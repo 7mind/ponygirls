@@ -1,0 +1,71 @@
+{
+  description = "Pi, Codex, Claude Code, and yolo coding-agent environment";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+    codegraph = {
+      url = "github:colbymchenry/codegraph";
+      flake = false;
+    };
+    openai-codex-plugin = {
+      url = "github:openai/codex-plugin-cc";
+      flake = false;
+    };
+    claude-code-sandbox.url = "github:neko-kai/claude-code-sandbox";
+  };
+
+  outputs = inputs@{ self, nixpkgs, flake-utils, ... }:
+    (flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-darwin" ] (system:
+      let
+        pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
+        skills = pkgs.callPackage ./nix/pkg/llm-skills/default.nix { };
+        contexts = pkgs.callPackage ./nix/pkg/llm-contexts/default.nix { };
+      in
+      {
+        packages = {
+          llm-skills = skills.package;
+          llm-contexts = contexts.package;
+          llm-context-with-env = pkgs.runCommandLocal "context-with-env.md" { } ''
+            : "${skills.package}"
+            cp ${pkgs.writeText "context-with-env-body" (contexts.general + "\n\n" + skills.environmentContent)} "$out"
+          '';
+          claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
+          codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
+          pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
+          codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix { src = inputs.codegraph; };
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
+          yolo = pkgs.callPackage ./nix/pkg/yolo/default.nix { };
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          yolo-darwin = pkgs.callPackage ./nix/pkg/yolo-darwin/default.nix {
+            claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
+          };
+          yolo = self.packages.${system}.yolo-darwin;
+        };
+        checks = {
+          kimi-401-retry = pkgs.runCommand "kimi-401-retry-test" {
+            nativeBuildInputs = [ pkgs.bun ];
+          } ''
+            cp -r ${./nix/pkg/pi-extensions} pi-extensions
+            cd pi-extensions
+            bun test kimi-401-retry.test.ts
+            touch $out
+          '';
+          yolo-profile = pkgs.runCommand "yolo-profile-test" {
+            nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.python3 ];
+          } ''
+            cp -r ${./nix/pkg/yolo} yolo
+            chmod -R u+w yolo
+            cd yolo
+            bash profile-test.sh
+            touch $out
+          '';
+        };
+      })) // {
+        lib.mkDevLlm = { cq, cqSource }:
+          import ./nix/hm/dev-llm.nix { inherit inputs cq cqSource; };
+        homeManagerModules.dev-llm =
+          self.lib.mkDevLlm { cq = null; cqSource = null; };
+      };
+}
