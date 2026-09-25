@@ -1,6 +1,6 @@
 --- a/packages/ai/src/auth/resolve.ts
 +++ b/packages/ai/src/auth/resolve.ts
-@@ -18,6 +18,13 @@ export type ModelsErrorCode = "model_source" | "model_validation" | "provider" |
+@@ -19,6 +19,13 @@ import type {
  export interface AuthResolutionOverrides {
  	apiKey?: string;
  	env?: ProviderEnv;
@@ -14,7 +14,7 @@
  	/** Require this much remaining OAuth-token validity; defaults to five minutes. */
  	minOAuthValidityMs?: number;
  	signal?: AbortSignal;
-@@ -94,6 +101,7 @@ async function resolveProviderAuthWithSignal(
+@@ -77,6 +84,7 @@ async function resolveProviderAuthWithSignal(
  				stored,
  				signal,
  				overrides?.minOAuthValidityMs,
@@ -22,7 +22,7 @@
  			);
  		}
  		if (stored.type === "api_key" && provider.auth.apiKey) {
-@@ -123,6 +131,10 @@ const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
+@@ -106,6 +114,10 @@ const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
   * OAuth resolution with double-checked locking: tokens with less than five
   * minutes remaining lock, re-check expiry under the lock, refresh once
   * globally, and persist the rotated credential before release.
@@ -33,7 +33,7 @@
   */
  async function resolveStoredOAuth(
  	credentials: CredentialStore,
-@@ -131,20 +143,27 @@ async function resolveStoredOAuth(
+@@ -114,20 +126,27 @@ async function resolveStoredOAuth(
  	stored: OAuthCredential,
  	signal: AbortSignal,
  	minOAuthValidityMs?: number,
@@ -66,23 +66,23 @@
  							signal,
 --- a/packages/ai/src/models.ts
 +++ b/packages/ai/src/models.ts
-@@ -18,6 +18,7 @@ import type {
- 	Api,
+@@ -20,6 +20,7 @@ import type {
  	ApiStreamOptions,
+ 	AssistantImages,
  	AssistantMessage,
 +	AssistantMessageEvent,
  	AssistantMessageEventStream,
- 	Context,
- 	DeferredCancelOptions,
-@@ -648,6 +649,7 @@ class ModelsImpl implements MutableModels {
- 	private async applyAuth<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
- 		model: Model<Api>,
+ 	ClassifierApi,
+ 	ClassifierContext,
+@@ -834,6 +835,7 @@ class ModelsImpl implements MutableModels {
+ 	>(
+ 		model: TModel,
  		options: TOptions | undefined,
 +		authOverrides?: Pick<AuthResolutionOverrides, "forceOAuthRefresh">,
  	): Promise<{
- 		requestModel: Model<Api>;
- 		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions;
-@@ -657,6 +659,7 @@ class ModelsImpl implements MutableModels {
+ 		requestModel: TModel;
+ 		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
+@@ -843,6 +845,7 @@ class ModelsImpl implements MutableModels {
  			apiKey: options?.apiKey,
  			env: options?.env,
  			signal: options?.signal,
@@ -90,7 +90,7 @@
  		});
  		if (!resolution) {
  			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
-@@ -676,22 +679,55 @@ class ModelsImpl implements MutableModels {
+@@ -862,22 +865,55 @@ class ModelsImpl implements MutableModels {
  		return { requestModel, requestOptions };
  	}
  
@@ -110,12 +110,12 @@
  	): AssistantMessageEventStream {
  		const transcript = normalizeContext(context);
  		return lazyStream(model, async () => {
- 			const provider = this.requireProvider(model);
+ 			const provider = this.requireChatProvider(model);
 -			const { requestModel, requestOptions } = await this.applyAuth(
 -				model,
 -				options as ModelsApiStreamOptions<Api> | undefined,
 -			);
--			return provider.stream(requestModel as Model<TApi>, transcript, requestOptions as ApiStreamOptions<TApi>);
+-			return provider.stream(requestModel, transcript, requestOptions as ApiStreamOptions<TApi>);
 +			const stored = await this.credentials.read(model.provider, { signal: options?.signal });
 +			// Explicit apiKey override is treated as a static credential path — no oauth retry.
 +			const oauthEligible = stored?.type === "oauth" && options?.apiKey === undefined;
@@ -154,13 +154,13 @@
  	async complete<TApi extends Api>(
  		model: Model<TApi>,
  		context: Context,
-@@ -701,12 +737,7 @@ class ModelsImpl implements MutableModels {
+@@ -887,12 +923,7 @@ class ModelsImpl implements MutableModels {
  	}
  
  	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
 -		const transcript = normalizeContext(context);
 -		return lazyStream(model, async () => {
--			const provider = this.requireProvider(model);
+-			const provider = this.requireChatProvider(model);
 -			const { requestModel, requestOptions } = await this.applyAuth(model, options);
 -			return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
 -		});
@@ -168,7 +168,7 @@
  	}
  
  	async completeSimple(
-@@ -754,6 +785,53 @@ class ModelsImpl implements MutableModels {
+@@ -976,6 +1007,53 @@ class ModelsImpl implements MutableModels {
  	}
  }
  
