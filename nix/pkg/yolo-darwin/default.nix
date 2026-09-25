@@ -9,6 +9,7 @@
 , podmanSocketUri ? null
 , extraReadOnlyPaths ? [ ]
 , extraReadWritePaths ? [ ]
+, piSharedAssets ? [ ]
 , promptJson ? "[]"
 , prehooksJson ? "[]"
 , sandboxHooksJson ? "[]"
@@ -17,7 +18,6 @@
 , secretSessionVariables ? { }
 , sandboxPackages ? [ ]
 , sessionVariables ? { }
-, cqIntegration ? false
 ,
 }:
 
@@ -58,6 +58,9 @@ let
   sessionVarsExports = lib.optionalString (sessionVariables != { }) ''
     export YOLO_SESSION_VARS=${lib.escapeShellArg (joinLines sessionVarLines)}
   '';
+  piSharedAssetsExports = lib.optionalString (piSharedAssets != [ ]) ''
+    export YOLO_PI_SHARED_ASSETS=${lib.escapeShellArg (joinLines piSharedAssets)}
+  '';
   promptJsonExports = lib.optionalString (promptJson != "[]") ''
     export YOLO_PROMPT_JSON=${lib.escapeShellArg promptJson}
   '';
@@ -78,10 +81,10 @@ let
     export YOLO_JQ="${jq}/bin/jq"
     export YOLO_CUSTOM_PROMPT="${customPromptScript}"
     export YOLO_SANDBOX_ENTRYPOINT="${sandboxEntrypoint}/bin/yolo-sandbox-entrypoint"
-    ${lib.optionalString cqIntegration "export YOLO_CQ_INTEGRATION=1"}
     ${podmanExports}
     ${extraRoExports}
     ${extraRwExports}
+    ${piSharedAssetsExports}
     ${secretVarsExports}
     ${sandboxBinExports}
     ${sessionVarsExports}

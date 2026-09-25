@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regression tests exercise the public yolo CLI with a recording sandbox.
 set -u
-export YOLO_CQ_INTEGRATION=1
+export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp.json'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 SCRIPT="$SCRIPT_DIR/yolo.sh"
@@ -24,13 +24,13 @@ mkdir -p \
   "$FAKE_HOME/.config/claude" \
   "$FAKE_HOME/.config/codex" \
   "$FAKE_HOME/.config/mcp" \
-  "$FAKE_HOME/.pi/agent/cq-agents" \
+  "$FAKE_HOME/.pi/agent/integration-agents" \
   "$FAKE_HOME/.pi/agent/prompts"
 printf 'x\n' > "$FAKE_HOME/.codex/AGENTS.md"
 printf 'x\n' > "$FAKE_HOME/.codex/config.toml"
 printf 'x\n' > "$FAKE_HOME/.codex/prompts/cq:plan.md"
 printf 'x\n' > "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
-printf 'x\n' > "$FAKE_HOME/.pi/agent/cq-agents/plan-reviewer.md"
+printf 'x\n' > "$FAKE_HOME/.pi/agent/integration-agents/reviewer.md"
 printf 'x\n' > "$FAKE_HOME/.pi/agent/prompts/cq:plan.md"
 
 printf '%s\n' \
@@ -87,8 +87,7 @@ run_profile_yolo() {
 }
 
 GLOBAL_CONFIG_HOME="$WORKDIR/xdg-config"
-mkdir -p "$GLOBAL_CONFIG_HOME/cq"
-printf 'reviewers = []\n' > "$GLOBAL_CONFIG_HOME/cq/cq.toml"
+mkdir -p "$GLOBAL_CONFIG_HOME"
 OUT="$(run_profile_yolo "$GLOBAL_CONFIG_HOME")"
 STATUS=$?
 
@@ -106,18 +105,13 @@ assert_contains \
   "$OUT" \
   "$FAKE_HOME/.pi/agent/prompts,$FAKE_HOME/.pi/agent/prompts"
 assert_contains \
-  "named profile re-shares Pi cq agents read-only" \
+  "named profile re-shares integration-provided Pi assets read-only" \
   "$OUT" \
-  "$FAKE_HOME/.pi/agent/cq-agents,$FAKE_HOME/.pi/agent/cq-agents"
+  "$FAKE_HOME/.pi/agent/integration-agents,$FAKE_HOME/.pi/agent/integration-agents"
 assert_contains \
   "named profile re-shares Pi appended system prompt read-only" \
   "$OUT" \
   "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md,$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
-assert_contains \
-  "absolute XDG config home shares cq configuration read-only" \
-  "$OUT" \
-  $'--ro\n'"$GLOBAL_CONFIG_HOME/cq"
-
 PROFILE_CODEX_CONFIG="$FAKE_HOME/.config/yolo/foo/codex/home/config.toml"
 assert_contains \
   "named profile seeds its codex config from the main profile" \
@@ -141,14 +135,6 @@ assert_contains \
   "$(cat "$PROFILE_CODEX_CONFIG")" \
   "[projects.\"$PROJECT_DIR\"]"
 printf 'x\n' > "$FAKE_HOME/.codex/config.toml"
-
-mkdir -p "$FAKE_HOME/.config/cq"
-printf 'reviewers = []\n' > "$FAKE_HOME/.config/cq/cq.toml"
-OUT="$(run_profile_yolo relative-config-home)"
-assert_contains \
-  "relative XDG config home falls back to the home config directory" \
-  "$OUT" \
-  $'--ro\n'"$FAKE_HOME/.config/cq"
 
 # Tag gating: audio is on by default, display passthrough (Wayland + X11) is off
 # by default, and --disable beats --enable for the same tag.
@@ -368,10 +354,6 @@ assert_after "declarative --ro follows the profile claude re-shares" "$OUT" \
 assert_after "declarative --rw follows the profile pi binds" "$OUT" \
   "$DECL_RW" "$FAKE_HOME/.pi/agent/mcp.json,$FAKE_HOME/.pi/agent/mcp.json"
 assert_after "CLI --ro follows the declarative extras" "$OUT" "$CLI_RO" "$DECL_RW"
-
-GENERIC_OUT="$(YOLO_CQ_INTEGRATION=0 run_profile_yolo "$GLOBAL_CONFIG_HOME")"
-assert_not_contains "generic launch omits cq state" "$GENERIC_OUT" "$FAKE_HOME/.local/state/cq"
-assert_not_contains "generic launch omits cq configuration" "$GENERIC_OUT" "$GLOBAL_CONFIG_HOME/cq"
 
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"

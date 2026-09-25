@@ -4,7 +4,7 @@
 # Seatbelt enforcement must run outside Nix's own Darwin sandbox because
 # sandbox-exec cannot nest there; see README.md's manual checklist.
 set -u
-export YOLO_CQ_INTEGRATION=1
+export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp.json'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 SCRIPT="$SCRIPT_DIR/yolo-darwin.sh"
@@ -135,20 +135,6 @@ assert_contains "allows ~/.agents read-only" "$RENDERED_AGENTS" \
   $'(allow file-read* file-read-metadata\n    (literal "'"$FAKE_HOME/.agents"$'")\n    (subpath "'"$FAKE_HOME/.agents"$'"))'
 assert_contains "allows read+write to \$PWD (/tmp/x)" "$RENDERED" '(subpath "/tmp/x")'
 assert_contains "allows ~/.cache" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.cache"))'
-# Regression: cq's default XDG primary lives here and must remain reachable
-# from the confined MCP server and Claude stop hook.
-assert_contains "allows cq default XDG state" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.local/state/cq"))'
-RENDERED_CUSTOM_XDG="$(XDG_STATE_HOME='/tmp/custom state' render_profile foo /tmp/x)"
-assert_contains "allows cq custom absolute XDG state" "$RENDERED_CUSTOM_XDG" '(subpath "/tmp/custom state/cq")'
-assert_contains "allows cq default global config read-only" "$RENDERED" \
-  $'(allow file-read* file-read-metadata\n    (subpath (string-append (param "HOME_DIR") "/.config/cq")))'
-RENDERED_CUSTOM_XDG_CONFIG="$(XDG_CONFIG_HOME='/tmp/custom config' render_profile foo /tmp/x)"
-assert_contains "allows cq custom absolute global config read-only" "$RENDERED_CUSTOM_XDG_CONFIG" \
-  $'(allow file-read* file-read-metadata\n    (subpath "/tmp/custom config/cq"))'
-RENDERED_RELATIVE_XDG_CONFIG="$(XDG_CONFIG_HOME='relative-config' render_profile foo /tmp/x)"
-assert_contains "relative XDG config home falls back to the home config directory" \
-  "$RENDERED_RELATIVE_XDG_CONFIG" \
-  $'(allow file-read* file-read-metadata\n    (subpath (string-append (param "HOME_DIR") "/.config/cq")))'
 assert_contains "allows /Users metadata traversal" "$RENDERED" '(literal "/Users")'
 assert_contains "allows home root metadata traversal" "$RENDERED" '(literal (param "HOME_DIR"))'
 assert_contains "allows named profile .config read traversal" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.config"))'
@@ -568,7 +554,7 @@ mkdir -p \
   "$RESHARE_HOME/.claude/skills" \
   "$RESHARE_HOME/.codex/prompts" \
   "$RESHARE_HOME/.codex/skills" \
-  "$RESHARE_HOME/.pi/agent/cq-agents" \
+  "$RESHARE_HOME/.pi/agent/integration-agents" \
   "$RESHARE_HOME/.pi/agent/prompts" \
   "$RESHARE_HOME/.pi/agent/skills"
 echo x > "$RESHARE_HOME/.claude/settings.json"
@@ -578,7 +564,7 @@ printf 'model = "test"\n' > "$RESHARE_HOME/.codex/config.toml"
 echo x > "$RESHARE_HOME/.codex/prompts/cq:plan.md"
 echo x > "$RESHARE_HOME/.pi/agent/settings.json"
 echo x > "$RESHARE_HOME/.pi/agent/APPEND_SYSTEM.md"
-echo x > "$RESHARE_HOME/.pi/agent/cq-agents/plan-reviewer.md"
+echo x > "$RESHARE_HOME/.pi/agent/integration-agents/reviewer.md"
 echo x > "$RESHARE_HOME/.pi/agent/prompts/cq:plan.md"
 run_profile_sync() {
   cd "$PROJECT_DIR" &&
@@ -601,7 +587,7 @@ assert_eq "reshare: codex prompts copied as a real dir" "yes" "$(_is_real_dir "$
 assert_eq "reshare: codex skills copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/codex/skills")"
 assert_eq "reshare: pi settings.json copied as a real file" "yes" "$(_is_real_file "$RESHARE_PROF/pi/settings.json")"
 assert_eq "reshare: pi appended system prompt copied as a real file" "yes" "$(_is_real_file "$RESHARE_PROF/pi/APPEND_SYSTEM.md")"
-assert_eq "reshare: pi cq agents copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/pi/cq-agents")"
+assert_eq "reshare: integration-provided Pi assets copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/pi/integration-agents")"
 assert_eq "reshare: pi prompts copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/pi/prompts")"
 assert_eq "reshare: pi skills copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/pi/skills")"
 assert_eq "reshare: copied content matches the source" "x" "$(cat "$RESHARE_PROF/codex/AGENTS.md")"
@@ -667,8 +653,5 @@ OUT="$(cd "$SYMLINK_HOME" && HOME="$FAKE_HOME" bash -c 'source "$1" --unsafe-sha
 assert_zero "--unsafe-share-home overrides the symlinked-\$HOME refusal" "$STATUS"
 
 # ── summary ─────────────────────────────────────────────────────────────────
-GENERIC_RENDERED="$(YOLO_CQ_INTEGRATION=0 render_profile foo /tmp/x)"
-assert_not_contains "generic policy omits cq state" "$GENERIC_RENDERED" "/.local/state/cq"
-assert_not_contains "generic policy omits cq configuration" "$GENERIC_RENDERED" "/.config/cq"
 echo "$TESTS_RUN assertions run, $FAILURES failed."
 [[ "$FAILURES" -eq 0 ]]

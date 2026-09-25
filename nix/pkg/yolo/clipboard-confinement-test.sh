@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-export YOLO_CQ_INTEGRATION=1
+export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp.json'
 # Raw-socket confinement suite for the yolo bubblewrap sandbox (defects:D262).
 #
 # Modes:
@@ -425,7 +425,7 @@ for leaf in \
   .claude/settings.json .claude/CLAUDE.md \
   .codex/AGENTS.md .codex/prompts .codex/skills \
   .pi/agent/settings.json .pi/agent/AGENTS.md .pi/agent/APPEND_SYSTEM.md \
-  .pi/agent/cq-agents .pi/agent/prompts .pi/agent/skills \
+  .pi/agent/integration-agents .pi/agent/prompts .pi/agent/skills \
   .pi/agent/extensions .pi/agent/mcp.json; do
   socket_at "$FAKE_HOME/$leaf"
 done
@@ -626,7 +626,7 @@ required_sources=(
   "$FAKE_HOME/.codex/AGENTS.md" "$FAKE_HOME/.codex/prompts"
   "$FAKE_HOME/.codex/skills" "$FAKE_HOME/.pi/agent/settings.json"
   "$FAKE_HOME/.pi/agent/AGENTS.md" "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
-  "$FAKE_HOME/.pi/agent/cq-agents" "$FAKE_HOME/.pi/agent/prompts"
+  "$FAKE_HOME/.pi/agent/integration-agents" "$FAKE_HOME/.pi/agent/prompts"
   "$FAKE_HOME/.pi/agent/skills" "$FAKE_HOME/.pi/agent/extensions"
   "$FAKE_HOME/.pi/agent/mcp.json" "$FAKE_HOME/.zshrc" "$FAKE_HOME/.zshenv"
   "$FAKE_HOME/.zprofile" "$FAKE_HOME/.zlogin" "$FAKE_HOME/.zlogout"
@@ -659,7 +659,7 @@ required_destinations=(
   "$FAKE_HOME/.codex/AGENTS.md" "$FAKE_HOME/.codex/prompts"
   "$FAKE_HOME/.codex/skills" "$FAKE_HOME/.pi/agent/settings.json"
   "$FAKE_HOME/.pi/agent/AGENTS.md" "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
-  "$FAKE_HOME/.pi/agent/cq-agents" "$FAKE_HOME/.pi/agent/prompts"
+  "$FAKE_HOME/.pi/agent/integration-agents" "$FAKE_HOME/.pi/agent/prompts"
   "$FAKE_HOME/.pi/agent/skills" "$FAKE_HOME/.pi/agent/extensions"
   "$FAKE_HOME/.pi/agent/mcp.json" "$FAKE_HOME/.zshrc" "$FAKE_HOME/.zshenv"
   "$FAKE_HOME/.zprofile" "$FAKE_HOME/.zlogin" "$FAKE_HOME/.zlogout"

@@ -8,10 +8,6 @@
 #   YOLO_JQ                     - path to jq binary
 #   YOLO_CUSTOM_PROMPT          - path to the shared prompt-composition library
 #
-# Built-in cq binds:
-#   absolute $XDG_STATE_HOME/cq or $HOME/.local/state/cq  - read-write ledger state
-#   absolute $XDG_CONFIG_HOME/cq or $HOME/.config/cq      - read-only global configuration
-#
 # Optional env vars:
 #   YOLO_PODMAN_SOCKET_PATH - rootless podman socket path (enables container forwarding)
 #   YOLO_PODMAN_SOCKET_URI  - rootless podman socket URI
@@ -624,37 +620,10 @@ if tag_active display off; then
   fi
 fi
 
-# cq's XDG state store (ledger `xdg` backend primary lives under <base>/cq).
-# Resolve <base> exactly as cq does (packages/ledger/src/stateDir.ts):
-# $XDG_STATE_HOME when set to an absolute path, else ~/.local/state. The
-# sandbox baseline explicitly forwards XDG_STATE_HOME, so it reaches the agent and
-# in-sandbox cq resolves to this same path — bind it read-write so sandboxed
-# agents share the host ledger. Skipped by llm-sandbox if the dir is absent.
-CQ_BIND_ARGS=()
-if [[ "${YOLO_CQ_INTEGRATION:-0}" == 1 ]]; then
-  if [[ -n "${XDG_STATE_HOME:-}" && "${XDG_STATE_HOME}" == /* ]]; then
-    _cq_state_dir="${XDG_STATE_HOME}/cq"
-  else
-    _cq_state_dir="${HOME}/.local/state/cq"
-  fi
-
-# cq's global configuration directory. Resolve the base exactly as @cq/config:
-# an absolute non-empty XDG_CONFIG_HOME wins; empty or relative values fall
-# back to ~/.config. The sandbox may consume global policy but cannot edit it.
-# llm-sandbox skips this bind when the directory is absent.
-  if [[ -n "${XDG_CONFIG_HOME:-}" && "${XDG_CONFIG_HOME}" == /* ]]; then
-    _cq_config_dir="${XDG_CONFIG_HOME}/cq"
-  else
-    _cq_config_dir="${HOME}/.config/cq"
-  fi
-  CQ_BIND_ARGS=(--rw "${_cq_state_dir}" --ro "${_cq_config_dir}")
-fi
-
 BASE_ARGS=(
   --rw "${PWD}"
   --rw "${HOME}/.cache"
   --rw "${HOME}/.ivy2"
-  "${CQ_BIND_ARGS[@]}"
   "${SOCKET_ARGS[@]}"
   "${TMUX_BIND_ARGS[@]}"
   "${DYNGPU_ARGS[@]}"
@@ -758,6 +727,14 @@ add_codex_binds() {
 # profile, like codex. Pi has no built-in MCP — its pi-mcp-adapter package
 # reads the shared registry at ~/.config/mcp/mcp.json (written by programs.mcp),
 # so bind that read-only too.
+PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md prompts skills extensions mcp.json)
+if [[ -n "${YOLO_PI_SHARED_ASSETS:-}" ]]; then
+  PI_SHARED_ASSETS=()
+  while IFS= read -r asset; do
+    [[ -z "$asset" ]] || PI_SHARED_ASSETS+=("$asset")
+  done <<< "$YOLO_PI_SHARED_ASSETS"
+fi
+
 add_pi_binds() {
   EXTRA_ARGS+=(--ro "${HOME}/.config/mcp")
   # Provider + web-search API-key secrets reach pi (and every harness) via the
@@ -767,30 +744,18 @@ add_pi_binds() {
   # ~/.pi/agent/extensions/search.json, shared read-only with the rest of
   # agent/extensions below — no separate writable mount needed.
   if [[ -n "$PROFILE" ]]; then
-    local A item; A="$(profile_dir pi)"
+    local A asset item
+    local -a asset_paths=()
+    A="$(profile_dir pi)"
     mkdir -p "$A/home/agent"
-    clear_reshare_leftovers \
-      "$A/home" \
-      agent/settings.json \
-      agent/AGENTS.md \
-      agent/APPEND_SYSTEM.md \
-      agent/cq-agents \
-      agent/prompts \
-      agent/skills \
-      agent/extensions \
-      agent/mcp.json
+    for asset in "${PI_SHARED_ASSETS[@]}"; do
+      asset_paths+=("agent/$asset")
+    done
+    clear_reshare_leftovers "$A/home" "${asset_paths[@]}"
     EXTRA_ARGS+=(--bind "$A/home,${HOME}/.pi")
     # Share the HM-managed (read-only, store-symlinked) assets from the main
     # profile; non-existent paths are filtered by the llm-sandbox layer.
-    for item in \
-      agent/settings.json \
-      agent/AGENTS.md \
-      agent/APPEND_SYSTEM.md \
-      agent/cq-agents \
-      agent/prompts \
-      agent/skills \
-      agent/extensions \
-      agent/mcp.json; do
+    for item in "${asset_paths[@]}"; do
       EXTRA_ARGS+=(--ro-bind "${HOME}/.pi/$item,${HOME}/.pi/$item")
     done
   else

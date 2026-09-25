@@ -37,7 +37,7 @@
 # Accepted fixed invocations can still trigger host-configured tmux hooks —
 # after-load-buffer, after-save-buffer, and command-error — which belong to
 # the host server's own configuration and receive no client-supplied argv.
-{ inputs, cqSource }:
+{ inputs }:
 { config
 , lib
 , pkgs
@@ -95,9 +95,19 @@ let
   # env anymore); the per-project index bootstrap is a sandbox pre-start hook
   # (contributed in config below). null disables all codegraph integration.
   codegraphSet = cfg.yolo.codegraph != null;
+  validPiSharedAsset = asset:
+    let
+      components = lib.splitString "/" asset;
+    in
+    asset != ""
+    && lib.all (
+      component:
+      component != "."
+      && component != ".."
+      && builtins.match "^[A-Za-z0-9._-]+$" component != null
+    ) components;
 
   yoloPkg = pkgs.callPackage ../pkg/yolo/default.nix {
-    cqIntegration = cqSource != null;
     podmanSocketPath = cfg.podman.socketPath;
     podmanSocketUri = cfg.podman.socketUri;
     # The remote-worker SSH key is just another read-only bind.
@@ -105,6 +115,7 @@ let
     extraReadWritePaths = cfg.yolo.extraReadWritePaths;
     # Device paths bound with device access (bwrap --dev-bind), e.g. GPU nodes.
     extraDevicePaths = cfg.yolo.extraDevicePaths;
+    piSharedAssets = cfg.yolo.piSharedAssets;
     # Extra packages exposed ONLY inside the sandbox (not the host profile);
     # codegraph rides along here so its CLI / `init -i` work inside the sandbox.
     sandboxPackages = cfg.yolo.packages ++ lib.optional codegraphSet cfg.yolo.codegraph;
@@ -216,6 +227,24 @@ in
         {option}`smind.hm.dev.llm.yolo.extraReadOnlyPaths`, and the GPU
         availability note (tagged the same, so `--disable=gpu` hides it too) via
         {option}`smind.hm.dev.llm.yolo.promptExtensions`.
+      '';
+    };
+
+    smind.hm.dev.llm.yolo.piSharedAssets = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [
+        "settings.json"
+        "AGENTS.md"
+        "APPEND_SYSTEM.md"
+        "prompts"
+        "skills"
+        "extensions"
+        "mcp.json"
+      ];
+      description = ''
+        Paths relative to Pi's agent directory that named yolo profiles
+        re-share read-only. Integrations may append their own projected asset
+        directories.
       '';
     };
 
@@ -409,6 +438,13 @@ in
 
   config = lib.mkMerge [
     {
+      assertions = [
+        {
+          assertion = lib.all validPiSharedAsset cfg.yolo.piSharedAssets;
+          message = "smind.hm.dev.llm.yolo.piSharedAssets entries must be safe relative paths";
+        }
+      ];
+
       # Module-provided prompt fragments, leading the list (mkBefore); the
       # consumer's fragments append after.
       #   - YOLO authorization (claude only — Pi/Codex have no permission system).
@@ -428,7 +464,7 @@ in
               if isLinux then
                 ''Sandbox: ACTIVE (bubblewrap via the 'yolo' wrapper; SMIND_SANDBOXED=1). Writes survive sandbox sessions in the project directory, /tmp/exchange, and explicitly bound read-write paths; /tmp/exchange is tmpfs and does not survive a host reboot. For access outside granted binds, follow the /environment skill.''
               else
-                ''Sandbox: ACTIVE (macOS Seatbelt via the 'yolo' wrapper; SMIND_SANDBOXED=1). Network access remains available. Filesystem writes are confined to the project directory, agent configuration/profile directories, shared cache, temporary directories allowed by the base policy, and cq's XDG state directory; unrelated home-directory paths are denied.'';
+                ''Sandbox: ACTIVE (macOS Seatbelt via the 'yolo' wrapper; SMIND_SANDBOXED=1). Network access remains available. Filesystem writes are confined to the project directory, agent configuration/profile directories, shared cache, temporary directories allowed by the base policy, and configured extra read-write paths; unrelated home-directory paths are denied.'';
           }
         ]
         ++ lib.optional sshKeySet {
@@ -482,12 +518,12 @@ in
     (lib.mkIf (cfg.enable && isDarwin) {
       home.packages = [
         (pkgs.callPackage ../pkg/yolo-darwin/default.nix {
-          cqIntegration = cqSource != null;
           claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
           podmanSocketPath = cfg.podman.socketPath;
           podmanSocketUri = cfg.podman.socketUri;
           extraReadOnlyPaths = cfg.yolo.extraReadOnlyPaths ++ lib.optional sshKeySet cfg.llmSshKeyPath;
           extraReadWritePaths = cfg.yolo.extraReadWritePaths;
+          piSharedAssets = cfg.yolo.piSharedAssets;
           sandboxPackages = cfg.yolo.packages ++ lib.optional codegraphSet cfg.yolo.codegraph;
           sessionVariables = cfg.yolo.sessionVariables;
           secretSessionVariables = cfg.yolo.secretSessionVariables;

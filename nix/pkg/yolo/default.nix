@@ -8,6 +8,7 @@
   extraReadOnlyPaths ? [ ],
   extraReadWritePaths ? [ ],
   extraDevicePaths ? [ ],
+  piSharedAssets ? [ ],
   promptJson ? "[]",
   prehooksJson ? "[]",
   sandboxHooksJson ? "[]",
@@ -16,7 +17,6 @@
   secretSessionVariables ? { },
   sandboxPackages ? [ ],
   sessionVariables ? { },
-  cqIntegration ? false,
 }:
 
 let
@@ -103,6 +103,9 @@ let
   sessionVarsExports = lib.optionalString (sessionVariables != { }) ''
     export YOLO_SESSION_VARS=${lib.escapeShellArg (lib.concatStringsSep "\n" sessionVarLines)}
   '';
+  piSharedAssetsExports = lib.optionalString (piSharedAssets != [ ]) ''
+    export YOLO_PI_SHARED_ASSETS=${lib.escapeShellArg (joinPaths piSharedAssets)}
+  '';
   # System-prompt extensions as a JSON array of { target, tags, prompt } objects
   # (the home-manager module does the Nix-`when` filtering and builds the JSON).
   # yolo.sh composes each agent's prompt at launch with jq — keeping objects
@@ -140,11 +143,11 @@ pkgs.writeShellScriptBin "yolo" ''
   export YOLO_CLIPBOARD_PROXY="${clipboardProxy}/bin/yolo-clipboard-proxy"
   export YOLO_CLIPBOARD_SHIM_DIR="${clipboardProxy}/tmux-shim"
   export YOLO_TMUX="${pkgs.tmux}/bin/tmux"
-  ${lib.optionalString cqIntegration "export YOLO_CQ_INTEGRATION=1"}
   ${podmanExports}
   ${extraRoExports}
   ${extraRwExports}
   ${extraDevExports}
+  ${piSharedAssetsExports}
   ${secretVarsExports}
   ${sandboxBinExports}
   ${sessionVarsExports}

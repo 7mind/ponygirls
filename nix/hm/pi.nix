@@ -1,4 +1,3 @@
-{ cqSource }:
 # Pi configuration for the LLM coding-agent harness, split out of dev-llm.nix.
 # Unlike Claude/Codex (whose `programs.*` modules come from the downstream's
 # home-manager), Pi's `programs.pi` module is defined in THIS flake — the
@@ -24,43 +23,6 @@ let
   mkAgentHarness = import ../lib/mk-agent-harness.nix;
 
   llmContexts = pkgs.callPackage ../pkg/llm-contexts/default.nix { };
-  ledgerAssets = if cqSource == null then { catalog = [ ]; } else import (cqSource + "/nix/pkg/cq-assets/assets.nix") { inherit lib; };
-  piPromptRoot = if cqSource == null then null else import (cqSource + "/nix/pkg/cq-assets/render-prompt-surface.nix") {
-    inherit pkgs lib;
-    surface = "pi";
-  };
-  piCatalogAgents = lib.filter (
-    role: role.roleKind == "dispatched-subagent"
-  ) ledgerAssets.catalog;
-  piCatalogCommands = lib.filter (
-    role: role.roleKind == "orchestrator-command"
-  ) ledgerAssets.catalog;
-  piPromptTemplates =
-    lib.filterAttrs (name: _: !(lib.hasPrefix "cq/" name)) cfg.merged.commands
-    // lib.listToAttrs (
-      map (
-        role:
-        lib.nameValuePair "cq/${role.roleId}" "${piPromptRoot}/roles/${role.roleId}.md"
-      ) piCatalogCommands
-    );
-  piCatalogAgentNames = map (role: role.roleId) piCatalogAgents;
-  piAgentHomeFiles =
-    lib.mapAttrs'
-      (
-        name: body: lib.nameValuePair ".pi/agent/cq-agents/${name}.md" { text = body; }
-      )
-      (lib.filterAttrs (
-        name: _: !(builtins.elem name piCatalogAgentNames)
-      ) cfg.merged.agents)
-    // lib.listToAttrs (
-      map (
-        role:
-        lib.nameValuePair ".pi/agent/cq-agents/${role.roleId}.md" {
-          source = "${piPromptRoot}/roles/${role.roleId}.md";
-        }
-      ) piCatalogAgents
-    );
-
   # Pi: vendored formula (version pinned in ../pkg/pi-coding-agent/package.nix;
   # nixpkgs lags at 0.75.x, and its older releases have broken Codex/ChatGPT
   # subscription token exchange). Bump: edit version + rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
@@ -82,23 +44,11 @@ let
   ddgsPython = pkgs.python3.withPackages (ps: [ ps.ddgs ]);
   piWrapped = pkgs.symlinkJoin {
     name = "pi-coding-agent-wrapped";
-    passthru = lib.optionalAttrs (cqSource != null) {
-      promptSurface = "pi";
-      promptRoot = piPromptRoot;
-    };
     paths = [ piBase ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postBuild = ''
-      # D180: respect a pre-set CQ_AGENTS_DIR (the cq-subagent-dispatch
-      # extension advertises env-first resolution) — only fall back to the
-      # projected default when the variable is unset or empty.
       wrapProgram $out/bin/pi \
-        --prefix PATH : ${ddgsPython}/bin ${lib.optionalString (cqSource != null) ''\
-        --set CQ_HARNESS pi \
-        --set CQ_PROMPT_SURFACE pi \
-        --set CQ_PROMPT_ROOT ${piPromptRoot} \
-        --set CQ_PROCESS_IDENTITY_HELPER "${lib.optionalString pkgs.stdenv.isDarwin "${piDispatchExtensionDir}/libexec/cq-process-identity"}" \
-        --run 'export CQ_AGENTS_DIR=''${CQ_AGENTS_DIR:-"''${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/cq-agents"}' ''}
+        --prefix PATH : ${ddgsPython}/bin
     '';
   };
 
@@ -218,13 +168,10 @@ let
         name: server:
           let
             directToolsEnabled =
-              name == "ledger"
-              || (
-                if lib.isList piMcpDirectTools then
-                  lib.elem name piMcpDirectTools
-                else
-                  piMcpDirectTools
-              );
+              if lib.isList piMcpDirectTools then
+                lib.elem name piMcpDirectTools
+              else
+                piMcpDirectTools;
           in
           (normalizeMcpServer server)
           // { lifecycle = "keep-alive"; }
@@ -241,38 +188,6 @@ let
   # project-specific — per-repo facts belong in AGENTS.md / CLAUDE.md (Pi
   # discovers both). Content lives in pkg/llm-contexts/pi-context.md.
   piAppendSystemPrompt = llmContexts.pi;
-
-  # Auto-driver extension: the whole subdirectory is copied to the store so
-  # index.ts can resolve its sibling imports (./decision, ./driver, etc.) at
-  # runtime. Pi's settings.extensions receives the index.ts store path inside
-  # that directory derivation.
-  autoDriverDir = cqSource + "/nix/pkg/pi-extensions/auto-driver";
-
-  # Ledger-status extension: same store-path-directory pattern as
-  # autoDriverDir above (index.ts resolves sibling imports ./counts etc. at
-  # runtime, so the whole directory is copied to the store).
-  ledgerStatusDir = cqSource + "/nix/pkg/pi-extensions/ledger-status";
-
-  cqSubagentDispatchDir = cqSource + "/nix/pkg/pi-extensions/cq-subagent-dispatch";
-
-  # The dispatch extension imports @cq/process-control at runtime. Install it
-  # as a directory closure so the package resolves beside the extension rather
-  # than through Pi's ambient package aliases. Darwin additionally needs the
-  # proc_pidinfo helper used to fence PID reuse.
-  piDispatchExtensionDir = pkgs.runCommand "cq-pi-subagent-dispatch-extension" {
-    nativeBuildInputs = lib.optionals pkgs.stdenv.isDarwin [ pkgs.stdenv.cc ];
-  } ''
-    mkdir -p "$out/node_modules/@cq"
-    cp -R ${cqSubagentDispatchDir}/. "$out/"
-    ln -s ${cqSource + "/nix/pkg/cq-ledgers/packages/process-control"} \
-      "$out/node_modules/@cq/process-control"
-    ${lib.optionalString pkgs.stdenv.isDarwin ''
-      mkdir -p "$out/libexec"
-      $CC -Wall -Wextra -Werror \
-        ${cqSource + "/nix/pkg/cq-ledgers/packages/process-control/native/darwin-process-identity.c"} \
-        -o "$out/libexec/cq-process-identity"
-    ''}
-  '';
 
   # Inference-provider extension packages, each gated by a
   # `smind.hm.dev.llm.pi.providers.<name>.enable` flag (declared in `options`
@@ -377,10 +292,8 @@ in
       example = [ "codegraph" "ledger" ];
       description = ''
         Register additional Pi MCP servers' tools individually instead of
-        behind pi-mcp-adapter's single `mcp({search, tool})` proxy. The ledger
-        server is always direct because rendered CQ prompts call its operational
-        tools by name. The proxy exists for context-window economy (progressive
-        disclosure), so other servers default to proxied. `true` sets
+        behind pi-mcp-adapter's single `mcp({search, tool})` proxy. The proxy
+        exists for context-window economy (progressive disclosure). `true` sets
         `directTools = true` on every server in
         {option}`programs.mcp.servers`; a list of server names enables it for
         those additional servers. Pi-only: applied in `piMcpJson`, not leaked
@@ -409,26 +322,25 @@ in
   config = lib.mkIf cfg.enable (lib.mkMerge [
     {
       programs.pi = sharedAgentWiring // {
-        # Vendored Pi (see pkg/pi-coding-agent/package.nix) wrapped to set CQ_HARNESS=pi, default CQ_AGENTS_DIR
-        # (a pre-set value wins — see piWrapped), and put the
-        # ddgs python on PATH (see piWrapped). Provider/search API keys are supplied
+        # Vendored Pi (see pkg/pi-coding-agent/package.nix), wrapped to put the
+        # ddgs python on PATH. Provider/search API keys are supplied
         # by the yolo sandbox (smind.hm.dev.llm.yolo.secretSessionVariables), not here.
-        package = piWrapped;
+        package = lib.mkDefault piWrapped;
         # Repo-agnostic operating manual appended inside Pi's (minimal) system
         # prompt; per-repo facts stay in AGENTS.md/CLAUDE.md (see definition).
         appendSystemPrompt = piAppendSystemPrompt;
-        # Deliver ledger (and other bundle) "commands" (plan/* etc.) as
-        # Pi prompt templates. The harness materializes keys like
+        # Deliver contributed bundle commands as Pi prompt templates. The
+        # harness materializes keys like
         # "plan/advance" as prompts/plan:advance.md so that /plan:advance
         # works exactly as it does for Claude (/plan:advance) and Codex.
-        promptTemplates = piPromptTemplates;
+        promptTemplates = cfg.merged.commands;
         settings = {
           theme = "dark";
-          # OpenAI Codex via ChatGPT subscription OAuth (`/login openai-codex`).
-          # Other providers (grok-build, openrouter, ...) stay selectable at runtime.
-          defaultProvider = "openai-codex";
-          defaultModel = "gpt-5.6-sol";
-          defaultThinkingLevel = "xhigh";
+          # The configured default does not restrict runtime model switching.
+          defaultProvider = cfg.models.pi.provider;
+          defaultModel = cfg.models.pi.model;
+          defaultThinkingLevel = cfg.models.pi.thinkingLevel;
+          tuiMode = if cfg.fullscreenTui.enable then "fullscreen" else "regular";
           compaction = {
             enabled = true;
             reserveTokens = 100000;
@@ -515,34 +427,11 @@ in
             # This rewrites the web_search tool definition per request to list
             # only the backends actually active per the live search.json. See
             # the extension header and the upstream bug-report draft.
-          ] ++ lib.optionals (cqSource != null) [
-            # cq subagent-dispatch: registers the `dispatch_agent` tool the cq
-            # shared prompts speak to. Reads the named agent markdown from
-            # $CQ_AGENTS_DIR (T222) and runs it as an isolated, tool-filtered
-            # child `pi -p` turn that cannot itself re-dispatch. See the
-            # extension header for the Route-A subprocess mechanism (T221/T224).
-            "${piDispatchExtensionDir}/index.ts"
-            # D201 / earendil-works/pi#7319: bounded turn re-drive when Kimi
-            # coding returns soft 401 authentication_error (core excludes 401
-            # from both retry classifiers and does not refresh OAuth on 401).
-            # cq auto-driver: registers /cq:advance:auto, /cq:plan:auto,
-            # /cq:investigate:auto, and /cq:implement:auto — drive-and-await
-            # loops that re-run the underlying cq:* command until its terminal
-            # predicate is satisfied (T465–T468). The entrypoint (index.ts)
-            # imports sibling modules (./decision, ./driver, ./decide, ./oracle)
-            # so the whole auto-driver/ directory is copied to the store via
-            # `autoDriverDir`; Pi receives the index.ts path within that tree.
-            "${autoDriverDir}/index.ts"
-            # cq ledger-status: paints a compact `Q d/t  T d/t  D d/t` status-bar
-            # line from `cq counts` (T533-T536, G76). Bare PATH-resolved `cq`,
-            # same shell-out pattern as auto-driver/oracle.ts (cq is already on
-            # the pi wrapper's PATH via home.packages' ledgerTools, see tools.nix).
-            "${ledgerStatusDir}/index.ts"
           ];
         };
       };
 
-      # Pi-specific MCP override: codegraph + ledger pinned keep-alive so Pi's
+      # Pi-specific MCP override: selected servers are pinned keep-alive so
       # pi-mcp-adapter connects them at startup (see piMcpJson).
       home.file.".pi/agent/mcp.json".source = piMcpJson;
 
@@ -551,19 +440,6 @@ in
       home.file.".pi/agent/extensions/search.json".source = searchHubConfig;
 
     }
-    {
-      # Project individual cq agent markdowns to ~/.pi/agent/cq-agents/<name>.md
-      # so the dispatch extension (T224) can discover them by reading the
-      # directory pointed to by $CQ_AGENTS_DIR (defaulted on piWrapped above).
-      # Separate mkMerge element because the block above sets static
-      # `home.file."<path>"` entries that can't coexist with a dynamic
-      # `home.file = <attrs>` in one attribute set.
-      home.file = piAgentHomeFiles;
-    }
-    (lib.mkIf (cqSource != null) {
-      home.file.".pi/agent/role-tool-profiles.json".source =
-        "${piPromptRoot}/role-tool-profiles.json";
-    })
     # Pi-specific extras (gated on the programs.pi sub-options declared above).
     # Pi's adapter reads the shared ~/.config/mcp/mcp.json registry (written by
     # programs.mcp); we only need to add the adapter to settings.packages (the

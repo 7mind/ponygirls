@@ -10,26 +10,22 @@
 #               asset-bundle merge + `merged.*` views, the `programs.mcp`
 #               registry, and the common host packages. (needs inputs + self)
 #   claude.nix  Claude Code configuration (programs.claude-code).
-#   codex.nix   Codex configuration (programs.codex); codex-ledger-mcp.nix
-#               binds its ledger registration to the rendered Codex prompt root.
+#   codex.nix   Codex configuration (programs.codex).
 #   pi.nix      Pi configuration (programs.pi); also carries the in-flake
 #               programs.pi module definition (shared factory + Pi options).
 #   podman.nix  NixOS-provided restricted rootless-Podman socket wiring.
 #   yolo.nix    the bubblewrap `yolo` sandbox wrapper + its options. (needs inputs)
 #
-# Curried over the flake's own `inputs` (codegraph, claude-code-sandbox) and
-# Optional `cq` and `cqSource` supply the ledger package and prompt assets
-# when the CQ flake composes this module through `lib.mkDevLlm`.
-{ inputs, cq, cqSource }:
+# Curried only over this flake's own inputs. Downstream integrations compose
+# this module and configure its public Home Manager options.
+{ inputs }:
 {
   imports = [
-    (import ./tools.nix { inherit inputs cq cqSource; })
-    (import ./claude.nix { inherit inputs cq cqSource; })
-    (import ./codex.nix { inherit cqSource; })
-    (import ./pi.nix { inherit cqSource; })
-    (import ./yolo.nix { inherit inputs cqSource; })
+    (import ./tools.nix { inherit inputs; })
+    (import ./claude.nix { inherit inputs; })
+    ./codex.nix
+    ./pi.nix
+    (import ./yolo.nix { inherit inputs; })
     ./podman.nix
-  ] ++ (if cqSource == null then [ ] else [
-    (import ./codex-ledger-mcp.nix { inherit cqSource; })
-  ]);
+  ];
 }

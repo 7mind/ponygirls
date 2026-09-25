@@ -5,12 +5,11 @@
 #   * the master `smind.hm.dev.llm.enable` switch,
 #   * the contributed-asset-bundle merge (skills/commands/agents/context) and
 #     the read-only `smind.hm.dev.llm.merged.*` views the agent modules consume,
-#   * the shared `programs.mcp` registry (codegraph + ledger), and
-#   * the common host packages (gh, node, codegraph, ledger CLIs, sandbox glue).
+#   * the shared `programs.mcp` registry, and
+#   * the common host packages (gh, node, codegraph, sandbox glue).
 #
-# Curried over the flake's `inputs` (codegraph, claude-code-sandbox) and `self`
-# (the ledger packages + llmAssets this flake contributes).
-{ inputs, cq, cqSource }:
+# Curried over the flake's `inputs` (codegraph, claude-code-sandbox).
+{ inputs }:
 { config
 , lib
 , pkgs
@@ -33,17 +32,9 @@ let
   llmSkills = pkgs.callPackage ../pkg/llm-skills/default.nix { };
   llmContexts = pkgs.callPackage ../pkg/llm-contexts/default.nix { };
 
-  # The ledger suite lives in THIS flake (cq). Re-use its packages + the LLM
-  # asset bundle it contributes.
-  ledgerPkgs = if cq == null then { } else cq.packages.${system};
-  ledgerAssets = if cq == null then { skills = { }; commands = { }; agents = { }; context = [ ]; } else cq.llmAssets;
-  # The cq CLI put on PATH so the agents (and the user) can drive the ledger
-  # directly (cq mcp|tui|web), not only via MCP.
-  ledgerTools = lib.optional (cq != null) ledgerPkgs.cq;
-
   # Canonical llmAssets bundle from the two in-repo packages: skills from
   # llm-skills, general context from llm-contexts. Symmetric with
-  # ledger.llmAssets. (Commands/agents come from the ledger bundle; none here.)
+  # external llmAssets bundles. This base bundle has no commands or agents.
   llmPromptsBundle = {
     skills = llmSkills.skills;
     commands = { };
@@ -76,18 +67,6 @@ in
 {
   options = {
     smind.hm.dev.llm.enable = lib.mkEnableOption "LLM development environment variables";
-
-    smind.hm.dev.llm.cq.globalConfig = lib.mkOption {
-      type = lib.types.nullOr lib.types.lines;
-      default = null;
-      description = ''
-        Optional global cq.toml content installed through
-        xdg.configFile."cq/cq.toml". The yolo sandbox exposes this file
-        read-only. The [ledger] and [project] tables are local-only and are
-        ignored in the global file; configure their backend, projectId, and
-        name values in each repository's cq.toml instead.
-      '';
-    };
 
     # Read-only views of the merged asset bundles, exposed so sibling modules
     # can reuse the same skill set and memory text without re-folding
@@ -125,15 +104,9 @@ in
     smind.hm.dev.llm.assetBundles = lib.mkOption {
       type = lib.types.listOf (
         lib.types.submodule {
-          # The bundle is a CROSS-REPO contract (pkg/cq-assets/assets.nix):
-          # producers carry a richer payload than this materializer fans out —
-          # the validated prompt catalog, its JSON projections, the fragment
-          # contracts, the per-surface layout. Those are consumed directly off
-          # `cq.llmAssets` by claude.nix/codex.nix/pi.nix, never through this
-          # option, but they still arrive inside the same attrset and must not
-          # abort evaluation. The four fanned-out fields below stay typed; the
-          # freeform type lets the producer contract grow without breaking every
-          # consumer pinned to an older revision of this module.
+          # Producers may carry a richer payload than this materializer fans
+          # out. The four fields below stay typed; the freeform type lets a
+          # producer contract grow without breaking older consumers.
           freeformType = lib.types.attrsOf lib.types.anything;
           options = {
             skills = lib.mkOption {
@@ -174,7 +147,7 @@ in
     # the ergonomic path when a host just wants to drop one or more SKILL.md
     # bodies onto every skill-aware agent without constructing a bundle.
     # Wired as a late asset bundle so user names win on collision with the
-    # in-repo / ledger skill sets.
+    # in-repo and externally contributed skill sets.
     smind.hm.dev.llm.extraSkills = lib.mkOption {
       type = lib.types.attrsOf lib.types.lines;
       default = { };
@@ -201,7 +174,7 @@ in
         Prefer this over appending a one-off entry to `assetBundles` when you
         only need skills. Values may be inline strings or
         `builtins.readFile ./path/to/SKILL.md`. On name collision with an
-        in-repo or ledger skill, the entry here wins.
+        in-repo or externally contributed skill, the entry here wins.
       '';
     };
 
@@ -215,6 +188,48 @@ in
       type = lib.types.bool;
       default = true;
       description = "Enable fullscreen TUI mode for agent CLIs that support it";
+    };
+
+    smind.hm.dev.llm.models.claude.model = lib.mkOption {
+      type = lib.types.str;
+      default = "opus";
+      description = "Claude Code default model; the opus alias tracks the current Opus release.";
+    };
+
+    smind.hm.dev.llm.models.claude.effort = lib.mkOption {
+      type = lib.types.enum [ "auto" "low" "medium" "high" "xhigh" "max" ];
+      default = "high";
+      description = "Claude Code default effort level.";
+    };
+
+    smind.hm.dev.llm.models.codex.model = lib.mkOption {
+      type = lib.types.str;
+      default = "gpt-6-sol";
+      description = "Codex default model.";
+    };
+
+    smind.hm.dev.llm.models.codex.reasoningEffort = lib.mkOption {
+      type = lib.types.enum [ "minimal" "low" "medium" "high" "xhigh" ];
+      default = "medium";
+      description = "Codex default model reasoning effort.";
+    };
+
+    smind.hm.dev.llm.models.pi.provider = lib.mkOption {
+      type = lib.types.str;
+      default = "xiaomi-token-plan-ams";
+      description = "Pi default inference provider.";
+    };
+
+    smind.hm.dev.llm.models.pi.model = lib.mkOption {
+      type = lib.types.str;
+      default = "mimo-v2.6-pro";
+      description = "Pi default model.";
+    };
+
+    smind.hm.dev.llm.models.pi.thinkingLevel = lib.mkOption {
+      type = lib.types.enum [ "off" "minimal" "low" "medium" "high" "xhigh" "max" ];
+      default = "xhigh";
+      description = "Pi default thinking level for reasoning-capable models.";
     };
   };
 
@@ -231,9 +246,8 @@ in
       # asset bundles; mkBefore keeps them ahead of host/user-specific
       # sections appended elsewhere with mkAfter.
       smind.hm.dev.llm.memorySections = lib.mkBefore mergedContext;
-      # In-repo prompts first (base), ledger after (may override on key
-      # collisions). External modules append further bundles elsewhere.
-      smind.hm.dev.llm.assetBundles = lib.mkBefore ([ llmPromptsBundle ] ++ lib.optional (cq != null) ledgerAssets);
+      # In-repo prompts form the base. External modules append their bundles.
+      smind.hm.dev.llm.assetBundles = lib.mkBefore [ llmPromptsBundle ];
     }
     # User extraSkills last so host-local names win on collision. Separate
     # mkMerge arm: two assignments to the same attr in one set are illegal
@@ -245,11 +259,6 @@ in
         }
       );
     }
-    (lib.mkIf (
-      config.smind.hm.dev.llm.enable && config.smind.hm.dev.llm.cq.globalConfig != null
-    ) {
-      xdg.configFile."cq/cq.toml".text = config.smind.hm.dev.llm.cq.globalConfig;
-    })
     (lib.mkIf config.smind.hm.dev.llm.enable {
       # commandKeyToStem ("/"→":") is injective only while no two bundle keys
       # share a stem. Fail-fast if a future bundle introduces a collision
@@ -279,20 +288,10 @@ in
       # hook; outside yolo, initialize it manually with `codegraph init`.
       programs.mcp = {
         enable = true;
-        servers = {
-          codegraph = {
-            command = "${codegraphPkg}/bin/codegraph";
-            args = [ "serve" "--mcp" ];
-          };
-        } // lib.optionalAttrs (cq != null) {
-          ledger = {
-            command = "${ledgerPkgs.cq}/bin/cq";
-            args = [ "mcp" ];
-          };
+        servers.codegraph = {
+          command = "${codegraphPkg}/bin/codegraph";
+          args = [ "serve" "--mcp" ];
         };
-        # markdown-ledger MCP server. stdio transport; --cwd defaults to the
-        # agent's process CWD, so one global server serves a per-project
-        # ledger. Pass "--http" "PORT" instead for a shared HTTP instance.
       };
 
       # Shared host packages. The bubblewrap sandbox + `yolo` wrapper live in
@@ -303,9 +302,7 @@ in
         pkgs.nodejs # required by claude-code plugins (.mjs scripts)
         codegraphPkg # codegraph CLI on the host PATH (the per-project index
         # bootstrap inside yolo is a pre-start hook; see nix/hm/yolo.nix)
-      ]
-      ++ ledgerTools
-      ++ lib.optionals isDarwin [
+      ] ++ lib.optionals isDarwin [
         inputs.claude-code-sandbox.packages.${system}.default
       ]
       ++ lib.optionals isLinux [

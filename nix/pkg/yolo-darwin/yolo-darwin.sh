@@ -335,34 +335,17 @@ _render_base() {
 # parameter while literal PWD keeps this fragment deterministic for testing.
 _render_yolo_rules() {
   local name="$1" pwd_dir="$2"
-  local esc_pwd esc_cq_state esc_cq_config label
+  local esc_pwd label
   esc_pwd="$(_sb_escape "$pwd_dir")"
-  if [[ -n "${XDG_STATE_HOME:-}" && "$XDG_STATE_HOME" == /* ]]; then
-    esc_cq_state="$(_sb_escape "${XDG_STATE_HOME%/}/cq")"
-  else
-    esc_cq_state=""
-  fi
-  if [[ -n "${XDG_CONFIG_HOME:-}" && "$XDG_CONFIG_HOME" == /* ]]; then
-    esc_cq_config="$(_sb_escape "${XDG_CONFIG_HOME%/}/cq")"
-  else
-    esc_cq_config=""
-  fi
   if [[ -n "$name" ]]; then label="$name"; else label="(default)"; fi
 
   printf ';; yolo-darwin rules appended after claude-code-sandbox noread.sb.\n'
   printf ';; Profile: %s\n' "$label"
   printf ';; Network remains open; filesystem grants are narrowed below.\n\n'
-  printf ';; Grant PWD, shared cache, cq state, and native homes for the default profile.\n'
+  printf ';; Grant PWD, shared cache, and native homes for the default profile.\n'
   printf '(allow file-read* file-write* file-write-create file-read-metadata file-ioctl\n'
   printf '    (subpath "%s")\n' "$esc_pwd"
   printf '    (subpath (string-append (param "HOME_DIR") "/.cache"))\n'
-  if [[ "${YOLO_CQ_INTEGRATION:-0}" == 1 ]]; then
-    if [[ -n "$esc_cq_state" ]]; then
-      printf '    (subpath "%s")\n' "$esc_cq_state"
-    else
-      printf '    (subpath (string-append (param "HOME_DIR") "/.local/state/cq"))\n'
-    fi
-  fi
   if [[ -z "$name" ]]; then
     printf '    ;; default profile: the agents'"'"' real home config dirs\n'
     printf '    (subpath (string-append (param "HOME_DIR") "/.claude"))\n'
@@ -372,16 +355,6 @@ _render_yolo_rules() {
     printf '    (subpath (string-append (param "HOME_DIR") "/.pi"))\n'
   fi
   printf ')\n\n'
-
-  if [[ "${YOLO_CQ_INTEGRATION:-0}" == 1 ]]; then
-    printf ';; Grant the global cq configuration read-only.\n'
-    printf '(allow file-read* file-read-metadata\n'
-    if [[ -n "$esc_cq_config" ]]; then
-      printf '    (subpath "%s"))\n\n' "$esc_cq_config"
-    else
-      printf '    (subpath (string-append (param "HOME_DIR") "/.config/cq")))\n\n'
-    fi
-  fi
 
   printf ';; Deny every named profile before re-granting the active one.\n'
   printf '(deny file-read* file-write* file-write-create\n'
@@ -468,7 +441,13 @@ ensure_codex_config() {
 
 # pi resolves all per-user state below PI_CODING_AGENT_DIR. Its MCP registry
 # remains shared because pi-mcp-adapter reads ~/.config/mcp/mcp.json directly.
-PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md cq-agents prompts skills extensions mcp.json)
+PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md prompts skills extensions mcp.json)
+if [[ -n "${YOLO_PI_SHARED_ASSETS:-}" ]]; then
+  PI_SHARED_ASSETS=()
+  while IFS= read -r asset; do
+    [[ -z "$asset" ]] || PI_SHARED_ASSETS+=("$asset")
+  done <<< "$YOLO_PI_SHARED_ASSETS"
+fi
 # Seatbelt cannot bind-mount HM assets, so copy and dereference store symlinks.
 profile_asset_matches() {
   local src="$1" dst="$2"

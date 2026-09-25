@@ -109,7 +109,7 @@ When you select a named profile (e.g., `--profile work`), `yolo-darwin` creates 
 └── pi/               # PI_CODING_AGENT_DIR when --profile work
     ├── settings.json
     ├── APPEND_SYSTEM.md
-    ├── cq-agents/
+    ├── integration-assets/       # when contributed by an integration
     ├── prompts/
     ├── skills/
     ├── auth.json
@@ -119,7 +119,7 @@ When you select a named profile (e.g., `--profile work`), `yolo-darwin` creates 
 
 Each directory is created with `chmod 700` (read-write-execute for the owner only).
 
-All three agents get the home-manager-managed shared assets **copied** into their profile directory before every named-profile launch, regardless of which agent or `shell`/`cmd` mode was selected (claude: settings.json, CLAUDE.md, skills, plugins, commands, agents; codex: AGENTS.md, prompts, skills; pi: settings.json, AGENTS.md, APPEND_SYSTEM.md, cq-agents, prompts, skills, extensions, mcp.json). The copies are dereferenced and self-contained (no symlinks back into the sandbox-denied real homes). Managed assets are source-authoritative: when a profile copy differs, the launcher moves it to the next unused `<asset>.yolobak-N` path and installs the current home-manager source. Identical assets remain untouched and produce no backup.
+All three agents get the home-manager-managed shared assets **copied** into their profile directory before every named-profile launch, regardless of which agent or `shell`/`cmd` mode was selected (claude: settings.json, CLAUDE.md, skills, plugins, commands, agents; codex: AGENTS.md, prompts, skills; pi: settings.json, AGENTS.md, APPEND_SYSTEM.md, prompts, skills, extensions, mcp.json, plus entries contributed through `piSharedAssets`). The copies are dereferenced and self-contained (no symlinks back into the sandbox-denied real homes). Managed assets are source-authoritative: when a profile copy differs, the launcher moves it to the next unused `<asset>.yolobak-N` path and installs the current home-manager source. Identical assets remain untouched and produce no backup.
 
 The default profile (empty, no `--profile` flag) does NOT create any directories. Agents use their real home directories:
 
@@ -137,7 +137,7 @@ Read-write access is granted only to:
 
 - **The working directory** (`$PWD`) — where you launched `yolo`.
 - **`~/.cache`** — cache directory shared across profiles.
-- **cq's XDG state root** — `$XDG_STATE_HOME/cq` when `XDG_STATE_HOME` is an absolute path, otherwise `~/.local/state/cq`; required by the ledger MCP server and Claude stop gate.
+- **integration-contributed paths** — read-only/read-write grants appended through the generic yolo path options.
 - **This profile's configuration directories** (when a named profile is active) — only the active profile's `~/.config/yolo/<name>/claude`, `~/.config/yolo/<name>/codex`, `~/.config/yolo/<name>/pi` directories are accessible; sibling profiles are explicitly denied.
 - **Declarative and `--rw` paths** — exact paths configured through `extraReadWritePaths` or supplied per invocation.
 
@@ -219,7 +219,7 @@ Codex stores subscription and MCP OAuth credentials. For profile isolation, conf
 pi (the Anthropic coding agent) exposes a configuration-directory environment variable, `PI_CODING_AGENT_DIR`. When you use a named profile, `yolo-darwin` automatically:
 
 1. Sets `PI_CODING_AGENT_DIR` to the profile's pi directory (e.g., `~/.config/yolo/work/pi`).
-2. Copies the HM-managed shared assets (settings.json, AGENTS.md, APPEND_SYSTEM.md, cq-agents, prompts, skills, extensions, mcp.json) from your main pi installation (`~/.pi/agent/`) into the profile directory, so it is self-contained (the real `~/.pi` stays denied by the sandbox).
+2. Copies the HM-managed shared assets (settings.json, AGENTS.md, APPEND_SYSTEM.md, prompts, skills, extensions, mcp.json, and integration-contributed entries) from your main pi installation (`~/.pi/agent/`) into the profile directory, so it is self-contained (the real `~/.pi` stays denied by the sandbox).
 
 This means:
 
@@ -393,7 +393,7 @@ Verify that the profile directory and shared assets are in place:
 
 ```bash
 ls -la ~/.config/yolo/work/pi/
-# Should include copies: settings.json, AGENTS.md, APPEND_SYSTEM.md, cq-agents,
+# Should include copies: settings.json, AGENTS.md, APPEND_SYSTEM.md,
 # prompts, skills, extensions, mcp.json
 ```
 
@@ -406,7 +406,7 @@ yolo --profile work pi login
 
 ### Sandbox permission denied on a file I need
 
-The sandbox grants read-write access only to the working directory, `~/.cache`, cq's XDG state root, and (for named profiles) the active profile's directories. If you need access to another path:
+The sandbox grants read-write access only to the working directory, `~/.cache`, configured extra read-write paths, and (for named profiles) the active profile's directories. If you need access to another path:
 
 1. Copy or symlink it into your working directory.
 2. Or, run the agent without a profile (`yolo claude`) to use the default configuration (but lose profile isolation).

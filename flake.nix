@@ -53,6 +53,39 @@
           assert builtins.elem "podsvc-llm" podmanModuleConfig.users.users.agent.extraGroups;
           assert !(builtins.elem "podsvc-llm" podmanModuleConfig.users.users.root.extraGroups);
           pkgs.runCommandLocal "podman-module-test" { } "touch $out";
+        devLlmModuleBoundaryCheck =
+          assert builtins.functionArgs (import ./nix/hm/dev-llm.nix) == { inputs = false; };
+          pkgs.runCommandLocal "dev-llm-module-boundary-test" { } "touch $out";
+        defaultModels = (nixpkgs.lib.evalModules {
+          specialArgs = { inherit pkgs; };
+          modules = [
+            (import ./nix/hm/tools.nix { inherit inputs; })
+            ({ lib, ... }: {
+              options = {
+                assertions = lib.mkOption {
+                  type = lib.types.listOf lib.types.attrs;
+                  default = [ ];
+                };
+                home.packages = lib.mkOption {
+                  type = lib.types.listOf lib.types.package;
+                  default = [ ];
+                };
+                programs.mcp = lib.mkOption {
+                  type = lib.types.attrs;
+                  default = { };
+                };
+              };
+            })
+          ];
+        }).config.smind.hm.dev.llm.models;
+        defaultModelsCheck =
+          assert defaultModels.codex.model == "gpt-6-sol";
+          assert defaultModels.codex.reasoningEffort == "medium";
+          assert defaultModels.claude.model == "opus";
+          assert defaultModels.claude.effort == "high";
+          assert defaultModels.pi.provider == "xiaomi-token-plan-ams";
+          assert defaultModels.pi.model == "mimo-v2.6-pro";
+          pkgs.runCommandLocal "default-models-test" { } "touch $out";
       in
       {
         packages = {
@@ -76,6 +109,8 @@
           yolo = self.packages.${system}.yolo-darwin;
         };
         checks = {
+          default-models = defaultModelsCheck;
+          dev-llm-module-boundary = devLlmModuleBoundaryCheck;
           kimi-401-retry = pkgs.runCommand "kimi-401-retry-test" {
             nativeBuildInputs = [ pkgs.bun ];
           } ''
@@ -97,10 +132,7 @@
           podman-module = podmanModuleCheck;
         };
       })) // {
-        lib.mkDevLlm = { cq, cqSource }:
-          import ./nix/hm/dev-llm.nix { inherit inputs cq cqSource; };
-        homeManagerModules.dev-llm =
-          self.lib.mkDevLlm { cq = null; cqSource = null; };
+        homeManagerModules.dev-llm = import ./nix/hm/dev-llm.nix { inherit inputs; };
         nixosModules.podman = import ./nix/nixos/podman.nix;
       };
 }

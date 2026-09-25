@@ -32,6 +32,14 @@ interactive Docker-compatible client environment. The host acceptance test is
 `nix/tests/test-rootless-podman.sh`.
 
 The module accepts additional prompt and skill bundles through
-`smind.hm.dev.llm.assetBundles`. The CQ flake uses `lib.mkDevLlm` to supply
-its ledger and rendered CQ prompts. A standalone ponygirls import omits CQ
-packages, MCP registration, hooks, and sandbox state/config grants.
+`smind.hm.dev.llm.assetBundles`. Integrations can also extend the shared
+`programs.mcp` registry, override each `programs.<agent>.package`, contribute
+agent settings/files, and append generic yolo read-only/read-write paths. CQ
+uses those extension points from its own Home Manager module; Ponygirls does
+not import CQ source code or accept a CQ flake argument.
+
+Default harness models are configured under `smind.hm.dev.llm.models`:
+Codex uses `gpt-6-sol` at medium reasoning effort, Claude Code uses the
+current `opus` alias at high effort, and Pi uses
+`xiaomi-token-plan-ams`/`mimo-v2.6-pro`. Pi follows
+`smind.hm.dev.llm.fullscreenTui.enable`, which defaults to fullscreen mode.
