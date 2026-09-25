@@ -21,6 +21,38 @@
         pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
         skills = pkgs.callPackage ./nix/pkg/llm-skills/default.nix { };
         contexts = pkgs.callPackage ./nix/pkg/llm-contexts/default.nix { };
+        podmanModuleConfig = (nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            self.nixosModules.podman
+            ({ lib, ... }: {
+              options.home-manager.users = lib.mkOption {
+                type = lib.types.attrsOf lib.types.anything;
+                default = { };
+              };
+              config = {
+                system.stateVersion = "26.11";
+                smind.containers.docker.enable = true;
+                users.users.agent.isNormalUser = true;
+                home-manager.users = {
+                  agent.smind.hm.dev.llm.enable = true;
+                  root.smind.hm.dev.llm.enable = true;
+                };
+              };
+            })
+          ];
+        }).config;
+        podmanModuleCheck =
+          assert podmanModuleConfig.virtualisation.podman.enable;
+          assert !podmanModuleConfig.virtualisation.podman.dockerSocket.enable;
+          assert !podmanModuleConfig.systemd.services.podman.enable;
+          assert !podmanModuleConfig.systemd.sockets.podman.enable;
+          assert podmanModuleConfig.systemd.user.sockets.podman-llm.socketConfig.ListenStream == "/run/podman-llm/podman.sock";
+          assert podmanModuleConfig.systemd.user.sockets.podman-llm.socketConfig.SocketMode == "0660";
+          assert podmanModuleConfig.users.users.podsvc-llm.uid == 77778;
+          assert builtins.elem "podsvc-llm" podmanModuleConfig.users.users.agent.extraGroups;
+          assert !(builtins.elem "podsvc-llm" podmanModuleConfig.users.users.root.extraGroups);
+          pkgs.runCommandLocal "podman-module-test" { } "touch $out";
       in
       {
         packages = {
@@ -61,11 +93,14 @@
             bash profile-test.sh
             touch $out
           '';
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          podman-module = podmanModuleCheck;
         };
       })) // {
         lib.mkDevLlm = { cq, cqSource }:
           import ./nix/hm/dev-llm.nix { inherit inputs cq cqSource; };
         homeManagerModules.dev-llm =
           self.lib.mkDevLlm { cq = null; cqSource = null; };
+        nixosModules.podman = import ./nix/nixos/podman.nix;
       };
 }

@@ -14,6 +14,7 @@
 #               binds its ledger registration to the rendered Codex prompt root.
 #   pi.nix      Pi configuration (programs.pi); also carries the in-flake
 #               programs.pi module definition (shared factory + Pi options).
+#   podman.nix  NixOS-provided restricted rootless-Podman socket wiring.
 #   yolo.nix    the bubblewrap `yolo` sandbox wrapper + its options. (needs inputs)
 #
 # Curried over the flake's own `inputs` (codegraph, claude-code-sandbox) and
@@ -27,6 +28,7 @@
     (import ./codex.nix { inherit cqSource; })
     (import ./pi.nix { inherit cqSource; })
     (import ./yolo.nix { inherit inputs cqSource; })
+    ./podman.nix
   ] ++ (if cqSource == null then [ ] else [
     (import ./codex-ledger-mcp.nix { inherit cqSource; })
   ]);
