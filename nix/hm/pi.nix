@@ -191,17 +191,18 @@ let
 
   # Inference-provider extension packages, each gated by a
   # `smind.hm.dev.llm.pi.providers.<name>.enable` flag (declared in `options`
-  # below). Only z.ai is enabled by default; the rest are opt-in. This covers
+  # below). None are enabled by default; all are opt-in. This covers
   # ONLY inference providers — pi-search-hub (web search) and pi-mcp-adapter are
   # not providers and stay unconditionally installed (search-hub in the static
-  # packages list; the adapter via enableMcpIntegration).
+  # packages list; the adapter via enableMcpIntegration). Every npm spec in
+  # `settings.packages` is pinned to an exact version so the managed install
+  # stays reproducible.
   inferenceProviderPackages = {
-    zai = "npm:@estebanforge/pi-glm-tweaks";
-    xai = "npm:pi-xai";
-    ollama = "npm:pi-ollama-cloud";
-    minimax = "npm:@sinamtz/pi-minimax-provider";
+    xai = "npm:pi-xai@0.18.0";
+    ollama = "npm:pi-ollama-cloud@0.12.1";
+    minimax = "npm:@sinamtz/pi-minimax-provider@1.1.7";
   };
-  defaultEnabledProviders = [ "zai" ];
+  defaultEnabledProviders = [ ];
   enabledProviderPackages = lib.attrValues (
     lib.filterAttrs (name: _: cfg.pi.providers.${name}.enable) inferenceProviderPackages
   );
@@ -262,7 +263,7 @@ in
 
     programs.pi.mcpAdapterPackage = lib.mkOption {
       type = lib.types.str;
-      default = "npm:pi-mcp-adapter";
+      default = "npm:pi-mcp-adapter@2.37.0";
       description = ''
         Pi package spec for the MCP adapter, added to
         {option}`programs.pi.settings.packages` when
@@ -303,8 +304,8 @@ in
 
     # One enable flag per inference-provider extension package (see
     # `inferenceProviderPackages` in the let block). Generated from that mapping
-    # so the option set and the install list cannot drift. z.ai is the only
-    # default; every other provider is opt-in. Search-hub / mcp-adapter are NOT
+    # so the option set and the install list cannot drift. No provider is
+    # enabled by default; all are opt-in. Search-hub / mcp-adapter are NOT
     # here — they are not inference providers.
     smind.hm.dev.llm.pi.providers = lib.mapAttrs (name: pkgSpec: {
       enable = lib.mkOption {
@@ -312,8 +313,8 @@ in
         default = lib.elem name defaultEnabledProviders;
         description = ''
           Install the Pi inference-provider extension package
-          {command}`${pkgSpec}` (registers the `${name}` provider). Only
-          z.ai (`zai`) is enabled by default; the others are opt-in.
+          {command}`${pkgSpec}` (registers the `${name}` provider). No
+          provider is enabled by default; all are opt-in.
         '';
       };
     }) inferenceProviderPackages;
@@ -367,17 +368,18 @@ in
           # - pi-anthropic-auth: Claude Pro/Max OAuth compat; activates only on
           #   Anthropic OAuth, passes everything else through (`/login anthropic`).
           # - pi-xai: xAI OAuth provider (`grok-build`) with Grok models/tools
-          #   (`/login grok-build`). Floating (latest; ≥ 0.9.1). 0.9.1 upstreamed
-          #   two fixes we previously carried as vendored extensions —
+          #   (`/login grok-build`). PINNED to 0.18.0 (requires ≥ 0.9.1). 0.9.1
+          #   upstreamed two fixes we previously carried as vendored extensions —
           #     * #2 grok-build-0.1 now reports contextWindow 256k (was the stale
           #       128k that made Pi auto-compact at half budget); and
           #     * #3 `mergeXaiTools` dedupes xAI built-ins by name/type and drops
           #       shadowing client function tools (e.g. pi-search-hub's client
           #       `web_search`) for grok-* under agentic mode — exactly what our
           #       drop-client-web-search-for-grok.ts did.
-          #   Both fixes are present in every release since 0.9.1, so we no longer
-          #   pin — matching the other floating npm: packages here.
+          #   Both fixes are present in every release since 0.9.1.
           # - pi-ollama-cloud: Ollama Cloud provider (first-party, badlogic).
+          #   PINNED to 0.12.1 (its model refresh uses pi's native `refreshModels`,
+          #   needs pi ≥ 0.84.0 — vendored pi is 0.87.1).
           #   Registers the `ollama-cloud` provider against https://ollama.com/v1
           #   (apiKey `$OLLAMA_API_KEY`; or ~/.pi/agent/ollama-cloud.json) — no
           #   local server. Self-contained: its only imports (@sinclair/typebox +
@@ -393,27 +395,17 @@ in
           #   OLLAMA_API_KEY), so the extension was removed — the old copy also
           #   crashed pi 0.80.8+, which dropped the SDK's AuthStorage export.
           # - @sinamtz/pi-minimax-provider: MiniMax M3 provider (Anthropic-compat
-          #   streaming). Registers the `minimax` provider against
+          #   streaming). PINNED to 1.1.7. Registers the `minimax` provider against
           #   https://api.minimax.io (apiKey `$MINIMAX_API_KEY`). Self-contained:
           #   `@sinclair/typebox` is a regular dep (installed) and also aliased by
           #   Pi's loader, so the managed --legacy-peer-deps install resolves it.
-          # - @estebanforge/pi-glm-tweaks: GLM-5.2 tweaks for Pi's BUILT-IN `zai`
-          #   provider — z.ai INTERNATIONAL (api.z.ai coding endpoint), NOT the
-          #   China bigmodel.cn platform. pi-ai already ships the `zai` provider
-          #   and `zai/glm-5.2`; this restricts the thinking-level UI to the modes
-          #   GLM-5.2 supports (off/high/max), wires the native
-          #   thinkingFormat:"zai" wire translation, auto-clamps stale levels, and
-          #   re-registers glm-5.2 on the OpenAI-compat endpoint (other zai models
-          #   — glm-4.7/5-turbo/5.1 — are preserved). Auth is `/login zai` (z.ai
-          #   API key); no provider package needed, `zai` is built into pi-ai.
-          #   Self-contained (no runtime deps; host API via peer/alias).
           # (pi-mcp-adapter is added separately by enableMcpIntegration.)
           #
           # pi-search-hub is unconditional (web search, not an inference
           # provider). The inference-provider packages (pi-xai, pi-ollama-cloud,
-          # @sinamtz/pi-minimax-provider, @estebanforge/pi-glm-tweaks) are each
-          # gated by `smind.hm.dev.llm.pi.providers.<name>.enable` — only z.ai
-          # (glm-tweaks) is on by default; see `inferenceProviderPackages`.
+          # @sinamtz/pi-minimax-provider) are each gated by
+          # `smind.hm.dev.llm.pi.providers.<name>.enable` — all opt-in (none
+          # enabled by default); see `inferenceProviderPackages`.
           packages = [
             "npm:pi-search-hub@2.8.0"
           ] ++ enabledProviderPackages;
