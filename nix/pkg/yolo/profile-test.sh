@@ -267,6 +267,29 @@ assert_not_contains "--disable beats a following --enable" "$OUT" "$WAYLAND_SOCK
 OUT="$(run_yolo_cmd --enable=audio --disable=audio)"
 assert_not_contains "--enable does not resurrect a disabled default-on tag" "$OUT" "$FAKE_XDG/pipewire-0"
 
+# The VM capability is configured by the package wrapper through a trusted,
+# absolute state-directory path. It must bind only that persistent directory
+# and /dev/kvm, and --disable=vm must remove both capabilities for the run.
+VM_STATE_DIR="$WORKDIR/vms"
+OUT="$(YOLO_VM_STATE_DIR="$VM_STATE_DIR" run_yolo_cmd)"
+assert_contains "configured VM capability binds KVM only" "$OUT" "/dev/kvm,/dev/kvm"
+assert_contains "configured VM capability binds its persistent state" "$OUT" "$VM_STATE_DIR"
+assert_contains "configured VM capability exports its state path" "$OUT" "YOLO_VM_STATE_DIR=$VM_STATE_DIR"
+assert_not_contains "configured VM capability does not bind host TUN" "$OUT" "/dev/net/tun"
+assert_not_contains "configured VM capability does not bind a libvirt socket" "$OUT" "libvirt-sock"
+assert_not_contains "configured VM capability does not bind an Incus socket" "$OUT" "incus/unix.socket"
+assert_eq "configured VM capability creates its state directory" "directory" \
+  "$([[ -d "$VM_STATE_DIR" ]] && printf directory || printf missing)"
+
+OUT="$(YOLO_VM_STATE_DIR="$VM_STATE_DIR" run_yolo_cmd --disable=vm)"
+assert_not_contains "--disable=vm drops KVM" "$OUT" "/dev/kvm,/dev/kvm"
+assert_not_contains "--disable=vm drops persistent VM state" "$OUT" "$VM_STATE_DIR"
+
+OUT="$(YOLO_VM_STATE_DIR=relative/path run_yolo_cmd)"
+STATUS=$?
+assert_eq "relative VM state path is rejected" "1" "$STATUS"
+assert_contains "relative VM state path fails explicitly" "$OUT" "must be absolute"
+
 TEST_WAYLAND_DISPLAY="wayland-absent"
 OUT="$(run_yolo_cmd --enable=display)"
 assert_contains "missing wayland socket warns" "$OUT" "no Wayland socket at"
@@ -307,6 +330,7 @@ TEST_DISPLAY=":99"
 OUT="$(run_yolo --help)"
 assert_contains "usage documents --enable" "$OUT" "--enable=TAG"
 assert_contains "usage documents dynamic gpu passthrough" "$OUT" "dyngpu"
+assert_contains "usage documents VM capability tag" "$OUT" "vm"
 
 # Ad-hoc CLI binds must be appended after every built-in bind: bwrap applies
 # mounts in argv order, so the last bind covering a path wins.

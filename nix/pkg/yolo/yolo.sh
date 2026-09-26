@@ -83,7 +83,7 @@ Flags (must precede the subcommand):
   -w, --work             Alias for `--profile work`
       --disable=TAG      Drop every device bind, prompt fragment and pre-start
                          hook carrying TAG (repeatable, comma-separated).
-                         Known tags: audio, codegraph, display, dyngpu, gpu.
+                         Known tags: audio, codegraph, display, dyngpu, gpu, vm.
       --enable=TAG       Turn on a feature that is off by default (repeatable,
                          comma-separated). Known tags: display (bind Wayland
                          and X11/XWayland), dyngpu (discover and bind Linux GPU
@@ -332,6 +332,29 @@ if [[ -n "${TMUX:-}" ]]; then
       TMUX_BIND_ARGS+=(--env "TMUX=")
     fi
   fi
+fi
+
+# KVM-backed test VMs run as ordinary processes inside this bubblewrap mount,
+# PID, user, and device namespace. The configured persistent directory and the
+# KVM character device are the only additional host resources: no block device,
+# libvirt/Incus socket, host TAP device, or broad /dev bind is introduced.
+VM_ARGS=()
+if [[ -n "${YOLO_VM_STATE_DIR:-}" ]] && tag_active vm on; then
+  if [[ "$YOLO_VM_STATE_DIR" != /* ]]; then
+    echo "Error: YOLO_VM_STATE_DIR must be absolute: $YOLO_VM_STATE_DIR" >&2
+    exit 1
+  fi
+  if [[ -e "$YOLO_VM_STATE_DIR" && ! -d "$YOLO_VM_STATE_DIR" ]]; then
+    echo "Error: YOLO_VM_STATE_DIR is not a directory: $YOLO_VM_STATE_DIR" >&2
+    exit 1
+  fi
+  (umask 077; mkdir -p -- "$YOLO_VM_STATE_DIR")
+  if [[ ! -c /dev/kvm ]]; then
+    echo "warning: VM capability configured but /dev/kvm is unavailable; KVM guests will not start" >&2
+  fi
+  VM_ARGS+=(--dev-bind "/dev/kvm,/dev/kvm")
+  VM_ARGS+=(--rw "$YOLO_VM_STATE_DIR")
+  VM_ARGS+=(--env "YOLO_VM_STATE_DIR=$YOLO_VM_STATE_DIR")
 fi
 
 # Dynamic GPU passthrough is a built-in, default-off capability enabled only by
@@ -626,6 +649,7 @@ BASE_ARGS=(
   --rw "${HOME}/.ivy2"
   "${SOCKET_ARGS[@]}"
   "${TMUX_BIND_ARGS[@]}"
+  "${VM_ARGS[@]}"
   "${DYNGPU_ARGS[@]}"
   "${DEV_ARGS[@]}"
   "${AUDIO_ARGS[@]}"

@@ -110,6 +110,7 @@ let
   yoloPkg = pkgs.callPackage ../pkg/yolo/default.nix {
     podmanSocketPath = cfg.podman.socketPath;
     podmanSocketUri = cfg.podman.socketUri;
+    vmStateDirectory = if cfg.yolo.vm.enable then cfg.yolo.vm.stateDirectory else null;
     # The remote-worker SSH key is just another read-only bind.
     extraReadOnlyPaths = cfg.yolo.extraReadOnlyPaths ++ lib.optional sshKeySet cfg.llmSshKeyPath;
     extraReadWritePaths = cfg.yolo.extraReadWritePaths;
@@ -118,7 +119,14 @@ let
     piSharedAssets = cfg.yolo.piSharedAssets;
     # Extra packages exposed ONLY inside the sandbox (not the host profile);
     # codegraph rides along here so its CLI / `init -i` work inside the sandbox.
-    sandboxPackages = cfg.yolo.packages ++ lib.optional codegraphSet cfg.yolo.codegraph;
+    sandboxPackages =
+      cfg.yolo.packages
+      ++ lib.optional codegraphSet cfg.yolo.codegraph
+      ++ lib.optionals (cfg.yolo.vm.enable && isLinux) [
+        pkgs.qemu_kvm
+        pkgs.cloud-utils
+        pkgs.systemd
+      ];
     # Declarative env vars set inside the sandbox session.
     sessionVariables = cfg.yolo.sessionVariables;
     # Secret-file-backed env vars composed + sourced inside the sandbox.
@@ -227,6 +235,23 @@ in
         {option}`smind.hm.dev.llm.yolo.extraReadOnlyPaths`, and the GPU
         availability note (tagged the same, so `--disable=gpu` hides it too) via
         {option}`smind.hm.dev.llm.yolo.promptExtensions`.
+      '';
+    };
+
+    smind.hm.dev.llm.yolo.vm.enable = lib.mkEnableOption ''
+      KVM-backed test virtual machines inside the yolo sandbox
+    '';
+
+    smind.hm.dev.llm.yolo.vm.stateDirectory = lib.mkOption {
+      type = lib.types.str;
+      default = "${config.xdg.stateHome}/yolo/vms";
+      defaultText = lib.literalExpression ''"${config.xdg.stateHome}/yolo/vms"'';
+      description = ''
+        Persistent host directory exposed read-write to yolo for agent-managed
+        VM disk images. Enabling the VM capability also exposes exactly
+        `/dev/kvm` and adds QEMU, qemu-img, systemd-vmspawn, and cloud image
+        utilities to the sandbox. It does not expose host block devices,
+        `/dev/net/tun`, libvirt/Incus sockets, or a broad `/dev` tree.
       '';
     };
 
@@ -443,6 +468,14 @@ in
           assertion = lib.all validPiSharedAsset cfg.yolo.piSharedAssets;
           message = "smind.hm.dev.llm.yolo.piSharedAssets entries must be safe relative paths";
         }
+        {
+          assertion = !cfg.yolo.vm.enable || isLinux;
+          message = "smind.hm.dev.llm.yolo.vm.enable is supported only on Linux";
+        }
+        {
+          assertion = !cfg.yolo.vm.enable || lib.hasPrefix "/" cfg.yolo.vm.stateDirectory;
+          message = "smind.hm.dev.llm.yolo.vm.stateDirectory must be an absolute path";
+        }
       ];
 
       # Module-provided prompt fragments, leading the list (mkBefore); the
@@ -490,6 +523,26 @@ in
         }
       );
     }
+    (lib.mkIf cfg.yolo.vm.enable {
+      smind.hm.dev.llm.memorySections = lib.mkAfter [
+        ''
+          ## Local test virtual machines
+
+          KVM-backed QEMU test VMs may be run inside yolo. Persistent VM images
+          belong under `$YOLO_VM_STATE_DIR`; QEMU, qemu-img,
+          systemd-vmspawn, and cloud-image utilities are available. Use QEMU
+          user-mode networking unless a task explicitly requires a different
+          topology. TUN/TAP devices and network namespaces created inside a
+          guest use the guest kernel and need no host device passthrough.
+
+          The sandbox exposes `/dev/kvm` but no host block devices,
+          `/dev/net/tun`, libvirt socket, or Incus socket. Do not attach host
+          filesystem directories, sockets, or device nodes to a guest. Guest
+          disks must be regular image files under `$YOLO_VM_STATE_DIR` or the
+          current project.
+        ''
+      ];
+    })
     # CodeGraph per-project index bootstrap as a sandbox pre-start hook (tag
     # "codegraph"). Running inside confinement makes the selected index match
     # the paths visible to the agent's MCP server.

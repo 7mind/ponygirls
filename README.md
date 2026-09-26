@@ -31,6 +31,25 @@ Manager module forwards the restricted socket into `yolo` and configures the
 interactive Docker-compatible client environment. The host acceptance test is
 `nix/tests/test-rootless-podman.sh`.
 
+On Linux, yolo can expose KVM for agent-managed NixOS and Ubuntu test VMs
+without exposing host disks or a privileged VM-management daemon:
+
+```nix
+smind.hm.dev.llm.yolo.vm = {
+  enable = true;
+  stateDirectory = "/srv/nvme/tmp/agent-vms";
+};
+```
+
+This adds QEMU, `qemu-img`, `systemd-vmspawn`, and cloud-image utilities inside
+the sandbox, binds the persistent directory at the same path, and device-binds
+only `/dev/kvm` for this capability. Bubblewrap still supplies a private
+`/dev`; no host block devices, host `/dev/net/tun`, Incus socket, or libvirt
+socket are exposed.
+Guests can create TUN/TAP devices with their own kernels and use QEMU user-mode
+networking without host `CAP_NET_ADMIN`. Run
+`nix/tests/test-yolo-vm.sh` after activation to verify the live boundary.
+
 The module accepts additional prompt and skill bundles through
 `smind.hm.dev.llm.assetBundles`. Integrations can also extend the shared
 `programs.mcp` registry, override each `programs.<agent>.package`, contribute

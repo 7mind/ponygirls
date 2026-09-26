@@ -5,6 +5,7 @@
   jq,
   podmanSocketPath ? null,
   podmanSocketUri ? null,
+  vmStateDirectory ? null,
   extraReadOnlyPaths ? [ ],
   extraReadWritePaths ? [ ],
   extraDevicePaths ? [ ],
@@ -57,6 +58,9 @@ let
   podmanExports = lib.optionalString (podmanSocketPath != null) ''
     export YOLO_PODMAN_SOCKET_PATH=${lib.escapeShellArg podmanSocketPath}
     export YOLO_PODMAN_SOCKET_URI=${lib.escapeShellArg podmanSocketUri}
+  '';
+  vmExports = lib.optionalString (vmStateDirectory != null) ''
+    export YOLO_VM_STATE_DIR=${lib.escapeShellArg vmStateDirectory}
   '';
   # Newline-joined path lists: paths cannot contain newlines, so this is
   # unambiguous and survives shell quoting. yolo.sh splits on newline.
@@ -144,6 +148,7 @@ pkgs.writeShellScriptBin "yolo" ''
   export YOLO_CLIPBOARD_SHIM_DIR="${clipboardProxy}/tmux-shim"
   export YOLO_TMUX="${pkgs.tmux}/bin/tmux"
   ${podmanExports}
+  ${vmExports}
   ${extraRoExports}
   ${extraRwExports}
   ${extraDevExports}
