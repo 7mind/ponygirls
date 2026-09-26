@@ -20,8 +20,8 @@ imports = [ inputs.ponygirls.homeManagerModules.dev-llm ];
 smind.hm.dev.llm.enable = true;
 ```
 
-Packages are under `packages.<system>`: `pi-coding-agent`, `codex`,
-`claude-code`, `codegraph`, `llm-skills`, `llm-contexts`, and `yolo`.
+Packages are under `packages.<system>`: `pi-coding-agent`, `pi-search-hub`,
+`codex`, `claude-code`, `codegraph`, `llm-skills`, `llm-contexts`, and `yolo`.
 Linux additionally exposes `reattach-llm`; macOS exposes `yolo-darwin`.
 
 On NixOS, `nixosModules.podman` creates a dedicated `podsvc-llm` rootless

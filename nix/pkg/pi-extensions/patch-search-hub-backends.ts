@@ -36,8 +36,8 @@ const DEFAULT_BACKEND = "duckduckgo";
 
 // Mirror of pi-search-hub credentials.ts FALLBACK_ENV_MAP (backend -> env var
 // whose presence auto-enables that backend). Keep in lockstep with upstream —
-// the npm: package in nix/hm/pi.nix is pinned to the mirrored version (2.8.0);
-// bump both together.
+// the vendored package in nix/pkg/pi-search-hub/package.nix is pinned to the
+// mirrored version (2.8.0); bump both together.
 const FALLBACK_ENV_MAP: Record<string, string> = {
   jina: "SEARCH_JINA_API_KEY",
   serper: "SEARCH_SERPER_API_KEY",

@@ -28,6 +28,12 @@ let
   # subscription token exchange). Bump: edit version + rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
 
+  # pi-search-hub as a Pi LOCAL package with a corrected manifest (upstream
+  # declares the host-provided `typebox` in `dependencies`, which trips Pi's
+  # extension-package warning and installs a duplicate copy —
+  # ronnieops/pi-search-hub#33). See the derivation header for the full story.
+  piSearchHub = pkgs.callPackage ../pkg/pi-search-hub/package.nix { };
+
   # Provider/API-key secrets are no longer injected by the pi wrapper. They are
   # supplied to ALL harnesses by the yolo sandbox via
   # `smind.hm.dev.llm.yolo.secretSessionVariables` (composed into one file,
@@ -356,15 +362,27 @@ in
           followUpMode = "all";
           hideThinkingBlock = true;
           enableInstallTelemetry = false;
-          # Pi packages (installed from npm on first run):
+          # Pi packages (the npm: ones are installed from npm on first run):
           # - pi-search-hub: unified web_search/web_read over 19 backends with
           #   auto-fallback (https://pi.dev/packages/pi-search-hub). Keys via
           #   the sandbox secretSessionVariables; declaratively configured at
           #   ~/.pi/agent/extensions/search.json (see searchHubConfig).
-          #   PINNED to 2.8.0: patch-search-hub-backends.ts mirrors upstream's
-          #   credentials.ts FALLBACK_ENV_MAP; a floating install could drift
-          #   ahead of the mirror and silently trim env-enabled backends from
-          #   the rewritten enum. Bump the pin and the mirror together.
+          #   Installed as a LOCAL package built from the npm tarball with a
+          #   corrected manifest (piSearchHub above, pkg/pi-search-hub), NOT as
+          #   `npm:pi-search-hub@…`: upstream declares the host-provided
+          #   `typebox` in `dependencies`, so Pi's managed install warns on
+          #   every startup and materialises a duplicate typebox copy
+          #   (ronnieops/pi-search-hub#33). Pi never installs local packages,
+          #   so the corrected manifest removes both effects (measured: the
+          #   package's whole import surface is host-aliased — see the
+          #   derivation header). PINNED to 2.8.0 (in
+          #   pkg/pi-search-hub/package.nix): patch-search-hub-backends.ts
+          #   mirrors upstream's credentials.ts FALLBACK_ENV_MAP; a floating
+          #   install could drift ahead of the mirror and silently trim
+          #   env-enabled backends from the rewritten enum. Bump the pin (and
+          #   re-verify the import surface noted in the derivation header) and
+          #   the mirror together; go back to the npm: spec once #33 is fixed
+          #   upstream.
           # - pi-anthropic-auth: Claude Pro/Max OAuth compat; activates only on
           #   Anthropic OAuth, passes everything else through (`/login anthropic`).
           # - pi-xai: xAI OAuth provider (`grok-build`) with Grok models/tools
@@ -407,7 +425,7 @@ in
           # `smind.hm.dev.llm.pi.providers.<name>.enable` — all opt-in (none
           # enabled by default); see `inferenceProviderPackages`.
           packages = [
-            "npm:pi-search-hub@2.8.0"
+            "${piSearchHub}"
           ] ++ enabledProviderPackages;
           extensions = [
             "${../pkg/pi-extensions/patch-search-hub-backends.ts}"
