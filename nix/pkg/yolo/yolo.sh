@@ -556,6 +556,7 @@ SANDBOX_PKG_ARGS=()
 _sandbox_path="$PATH"
 if [[ -n "${YOLO_SANDBOX_BIN:-}" ]]; then
   _sandbox_path="${YOLO_SANDBOX_BIN}:$_sandbox_path"
+  SANDBOX_PKG_ARGS+=(--env "YOLO_SANDBOX_BIN=$YOLO_SANDBOX_BIN")
 fi
 if [[ -n "${CLIP_SHIM_DIR:-}" ]]; then
   _sandbox_path="${CLIP_SHIM_DIR}:$_sandbox_path"

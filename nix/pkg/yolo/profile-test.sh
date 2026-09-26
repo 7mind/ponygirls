@@ -290,6 +290,14 @@ STATUS=$?
 assert_eq "relative VM state path is rejected" "1" "$STATUS"
 assert_contains "relative VM state path fails explicitly" "$OUT" "must be absolute"
 
+SANDBOX_BIN="$WORKDIR/sandbox-bin"
+mkdir -p "$SANDBOX_BIN"
+OUT="$(YOLO_SANDBOX_BIN="$SANDBOX_BIN" run_yolo_cmd)"
+assert_contains \
+  "sandbox package directory remains available to child shells" \
+  "$OUT" \
+  "YOLO_SANDBOX_BIN=$SANDBOX_BIN"
+
 TEST_WAYLAND_DISPLAY="wayland-absent"
 OUT="$(run_yolo_cmd --enable=display)"
 assert_contains "missing wayland socket warns" "$OUT" "no Wayland socket at"

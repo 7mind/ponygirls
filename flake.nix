@@ -125,6 +125,7 @@
             cp -r ${./nix/pkg/yolo} yolo
             chmod -R u+w yolo
             cd yolo
+            bash llm-sandbox-test.sh
             bash profile-test.sh
             touch $out
           '';

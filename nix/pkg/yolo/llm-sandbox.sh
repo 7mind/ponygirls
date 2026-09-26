@@ -75,7 +75,9 @@ BWRAP_ARGS=(
 )
 
 # Keep process identity, terminal and Nix runtime settings, locale, and XDG
-# locations. Callers add integrations and credentials explicitly with --env.
+# locations. The NixOS initialization sentinel prevents child shells from
+# replacing the explicitly constructed PATH. Callers add integrations and
+# credentials explicitly with --env.
 BASE_ENV_NAMES=(
   HOME USER LOGNAME SHELL PATH TERM COLORTERM TERMINFO_DIRS TERM_PROGRAM TERM_PROGRAM_VERSION
   LANG LANGUAGE LOCALE_ARCHIVE XDG_SESSION_TYPE
@@ -85,6 +87,7 @@ BASE_ENV_NAMES=(
   XDG_CONFIG_DIRS XDG_DATA_DIRS TZ TZDIR EDITOR VISUAL PAGER GIT_PAGER GH_PAGER NO_COLOR
   NIX_LD NIX_LD_LIBRARY_PATH NIX_PATH NIX_PROFILES NIX_USER_PROFILE_DIR
   NIX_DEBUG_INFO_DIRS NIXPKGS_CONFIG NIX_SSL_CERT_FILE SSL_CERT_FILE
+  __NIXOS_SET_ENVIRONMENT_DONE
 )
 for name in "${BASE_ENV_NAMES[@]}"; do
   if [[ -v "$name" ]]; then
