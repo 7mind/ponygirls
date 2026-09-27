@@ -12,16 +12,16 @@
 buildNpmPackage (finalAttrs: {
   pname = "pi-coding-agent";
   # Upstream snapshot after the v0.87.1 release: the carried patches target
-  # upstream main (the base of PR #10050). Per nixpkgs versioning, a
+  # upstream main (rebased from the base of PR #10050). Per nixpkgs versioning, a
   # post-release commit is `<latest preceding release>-unstable-<commit date>`.
-  version = "0.87.1-unstable-2026-09-25";
+  version = "0.87.1-unstable-2026-09-26";
 
   src = fetchFromGitHub {
     owner = "earendil-works";
     repo = "pi";
-    # Base revision of PR #10050 (upstream main as of 2026-09-25).
-    rev = "d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31";
-    hash = "sha256-K1f4G3rU+Bck80yn7lDP7o/C3mTE+Ucg7qTrC3ulGpQ=";
+    # Upstream main as of 2026-09-26, two commits after the base of PR #10050.
+    rev = "2b0a123de98318c2ff8069661721ce0c3794c34e";
+    hash = "sha256-9lluUc4WFD6RyF4H3SB65Zx5uoWvWAUScEiNpr0X/0o=";
   };
 
   # D201 / earendil-works/pi#7319 (+ PR #7324, auto-closed, not merged):
@@ -35,7 +35,7 @@ buildNpmPackage (finalAttrs: {
   # Capture non-renderer writes to process.stdout/process.stderr while
   # ProcessTerminal owns the terminal (extension console output no longer
   # garbles the interactive TUI) and surface them through pi-captured-output.log
-  # plus a chat entry. This is exactly the PR diff against the pinned revision;
+  # plus a chat entry. This is PR #10050 rebased onto the pinned revision;
   # drop when a released pi version includes it.
   patches = [
     ./patches/oauth-refresh-on-401.patch
