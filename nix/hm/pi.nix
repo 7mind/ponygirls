@@ -14,6 +14,58 @@ let
   cfg = config.smind.hm.dev.llm;
   piCfg = config.programs.pi;
   jsonFormat = pkgs.formats.json { };
+  agentDir = "${config.home.homeDirectory}/.pi/agent";
+  xiaomiProfileRelDir = ".pi/agent-xiaomi-ams";
+
+  # Pi's retry settings are global, so the Xiaomi AMS policy uses a separate
+  # agent directory with only settings.json overridden.
+  generalRetryPolicy = {
+    httpIdleTimeoutMs = 120000;
+    retry = {
+      enabled = true;
+      maxRetries = 2;
+      baseDelayMs = 1000;
+      maxAgentDelayMs = 10000;
+      provider = {
+        timeoutMs = 120000;
+        maxRetries = 0;
+        maxRetryDelayMs = 15000;
+      };
+    };
+  };
+  xiaomiRetryPolicy = {
+    httpIdleTimeoutMs = 60000;
+    retry = {
+      enabled = true;
+      maxRetries = 1;
+      baseDelayMs = 1000;
+      maxAgentDelayMs = 5000;
+      provider = {
+        timeoutMs = 60000;
+        maxRetries = 0;
+        maxRetryDelayMs = 10000;
+      };
+    };
+  };
+  sharedAgentDirEntries = [
+    "AGENTS.md"
+    "APPEND_SYSTEM.md"
+    "auth.json"
+    "cache"
+    "exa-usage.json"
+    "extensions"
+    "mcp-cache.json"
+    "mcp-onboarding.json"
+    "mcp.json"
+    "models-store.json"
+    "models.json"
+    "npm"
+    "prompts"
+    "role-tool-profiles.json"
+    "sessions"
+    "skills"
+    "trust.json"
+  ];
 
   # The `programs.pi` module is defined IN THIS FLAKE (Pi isn't in home-manager
   # upstream): the common agent-harness surface comes from the shared factory,
@@ -342,6 +394,7 @@ in
         # works exactly as it does for Claude (/plan:advance) and Codex.
         promptTemplates = cfg.merged.commands;
         settings = {
+          inherit (generalRetryPolicy) httpIdleTimeoutMs retry;
           theme = "dark";
           # The configured default does not restrict runtime model switching.
           defaultProvider = cfg.models.pi.provider;
@@ -441,13 +494,28 @@ in
         };
       };
 
-      # Pi-specific MCP override: selected servers are pinned keep-alive so
-      # pi-mcp-adapter connects them at startup (see piMcpJson).
-      home.file.".pi/agent/mcp.json".source = piMcpJson;
+      home.file = lib.listToAttrs (
+        [
+          {
+            name = "${xiaomiProfileRelDir}/settings.json";
+            value.source = jsonFormat.generate "pi-settings-xiaomi-ams.json" (
+              piCfg.settings // xiaomiRetryPolicy
+            );
+          }
+        ]
+        ++ map (name: {
+          name = "${xiaomiProfileRelDir}/${name}";
+          value.source = config.lib.file.mkOutOfStoreSymlink "${agentDir}/${name}";
+        }) sharedAgentDirEntries
+      ) // {
+        # Pi-specific MCP override: selected servers are pinned keep-alive so
+        # pi-mcp-adapter connects them at startup (see piMcpJson).
+        ".pi/agent/mcp.json".source = piMcpJson;
 
-      # Declarative pi-search-hub config (see searchHubConfig). RO store symlink,
-      # like mcp.json above.
-      home.file.".pi/agent/extensions/search.json".source = searchHubConfig;
+        # Declarative pi-search-hub config (see searchHubConfig). RO store symlink,
+        # like mcp.json above.
+        ".pi/agent/extensions/search.json".source = searchHubConfig;
+      };
 
     }
     # Pi-specific extras (gated on the programs.pi sub-options declared above).
