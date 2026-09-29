@@ -38,6 +38,7 @@ Profiles isolate each agent's configuration, credentials, and session history un
 - `--list-profiles` — Print the names of the existing named profiles (the directories under `~/.config/yolo/`) and exit.
 - `--delete-profile NAME` — Move `~/.config/yolo/NAME/` to `~/.local/share/yolo/deleted-profiles/NAME-YYYYmmdd-HHMMSS/` and exit. Remove the backup there to delete it for good; move it back to restore the profile.
 - `--delete-profile NAME --purge` — Permanently delete `~/.config/yolo/NAME/` (after a y/N prompt) instead of backing it up.
+- `--copy-sessions AGENT:SRC:DST` — Copy `AGENT`'s (`claude`, `codex` or `pi`) sessions from named profile `SRC` into named profile `DST`. Files `DST` already has are never replaced or removed. Claude copies `projects/` (without per-project `memory/`) and `file-history/`; Codex copies `sessions/` and `archived_sessions/` and re-arms its state-DB backfill so the next launch lists the copied sessions; pi copies `sessions/`.
 
 Profile management flags run on the host without a subcommand, so they also work from `$HOME`.
 
@@ -49,6 +50,7 @@ yolo --profile personal claude
 yolo --profile work codex --search
 yolo --list-profiles
 yolo --delete-profile personal
+yolo --copy-sessions codex:work:personal
 ```
 
 ### Feature suppression and activation

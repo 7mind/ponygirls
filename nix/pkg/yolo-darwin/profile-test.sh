@@ -17,6 +17,7 @@ _jq_path="$(command -v jq || echo /usr/bin/jq)"
 _python_path="$(command -v python3 || echo /usr/bin/python3)"
 export YOLO_SANDBOX_EXEC="$_true_path"
 export YOLO_JQ="$_jq_path"
+export YOLO_SQLITE="$(command -v sqlite3)"
 export YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh"
 
 FAILURES=0
@@ -156,6 +157,36 @@ assert_contains "--delete-profile of a missing profile names it" "$OUT" "profile
 OUT="$(cd "$PROJECT_DIR" && printf 'y\n' | HOME="$FAKE_HOME" bash "$SCRIPT" --delete-profile .. 2>&1)"; STATUS=$?
 assert_nonzero "--delete-profile with an invalid name exits non-zero" "$STATUS"
 assert_eq "--delete-profile with an invalid name leaves siblings" "yes" "$([[ -d "$FAKE_HOME/.config/yolo/alpha" ]] && echo yes || echo no)"
+CS_SRC="$FAKE_HOME/.config/yolo/cs-src"
+CS_DST="$FAKE_HOME/.config/yolo/cs-dst"
+mkdir -p "$CS_SRC/claude/projects/-p/memory" "$CS_SRC/codex/sessions/2026" "$CS_SRC/pi/sessions/--p--" \
+  "$CS_DST/claude/projects/-p" "$CS_DST/codex"
+printf 'src\n' > "$CS_SRC/claude/projects/-p/s1.jsonl"
+printf 'new\n' > "$CS_SRC/claude/projects/-p/s3.jsonl"
+printf 'mem\n' > "$CS_SRC/claude/projects/-p/memory/MEMORY.md"
+printf 'dst\n' > "$CS_DST/claude/projects/-p/s1.jsonl"
+printf 'a\n' > "$CS_SRC/codex/sessions/2026/rollout-a.jsonl"
+printf 'x\n' > "$CS_SRC/pi/sessions/--p--/x.jsonl"
+"$YOLO_SQLITE" "$CS_DST/codex/state_5.sqlite" \
+  "CREATE TABLE backfill_state (id INTEGER PRIMARY KEY, status TEXT NOT NULL, last_watermark TEXT, last_success_at INTEGER, updated_at INTEGER NOT NULL);
+   INSERT INTO backfill_state VALUES (1, 'complete', 'sessions/x', 1, 1);"
+run_script --copy-sessions claude:cs-src:cs-dst
+assert_zero "--copy-sessions claude exits zero" "$STATUS"
+assert_eq "--copy-sessions claude keeps DST's shared session" "dst" "$(cat "$CS_DST/claude/projects/-p/s1.jsonl")"
+assert_eq "--copy-sessions claude copies new sessions" "new" "$(cat "$CS_DST/claude/projects/-p/s3.jsonl" 2>&1)"
+assert_eq "--copy-sessions claude skips project memory" "no" "$([[ -e "$CS_DST/claude/projects/-p/memory" ]] && echo yes || echo no)"
+run_script --copy-sessions codex:cs-src:cs-dst
+assert_zero "--copy-sessions codex exits zero" "$STATUS"
+assert_eq "--copy-sessions codex copies rollouts" "a" "$(cat "$CS_DST/codex/sessions/2026/rollout-a.jsonl" 2>&1)"
+assert_eq "--copy-sessions codex re-arms the backfill" "pending|" \
+  "$("$YOLO_SQLITE" "$CS_DST/codex/state_5.sqlite" "SELECT status || '|' || ifnull(last_watermark, '') FROM backfill_state")"
+run_script --copy-sessions pi:cs-src:cs-dst
+assert_zero "--copy-sessions pi exits zero" "$STATUS"
+assert_eq "--copy-sessions pi copies sessions" "x" "$(cat "$CS_DST/pi/sessions/--p--/x.jsonl" 2>&1)"
+run_script --copy-sessions codex:cs-src:cs-src
+assert_nonzero "--copy-sessions onto the same profile exits non-zero" "$STATUS"
+run_script --copy-sessions codex:cs-src:missing
+assert_nonzero "--copy-sessions into a missing profile exits non-zero" "$STATUS"
 rm -rf "$FAKE_HOME/.config/yolo" "$FAKE_HOME/.local"
 run_script --work cmd true
 assert_nonzero "retired --work alias exits non-zero" "$STATUS"

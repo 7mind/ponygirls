@@ -7,6 +7,7 @@
 #   YOLO_NIX_LD                 - path to nix-ld binary (bound as /lib64/ld-linux-x86-64.so.2)
 #   YOLO_JQ                     - path to jq binary
 #   YOLO_CUSTOM_PROMPT          - path to the shared prompt-composition library
+#   YOLO_SQLITE                 - path to sqlite3 (only needed by --copy-sessions codex:…)
 #
 # Optional env vars:
 #   YOLO_PODMAN_SOCKET_PATH - rootless podman socket path (enables container forwarding)
@@ -46,12 +47,15 @@
 # bound onto the standard in-sandbox paths so agents need no profile-specific
 # env.
 PROFILE=""
-# Host-side profile management (`--list-profiles`, `--delete-profile NAME`):
+# Host-side profile management (`--list-profiles`, `--delete-profile NAME`,
+# `--copy-sessions AGENT:SRC:DST`):
 # runs instead of launching the sandbox. Empty means launch normally.
 PROFILE_ACTION=""
 DELETE_PROFILE_NAME=""
 # --purge makes --delete-profile remove the profile instead of backing it up.
 PURGE_PROFILE=0
+# --copy-sessions AGENT:SRC:DST, validated in copy_sessions.
+COPY_SESSIONS_SPEC=""
 # Refuse to launch with $PWD == $HOME by default: BASE_ARGS binds $PWD
 # read-write, so running from the home directory would mount the entire home
 # (credentials, keys, history) into the sandbox. --unsafe-share-home overrides.
@@ -88,6 +92,7 @@ Usage:
   yolo [FLAGS...] <claude|codex|pi|shell|cmd> [args...]
   yolo --list-profiles
   yolo --delete-profile NAME [--purge]
+  yolo --copy-sessions AGENT:SRC:DST
 
 Flags (must precede the subcommand):
   -p, --profile NAME     Use isolated config namespace ~/.config/yolo/NAME
@@ -124,6 +129,10 @@ Profile management (no subcommand; runs outside the sandbox):
                          ~/.local/share/yolo/deleted-profiles/NAME-TIMESTAMP.
       --purge            With --delete-profile: remove the profile permanently
                          instead, after an interactive y/N prompt.
+      --copy-sessions AGENT:SRC:DST
+                         Copy AGENT's (claude|codex|pi) sessions from named
+                         profile SRC into named profile DST. Sessions DST
+                         already has are never replaced or removed.
 
 Subcommands:
   claude | codex | pi    Launch the named coding agent (bypass-approvals).
@@ -152,6 +161,11 @@ while [[ $# -gt 0 ]]; do
       fi
       PROFILE_ACTION="delete"; DELETE_PROFILE_NAME="$2"; shift 2 ;;
     --purge) PURGE_PROFILE=1; shift ;;
+    --copy-sessions)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: $1 requires AGENT:SRC:DST" >&2; exit 1
+      fi
+      PROFILE_ACTION="copy-sessions"; COPY_SESSIONS_SPEC="$2"; shift 2 ;;
     --auth-override)
       if [[ $# -lt 2 || -z "$2" ]]; then
         echo "Error: $1 requires AGENT:PROFILE" >&2; exit 1
@@ -276,6 +290,105 @@ delete_profile() {
   echo "Permanently deleted profile '$_name'."
 }
 
+# An agent's home inside a named profile, mirroring the add_*_binds layout.
+agent_home() {
+  case "$2" in
+    claude|codex) printf '%s/%s/%s/home' "$PROFILES_ROOT" "$1" "$2" ;;
+    pi) printf '%s/%s/pi/home/agent' "$PROFILES_ROOT" "$1" ;;
+  esac
+}
+
+# Session storage per agent, relative to that agent's home in a profile:
+#   claude: projects/<cwd-slug>/<id>.jsonl (+ <id>/ subagent transcripts; the
+#           per-project memory/ dir is project state, not a session) and
+#           file-history/<id>/ rewind checkpoints;
+#   codex:  sessions/ and archived_sessions/ rollouts;
+#   pi:     sessions/--<cwd>--/*.jsonl under the agent dir.
+session_roots() {
+  case "$1" in
+    claude) printf '%s\n' projects file-history ;;
+    codex) printf '%s\n' sessions archived_sessions ;;
+    pi) printf '%s\n' sessions ;;
+  esac
+}
+
+SESSIONS_COPIED=0
+SESSIONS_KEPT=0
+
+# Copies every file under SRC_ROOT to the same relative path under DST_ROOT,
+# never replacing a file DST_ROOT already has.
+copy_session_tree() {
+  local _src_root="$1" _dst_root="$2" _file _rel
+  while IFS= read -r -d '' _file; do
+    _rel="${_file#"$_src_root"/}"
+    if [[ -e "$_dst_root/$_rel" ]]; then
+      SESSIONS_KEPT=$((SESSIONS_KEPT + 1))
+      continue
+    fi
+    mkdir -p "$(dirname "$_dst_root/$_rel")"
+    cp -p -- "$_file" "$_dst_root/$_rel"
+    SESSIONS_COPIED=$((SESSIONS_COPIED + 1))
+  done < <(find "$_src_root" -path "$_src_root/*/memory" -prune -o -type f -print0)
+}
+
+# Codex lists sessions from its state DB, which a completed backfill never
+# re-scans for rollouts added behind its watermark; re-arm the backfill so the
+# next launch indexes the copied rollouts (existing rows are upserted, not lost).
+rearm_codex_backfill() {
+  local _home="$1" _db
+  : "${YOLO_SQLITE:?must be set to copy codex sessions}"
+  for _db in "$_home"/state_*.sqlite; do
+    [[ -f "$_db" ]] || continue
+    if ! "$YOLO_SQLITE" -cmd '.timeout 5000' "$_db" \
+        "UPDATE backfill_state SET status = 'pending', last_watermark = NULL WHERE id = 1;"; then
+      echo "Error: could not re-arm the codex session index in $_db; copied sessions stay unlisted until it is re-armed" >&2
+      exit 1
+    fi
+  done
+}
+
+copy_sessions() {
+  local _spec="$1" _agent _src _dst _extra _name _root _src_home _dst_home _found=0
+  IFS=: read -r _agent _src _dst _extra <<< "$_spec"
+  case "$_agent" in
+    claude|codex|pi) ;;
+    *) echo "Error: --copy-sessions expects AGENT:SRC:DST with AGENT one of claude, codex, pi (got '$_spec')" >&2; exit 1 ;;
+  esac
+  if [[ -z "$_dst" || -n "$_extra" ]]; then
+    echo "Error: --copy-sessions expects AGENT:SRC:DST (got '$_spec')" >&2
+    exit 1
+  fi
+  for _name in "$_src" "$_dst"; do
+    if ! valid_profile_name "$_name"; then
+      echo "Error: invalid profile name '$_name' in --copy-sessions $_spec" >&2
+      exit 1
+    fi
+    if [[ ! -d "$PROFILES_ROOT/$_name" ]]; then
+      echo "Error: profile '$_name' does not exist ($PROFILES_ROOT/$_name)" >&2
+      exit 1
+    fi
+  done
+  if [[ "$_src" == "$_dst" ]]; then
+    echo "Error: --copy-sessions $_spec copies a profile onto itself" >&2
+    exit 1
+  fi
+  _src_home="$(agent_home "$_src" "$_agent")"
+  _dst_home="$(agent_home "$_dst" "$_agent")"
+  while IFS= read -r _root; do
+    [[ -d "$_src_home/$_root" ]] || continue
+    _found=1
+    copy_session_tree "$_src_home/$_root" "$_dst_home/$_root"
+  done < <(session_roots "$_agent")
+  if [[ $_found -ne 1 ]]; then
+    echo "Error: profile '$_src' has no $_agent sessions under $_src_home" >&2
+    exit 1
+  fi
+  if [[ "$_agent" == "codex" && $SESSIONS_COPIED -gt 0 ]]; then
+    rearm_codex_backfill "$_dst_home"
+  fi
+  echo "$_agent sessions '$_src' -> '$_dst': copied $SESSIONS_COPIED file(s), kept $SESSIONS_KEPT already in '$_dst'"
+}
+
 # Profile management touches only ~/.config/yolo on the host, so it runs before
 # the $HOME guard and never reaches the sandbox.
 if [[ $PURGE_PROFILE -eq 1 && "$PROFILE_ACTION" != "delete" ]]; then
@@ -284,12 +397,13 @@ if [[ $PURGE_PROFILE -eq 1 && "$PROFILE_ACTION" != "delete" ]]; then
 fi
 if [[ -n "$PROFILE_ACTION" ]]; then
   if [[ $# -gt 0 ]]; then
-    echo "Error: --list-profiles/--delete-profile take no subcommand (got '$1')" >&2
+    echo "Error: --list-profiles/--delete-profile/--copy-sessions take no subcommand (got '$1')" >&2
     exit 1
   fi
   case "$PROFILE_ACTION" in
     list) list_profiles ;;
     delete) delete_profile "$DELETE_PROFILE_NAME" ;;
+    copy-sessions) copy_sessions "$COPY_SESSIONS_SPEC" ;;
   esac
   exit 0
 fi

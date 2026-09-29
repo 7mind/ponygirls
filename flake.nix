@@ -123,7 +123,7 @@
             touch $out
           '';
           yolo-profile = pkgs.runCommand "yolo-profile-test" {
-            nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.python3 ];
+            nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.python3 pkgs.sqlite ];
           } ''
             cp -r ${./nix/pkg/yolo} yolo
             chmod -R u+w yolo

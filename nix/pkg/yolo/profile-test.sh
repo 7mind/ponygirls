@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regression tests exercise the public yolo CLI with a recording sandbox.
 set -u
+export YOLO_SQLITE="$(command -v sqlite3)"
 export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp.json'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -557,6 +558,71 @@ fi
 OUT="$(run_yolo --delete-profile)"
 STATUS=$?
 assert_eq "delete profile without a name is refused" "1" "$STATUS"
+
+# --copy-sessions AGENT:SRC:DST copies session files into DST without
+# overwriting anything DST already has.
+CS_SRC="$FAKE_HOME/.config/yolo/cs-src"
+CS_DST="$FAKE_HOME/.config/yolo/cs-dst"
+mkdir -p "$CS_SRC/claude/home/projects/-p/s1/subagents" "$CS_SRC/claude/home/projects/-p/memory" \
+  "$CS_SRC/claude/home/file-history/s1" \
+  "$CS_SRC/codex/home/sessions/2026/09/29" "$CS_SRC/codex/home/archived_sessions" \
+  "$CS_SRC/pi/home/agent/sessions/--p--" \
+  "$CS_DST/claude/home/projects/-p" "$CS_DST/codex/home/sessions/2026/09/29"
+printf 'src\n' > "$CS_SRC/claude/home/projects/-p/s1.jsonl"
+printf 'sub\n' > "$CS_SRC/claude/home/projects/-p/s1/subagents/a.jsonl"
+printf 'mem\n' > "$CS_SRC/claude/home/projects/-p/memory/MEMORY.md"
+printf 'fh\n' > "$CS_SRC/claude/home/file-history/s1/v1"
+printf 'dst\n' > "$CS_DST/claude/home/projects/-p/s1.jsonl"
+printf 'own\n' > "$CS_DST/claude/home/projects/-p/s2.jsonl"
+printf 'a\n' > "$CS_SRC/codex/home/sessions/2026/09/29/rollout-a.jsonl"
+printf 'b\n' > "$CS_SRC/codex/home/archived_sessions/rollout-b.jsonl"
+printf 'c\n' > "$CS_DST/codex/home/sessions/2026/09/29/rollout-c.jsonl"
+printf 'x\n' > "$CS_SRC/pi/home/agent/sessions/--p--/x.jsonl"
+"$YOLO_SQLITE" "$CS_DST/codex/home/state_5.sqlite" \
+  "CREATE TABLE backfill_state (id INTEGER PRIMARY KEY, status TEXT NOT NULL, last_watermark TEXT, last_success_at INTEGER, updated_at INTEGER NOT NULL);
+   INSERT INTO backfill_state VALUES (1, 'complete', 'sessions/2026/09/29/rollout-c.jsonl', 1, 1);"
+
+OUT="$(run_yolo --copy-sessions claude:cs-src:cs-dst)"
+STATUS=$?
+assert_eq "claude session copy succeeds" "0" "$STATUS"
+assert_eq "claude session copy keeps DST's version of a shared session" "dst" "$(cat "$CS_DST/claude/home/projects/-p/s1.jsonl")"
+assert_eq "claude session copy keeps DST-only sessions" "own" "$(cat "$CS_DST/claude/home/projects/-p/s2.jsonl")"
+assert_eq "claude session copy includes subagent transcripts" "sub" "$(cat "$CS_DST/claude/home/projects/-p/s1/subagents/a.jsonl" 2>&1)"
+assert_eq "claude session copy includes file history" "fh" "$(cat "$CS_DST/claude/home/file-history/s1/v1" 2>&1)"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -e "$CS_DST/claude/home/projects/-p/memory" ]]; then
+  echo "FAIL: claude session copy leaves project memory behind"
+  FAILURES=$((FAILURES + 1))
+fi
+assert_contains "claude session copy reports counts" "$OUT" "copied 2 file(s), kept 1 already in 'cs-dst'"
+
+OUT="$(run_yolo --copy-sessions codex:cs-src:cs-dst)"
+STATUS=$?
+assert_eq "codex session copy succeeds" "0" "$STATUS"
+assert_eq "codex session copy copies active rollouts" "a" "$(cat "$CS_DST/codex/home/sessions/2026/09/29/rollout-a.jsonl" 2>&1)"
+assert_eq "codex session copy copies archived rollouts" "b" "$(cat "$CS_DST/codex/home/archived_sessions/rollout-b.jsonl" 2>&1)"
+assert_eq "codex session copy keeps DST rollouts" "c" "$(cat "$CS_DST/codex/home/sessions/2026/09/29/rollout-c.jsonl")"
+assert_eq "codex session copy re-arms the state DB backfill" "pending|" \
+  "$("$YOLO_SQLITE" "$CS_DST/codex/home/state_5.sqlite" "SELECT status || '|' || ifnull(last_watermark, '') FROM backfill_state")"
+
+OUT="$(run_yolo --copy-sessions pi:cs-src:cs-dst)"
+STATUS=$?
+assert_eq "pi session copy succeeds" "0" "$STATUS"
+assert_eq "pi session copy copies sessions" "x" "$(cat "$CS_DST/pi/home/agent/sessions/--p--/x.jsonl" 2>&1)"
+
+OUT="$(run_yolo --copy-sessions pi:cs-src:cs-dst)"
+assert_contains "repeated session copy copies nothing new" "$OUT" "copied 0 file(s), kept 1 already in 'cs-dst'"
+
+for _bad in "gemini:cs-src:cs-dst" "codex:cs-src" "codex:cs-src:cs-src" "codex:cs-src:missing" \
+    "codex:missing:cs-dst" "codex:../x:cs-dst"; do
+  OUT="$(run_yolo --copy-sessions "$_bad")"
+  STATUS=$?
+  assert_eq "--copy-sessions $_bad is refused" "1" "$STATUS"
+done
+OUT="$(run_yolo --copy-sessions codex:cs-src:cs-dst cmd true)"
+STATUS=$?
+assert_eq "--copy-sessions rejects a trailing subcommand" "1" "$STATUS"
+rm -rf "$CS_SRC" "$CS_DST"
 
 OUT="$(run_yolo --work cmd true)"
 STATUS=$?
