@@ -17,6 +17,7 @@ from tokemon.transport import UrllibTransport
 
 DEFAULT_REFRESH_SECONDS = 300
 DEFAULT_TIMEOUT_SECONDS = 15.0
+SIGINT_EXIT_STATUS = 130
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -74,7 +75,10 @@ def main(argv: list[str] | None = None) -> int:
     query = make_query(args.home, os.environ, transport)
 
     if args.once:
-        results = query()
+        try:
+            results = query()
+        except KeyboardInterrupt:
+            return SIGINT_EXIT_STATUS
         now = datetime.now(timezone.utc)
         console.print(build_table(results, now, "one shot", args.show_invalid, args.mask_logins, args.mask_profiles))
         return 0
