@@ -4,6 +4,7 @@
 , writeText
 , writeTextFile
 , jq
+, sqlite
 , claude-code-sandbox
 , podmanSocketPath ? null
 , podmanSocketUri ? null
@@ -79,6 +80,7 @@ let
   bin = writeShellScriptBin "yolo" ''
     export YOLO_SANDBOX_EXEC="${claude-code-sandbox}/bin/claude-sandbox"
     export YOLO_JQ="${jq}/bin/jq"
+    export YOLO_SQLITE="${sqlite}/bin/sqlite3"
     export YOLO_CUSTOM_PROMPT="${customPromptScript}"
     export YOLO_SANDBOX_ENTRYPOINT="${sandboxEntrypoint}/bin/yolo-sandbox-entrypoint"
     ${podmanExports}
