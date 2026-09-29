@@ -71,8 +71,20 @@ def _fmt_resets(window: QuotaWindow, now: datetime) -> str:
     return f"{hours}h {minutes:02d}m"
 
 
+def _rate_limited_status(retry_at: datetime | None, now: datetime) -> str:
+    if retry_at is None:
+        return "rate limited (HTTP 429) · retry next refresh"
+    seconds = int((retry_at - now).total_seconds())
+    if seconds <= 0:
+        return "rate limited (HTTP 429) · retry due"
+    minutes, seconds = divmod(seconds, 60)
+    return f"rate limited (HTTP 429) · retry in {minutes}m {seconds:02d}s"
+
+
 def _status(result: QueryResult, window: QuotaWindow | None, now: datetime) -> tuple[str, str]:
     """Return (text, style)."""
+    if result.rate_limit is not None:
+        return _rate_limited_status(result.rate_limit.retry_at, now), "yellow"
     if result.error is not None:
         return result.error, "bold red"
     parts: list[str] = []
@@ -139,8 +151,10 @@ def _status_column(result: QueryResult, windows: list[QuotaWindow | None], now: 
     return text
 
 
-def _has_quota_data(result: QueryResult) -> bool:
-    return result.snapshot is not None and bool(result.snapshot.windows)
+def _is_shown_by_default(result: QueryResult) -> bool:
+    """Rows with quota data, and rate-limited rows (a valid, temporary answer
+    whose retry countdown matters), are shown; other errors are hidden."""
+    return result.rate_limit is not None or (result.snapshot is not None and bool(result.snapshot.windows))
 
 
 def _mask_login(login: str) -> str:
@@ -205,14 +219,15 @@ def build_table(
     mask_logins: bool,
     mask_profiles: bool,
 ) -> Table:
-    """Render results; rows without quota windows are omitted unless
-    ``show_invalid`` and summarized in the table caption instead. With
+    """Render results; rows without quota windows (other than rate-limited
+    rows) are omitted unless ``show_invalid`` and summarized in the table
+    caption instead. With
     ``mask_logins`` each login keeps its first two characters, the rest starred.
     With ``mask_profiles`` named profiles are numbered over all ``results`` (so
     hiding rows never renumbers them) and masked in paths too."""
     mask = ProfileMask.numbering(results) if mask_profiles else ProfileMask.unmasked()
-    shown = results if show_invalid else [result for result in results if _has_quota_data(result)]
-    hidden = [] if show_invalid else [result for result in results if not _has_quota_data(result)]
+    shown = results if show_invalid else [result for result in results if _is_shown_by_default(result)]
+    hidden = [] if show_invalid else [result for result in results if not _is_shown_by_default(result)]
     table = Table(
         title=f"tokemon — token quotas · {refresh_note}",
         caption=_hidden_caption(hidden),

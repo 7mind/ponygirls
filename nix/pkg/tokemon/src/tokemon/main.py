@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     if not discover_targets(args.home, os.environ):
         console.print(f"no codex or pi credentials found under {args.home}")
         return 1
-    query = make_query(args.home, os.environ, transport)
+    query = make_query(args.home, os.environ, transport, lambda: datetime.now(timezone.utc))
 
     if args.once:
         try:

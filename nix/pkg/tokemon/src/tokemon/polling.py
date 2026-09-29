@@ -9,7 +9,7 @@ from typing import Callable, Mapping
 
 from tokemon.adapters import adapter_for
 from tokemon.discovery import Target, discover_targets, join_unique
-from tokemon.quota import QueryResult
+from tokemon.quota import QueryResult, RateLimit, RateLimitedError
 from tokemon.transport import Transport
 
 MAX_QUERY_WORKERS = 8
@@ -18,12 +18,20 @@ MAX_QUERY_WORKERS = 8
 def query_target(target: Target, transport: Transport) -> QueryResult:
     now = datetime.now(timezone.utc)
     if target.credential is None:
-        return QueryResult(target=target, snapshot=None, error=target.note or "no credential", fetched_at=now)
+        return QueryResult(
+            target=target, snapshot=None, error=target.note or "no credential", fetched_at=now, rate_limit=None
+        )
     try:
         snapshot = adapter_for(target.provider).fetch(target.credential, transport)
+    except RateLimitedError as exc:
+        return QueryResult(
+            target=target, snapshot=None, error=str(exc), fetched_at=now, rate_limit=RateLimit(exc.retry_at)
+        )
     except Exception as exc:  # per-row isolation: one bad adapter must not kill the dashboard
-        return QueryResult(target=target, snapshot=None, error=f"{type(exc).__name__}: {exc}", fetched_at=now)
-    return QueryResult(target=target, snapshot=snapshot, error=None, fetched_at=now)
+        return QueryResult(
+            target=target, snapshot=None, error=f"{type(exc).__name__}: {exc}", fetched_at=now, rate_limit=None
+        )
+    return QueryResult(target=target, snapshot=snapshot, error=None, fetched_at=now, rate_limit=None)
 
 
 def coalesce_by_identity(results: list[QueryResult]) -> list[QueryResult]:
@@ -57,23 +65,58 @@ def coalesce_by_identity(results: list[QueryResult]) -> list[QueryResult]:
             snapshot=prior.snapshot,
             error=None,
             fetched_at=prior.fetched_at,
+            rate_limit=None,
         )
     return out
 
 
-def query_all(targets: list[Target], transport: Transport) -> list[QueryResult]:
+def _query_targets(targets: list[Target], transport: Transport) -> list[QueryResult]:
     if not targets:
         return []
     with ThreadPoolExecutor(max_workers=min(MAX_QUERY_WORKERS, len(targets))) as executor:
         futures = [executor.submit(query_target, target, transport) for target in targets]
-        return coalesce_by_identity([future.result() for future in futures])
+        return [future.result() for future in futures]
 
 
-def make_query(home: Path, environ: Mapping[str, str], transport: Transport) -> Callable[[], list[QueryResult]]:
-    """Each call re-walks ``home`` so added/removed profiles and rewritten
-    credential files (e.g. refreshed OAuth tokens) are picked up on refresh."""
+TargetKey = tuple[str, str, str]
 
-    def query() -> list[QueryResult]:
-        return query_all(discover_targets(home, environ), transport)
 
-    return query
+def _target_key(target: Target) -> TargetKey:
+    return (target.source, target.provider, target.label)
+
+
+class RetryAwareQuery:
+    """One refresh: re-walk ``home`` (so added/removed profiles and rewritten
+    credential files are picked up), query every target except those still
+    inside a Retry-After window from their last HTTP 429, whose previous
+    result is carried forward unchanged until that window passes."""
+
+    def __init__(
+        self, home: Path, environ: Mapping[str, str], transport: Transport, clock: Callable[[], datetime]
+    ) -> None:
+        self._home = home
+        self._environ = environ
+        self._transport = transport
+        self._clock = clock
+        self._previous: dict[TargetKey, QueryResult] = {}
+
+    def __call__(self) -> list[QueryResult]:
+        now = self._clock()
+        due: list[Target] = []
+        held: list[QueryResult] = []
+        for target in discover_targets(self._home, self._environ):
+            previous = self._previous.get(_target_key(target))
+            retry_at = previous.rate_limit.retry_at if previous is not None and previous.rate_limit else None
+            if previous is not None and retry_at is not None and retry_at > now:
+                held.append(previous)
+            else:
+                due.append(target)
+        results = _query_targets(due, self._transport) + held
+        self._previous = {_target_key(result.target): result for result in results}
+        return coalesce_by_identity(results)
+
+
+def make_query(
+    home: Path, environ: Mapping[str, str], transport: Transport, clock: Callable[[], datetime]
+) -> Callable[[], list[QueryResult]]:
+    return RetryAwareQuery(home, environ, transport, clock)
