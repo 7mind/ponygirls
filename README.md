@@ -1,5 +1,7 @@
 # ponygirls
 
+<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/523ef773-ea3d-46e2-af3b-e7f7d16c8fcb" />
+
 Nix packages and Home Manager settings for Pi, Codex, Claude Code, CodeGraph,
 and the `yolo` sandbox. Linux uses bubblewrap; macOS uses Seatbelt through
 `claude-code-sandbox`.
