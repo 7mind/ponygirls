@@ -125,6 +125,42 @@ run_script
 assert_contains "usage mentions --disable" "$OUT" "--disable=TAG"
 assert_contains "usage mentions --enable" "$OUT" "--enable=TAG"
 
+# ── profile management (host-side, exits before exec) ───────────────────────
+mkdir -p "$FAKE_HOME/.config/yolo/alpha/claude" "$FAKE_HOME/.config/yolo/beta"
+: > "$FAKE_HOME/.config/yolo/not-a-profile"
+run_script --list-profiles
+assert_zero "--list-profiles exits zero" "$STATUS"
+assert_eq "--list-profiles prints profile dir names, sorted" $'alpha\nbeta' "$OUT"
+OUT="$(cd "$FAKE_HOME" && HOME="$FAKE_HOME" bash "$SCRIPT" --list-profiles 2>&1)"
+assert_eq "--list-profiles works from \$HOME" $'alpha\nbeta' "$OUT"
+run_script --list-profiles claude
+assert_nonzero "--list-profiles rejects a trailing subcommand" "$STATUS"
+run_script --delete-profile beta </dev/null
+assert_zero "--delete-profile moves to backup without prompting" "$STATUS"
+assert_eq "--delete-profile removes the profile from ~/.config/yolo" "no" "$([[ -e "$FAKE_HOME/.config/yolo/beta" ]] && echo yes || echo no)"
+BACKUPS=("$FAKE_HOME/.local/share/yolo/deleted-profiles"/beta-*)
+assert_eq "--delete-profile leaves exactly one backup" "1" "${#BACKUPS[@]}"
+assert_contains "--delete-profile reports the backup path" "$OUT" "${BACKUPS[0]}"
+mkdir -p "$FAKE_HOME/.config/yolo/beta"
+OUT="$(cd "$PROJECT_DIR" && printf 'n\n' | HOME="$FAKE_HOME" bash "$SCRIPT" --delete-profile beta --purge 2>&1)"; STATUS=$?
+assert_nonzero "declined --purge exits non-zero" "$STATUS"
+assert_eq "declined --purge keeps the profile" "yes" "$([[ -d "$FAKE_HOME/.config/yolo/beta" ]] && echo yes || echo no)"
+OUT="$(cd "$PROJECT_DIR" && printf 'y\n' | HOME="$FAKE_HOME" bash "$SCRIPT" --delete-profile beta --purge 2>&1)"; STATUS=$?
+assert_zero "confirmed --purge exits zero" "$STATUS"
+assert_eq "confirmed --purge removes the profile" "no" "$([[ -e "$FAKE_HOME/.config/yolo/beta" ]] && echo yes || echo no)"
+run_script --purge cmd true
+assert_nonzero "--purge without --delete-profile exits non-zero" "$STATUS"
+OUT="$(cd "$PROJECT_DIR" && printf 'y\n' | HOME="$FAKE_HOME" bash "$SCRIPT" --delete-profile beta 2>&1)"; STATUS=$?
+assert_nonzero "--delete-profile of a missing profile exits non-zero" "$STATUS"
+assert_contains "--delete-profile of a missing profile names it" "$OUT" "profile 'beta' does not exist"
+OUT="$(cd "$PROJECT_DIR" && printf 'y\n' | HOME="$FAKE_HOME" bash "$SCRIPT" --delete-profile .. 2>&1)"; STATUS=$?
+assert_nonzero "--delete-profile with an invalid name exits non-zero" "$STATUS"
+assert_eq "--delete-profile with an invalid name leaves siblings" "yes" "$([[ -d "$FAKE_HOME/.config/yolo/alpha" ]] && echo yes || echo no)"
+rm -rf "$FAKE_HOME/.config/yolo" "$FAKE_HOME/.local"
+run_script --work cmd true
+assert_nonzero "retired --work alias exits non-zero" "$STATUS"
+assert_contains "retired --work alias is an unknown flag" "$OUT" "Unknown flag: --work"
+
 # ── generated policy ─────────────────────────────────────────────────────────
 RENDERED="$(render_profile foo /tmp/x)"
 GOLDEN="$(cat "$GOLDEN_FILE" 2>/dev/null || true)"

@@ -16,12 +16,6 @@ With a named profile (e.g., "work"):
 yolo --profile work claude
 ```
 
-Or using the `--work` alias:
-
-```bash
-yolo --work claude
-```
-
 ## Subcommands
 
 All subcommands are confined and profile-isolated. Choose the agent and any arguments:
@@ -41,14 +35,20 @@ All agents inherit the active profile's configuration directories (when set).
 Profiles isolate each agent's configuration, credentials, and session history under `~/.config/yolo/<name>/<agent>`. The default (no profile) uses the agents' real home directories (`~/.claude`, `~/.codex`, `~/.pi`).
 
 - `--profile NAME` or `-p NAME` — Select a named profile. The profile name must contain only letters, digits, `.`, `_`, `-`, and cannot be `.` or `..`. Each agent (claude, codex, pi) gets a private directory under `~/.config/yolo/<name>/`.
-- `--work` or `-w` — Shorthand for `--profile work`. Useful for launching a "work" profile with minimal typing.
+- `--list-profiles` — Print the names of the existing named profiles (the directories under `~/.config/yolo/`) and exit.
+- `--delete-profile NAME` — Move `~/.config/yolo/NAME/` to `~/.local/share/yolo/deleted-profiles/NAME-YYYYmmdd-HHMMSS/` and exit. Remove the backup there to delete it for good; move it back to restore the profile.
+- `--delete-profile NAME --purge` — Permanently delete `~/.config/yolo/NAME/` (after a y/N prompt) instead of backing it up.
+
+Profile management flags run on the host without a subcommand, so they also work from `$HOME`.
 
 Example:
 
 ```bash
 mkdir -p ~/.config/yolo/personal ~/.config/yolo/work  # optional; created automatically
 yolo --profile personal claude
-yolo --work codex --search
+yolo --profile work codex --search
+yolo --list-profiles
+yolo --delete-profile personal
 ```
 
 ### Feature suppression and activation
@@ -291,7 +291,7 @@ For each profile you set up (e.g., "personal" and "work"):
    or
 
    ```bash
-   yolo --work codex status
+   yolo --profile work codex status
    ```
 
    Confirm that the account shown matches the subscription or user account you configured for that profile (e.g., "personal@example.com").

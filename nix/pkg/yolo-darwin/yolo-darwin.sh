@@ -14,6 +14,12 @@
 
 # An empty profile preserves each agent's native home-directory defaults.
 PROFILE=""
+# Host-side profile management (`--list-profiles`, `--delete-profile NAME`):
+# runs instead of launching the sandbox. Empty means launch normally.
+PROFILE_ACTION=""
+DELETE_PROFILE_NAME=""
+# --purge makes --delete-profile remove the profile instead of backing it up.
+PURGE_PROFILE=0
 UNSAFE_SHARE_HOME=0
 # Applied only to the child; explicit pairs override profile-derived values.
 ENV_PAIRS=()
@@ -58,11 +64,12 @@ print_help() {
 yolo — LLM tool launcher inside a macOS Seatbelt sandbox.
 
 Usage: yolo-darwin [FLAGS...] <claude|codex|pi|shell|cmd> [args...]
+       yolo-darwin --list-profiles
+       yolo-darwin --delete-profile NAME [--purge]
 
 Flags (must precede the subcommand):
   -p, --profile NAME     Use isolated config namespace ~/.config/yolo/NAME
                          (default: agents read their native home directories).
-  -w, --work             Alias for `--profile work`.
       --disable=TAG      Drop prompt fragments and pre-start hooks carrying TAG
                          (repeatable, comma-separated).
       --enable=TAG       Turn on a feature that is off by default (repeatable,
@@ -77,6 +84,15 @@ Flags (must precede the subcommand):
       --unsafe-share-home  Allow running with $PWD == $HOME (grants all of $HOME
                          read-write; refused by default).
   -h, --help             Show this help and exit.
+
+Profile management (no subcommand; runs outside the sandbox):
+      --list-profiles    Print the named profiles under ~/.config/yolo.
+      --delete-profile NAME
+                         Move ~/.config/yolo/NAME (credentials, sessions and
+                         state of every agent) to
+                         ~/.local/share/yolo/deleted-profiles/NAME-TIMESTAMP.
+      --purge            With --delete-profile: remove the profile permanently
+                         instead, after an interactive y/N prompt.
 
 Subcommands:
   claude | codex | pi    Launch the named coding agent (bypass approvals).
@@ -119,7 +135,13 @@ while [[ $# -gt 0 ]]; do
         echo "Error: $1 requires a profile name" >&2; exit 1
       fi
       PROFILE="$2"; shift 2 ;;
-    --work|-w) PROFILE="work"; shift ;;
+    --list-profiles) PROFILE_ACTION="list"; shift ;;
+    --delete-profile)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: $1 requires a profile name" >&2; exit 1
+      fi
+      PROFILE_ACTION="delete"; DELETE_PROFILE_NAME="$2"; shift 2 ;;
+    --purge) PURGE_PROFILE=1; shift ;;
     --disable=*)
       IFS=',' read -ra _dtags <<< "${1#*=}"
       DISABLE_TAGS+=("${_dtags[@]}")
@@ -172,9 +194,77 @@ tag_active() {
 }
 
 # Profile names map directly to paths under ~/.config/yolo.
-if [[ -n "$PROFILE" && ( ! "$PROFILE" =~ ^[A-Za-z0-9._-]+$ || "$PROFILE" == "." || "$PROFILE" == ".." ) ]]; then
+valid_profile_name() {
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ && "$1" != "." && "$1" != ".." ]]
+}
+if [[ -n "$PROFILE" ]] && ! valid_profile_name "$PROFILE"; then
   echo "Error: invalid profile name '$PROFILE' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')" >&2
   exit 1
+fi
+
+PROFILES_ROOT="${HOME}/.config/yolo"
+# Deleted profiles are kept outside PROFILES_ROOT so that nothing enumerating
+# profiles (--list-profiles, tokemon, the Seatbelt policy) still sees them.
+PROFILE_BACKUP_ROOT="${HOME}/.local/share/yolo/deleted-profiles"
+
+list_profiles() {
+  local _dir
+  for _dir in "$PROFILES_ROOT"/*/; do
+    [[ -d "$_dir" ]] || continue
+    _dir="${_dir%/}"
+    printf '%s\n' "${_dir##*/}"
+  done
+}
+
+delete_profile() {
+  local _name="$1" _dir _backup _reply
+  if ! valid_profile_name "$_name"; then
+    echo "Error: invalid profile name '$_name' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')" >&2
+    exit 1
+  fi
+  _dir="$PROFILES_ROOT/$_name"
+  if [[ ! -d "$_dir" ]]; then
+    echo "Error: profile '$_name' does not exist ($_dir)" >&2
+    exit 1
+  fi
+  if [[ $PURGE_PROFILE -ne 1 ]]; then
+    _backup="$PROFILE_BACKUP_ROOT/$_name-$(date +%Y%m%d-%H%M%S)"
+    if [[ -e "$_backup" ]]; then
+      echo "Error: backup path $_backup already exists; retry in a second" >&2
+      exit 1
+    fi
+    mkdir -p "$PROFILE_BACKUP_ROOT"
+    chmod 700 "$PROFILE_BACKUP_ROOT"
+    mv -- "$_dir" "$_backup"
+    echo "Moved profile '$_name' to $_backup"
+    return 0
+  fi
+  printf "Permanently delete profile '%s' at %s, including every agent's credentials and sessions? [y/N] " "$_name" "$_dir" >&2
+  read -r _reply || _reply=""
+  if [[ "$_reply" != "y" && "$_reply" != "yes" ]]; then
+    echo "Aborted; profile '$_name' kept." >&2
+    exit 1
+  fi
+  rm -rf -- "$_dir"
+  echo "Permanently deleted profile '$_name'."
+}
+
+# Profile management touches only ~/.config/yolo on the host, so it runs before
+# the $HOME guard and never reaches the sandbox.
+if [[ $PURGE_PROFILE -eq 1 && "$PROFILE_ACTION" != "delete" ]]; then
+  echo "Error: --purge only applies to --delete-profile" >&2
+  exit 1
+fi
+if [[ -n "$PROFILE_ACTION" ]]; then
+  if [[ $# -gt 0 ]]; then
+    echo "Error: --list-profiles/--delete-profile take no subcommand (got '$1')" >&2
+    exit 1
+  fi
+  case "$PROFILE_ACTION" in
+    list) list_profiles ;;
+    delete) delete_profile "$DELETE_PROFILE_NAME" ;;
+  esac
+  exit 0
 fi
 
 # Resolve symlinks portably; stock macOS does not provide `readlink -f`.
@@ -226,7 +316,7 @@ if [[ -n "${YOLO_PODMAN_SOCKET_PATH:-}" && -n "${YOLO_PODMAN_SOCKET_URI:-}" ]]; 
   fi
 fi
 
-profile_dir() { printf '%s/.config/yolo/%s/%s' "${HOME}" "${PROFILE}" "$1"; }
+profile_dir() { printf '%s/%s/%s' "${PROFILES_ROOT}" "${PROFILE}" "$1"; }
 
 # PI_CODING_AGENT_DIR relocates pi's entire per-user state for named profiles;
 # leaving these variables unset preserves native defaults for the empty profile.
