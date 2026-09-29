@@ -62,6 +62,7 @@ def run_tui(
     interval_seconds: int,
     show_invalid: bool,
     mask_logins: bool,
+    mask_profiles: bool,
     console: Console,
 ) -> None:
     events: queue.Queue[str] = queue.Queue()
@@ -87,6 +88,7 @@ def run_tui(
                             _refresh_note(last_refresh, next_refresh, now, show_invalid),
                             show_invalid,
                             mask_logins,
+                            mask_profiles,
                         ),
                         refresh=True,
                     )
