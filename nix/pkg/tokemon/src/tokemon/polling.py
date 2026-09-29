@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable, Mapping
 
 from tokemon.adapters import adapter_for
-from tokemon.discovery import Target, join_unique
+from tokemon.discovery import Target, discover_targets, join_unique
 from tokemon.quota import QueryResult
 from tokemon.transport import Transport
 
@@ -65,3 +67,13 @@ def query_all(targets: list[Target], transport: Transport) -> list[QueryResult]:
     with ThreadPoolExecutor(max_workers=min(MAX_QUERY_WORKERS, len(targets))) as executor:
         futures = [executor.submit(query_target, target, transport) for target in targets]
         return coalesce_by_identity([future.result() for future in futures])
+
+
+def make_query(home: Path, environ: Mapping[str, str], transport: Transport) -> Callable[[], list[QueryResult]]:
+    """Each call re-walks ``home`` so added/removed profiles and rewritten
+    credential files (e.g. refreshed OAuth tokens) are picked up on refresh."""
+
+    def query() -> list[QueryResult]:
+        return query_all(discover_targets(home, environ), transport)
+
+    return query

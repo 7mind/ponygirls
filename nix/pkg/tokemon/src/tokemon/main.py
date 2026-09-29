@@ -11,7 +11,7 @@ from pathlib import Path
 from rich.console import Console
 
 from tokemon.discovery import discover_targets
-from tokemon.polling import query_all
+from tokemon.polling import make_query
 from tokemon.render import build_table
 from tokemon.transport import UrllibTransport
 
@@ -68,13 +68,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     console = Console()
     transport = UrllibTransport(timeout_seconds=args.timeout)
-    targets = discover_targets(args.home, os.environ)
-    if not targets:
+    if not discover_targets(args.home, os.environ):
         console.print(f"no codex or pi credentials found under {args.home}")
         return 1
-
-    def query():
-        return query_all(targets, transport)
+    query = make_query(args.home, os.environ, transport)
 
     if args.once:
         results = query()
