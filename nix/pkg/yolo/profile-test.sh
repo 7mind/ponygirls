@@ -477,6 +477,84 @@ assert_eq "auth override leaves the launched profile's own credentials untouched
 assert_eq "auth override leaves the source credentials untouched" \
   '{"work":"codex"}' "$(cat "$WORK_CODEX_AUTH")"
 
+# --list-profiles / --delete-profile manage ~/.config/yolo/<name> host-side and
+# exit without launching the sandbox (so they also work from $HOME).
+mkdir -p "$FAKE_HOME/.config/yolo/zeta/claude"
+: > "$FAKE_HOME/.config/yolo/not-a-profile"
+OUT="$(run_yolo --list-profiles)"
+STATUS=$?
+assert_eq "list profiles succeeds" "0" "$STATUS"
+assert_eq "list profiles prints each profile dir name, sorted" $'foo\nwork\nzeta' "$OUT"
+OUT="$(cd "$FAKE_HOME" && HOME="$FAKE_HOME" YOLO_LLM_SANDBOX=x YOLO_SANDBOX_ENTRYPOINT=x YOLO_NIX_LD=x \
+  YOLO_JQ=x YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" bash "$SCRIPT" --list-profiles 2>&1)"
+assert_eq "list profiles works from \$HOME" $'foo\nwork\nzeta' "$OUT"
+OUT="$(run_yolo --list-profiles claude)"
+STATUS=$?
+assert_eq "list profiles rejects a trailing subcommand" "1" "$STATUS"
+
+BACKUP_ROOT="$FAKE_HOME/.local/share/yolo/deleted-profiles"
+OUT="$(run_yolo --delete-profile zeta </dev/null)"
+STATUS=$?
+assert_eq "profile deletion moves to backup without prompting" "0" "$STATUS"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -e "$FAKE_HOME/.config/yolo/zeta" ]]; then
+  echo "FAIL: profile deletion removes the profile from ~/.config/yolo"
+  FAILURES=$((FAILURES + 1))
+fi
+BACKUPS=("$BACKUP_ROOT"/zeta-*)
+assert_eq "profile deletion leaves exactly one backup" "1" "${#BACKUPS[@]}"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ ! -d "${BACKUPS[0]}/claude" ]]; then
+  echo "FAIL: profile backup keeps the profile contents"
+  FAILURES=$((FAILURES + 1))
+fi
+assert_contains "profile deletion reports the backup path" "$OUT" "${BACKUPS[0]}"
+OUT="$(run_yolo --list-profiles)"
+assert_eq "backed-up profile is no longer listed" $'foo\nwork' "$OUT"
+
+mkdir -p "$FAKE_HOME/.config/yolo/zeta/claude"
+OUT="$(printf 'n\n' | run_yolo --delete-profile zeta --purge)"
+STATUS=$?
+assert_eq "declined purge exits non-zero" "1" "$STATUS"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ ! -d "$FAKE_HOME/.config/yolo/zeta" ]]; then
+  echo "FAIL: declined purge keeps the profile"
+  FAILURES=$((FAILURES + 1))
+fi
+OUT="$(printf 'y\n' | run_yolo --delete-profile zeta --purge)"
+STATUS=$?
+assert_eq "confirmed purge succeeds" "0" "$STATUS"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -e "$FAKE_HOME/.config/yolo/zeta" ]]; then
+  echo "FAIL: confirmed purge removes the profile dir"
+  FAILURES=$((FAILURES + 1))
+fi
+BACKUPS=("$BACKUP_ROOT"/zeta-*)
+assert_eq "purge makes no backup" "1" "${#BACKUPS[@]}"
+OUT="$(run_yolo --purge cmd true)"
+STATUS=$?
+assert_eq "--purge without --delete-profile is refused" "1" "$STATUS"
+OUT="$(printf 'y\n' | run_yolo --delete-profile zeta)"
+STATUS=$?
+assert_eq "deleting a missing profile is refused" "1" "$STATUS"
+assert_contains "missing profile deletion names the profile" "$OUT" "profile 'zeta' does not exist"
+OUT="$(printf 'y\n' | run_yolo --delete-profile ..)"
+STATUS=$?
+assert_eq "deleting an invalid profile name is refused" "1" "$STATUS"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ ! -d "$FAKE_HOME/.config/yolo/foo" ]]; then
+  echo "FAIL: invalid profile name deletion leaves siblings intact"
+  FAILURES=$((FAILURES + 1))
+fi
+OUT="$(run_yolo --delete-profile)"
+STATUS=$?
+assert_eq "delete profile without a name is refused" "1" "$STATUS"
+
+OUT="$(run_yolo --work cmd true)"
+STATUS=$?
+assert_eq "retired --work alias is an unknown flag" "1" "$STATUS"
+assert_contains "retired --work alias reports an unknown flag" "$OUT" "Unknown flag: --work"
+
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"
   exit 1

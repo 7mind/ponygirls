@@ -44,8 +44,14 @@
 # profile: agents read their real home dirs (~/.claude, ~/.codex, ...).
 # A non-empty NAME backs every agent's config with ~/.config/yolo/NAME/<agent>,
 # bound onto the standard in-sandbox paths so agents need no profile-specific
-# env. `--work`/`-w` is a backward-compatible alias for `--profile work`.
+# env.
 PROFILE=""
+# Host-side profile management (`--list-profiles`, `--delete-profile NAME`):
+# runs instead of launching the sandbox. Empty means launch normally.
+PROFILE_ACTION=""
+DELETE_PROFILE_NAME=""
+# --purge makes --delete-profile remove the profile instead of backing it up.
+PURGE_PROFILE=0
 # Refuse to launch with $PWD == $HOME by default: BASE_ARGS binds $PWD
 # read-write, so running from the home directory would mount the entire home
 # (credentials, keys, history) into the sandbox. --unsafe-share-home overrides.
@@ -80,11 +86,12 @@ yolo — LLM tool launcher inside the llm-sandbox (bubblewrap) sandbox.
 
 Usage:
   yolo [FLAGS...] <claude|codex|pi|shell|cmd> [args...]
+  yolo --list-profiles
+  yolo --delete-profile NAME [--purge]
 
 Flags (must precede the subcommand):
   -p, --profile NAME     Use isolated config namespace ~/.config/yolo/NAME
                          (default: agents read their real ~/.claude, ~/.codex, …)
-  -w, --work             Alias for `--profile work`
       --auth-override AGENT:PROFILE
                          Authenticate AGENT (claude|codex|pi) with the credentials
                          of named profile PROFILE while keeping the launched
@@ -109,6 +116,15 @@ Flags (must precede the subcommand):
                          read-write; refused by default).
   -h, --help             Show this help and exit.
 
+Profile management (no subcommand; runs outside the sandbox):
+      --list-profiles    Print the named profiles under ~/.config/yolo.
+      --delete-profile NAME
+                         Move ~/.config/yolo/NAME (credentials, sessions and
+                         state of every agent) to
+                         ~/.local/share/yolo/deleted-profiles/NAME-TIMESTAMP.
+      --purge            With --delete-profile: remove the profile permanently
+                         instead, after an interactive y/N prompt.
+
 Subcommands:
   claude | codex | pi    Launch the named coding agent (bypass-approvals).
   shell                  Interactive shell inside the sandbox.
@@ -129,7 +145,13 @@ while [[ $# -gt 0 ]]; do
         echo "Error: $1 requires a profile name" >&2; exit 1
       fi
       PROFILE="$2"; shift 2 ;;
-    --work|-w) PROFILE="work"; shift ;;
+    --list-profiles) PROFILE_ACTION="list"; shift ;;
+    --delete-profile)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: $1 requires a profile name" >&2; exit 1
+      fi
+      PROFILE_ACTION="delete"; DELETE_PROFILE_NAME="$2"; shift 2 ;;
+    --purge) PURGE_PROFILE=1; shift ;;
     --auth-override)
       if [[ $# -lt 2 || -z "$2" ]]; then
         echo "Error: $1 requires AGENT:PROFILE" >&2; exit 1
@@ -206,6 +228,72 @@ if [[ -n "$PROFILE" ]] && ! valid_profile_name "$PROFILE"; then
   exit 1
 fi
 
+# Named profiles live as directories under this root (see profile_dir below).
+PROFILES_ROOT="${HOME}/.config/yolo"
+# Deleted profiles are kept outside PROFILES_ROOT so that nothing enumerating
+# profiles (--list-profiles, tokemon, the Seatbelt policy) still sees them.
+PROFILE_BACKUP_ROOT="${HOME}/.local/share/yolo/deleted-profiles"
+
+list_profiles() {
+  local _dir
+  for _dir in "$PROFILES_ROOT"/*/; do
+    [[ -d "$_dir" ]] || continue
+    _dir="${_dir%/}"
+    printf '%s\n' "${_dir##*/}"
+  done
+}
+
+delete_profile() {
+  local _name="$1" _dir _backup _reply
+  if ! valid_profile_name "$_name"; then
+    echo "Error: invalid profile name '$_name' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')" >&2
+    exit 1
+  fi
+  _dir="$PROFILES_ROOT/$_name"
+  if [[ ! -d "$_dir" ]]; then
+    echo "Error: profile '$_name' does not exist ($_dir)" >&2
+    exit 1
+  fi
+  if [[ $PURGE_PROFILE -ne 1 ]]; then
+    _backup="$PROFILE_BACKUP_ROOT/$_name-$(date +%Y%m%d-%H%M%S)"
+    if [[ -e "$_backup" ]]; then
+      echo "Error: backup path $_backup already exists; retry in a second" >&2
+      exit 1
+    fi
+    mkdir -p "$PROFILE_BACKUP_ROOT"
+    chmod 700 "$PROFILE_BACKUP_ROOT"
+    mv -- "$_dir" "$_backup"
+    echo "Moved profile '$_name' to $_backup"
+    return 0
+  fi
+  printf "Permanently delete profile '%s' at %s, including every agent's credentials and sessions? [y/N] " "$_name" "$_dir" >&2
+  read -r _reply || _reply=""
+  if [[ "$_reply" != "y" && "$_reply" != "yes" ]]; then
+    echo "Aborted; profile '$_name' kept." >&2
+    exit 1
+  fi
+  rm -rf -- "$_dir"
+  echo "Permanently deleted profile '$_name'."
+}
+
+# Profile management touches only ~/.config/yolo on the host, so it runs before
+# the $HOME guard and never reaches the sandbox.
+if [[ $PURGE_PROFILE -eq 1 && "$PROFILE_ACTION" != "delete" ]]; then
+  echo "Error: --purge only applies to --delete-profile" >&2
+  exit 1
+fi
+if [[ -n "$PROFILE_ACTION" ]]; then
+  if [[ $# -gt 0 ]]; then
+    echo "Error: --list-profiles/--delete-profile take no subcommand (got '$1')" >&2
+    exit 1
+  fi
+  case "$PROFILE_ACTION" in
+    list) list_profiles ;;
+    delete) delete_profile "$DELETE_PROFILE_NAME" ;;
+  esac
+  exit 0
+fi
+
 # Fail-safe: refuse to run with the working directory equal to $HOME. BASE_ARGS
 # binds $PWD read-write into the sandbox, so launching from the home directory
 # would mount the entire home — every credential, SSH/agenix key, and shell
@@ -224,7 +312,7 @@ if [[ "$_pwd_real" == "$_home_real" && $UNSAFE_SHARE_HOME -ne 1 ]]; then
 fi
 
 # Host-side backing directory for an agent within the active named profile.
-profile_dir() { printf '%s/.config/yolo/%s/%s' "${HOME}" "${PROFILE}" "$1"; }
+profile_dir() { printf '%s/%s/%s' "${PROFILES_ROOT}" "${PROFILE}" "$1"; }
 
 # Credentials file of each agent, relative to its home dir (~/.claude, ~/.codex,
 # ~/.pi in the sandbox; <profile>/<agent>/home on the host). Every agent
@@ -267,7 +355,7 @@ for _override in "${AUTH_OVERRIDES[@]}"; do
     exit 1
   fi
   _auth_agents_seen+="$_agent "
-  _src="${HOME}/.config/yolo/${_src_profile}/${_agent}/home/${_cred_file}"
+  _src="${PROFILES_ROOT}/${_src_profile}/${_agent}/home/${_cred_file}"
   if [[ ! -f "$_src" || ! -s "$_src" ]]; then
     echo "Error: profile '$_src_profile' has no $_agent credentials at $_src (log in there first: yolo --profile $_src_profile $_agent)" >&2
     exit 1
