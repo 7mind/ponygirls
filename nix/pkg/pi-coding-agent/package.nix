@@ -42,7 +42,8 @@ buildNpmPackage (finalAttrs: {
   # settings.json) are only queued for drainErrors(), which interactive mode
   # never calls after startup: the change looks applied but is silently not
   # persisted. SettingsManager.onWriteError + an interactive-mode listener
-  # report each failed save in the chat. Drop when upstream surfaces them.
+  # report each failed save in the chat (earendil-works/pi#10168). Drop when
+  # upstream surfaces them.
   patches = [
     ./patches/oauth-refresh-on-401.patch
     ./patches/captured-terminal-output.patch
