@@ -25,6 +25,20 @@ in
       settings = {
         model = cfg.models.codex.model;
         model_reasoning_effort = cfg.models.codex.reasoningEffort;
+        tui.status_line = [
+          "model-with-reasoning"
+          "current-dir"
+          "git-branch"
+          "thread-name"
+          "context-used"
+          "five-hour-limit"
+          "weekly-limit"
+          "used-tokens"
+          "total-input-tokens"
+          "total-output-tokens"
+          "thread-id"
+          "task-progress"
+        ];
         project_doc_fallback_filenames = [ "CLAUDE.md" ];
         features.apps = false;
         features.multi_agent = true;
