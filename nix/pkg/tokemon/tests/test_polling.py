@@ -20,7 +20,7 @@ def _credential(secret: str) -> Credential:
 def _result(provider: str, label: str, secret: str, identity: str | None):
     target = Target("default", "pi", provider, label, _credential(secret), None)
     snapshot = QuotaSnapshot(plan_name=None, identity=identity, windows=(), note=None)
-    return QueryResult(target=target, snapshot=snapshot, error=None, fetched_at=NOW)
+    return QueryResult(target=target, snapshot=snapshot, error=None, fetched_at=NOW, rate_limit=None)
 
 
 class CoalesceByIdentityTests(unittest.TestCase):

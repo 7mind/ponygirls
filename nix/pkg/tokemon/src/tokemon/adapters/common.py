@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Mapping
 
 from tokemon.credentials import Credential
-from tokemon.quota import QuotaFetchError
+from tokemon.quota import QuotaFetchError, RateLimitedError
 from tokemon.transport import HttpResponse, Transport
 
 
@@ -14,8 +15,28 @@ def bearer_headers(credential: Credential) -> dict[str, str]:
     return {"Authorization": f"Bearer {credential.secret}"}
 
 
+HTTP_TOO_MANY_REQUESTS = 429
+
+
+def parse_retry_after(value: str | None, now: datetime) -> datetime | None:
+    """Retry-After is either delay-seconds or an HTTP-date (RFC 9110 §10.2.3);
+    an absent or unparseable header means the server named no retry time."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return now + timedelta(seconds=int(value))
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
 def get_json(transport: Transport, url: str, headers: Mapping[str, str]) -> tuple[HttpResponse, Any]:
     response = transport.request("GET", url, headers, None)
+    if response.status == HTTP_TOO_MANY_REQUESTS:
+        raise RateLimitedError(url, parse_retry_after(response.retry_after, datetime.now(timezone.utc)))
     if response.status == 401 or response.status == 403:
         raise QuotaFetchError(f"auth rejected (HTTP {response.status}) — credential expired or revoked?")
     if response.status != 200:

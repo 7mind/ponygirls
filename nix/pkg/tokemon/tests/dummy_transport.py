@@ -28,4 +28,4 @@ class ScriptedTransport:
 def json_response(status: int, payload: object) -> HttpResponse:
     import json
 
-    return HttpResponse(status=status, body=json.dumps(payload).encode("utf-8"))
+    return HttpResponse(status=status, body=json.dumps(payload).encode("utf-8"), retry_after=None)

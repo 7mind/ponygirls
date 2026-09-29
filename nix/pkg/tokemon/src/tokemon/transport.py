@@ -18,6 +18,7 @@ class TransportError(ConnectionError):
 class HttpResponse:
     status: int
     body: bytes
+    retry_after: str | None  # raw Retry-After header, if the server sent one
 
     def json(self) -> object:
         import json
@@ -47,8 +48,10 @@ class UrllibTransport:
             request.add_header(name, value)
         try:
             with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
-                return HttpResponse(status=response.status, body=response.read())
+                return HttpResponse(
+                    status=response.status, body=response.read(), retry_after=response.headers.get("Retry-After")
+                )
         except urllib.error.HTTPError as exc:
-            return HttpResponse(status=exc.code, body=exc.read())
+            return HttpResponse(status=exc.code, body=exc.read(), retry_after=exc.headers.get("Retry-After"))
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise TransportError(f"{method} {url}: {exc}") from exc

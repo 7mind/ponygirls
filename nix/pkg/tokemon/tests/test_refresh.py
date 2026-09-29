@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dummy_transport import ScriptedTransport
@@ -26,7 +27,7 @@ class RefreshTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             _add_profile(home, "alpha", "zai")
-            query = make_query(home, {}, ScriptedTransport({}))
+            query = make_query(home, {}, ScriptedTransport({}), lambda: datetime.now(timezone.utc))
             self.assertEqual(_profiles(query()), ["alpha"])
 
             _add_profile(home, "beta", "kimi-coding")

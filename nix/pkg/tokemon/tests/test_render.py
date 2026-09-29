@@ -43,13 +43,17 @@ def _result(window: QuotaWindow | None, note: str | None, expires_at=None, error
     snapshot = QuotaSnapshot(
         plan_name=None, identity="tester@example.test", windows=all_windows, note=note
     )
-    return QueryResult(target=target, snapshot=snapshot if error is None else None, error=error, fetched_at=NOW)
+    return QueryResult(
+        target=target, snapshot=snapshot if error is None else None, error=error, fetched_at=NOW, rate_limit=None
+    )
 
 
 def _profile_result(profile: str, label: str, window: QuotaWindow | None, error: str | None = None) -> QueryResult:
     target = Target(profile, "pi", "demo", label, None, None)
     snapshot = QuotaSnapshot(plan_name=None, identity=None, windows=(window,) if window else (), note=None)
-    return QueryResult(target=target, snapshot=snapshot if error is None else None, error=error, fetched_at=NOW)
+    return QueryResult(
+        target=target, snapshot=snapshot if error is None else None, error=error, fetched_at=NOW, rate_limit=None
+    )
 
 
 class RenderTests(unittest.TestCase):
