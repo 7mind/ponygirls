@@ -477,6 +477,14 @@ assert_eq "auth override leaves the launched profile's own credentials untouched
 assert_eq "auth override leaves the source credentials untouched" \
   '{"work":"codex"}' "$(cat "$WORK_CODEX_AUTH")"
 
+# Claude treats the sandboxed workspace as trusted (no trust dialog) whenever
+# CLAUDE_CODE_SANDBOXED is set; yolo sets it for every subcommand.
+for _subcmd in claude codex pi "cmd true"; do
+  # shellcheck disable=SC2086
+  OUT="$(run_yolo --profile foo $_subcmd)"
+  assert_contains "$_subcmd: CLAUDE_CODE_SANDBOXED is set in the sandbox" "$OUT" $'--env\nCLAUDE_CODE_SANDBOXED=1'
+done
+
 # --list-profiles / --delete-profile manage ~/.config/yolo/<name> host-side and
 # exit without launching the sandbox (so they also work from $HOME).
 mkdir -p "$FAKE_HOME/.config/yolo/zeta/claude"

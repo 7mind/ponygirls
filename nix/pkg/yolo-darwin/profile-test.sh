@@ -354,6 +354,7 @@ printf '%s\n' \
   'printf "SECRET_VALUE=%s\n" "${SECRET_VALUE:-<unset>}"' \
   'printf "GH_TOKEN=%s\n" "${GH_TOKEN:-<unset>}"' \
   'printf "HOST_ONLY=%s\n" "${HOST_ONLY:-<unset>}"' \
+  'printf "CLAUDE_CODE_SANDBOXED=%s\n" "${CLAUDE_CODE_SANDBOXED:-<unset>}"' \
   'printf "TERMINFO_DIRS=%s\n" "${TERMINFO_DIRS:-<unset>}"' \
   'printf "NIX_LD=%s\n" "${NIX_LD:-<unset>}"' \
   'printf "NIX_CONFIG=%s\n" "${NIX_CONFIG:-<unset>}"' \
@@ -489,6 +490,7 @@ assert_contains "explicit --env overrides declarative session variable" "$OUT" "
 assert_contains "secret file value overrides non-secret values" "$OUT" "SECRET_VALUE=from-secret-file"
 assert_contains "sandbox secret overrides inherited token" "$OUT" "GH_TOKEN=from-secret-file"
 assert_contains "unlisted host variable is absent" "$OUT" "HOST_ONLY=<unset>"
+assert_contains "Claude workspace trust is pre-accepted inside the sandbox" "$OUT" "CLAUDE_CODE_SANDBOXED=1"
 assert_contains "sandbox hook exports reach agent" "$OUT" "SANDBOX_HOOK=ran"
 assert_contains "agent subcommand excludes shell hooks" "$OUT" "SHELL_HOOK=<unset>"
 assert_contains "agent subcommand excludes cmd hooks" "$OUT" "CMD_HOOK=<unset>"

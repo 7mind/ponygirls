@@ -614,8 +614,9 @@ run_prestart_hooks() {
 
 # Environment precedence increases from profile, container socket defaults,
 # extra-package PATH, and declarative session variables to user --env. Secrets
-# load inside Seatbelt after those values, while SMIND_SANDBOXED remains
-# non-overridable.
+# load inside Seatbelt after those values, while SMIND_SANDBOXED and
+# CLAUDE_CODE_SANDBOXED (Claude Code skips its workspace-trust dialog when set)
+# remain non-overridable.
 yolo_exec_agent() {
   local subcmd="$1"; shift
   # cmd supplies its executable through "$@"; other modes prepend fixed argv.
@@ -721,6 +722,7 @@ yolo_exec_agent() {
     "${SESSION_ENV_PAIRS[@]}" \
     "${ENV_PAIRS[@]}" \
     SMIND_SANDBOXED=1 \
+    CLAUDE_CODE_SANDBOXED=1 \
     "${entrypoint_env[@]}" \
     "${sandbox_argv[@]}" \
     "${child_argv[@]}"
