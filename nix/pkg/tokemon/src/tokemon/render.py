@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Mapping
 
 from rich.table import Table
 
+from tokemon.discovery import DEFAULT_PROFILE, YOLO_CONFIG_ROOT
 from tokemon.quota import QueryResult, QuotaWindow
 
 LOW_WATER_FRACTION = 0.9
@@ -123,7 +127,7 @@ def _stacked_cells(windows: list[QuotaWindow | None], now: datetime) -> tuple[st
     return "\n".join(names), "\n".join(used_limits), "\n".join(bars), "\n".join(resets)
 
 
-def _status_column(result: QueryResult, windows: list[QuotaWindow | None], now: datetime):
+def _status_column(result: QueryResult, windows: list[QuotaWindow | None], now: datetime, mask: ProfileMask):
     from rich.text import Text
 
     text = Text()
@@ -131,7 +135,7 @@ def _status_column(result: QueryResult, windows: list[QuotaWindow | None], now: 
         if index:
             text.append("\n")
         status_text, status_style = _status(result, window, now)
-        text.append(status_text, style=status_style)
+        text.append(mask.text(status_text), style=status_style)
     return text
 
 
@@ -141,6 +145,40 @@ def _has_quota_data(result: QueryResult) -> bool:
 
 def _mask_login(login: str) -> str:
     return login[:MASKED_LOGIN_PREFIX] + "*" * max(len(login) - MASKED_LOGIN_PREFIX, 0)
+
+
+@dataclass(frozen=True)
+class ProfileMask:
+    """Replaces named yolo profiles with stable numbers, both as profile names
+    and as the ``.config/yolo/NAME`` segment of any path in rendered text.
+    An empty mapping renders everything verbatim."""
+
+    numbers: Mapping[str, int]
+
+    @staticmethod
+    def unmasked() -> ProfileMask:
+        return ProfileMask({})
+
+    @staticmethod
+    def numbering(results: list[QueryResult]) -> ProfileMask:
+        names = sorted(
+            {name for result in results for name in result.target.profile.split(", ")} - {DEFAULT_PROFILE}
+        )
+        return ProfileMask({name: index for index, name in enumerate(names, start=1)})
+
+    def profile(self, profiles: str) -> str:
+        return ", ".join(str(self.numbers.get(name, name)) for name in profiles.split(", "))
+
+    def text(self, text: str) -> str:
+        if not self.numbers:
+            return text
+        root = re.escape("/" + YOLO_CONFIG_ROOT.as_posix() + "/")
+        names = "|".join(re.escape(name) for name in sorted(self.numbers, key=len, reverse=True))
+        return re.sub(
+            f"({root})({names})(?=/|$|[\\s,:])",
+            lambda match: match.group(1) + str(self.numbers[match.group(2)]),
+            text,
+        )
 
 
 def _plural(count: int, noun: str) -> str:
@@ -160,11 +198,19 @@ def _hidden_caption(hidden: list[QueryResult]) -> str | None:
 
 
 def build_table(
-    results: list[QueryResult], now: datetime, refresh_note: str, show_invalid: bool, mask_logins: bool
+    results: list[QueryResult],
+    now: datetime,
+    refresh_note: str,
+    show_invalid: bool,
+    mask_logins: bool,
+    mask_profiles: bool,
 ) -> Table:
     """Render results; rows without quota windows are omitted unless
     ``show_invalid`` and summarized in the table caption instead. With
-    ``mask_logins`` each login keeps its first two characters, the rest starred."""
+    ``mask_logins`` each login keeps its first two characters, the rest starred.
+    With ``mask_profiles`` named profiles are numbered over all ``results`` (so
+    hiding rows never renumbers them) and masked in paths too."""
+    mask = ProfileMask.numbering(results) if mask_profiles else ProfileMask.unmasked()
     shown = results if show_invalid else [result for result in results if _has_quota_data(result)]
     hidden = [] if show_invalid else [result for result in results if not _has_quota_data(result)]
     table = Table(
@@ -206,16 +252,16 @@ def build_table(
                 windows = list(result.snapshot.windows)
         names, used_limits, bars, resets = _stacked_cells(windows, now)
         table.add_row(
-            target.profile,
+            mask.profile(target.profile),
             target.source,
-            target.provider + "\n" + "\n".join(target.label.split(", ")),
+            target.provider + "\n" + "\n".join(mask.text(label) for label in target.label.split(", ")),
             identity,
             plan,
             names,
             used_limits,
             bars,
             resets,
-            _status_column(result, windows, now),
+            _status_column(result, windows, now, mask),
             style=row_style,
         )
     return table

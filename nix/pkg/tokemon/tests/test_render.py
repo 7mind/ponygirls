@@ -18,11 +18,15 @@ EXPIRED = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
 
 def _render(
-    results: list[QueryResult], force_terminal: bool = False, show_invalid: bool = True, mask_logins: bool = False
+    results: list[QueryResult],
+    force_terminal: bool = False,
+    show_invalid: bool = True,
+    mask_logins: bool = False,
+    mask_profiles: bool = False,
 ) -> str:
     buffer = io.StringIO()
     console = Console(file=buffer, width=240, force_terminal=force_terminal, color_system="256" if force_terminal else None)
-    console.print(build_table(results, NOW, "test", show_invalid, mask_logins))
+    console.print(build_table(results, NOW, "test", show_invalid, mask_logins, mask_profiles))
     return buffer.getvalue()
 
 
@@ -39,6 +43,12 @@ def _result(window: QuotaWindow | None, note: str | None, expires_at=None, error
     snapshot = QuotaSnapshot(
         plan_name=None, identity="tester@example.test", windows=all_windows, note=note
     )
+    return QueryResult(target=target, snapshot=snapshot if error is None else None, error=error, fetched_at=NOW)
+
+
+def _profile_result(profile: str, label: str, window: QuotaWindow | None, error: str | None = None) -> QueryResult:
+    target = Target(profile, "pi", "demo", label, None, None)
+    snapshot = QuotaSnapshot(plan_name=None, identity=None, windows=(window,) if window else (), note=None)
     return QueryResult(target=target, snapshot=snapshot if error is None else None, error=error, fetched_at=NOW)
 
 
@@ -112,6 +122,46 @@ class RenderTests(unittest.TestCase):
         text = _render([_result(window, None)], mask_logins=True)
         self.assertNotIn("tester@example.test", text)
         self.assertIn("te" + "*" * (len("tester@example.test") - 2), text)
+
+    def test_mask_profiles_numbers_names_and_masks_them_in_paths(self):
+        window = QuotaWindow("5h", used=1.0, limit=100.0, unit="%", resets_at=None)
+        results = [
+            _profile_result("work", "~/.config/yolo/work/codex/home", window),
+            _profile_result("default, zeta", "~/.pi/agent, ~/.config/yolo/zeta/pi/home/agent", window),
+            _profile_result(
+                "zeta",
+                "~/.config/yolo/zeta/pi/home/other",
+                None,
+                error="DiscoveryError: /home/u/.config/yolo/zeta/pi/home/other/auth.json: unreadable JSON",
+            ),
+        ]
+        text = _render(results, mask_profiles=True)
+        self.assertNotIn("work", text)
+        self.assertNotIn("zeta", text)
+        self.assertIn("~/.config/yolo/1/codex/home", text)
+        self.assertIn("~/.config/yolo/2/pi/home/agent", text)
+        self.assertIn("default, 2", text)
+        self.assertIn("/home/u/.config/yolo/2/pi/home/other/auth.json", text)
+        self.assertIn("~/.pi/agent", text)
+
+    def test_mask_profiles_rewrites_only_the_profile_path_segment(self):
+        window = QuotaWindow("5h", used=1.0, limit=100.0, unit="%", resets_at=None)
+        text = _render([_profile_result("home", "~/.config/yolo/home/pi/home/agent", window)], mask_profiles=True)
+        self.assertIn("~/.config/yolo/1/pi/home/agent", text)
+
+    def test_mask_profiles_numbering_ignores_hidden_rows(self):
+        window = QuotaWindow("5h", used=1.0, limit=100.0, unit="%", resets_at=None)
+        results = [
+            _profile_result("alpha", "~/.config/yolo/alpha/codex/home", None, error="QuotaFetchError: x"),
+            _profile_result("beta", "~/.config/yolo/beta/codex/home", window),
+        ]
+        text = _render(results, show_invalid=False, mask_profiles=True)
+        self.assertIn("~/.config/yolo/2/codex/home", text)
+
+    def test_unmasked_profiles_are_shown_verbatim(self):
+        window = QuotaWindow("5h", used=1.0, limit=100.0, unit="%", resets_at=None)
+        text = _render([_profile_result("work", "~/.config/yolo/work/codex/home", window)])
+        self.assertIn("~/.config/yolo/work/codex/home", text)
 
     def test_logical_rows_are_separated_by_a_rule(self):
         window = QuotaWindow("5h", used=1.0, limit=100.0, unit="%", resets_at=None)

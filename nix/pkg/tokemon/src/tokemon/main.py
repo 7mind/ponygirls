@@ -50,6 +50,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="show only the first two characters of each login, the rest as stars",
     )
     parser.add_argument(
+        "--mask-profiles",
+        action="store_true",
+        help="replace named yolo profile names with numbers, in the profile column and in paths",
+    )
+    parser.add_argument(
         "--home",
         type=Path,
         default=Path.home(),
@@ -74,12 +79,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.once:
         results = query()
         now = datetime.now(timezone.utc)
-        console.print(build_table(results, now, "one shot", args.show_invalid, args.mask_logins))
+        console.print(build_table(results, now, "one shot", args.show_invalid, args.mask_logins, args.mask_profiles))
         return 0
 
     from tokemon.tui import run_tui
 
-    run_tui(query, args.interval, args.show_invalid, args.mask_logins, console)
+    run_tui(query, args.interval, args.show_invalid, args.mask_logins, args.mask_profiles, console)
     return 0
 
 
