@@ -302,6 +302,7 @@ in
         pkgs.nodejs # required by claude-code plugins (.mjs scripts)
         codegraphPkg # codegraph CLI on the host PATH (the per-project index
         # bootstrap inside yolo is a pre-start hook; see nix/hm/yolo.nix)
+        (pkgs.callPackage ../pkg/tokemon/package.nix { }) # quota dashboard
       ] ++ lib.optionals isDarwin [
         inputs.claude-code-sandbox.packages.${system}.default
       ]

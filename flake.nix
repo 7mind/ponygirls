@@ -100,6 +100,7 @@
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
           pi-search-hub = pkgs.callPackage ./nix/pkg/pi-search-hub/package.nix { };
           codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix { src = inputs.codegraph; };
+          tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
           yolo = pkgs.callPackage ./nix/pkg/yolo/default.nix { };
@@ -111,6 +112,7 @@
         };
         checks = {
           default-models = defaultModelsCheck;
+          tokemon = self.packages.${system}.tokemon;
           dev-llm-module-boundary = devLlmModuleBoundaryCheck;
           kimi-401-retry = pkgs.runCommand "kimi-401-retry-test" {
             nativeBuildInputs = [ pkgs.bun ];

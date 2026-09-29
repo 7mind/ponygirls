@@ -2,3 +2,5 @@ result
 result-*
 .codegraph/
 debug/
+__pycache__/
+*.egg-info/

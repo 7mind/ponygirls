@@ -1,0 +1,21 @@
+{
+ "code": 0,
+ "msg": "ok",
+ "success": true,
+ "data": {
+  "limits": [
+   {
+    "type": "TOKENS_LIMIT",
+    "percentage": 40.5,
+    "currentValue": 12500000,
+    "usage": 40000000
+   },
+   {
+    "type": "TIME_LIMIT",
+    "percentage": 12.3,
+    "currentValue": 123,
+    "usage": 1000
+   }
+  ]
+ }
+}

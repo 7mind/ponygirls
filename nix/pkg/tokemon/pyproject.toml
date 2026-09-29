@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tokemon"
+version = "0.1.0"
+description = "Token quota dashboard for yolo codex/claude profiles and pi provider credentials"
+requires-python = ">=3.11"
+dependencies = ["rich>=13"]
+
+[project.scripts]
+tokemon = "tokemon.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

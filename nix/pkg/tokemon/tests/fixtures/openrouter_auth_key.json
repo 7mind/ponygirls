@@ -1,0 +1,13 @@
+{
+ "data": {
+  "label": "test key",
+  "usage": 1.25,
+  "limit": 10.0,
+  "is_free_tier": false,
+  "rate_limit": {
+   "usage": 3,
+   "limit": 20,
+   "interval": "10s"
+  }
+ }
+}
