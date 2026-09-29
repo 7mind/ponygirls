@@ -391,9 +391,11 @@ assert_after "CLI --ro follows the declarative extras" "$OUT" "$CLI_RO" "$DECL_R
 # read-write over the launched profile's, leaving its sessions/state in place.
 WORK_CODEX_AUTH="$FAKE_HOME/.config/yolo/work/codex/home/auth.json"
 WORK_CLAUDE_CREDS="$FAKE_HOME/.config/yolo/work/claude/home/.credentials.json"
+WORK_PI_AUTH="$FAKE_HOME/.config/yolo/work/pi/home/agent/auth.json"
 FOO_CODEX_AUTH="$FAKE_HOME/.config/yolo/foo/codex/home/auth.json"
 FOO_CLAUDE_CREDS="$FAKE_HOME/.config/yolo/foo/claude/home/.credentials.json"
-mkdir -p "$(dirname "$WORK_CODEX_AUTH")" "$(dirname "$WORK_CLAUDE_CREDS")"
+mkdir -p "$(dirname "$WORK_CODEX_AUTH")" "$(dirname "$WORK_CLAUDE_CREDS")" "$(dirname "$WORK_PI_AUTH")"
+printf '{"work":"pi"}\n' > "$WORK_PI_AUTH"
 printf '{"work":"codex"}\n' > "$WORK_CODEX_AUTH"
 printf '{"work":"claude"}\n' > "$WORK_CLAUDE_CREDS"
 
@@ -411,6 +413,14 @@ assert_after "claude auth override follows the profile claude home bind" "$OUT" 
 assert_not_contains "auth override keeps the launched profile's claude home" "$OUT" \
   "$FAKE_HOME/.config/yolo/work/claude/home,$FAKE_HOME/.claude"
 
+OUT="$(run_yolo --profile foo --auth-override pi:work cmd true)"
+STATUS=$?
+assert_eq "pi auth override launch succeeds" "0" "$STATUS"
+assert_contains "pi auth override binds the source profile's auth.json read-write" "$OUT" \
+  $'--bind\n'"$WORK_PI_AUTH,$FAKE_HOME/.pi/agent/auth.json"
+assert_after "pi auth override follows the profile pi home bind" "$OUT" \
+  "$WORK_PI_AUTH,$FAKE_HOME/.pi/agent/auth.json" "$FAKE_HOME/.config/yolo/foo/pi/home,$FAKE_HOME/.pi"
+
 OUT="$(run_yolo --auth-override codex:work cmd true)"
 assert_contains "auth override applies to the default profile" "$OUT" \
   $'--bind\n'"$WORK_CODEX_AUTH,$FAKE_HOME/.codex/auth.json"
@@ -425,7 +435,7 @@ OUT="$(run_yolo --profile work --auth-override codex:work cmd true)"
 STATUS=$?
 assert_eq "auth override from the launched profile itself is refused" "1" "$STATUS"
 
-OUT="$(run_yolo --profile foo --auth-override pi:work cmd true)"
+OUT="$(run_yolo --profile foo --auth-override gemini:work cmd true)"
 STATUS=$?
 assert_eq "auth override for an unsupported agent is refused" "1" "$STATUS"
 

@@ -86,11 +86,12 @@ Flags (must precede the subcommand):
                          (default: agents read their real ~/.claude, ~/.codex, …)
   -w, --work             Alias for `--profile work`
       --auth-override AGENT:PROFILE
-                         Authenticate AGENT (claude|codex) with the credentials
+                         Authenticate AGENT (claude|codex|pi) with the credentials
                          of named profile PROFILE while keeping the launched
                          profile's sessions and state (repeatable, one per
                          agent). The credentials file is shared live, so token
-                         refreshes are visible to PROFILE too.
+                         refreshes are visible to PROFILE too. For pi this is
+                         its whole auth.json (every provider).
       --disable=TAG      Drop every device bind, prompt fragment and pre-start
                          hook carrying TAG (repeatable, comma-separated).
                          Known tags: audio, codegraph, display, dyngpu, gpu, vm.
@@ -225,14 +226,17 @@ fi
 # Host-side backing directory for an agent within the active named profile.
 profile_dir() { printf '%s/.config/yolo/%s/%s' "${HOME}" "${PROFILE}" "$1"; }
 
-# Credentials file of each agent, relative to its home dir (~/.claude, ~/.codex
-# in the sandbox; <profile>/<agent>/home on the host). Both agents rewrite it in
-# place when the target is a mount point (codex always truncates+writes; claude
-# falls back from rename to in-place on EBUSY), so a file bind stays live.
+# Credentials file of each agent, relative to its home dir (~/.claude, ~/.codex,
+# ~/.pi in the sandbox; <profile>/<agent>/home on the host). Every agent
+# rewrites it in place when the target is a mount point (codex and pi always
+# truncate+write; claude falls back from rename to in-place on EBUSY), so a file
+# bind stays live. pi's auth.json holds all of its providers at once, and its
+# proper-lockfile lock (auth.json.lock, a sibling dir) stays per profile.
 agent_credentials_file() {
   case "$1" in
     claude) printf '.credentials.json' ;;
     codex) printf 'auth.json' ;;
+    pi) printf 'agent/auth.json' ;;
     *) return 1 ;;
   esac
 }
@@ -247,7 +251,7 @@ for _override in "${AUTH_OVERRIDES[@]}"; do
   _agent="${_override%%:*}"
   _src_profile="${_override#*:}"
   if [[ "$_override" != *:* ]] || ! _cred_file="$(agent_credentials_file "$_agent")"; then
-    echo "Error: --auth-override expects AGENT:PROFILE with AGENT one of claude, codex (got '$_override')" >&2
+    echo "Error: --auth-override expects AGENT:PROFILE with AGENT one of claude, codex, pi (got '$_override')" >&2
     exit 1
   fi
   if ! valid_profile_name "$_src_profile"; then
