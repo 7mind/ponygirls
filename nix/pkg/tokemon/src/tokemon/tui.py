@@ -61,6 +61,7 @@ def run_tui(
     query: Callable[[], list[QueryResult]],
     interval_seconds: int,
     show_invalid: bool,
+    mask_logins: bool,
     console: Console,
 ) -> None:
     events: queue.Queue[str] = queue.Queue()
@@ -81,7 +82,11 @@ def run_tui(
                     now = datetime.now(timezone.utc)
                     live.update(
                         build_table(
-                            results, now, _refresh_note(last_refresh, next_refresh, now, show_invalid), show_invalid
+                            results,
+                            now,
+                            _refresh_note(last_refresh, next_refresh, now, show_invalid),
+                            show_invalid,
+                            mask_logins,
                         ),
                         refresh=True,
                     )

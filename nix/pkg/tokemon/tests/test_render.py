@@ -17,10 +17,12 @@ NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 EXPIRED = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
 
-def _render(results: list[QueryResult], force_terminal: bool = False, show_invalid: bool = True) -> str:
+def _render(
+    results: list[QueryResult], force_terminal: bool = False, show_invalid: bool = True, mask_logins: bool = False
+) -> str:
     buffer = io.StringIO()
     console = Console(file=buffer, width=240, force_terminal=force_terminal, color_system="256" if force_terminal else None)
-    console.print(build_table(results, NOW, "test", show_invalid))
+    console.print(build_table(results, NOW, "test", show_invalid, mask_logins))
     return buffer.getvalue()
 
 
@@ -104,6 +106,18 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("\x1b[48;", single, "first logical row must be unbanded")
         double = _render([_result(window, None), _result(window, None)], force_terminal=True)
         self.assertIn("\x1b[48;", double, "second logical row must carry the band style")
+
+    def test_mask_logins_keeps_two_leading_characters(self):
+        window = QuotaWindow("5h", used=1.0, limit=100.0, unit="%", resets_at=None)
+        text = _render([_result(window, None)], mask_logins=True)
+        self.assertNotIn("tester@example.test", text)
+        self.assertIn("te" + "*" * (len("tester@example.test") - 2), text)
+
+    def test_logical_rows_are_separated_by_a_rule(self):
+        window = QuotaWindow("5h", used=1.0, limit=100.0, unit="%", resets_at=None)
+        rule = lambda text: [line for line in text.splitlines() if line.startswith("├")]
+        self.assertEqual(rule(_render([_result(window, None)])), [], "a single row needs no separator")
+        self.assertEqual(len(rule(_render([_result(window, None), _result(window, None)]))), 1)
 
     def test_window_lines_are_contiguous_without_blank_rows(self):
         first = QuotaWindow("primary (7d)", used=91.0, limit=100.0, unit="%", resets_at=None)

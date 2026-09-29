@@ -45,6 +45,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="also list rows without quota data (errors, no quota endpoint); toggle with i in the TUI",
     )
     parser.add_argument(
+        "--mask-logins",
+        action="store_true",
+        help="show only the first two characters of each login, the rest as stars",
+    )
+    parser.add_argument(
         "--home",
         type=Path,
         default=Path.home(),
@@ -69,12 +74,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.once:
         results = query()
         now = datetime.now(timezone.utc)
-        console.print(build_table(results, now, "one shot", args.show_invalid))
+        console.print(build_table(results, now, "one shot", args.show_invalid, args.mask_logins))
         return 0
 
     from tokemon.tui import run_tui
 
-    run_tui(query, args.interval, args.show_invalid, console)
+    run_tui(query, args.interval, args.show_invalid, args.mask_logins, console)
     return 0
 
 
