@@ -10,6 +10,7 @@ from tokemon.quota import QueryResult, QuotaWindow
 
 LOW_WATER_FRACTION = 0.9
 BAR_WIDTH = 10
+MASKED_LOGIN_PREFIX = 2
 ROW_BAND_STYLE = "on grey11"
 
 
@@ -138,6 +139,10 @@ def _has_quota_data(result: QueryResult) -> bool:
     return result.snapshot is not None and bool(result.snapshot.windows)
 
 
+def _mask_login(login: str) -> str:
+    return login[:MASKED_LOGIN_PREFIX] + "*" * max(len(login) - MASKED_LOGIN_PREFIX, 0)
+
+
 def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
@@ -154,15 +159,19 @@ def _hidden_caption(hidden: list[QueryResult]) -> str | None:
     return f"{_plural(len(hidden), 'row')} hidden: {', '.join(parts)}"
 
 
-def build_table(results: list[QueryResult], now: datetime, refresh_note: str, show_invalid: bool) -> Table:
+def build_table(
+    results: list[QueryResult], now: datetime, refresh_note: str, show_invalid: bool, mask_logins: bool
+) -> Table:
     """Render results; rows without quota windows are omitted unless
-    ``show_invalid`` and summarized in the table caption instead."""
+    ``show_invalid`` and summarized in the table caption instead. With
+    ``mask_logins`` each login keeps its first two characters, the rest starred."""
     shown = results if show_invalid else [result for result in results if _has_quota_data(result)]
     hidden = [] if show_invalid else [result for result in results if not _has_quota_data(result)]
     table = Table(
         title=f"tokemon — token quotas · {refresh_note}",
         caption=_hidden_caption(hidden),
         expand=True,
+        show_lines=True,
     )
     table.add_column("Profile", no_wrap=True)
     table.add_column("Src", no_wrap=True)
@@ -191,6 +200,8 @@ def build_table(results: list[QueryResult], now: datetime, refresh_note: str, sh
         if result.snapshot is not None:
             plan = result.snapshot.plan_name or ""
             identity = result.snapshot.identity or ""
+            if mask_logins:
+                identity = _mask_login(identity)
             if result.snapshot.windows:
                 windows = list(result.snapshot.windows)
         names, used_limits, bars, resets = _stacked_cells(windows, now)
