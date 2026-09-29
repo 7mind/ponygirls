@@ -104,6 +104,9 @@ def run_tui(
                         break
                     if char in ("i", "I"):
                         show_invalid = not show_invalid
+    except KeyboardInterrupt:
+        # cbreak keeps ISIG, so Ctrl+C arrives as SIGINT rather than "\x03": quit like q.
+        return
     finally:
         if restore_terminal is not None:
             restore_terminal()
