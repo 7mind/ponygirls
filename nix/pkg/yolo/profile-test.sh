@@ -73,7 +73,7 @@ assert_eq() {
 }
 
 run_profile_yolo() {
-  local config_home="$1"
+  local config_home="$1"; shift
   {
     cd "$PROJECT_DIR" &&
       HOME="$FAKE_HOME" \
@@ -83,7 +83,7 @@ run_profile_yolo() {
       YOLO_NIX_LD="$(command -v true)" \
       YOLO_JQ="$(command -v jq)" \
       YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
-      bash "$SCRIPT" --profile foo cmd true
+      bash "$SCRIPT" "$@" --profile foo cmd true
   } 2>&1
 }
 
@@ -114,6 +114,24 @@ assert_contains \
   "$OUT" \
   "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md,$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
 PROFILE_CODEX_CONFIG="$FAKE_HOME/.config/yolo/foo/codex/home/config.toml"
+# By default the profile reads the main codex config read-only; trust comes
+# from a -c override on the codex command line instead of a rewritten file.
+assert_contains \
+  "named profile re-shares the codex config read-only" \
+  "$OUT" \
+  $'--ro-bind\n'"$FAKE_HOME/.codex/config.toml,$FAKE_HOME/.codex/config.toml"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -e "$PROFILE_CODEX_CONFIG" ]]; then
+  echo "FAIL: named profile does not materialize a codex config by default"
+  FAILURES=$((FAILURES + 1))
+fi
+
+# --enable=codex-config restores the writable, $PWD-trusted copy.
+OUT="$(run_profile_yolo "$GLOBAL_CONFIG_HOME" --enable=codex-config)"
+assert_not_contains \
+  "codex-config profile does not re-share the codex config read-only" \
+  "$OUT" \
+  "$FAKE_HOME/.codex/config.toml,$FAKE_HOME/.codex/config.toml"
 assert_contains \
   "named profile seeds its codex config from the main profile" \
   "$(cat "$PROFILE_CODEX_CONFIG")" \
@@ -126,7 +144,7 @@ assert_contains \
 # A profile launched once into a directory it already trusts must still pick up
 # later changes to the main config.
 printf 'x\nmain-profile-edit\n' > "$FAKE_HOME/.codex/config.toml"
-OUT="$(run_profile_yolo "$GLOBAL_CONFIG_HOME")"
+OUT="$(run_profile_yolo "$GLOBAL_CONFIG_HOME" --enable=codex-config)"
 assert_contains \
   "relaunch re-syncs the profile codex config with the main profile" \
   "$(cat "$PROFILE_CODEX_CONFIG")" \
@@ -485,6 +503,19 @@ for _subcmd in claude codex pi "cmd true"; do
   OUT="$(run_yolo --profile foo $_subcmd)"
   assert_contains "$_subcmd: CLAUDE_CODE_SANDBOXED is set in the sandbox" "$OUT" $'--env\nCLAUDE_CODE_SANDBOXED=1'
 done
+
+# codex trusts $PWD through a -c override; the default profile's config file
+# is left alone unless --enable=codex-config asks for the rewritten copy.
+CODEX_TRUST_OVERRIDE="projects={\"$PROJECT_DIR\"={trust_level=\"trusted\"}}"
+OUT="$(run_yolo codex)"
+assert_contains "codex launch trusts \$PWD via a -c override" "$OUT" $'-c\n'"$CODEX_TRUST_OVERRIDE"
+assert_eq "default profile codex config is left untouched" "x" "$(cat "$FAKE_HOME/.codex/config.toml")"
+OUT="$(run_yolo --profile foo codex)"
+assert_contains "named profile codex launch trusts \$PWD via a -c override" "$OUT" $'-c\n'"$CODEX_TRUST_OVERRIDE"
+OUT="$(run_yolo --enable=codex-config codex)"
+assert_contains "codex-config default profile trusts \$PWD in the rewritten config" \
+  "$(cat "$FAKE_HOME/.codex/config.toml")" "[projects.\"$PROJECT_DIR\"]"
+printf 'x\n' > "$FAKE_HOME/.codex/config.toml"
 
 # --list-profiles / --delete-profile manage ~/.config/yolo/<name> host-side and
 # exit without launching the sandbox (so they also work from $HOME).

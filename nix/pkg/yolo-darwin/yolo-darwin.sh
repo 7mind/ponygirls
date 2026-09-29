@@ -78,9 +78,11 @@ Flags (must precede the subcommand):
       --disable=TAG      Drop prompt fragments and pre-start hooks carrying TAG
                          (repeatable, comma-separated).
       --enable=TAG       Turn on a feature that is off by default (repeatable,
-                         comma-separated). No Darwin feature is opt-in yet
-                         (Linux has "display"). --disable=TAG wins over
-                         --enable=TAG.
+                         comma-separated).
+                         Known tags: codex-config (give codex a writable
+                         config.toml with $PWD trust and file credential
+                         stores written in, instead of -c overrides).
+                         --disable=TAG wins over --enable=TAG.
       --ro PATH          Grant ad-hoc read-only access to PATH (repeatable;
                          skipped if missing).
       --rw PATH          Grant ad-hoc read-write access to PATH (repeatable;
@@ -606,6 +608,38 @@ render_sandbox_profile() {
 # Materialize the immutable HM config as a writable file. File-backed
 # credentials keep named profiles out of the shared macOS Keychain, while
 # persisted PWD trust avoids Codex prompting on every launch.
+# Named profiles cannot read the native ~/.codex, so their CODEX_HOME carries a
+# plain copy of the main config, regenerated each launch to track HM changes.
+mirror_codex_config() {
+  local out_file="$1" base_file="$2" tmp
+  [[ -e "$base_file" ]] || return 0
+  mkdir -p "$(dirname "$out_file")"
+  tmp="$(mktemp)"
+  cat -- "$base_file" > "$tmp"
+  rm -f "$out_file"
+  mv -- "$tmp" "$out_file"
+  chmod u+w "$out_file"
+}
+
+# codex shows its directory-trust screen whenever the merged config has no
+# projects."<cwd>".trust_level, and file credential stores keep named profiles
+# out of the shared macOS Keychain. -c supplies both per launch without
+# touching config.toml; -c splits dotted keys without honouring quotes, so the
+# path goes inside an inline-table value (parsed as TOML) instead of the key.
+toml_basic_string() {
+  local _s="$1"
+  _s="${_s//\\/\\\\}"
+  _s="${_s//\"/\\\"}"
+  printf '"%s"' "$_s"
+}
+CODEX_LAUNCH_ARGS=(
+  -c "projects={$(toml_basic_string "$PWD")={trust_level=\"trusted\"}}"
+  -c 'cli_auth_credentials_store="file"'
+  -c 'mcp_oauth_credentials_store="file"'
+)
+
+# --enable=codex-config: materialize a writable config.toml with the same
+# settings persisted, so codex can also save its own config edits.
 ensure_codex_config() {
   local out_file="$1" base_file="$2" trusted_dir="$3"
   local trust_header tmp
@@ -704,7 +738,11 @@ prepare_profile_assets() {
   reshare_profile_assets claude
   reshare_profile_assets codex
   reshare_profile_assets pi
-  ensure_codex_config "$CODEX_HOME/config.toml" "${HOME}/.codex/config.toml" "$PWD"
+  if tag_active codex-config off; then
+    ensure_codex_config "$CODEX_HOME/config.toml" "${HOME}/.codex/config.toml" "$PWD"
+  else
+    mirror_codex_config "$CODEX_HOME/config.toml" "${HOME}/.codex/config.toml"
+  fi
 }
 
 # Host pre-start hooks run for agent subcommands only. Hooks are best-effort and
@@ -740,7 +778,7 @@ yolo_exec_agent() {
       agent_argv=(claude --permission-mode bypassPermissions --dangerously-skip-permissions --disallowed-tools AskUserQuestion)
       [[ -n "$agent_prompt" ]] && agent_argv+=(--append-system-prompt "$agent_prompt")
       ;;
-    codex)  agent_argv=(codex --dangerously-bypass-approvals-and-sandbox --search) ;;
+    codex)  agent_argv=(codex --dangerously-bypass-approvals-and-sandbox --search "${CODEX_LAUNCH_ARGS[@]}") ;;
     pi)
       agent_prompt="$(compose_prompt pi)"
       agent_argv=(pi)
@@ -855,8 +893,7 @@ case "$SUBCMD" in
     ;;
 
   codex)
-    # File credential stores prevent named profiles from sharing Keychain state.
-    if [[ -z "$PROFILE" ]]; then
+    if [[ -z "$PROFILE" ]] && tag_active codex-config off; then
       ensure_codex_config "${HOME}/.codex/config.toml" "${HOME}/.codex/config.toml" "$PWD"
     fi
     yolo_exec_agent codex "${CMD_ARGS[@]}"

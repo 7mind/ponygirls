@@ -56,7 +56,7 @@ yolo --copy-sessions codex:work:personal
 ### Feature suppression and activation
 
 - `--disable=TAG` — Exclude prompt fragments and pre-start hooks carrying `TAG`. Repeatable and comma-separated, matching Linux `yolo` parsing.
-- `--enable=TAG` — Turn on a feature that is off by default. Repeatable and comma-separated, matching Linux `yolo` parsing; `--disable=TAG` wins over `--enable=TAG` for the same tag. No Darwin feature is opt-in yet (Linux has `display` for Wayland passthrough).
+- `--enable=TAG` — Turn on a feature that is off by default. Repeatable and comma-separated, matching Linux `yolo` parsing; `--disable=TAG` wins over `--enable=TAG` for the same tag. Opt-in tags: `codex-config` (see "Codex — file-based credentials").
 
 ```bash
 yolo --disable=gpu,ssh --disable=github claude
@@ -186,25 +186,11 @@ Run `/login` and complete the browser flow with the intended subscription accoun
 
 ### Codex — file-based credentials
 
-Codex stores subscription and MCP OAuth credentials. For profile isolation, configure each profile's `config.toml` to use file-based credential storage instead of the shared macOS Keychain:
+Codex stores subscription and MCP OAuth credentials. For profile isolation, yolo launches Codex with `-c cli_auth_credentials_store="file" -c mcp_oauth_credentials_store="file"`, so credentials land in files inside the active profile's directory rather than the shared macOS Keychain. The same launch passes `-c 'projects={"$PWD"={trust_level="trusted"}}'`, so Codex never shows its directory-trust screen.
 
-1. **Create a profile directory and config**:
+1. **`config.toml` is managed by yolo**: a named profile's `~/.config/yolo/<name>/codex/config.toml` is a plain copy of `~/.codex/config.toml`, regenerated on every launch, so edit the main config (or its home-manager source) instead. With `--enable=codex-config`, yolo instead writes the trust table and both credential-store keys into a writable `config.toml` (the default profile's `~/.codex/config.toml` is rewritten in place), which lets Codex persist its own config edits such as `/model` until the next launch.
 
-   ```bash
-   mkdir -p ~/.config/yolo/work/codex
-   chmod 700 ~/.config/yolo/work/codex
-   ```
-
-2. **Create or edit `~/.config/yolo/work/codex/config.toml`** and add the following at the top (before any table headers):
-
-   ```toml
-   cli_auth_credentials_store = "file"
-   mcp_oauth_credentials_store = "file"
-   ```
-
-   This tells Codex to store subscription credentials in `auth.json` and MCP OAuth tokens in files within the profile's directory, not in the shared macOS Keychain.
-
-3. **Launch Codex and authenticate**:
+2. **Launch Codex and authenticate**:
 
    ```bash
    yolo --profile work codex login
@@ -212,7 +198,7 @@ Codex stores subscription and MCP OAuth credentials. For profile isolation, conf
 
    Complete the authentication flow. Codex stores the credentials in `~/.config/yolo/work/codex/auth.json` (treat this as a secret file).
 
-4. **Each profile is now independently authenticated**. Subsequent launches use the stored credentials from that profile's `auth.json`.
+3. **Each profile is now independently authenticated**. Subsequent launches use the stored credentials from that profile's `auth.json`.
 
 **Important**: Do not select `keyring` or `auto` for `cli_auth_credentials_store` if you need profile-isolated credentials independent of the shared Keychain. Use `file` explicitly.
 
@@ -321,7 +307,7 @@ For each profile you set up (e.g., "personal" and "work"):
 
    Each should still show its original account. If you see the wrong account, check:
    - For Claude Code: Did you run `/login` separately inside each named profile?
-   - For Codex: Is the profile's `config.toml` using `cli_auth_credentials_store = "file"`?
+   - For Codex: Did you launch it through `yolo` (which passes `-c cli_auth_credentials_store="file"`), rather than running `codex` directly?
    - For pi: Is the `auth.json` in the correct profile directory?
 
 6. **For Claude Code, re-test after OAuth refresh** — If you wait long enough (hours to days), Claude Code may refresh its OAuth token. Restart Claude Code after a refresh and confirm that it still shows the correct account for the profile. This verifies that the native profile-specific credential remains associated with the intended account.
@@ -374,18 +360,10 @@ For the default (no-profile) case, Claude Code uses the shared macOS Keychain cr
 
 ### Codex login fails or shows the wrong account
 
-Ensure the profile's `config.toml` file exists and includes the file-based credential-store settings:
+Launch Codex through yolo, which selects file-based credential stores with `-c` overrides; running `codex` directly uses whatever `config.toml` specifies, possibly the Keychain. Check where the credentials landed:
 
 ```bash
-cat ~/.config/yolo/work/codex/config.toml
-# Should include:
-# cli_auth_credentials_store = "file"
-# mcp_oauth_credentials_store = "file"
-```
-
-If you see `keyring` or another value, edit the file to change these settings, then try logging in again:
-
-```bash
+ls -l ~/.config/yolo/work/codex/auth.json
 yolo --profile work codex login
 ```
 
