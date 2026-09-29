@@ -110,7 +110,10 @@ Flags (must precede the subcommand):
       --enable=TAG       Turn on a feature that is off by default (repeatable,
                          comma-separated). Known tags: display (bind Wayland
                          and X11/XWayland), dyngpu (discover and bind Linux GPU
-                         devices, sysfs, and NixOS graphics/Vulkan drivers).
+                         devices, sysfs, and NixOS graphics/Vulkan drivers),
+                         codex-config (give codex a writable config.toml copy
+                         with $PWD trusted, instead of the read-only HM config
+                         plus a -c trust override).
                          --disable=TAG wins over --enable=TAG.
       --ro PATH          Ad-hoc read-only bind of a host PATH into the sandbox
                          at the same location (repeatable; skipped if missing).
@@ -996,29 +999,36 @@ add_claude_binds() {
 
 # codex: ~/.codex (CODEX_HOME default) + ~/.config/codex. Shared read-only from
 # the main profile: config.toml, AGENTS.md, skills.
+# $PWD trust always comes from codex_trust_args; --enable=codex-config (off by
+# default) additionally materializes a writable, $PWD-trusted config.toml copy
+# so codex can persist its own config edits (e.g. /model).
 add_codex_binds() {
+  local shared_items=(AGENTS.md prompts skills)
+  tag_active codex-config off || shared_items+=(config.toml)
   if [[ -n "$PROFILE" ]]; then
     local A item; A="$(profile_dir codex)"
     mkdir -p "$A/home" "$A/config"
-    # Materialize the profile's ~/.codex/config.toml as a writable copy of the
-    # main (HM) config with $PWD pre-trusted; bound in via $A/home below. The
-    # host ~/.codex is left untouched in profile mode.
-    ensure_codex_config "$A/home/config.toml" "${HOME}/.codex/config.toml" "${PWD}"
+    # The writable copy lives in $A/home and is bound in below; the host
+    # ~/.codex is left untouched in profile mode.
+    if tag_active codex-config off; then
+      ensure_codex_config "$A/home/config.toml" "${HOME}/.codex/config.toml" "${PWD}"
+    fi
     clear_reshare_leftovers "$A/home" AGENTS.md prompts skills
     EXTRA_ARGS+=(
       --bind "$A/home,${HOME}/.codex"
       --bind "$A/config,${HOME}/.config/codex"
     )
-    # config.toml now comes from $A/home (writable, trusted); only the remaining
-    # HM-managed assets are shared read-only from the main profile.
-    for item in AGENTS.md prompts skills; do
+    # HM-managed assets (and config.toml unless codex-config supplies a
+    # writable copy) are shared read-only from the main profile.
+    for item in "${shared_items[@]}"; do
       EXTRA_ARGS+=(--ro-bind "${HOME}/.codex/$item,${HOME}/.codex/$item")
     done
   else
-    # Default profile shares the real ~/.codex: replace the immutable HM
-    # config.toml symlink in place with a writable, $PWD-trusted copy so codex
-    # finds the project trusted and never needs the failing trust write.
-    ensure_codex_config "${HOME}/.codex/config.toml" "${HOME}/.codex/config.toml" "${PWD}"
+    # Default profile shares the real ~/.codex. With codex-config, replace the
+    # immutable HM config.toml symlink in place with a writable, $PWD-trusted copy.
+    if tag_active codex-config off; then
+      ensure_codex_config "${HOME}/.codex/config.toml" "${HOME}/.codex/config.toml" "${PWD}"
+    fi
     EXTRA_ARGS+=(
       --rw "${HOME}/.codex"
       --rw "${HOME}/.config/codex"
@@ -1094,6 +1104,18 @@ add_all_agent_binds() {
 #   $1 = out_file  (writable config.toml to produce / bind into the sandbox)
 #   $2 = base_file (HM config.toml to copy settings from; a store symlink)
 #   $3 = trusted_dir ($PWD)
+# codex shows its directory-trust screen whenever the merged config has no
+# projects."<cwd>".trust_level. A -c override supplies it per launch without
+# touching config.toml; -c splits dotted keys without honouring quotes, so the
+# path goes inside an inline-table value (parsed as TOML) instead of the key.
+toml_basic_string() {
+  local _s="$1"
+  _s="${_s//\\/\\\\}"
+  _s="${_s//\"/\\\"}"
+  printf '"%s"' "$_s"
+}
+CODEX_TRUST_ARGS=(-c "projects={$(toml_basic_string "$PWD")={trust_level=\"trusted\"}}")
+
 ensure_codex_config() {
   local out_file="$1" base_file="$2" trusted_dir="$3"
   local header tmp
@@ -1160,7 +1182,7 @@ case "$SUBCMD" in
 
   codex)
     add_all_agent_binds
-    EXEC_CMD=(codex --dangerously-bypass-approvals-and-sandbox --search "${CMD_ARGS[@]}")
+    EXEC_CMD=(codex --dangerously-bypass-approvals-and-sandbox --search "${CODEX_TRUST_ARGS[@]}" "${CMD_ARGS[@]}")
     ;;
 
   pi)

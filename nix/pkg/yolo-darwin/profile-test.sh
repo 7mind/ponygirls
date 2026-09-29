@@ -640,11 +640,17 @@ run_profile_sync() {
     HOME="$RESHARE_HOME" \
     PATH="$FAKE_BIN:$PATH" \
     YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
-    bash "$SCRIPT" --profile foo cmd true 2>&1
+    bash "$SCRIPT" "$@" --profile foo cmd true 2>&1
 }
 OUT="$(run_profile_sync)"
 STATUS=$?
 assert_zero "cmd launch prepares every profile's assets" "$STATUS"
+# By default the profile's config.toml is a plain copy of the main one; trust
+# and file credential stores come from -c overrides on the codex command line.
+assert_eq "default launch copies the Codex config verbatim" 'model = "test"' "$(cat "$RESHARE_HOME/.config/yolo/foo/codex/config.toml" 2>/dev/null)"
+OUT="$(run_profile_sync --enable=codex-config)"
+STATUS=$?
+assert_zero "codex-config launch prepares every profile's assets" "$STATUS"
 RESHARE_PROF="$RESHARE_HOME/.config/yolo/foo"
 _is_real_file() { if [[ -f "$1" && ! -L "$1" ]]; then echo yes; else echo no; fi; }
 _is_real_dir()  { if [[ -d "$1" && ! -L "$1" ]]; then echo yes; else echo no; fi; }
@@ -667,7 +673,7 @@ assert_contains "cmd launch trusts the launch directory" "$(cat "$RESHARE_PROF/c
 # A profile launched once into a directory it already trusts must still pick up
 # later changes to the main config.
 printf 'model = "test"\nmain-profile-edit = true\n' > "$RESHARE_HOME/.codex/config.toml"
-OUT="$(run_profile_sync)"
+OUT="$(run_profile_sync --enable=codex-config)"
 STATUS=$?
 assert_zero "relaunch into a trusted directory succeeds" "$STATUS"
 assert_contains "relaunch re-syncs the Codex profile config with the main profile" \
@@ -720,6 +726,27 @@ source_guard "$SYMLINK_HOME" "$FAKE_HOME"
 assert_nonzero "symlinked \$PWD resolving to \$HOME refuses (portable canonicalization)" "$STATUS"
 OUT="$(cd "$SYMLINK_HOME" && HOME="$FAKE_HOME" bash -c 'source "$1" --unsafe-share-home cmd true' _ "$PREFIX" 2>&1)"; STATUS=$?
 assert_zero "--unsafe-share-home overrides the symlinked-\$HOME refusal" "$STATUS"
+
+# ── codex launch overrides ──────────────────────────────────────────────────
+printf '%s\n' "#!$_bash_path" 'printf "%s\n" "$@"' > "$FAKE_BIN/codex"
+chmod +x "$FAKE_BIN/codex"
+CODEX_HOME_DIR="$WORKDIR/codex-home"
+mkdir -p "$CODEX_HOME_DIR/.codex"
+printf 'model = "test"\n' > "$CODEX_HOME_DIR/.codex/config.toml"
+run_codex() {
+  OUT="$(cd "$PROJECT_DIR" && HOME="$CODEX_HOME_DIR" PATH="$FAKE_BIN:$PATH" \
+    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" bash "$SCRIPT" "$@" codex 2>&1)"
+  STATUS=$?
+}
+run_codex
+assert_zero "codex launch succeeds" "$STATUS"
+assert_contains "codex launch trusts \$PWD via -c" "$OUT" $'-c\n'"projects={\"$PROJECT_DIR\"={trust_level=\"trusted\"}}"
+assert_contains "codex launch selects the file CLI credential store via -c" "$OUT" $'-c\ncli_auth_credentials_store="file"'
+assert_contains "codex launch selects the file MCP credential store via -c" "$OUT" $'-c\nmcp_oauth_credentials_store="file"'
+assert_eq "default-profile codex config is left untouched" 'model = "test"' "$(cat "$CODEX_HOME_DIR/.codex/config.toml")"
+run_codex --enable=codex-config
+assert_contains "codex-config rewrites the default-profile config with trust" \
+  "$(cat "$CODEX_HOME_DIR/.codex/config.toml")" "[projects.\"$PROJECT_DIR\"]"
 
 # ── summary ─────────────────────────────────────────────────────────────────
 echo "$TESTS_RUN assertions run, $FAILURES failed."
