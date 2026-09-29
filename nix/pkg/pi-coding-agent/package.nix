@@ -37,9 +37,16 @@ buildNpmPackage (finalAttrs: {
   # garbles the interactive TUI) and surface them through pi-captured-output.log
   # plus a chat entry. This is PR #10050 rebased onto the pinned revision;
   # drop when a released pi version includes it.
+  #
+  # Settings write errors (e.g. EROFS on the home-manager store-symlinked
+  # settings.json) are only queued for drainErrors(), which interactive mode
+  # never calls after startup: the change looks applied but is silently not
+  # persisted. SettingsManager.onWriteError + an interactive-mode listener
+  # report each failed save in the chat. Drop when upstream surfaces them.
   patches = [
     ./patches/oauth-refresh-on-401.patch
     ./patches/captured-terminal-output.patch
+    ./patches/surface-settings-write-errors.patch
   ];
 
   npmDepsHash = "sha256-vpxPRiQKGZ3iWi+Bp/vq225mhpk9YAKuxiJxX/FR/m8=";

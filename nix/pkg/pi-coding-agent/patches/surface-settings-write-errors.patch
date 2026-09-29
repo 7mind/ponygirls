@@ -1,0 +1,138 @@
+diff --git a/packages/coding-agent/src/core/settings-manager.ts b/packages/coding-agent/src/core/settings-manager.ts
+index c7bb2af..8c75f26 100644
+--- a/packages/coding-agent/src/core/settings-manager.ts
++++ b/packages/coding-agent/src/core/settings-manager.ts
+@@ -217,6 +217,8 @@ export interface SettingsError {
+ 	error: Error;
+ }
+ 
++export type SettingsWriteErrorListener = (error: SettingsError) => void;
++
+ type SettingsPaths = Partial<Record<SettingsScope, string>>;
+ 
+ function toSettingsError(scope: SettingsScope, error: unknown, path?: string): SettingsError {
+@@ -327,6 +329,7 @@ export class SettingsManager {
+ 	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
+ 	private writeQueue: Promise<void> = Promise.resolve();
+ 	private errors: SettingsError[];
++	private writeErrorListeners = new Set<SettingsWriteErrorListener>();
+ 	private settingsPaths: SettingsPaths;
+ 
+ 	private constructor(
+@@ -622,7 +625,14 @@ export class SettingsManager {
+ 				this.clearModifiedScope(scope);
+ 			})
+ 			.catch((error) => {
+-				this.recordError(scope, error);
++				if (this.writeErrorListeners.size === 0) {
++					this.recordError(scope, error);
++					return;
++				}
++				const settingsError = toSettingsError(scope, error, this.settingsPaths[scope]);
++				for (const listener of this.writeErrorListeners) {
++					listener(settingsError);
++				}
+ 			});
+ 	}
+ 
+@@ -710,6 +720,14 @@ export class SettingsManager {
+ 		await this.writeQueue;
+ 	}
+ 
++	/** Receive save failures as they happen; while any listener is registered they are not queued for drainErrors(). */
++	onWriteError(listener: SettingsWriteErrorListener): () => void {
++		this.writeErrorListeners.add(listener);
++		return () => {
++			this.writeErrorListeners.delete(listener);
++		};
++	}
++
+ 	drainErrors(): SettingsError[] {
+ 		const drained = [...this.errors];
+ 		this.errors = [];
+diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+index bcfa2c6..27db4ee 100644
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -496,6 +496,7 @@ export class InteractiveMode {
+ 
+ 	// Agent subscription unsubscribe function
+ 	private unsubscribe?: () => void;
++	private unsubscribeSettingsWriteErrors?: () => void;
+ 	private signalCleanupHandlers: Array<() => void> = [];
+ 
+ 	// Track if editor is in bash mode (text starts with !)
+@@ -2024,6 +2025,12 @@ export class InteractiveMode {
+ 
+ 		this.unsubscribe?.();
+ 		this.unsubscribe = undefined;
++		this.unsubscribeSettingsWriteErrors?.();
++		this.unsubscribeSettingsWriteErrors = this.settingsManager.onWriteError(({ scope, path, error }) => {
++			this.showError(
++				`Failed to save ${scope} settings${path ? ` to ${path}` : ""}: ${error.message}. The change applies to this session only.`,
++			);
++		});
+ 		this.applyRuntimeSettings();
+ 
+ 		if (options.renderBeforeBind) {
+@@ -6898,6 +6905,7 @@ export class InteractiveMode {
+ 		if (this.unsubscribe) {
+ 			this.unsubscribe();
+ 		}
++		this.unsubscribeSettingsWriteErrors?.();
+ 		if (this.isInitialized) {
+ 			this.stopInteractiveTui(fullscreenExitOutput);
+ 			this.isInitialized = false;
+diff --git a/packages/coding-agent/test/settings-manager.test.ts b/packages/coding-agent/test/settings-manager.test.ts
+index 8e1bb83..9ca6e85 100644
+--- a/packages/coding-agent/test/settings-manager.test.ts
++++ b/packages/coding-agent/test/settings-manager.test.ts
+@@ -3,7 +3,12 @@ import { homedir } from "os";
+ import { join } from "path";
+ import { afterEach, beforeEach, describe, expect, it } from "vitest";
+ import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
+-import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
++import {
++	type Settings,
++	type SettingsError,
++	SettingsManager,
++	type SettingsStorage,
++} from "../src/core/settings-manager.ts";
+ 
+ describe("SettingsManager", () => {
+ 	const testDir = join(process.cwd(), "test-settings-tmp");
+@@ -234,6 +239,34 @@ describe("SettingsManager", () => {
+ 			]);
+ 			expect(manager.drainErrors()).toEqual([]);
+ 		});
++
++		it("should deliver save errors to write-error listeners instead of queueing them", async () => {
++			const writeError = Object.assign(new Error("EROFS: read-only file system"), { code: "EROFS" });
++			const storage: SettingsStorage = {
++				withLock: (scope, fn) => {
++					if (fn(scope === "global" ? JSON.stringify({ hideThinkingBlock: true }) : undefined) !== undefined) {
++						throw writeError;
++					}
++				},
++			};
++			const manager = SettingsManager.fromStorage(storage);
++			const received: SettingsError[] = [];
++			const unsubscribe = manager.onWriteError((error) => received.push(error));
++
++			manager.setHideThinkingBlock(false);
++			await manager.flush();
++
++			expect(received).toMatchObject([{ scope: "global", error: writeError }]);
++			expect(manager.drainErrors()).toEqual([]);
++			expect(manager.getHideThinkingBlock()).toBe(false);
++
++			unsubscribe();
++			manager.setHideThinkingBlock(true);
++			await manager.flush();
++
++			expect(received).toHaveLength(1);
++			expect(manager.drainErrors()).toMatchObject([{ scope: "global", error: writeError }]);
++		});
+ 	});
+ 
+ 	describe("project trust", () => {

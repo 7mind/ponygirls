@@ -18,7 +18,15 @@ let
   xiaomiProfileRelDir = ".pi/agent-xiaomi-ams";
 
   # Pi's retry settings are global, so the Xiaomi AMS policy uses a separate
-  # agent directory with only settings.json overridden.
+  # agent directory with only settings.json overridden. Select it per process
+  # with PI_CODING_AGENT_DIR=~/.pi/agent-xiaomi-ams; the cq wrapper derives
+  # CQ_AGENTS_DIR from it, so cq-agents must be shared too.
+  #
+  # Both settings.json files are read-only store symlinks: settings are fully
+  # declarative. Runtime saves (/settings, Ctrl+T, ...) apply to the current
+  # session only and pi reports the EROFS failure in the chat (see
+  # patches/surface-settings-write-errors.patch); persist a change by editing
+  # programs.pi.settings here and switching.
   generalRetryPolicy = {
     httpIdleTimeoutMs = 120000;
     retry = {
@@ -52,6 +60,7 @@ let
     "APPEND_SYSTEM.md"
     "auth.json"
     "cache"
+    "cq-agents"
     "exa-usage.json"
     "extensions"
     "mcp-cache.json"
