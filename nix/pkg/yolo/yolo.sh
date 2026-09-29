@@ -69,6 +69,10 @@ ENV_ARGS=()
 # profile-specific EXTRA_ARGS) and after the declarative EXTRA_PATH_ARGS —
 # because bwrap applies mounts in argv order: the last bind covering a path wins.
 ADHOC_BIND_ARGS=()
+# Credential borrowing: `--auth-override AGENT:PROFILE` (repeatable, one per
+# agent) binds PROFILE's credentials file read-write over the launched
+# profile's, so the session keeps its own state but authenticates as PROFILE.
+AUTH_OVERRIDES=()
 
 print_help() {
   cat <<'EOF'
@@ -81,6 +85,12 @@ Flags (must precede the subcommand):
   -p, --profile NAME     Use isolated config namespace ~/.config/yolo/NAME
                          (default: agents read their real ~/.claude, ~/.codex, …)
   -w, --work             Alias for `--profile work`
+      --auth-override AGENT:PROFILE
+                         Authenticate AGENT (claude|codex) with the credentials
+                         of named profile PROFILE while keeping the launched
+                         profile's sessions and state (repeatable, one per
+                         agent). The credentials file is shared live, so token
+                         refreshes are visible to PROFILE too.
       --disable=TAG      Drop every device bind, prompt fragment and pre-start
                          hook carrying TAG (repeatable, comma-separated).
                          Known tags: audio, codegraph, display, dyngpu, gpu, vm.
@@ -119,6 +129,11 @@ while [[ $# -gt 0 ]]; do
       fi
       PROFILE="$2"; shift 2 ;;
     --work|-w) PROFILE="work"; shift ;;
+    --auth-override)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: $1 requires AGENT:PROFILE" >&2; exit 1
+      fi
+      AUTH_OVERRIDES+=("$2"); shift 2 ;;
     --disable=*)
       IFS=',' read -ra _dtags <<< "${1#*=}"
       DISABLE_TAGS+=("${_dtags[@]}")
@@ -182,7 +197,10 @@ tag_active() {
 
 # Guard against path traversal / nesting: a profile name maps directly into a
 # filesystem path under ~/.config/yolo, so restrict it to a safe charset.
-if [[ -n "$PROFILE" && ( ! "$PROFILE" =~ ^[A-Za-z0-9._-]+$ || "$PROFILE" == "." || "$PROFILE" == ".." ) ]]; then
+valid_profile_name() {
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ && "$1" != "." && "$1" != ".." ]]
+}
+if [[ -n "$PROFILE" ]] && ! valid_profile_name "$PROFILE"; then
   echo "Error: invalid profile name '$PROFILE' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')" >&2
   exit 1
 fi
@@ -206,6 +224,58 @@ fi
 
 # Host-side backing directory for an agent within the active named profile.
 profile_dir() { printf '%s/.config/yolo/%s/%s' "${HOME}" "${PROFILE}" "$1"; }
+
+# Credentials file of each agent, relative to its home dir (~/.claude, ~/.codex
+# in the sandbox; <profile>/<agent>/home on the host). Both agents rewrite it in
+# place when the target is a mount point (codex always truncates+writes; claude
+# falls back from rename to in-place on EBUSY), so a file bind stays live.
+agent_credentials_file() {
+  case "$1" in
+    claude) printf '.credentials.json' ;;
+    codex) printf 'auth.json' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Validated --auth-override binds, appended after every agent home bind.
+# AUTH_PLACEHOLDERS lists launched-profile credential paths that do not exist
+# yet: bwrap creates an empty mount-point file there, removed again on exit.
+AUTH_BIND_ARGS=()
+AUTH_PLACEHOLDERS=()
+_auth_agents_seen=" "
+for _override in "${AUTH_OVERRIDES[@]}"; do
+  _agent="${_override%%:*}"
+  _src_profile="${_override#*:}"
+  if [[ "$_override" != *:* ]] || ! _cred_file="$(agent_credentials_file "$_agent")"; then
+    echo "Error: --auth-override expects AGENT:PROFILE with AGENT one of claude, codex (got '$_override')" >&2
+    exit 1
+  fi
+  if ! valid_profile_name "$_src_profile"; then
+    echo "Error: invalid profile name '$_src_profile' in --auth-override $_override" >&2
+    exit 1
+  fi
+  if [[ "$_src_profile" == "$PROFILE" ]]; then
+    echo "Error: --auth-override $_override names the launched profile itself" >&2
+    exit 1
+  fi
+  if [[ "$_auth_agents_seen" == *" $_agent "* ]]; then
+    echo "Error: more than one --auth-override for $_agent" >&2
+    exit 1
+  fi
+  _auth_agents_seen+="$_agent "
+  _src="${HOME}/.config/yolo/${_src_profile}/${_agent}/home/${_cred_file}"
+  if [[ ! -f "$_src" || ! -s "$_src" ]]; then
+    echo "Error: profile '$_src_profile' has no $_agent credentials at $_src (log in there first: yolo --profile $_src_profile $_agent)" >&2
+    exit 1
+  fi
+  if [[ -n "$PROFILE" ]]; then
+    _dst_host="$(profile_dir "$_agent")/home/${_cred_file}"
+  else
+    _dst_host="${HOME}/.${_agent}/${_cred_file}"
+  fi
+  [[ -e "$_dst_host" ]] || AUTH_PLACEHOLDERS+=("$_dst_host")
+  AUTH_BIND_ARGS+=(--bind "$_src,${HOME}/.${_agent}/${_cred_file}")
+done
 
 # A profile's writable home is bound onto the agent's real home dir, then the
 # HM-managed assets (settings.json, CLAUDE.md, skills, ...) are re-shared
@@ -795,6 +865,7 @@ add_all_agent_binds() {
   add_claude_binds
   add_codex_binds
   add_pi_binds
+  EXTRA_ARGS+=("${AUTH_BIND_ARGS[@]}")
 }
 
 # codex gates its interactive directory-trust screen on persisted trust read
@@ -953,12 +1024,17 @@ _yolo_entrypoint="$YOLO_SANDBOX_ENTRYPOINT"
 # layer, no cleanup). The host-side composed files live in tmpfs and are removed
 # on exit.
 # Any host-side resource that must outlive the sandbox (secrets/hooks tmpfiles,
-# synthesized ssh_config, clipboard broker) is cleaned on EXIT, so we run in
+# synthesized ssh_config, clipboard broker, --auth-override mount-point
+# placeholders) is cleaned on EXIT, so we run in
 # the foreground behind a trap rather than exec'ing when any of them is active.
 # The entrypoint layer is added only when secrets/hooks are in play — the
 # ssh_config bind and clipboard broker socket are plain binds.
 _yolo_cleanup() {
   rm -f "$SECRET_TMPFILE" "$SANDBOX_HOOKS_TMPFILE" "$SSH_CONFIG_TMPFILE"
+  local _placeholder
+  for _placeholder in "${AUTH_PLACEHOLDERS[@]}"; do
+    [[ -f "$_placeholder" && ! -s "$_placeholder" ]] && rm -f "$_placeholder"
+  done
   if [[ -n "${CLIP_BROKER_PID:-}" ]]; then
     kill "$CLIP_BROKER_PID" 2>/dev/null || true
     wait "$CLIP_BROKER_PID" 2>/dev/null || true
@@ -969,7 +1045,7 @@ _yolo_cleanup() {
     CLIP_PROXY_DIR=""
   fi
 }
-if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMPFILE" || -n "$CLIP_BROKER_PID" ]]; then
+if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMPFILE" || -n "$CLIP_BROKER_PID" || ${#AUTH_PLACEHOLDERS[@]} -gt 0 ]]; then
   trap '_yolo_cleanup' EXIT
   # Fatal signals must also pass through cleanup (an untrapped TERM/INT/HUP
   # would skip the EXIT trap). A trapped signal only interrupts a `wait`

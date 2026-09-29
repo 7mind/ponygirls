@@ -387,6 +387,86 @@ assert_after "declarative --rw follows the profile pi binds" "$OUT" \
   "$DECL_RW" "$FAKE_HOME/.pi/agent/mcp.json,$FAKE_HOME/.pi/agent/mcp.json"
 assert_after "CLI --ro follows the declarative extras" "$OUT" "$CLI_RO" "$DECL_RW"
 
+# --auth-override AGENT:PROFILE binds the other profile's credentials file
+# read-write over the launched profile's, leaving its sessions/state in place.
+WORK_CODEX_AUTH="$FAKE_HOME/.config/yolo/work/codex/home/auth.json"
+WORK_CLAUDE_CREDS="$FAKE_HOME/.config/yolo/work/claude/home/.credentials.json"
+FOO_CODEX_AUTH="$FAKE_HOME/.config/yolo/foo/codex/home/auth.json"
+FOO_CLAUDE_CREDS="$FAKE_HOME/.config/yolo/foo/claude/home/.credentials.json"
+mkdir -p "$(dirname "$WORK_CODEX_AUTH")" "$(dirname "$WORK_CLAUDE_CREDS")"
+printf '{"work":"codex"}\n' > "$WORK_CODEX_AUTH"
+printf '{"work":"claude"}\n' > "$WORK_CLAUDE_CREDS"
+
+OUT="$(run_yolo --profile foo --auth-override codex:work --auth-override claude:work cmd true)"
+STATUS=$?
+assert_eq "auth override launch succeeds" "0" "$STATUS"
+assert_contains "codex auth override binds the source profile's auth.json read-write" "$OUT" \
+  $'--bind\n'"$WORK_CODEX_AUTH,$FAKE_HOME/.codex/auth.json"
+assert_contains "claude auth override binds the source profile's credentials read-write" "$OUT" \
+  $'--bind\n'"$WORK_CLAUDE_CREDS,$FAKE_HOME/.claude/.credentials.json"
+assert_after "codex auth override follows the profile codex home bind" "$OUT" \
+  "$WORK_CODEX_AUTH,$FAKE_HOME/.codex/auth.json" "$FAKE_HOME/.config/yolo/foo/codex/home,$FAKE_HOME/.codex"
+assert_after "claude auth override follows the profile claude home bind" "$OUT" \
+  "$WORK_CLAUDE_CREDS,$FAKE_HOME/.claude/.credentials.json" "$FAKE_HOME/.config/yolo/foo/claude/home,$FAKE_HOME/.claude"
+assert_not_contains "auth override keeps the launched profile's claude home" "$OUT" \
+  "$FAKE_HOME/.config/yolo/work/claude/home,$FAKE_HOME/.claude"
+
+OUT="$(run_yolo --auth-override codex:work cmd true)"
+assert_contains "auth override applies to the default profile" "$OUT" \
+  $'--bind\n'"$WORK_CODEX_AUTH,$FAKE_HOME/.codex/auth.json"
+
+OUT="$(run_yolo --profile foo --auth-override codex:missing cmd true)"
+STATUS=$?
+assert_eq "auth override without source credentials is refused" "1" "$STATUS"
+assert_contains "missing source credentials are named" "$OUT" \
+  "$FAKE_HOME/.config/yolo/missing/codex/home/auth.json"
+
+OUT="$(run_yolo --profile work --auth-override codex:work cmd true)"
+STATUS=$?
+assert_eq "auth override from the launched profile itself is refused" "1" "$STATUS"
+
+OUT="$(run_yolo --profile foo --auth-override pi:work cmd true)"
+STATUS=$?
+assert_eq "auth override for an unsupported agent is refused" "1" "$STATUS"
+
+OUT="$(run_yolo --profile foo --auth-override codex:work --auth-override codex:other cmd true)"
+STATUS=$?
+assert_eq "two auth overrides for one agent are refused" "1" "$STATUS"
+
+OUT="$(run_yolo --profile foo --auth-override codex:../x cmd true)"
+STATUS=$?
+assert_eq "auth override with an invalid profile name is refused" "1" "$STATUS"
+
+# bwrap creates an empty mountpoint file when the launched profile has no
+# credentials of its own; yolo removes it on exit so the profile is not left
+# with an empty (invalid) credentials file. Existing credentials are untouched.
+printf '%s\n' \
+  "#!$_bash_path" \
+  ": > \"$FOO_CODEX_AUTH\"" \
+  "[[ -e \"$FOO_CLAUDE_CREDS\" ]] || : > \"$FOO_CLAUDE_CREDS\"" \
+  > "$FAKE_BIN/mountpoint-sandbox"
+chmod +x "$FAKE_BIN/mountpoint-sandbox"
+rm -f "$FOO_CODEX_AUTH"
+printf '{"foo":"claude"}\n' > "$FOO_CLAUDE_CREDS"
+(
+  cd "$PROJECT_DIR" && HOME="$FAKE_HOME" \
+    YOLO_LLM_SANDBOX="$FAKE_BIN/mountpoint-sandbox" \
+    YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
+    YOLO_NIX_LD="$(command -v true)" \
+    YOLO_JQ="$(command -v jq)" \
+    YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
+    bash "$SCRIPT" --profile foo --auth-override codex:work --auth-override claude:work cmd true
+)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -e "$FOO_CODEX_AUTH" ]]; then
+  echo "FAIL: auth override removes the mountpoint file it caused"
+  FAILURES=$((FAILURES + 1))
+fi
+assert_eq "auth override leaves the launched profile's own credentials untouched" \
+  '{"foo":"claude"}' "$(cat "$FOO_CLAUDE_CREDS")"
+assert_eq "auth override leaves the source credentials untouched" \
+  '{"work":"codex"}' "$(cat "$WORK_CODEX_AUTH")"
+
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"
   exit 1
