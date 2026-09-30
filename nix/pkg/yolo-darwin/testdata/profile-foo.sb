@@ -40,3 +40,8 @@
     (subpath (string-append (param "HOME_DIR") "/.config/yolo/foo/codex"))
     (literal (string-append (param "HOME_DIR") "/.config/yolo/foo/pi"))
     (subpath (string-append (param "HOME_DIR") "/.config/yolo/foo/pi")))
+
+;; Override the base grant to the shared MCP registry: no sandboxed agent
+;; reads it (pi uses its own agent/mcp.json). Configured grants may re-grant.
+(deny file-read*
+    (subpath (string-append (param "HOME_DIR") "/.config/mcp")))

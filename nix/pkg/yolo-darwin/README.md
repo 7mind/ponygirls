@@ -150,7 +150,7 @@ Read-only access is granted to system files required to run the agent:
 - `~/.config/git`, `~/.gitconfig`, `~/.config/jj` (version control configuration).
 - `~/.nix-profile`, `~/.config/nix`, `~/.local/share/nix` (Nix configuration).
 - `~/.config/gh` (GitHub CLI configuration).
-- `~/.config/mcp`, `~/.config/direnv`, `~/.local/share/direnv`, and `~/.direnvrc` (from the pinned upstream base profile).
+- `~/.config/direnv`, `~/.local/share/direnv`, and `~/.direnvrc` (from the pinned upstream base profile). The base profile also grants `~/.config/mcp`; yolo denies it, since no sandboxed agent reads it (pi uses its own `mcp.json` shared asset). An explicit `--ro` or `extraReadOnlyPaths` grant re-enables it.
 - Declarative `extraReadOnlyPaths` and per-invocation `--ro` paths.
 - A configured Podman/Docker Unix socket, including both a stable symlink and
   its canonical runtime target.
