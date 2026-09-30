@@ -20,6 +20,12 @@ if [ -n "${YOLO_SECRETS_FILE:-}" ]; then
   done < "$YOLO_SECRETS_FILE"
 fi
 
+# Trace the remaining steps (each top-level hook command and the final exec) to
+# stderr, timestamped like llm-sandbox's `exec bwrap` line so slow startup steps
+# stand out. Enabled only after the secrets loop so their values stay out of it.
+PS4='+ ${EPOCHREALTIME} '
+set -x
+
 if [ -n "${YOLO_SANDBOX_HOOKS_FILE:-}" ]; then
   # shellcheck disable=SC1090
   . "$YOLO_SANDBOX_HOOKS_FILE"
