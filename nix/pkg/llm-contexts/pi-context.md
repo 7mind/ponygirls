@@ -55,7 +55,8 @@ When an executing cq prompt says to run another `/cq:*` command **INLINE**:
 1. Convert the invocation to its prompt-catalog role id: remove the `/cq:`
    prefix and replace each remaining `:` with `/`.
 2. Call the ledger MCP `fetch_prompt` capability for that role id (as a direct
-   tool when exposed, otherwise through the `mcp` proxy), and require
+   `mcp__ledger__fetch_prompt` tool, loading it with `tool_search` first when it
+   is not yet declared), and require
    `kind: "orchestrator-command"` with `dispatched: false`.
 3. Substitute any text following the invocation for `$ARGUMENTS`, then execute
    the returned `promptTemplate` INLINE in this same parent session before

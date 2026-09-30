@@ -3,7 +3,7 @@
 set -u
 YOLO_SQLITE="$(command -v sqlite3)" || { echo "profile-test.sh: sqlite3 must be on PATH" >&2; exit 1; }
 export YOLO_SQLITE
-export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp-adapter.json'
+export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp.json'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 SCRIPT="$SCRIPT_DIR/yolo.sh"
@@ -25,7 +25,6 @@ mkdir -p \
   "$FAKE_HOME/.codex/skills" \
   "$FAKE_HOME/.config/claude" \
   "$FAKE_HOME/.config/codex" \
-  "$FAKE_HOME/.config/mcp" \
   "$FAKE_HOME/.pi/agent/integration-agents" \
   "$FAKE_HOME/.pi/agent/prompts"
 printf 'x\n' > "$FAKE_HOME/.codex/AGENTS.md"
@@ -393,7 +392,7 @@ assert_after "CLI --ro follows the built-in agents-registry bind" "$OUT" "$CLI_R
 assert_after "CLI --ro follows the profile claude binds" "$OUT" \
   "$CLI_RO" "$FAKE_HOME/.config/yolo/foo/claude/home,$FAKE_HOME/.claude"
 assert_after "CLI --ro follows the profile pi binds" "$OUT" \
-  "$CLI_RO" "$FAKE_HOME/.pi/agent/mcp-adapter.json,$FAKE_HOME/.pi/agent/mcp-adapter.json"
+  "$CLI_RO" "$FAKE_HOME/.pi/agent/mcp.json,$FAKE_HOME/.pi/agent/mcp.json"
 assert_after "CLI --rw follows the CLI --ro that preceded it" "$OUT" "$CLI_RW" "$CLI_RO"
 assert_after "the sandbox command separator still follows the CLI binds" "$OUT" "--" "$CLI_RW"
 
@@ -404,7 +403,7 @@ assert_after "declarative --ro follows the built-in agents-registry bind" "$OUT"
 assert_after "declarative --ro follows the profile claude re-shares" "$OUT" \
   "$DECL_RO" "$FAKE_HOME/.claude/settings.json,$FAKE_HOME/.claude/settings.json"
 assert_after "declarative --rw follows the profile pi binds" "$OUT" \
-  "$DECL_RW" "$FAKE_HOME/.pi/agent/mcp-adapter.json,$FAKE_HOME/.pi/agent/mcp-adapter.json"
+  "$DECL_RW" "$FAKE_HOME/.pi/agent/mcp.json,$FAKE_HOME/.pi/agent/mcp.json"
 assert_after "CLI --ro follows the declarative extras" "$OUT" "$CLI_RO" "$DECL_RW"
 
 # --auth-override AGENT:PROFILE binds the other profile's credentials file
