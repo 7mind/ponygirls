@@ -510,6 +510,7 @@ done
 CODEX_TRUST_OVERRIDE="projects={\"$PROJECT_DIR\"={trust_level=\"trusted\"}}"
 OUT="$(run_yolo codex)"
 assert_contains "codex launch trusts \$PWD via a -c override" "$OUT" $'-c\n'"$CODEX_TRUST_OVERRIDE"
+assert_contains "codex launch keeps mouse selection with tmux via a -c override" "$OUT" $'-c\ntui.fullscreen_transcript=false'
 assert_eq "default profile codex config is left untouched" "x" "$(cat "$FAKE_HOME/.codex/config.toml")"
 OUT="$(run_yolo --profile foo codex)"
 assert_contains "named profile codex launch trusts \$PWD via a -c override" "$OUT" $'-c\n'"$CODEX_TRUST_OVERRIDE"
