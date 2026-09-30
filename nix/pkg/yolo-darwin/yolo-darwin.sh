@@ -595,6 +595,11 @@ _render_yolo_rules() {
     printf '    (literal (string-append (param "HOME_DIR") "/.config/yolo/%s/pi"))\n' "$name"
     printf '    (subpath (string-append (param "HOME_DIR") "/.config/yolo/%s/pi")))\n' "$name"
   fi
+  printf '\n'
+  printf ';; Override the base grant to the shared MCP registry: no sandboxed agent\n'
+  printf ';; reads it (pi uses its own agent/mcp.json). Configured grants may re-grant.\n'
+  printf '(deny file-read*\n'
+  printf '    (subpath (string-append (param "HOME_DIR") "/.config/mcp")))\n'
   _render_configured_path_grants
 }
 

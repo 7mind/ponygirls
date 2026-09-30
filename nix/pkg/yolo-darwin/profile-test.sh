@@ -293,6 +293,20 @@ if [[ -z "$PROFILE_REGRANT_LINE" || -z "$DECL_RO_LINE" || "$DECL_RO_LINE" -le "$
   FAILURES=$((FAILURES + 1))
 fi
 
+# The upstream base grants ~/.config/mcp read access; no sandboxed agent reads
+# it, so yolo denies it in every profile, before any configured grant (which
+# may still re-grant it explicitly).
+MCP_DENY=$'(deny file-read*\n    (subpath (string-append (param "HOME_DIR") "/.config/mcp")))'
+assert_contains "named: denies upstream ~/.config/mcp grant" "$RENDERED" "$MCP_DENY"
+assert_contains "default: denies upstream ~/.config/mcp grant" "$(render_profile "" /tmp/x)" "$MCP_DENY"
+MCP_DENY_LINE="$(printf '%s\n' "$RENDERED_PATHS" \
+  | grep -n -F -- '"/.config/mcp")))' | tail -1 | cut -d: -f1)"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -z "$MCP_DENY_LINE" || -z "$DECL_RO_LINE" || "$DECL_RO_LINE" -le "$MCP_DENY_LINE" ]]; then
+  echo "FAIL: configured grants follow the ~/.config/mcp deny -- expected declarative ($DECL_RO_LINE) after deny ($MCP_DENY_LINE)"
+  FAILURES=$((FAILURES + 1))
+fi
+
 # Named profiles override any upstream grants to native agent homes.
 assert_contains "named: denies real ~/.claude" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.claude"))'
 assert_contains "named: denies real ~/.claude.json" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.claude.json"))'
