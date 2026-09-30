@@ -1,6 +1,8 @@
+diff --git a/packages/coding-agent/src/config.ts b/packages/coding-agent/src/config.ts
+index 360c609e8..fa2ed4440 100644
 --- a/packages/coding-agent/src/config.ts
 +++ b/packages/coding-agent/src/config.ts
-@@ -577,3 +577,8 @@
+@@ -605,3 +605,8 @@ export function getSessionsDir(): string {
  export function getDebugLogPath(): string {
  	return join(getAgentDir(), `${APP_NAME}-debug.log`);
  }
@@ -9,9 +11,11 @@
 +export function getCapturedOutputLogPath(): string {
 +	return join(getAgentDir(), `${APP_NAME}-captured-output.log`);
 +}
+diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+index b7eb92054..2d5344a90 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-@@ -20,6 +20,7 @@
+@@ -20,6 +20,7 @@ import {
  import type {
  	AutocompleteItem,
  	AutocompleteProvider,
@@ -19,7 +23,7 @@
  	EditorComponent,
  	Keybinding,
  	KeyId,
-@@ -58,6 +59,7 @@
+@@ -58,6 +59,7 @@ import {
  	CONFIG_DIR_NAME,
  	getAgentDir,
  	getAuthPath,
@@ -27,31 +31,30 @@
  	getDebugLogPath,
  	getDocsPath,
  	VERSION,
-@@ -465,6 +467,9 @@
+@@ -469,6 +471,11 @@ export class InteractiveMode {
  	private lastStatusSpacer: Spacer | undefined = undefined;
  	private lastStatusText: ThemedText | undefined = undefined;
  	private lastStatusMessage = "";
 +	private capturedOutputSpacer: Spacer | undefined = undefined;
-+	private capturedOutputText: Text | undefined = undefined;
++	private capturedOutputText: ThemedText | undefined = undefined;
++	private capturedOutputMessage = "";
++	private capturedOutputStream: CapturedOutputStream = "stdout";
 +	private capturedOutputCount = 0;
  	private managedToolStatusStarted = false;
  
  	// Streaming message tracking
-@@ -586,6 +591,7 @@
- 			terminal: options.terminal,
+@@ -591,6 +598,7 @@ export class InteractiveMode {
  			onRightClickPaste: this.onRightClickPaste,
  			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
+ 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
 +			onCapturedOutput: (text, stream) => this.handleCapturedTerminalOutput(text, stream),
  		});
  		this.ui = createInteractiveTuiReference(() => this.renderer);
  		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-@@ -3706,6 +3712,43 @@
- 		this.chatContainer.addChild(text);
- 		this.lastStatusSpacer = spacer;
- 		this.lastStatusText = text;
-+		this.ui.requestRender();
-+	}
-+
+@@ -3736,6 +3744,48 @@ export class InteractiveMode {
+ 		this.ui.requestRender();
+ 	}
+ 
 +	/**
 +	 * Surface writes captured while the TUI owns the terminal (see ProcessTerminal
 +	 * output capture), e.g. console output from extension code. The captured text
@@ -71,42 +74,52 @@
 +			// the chat entry below still surfaces the output.
 +		}
 +		this.capturedOutputCount += 1;
-+		const detail = theme.fg("muted", `Captured output ×${this.capturedOutputCount} · full log: ${logPath}`);
-+		const body = `${theme.fg(stream === "stderr" ? "warning" : "dim", message)}\n${detail}`;
++		this.capturedOutputMessage = message;
++		this.capturedOutputStream = stream;
 +		const children = this.chatContainer.children;
 +		const last = children.length > 0 ? children[children.length - 1] : undefined;
 +		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
 +		if (last && secondLast && last === this.capturedOutputText && secondLast === this.capturedOutputSpacer) {
-+			this.capturedOutputText.setText(body);
++			this.capturedOutputText.invalidate();
 +		} else {
 +			const spacer = new Spacer(1);
-+			const entry = new Text(body, 1, 0);
++			const entry = new ThemedText(
++				() =>
++					`${theme.fg(this.capturedOutputStream === "stderr" ? "warning" : "dim", this.capturedOutputMessage)}\n${theme.fg("muted", `Captured output ×${this.capturedOutputCount} · full log: ${logPath}`)}`,
++				1,
++				0,
++			);
 +			this.chatContainer.addChild(spacer);
 +			this.chatContainer.addChild(entry);
 +			this.capturedOutputSpacer = spacer;
 +			this.capturedOutputText = entry;
 +		}
- 		this.ui.requestRender();
- 	}
- 
++		this.ui.requestRender();
++	}
++
+ 	private addCustomEntryToChat(entry: Extract<SessionEntry, { type: "custom" }>): void {
+ 		const renderer = this.session.extensionRunner.getEntryRenderer(entry.customType);
+ 		if (!renderer) {
+diff --git a/packages/coding-agent/src/modes/interactive/tui-renderer.ts b/packages/coding-agent/src/modes/interactive/tui-renderer.ts
+index 6487c1c6f..a868f4e89 100644
 --- a/packages/coding-agent/src/modes/interactive/tui-renderer.ts
 +++ b/packages/coding-agent/src/modes/interactive/tui-renderer.ts
 @@ -1,4 +1,4 @@
--import type { Terminal } from "@earendil-works/pi-tui";
-+import type { CapturedOutputStream, Terminal } from "@earendil-works/pi-tui";
+-import type { Terminal, WheelScrollLines } from "@earendil-works/pi-tui";
++import type { CapturedOutputStream, Terminal, WheelScrollLines } from "@earendil-works/pi-tui";
  import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
  import { copyToClipboard } from "../../utils/clipboard.ts";
  import { openBrowser } from "../../utils/open-browser.ts";
-@@ -12,6 +12,8 @@
- 	readonly terminal?: Terminal;
+@@ -13,6 +13,8 @@ export interface InteractiveTuiOptions {
  	readonly onRightClickPaste?: () => void;
  	readonly fullscreenCopyOnSelect?: boolean;
+ 	readonly fullscreenWheelScrollLines?: WheelScrollLines;
 +	/** See ProcessTerminalOptions.onCapturedOutput; ignored when a terminal is passed in. */
 +	readonly onCapturedOutput?: (text: string, stream: CapturedOutputStream) => void;
  }
  
  /** Composition root shared by coding-agent presentations. */
-@@ -19,7 +21,7 @@
+@@ -20,7 +22,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions & { readonly
  export function createInteractiveTui(options: InteractiveTuiOptions & { readonly tuiMode: "regular" }): TuiMainScreen;
  export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen;
  export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen {
@@ -115,9 +128,11 @@
  	if (options.tuiMode === "fullscreen") {
  		const styleSearchMatch = (text: string) => theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
  		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
+diff --git a/packages/tui/src/index.ts b/packages/tui/src/index.ts
+index 93fb8b727..aba01f85d 100644
 --- a/packages/tui/src/index.ts
 +++ b/packages/tui/src/index.ts
-@@ -108,7 +108,12 @@
+@@ -108,7 +108,12 @@ export { oklabToOkhslLightness } from "./oklab.ts";
  // Input buffering for batch splitting
  export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
  // Terminal interface and implementations
@@ -131,9 +146,11 @@
  // Terminal colors
  export {
  	parseTerminalColorSchemeReport,
+diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
+index cce2dd116..a4a2fbdaa 100644
 --- a/packages/tui/src/terminal.ts
 +++ b/packages/tui/src/terminal.ts
-@@ -131,11 +131,34 @@
+@@ -131,11 +131,34 @@ export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
  	return DEFAULT_ESCAPE_TIMEOUT_MS;
  }
  
@@ -168,7 +185,7 @@
  	private inputHandler?: (data: string) => void;
  	private resizeHandler?: () => void;
  	private _kittyProtocolActive = false;
-@@ -163,6 +186,10 @@
+@@ -163,6 +186,10 @@ export class ProcessTerminal implements Terminal {
  		return env;
  	})();
  
@@ -179,7 +196,7 @@
  	get kittyProtocolActive(): boolean {
  		return this._kittyProtocolActive;
  	}
-@@ -172,6 +199,7 @@
+@@ -172,6 +199,7 @@ export class ProcessTerminal implements Terminal {
  	}
  
  	start(onInput: (data: string) => void, onResize: () => void): void {
@@ -187,7 +204,7 @@
  		this.inputHandler = onInput;
  		this.resizeHandler = onResize;
  
-@@ -184,7 +212,7 @@
+@@ -184,7 +212,7 @@ export class ProcessTerminal implements Terminal {
  		process.stdin.resume();
  
  		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
@@ -196,7 +213,7 @@
  
  		// Set up resize handler immediately
  		process.stdout.on("resize", this.resizeHandler);
-@@ -261,7 +289,7 @@
+@@ -261,7 +289,7 @@ export class ProcessTerminal implements Terminal {
  		this.keyboardProtocolPushed = true;
  		this.pendingKeyboardProtocolDeviceAttributes += 1;
  		this.clearKeyboardProtocolNegotiationBuffer();
@@ -205,7 +222,7 @@
  	}
  
  	private handleKeyboardProtocolNegotiationSequence(
-@@ -363,13 +391,13 @@
+@@ -363,13 +391,13 @@ export class ProcessTerminal implements Terminal {
  
  	private enableModifyOtherKeys(): void {
  		if (this._kittyProtocolActive || this._modifyOtherKeysActive) return;
@@ -221,7 +238,7 @@
  		this._modifyOtherKeysActive = false;
  	}
  
-@@ -394,7 +422,7 @@
+@@ -394,7 +422,7 @@ export class ProcessTerminal implements Terminal {
  		if (shouldDisableKittyProtocol) {
  			// Disable Kitty keyboard protocol first so any late key releases
  			// do not generate new Kitty escape sequences.
@@ -230,7 +247,7 @@
  			this.keyboardProtocolPushed = false;
  			this._kittyProtocolActive = false;
  			setKittyProtocolActive(false);
-@@ -428,18 +456,18 @@
+@@ -428,18 +456,18 @@ export class ProcessTerminal implements Terminal {
  
  	stop(): void {
  		if (this.clearProgressInterval()) {
@@ -252,7 +269,7 @@
  			this.keyboardProtocolPushed = false;
  			this._kittyProtocolActive = false;
  			setKittyProtocolActive(false);
-@@ -472,10 +500,63 @@
+@@ -472,10 +500,63 @@ export class ProcessTerminal implements Terminal {
  		if (process.stdin.setRawMode) {
  			process.stdin.setRawMode(this.wasRaw);
  		}
@@ -317,7 +334,7 @@
  		if (this.writeLogPath) {
  			try {
  				fs.appendFileSync(this.writeLogPath, data, { encoding: "utf8" });
-@@ -496,52 +577,52 @@
+@@ -496,52 +577,52 @@ export class ProcessTerminal implements Terminal {
  	moveBy(lines: number): void {
  		if (lines > 0) {
  			// Move down

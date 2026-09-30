@@ -4,7 +4,7 @@
 # Seatbelt enforcement must run outside Nix's own Darwin sandbox because
 # sandbox-exec cannot nest there; see README.md's manual checklist.
 set -u
-export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp.json'
+export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp-adapter.json'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 SCRIPT="$SCRIPT_DIR/yolo-darwin.sh"

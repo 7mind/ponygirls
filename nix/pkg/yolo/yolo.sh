@@ -1038,10 +1038,10 @@ add_codex_binds() {
 
 # pi: ~/.pi (state + ~/.pi/agent config). HM-managed assets (settings.json,
 # AGENTS.md, skills, optional extensions) are shared read-only from the main
-# profile, like codex. Pi has no built-in MCP — its pi-mcp-adapter package
+# profile, like codex. Pi's MCP goes through its pi-mcp-adapter package, which
 # reads the shared registry at ~/.config/mcp/mcp.json (written by programs.mcp),
 # so bind that read-only too.
-PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md prompts skills extensions mcp.json)
+PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md prompts skills extensions mcp-adapter.json)
 if [[ -n "${YOLO_PI_SHARED_ASSETS:-}" ]]; then
   PI_SHARED_ASSETS=()
   while IFS= read -r asset; do

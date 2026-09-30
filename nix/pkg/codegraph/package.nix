@@ -27,7 +27,7 @@ buildNpmPackage {
   npmDeps = fetchNpmDeps {
     inherit src;
     # Hash of the pinned main rev's package-lock.json closure. Refresh on bumps.
-    hash = "sha256-pmkzXQObY25kqCnlpPKm+wYwe0jCAkwD2ZPfPg/4Auc=";
+    hash = "sha256-5K5Lqdhh58JLJntNsvEBZQTuLOQxkT+uCLdY6EzEG9E=";
   };
 
   nodejs = nodejs_24;
