@@ -33,7 +33,10 @@ fi
 
 # These pointers (passed in via bwrap --env, so not cleared by the host-side
 # unset of YOLO_*) have served their purpose; drop them so the agent's env
-# carries no YOLO_* orchestration state.
+# carries no YOLO_* orchestration state. Untraced, so the startup trace (which
+# lands in the agent's terminal) names no YOLO_* variables either.
+{ set +x; } 2>/dev/null
 unset YOLO_SECRETS_FILE YOLO_SANDBOX_HOOKS_FILE
+set -x
 
 exec "$@"
