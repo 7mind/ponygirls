@@ -1,5 +1,6 @@
 { lib
 , buildEnv
+, runtimeShell
 , writeShellScriptBin
 , writeText
 , writeTextFile
@@ -95,7 +96,9 @@ let
     ${sandboxHooksJsonExports}
     ${shellHooksJsonExports}
     ${cmdHooksJsonExports}
-    exec bash ${yoloDarwinScript} "$@"
+    # Not PATH `bash`: non-interactive SSH sessions resolve it to macOS
+    # /bin/bash 3.2, which rejects the script's bash >= 4.2 syntax ([[ -v ]]).
+    exec ${runtimeShell} ${yoloDarwinScript} "$@"
   '';
 in
 bin // { meta = bin.meta // { platforms = lib.platforms.darwin; }; }
