@@ -79,7 +79,7 @@
           ];
         }).config.smind.hm.dev.llm.models;
         defaultModelsCheck =
-          assert defaultModels.codex.model == "gpt-6-sol";
+          assert defaultModels.codex.model == "gpt-6.1-sol";
           assert defaultModels.codex.reasoningEffort == "medium";
           assert defaultModels.claude.model == "opus";
           assert defaultModels.claude.effort == "high";
