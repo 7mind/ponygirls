@@ -17,6 +17,11 @@ from tokemon.quota import QueryResult
 from tokemon.render import build_table
 
 COUNTDOWN_PERIOD_SECONDS = 1.0
+WINDOW_TITLE = "tokemon"
+# xterm title stack (XTWINOPS 22/23): save the shell's title, restore it on exit.
+# Terminals without the stack ignore these, leaving the title as set.
+PUSH_TITLE = "\x1b[22;0t"
+POP_TITLE = "\x1b[23;0t"
 
 
 def _key_reader(events: "queue.Queue[str]") -> Callable[[], None] | None:
@@ -71,6 +76,9 @@ def run_tui(
     now = datetime.now(timezone.utc)
     last_refresh = now
     next_refresh = now
+    if console.is_terminal:
+        console.file.write(PUSH_TITLE)
+        console.set_window_title(WINDOW_TITLE)
     try:
         with Live(console=console, screen=True, auto_refresh=False) as live:
             while True:
@@ -108,5 +116,8 @@ def run_tui(
         # cbreak keeps ISIG, so Ctrl+C arrives as SIGINT rather than "\x03": quit like q.
         return
     finally:
+        if console.is_terminal:
+            console.file.write(POP_TITLE)
+            console.file.flush()
         if restore_terminal is not None:
             restore_terminal()
