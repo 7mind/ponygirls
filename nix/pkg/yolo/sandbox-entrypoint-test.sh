@@ -10,8 +10,8 @@ WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 SECRET_VALUE="entrypoint-secret-value"
-printf 'YOLO_TEST_SECRET=%s\n' "$SECRET_VALUE" > "$WORKDIR/secrets.env"
-printf '%s\n' 'true hook-marker' 'export YOLO_TEST_HOOKED=1' > "$WORKDIR/hooks.sh"
+printf 'ENTRYPOINT_TEST_SECRET=%s\n' "$SECRET_VALUE" > "$WORKDIR/secrets.env"
+printf '%s\n' 'true hook-marker' 'export HOOK_EXPORTED=1' > "$WORKDIR/hooks.sh"
 
 TESTS_RUN=0
 FAILURES=0
@@ -29,7 +29,7 @@ check() {
 
 stdout="$(
   YOLO_SECRETS_FILE="$WORKDIR/secrets.env" YOLO_SANDBOX_HOOKS_FILE="$WORKDIR/hooks.sh" \
-    bash "$ENTRYPOINT" bash -c 'printf "%s %s\n" "$YOLO_TEST_SECRET" "$YOLO_TEST_HOOKED"' \
+    bash "$ENTRYPOINT" bash -c 'printf "%s %s\n" "$ENTRYPOINT_TEST_SECRET" "$HOOK_EXPORTED"' \
     2> "$WORKDIR/stderr"
 )"
 stderr="$(< "$WORKDIR/stderr")"
@@ -41,6 +41,8 @@ check "hook command is traced with a timestamp" \
   grep -Eq "${timestamped_line}true hook-marker\$" <<< "$stderr"
 check "final exec is traced with a timestamp" \
   grep -Eq "${timestamped_line}exec bash -c " <<< "$stderr"
+check "trace carries no YOLO_* orchestration variable names" \
+  bash -c '! grep -Fq YOLO_ <<< "$1"' _ "$stderr"
 check "secret value never reaches the trace" \
   bash -c '! grep -Fq "$1" <<< "$2"' _ "$SECRET_VALUE" "$stderr"
 
