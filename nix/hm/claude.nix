@@ -126,6 +126,27 @@ in
               CLAUDE_ACCOUNT="unknown-claude-account"
             fi
             printf '\033[2m\033[35m%s \033[0m\033[2m\033[37m%s \033[0m\033[2m@ %s \033[0m\033[2m\033[36min \033[1m\033[36m%s\033[0m' "$CLAUDE_ACCOUNT" "$(whoami)" "$(hostname -s)" "$(pwd | sed "s|^$HOME|~|")"
+            # Claude Code passes session state as JSON on stdin
+            # (https://code.claude.com/docs/en/statusline). The branch is not
+            # in it and comes from git; the effort level and the rate limits
+            # are present only for some models and plans, so each field is
+            # printed only when it exists.
+            BRANCH="$(${pkgs.git}/bin/git -C "$(pwd)" branch --show-current 2>/dev/null)"
+            if [ -n "$BRANCH" ]; then
+              printf ' \033[2m\033[33m%s\033[0m' "$BRANCH"
+            fi
+            ${pkgs.jq}/bin/jq -j '
+              def pct(v): if v == null then empty else (v | floor | tostring) + "%" end;
+              def limit(name; l): if l == null or l.used_percentage == null then empty
+                else name + " " + pct(l.used_percentage)
+                  + (if l.resets_at == null then "" else " (" + (l.resets_at | strflocaltime("%a %H:%M")) + ")" end) end;
+              [ (if .model.display_name == null then empty
+                 else .model.display_name + (if .effort.level == null then "" else "/" + .effort.level end) end),
+                (.context_window.used_percentage | if . == null then empty else "ctx " + pct(.) end),
+                limit("5h"; .rate_limits.five_hour),
+                limit("7d"; .rate_limits.seven_day)
+              ] | map(" \u001b[2m" + . + "\u001b[0m") | join("")
+            ' 2>/dev/null
           '';
         };
       };
