@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Regression tests exercise the public yolo CLI with a recording sandbox.
 set -u
-export YOLO_SQLITE="$(command -v sqlite3)"
+YOLO_SQLITE="$(command -v sqlite3)" || { echo "profile-test.sh: sqlite3 must be on PATH" >&2; exit 1; }
+export YOLO_SQLITE
 export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp-adapter.json'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
