@@ -144,8 +144,8 @@ let
     }
   '';
 
-  # Pi has no native MCP; pi-mcp-adapter (added via enableMcpIntegration)
-  # auto-reads ~/.config/mcp/mcp.json — but servers there are lazy (connect on
+  # MCP goes through pi-mcp-adapter (added via enableMcpIntegration; Pi's
+  # built-in MCP is disabled there), which auto-reads ~/.config/mcp/mcp.json — but servers there are lazy (connect on
   # first tool call). This Pi-only override (higher precedence than the shared
   # file) re-declares the same servers with lifecycle="keep-alive" so Pi
   # connects them at startup and auto-reconnects. Kept out of the shared
@@ -190,7 +190,7 @@ let
         "serverUrl"
       ]
     );
-  piMcpJson = jsonFormat.generate "pi-mcp.json" {
+  piMcpJson = jsonFormat.generate "pi-mcp-adapter.json" {
     mcpServers = lib.mapAttrs
       (
         name: server:
@@ -227,7 +227,7 @@ let
   # stays reproducible.
   inferenceProviderPackages = {
     xai = "npm:pi-xai@0.18.0";
-    ollama = "npm:pi-ollama-cloud@0.12.1";
+    ollama = "npm:pi-ollama-cloud@0.12.2";
     minimax = "npm:@sinamtz/pi-minimax-provider@1.1.7";
   };
   defaultEnabledProviders = [ ];
@@ -255,9 +255,9 @@ in
     #   ~/.pi/agent/extensions/*.ts       auto-discovered TS extensions
     #   settings.packages / settings.extensions   npm:/git: packages + local exts
     #   PI_CODING_AGENT_DIR         overrides the ~/.pi/agent location
-    # MCP: Pi has no built-in MCP. The `pi-mcp-adapter` package reads
-    # ~/.config/mcp/mcp.json — which `programs.mcp` already writes — so
-    # enableMcpIntegration only adds the adapter to settings.packages.
+    # MCP: the `pi-mcp-adapter` package reads ~/.config/mcp/mcp.json — which
+    # `programs.mcp` already writes — so enableMcpIntegration adds the adapter
+    # to settings.packages and disables Pi's built-in MCP.
     (mkAgentHarness {
       name = "pi";
       prettyName = "Pi";
@@ -291,7 +291,7 @@ in
 
     programs.pi.mcpAdapterPackage = lib.mkOption {
       type = lib.types.str;
-      default = "npm:pi-mcp-adapter@2.37.0";
+      default = "npm:pi-mcp-adapter@3.3.0";
       description = ''
         Pi package spec for the MCP adapter, added to
         {option}`programs.pi.settings.packages` when
@@ -419,8 +419,8 @@ in
           #       drop-client-web-search-for-grok.ts did.
           #   Both fixes are present in every release since 0.9.1.
           # - pi-ollama-cloud: Ollama Cloud provider (first-party, badlogic).
-          #   PINNED to 0.12.1 (its model refresh uses pi's native `refreshModels`,
-          #   needs pi ≥ 0.84.0 — vendored pi is 0.87.1).
+          #   PINNED to 0.12.2 (its model refresh uses pi's native `refreshModels`,
+          #   needs pi ≥ 0.84.0 — vendored pi is 0.99.1).
           #   Registers the `ollama-cloud` provider against https://ollama.com/v1
           #   (apiKey `$OLLAMA_API_KEY`; or ~/.pi/agent/ollama-cloud.json) — no
           #   local server. Self-contained: its only imports (@sinclair/typebox +
@@ -465,20 +465,25 @@ in
       };
 
       # Pi-specific MCP override: selected servers are pinned keep-alive so
-      # pi-mcp-adapter connects them at startup (see piMcpJson).
-      home.file.".pi/agent/mcp.json".source = piMcpJson;
+      # pi-mcp-adapter connects them at startup (see piMcpJson). pi-mcp-adapter
+      # >= 3.0 reads mcp-adapter.json; ~/.pi/agent/mcp.json belongs to Pi's
+      # built-in MCP.
+      home.file.".pi/agent/mcp-adapter.json".source = piMcpJson;
 
       # Declarative pi-search-hub config (see searchHubConfig). RO store symlink,
-      # like mcp.json above.
+      # like mcp-adapter.json above.
       home.file.".pi/agent/extensions/search.json".source = searchHubConfig;
 
     }
     # Pi-specific extras (gated on the programs.pi sub-options declared above).
     # Pi's adapter reads the shared ~/.config/mcp/mcp.json registry (written by
     # programs.mcp); we only need to add the adapter to settings.packages (the
-    # list merges with the package set above).
+    # list merges with the package set above). Pi's built-in MCP (pi >= 0.99)
+    # is disabled so a stale ~/.pi/agent/mcp.json (e.g. an old copy in a yolo
+    # profile) cannot start the same servers a second time.
     (lib.mkIf piCfg.enableMcpIntegration {
       programs.pi.settings.packages = [ piCfg.mcpAdapterPackage ];
+      programs.pi.settings.extensions = [ "-builtin:mcp" ];
     })
     (lib.mkIf (piCfg.extensionsDir != null) {
       home.file."${piCfg.configDir}/extensions" = {
