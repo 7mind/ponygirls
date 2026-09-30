@@ -17,7 +17,8 @@ _jq_path="$(command -v jq || echo /usr/bin/jq)"
 _python_path="$(command -v python3 || echo /usr/bin/python3)"
 export YOLO_SANDBOX_EXEC="$_true_path"
 export YOLO_JQ="$_jq_path"
-export YOLO_SQLITE="$(command -v sqlite3)"
+YOLO_SQLITE="$(command -v sqlite3)" || { echo "profile-test.sh: sqlite3 must be on PATH" >&2; exit 1; }
+export YOLO_SQLITE
 export YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh"
 
 FAILURES=0

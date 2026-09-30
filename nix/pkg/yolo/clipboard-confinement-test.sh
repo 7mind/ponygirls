@@ -584,7 +584,10 @@ if [[ $EXPECT_VULNERABLE -eq 1 ]]; then
 fi
 
 required_labels=(
-  exchange project cache ivy xdg-cq-state fallback-cq-state adhoc-ro adhoc-rw
+  # xdg-cq-state / fallback-cq-state: disabled since a9e3f56 removed yolo's
+  # built-in cq state bind; restore if a cq integration binds it again.
+  exchange project cache ivy # xdg-cq-state fallback-cq-state
+  adhoc-ro adhoc-rw
   configured-ro configured-rw clipboard-proxy raw-bind raw-ro-bind raw-dev-bind podman pipewire
   pulse pulse-cookie device git direnv direnv-share direnvrc mcp claude-default
   claude-json-default claude-config codex-default codex-config pi-default
@@ -600,8 +603,9 @@ required_labels=(
 )
 required_sources=(
   "$EXCHANGE_SOCKET" "$PROJECT_DIR/$SOCKET_LEAF" "$FAKE_HOME/.cache/$SOCKET_LEAF"
-  "$FAKE_HOME/.ivy2/$SOCKET_LEAF" "$XDG_STATE_DIR/cq/$SOCKET_LEAF"
-  "$FAKE_HOME/.local/state/cq/$SOCKET_LEAF" "$FAKE_HOME/adhoc-ro/$SOCKET_LEAF"
+  "$FAKE_HOME/.ivy2/$SOCKET_LEAF"
+  # "$XDG_STATE_DIR/cq/$SOCKET_LEAF" "$FAKE_HOME/.local/state/cq/$SOCKET_LEAF"
+  "$FAKE_HOME/adhoc-ro/$SOCKET_LEAF"
   "$FAKE_HOME/adhoc-rw/$SOCKET_LEAF" "$FAKE_HOME/configured-ro/$SOCKET_LEAF"
   "$FAKE_HOME/configured-rw/$SOCKET_LEAF" "$CLIP_PROXY_BOUND_DIR/$SOCKET_LEAF"
   "$RAW_BIND_SRC/$SOCKET_LEAF"
@@ -636,8 +640,9 @@ required_sources=(
 )
 required_destinations=(
   "$EXCHANGE_SOCKET" "$PROJECT_DIR/$SOCKET_LEAF" "$FAKE_HOME/.cache/$SOCKET_LEAF"
-  "$FAKE_HOME/.ivy2/$SOCKET_LEAF" "$XDG_STATE_DIR/cq/$SOCKET_LEAF"
-  "$FAKE_HOME/.local/state/cq/$SOCKET_LEAF" "$FAKE_HOME/adhoc-ro/$SOCKET_LEAF"
+  "$FAKE_HOME/.ivy2/$SOCKET_LEAF"
+  # "$XDG_STATE_DIR/cq/$SOCKET_LEAF" "$FAKE_HOME/.local/state/cq/$SOCKET_LEAF"
+  "$FAKE_HOME/adhoc-ro/$SOCKET_LEAF"
   "$FAKE_HOME/adhoc-rw/$SOCKET_LEAF" "$FAKE_HOME/configured-ro/$SOCKET_LEAF"
   "$FAKE_HOME/configured-rw/$SOCKET_LEAF" "$CLIP_PROXY_BOUND_DIR/$SOCKET_LEAF"
   "$RAW_BIND_DST/$SOCKET_LEAF"
