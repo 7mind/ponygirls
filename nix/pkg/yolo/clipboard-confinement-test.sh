@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp-adapter.json'
+export YOLO_PI_SHARED_ASSETS=$'settings.json\nAGENTS.md\nAPPEND_SYSTEM.md\nintegration-agents\nprompts\nskills\nextensions\nmcp.json'
 # Raw-socket confinement suite for the yolo bubblewrap sandbox (defects:D262).
 #
 # Modes:
@@ -385,7 +385,6 @@ for directory in \
   "$FAKE_HOME/.config/git" \
   "$FAKE_HOME/.config/direnv" \
   "$FAKE_HOME/.local/share/direnv" \
-  "$FAKE_HOME/.config/mcp" \
   "$FAKE_HOME/.claude" \
   "$FAKE_HOME/.config/claude" \
   "$FAKE_HOME/.codex" \
@@ -426,7 +425,7 @@ for leaf in \
   .codex/AGENTS.md .codex/prompts .codex/skills \
   .pi/agent/settings.json .pi/agent/AGENTS.md .pi/agent/APPEND_SYSTEM.md \
   .pi/agent/integration-agents .pi/agent/prompts .pi/agent/skills \
-  .pi/agent/extensions .pi/agent/mcp-adapter.json; do
+  .pi/agent/extensions .pi/agent/mcp.json; do
   socket_at "$FAKE_HOME/$leaf"
 done
 
@@ -589,7 +588,7 @@ required_labels=(
   exchange project cache ivy # xdg-cq-state fallback-cq-state
   adhoc-ro adhoc-rw
   configured-ro configured-rw clipboard-proxy raw-bind raw-ro-bind raw-dev-bind podman pipewire
-  pulse pulse-cookie device git direnv direnv-share direnvrc mcp claude-default
+  pulse pulse-cookie device git direnv direnv-share direnvrc claude-default
   claude-json-default claude-config codex-default codex-config pi-default
   profile-claude-home profile-claude-json profile-claude-config
   profile-codex-home profile-codex-config profile-pi-home
@@ -614,7 +613,7 @@ required_sources=(
   "$FAKE_HOME/.config/pulse/cookie" "$FAKE_HOME/device/$SOCKET_LEAF"
   "$FAKE_HOME/.config/git/$SOCKET_LEAF" "$FAKE_HOME/.config/direnv/$SOCKET_LEAF"
   "$FAKE_HOME/.local/share/direnv/$SOCKET_LEAF" "$FAKE_HOME/.direnvrc"
-  "$FAKE_HOME/.config/mcp/$SOCKET_LEAF" "$FAKE_HOME/.claude/$SOCKET_LEAF"
+  "$FAKE_HOME/.claude/$SOCKET_LEAF"
   "$FAKE_HOME/.claude.json" "$FAKE_HOME/.config/claude/$SOCKET_LEAF"
   "$FAKE_HOME/.codex/$SOCKET_LEAF" "$FAKE_HOME/.config/codex/$SOCKET_LEAF"
   "$FAKE_HOME/.pi/$SOCKET_LEAF"
@@ -632,7 +631,7 @@ required_sources=(
   "$FAKE_HOME/.pi/agent/AGENTS.md" "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
   "$FAKE_HOME/.pi/agent/integration-agents" "$FAKE_HOME/.pi/agent/prompts"
   "$FAKE_HOME/.pi/agent/skills" "$FAKE_HOME/.pi/agent/extensions"
-  "$FAKE_HOME/.pi/agent/mcp-adapter.json" "$FAKE_HOME/.zshrc" "$FAKE_HOME/.zshenv"
+  "$FAKE_HOME/.pi/agent/mcp.json" "$FAKE_HOME/.zshrc" "$FAKE_HOME/.zshenv"
   "$FAKE_HOME/.zprofile" "$FAKE_HOME/.zlogin" "$FAKE_HOME/.zlogout"
   "$FAKE_HOME/.bashrc" "$FAKE_HOME/.bash_profile" "$FAKE_HOME/.bash_login"
   "$FAKE_HOME/.profile" "$FAKE_HOME/.inputrc" "$FAKE_HOME/.config/fish/$SOCKET_LEAF"
@@ -651,7 +650,7 @@ required_destinations=(
   "$FAKE_HOME/.config/pulse/cookie" "$FAKE_HOME/device/$SOCKET_LEAF"
   "$FAKE_HOME/.config/git/$SOCKET_LEAF" "$FAKE_HOME/.config/direnv/$SOCKET_LEAF"
   "$FAKE_HOME/.local/share/direnv/$SOCKET_LEAF" "$FAKE_HOME/.direnvrc"
-  "$FAKE_HOME/.config/mcp/$SOCKET_LEAF" "$FAKE_HOME/.claude/$SOCKET_LEAF"
+  "$FAKE_HOME/.claude/$SOCKET_LEAF"
   "$FAKE_HOME/.claude.json" "$FAKE_HOME/.config/claude/$SOCKET_LEAF"
   "$FAKE_HOME/.codex/$SOCKET_LEAF" "$FAKE_HOME/.config/codex/$SOCKET_LEAF"
   "$FAKE_HOME/.pi/$SOCKET_LEAF" "$FAKE_HOME/.claude/$SOCKET_LEAF"
@@ -666,7 +665,7 @@ required_destinations=(
   "$FAKE_HOME/.pi/agent/AGENTS.md" "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
   "$FAKE_HOME/.pi/agent/integration-agents" "$FAKE_HOME/.pi/agent/prompts"
   "$FAKE_HOME/.pi/agent/skills" "$FAKE_HOME/.pi/agent/extensions"
-  "$FAKE_HOME/.pi/agent/mcp-adapter.json" "$FAKE_HOME/.zshrc" "$FAKE_HOME/.zshenv"
+  "$FAKE_HOME/.pi/agent/mcp.json" "$FAKE_HOME/.zshrc" "$FAKE_HOME/.zshenv"
   "$FAKE_HOME/.zprofile" "$FAKE_HOME/.zlogin" "$FAKE_HOME/.zlogout"
   "$FAKE_HOME/.bashrc" "$FAKE_HOME/.bash_profile" "$FAKE_HOME/.bash_login"
   "$FAKE_HOME/.profile" "$FAKE_HOME/.inputrc" "$FAKE_HOME/.config/fish/$SOCKET_LEAF"

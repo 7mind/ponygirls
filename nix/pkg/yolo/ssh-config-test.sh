@@ -22,7 +22,6 @@ mkdir -p \
   "$FAKE_HOME/.codex" \
   "$FAKE_HOME/.config/claude" \
   "$FAKE_HOME/.config/codex" \
-  "$FAKE_HOME/.config/mcp" \
   "$FAKE_HOME/.config/git" \
   "$FAKE_HOME/.config/direnv" \
   "$FAKE_HOME/.local/share/direnv" \

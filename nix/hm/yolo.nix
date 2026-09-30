@@ -264,7 +264,7 @@ in
         "prompts"
         "skills"
         "extensions"
-        "mcp-adapter.json"
+        "mcp.json"
       ];
       description = ''
         Paths relative to Pi's agent directory that named yolo profiles

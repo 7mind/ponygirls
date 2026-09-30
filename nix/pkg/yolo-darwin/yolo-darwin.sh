@@ -675,9 +675,9 @@ ensure_codex_config() {
   chmod u+w "$out_file"
 }
 
-# pi resolves all per-user state below PI_CODING_AGENT_DIR. Its MCP registry
-# remains shared because pi-mcp-adapter reads ~/.config/mcp/mcp.json directly.
-PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md prompts skills extensions mcp-adapter.json)
+# pi resolves all per-user state below PI_CODING_AGENT_DIR, including the
+# built-in MCP registry mcp.json, which is copied in as a shared asset.
+PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md prompts skills extensions mcp.json)
 if [[ -n "${YOLO_PI_SHARED_ASSETS:-}" ]]; then
   PI_SHARED_ASSETS=()
   while IFS= read -r asset; do

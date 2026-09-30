@@ -39,8 +39,7 @@ let
 
   # The `programs.pi` module is defined IN THIS FLAKE (Pi isn't in home-manager
   # upstream): the common agent-harness surface comes from the shared factory,
-  # plus the Pi-specific options (extensionsDir / mcpAdapterPackage /
-  # appendSystemPrompt) declared in the inline module below. Both are imported
+  # plus the Pi-specific options (extensionsDir / appendSystemPrompt) declared in the inline module below. Both are imported
   # at the bottom; this file then configures the resulting `programs.pi`.
   mkAgentHarness = import ../lib/mk-agent-harness.nix;
 
@@ -144,28 +143,26 @@ let
     }
   '';
 
-  # MCP goes through pi-mcp-adapter (added via enableMcpIntegration; Pi's
-  # built-in MCP is disabled there), which auto-reads ~/.config/mcp/mcp.json — but servers there are lazy (connect on
-  # first tool call). This Pi-only override (higher precedence than the shared
-  # file) re-declares the same servers with lifecycle="keep-alive" so Pi
-  # connects them at startup and auto-reconnects. Kept out of the shared
-  # programs.mcp registry so `lifecycle` doesn't leak into claude/codex configs.
-  # `directTools` (gated by smind.hm.dev.llm.pi.mcpDirectTools) is likewise
-  # Pi-only — it registers a server's tools directly instead of behind the
-  # adapter's mcp() proxy, and stays out of the shared registry for the same
-  # reason.
+  # MCP goes through Pi's built-in MCP extension (pi >= 0.99), which reads
+  # only ~/.pi/agent/mcp.json — not the shared ~/.config/mcp/mcp.json — so the
+  # programs.mcp registry is re-emitted there. It connects every enabled
+  # server at session start and reconnects a dropped one on the next call.
+  #
+  # Exposure: codemode is disabled (see `-builtin:codemode` below), so servers
+  # default to `deferred` — tools stay undeclared until the built-in
+  # `tool_search` tool loads them. `directTools` servers (gated by
+  # smind.hm.dev.llm.pi.mcpDirectTools) get `direct` exposure instead. Both
+  # are Pi-only and stay out of the shared registry used by claude/codex.
   #
   # Shape: match programs.mcp → ~/.config/mcp/mcp.json (null/empty optional
-  # fields stripped, type added), then layer Pi-only lifecycle/directTools.
-  # Raw `programs.mcp.servers` submodule attrs carry `url = null`,
-  # `enabled = null`, `env = {}`, `headers = {}` defaults; emitting those as
-  # JSON null crashes pi-mcp-adapter@2.14.0 — resolveServerUrl only treats
-  # `url === undefined` as missing, then calls `url.matchAll(...)` after the
-  # stdio child has already been spawned (upstream
-  # https://github.com/nicobailon/pi-mcp-adapter/issues/222). The empty-value
-  # filter mirrors lib.hm.mcp.transformMcpServer (home-manager
-  # modules/lib/mcp.nix); reimplemented locally so this module stays evaluable
-  # under pure nixpkgs lib (pi-prompt-root-test) without a home-manager input.
+  # fields stripped, type added), then layer the Pi-only exposure. Raw
+  # `programs.mcp.servers` submodule attrs carry `url = null`,
+  # `enabled = null`, `env = {}`, `headers = {}` defaults; Pi's validator
+  # rejects e.g. `enabled: null` ("enabled must be a boolean"), so they are
+  # stripped. The empty-value filter mirrors lib.hm.mcp.transformMcpServer
+  # (home-manager modules/lib/mcp.nix); reimplemented locally so this module
+  # stays evaluable under pure nixpkgs lib (pi-prompt-root-test) without a
+  # home-manager input.
   piMcpDirectTools = cfg.pi.mcpDirectTools;
   # Same empty-value filter as lib.hm.mcp.transformMcpServer + addType
   # (also drops disabled/serverUrl, which the shared transform excludes).
@@ -190,7 +187,7 @@ let
         "serverUrl"
       ]
     );
-  piMcpJson = jsonFormat.generate "pi-mcp-adapter.json" {
+  piMcpJson = jsonFormat.generate "pi-mcp.json" {
     mcpServers = lib.mapAttrs
       (
         name: server:
@@ -202,8 +199,7 @@ let
                 piMcpDirectTools;
           in
           (normalizeMcpServer server)
-          // { lifecycle = "keep-alive"; }
-          // lib.optionalAttrs directToolsEnabled { directTools = true; }
+          // { exposure = if directToolsEnabled then "direct" else "deferred"; }
       )
       config.programs.mcp.servers;
   };
@@ -220,9 +216,8 @@ let
   # Inference-provider extension packages, each gated by a
   # `smind.hm.dev.llm.pi.providers.<name>.enable` flag (declared in `options`
   # below). None are enabled by default; all are opt-in. This covers
-  # ONLY inference providers — pi-search-hub (web search) and pi-mcp-adapter are
-  # not providers and stay unconditionally installed (search-hub in the static
-  # packages list; the adapter via enableMcpIntegration). Every npm spec in
+  # ONLY inference providers — pi-search-hub (web search) is not a provider and
+  # stays unconditionally installed (in the static packages list). Every npm spec in
   # `settings.packages` is pinned to an exact version so the managed install
   # stays reproducible.
   inferenceProviderPackages = {
@@ -255,9 +250,8 @@ in
     #   ~/.pi/agent/extensions/*.ts       auto-discovered TS extensions
     #   settings.packages / settings.extensions   npm:/git: packages + local exts
     #   PI_CODING_AGENT_DIR         overrides the ~/.pi/agent location
-    # MCP: the `pi-mcp-adapter` package reads ~/.config/mcp/mcp.json — which
-    # `programs.mcp` already writes — so enableMcpIntegration adds the adapter
-    # to settings.packages and disables Pi's built-in MCP.
+    # MCP: Pi's built-in MCP reads ~/.pi/agent/mcp.json, so
+    # enableMcpIntegration re-emits the `programs.mcp` registry there.
     (mkAgentHarness {
       name = "pi";
       prettyName = "Pi";
@@ -289,17 +283,6 @@ in
       example = lib.literalExpression "./pi-extensions";
     };
 
-    programs.pi.mcpAdapterPackage = lib.mkOption {
-      type = lib.types.str;
-      default = "npm:pi-mcp-adapter@3.3.0";
-      description = ''
-        Pi package spec for the MCP adapter, added to
-        {option}`programs.pi.settings.packages` when
-        {option}`programs.pi.enableMcpIntegration` is set. Pin a version
-        with e.g. {command}`"npm:pi-mcp-adapter@1.2.3"`.
-      '';
-    };
-
     programs.pi.appendSystemPrompt = lib.mkOption {
       type = lib.types.either lib.types.lines lib.types.path;
       default = "";
@@ -320,10 +303,11 @@ in
       default = false;
       example = [ "codegraph" "ledger" ];
       description = ''
-        Register additional Pi MCP servers' tools individually instead of
-        behind pi-mcp-adapter's single `mcp({search, tool})` proxy. The proxy
-        exists for context-window economy (progressive disclosure). `true` sets
-        `directTools = true` on every server in
+        Declare additional Pi MCP servers' tools to the model directly
+        (`exposure = "direct"`) instead of deferring them behind Pi's built-in
+        `tool_search` tool (`exposure = "deferred"`). Deferral exists for
+        context-window economy (progressive disclosure). `true` sets
+        `exposure = "direct"` on every server in
         {option}`programs.mcp.servers`; a list of server names enables it for
         those additional servers. Pi-only: applied in `piMcpJson`, not leaked
         into the shared MCP registry used by claude/codex.
@@ -333,8 +317,8 @@ in
     # One enable flag per inference-provider extension package (see
     # `inferenceProviderPackages` in the let block). Generated from that mapping
     # so the option set and the install list cannot drift. No provider is
-    # enabled by default; all are opt-in. Search-hub / mcp-adapter are NOT
-    # here — they are not inference providers.
+    # enabled by default; all are opt-in. Search-hub is NOT here — it is not
+    # an inference provider.
     smind.hm.dev.llm.pi.providers = lib.mapAttrs (name: pkgSpec: {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -440,8 +424,6 @@ in
           #   https://api.minimax.io (apiKey `$MINIMAX_API_KEY`). Self-contained:
           #   `@sinclair/typebox` is a regular dep (installed) and also aliased by
           #   Pi's loader, so the managed --legacy-peer-deps install resolves it.
-          # (pi-mcp-adapter is added separately by enableMcpIntegration.)
-          #
           # pi-search-hub is unconditional (web search, not an inference
           # provider). The inference-provider packages (pi-xai, pi-ollama-cloud,
           # @sinamtz/pi-minimax-provider) are each gated by
@@ -451,6 +433,10 @@ in
             "${piSearchHub}"
           ] ++ enabledProviderPackages;
           extensions = [
+            # Codemode (model-written JS calling tools in a QuickJS sandbox)
+            # is deliberately off; MCP tools use `deferred` / `direct`
+            # exposure instead (see piMcpJson).
+            "-builtin:codemode"
             "${../pkg/pi-extensions/patch-search-hub-backends.ts}"
             "${../pkg/pi-extensions/kimi-401-retry.ts}"
             # pi-search-hub advertises a static all-backends list (19 in
@@ -464,26 +450,17 @@ in
         };
       };
 
-      # Pi-specific MCP override: selected servers are pinned keep-alive so
-      # pi-mcp-adapter connects them at startup (see piMcpJson). pi-mcp-adapter
-      # >= 3.0 reads mcp-adapter.json; ~/.pi/agent/mcp.json belongs to Pi's
-      # built-in MCP.
-      home.file.".pi/agent/mcp-adapter.json".source = piMcpJson;
-
       # Declarative pi-search-hub config (see searchHubConfig). RO store symlink,
-      # like mcp-adapter.json above.
+      # like settings.json.
       home.file.".pi/agent/extensions/search.json".source = searchHubConfig;
 
     }
     # Pi-specific extras (gated on the programs.pi sub-options declared above).
-    # Pi's adapter reads the shared ~/.config/mcp/mcp.json registry (written by
-    # programs.mcp); we only need to add the adapter to settings.packages (the
-    # list merges with the package set above). Pi's built-in MCP (pi >= 0.99)
-    # is disabled so a stale ~/.pi/agent/mcp.json (e.g. an old copy in a yolo
-    # profile) cannot start the same servers a second time.
+    # Pi's built-in MCP reads ~/.pi/agent/mcp.json (see piMcpJson). RO store
+    # symlink: /mcp exposure and enable/disable changes fail with "Could not
+    # update …"; make them in programs.mcp / mcpDirectTools instead.
     (lib.mkIf piCfg.enableMcpIntegration {
-      programs.pi.settings.packages = [ piCfg.mcpAdapterPackage ];
-      programs.pi.settings.extensions = [ "-builtin:mcp" ];
+      home.file."${piCfg.configDir}/mcp.json".source = piMcpJson;
     })
     (lib.mkIf (piCfg.extensionsDir != null) {
       home.file."${piCfg.configDir}/extensions" = {

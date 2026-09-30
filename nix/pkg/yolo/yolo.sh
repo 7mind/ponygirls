@@ -1038,10 +1038,9 @@ add_codex_binds() {
 
 # pi: ~/.pi (state + ~/.pi/agent config). HM-managed assets (settings.json,
 # AGENTS.md, skills, optional extensions) are shared read-only from the main
-# profile, like codex. Pi's MCP goes through its pi-mcp-adapter package, which
-# reads the shared registry at ~/.config/mcp/mcp.json (written by programs.mcp),
-# so bind that read-only too.
-PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md prompts skills extensions mcp-adapter.json)
+# profile, like codex. Pi's built-in MCP reads its own agent/mcp.json (one of
+# the shared assets), not the ~/.config/mcp registry.
+PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md prompts skills extensions mcp.json)
 if [[ -n "${YOLO_PI_SHARED_ASSETS:-}" ]]; then
   PI_SHARED_ASSETS=()
   while IFS= read -r asset; do
@@ -1050,7 +1049,6 @@ if [[ -n "${YOLO_PI_SHARED_ASSETS:-}" ]]; then
 fi
 
 add_pi_binds() {
-  EXTRA_ARGS+=(--ro "${HOME}/.config/mcp")
   # Provider + web-search API-key secrets reach pi (and every harness) via the
   # composed secrets file sourced inside the sandbox — see the YOLO_SECRET_VARS
   # handling / SECRET_FILE_ARGS near BASE_ARGS, not a per-secret bind here.
