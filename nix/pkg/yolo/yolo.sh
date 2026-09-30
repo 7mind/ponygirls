@@ -1115,6 +1115,12 @@ toml_basic_string() {
   printf '"%s"' "$_s"
 }
 CODEX_TRUST_ARGS=(-c "projects={$(toml_basic_string "$PWD")={trust_level=\"trusted\"}}")
+# codex >= 0.157 defaults to a fullscreen transcript that captures the mouse and
+# copies selections itself. In the sandbox that copy cannot land: codex runs the
+# real tmux from system paths (bypassing the clipboard shim) against the broker
+# socket in $TMUX, then falls back to DCS-wrapped OSC 52, which the host tmux
+# drops unless allow-passthrough is on. Inline mode leaves selection to tmux.
+CODEX_TUI_ARGS=(-c 'tui.fullscreen_transcript=false')
 
 ensure_codex_config() {
   local out_file="$1" base_file="$2" trusted_dir="$3"
@@ -1182,7 +1188,7 @@ case "$SUBCMD" in
 
   codex)
     add_all_agent_binds
-    EXEC_CMD=(codex --dangerously-bypass-approvals-and-sandbox --search "${CODEX_TRUST_ARGS[@]}" "${CMD_ARGS[@]}")
+    EXEC_CMD=(codex --dangerously-bypass-approvals-and-sandbox --search "${CODEX_TRUST_ARGS[@]}" "${CODEX_TUI_ARGS[@]}" "${CMD_ARGS[@]}")
     ;;
 
   pi)
