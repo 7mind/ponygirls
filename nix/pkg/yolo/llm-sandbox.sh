@@ -296,5 +296,6 @@ if [[ -n "$CONFINE_SOCKET" ]]; then
   BWRAP_ARGS=("${_confined_args[@]}")
 fi
 
+PS4='+ ${EPOCHREALTIME} '
 set -x
 exec bwrap "${BWRAP_ARGS[@]}" "$@"

@@ -130,6 +130,7 @@
             cd yolo
             bash llm-sandbox-test.sh
             bash profile-test.sh
+            bash sandbox-entrypoint-test.sh
             touch $out
           '';
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
