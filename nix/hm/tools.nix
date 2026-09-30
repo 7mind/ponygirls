@@ -204,7 +204,7 @@ in
 
     smind.hm.dev.llm.models.codex.model = lib.mkOption {
       type = lib.types.str;
-      default = "gpt-6-sol";
+      default = "gpt-6.1-sol";
       description = "Codex default model.";
     };
 
