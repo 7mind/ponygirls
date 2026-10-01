@@ -70,6 +70,13 @@ class RenderTests(unittest.TestCase):
         text = _render([_result(window, None)])
         self.assertIn("EXHAUSTED", text)
 
+    # regression: a ChatGPT credit balance was rendered as dollars ($62500.00)
+    def test_credit_balance_is_a_plain_rounded_count(self):
+        window = QuotaWindow("credits", used=None, limit=62500.4, unit="credits", resets_at=None)
+        text = _render([_result(window, None)])
+        self.assertIn(" 62500 ", text)
+        self.assertNotIn("$", text)
+
     def test_unlimited_row(self):
         window = QuotaWindow("chat", used=None, limit=None, unit="requests", resets_at=None, unlimited=True)
         text = _render([_result(window, None)])
