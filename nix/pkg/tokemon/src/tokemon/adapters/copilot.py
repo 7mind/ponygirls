@@ -8,7 +8,11 @@ freshly minted.  Response schema pinned against the live payload:
     {copilot_plan, access_type_sku, quota_reset_date, quota_reset_date_utc,
      quota_snapshots: {<scope>: {entitlement, remaining, credits_used,
                                  percent_remaining, unlimited, has_quota,
-                                 quota_reset_at, overage_count, ...}}}}
+                                 quota_reset_at, overage_count,
+                                 token_based_billing, ...}}}}
+
+Since GitHub's move to usage-based billing (2026-06-01) the premium quota of a
+``token_based_billing`` account counts GitHub AI Credits, not premium requests.
 """
 
 from __future__ import annotations
@@ -37,8 +41,9 @@ COPILOT_HEADERS = {
     "Copilot-Integration-Id": "vscode-chat",
 }
 
+PREMIUM_SCOPE = "premium_interactions"
 SCOPE_LABELS: Mapping[str, str] = {
-    "premium_interactions": "premium requests",
+    PREMIUM_SCOPE: "premium requests",
     "chat": "chat",
     "completions": "completions",
 }
@@ -95,11 +100,14 @@ class CopilotQuota:
         else:
             resets_at = fallback_reset
         label = SCOPE_LABELS.get(scope, scope)
+        unit = "requests"
+        if scope == PREMIUM_SCOPE and detail.get("token_based_billing") is True:
+            label, unit = "AI credits", "credits"
         return QuotaWindow(
             name=label,
             used=used,
             limit=entitlement,
-            unit="requests",
+            unit=unit,
             resets_at=resets_at,
             unlimited=unlimited,
         )

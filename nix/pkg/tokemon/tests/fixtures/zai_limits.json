@@ -1,21 +1,36 @@
 {
- "code": 0,
- "msg": "ok",
- "success": true,
- "data": {
-  "limits": [
-   {
-    "type": "TOKENS_LIMIT",
-    "percentage": 40.5,
-    "currentValue": 12500000,
-    "usage": 40000000
-   },
-   {
-    "type": "TIME_LIMIT",
-    "percentage": 12.3,
-    "currentValue": 123,
-    "usage": 1000
-   }
-  ]
- }
+  "code": 200,
+  "msg": "ok",
+  "success": true,
+  "data": {
+    "limits": [
+      {
+        "type": "TOKENS_LIMIT",
+        "unit": 3,
+        "number": 5,
+        "percentage": 31,
+        "currentValue": 12500000,
+        "usage": 40000000,
+        "remaining": 27500000,
+        "nextResetTime": 1790866800000
+      },
+      {
+        "type": "TOKENS_LIMIT",
+        "unit": 6,
+        "number": 1,
+        "percentage": 12,
+        "nextResetTime": 1791158400000
+      },
+      {
+        "type": "TIME_LIMIT",
+        "unit": 5,
+        "number": 1,
+        "percentage": 12,
+        "currentValue": 123,
+        "usage": 1000,
+        "remaining": 877,
+        "nextResetTime": 1791849600000
+      }
+    ]
+  }
 }
