@@ -122,6 +122,7 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual(primary.resets_at, datetime.fromtimestamp(1791104309, tz=timezone.utc))
         self.assertEqual(credits.name, "credits")
         self.assertEqual(credits.limit, 0.0)
+        self.assertEqual(credits.unit, "credits")  # OpenAI credits, not a currency
         self.assertEqual(snapshot.note, "reset credits: 0")
 
     # regression: live payload has secondary_window: null — crashed with AttributeError

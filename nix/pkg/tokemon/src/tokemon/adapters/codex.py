@@ -108,7 +108,7 @@ class CodexQuota:
                         name="credits",
                         used=None,
                         limit=balance,
-                        unit="USD",
+                        unit="credits",
                         resets_at=None,
                         unlimited=unlimited,
                     )

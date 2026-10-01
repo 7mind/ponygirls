@@ -27,6 +27,8 @@ def _fmt_amount(value: float | None, unit: str) -> str:
         return f"${value:.2f}"
     if unit == "requests":
         return str(int(value))
+    if unit == "credits":
+        return str(round(value))
     absolute = abs(value)
     for threshold, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "k")):
         if absolute >= threshold:
