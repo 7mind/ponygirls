@@ -19,6 +19,21 @@ xAI has three credential kinds with disjoint quota surfaces:
   CLI displays its absolute value) and is shown whenever the account reports
   it, zero included; on-demand spend is shown only under a non-zero cap.
 
+  The pool is consumer billing.  A team seat (SuperGrok Business) does not use
+  it: the Grok CLI never shows it to a team account, and on a live seat
+  (2026-10-01) requests through api.x.ai, through the proxy, and from grok.com
+  chat were all billed per token to the team's invoice (products "api",
+  "grok-build", "grok-chat") while the pool stayed at 0%.  A team account is
+  therefore reported with a pointer to the team's credits, not the pool.  Team
+  membership comes from the proxy's user endpoint (xai-grok-login UserInfo):
+
+      GET cli-chat-proxy.grok.com/v1/user?include=subscription
+          {userId, email, principalType, teamId, teamName, teamRole,
+           subscriptionTier, ...}
+
+  The Management API rejects the OAuth token (HTTP 500), so a team's balance
+  needs a management key.
+
 - Inference API key (``XAI_API_KEY``): api.x.ai has no quota endpoint.
   ``GET api.x.ai/v1/api-key`` reports only the key's name and blocked state.
 
@@ -30,6 +45,17 @@ xAI has three credential kinds with disjoint quota surfaces:
           {teamId, scope, scopeId, name, ...}
       GET management-api.x.ai/v1/billing/teams/{team_id}/prepaid/balance
           {changes: [...], total: {val: "<cents>"}}
+      GET management-api.x.ai/v1/billing/teams/{team_id}/postpaid/invoice/preview
+          {coreInvoice: {lines: [...], totalWithCorr: {val}, defaultCreditsIssued, ...},
+           defaultCredits, effectiveSpendingLimit, billingCycle: {year, month}}
+
+  The invoice preview was observed live (2026-10-01) on a SuperGrok Business
+  team: ``totalWithCorr`` (the cycle's usage, cents) rose with every request —
+  API key, OAuth, Grok Build and grok.com chat alike, each its own invoice
+  line — while ``defaultCredits`` stayed fixed at 14819 —
+  $150 prorated over the calendar month from the minute the seat was bought.
+  It is therefore read as the cycle's included allotment, renewed with the
+  calendar-month ``billingCycle``; xAI documents neither.
 
 OAuth access tokens are refreshed the way pi does it (pi-ai auth/oauth/xai.ts):
 
@@ -42,13 +68,14 @@ OAuth access tokens are refreshed the way pi does it (pi-ai auth/oauth/xai.ts):
 from __future__ import annotations
 
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from tokemon.adapters.common import (
     bearer_headers,
     get_json,
     optional_float,
+    optional_int,
     parse_datetime_string,
     require_object,
     top_level_keys,
@@ -59,10 +86,12 @@ from tokemon.token_refresh import RefreshedToken, TokenRefreshError
 from tokemon.transport import Transport, TransportError
 
 GROK_CLI_PROXY_API = "https://cli-chat-proxy.grok.com/v1"
+USER_PATH = "/user?include=subscription"
 BILLING_CREDITS_PATH = "/billing?format=credits"
 # Static client marker and version the Grok CLI sends with the OAuth bearer token.
+# The version is the proxy's own minimum (its /settings min_client_version, 2026-10-01).
 GROK_CLI_TOKEN_AUTH = "xai-grok-cli"
-GROK_CLI_VERSION = "0.2.101"
+GROK_CLI_VERSION = "1.0.13"
 
 XAI_OAUTH_TOKEN_URL = "https://auth.x.ai/oauth2/token"
 # The public OAuth client pi and the Grok CLI both log in with.
@@ -80,6 +109,7 @@ MANAGEMENT_KEY_ENV = "XAI_MANAGEMENT_API_KEY"
 TEAM_SCOPE = "SCOPE_TEAM"
 
 CENTS_PER_USD = 100.0
+MONTHS_PER_YEAR = 12
 
 USAGE_PERIOD_LABELS: Mapping[str, str] = {
     "USAGE_PERIOD_TYPE_WEEKLY": "weekly",
@@ -131,11 +161,28 @@ class GrokSubscriptionQuota:
         headers = bearer_headers(credential)
         headers["X-XAI-Token-Auth"] = GROK_CLI_TOKEN_AUTH
         headers["x-grok-client-version"] = GROK_CLI_VERSION
+        _, user_payload = get_json(transport, f"{GROK_CLI_PROXY_API}{USER_PATH}", headers)
+        user = require_object(user_payload, "grok user")
+        email = user.get("email")
+        tier = user.get("subscriptionTier")
+        identity = email if isinstance(email, str) and email else None
+        plan_name = tier if isinstance(tier, str) and tier else None
+        team_name = user.get("teamName")
+        if isinstance(team_name, str) and team_name:
+            return QuotaSnapshot(
+                plan_name=plan_name,
+                identity=identity,
+                windows=(),
+                note=f"team seat: usage bills the team's credits (see {MANAGEMENT_KEY_ENV})",
+            )
+
         _, payload = get_json(transport, f"{GROK_CLI_PROXY_API}{BILLING_CREDITS_PATH}", headers)
         body = require_object(payload, "grok billing")
         config = body.get("config")
         if not isinstance(config, Mapping) or not config:
-            return QuotaSnapshot(plan_name=None, identity=None, windows=(), note="no Grok subscription billing config")
+            return QuotaSnapshot(
+                plan_name=plan_name, identity=identity, windows=(), note="no Grok subscription billing config"
+            )
 
         pool = _pool_window(config)
         if pool is None:
@@ -156,7 +203,7 @@ class GrokSubscriptionQuota:
         prepaid = _usd(config.get("prepaidBalance"))
         if prepaid is not None:
             windows.append(QuotaWindow(name="prepaid", used=None, limit=abs(prepaid), unit="USD", resets_at=None))
-        return QuotaSnapshot(plan_name=None, identity=None, windows=tuple(windows), note=None)
+        return QuotaSnapshot(plan_name=plan_name, identity=identity, windows=tuple(windows), note=None)
 
 
 class XaiInferenceKeyStatus:
@@ -206,15 +253,45 @@ class XaiManagementQuota:
         ledger_cents = optional_float(total.get("val")) if isinstance(total, Mapping) else None
         if ledger_cents is None:
             raise QuotaFetchError(f"xai prepaid balance: no total (top-level keys: {top_level_keys(balance)})")
+        # 0.0 - x rather than -x: an empty ledger must not become a negative zero
+        prepaid = QuotaWindow(
+            name="prepaid", used=None, limit=0.0 - ledger_cents / CENTS_PER_USD, unit="USD", resets_at=None
+        )
+
+        _, preview_payload = get_json(
+            transport, f"{XAI_MANAGEMENT_API}/v1/billing/teams/{team_id}/postpaid/invoice/preview", headers
+        )
         name = key.get("name")
         return QuotaSnapshot(
             plan_name=None,
             identity=name if isinstance(name, str) and name else None,
-            windows=(
-                QuotaWindow(name="prepaid", used=None, limit=-ledger_cents / CENTS_PER_USD, unit="USD", resets_at=None),
-            ),
+            windows=(*_cycle_windows(require_object(preview_payload, "xai invoice preview")), prepaid),
             note=None,
         )
+
+
+def _cycle_windows(preview: Mapping[str, Any]) -> tuple[QuotaWindow, ...]:
+    """The current billing cycle's usage against the team's included credits."""
+    invoice = preview.get("coreInvoice")
+    used = _usd(invoice.get("totalWithCorr")) if isinstance(invoice, Mapping) else None
+    if used is None:
+        return ()
+    included_cents = optional_float(preview.get("defaultCredits"))
+    cycle = preview.get("billingCycle")
+    year = optional_int(cycle.get("year")) if isinstance(cycle, Mapping) else None
+    month = optional_int(cycle.get("month")) if isinstance(cycle, Mapping) else None
+    next_cycle = None
+    if year and month and 1 <= month <= MONTHS_PER_YEAR:
+        next_cycle = datetime(year + month // MONTHS_PER_YEAR, month % MONTHS_PER_YEAR + 1, 1, tzinfo=timezone.utc)
+    return (
+        QuotaWindow(
+            name="credits (1mo)",
+            used=used,
+            limit=included_cents / CENTS_PER_USD if included_cents else None,
+            unit="USD",
+            resets_at=next_cycle,
+        ),
+    )
 
 
 def _oauth_error(body: Any) -> str:

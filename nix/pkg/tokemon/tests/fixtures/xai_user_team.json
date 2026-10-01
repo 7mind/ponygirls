@@ -1,0 +1,13 @@
+{
+  "userId": "4d52c406-6ec6-4361-9b7c-40dc7e8ff284",
+  "email": "user@example.test",
+  "firstName": "Test",
+  "lastName": "User",
+  "principalType": "Team",
+  "principalId": "65c1e471-205f-4566-9c5a-07198badf4ce",
+  "teamId": "65c1e471-205f-4566-9c5a-07198badf4ce",
+  "teamName": "Example Team",
+  "teamRole": "ADMIN",
+  "canAdministerTeam": true,
+  "subscriptionTier": "GrokPro"
+}

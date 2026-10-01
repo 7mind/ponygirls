@@ -15,6 +15,11 @@ Fixture origins:
 - grok_billing_credits.json, grok_billing_legacy.json — synthetic payloads built
   from the Grok CLI's BillingConfig serde model and its own test payloads
   (xai-org/grok-build, extensions/billing.rs).
+- xai_user_team.json — synthetic payload built from the Grok CLI's UserInfo model
+  (xai-grok-login model.rs), with the team fields of a live SuperGrok Business
+  account (2026-10-01); identifiers are made up.
+- xai_invoice_preview.json — live response of a team on included credits
+  (2026-10-01), invoice lines trimmed.
 - xai_api_key.json, xai_management_key_validation.json, xai_prepaid_balance.json
   — the example responses of the xAI REST API reference (docs.x.ai).
 """
@@ -418,11 +423,33 @@ class VercelGatewayAdapterTests(unittest.TestCase):
 
 
 class XaiSubscriptionAdapterTests(unittest.TestCase):
+    USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription"
     BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+    PERSONAL_USER = {"userId": "u-1", "email": "user@example.test", "subscriptionTier": "SuperGrok"}
 
-    def _fetch(self, payload: object):
-        transport = ScriptedTransport({("GET", self.BILLING_URL): json_response(200, payload)})
+    def _fetch(self, payload: object, user: object = PERSONAL_USER):
+        transport = ScriptedTransport(
+            {("GET", self.USER_URL): json_response(200, user), ("GET", self.BILLING_URL): json_response(200, payload)}
+        )
         return XaiQuota().fetch(OAUTH, transport), transport
+
+    # regression: a team seat is billed per token to its team's credits on every route;
+    # the consumer pool it never touches was shown as a permanent "weekly 0%"
+    def test_team_seat_points_to_team_credits_instead_of_the_consumer_pool(self):
+        snapshot, transport = self._fetch(fixture("grok_billing_unified_live.json"), fixture("xai_user_team.json"))
+        self.assertEqual(snapshot.windows, ())
+        self.assertIn("team's credits", snapshot.note)
+        self.assertIn("XAI_MANAGEMENT_API_KEY", snapshot.note)
+        self.assertEqual((snapshot.identity, snapshot.plan_name), ("user@example.test", "GrokPro"))
+        self.assertEqual(transport.calls, [("GET", self.USER_URL)])  # the consumer pool is not asked for
+
+    def test_personal_account_has_no_team_note(self):
+        snapshot, _ = self._fetch(fixture("grok_billing_unified_live.json"))
+        self.assertIsNone(snapshot.note)
+
+    def test_personal_account_reports_login_and_plan(self):
+        snapshot, _ = self._fetch(fixture("grok_billing_credits.json"))
+        self.assertEqual((snapshot.identity, snapshot.plan_name), ("user@example.test", "SuperGrok"))
 
     def test_parses_credits_config(self):
         snapshot, _ = self._fetch(fixture("grok_billing_credits.json"))
@@ -448,9 +475,10 @@ class XaiSubscriptionAdapterTests(unittest.TestCase):
 
     def test_sends_grok_cli_token_marker(self):
         _, transport = self._fetch(fixture("grok_billing_credits.json"))
-        self.assertEqual(transport.calls, [("GET", self.BILLING_URL)])
-        self.assertEqual(transport.headers[0]["Authorization"], "Bearer test-access")
-        self.assertEqual(transport.headers[0]["X-XAI-Token-Auth"], "xai-grok-cli")
+        self.assertEqual(transport.calls, [("GET", self.USER_URL), ("GET", self.BILLING_URL)])
+        for headers in transport.headers:
+            self.assertEqual(headers["Authorization"], "Bearer test-access")
+            self.assertEqual(headers["X-XAI-Token-Auth"], "xai-grok-cli")
 
     # proto3 JSON omits zero-valued scalars: an untouched pool has no creditUsagePercent
     def test_omitted_usage_percent_in_a_current_period_is_zero(self):
@@ -492,7 +520,7 @@ class XaiSubscriptionAdapterTests(unittest.TestCase):
             self._fetch({"config": {"history": []}})
 
     def test_rejected_token_raises(self):
-        transport = ScriptedTransport({("GET", self.BILLING_URL): json_response(401, {"error": "expired"})})
+        transport = ScriptedTransport({("GET", self.USER_URL): json_response(401, {"error": "expired"})})
         with self.assertRaises(QuotaFetchError):
             XaiQuota().fetch(OAUTH, transport)
 
@@ -526,22 +554,51 @@ class XaiManagementAdapterTests(unittest.TestCase):
         "https://management-api.x.ai/v1/billing/teams/65c1e471-205f-4566-9c5a-07198badf4ce/prepaid/balance"
     )
 
-    def _fetch(self, validation: object, balance: object):
+    PREVIEW_URL = (
+        "https://management-api.x.ai/v1/billing/teams/65c1e471-205f-4566-9c5a-07198badf4ce/postpaid/invoice/preview"
+    )
+    EMPTY_BALANCE = {"changes": [], "total": {"val": "0"}}
+
+    def _fetch(self, validation: object, balance: object, preview: object = None):
+        preview = fixture("xai_invoice_preview.json") if preview is None else preview
         transport = ScriptedTransport(
             {
                 ("GET", self.VALIDATION_URL): json_response(200, validation),
                 ("GET", self.BALANCE_URL): json_response(200, balance),
+                ("GET", self.PREVIEW_URL): json_response(200, preview),
             }
         )
         return XaiManagementQuota().fetch(API_KEY, transport)
+
+    # regression: a team on included credits has an empty prepaid ledger; its usage and
+    # credits are in the invoice preview, and the only row was "prepaid $-0.00"
+    def test_cycle_usage_is_shown_against_the_included_credits(self):
+        snapshot = self._fetch(fixture("xai_management_key_validation.json"), self.EMPTY_BALANCE)
+        self.assertEqual(
+            [(w.name, w.used, w.limit, w.unit) for w in snapshot.windows],
+            [("credits (1mo)", 1.18, 148.19, "USD"), ("prepaid", None, 0.0, "USD")],
+        )
+        self.assertEqual(snapshot.windows[0].resets_at, datetime(2026, 11, 1, tzinfo=timezone.utc))
+        self.assertEqual(str(snapshot.windows[1].limit), "0.0")  # not the negative zero that rendered as $-0.00
+
+    def test_december_cycle_resets_in_january(self):
+        preview = fixture("xai_invoice_preview.json")
+        preview["billingCycle"] = {"year": 2026, "month": 12}
+        window = self._fetch(fixture("xai_management_key_validation.json"), self.EMPTY_BALANCE, preview).windows[0]
+        self.assertEqual(window.resets_at, datetime(2027, 1, 1, tzinfo=timezone.utc))
+
+    def test_usage_without_included_credits_has_no_limit(self):
+        preview = fixture("xai_invoice_preview.json")
+        preview["defaultCredits"] = "0"
+        window = self._fetch(fixture("xai_management_key_validation.json"), self.EMPTY_BALANCE, preview).windows[0]
+        self.assertEqual((window.used, window.limit), (1.18, None))
 
     # the ledger is inverted: a $10 top-up is reported as "-1000" cents
     def test_prepaid_balance_is_the_negated_ledger_total(self):
         snapshot = self._fetch(fixture("xai_management_key_validation.json"), fixture("xai_prepaid_balance.json"))
         self.assertEqual(snapshot.identity, "test key")
-        self.assertEqual(
-            [(w.name, w.used, w.limit, w.unit) for w in snapshot.windows], [("prepaid", None, 10.0, "USD")]
-        )
+        prepaid = snapshot.windows[-1]
+        self.assertEqual((prepaid.name, prepaid.used, prepaid.limit, prepaid.unit), ("prepaid", None, 10.0, "USD"))
 
     def test_balance_without_total_raises(self):
         with self.assertRaises(QuotaFetchError):
