@@ -151,13 +151,5 @@ in
         };
       };
     };
-
-    # Mirror the HM-managed Claude settings + memory to a `.claude-work`
-    # profile path so yolo's `--profile work` namespace re-shares
-    # them.
-    home.file.".claude-work/settings.json".source =
-      config.home.file."${config.programs.claude-code.configDir}/settings.json".source;
-    home.file.".claude-work/CLAUDE.md".source =
-      config.home.file."${config.programs.claude-code.configDir}/CLAUDE.md".source;
   };
 }
