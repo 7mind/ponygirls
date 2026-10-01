@@ -8,13 +8,17 @@ are reported with a note.  Schemas pinned against live responses (2026-09-29):
                   group, percent, severity, resets_at, is_active,
                   scope: {model: {id, display_name}, surface} | null}, ...]
         five_hour, seven_day, seven_day_opus, ...: {utilization, resets_at, ...} | null
-        extra_usage, spend, ...
+        spend: {enabled, disabled_reason,
+                used: {amount_minor, currency, exponent}, limit: <same> | null, ...}
+        extra_usage, ...
     GET /api/oauth/profile:
         account: {email, ...}
         organization: {organization_type, rate_limit_tier, ...}
 
 The per-window top-level keys include opaque codenames that change over time,
 so windows are read from the ``limits`` list, which names them explicitly.
+``spend`` is extra usage beyond the plan, billed in the account's currency: a
+row while enabled, a note while switched on but blocked (``disabled_reason``).
 """
 
 from __future__ import annotations
@@ -74,6 +78,38 @@ def _limit_window(node: Any) -> QuotaWindow | None:
     )
 
 
+def _money(node: Any) -> tuple[float, str] | None:
+    if not isinstance(node, Mapping):
+        return None
+    amount_minor = optional_float(node.get("amount_minor"))
+    exponent = optional_float(node.get("exponent"))
+    currency = node.get("currency")
+    if amount_minor is None or exponent is None or not isinstance(currency, str):
+        return None
+    return amount_minor / 10**exponent, currency
+
+
+def _extra_usage(spend: Any) -> tuple[QuotaWindow | None, str | None]:
+    """Return (window, note) for the extra-usage spend object."""
+    if not isinstance(spend, Mapping):
+        return None, None
+    if spend.get("enabled") is not True:
+        reason = spend.get("disabled_reason")
+        return None, f"extra usage off: {reason}" if isinstance(reason, str) and reason else None
+    used = _money(spend.get("used"))
+    if used is None:
+        return None, None
+    limit = _money(spend.get("limit"))
+    window = QuotaWindow(
+        name="extra usage",
+        used=used[0],
+        limit=limit[0] if limit is not None else None,
+        unit=used[1],
+        resets_at=None,
+    )
+    return window, None
+
+
 class ClaudeQuota:
     def fetch(self, credential: Credential, transport: Transport) -> QuotaSnapshot:
         if credential.kind is not CredentialKind.OAUTH:
@@ -90,6 +126,10 @@ class ClaudeQuota:
         if not present:
             raise QuotaFetchError(f"claude usage: no recognizable quota data (top-level keys: {top_level_keys(usage)})")
 
+        extra_window, note = _extra_usage(usage.get("spend"))
+        if extra_window is not None:
+            present = (*present, extra_window)
+
         account = profile.get("account")
         organization = profile.get("organization")
         email = account.get("email") if isinstance(account, Mapping) else None
@@ -98,5 +138,5 @@ class ClaudeQuota:
             plan_name=plan if isinstance(plan, str) else None,
             identity=email if isinstance(email, str) else None,
             windows=present,
-            note=None,
+            note=note,
         )

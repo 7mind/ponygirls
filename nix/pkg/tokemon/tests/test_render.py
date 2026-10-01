@@ -77,6 +77,10 @@ class RenderTests(unittest.TestCase):
         self.assertIn(" 62500 ", text)
         self.assertNotIn("$", text)
 
+    def test_non_dollar_currency_uses_its_own_symbol(self):
+        window = QuotaWindow("extra usage", used=12.34, limit=200.0, unit="EUR", resets_at=None)
+        self.assertIn("€12.34 / €200.00", _render([_result(window, None)]))
+
     def test_unlimited_row(self):
         window = QuotaWindow("chat", used=None, limit=None, unit="requests", resets_at=None, unlimited=True)
         text = _render([_result(window, None)])

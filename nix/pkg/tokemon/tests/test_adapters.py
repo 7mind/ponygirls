@@ -4,7 +4,7 @@ Fixture origins:
 - codex_wham_usage.json, claude_oauth_usage.json, claude_oauth_profile.json,
   copilot_user.json, zai_no_coding_plan.json,
   minimax_remains_null.json — sanitized live responses (2026-09-29).
-- openrouter_key.json — sanitized live response (2026-10-01).
+- openrouter_key.json, vercel_credits.json — sanitized live responses (2026-10-01).
 - grok_billing_unified_live.json — live response of a unified-billing
   subscription (2026-10-01, history removed).
 - kimi_usages.json — synthetic payload built from the response handling of
@@ -34,6 +34,7 @@ from tokemon.adapters.copilot import CopilotQuota
 from tokemon.adapters.kimi import KimiQuota
 from tokemon.adapters.minimax import MinimaxQuota
 from tokemon.adapters.openrouter import OpenRouterQuota
+from tokemon.adapters.vercel import VercelGatewayQuota
 from tokemon.adapters.xai import XaiManagementQuota, XaiQuota
 from tokemon.adapters.zai import ZaiQuota
 from tokemon.credentials import Credential, CredentialKind
@@ -96,6 +97,38 @@ class ClaudeAdapterTests(unittest.TestCase):
         with self.assertRaises(QuotaFetchError):
             self._fetch(usage, fixture("claude_oauth_profile.json"))
 
+    def test_enabled_extra_usage_is_a_spend_row_in_the_account_currency(self):
+        usage = fixture("claude_oauth_usage.json")
+        usage["spend"].update(
+            {
+                "enabled": True,
+                "used": {"amount_minor": 1234, "currency": "EUR", "exponent": 2},
+                "limit": {"amount_minor": 20000, "currency": "EUR", "exponent": 2},
+            }
+        )
+        snapshot, _ = self._fetch(usage, fixture("claude_oauth_profile.json"))
+        extra = snapshot.windows[-1]
+        self.assertEqual((extra.name, extra.used, extra.limit, extra.unit), ("extra usage", 12.34, 200.0, "EUR"))
+        self.assertIsNone(snapshot.note)
+
+    # shape observed live 2026-10-01: extra usage switched on but blocked
+    def test_blocked_extra_usage_is_a_note_not_a_row(self):
+        usage = fixture("claude_oauth_usage.json")
+        usage["spend"].update(
+            {
+                "enabled": False,
+                "disabled_reason": "out_of_credits",
+                "limit": {"amount_minor": 20000, "currency": "EUR", "exponent": 2},
+            }
+        )
+        snapshot, _ = self._fetch(usage, fixture("claude_oauth_profile.json"))
+        self.assertEqual(len(snapshot.windows), 3)
+        self.assertEqual(snapshot.note, "extra usage off: out_of_credits")
+
+    def test_extra_usage_never_enabled_is_silent(self):
+        snapshot, _ = self._fetch(fixture("claude_oauth_usage.json"), fixture("claude_oauth_profile.json"))
+        self.assertIsNone(snapshot.note)
+
     def test_api_key_skips_network_with_note(self):
         snapshot, transport = self._fetch({}, {}, API_KEY)
         self.assertEqual(transport.calls, [])
@@ -140,6 +173,28 @@ class CodexAdapterTests(unittest.TestCase):
     def test_no_quota_data_raises(self):
         with self.assertRaises(QuotaFetchError):
             self._fetch({"plan_type": "pro"})
+
+    # observed live 2026-10-01: a separate ChatPass quota, absent from the Codex CLI's model
+    def test_chatpass_windows_are_shown(self):
+        payload = fixture("codex_wham_usage.json")
+        payload["chatpass"] = {
+            "windows": [{"used_percent": 7, "limit_window_seconds": 604800, "reset_after_seconds": 604800, "reset_at": 1791458686}]
+        }
+        windows = {window.name: window for window in self._fetch(payload).windows}
+        self.assertEqual(windows["chatpass (7d)"].used, 7.0)
+        self.assertEqual(windows["chatpass (7d)"].resets_at, datetime.fromtimestamp(1791458686, tz=timezone.utc))
+
+    # regression: the code-review limit is a rate-limit status, not a bare window, and was dropped
+    def test_code_review_limit_is_a_rate_limit_status(self):
+        payload = fixture("codex_wham_usage.json")
+        payload["code_review_rate_limit"] = {
+            "allowed": True,
+            "limit_reached": False,
+            "primary_window": {"used_percent": 33, "limit_window_seconds": 604800, "reset_at": 1791104309},
+            "secondary_window": None,
+        }
+        windows = {window.name: window for window in self._fetch(payload).windows}
+        self.assertEqual(windows["code review (7d)"].used, 33.0)
 
     # regression: additional_rate_limits is a list of named rate-limit statuses
     # (openai/codex AdditionalRateLimitDetails); it was read as a dict and dropped
@@ -340,6 +395,26 @@ class OpenRouterAdapterTests(unittest.TestCase):
     def test_deprecated_rate_limit_is_ignored(self):
         names = [w.name for w in self._fetch(fixture("openrouter_key.json"), json_response(200, self.CREDITS)).windows]
         self.assertFalse([name for name in names if name.startswith("requests")])
+
+
+class VercelGatewayAdapterTests(unittest.TestCase):
+    CREDITS_URL = "https://ai-gateway.vercel.sh/v1/credits"
+
+    def _fetch(self, payload: object):
+        transport = ScriptedTransport({("GET", self.CREDITS_URL): json_response(200, payload)})
+        return VercelGatewayQuota().fetch(API_KEY, transport)
+
+    def test_parses_observed_schema(self):
+        snapshot = self._fetch(fixture("vercel_credits.json"))
+        self.assertEqual([(w.name, w.used, w.limit, w.unit) for w in snapshot.windows], [("credits", 0.0, 0.0, "USD")])
+
+    def test_spend_is_shown_against_spend_plus_balance(self):
+        (window,) = self._fetch({"balance": "21.50", "total_used": "3.50"}).windows
+        self.assertEqual((window.used, window.limit), (3.5, 25.0))
+
+    def test_missing_balance_raises(self):
+        with self.assertRaises(QuotaFetchError):
+            self._fetch({"total_used": "3.50"})
 
 
 class XaiSubscriptionAdapterTests(unittest.TestCase):

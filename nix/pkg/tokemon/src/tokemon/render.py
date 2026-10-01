@@ -13,6 +13,7 @@ from tokemon.discovery import DEFAULT_PROFILE, YOLO_CONFIG_ROOT
 from tokemon.quota import QueryResult, QuotaWindow
 
 LOW_WATER_FRACTION = 0.9
+CURRENCY_SYMBOLS: Mapping[str, str] = {"USD": "$", "EUR": "€", "GBP": "£"}
 BAR_WIDTH = 10
 MASKED_LOGIN_PREFIX = 2
 ROW_BAND_STYLE = "on grey11"
@@ -23,8 +24,8 @@ def _fmt_amount(value: float | None, unit: str) -> str:
         return "—"
     if unit == "%":
         return f"{value:.1f}%"
-    if unit == "USD":
-        return f"${value:.2f}"
+    if unit in CURRENCY_SYMBOLS:
+        return f"{CURRENCY_SYMBOLS[unit]}{value:.2f}"
     if unit == "requests":
         return str(int(value))
     if unit == "credits":
