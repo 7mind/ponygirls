@@ -24,6 +24,7 @@ from tokemon.polling import query_target
 from tokemon.token_refresh import KeepExpiredTokens, RefreshExpiredTokens, TokenRefreshError
 
 TOKEN_URL = "https://auth.x.ai/oauth2/token"
+USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription"
 BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 EXPIRED_MS = int((NOW - timedelta(days=60)).timestamp() * 1000)
@@ -173,6 +174,7 @@ class TokenRefreshTests(unittest.TestCase):
         transport = ScriptedTransport(
             {
                 ("POST", TOKEN_URL): json_response(200, ROTATED),
+                ("GET", USER_URL): json_response(200, {"userId": "u-1"}),
                 ("GET", BILLING_URL): json_response(200, fixture("grok_billing_credits.json")),
             }
         )
