@@ -88,6 +88,24 @@ def epoch_seconds_to_datetime(value: Any) -> datetime | None:
     return datetime.fromtimestamp(seconds, tz=timezone.utc)
 
 
+MILLISECONDS_PER_SECOND = 1000.0
+
+
+def epoch_millis_to_datetime(value: Any) -> datetime | None:
+    millis = optional_float(value)
+    return epoch_seconds_to_datetime(millis / MILLISECONDS_PER_SECOND) if millis is not None else None
+
+
+def humanize_seconds(seconds: float | None) -> str:
+    if seconds is None:
+        return ""
+    if seconds % 86400 == 0:
+        return f"{int(seconds // 86400)}d"
+    if seconds % 3600 == 0:
+        return f"{int(seconds // 3600)}h"
+    return f"{int(seconds // 60)}m"
+
+
 def top_level_keys(payload: Any) -> str:
     if isinstance(payload, dict):
         return ", ".join(sorted(str(key) for key in payload.keys()))

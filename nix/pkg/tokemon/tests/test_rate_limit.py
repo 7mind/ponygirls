@@ -22,7 +22,8 @@ from tokemon.quota import RateLimitedError
 from tokemon.render import build_table
 from tokemon.transport import HttpResponse
 
-AUTH_KEY_URL = "https://openrouter.ai/api/v1/auth/key"
+KEY_URL = "https://openrouter.ai/api/v1/key"
+CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 T0 = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
 
@@ -31,14 +32,17 @@ def rate_limited(retry_after: str | None) -> HttpResponse:
 
 
 class SequenceTransport:
-    """Answers each request with the next scripted response."""
+    """Answers each key request with the next scripted response; account
+    credits always answer, uncounted."""
 
     def __init__(self, responses: list[HttpResponse]) -> None:
         self._responses = list(responses)
         self.calls = 0
 
     def request(self, method: str, url: str, headers: Mapping[str, str], body: bytes | None) -> HttpResponse:
-        assert (method, url) == ("GET", AUTH_KEY_URL), (method, url)
+        if (method, url) == ("GET", CREDITS_URL):
+            return json_response(200, {"data": {"total_credits": 10, "total_usage": 1}})
+        assert (method, url) == ("GET", KEY_URL), (method, url)
         self.calls += 1
         return self._responses.pop(0)
 
@@ -90,7 +94,7 @@ class RetryAwareRefreshTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_rate_limited_target_is_not_requeried_before_retry_after(self):
-        ok = json_response(200, fixture("openrouter_auth_key.json"))
+        ok = json_response(200, fixture("openrouter_key.json"))
         transport = SequenceTransport([rate_limited("60"), ok])
         clock = Clock(T0)
         query = self._query(transport, clock)
@@ -112,7 +116,7 @@ class RetryAwareRefreshTests(unittest.TestCase):
         self.assertIsNotNone(retried[0].snapshot)
 
     def test_rate_limit_without_retry_after_is_retried_on_next_refresh(self):
-        ok = json_response(200, fixture("openrouter_auth_key.json"))
+        ok = json_response(200, fixture("openrouter_key.json"))
         transport = SequenceTransport([rate_limited(None), ok])
         query = self._query(transport, Clock(T0))
         query()

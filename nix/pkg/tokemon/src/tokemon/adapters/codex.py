@@ -7,11 +7,15 @@ Schema pinned against a live ``GET /wham/usage`` response (2026-09-29):
                                   reset_after_seconds, reset_at},
                  secondary_window: <same> | null}
     code_review_rate_limit: <window> | null
-    additional_rate_limits: {name: <window>, ...} | null
+    additional_rate_limits: [{limit_name, metered_feature,
+                              rate_limit: <as rate_limit> | null}, ...] | null
     credits: {has_credits, unlimited, overage_limit_reached, balance: "0", ...}
     spend_control: {reached, individual_limit}
     rate_limit_reset_credits: {available_count, applicable_available_count}
     plan_type, model_usage, promo, ...
+
+``additional_rate_limits`` was null in the live response; its shape is the Codex
+CLI's own model (openai/codex, AdditionalRateLimitDetails).
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from tokemon.adapters.common import (
     bearer_headers,
     epoch_seconds_to_datetime,
     get_json,
+    humanize_seconds,
     optional_float,
     optional_int,
     require_object,
@@ -35,16 +40,6 @@ CHATGPT_BACKEND_API = "https://chatgpt.com/backend-api"
 USAGE_PATH = "/wham/usage"
 
 
-def _humanize_seconds(seconds: float | None) -> str:
-    if seconds is None:
-        return ""
-    if seconds % 86400 == 0:
-        return f"{int(seconds // 86400)}d"
-    if seconds % 3600 == 0:
-        return f"{int(seconds // 3600)}h"
-    return f"{int(seconds // 60)}m"
-
-
 def _window(name: str, node: Any, exhausted: bool | None) -> QuotaWindow | None:
     if not isinstance(node, Mapping):
         return None
@@ -52,7 +47,7 @@ def _window(name: str, node: Any, exhausted: bool | None) -> QuotaWindow | None:
     if used_percent is None:
         return None
     window_seconds = optional_float(node.get("limit_window_seconds"))
-    label = f"{name} ({_humanize_seconds(window_seconds)})" if window_seconds else name
+    label = f"{name} ({humanize_seconds(window_seconds)})" if window_seconds else name
     return QuotaWindow(
         name=label,
         used=used_percent,
@@ -61,6 +56,18 @@ def _window(name: str, node: Any, exhausted: bool | None) -> QuotaWindow | None:
         resets_at=epoch_seconds_to_datetime(node.get("reset_at")),
         exhausted=exhausted,
     )
+
+
+def _status_windows(primary_name: str, secondary_name: str, status: Any) -> list[QuotaWindow]:
+    """The windows of one rate-limit status ({limit_reached, primary_window, secondary_window})."""
+    if not isinstance(status, Mapping):
+        return []
+    limit_reached = status.get("limit_reached") is True
+    windows = [
+        _window(primary_name, status.get("primary_window"), limit_reached or None),
+        _window(secondary_name, status.get("secondary_window"), None),
+    ]
+    return [window for window in windows if window is not None]
 
 
 class CodexQuota:
@@ -75,28 +82,22 @@ class CodexQuota:
         notes: list[str] = []
 
         rate_limit = body.get("rate_limit")
-        if isinstance(rate_limit, dict):
-            limit_reached = rate_limit.get("limit_reached") is True
-            if rate_limit.get("allowed") is False:
-                notes.append("not allowed")
-            primary = _window("primary", rate_limit.get("primary_window"), limit_reached or None)
-            if primary is not None:
-                windows.append(primary)
-            secondary = _window("secondary", rate_limit.get("secondary_window"), None)
-            if secondary is not None:
-                windows.append(secondary)
+        if isinstance(rate_limit, dict) and rate_limit.get("allowed") is False:
+            notes.append("not allowed")
+        windows.extend(_status_windows("primary", "secondary", rate_limit))
         code_review = body.get("code_review_rate_limit")
         if isinstance(code_review, dict):
             window = _window("code review", code_review, None)
             if window is not None:
                 windows.append(window)
         additional = body.get("additional_rate_limits")
-        if isinstance(additional, dict):
-            for name, node in sorted(additional.items()):
-                if isinstance(node, dict):
-                    window = _window(str(name), node, None)
-                    if window is not None:
-                        windows.append(window)
+        if isinstance(additional, list):
+            for details in additional:
+                if not isinstance(details, dict):
+                    continue
+                limit_name = details.get("limit_name")
+                name = limit_name if isinstance(limit_name, str) and limit_name else "additional"
+                windows.extend(_status_windows(name, name, details.get("rate_limit")))
 
         credits = body.get("credits")
         if isinstance(credits, dict):

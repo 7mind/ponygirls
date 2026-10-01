@@ -4,10 +4,14 @@ Fixture origins:
 - codex_wham_usage.json, claude_oauth_usage.json, claude_oauth_profile.json,
   copilot_user.json, zai_no_coding_plan.json,
   minimax_remains_null.json — sanitized live responses (2026-09-29).
+- openrouter_key.json — sanitized live response (2026-10-01).
 - grok_billing_unified_live.json — live response of a unified-billing
   subscription (2026-10-01, history removed).
-- zai_limits.json, openrouter_auth_key.json — synthetic payloads built from the
-  documented / official-source response shapes.
+- kimi_usages.json — synthetic payload built from the response handling of
+  kimi-cli's own /usage command (MoonshotAI/kimi-cli, ui/shell/usage.py).
+- minimax_remains_plan.json, zai_limits.json — synthetic payloads built from the
+  field handling of CodexBar's MiniMax and z.ai parsers (steipete/CodexBar);
+  the z.ai limit types also match the official zai-coding-plugins script.
 - grok_billing_credits.json, grok_billing_legacy.json — synthetic payloads built
   from the Grok CLI's BillingConfig serde model and its own test payloads
   (xai-org/grok-build, extensions/billing.rs).
@@ -137,6 +141,29 @@ class CodexAdapterTests(unittest.TestCase):
         with self.assertRaises(QuotaFetchError):
             self._fetch({"plan_type": "pro"})
 
+    # regression: additional_rate_limits is a list of named rate-limit statuses
+    # (openai/codex AdditionalRateLimitDetails); it was read as a dict and dropped
+    def test_additional_rate_limits_list_is_shown(self):
+        payload = fixture("codex_wham_usage.json")
+        payload["additional_rate_limits"] = [
+            {
+                "limit_name": "codex_other",
+                "metered_feature": "codex_other",
+                "rate_limit": {
+                    "allowed": True,
+                    "limit_reached": True,
+                    "primary_window": {"used_percent": 100, "limit_window_seconds": 900, "reset_at": 1791104309},
+                    "secondary_window": {"used_percent": 84, "limit_window_seconds": 3600, "reset_at": 1791104309},
+                },
+            },
+            {"limit_name": "unprovisioned", "metered_feature": "x", "rate_limit": None},
+        ]
+        windows = {window.name: window for window in self._fetch(payload).windows}
+        self.assertEqual(windows["codex_other (15m)"].used, 100.0)
+        self.assertIs(windows["codex_other (15m)"].exhausted, True)
+        self.assertEqual(windows["codex_other (1h)"].used, 84.0)
+        self.assertNotIn("unprovisioned", " ".join(windows))
+
     def test_limit_reached_marks_primary_exhausted(self):
         payload = fixture("codex_wham_usage.json")
         payload["rate_limit"]["limit_reached"] = True
@@ -170,19 +197,26 @@ class CopilotAdapterTests(unittest.TestCase):
         self.assertEqual(snapshot.identity, payload["login"])
         self.assertEqual(snapshot.note, "free_engaged_oss_quota")
         windows = {window.name: window for window in snapshot.windows}
-        premium = windows["premium requests"]
+        premium = windows["AI credits"]  # the live account is on token-based billing
         self.assertEqual(premium.used, 1350.0)  # entitlement - remaining
         self.assertEqual(premium.limit, 1500.0)
+        self.assertEqual(premium.unit, "credits")
         self.assertEqual(premium.resets_at, datetime(2026, 10, 1, tzinfo=timezone.utc))
         self.assertTrue(windows["chat"].unlimited)
         self.assertTrue(windows["completions"].unlimited)
+
+    def test_request_based_billing_keeps_premium_requests(self):
+        payload = fixture("copilot_user.json")
+        payload["quota_snapshots"]["premium_interactions"]["token_based_billing"] = False
+        windows = {window.name: window for window in self._fetch(payload).windows}
+        self.assertEqual(windows["premium requests"].unit, "requests")
 
     def test_quota_reset_at_overrides_body_date(self):
         payload = fixture("copilot_user.json")
         payload["quota_snapshots"]["premium_interactions"]["quota_reset_at"] = 1791104309
         windows = {window.name: window for window in self._fetch(payload).windows}
         self.assertEqual(
-            windows["premium requests"].resets_at, datetime.fromtimestamp(1791104309, tz=timezone.utc)
+            windows["AI credits"].resets_at, datetime.fromtimestamp(1791104309, tz=timezone.utc)
         )
 
     def test_uses_refresh_token_for_auth(self):
@@ -210,7 +244,23 @@ class ZaiAdapterTests(unittest.TestCase):
         windows = {window.name: window for window in snapshot.windows}
         tokens = windows["tokens (5h)"]
         self.assertEqual((tokens.used, tokens.limit, tokens.unit), (12500000.0, 40000000.0, "tokens"))
+        self.assertEqual(tokens.resets_at, datetime.fromtimestamp(1790866800, tz=timezone.utc))
+        # regression: the weekly token limit was labelled "tokens (5h)" and overwrote the 5h one
+        weekly = windows["tokens (7d)"]
+        self.assertEqual((weekly.used, weekly.limit, weekly.unit), (12.0, 100.0, "%"))
         self.assertEqual(windows["MCP (1mo)"].unit, "calls")
+        self.assertEqual(len(snapshot.windows), 3)
+
+    def test_used_is_derived_from_remaining_and_credit_limits_are_named(self):
+        payload = fixture("zai_limits.json")
+        entry = payload["data"]["limits"][0]
+        del entry["currentValue"]
+        entry["type"] = "CREDIT_LIMIT"
+        transport = ScriptedTransport(
+            {("GET", "https://api.z.ai/api/monitor/usage/quota/limit"): json_response(200, payload)}
+        )
+        window = ZaiQuota().fetch(API_KEY, transport).windows[0]
+        self.assertEqual((window.name, window.used, window.limit, window.unit), ("credits (5h)", 12500000.0, 40000000.0, "credits"))
 
     def test_sends_bare_authorization_token(self):
         transport = ScriptedTransport(
@@ -229,35 +279,67 @@ class MinimaxAdapterTests(unittest.TestCase):
         self.assertEqual(snapshot.windows, ())
         self.assertEqual(snapshot.note, "no active token plan")
 
+    # regression: plan entries carry current_interval_* counts, where "usage_count"
+    # is the REMAINING quota; the adapter looked for used/limit and raised
+    def test_parses_plan_entries_with_remaining_counts(self):
+        transport = ScriptedTransport(
+            {("GET", "https://api.minimax.io/v1/token_plan/remains"): json_response(200, fixture("minimax_remains_plan.json"))}
+        )
+        snapshot = MinimaxQuota().fetch(OAUTH, transport)
+        self.assertEqual(
+            [(w.name, w.used, w.limit, w.unit) for w in snapshot.windows],
+            [("MiniMax-M2 (5h)", 500.0, 4500.0, "requests"), ("MiniMax-M2 (7d)", 15000.0, 45000.0, "requests")],
+        )
+        self.assertEqual(snapshot.windows[0].resets_at, datetime.fromtimestamp(1790866800, tz=timezone.utc))
+        self.assertEqual(snapshot.windows[1].resets_at, datetime.fromtimestamp(1791158400, tz=timezone.utc))
+
+    def test_percent_only_lane_is_shown_as_percent(self):
+        payload = fixture("minimax_remains_plan.json")
+        lane = payload["model_remains"][1]
+        lane["current_interval_status"] = 1
+        lane["current_interval_remaining_percent"] = 75
+        transport = ScriptedTransport(
+            {("GET", "https://api.minimax.io/v1/token_plan/remains"): json_response(200, payload)}
+        )
+        windows = {w.name: w for w in MinimaxQuota().fetch(OAUTH, transport).windows}
+        self.assertEqual((windows["video (5h)"].used, windows["video (5h)"].limit, windows["video (5h)"].unit), (25.0, 100.0, "%"))
+
 
 class OpenRouterAdapterTests(unittest.TestCase):
-    def test_parses_credits_and_rate_limit(self):
-        transport = ScriptedTransport(
-            {("GET", "https://openrouter.ai/api/v1/auth/key"): json_response(200, fixture("openrouter_auth_key.json"))}
-        )
-        snapshot = OpenRouterQuota().fetch(API_KEY, transport)
-        self.assertEqual(snapshot.identity, "test key")
-        windows = {window.name: window for window in snapshot.windows}
-        self.assertEqual((windows["credits"].used, windows["credits"].limit), (1.25, 10.0))
-        self.assertEqual((windows["requests/10s"].used, windows["requests/10s"].limit), (3.0, 20.0))
+    KEY_URL = "https://openrouter.ai/api/v1/key"
+    CREDITS_URL = "https://openrouter.ai/api/v1/credits"
+    CREDITS = {"data": {"total_credits": 25, "total_usage": 3.5}}
 
-    def test_limit_reset_epoch_becomes_credits_reset(self):
-        payload = fixture("openrouter_auth_key.json")
-        payload["data"]["limit_reset"] = 1791104309
-        transport = ScriptedTransport(
-            {("GET", "https://openrouter.ai/api/v1/auth/key"): json_response(200, payload)}
-        )
-        windows = {window.name: window for window in OpenRouterQuota().fetch(API_KEY, transport).windows}
-        self.assertEqual(windows["credits"].resets_at, datetime.fromtimestamp(1791104309, tz=timezone.utc))
+    def _fetch(self, key: object, credits: object):
+        transport = ScriptedTransport({("GET", self.KEY_URL): json_response(200, key), ("GET", self.CREDITS_URL): credits})
+        return OpenRouterQuota().fetch(API_KEY, transport)
 
-    def test_limit_reset_iso_string_becomes_credits_reset(self):
-        payload = fixture("openrouter_auth_key.json")
-        payload["data"]["limit_reset"] = "2026-10-01T00:00:00Z"
-        transport = ScriptedTransport(
-            {("GET", "https://openrouter.ai/api/v1/auth/key"): json_response(200, payload)}
+    # regression: the "credits" row was the key's lifetime spend, not the account balance
+    def test_credits_row_is_the_account_balance(self):
+        snapshot = self._fetch(fixture("openrouter_key.json"), json_response(200, self.CREDITS))
+        self.assertEqual(snapshot.identity, "sk-or-v1-abc...123")
+        self.assertEqual(
+            [(w.name, w.used, w.limit, w.unit) for w in snapshot.windows],
+            [("credits", 3.5, 25.0, "USD"), ("free models (1d)", 0.0, 50.0, "requests")],
         )
-        windows = {window.name: window for window in OpenRouterQuota().fetch(API_KEY, transport).windows}
-        self.assertEqual(windows["credits"].resets_at, datetime(2026, 10, 1, tzinfo=timezone.utc))
+        self.assertIsNone(snapshot.note)
+
+    def test_key_spending_limit_is_its_own_row(self):
+        key = fixture("openrouter_key.json")
+        key["data"].update({"limit": 10.0, "usage": 1.25, "limit_remaining": 8.75, "limit_reset": "monthly"})
+        windows = {w.name: w for w in self._fetch(key, json_response(200, self.CREDITS)).windows}
+        limit = windows["key limit (monthly)"]
+        self.assertEqual((limit.used, limit.limit, limit.unit), (1.25, 10.0, "USD"))
+
+    # the docs reserve /credits for management keys; a refusal must not hide the key's own limits
+    def test_refused_credits_are_noted_and_key_rows_kept(self):
+        snapshot = self._fetch(fixture("openrouter_key.json"), json_response(403, {"error": {"code": 403}}))
+        self.assertEqual([w.name for w in snapshot.windows], ["free models (1d)"])
+        self.assertIn("account credits unavailable", snapshot.note)
+
+    def test_deprecated_rate_limit_is_ignored(self):
+        names = [w.name for w in self._fetch(fixture("openrouter_key.json"), json_response(200, self.CREDITS)).windows]
+        self.assertFalse([name for name in names if name.startswith("requests")])
 
 
 class XaiSubscriptionAdapterTests(unittest.TestCase):
@@ -399,12 +481,25 @@ class XaiManagementAdapterTests(unittest.TestCase):
 
 
 class KimiAdapterTests(unittest.TestCase):
-    def test_error_envelope_without_list_raises(self):
-        transport = ScriptedTransport(
-            {("GET", "https://api.kimi.com/coding/v1/usages"): json_response(200, {"usages": []})}
+    USAGES_URL = "https://api.kimi.com/coding/v1/usages"
+
+    def _fetch(self, payload: object):
+        return KimiQuota().fetch(OAUTH, ScriptedTransport({("GET", self.USAGES_URL): json_response(200, payload)}))
+
+    # regression: the adapter expected a data/usages list and rejected the real shape
+    def test_parses_usage_summary_and_windowed_limits(self):
+        snapshot = self._fetch(fixture("kimi_usages.json"))
+        self.assertEqual(
+            [(w.name, w.used, w.limit) for w in snapshot.windows],
+            [("weekly", 37.0, 100.0), ("limit (5h)", 12.0, 100.0)],  # second: used = limit - remaining
         )
+        self.assertEqual(
+            snapshot.windows[0].resets_at, datetime(2026, 10, 5, 5, 24, 18, 443553, tzinfo=timezone.utc)
+        )
+
+    def test_payload_without_usage_raises(self):
         with self.assertRaises(QuotaFetchError):
-            KimiQuota().fetch(OAUTH, transport)
+            self._fetch({"usages": []})
 
 
 if __name__ == "__main__":
