@@ -6,7 +6,7 @@ Schema pinned against a live ``GET /wham/usage`` response (2026-09-29):
                  primary_window: {used_percent, limit_window_seconds,
                                   reset_after_seconds, reset_at},
                  secondary_window: <same> | null}
-    code_review_rate_limit: <window> | null
+    code_review_rate_limit: <as rate_limit> | null
     additional_rate_limits: [{limit_name, metered_feature,
                               rate_limit: <as rate_limit> | null}, ...] | null
     credits: {has_credits, unlimited, overage_limit_reached, balance: "0", ...}
@@ -14,8 +14,14 @@ Schema pinned against a live ``GET /wham/usage`` response (2026-09-29):
     rate_limit_reset_credits: {available_count, applicable_available_count}
     plan_type, model_usage, promo, ...
 
+    chatpass: {windows: [<window>, ...]}        # observed live 2026-10-01
+
 ``additional_rate_limits`` was null in the live response; its shape is the Codex
-CLI's own model (openai/codex, AdditionalRateLimitDetails).
+CLI's own model (openai/codex, AdditionalRateLimitDetails).  ``chatpass`` is a
+separate quota for ChatPass (ChatGPT sign-in for third-party apps) that the CLI
+model does not carry.  ``code_review_rate_limit`` was null too and is read as a
+rate-limit status like ``rate_limit``; that shape is not confirmed by an
+observed response.
 """
 
 from __future__ import annotations
@@ -85,11 +91,13 @@ class CodexQuota:
         if isinstance(rate_limit, dict) and rate_limit.get("allowed") is False:
             notes.append("not allowed")
         windows.extend(_status_windows("primary", "secondary", rate_limit))
-        code_review = body.get("code_review_rate_limit")
-        if isinstance(code_review, dict):
-            window = _window("code review", code_review, None)
-            if window is not None:
-                windows.append(window)
+        windows.extend(_status_windows("code review", "code review", body.get("code_review_rate_limit")))
+        chatpass = body.get("chatpass")
+        if isinstance(chatpass, dict) and isinstance(chatpass.get("windows"), list):
+            for node in chatpass["windows"]:
+                window = _window("chatpass", node, None)
+                if window is not None:
+                    windows.append(window)
         additional = body.get("additional_rate_limits")
         if isinstance(additional, list):
             for details in additional:

@@ -24,6 +24,7 @@ ADAPTER_PROVIDERS = {
     "kimi-coding",
     "minimax",
     "openrouter",
+    "vercel-ai-gateway",
     "xai",
     "xai-management",
     "zai",

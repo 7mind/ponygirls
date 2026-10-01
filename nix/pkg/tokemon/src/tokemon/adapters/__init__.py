@@ -10,6 +10,7 @@ from tokemon.adapters.copilot import CopilotQuota
 from tokemon.adapters.kimi import KimiQuota
 from tokemon.adapters.minimax import MinimaxQuota
 from tokemon.adapters.openrouter import OpenRouterQuota
+from tokemon.adapters.vercel import VercelGatewayQuota
 from tokemon.adapters.xai import XaiManagementQuota, XaiQuota, XaiTokenEndpoint
 from tokemon.adapters.zai import ZaiQuota
 from tokemon.quota import NoQuotaEndpoint, QuotaAdapter
@@ -24,6 +25,7 @@ _ADAPTERS: dict[str, QuotaAdapter] = {
     "kimi-coding": KimiQuota(),
     "minimax": MinimaxQuota(),
     "openrouter": OpenRouterQuota(),
+    "vercel-ai-gateway": VercelGatewayQuota(),
     "xai": XaiQuota(),
     "xai-management": XaiManagementQuota(),
     "zai": ZaiQuota(),
