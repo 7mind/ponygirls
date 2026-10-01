@@ -10,9 +10,11 @@ from pathlib import Path
 
 from rich.console import Console
 
+from tokemon.adapters import TOKEN_ENDPOINTS
 from tokemon.discovery import discover_targets
 from tokemon.polling import make_query
 from tokemon.render import build_table
+from tokemon.token_refresh import LOCK_WAIT_SECONDS, ExpiredTokenPolicy, KeepExpiredTokens, RefreshExpiredTokens
 from tokemon.transport import UrllibTransport
 
 DEFAULT_REFRESH_SECONDS = 300
@@ -56,6 +58,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="replace named yolo profile names with numbers, in the profile column and in paths",
     )
     parser.add_argument(
+        "--refresh-tokens",
+        action="store_true",
+        help="refresh expired pi OAuth access tokens (xAI logins) and write them back to auth.json; "
+        "without this flag no credential file is ever modified",
+    )
+    parser.add_argument(
         "--home",
         type=Path,
         default=Path.home(),
@@ -72,7 +80,10 @@ def main(argv: list[str] | None = None) -> int:
     if not discover_targets(args.home, os.environ):
         console.print(f"no codex or pi credentials found under {args.home}")
         return 1
-    query = make_query(args.home, os.environ, transport, lambda: datetime.now(timezone.utc))
+    tokens: ExpiredTokenPolicy = (
+        RefreshExpiredTokens(TOKEN_ENDPOINTS, LOCK_WAIT_SECONDS) if args.refresh_tokens else KeepExpiredTokens()
+    )
+    query = make_query(args.home, os.environ, transport, lambda: datetime.now(timezone.utc), tokens)
 
     if args.once:
         try:

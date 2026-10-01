@@ -4,8 +4,15 @@ Fixture origins:
 - codex_wham_usage.json, claude_oauth_usage.json, claude_oauth_profile.json,
   copilot_user.json, zai_no_coding_plan.json,
   minimax_remains_null.json — sanitized live responses (2026-09-29).
+- grok_billing_unified_live.json — live response of a unified-billing
+  subscription (2026-10-01, history removed).
 - zai_limits.json, openrouter_auth_key.json — synthetic payloads built from the
   documented / official-source response shapes.
+- grok_billing_credits.json, grok_billing_legacy.json — synthetic payloads built
+  from the Grok CLI's BillingConfig serde model and its own test payloads
+  (xai-org/grok-build, extensions/billing.rs).
+- xai_api_key.json, xai_management_key_validation.json, xai_prepaid_balance.json
+  — the example responses of the xAI REST API reference (docs.x.ai).
 """
 
 from __future__ import annotations
@@ -23,6 +30,7 @@ from tokemon.adapters.copilot import CopilotQuota
 from tokemon.adapters.kimi import KimiQuota
 from tokemon.adapters.minimax import MinimaxQuota
 from tokemon.adapters.openrouter import OpenRouterQuota
+from tokemon.adapters.xai import XaiManagementQuota, XaiQuota
 from tokemon.adapters.zai import ZaiQuota
 from tokemon.credentials import Credential, CredentialKind
 from tokemon.quota import QuotaFetchError
@@ -30,13 +38,16 @@ from tokemon.transport import TransportError
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
-API_KEY = Credential(kind=CredentialKind.API_KEY, secret="test-key", refresh_token=None, account_id=None, expires_at=None)
+API_KEY = Credential(
+    kind=CredentialKind.API_KEY, secret="test-key", refresh_token=None, account_id=None, expires_at=None, stores=()
+)
 OAUTH = Credential(
     kind=CredentialKind.OAUTH,
     secret="test-access",
     refresh_token="test-refresh",
     account_id="test-account",
     expires_at=None,
+    stores=(),
 )
 
 
@@ -246,6 +257,144 @@ class OpenRouterAdapterTests(unittest.TestCase):
         )
         windows = {window.name: window for window in OpenRouterQuota().fetch(API_KEY, transport).windows}
         self.assertEqual(windows["credits"].resets_at, datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+
+class XaiSubscriptionAdapterTests(unittest.TestCase):
+    BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+
+    def _fetch(self, payload: object):
+        transport = ScriptedTransport({("GET", self.BILLING_URL): json_response(200, payload)})
+        return XaiQuota().fetch(OAUTH, transport), transport
+
+    def test_parses_credits_config(self):
+        snapshot, _ = self._fetch(fixture("grok_billing_credits.json"))
+        self.assertEqual(
+            [(w.name, w.used, w.limit, w.unit) for w in snapshot.windows],
+            [
+                ("weekly", 42.5, 100.0, "%"),
+                ("on-demand", 1.25, 5.0, "USD"),
+                ("prepaid", None, 86.66, "USD"),
+            ],
+        )
+        self.assertEqual(snapshot.windows[0].resets_at, datetime(2026, 10, 5, 10, 13, 12, tzinfo=timezone.utc))
+
+    def test_parses_observed_unified_billing_schema(self):
+        snapshot, _ = self._fetch(fixture("grok_billing_unified_live.json"))
+        self.assertEqual(
+            [(w.name, w.used, w.limit, w.unit) for w in snapshot.windows],
+            [("weekly", 0.0, 100.0, "%"), ("prepaid", None, 0.0, "USD")],
+        )
+        self.assertEqual(
+            snapshot.windows[0].resets_at, datetime(2026, 10, 6, 17, 10, 14, 416436, tzinfo=timezone.utc)
+        )
+
+    def test_sends_grok_cli_token_marker(self):
+        _, transport = self._fetch(fixture("grok_billing_credits.json"))
+        self.assertEqual(transport.calls, [("GET", self.BILLING_URL)])
+        self.assertEqual(transport.headers[0]["Authorization"], "Bearer test-access")
+        self.assertEqual(transport.headers[0]["X-XAI-Token-Auth"], "xai-grok-cli")
+
+    # proto3 JSON omits zero-valued scalars: an untouched pool has no creditUsagePercent
+    def test_omitted_usage_percent_in_a_current_period_is_zero(self):
+        payload = fixture("grok_billing_credits.json")
+        del payload["config"]["creditUsagePercent"]
+        snapshot, _ = self._fetch(payload)
+        self.assertEqual((snapshot.windows[0].name, snapshot.windows[0].used), ("weekly", 0.0))
+
+    # regression: billing stores bought credits as negative cents — the row was dropped
+    def test_negative_prepaid_ledger_is_a_positive_balance(self):
+        payload = fixture("grok_billing_credits.json")
+        payload["config"]["prepaidBalance"] = {"val": -500}
+        snapshot, _ = self._fetch(payload)
+        prepaid = {w.name: w for w in snapshot.windows}["prepaid"]
+        self.assertEqual((prepaid.used, prepaid.limit, prepaid.unit), (None, 5.0, "USD"))
+
+    def test_zero_on_demand_cap_and_absent_prepaid_are_omitted(self):
+        payload = fixture("grok_billing_credits.json")
+        del payload["config"]["prepaidBalance"]
+        payload["config"]["onDemandCap"] = {}
+        snapshot, _ = self._fetch(payload)
+        self.assertEqual([w.name for w in snapshot.windows], ["weekly"])
+
+    def test_legacy_shape_falls_back_to_monthly_credits(self):
+        snapshot, _ = self._fetch(fixture("grok_billing_legacy.json"))
+        self.assertEqual(
+            [(w.name, w.used, w.limit, w.unit) for w in snapshot.windows],
+            [("monthly credits", 12.34, 20.0, "USD")],
+        )
+        self.assertEqual(snapshot.windows[0].resets_at, datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+    def test_account_without_billing_config_is_a_note(self):
+        snapshot, _ = self._fetch({})
+        self.assertEqual(snapshot.windows, ())
+        self.assertIn("no Grok subscription", snapshot.note)
+
+    def test_unrecognized_config_raises(self):
+        with self.assertRaises(QuotaFetchError):
+            self._fetch({"config": {"history": []}})
+
+    def test_rejected_token_raises(self):
+        transport = ScriptedTransport({("GET", self.BILLING_URL): json_response(401, {"error": "expired"})})
+        with self.assertRaises(QuotaFetchError):
+            XaiQuota().fetch(OAUTH, transport)
+
+
+class XaiApiKeyAdapterTests(unittest.TestCase):
+    API_KEY_URL = "https://api.x.ai/v1/api-key"
+
+    def _fetch(self, payload: object):
+        transport = ScriptedTransport({("GET", self.API_KEY_URL): json_response(200, payload)})
+        return XaiQuota().fetch(API_KEY, transport)
+
+    def test_inference_key_reports_identity_and_no_quota_note(self):
+        snapshot = self._fetch(fixture("xai_api_key.json"))
+        self.assertEqual(snapshot.identity, "My API Key")
+        self.assertEqual(snapshot.windows, ())
+        self.assertIn("XAI_MANAGEMENT_API_KEY", snapshot.note)
+
+    def test_blocked_flags_are_reported(self):
+        payload = fixture("xai_api_key.json")
+        payload["team_blocked"] = True
+        payload["api_key_disabled"] = True
+        note = self._fetch(payload).note
+        self.assertIn("team blocked", note)
+        self.assertIn("key disabled", note)
+        self.assertNotIn("key blocked", note)
+
+
+class XaiManagementAdapterTests(unittest.TestCase):
+    VALIDATION_URL = "https://management-api.x.ai/auth/management-keys/validation"
+    BALANCE_URL = (
+        "https://management-api.x.ai/v1/billing/teams/65c1e471-205f-4566-9c5a-07198badf4ce/prepaid/balance"
+    )
+
+    def _fetch(self, validation: object, balance: object):
+        transport = ScriptedTransport(
+            {
+                ("GET", self.VALIDATION_URL): json_response(200, validation),
+                ("GET", self.BALANCE_URL): json_response(200, balance),
+            }
+        )
+        return XaiManagementQuota().fetch(API_KEY, transport)
+
+    # the ledger is inverted: a $10 top-up is reported as "-1000" cents
+    def test_prepaid_balance_is_the_negated_ledger_total(self):
+        snapshot = self._fetch(fixture("xai_management_key_validation.json"), fixture("xai_prepaid_balance.json"))
+        self.assertEqual(snapshot.identity, "test key")
+        self.assertEqual(
+            [(w.name, w.used, w.limit, w.unit) for w in snapshot.windows], [("prepaid", None, 10.0, "USD")]
+        )
+
+    def test_balance_without_total_raises(self):
+        with self.assertRaises(QuotaFetchError):
+            self._fetch(fixture("xai_management_key_validation.json"), {"changes": []})
+
+    def test_key_without_team_scope_raises(self):
+        validation = fixture("xai_management_key_validation.json")
+        del validation["teamId"]
+        validation["scope"] = "SCOPE_ORGANIZATION"
+        with self.assertRaises(QuotaFetchError):
+            self._fetch(validation, fixture("xai_prepaid_balance.json"))
 
 
 class KimiAdapterTests(unittest.TestCase):

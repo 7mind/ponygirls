@@ -111,6 +111,11 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn(("minimax", "MINIMAX_API_KEY"), env_labels)
         self.assertNotIn(("openrouter", "OPENROUTER_API_KEY"), env_labels)
 
+    def test_xai_management_key_is_listed_from_env(self):
+        targets = discover_targets(self.home, {"XAI_MANAGEMENT_API_KEY": "mgmt-key"})
+        rows = [t for t in targets if t.source == "env"]
+        self.assertEqual([(t.provider, t.label, t.credential.secret) for t in rows], [("xai-management", "XAI_MANAGEMENT_API_KEY", "mgmt-key")])
+
     def test_identical_credentials_across_dirs_are_merged_with_joined_labels(self):
         _write_json(
             self.home / ".pi" / "other" / "auth.json",

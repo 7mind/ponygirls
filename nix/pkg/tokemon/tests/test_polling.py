@@ -14,7 +14,7 @@ NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
 
 def _credential(secret: str) -> Credential:
-    return Credential(kind=CredentialKind.OAUTH, secret=secret, refresh_token=None, account_id=None, expires_at=None)
+    return Credential(kind=CredentialKind.OAUTH, secret=secret, refresh_token=None, account_id=None, expires_at=None, stores=())
 
 
 def _result(provider: str, label: str, secret: str, identity: str | None):

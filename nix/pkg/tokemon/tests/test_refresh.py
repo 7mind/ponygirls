@@ -10,6 +10,7 @@ from pathlib import Path
 
 from dummy_transport import ScriptedTransport
 from tokemon.polling import make_query
+from tokemon.token_refresh import KeepExpiredTokens
 
 
 def _add_profile(home: Path, name: str, provider: str) -> None:
@@ -27,7 +28,7 @@ class RefreshTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             _add_profile(home, "alpha", "zai")
-            query = make_query(home, {}, ScriptedTransport({}), lambda: datetime.now(timezone.utc))
+            query = make_query(home, {}, ScriptedTransport({}), lambda: datetime.now(timezone.utc), KeepExpiredTokens())
             self.assertEqual(_profiles(query()), ["alpha"])
 
             _add_profile(home, "beta", "kimi-coding")

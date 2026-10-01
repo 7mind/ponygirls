@@ -15,7 +15,7 @@ Claude Code on Linux stores its OAuth token in ``~/.claude/.credentials.json``
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -23,6 +23,7 @@ from tokemon.credentials import (
     Credential,
     CredentialError,
     CredentialKind,
+    CredentialStore,
     credential_from_claude_oauth,
     credential_from_env_api_key,
     credential_from_pi_entry,
@@ -47,6 +48,8 @@ ENV_PROVIDER_KEYS: Mapping[str, str] = {
     "MINIMAX_API_KEY": "minimax",
     "MINIMAX_CN_API_KEY": "minimax-cn",
     "XAI_API_KEY": "xai",
+    # not a pi variable: xAI inference keys cannot read billing, management keys can
+    "XAI_MANAGEMENT_API_KEY": "xai-management",
     "ZAI_API_KEY": "zai",
     "ZAI_CODING_CN_API_KEY": "zai-coding-cn",
     "XIAOMI_API_KEY": "xiaomi",
@@ -105,6 +108,7 @@ def _codex_targets(codex_home: Path, profile: str, home: Path) -> list[Target]:
             refresh_token=None,
             account_id=account_id if isinstance(account_id, str) else None,
             expires_at=None,
+            stores=(),
         )
         return [Target(profile, "codex", "openai-codex", label, credential, None)]
     api_key = auth.get("OPENAI_API_KEY")
@@ -143,7 +147,8 @@ def _pi_targets(pi_root: Path, profile: str, home: Path) -> list[Target]:
                 if not isinstance(entry, dict):
                     raise DiscoveryError(f"{agent_dir / 'auth.json'}: entry {provider_id!r} is not an object")
                 try:
-                    credential = credential_from_pi_entry(provider_id, entry)
+                    store = CredentialStore(agent_dir / "auth.json", provider_id)
+                    credential = credential_from_pi_entry(provider_id, entry, store)
                 except CredentialError as exc:
                     targets.append(Target(profile, "pi", provider_id, label, None, str(exc)))
                     continue
@@ -190,12 +195,15 @@ def _merge_identical_credentials(targets: list[Target]) -> list[Target]:
         if previous is None:
             merged[key] = target
             continue
+        credential = previous.credential
+        if credential is not None and target.credential is not None:
+            credential = replace(credential, stores=credential.stores + target.credential.stores)
         merged[key] = Target(
             profile=join_unique(previous.profile, target.profile),
             source=join_unique(previous.source, target.source),
             provider=target.provider,
             label=f"{previous.label}, {target.label}",
-            credential=previous.credential,
+            credential=credential,
             note=previous.note if previous.note is not None else target.note,
         )
     return list(merged.values())
