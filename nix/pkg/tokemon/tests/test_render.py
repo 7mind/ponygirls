@@ -37,6 +37,7 @@ def _result(window: QuotaWindow | None, note: str | None, expires_at=None, error
         refresh_token=None,
         account_id=None,
         expires_at=expires_at,
+        stores=(),
     )
     target = Target("default", "pi", "demo", "~/.pi/agent", credential, None)
     all_windows = ((window,) if window else ()) + tuple(extra_windows)

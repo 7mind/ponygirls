@@ -13,9 +13,13 @@ class ScriptedTransport:
     def __init__(self, routes: Mapping[tuple[str, str], object]) -> None:
         self._routes = dict(routes)
         self.calls: list[tuple[str, str]] = []
+        self.headers: list[dict[str, str]] = []
+        self.bodies: list[bytes | None] = []
 
     def request(self, method: str, url: str, headers: Mapping[str, str], body: bytes | None) -> HttpResponse:
         self.calls.append((method, url))
+        self.headers.append(dict(headers))
+        self.bodies.append(body)
         outcome = self._routes.get((method, url))
         if outcome is None:
             raise TransportError(f"no scripted route for {method} {url}")

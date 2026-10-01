@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping
@@ -10,19 +11,22 @@ from typing import Callable, Mapping
 from tokemon.adapters import adapter_for
 from tokemon.discovery import Target, discover_targets, join_unique
 from tokemon.quota import QueryResult, RateLimit, RateLimitedError
+from tokemon.token_refresh import ExpiredTokenPolicy
 from tokemon.transport import Transport
 
 MAX_QUERY_WORKERS = 8
 
 
-def query_target(target: Target, transport: Transport) -> QueryResult:
+def query_target(target: Target, transport: Transport, tokens: ExpiredTokenPolicy) -> QueryResult:
     now = datetime.now(timezone.utc)
     if target.credential is None:
         return QueryResult(
             target=target, snapshot=None, error=target.note or "no credential", fetched_at=now, rate_limit=None
         )
     try:
-        snapshot = adapter_for(target.provider).fetch(target.credential, transport)
+        credential = tokens.current(target.provider, target.credential, transport, now)
+        target = replace(target, credential=credential)
+        snapshot = adapter_for(target.provider).fetch(credential, transport)
     except RateLimitedError as exc:
         return QueryResult(
             target=target, snapshot=None, error=str(exc), fetched_at=now, rate_limit=RateLimit(exc.retry_at)
@@ -70,11 +74,11 @@ def coalesce_by_identity(results: list[QueryResult]) -> list[QueryResult]:
     return out
 
 
-def _query_targets(targets: list[Target], transport: Transport) -> list[QueryResult]:
+def _query_targets(targets: list[Target], transport: Transport, tokens: ExpiredTokenPolicy) -> list[QueryResult]:
     if not targets:
         return []
     with ThreadPoolExecutor(max_workers=min(MAX_QUERY_WORKERS, len(targets))) as executor:
-        futures = [executor.submit(query_target, target, transport) for target in targets]
+        futures = [executor.submit(query_target, target, transport, tokens) for target in targets]
         return [future.result() for future in futures]
 
 
@@ -92,12 +96,18 @@ class RetryAwareQuery:
     result is carried forward unchanged until that window passes."""
 
     def __init__(
-        self, home: Path, environ: Mapping[str, str], transport: Transport, clock: Callable[[], datetime]
+        self,
+        home: Path,
+        environ: Mapping[str, str],
+        transport: Transport,
+        clock: Callable[[], datetime],
+        tokens: ExpiredTokenPolicy,
     ) -> None:
         self._home = home
         self._environ = environ
         self._transport = transport
         self._clock = clock
+        self._tokens = tokens
         self._previous: dict[TargetKey, QueryResult] = {}
 
     def __call__(self) -> list[QueryResult]:
@@ -111,12 +121,16 @@ class RetryAwareQuery:
                 held.append(previous)
             else:
                 due.append(target)
-        results = _query_targets(due, self._transport) + held
+        results = _query_targets(due, self._transport, self._tokens) + held
         self._previous = {_target_key(result.target): result for result in results}
         return coalesce_by_identity(results)
 
 
 def make_query(
-    home: Path, environ: Mapping[str, str], transport: Transport, clock: Callable[[], datetime]
+    home: Path,
+    environ: Mapping[str, str],
+    transport: Transport,
+    clock: Callable[[], datetime],
+    tokens: ExpiredTokenPolicy,
 ) -> Callable[[], list[QueryResult]]:
-    return RetryAwareQuery(home, environ, transport, clock)
+    return RetryAwareQuery(home, environ, transport, clock, tokens)

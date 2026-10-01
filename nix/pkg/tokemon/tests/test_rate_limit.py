@@ -17,6 +17,7 @@ from test_adapters import fixture
 from tokemon.adapters.openrouter import OpenRouterQuota
 from tokemon.credentials import credential_from_env_api_key
 from tokemon.polling import make_query
+from tokemon.token_refresh import KeepExpiredTokens
 from tokemon.quota import RateLimitedError
 from tokemon.render import build_table
 from tokemon.transport import HttpResponse
@@ -80,7 +81,7 @@ class RetryAfterParsingTests(unittest.TestCase):
 class RetryAwareRefreshTests(unittest.TestCase):
     def _query(self, transport: SequenceTransport, clock: Clock):
         home = Path(self._tmp.name)
-        return make_query(home, {"OPENROUTER_API_KEY": "k"}, transport, clock)
+        return make_query(home, {"OPENROUTER_API_KEY": "k"}, transport, clock, KeepExpiredTokens())
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -124,7 +125,7 @@ class RateLimitedRenderTests(unittest.TestCase):
         transport = SequenceTransport([rate_limited("90")])
         with tempfile.TemporaryDirectory() as tmp:
             clock = Clock(datetime.now(timezone.utc))
-            results = make_query(Path(tmp), {"OPENROUTER_API_KEY": "k"}, transport, clock)()
+            results = make_query(Path(tmp), {"OPENROUTER_API_KEY": "k"}, transport, clock, KeepExpiredTokens())()
         buffer = io.StringIO()
         Console(file=buffer, width=240).print(build_table(results, clock.now, "t", False, False, False))
         text = buffer.getvalue()

@@ -17,7 +17,17 @@ from tokemon.quota import QuotaFetchError
 from tokemon.transport import TransportError, UrllibTransport
 
 LIVE = os.environ.get("TOKEMON_LIVE") == "1"
-ADAPTER_PROVIDERS = {"anthropic", "openai-codex", "github-copilot", "kimi-coding", "minimax", "openrouter", "zai"}
+ADAPTER_PROVIDERS = {
+    "anthropic",
+    "openai-codex",
+    "github-copilot",
+    "kimi-coding",
+    "minimax",
+    "openrouter",
+    "xai",
+    "xai-management",
+    "zai",
+}
 
 
 @unittest.skipUnless(LIVE, "evil-communication leg: set TOKEMON_LIVE=1 to run")

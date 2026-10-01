@@ -1,0 +1,17 @@
+{
+  "config": {
+    "monthlyLimit": {"val": 2000},
+    "used": {"val": 1234},
+    "onDemandCap": {},
+    "billingPeriodStart": "2026-09-01T00:00:00Z",
+    "billingPeriodEnd": "2026-10-01T00:00:00Z",
+    "history": [
+      {
+        "billingCycle": {"year": 2026, "month": 8},
+        "includedUsed": {"val": 1800},
+        "onDemandUsed": {"val": 0},
+        "totalUsed": {"val": 1800}
+      }
+    ]
+  }
+}
