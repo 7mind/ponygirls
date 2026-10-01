@@ -83,6 +83,10 @@ in
           # Tool name from https://code.claude.com/docs/en/tools-reference ; see also GitHub #10258.
           deny = [ "AskUserQuestion" ];
         };
+        # Drops the built-in "# Git" block from the Bash tool description
+        # (incl. "If on the default branch, branch first") and the
+        # session-start git status snapshot.
+        includeGitInstructions = false;
         includeCoAuthoredBy = cfg.coAuthored.enable;
         attribution = lib.mkIf (!cfg.coAuthored.enable) { commit = ""; pr = ""; };
         effortLevel = cfg.models.claude.effort;
