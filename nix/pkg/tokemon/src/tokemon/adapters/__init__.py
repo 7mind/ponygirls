@@ -7,7 +7,7 @@ from typing import Mapping
 from tokemon.adapters.claude import ClaudeQuota, ClaudeTokenEndpoint
 from tokemon.adapters.codex import CodexQuota
 from tokemon.adapters.copilot import CopilotQuota
-from tokemon.adapters.kimi import KimiQuota
+from tokemon.adapters.kimi import KimiQuota, KimiTokenEndpoint
 from tokemon.adapters.minimax import MinimaxQuota
 from tokemon.adapters.openrouter import OpenRouterQuota
 from tokemon.adapters.vercel import VercelGatewayQuota
@@ -34,6 +34,7 @@ _ADAPTERS: dict[str, QuotaAdapter] = {
 # Providers whose expired pi OAuth access token tokemon can refresh.
 TOKEN_ENDPOINTS: Mapping[str, TokenEndpoint] = {
     "anthropic": ClaudeTokenEndpoint(),
+    "kimi-coding": KimiTokenEndpoint(),
     "xai": XaiTokenEndpoint(),
 }
 

@@ -20,6 +20,7 @@ from dummy_transport import ScriptedTransport, json_response
 from test_adapters import fixture
 from tokemon.adapters import TOKEN_ENDPOINTS
 from tokemon.adapters.claude import CLAUDE_OAUTH_CLIENT_ID, CLAUDE_OAUTH_SCOPES, CLAUDE_OAUTH_TOKEN_URL
+from tokemon.adapters.kimi import KIMI_OAUTH_CLIENT_ID, KIMI_OAUTH_HOST, KIMI_OAUTH_TOKEN_PATH
 from tokemon.discovery import discover_targets
 from tokemon.main import _parse_args, token_policy
 from tokemon.polling import query_target
@@ -121,8 +122,8 @@ class TokenRefreshTests(unittest.TestCase):
         self.assertEqual(transport.calls, [])
 
     def test_provider_without_token_endpoint_is_left_alone(self):
-        self._write(self.auth_path, {"kimi-coding": _entry(EXPIRED_MS)})
-        credential, transport = self._current("kimi-coding", json_response(200, ROTATED))
+        self._write(self.auth_path, {"minimax": _entry(EXPIRED_MS)})
+        credential, transport = self._current("minimax", json_response(200, ROTATED))
         self.assertEqual(credential.secret, "old-access")
         self.assertEqual(transport.calls, [])
 
@@ -286,6 +287,68 @@ class ClaudeTokenRefreshTests(unittest.TestCase):
             json.loads(self.credentials.read_text(encoding="utf-8"))["claudeAiOauth"]["refreshToken"],
             "old-refresh",
         )
+
+
+class KimiTokenRefreshTests(unittest.TestCase):
+    TOKEN_URL = f"{KIMI_OAUTH_HOST}{KIMI_OAUTH_TOKEN_PATH}"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self._tmp.name)
+        self.auth_path = self.home / ".pi" / "agent" / "auth.json"
+        self.policy = RefreshExpiredTokens(TOKEN_ENDPOINTS, LOCK_WAIT_SECONDS)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write(self, auth: dict) -> None:
+        self.auth_path.parent.mkdir(parents=True, exist_ok=True)
+        self.auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    def test_expired_token_is_refreshed_the_way_pi_does(self):
+        self._write({"kimi-coding": _entry(EXPIRED_MS), "openrouter": {"type": "api_key", "key": "kept"}})
+        transport = ScriptedTransport({("POST", self.TOKEN_URL): json_response(200, ROTATED)})
+        target = [t for t in discover_targets(self.home, {}) if t.provider == "kimi-coding"][0]
+        credential = self.policy.current("kimi-coding", target.credential, transport, NOW)
+
+        self.assertEqual((credential.secret, credential.refresh_token), ("new-access", "new-refresh"))
+        self.assertEqual(credential.expires_at, NOW + timedelta(seconds=7200))
+        self.assertEqual(
+            urllib.parse.parse_qs(transport.bodies[0].decode("ascii")),
+            {
+                "client_id": [KIMI_OAUTH_CLIENT_ID],
+                "grant_type": ["refresh_token"],
+                "refresh_token": ["old-refresh"],
+            },
+        )
+        stored = json.loads(self.auth_path.read_text(encoding="utf-8"))
+        self.assertEqual(stored["kimi-coding"]["access"], "new-access")
+        self.assertEqual(stored["kimi-coding"]["refresh"], "new-refresh")
+        self.assertEqual(stored["kimi-coding"]["source"], "kept")
+        self.assertEqual(stored["openrouter"]["key"], "kept")
+
+    def test_response_without_rotated_refresh_token_leaves_the_file_untouched(self):
+        self._write({"kimi-coding": _entry(EXPIRED_MS)})
+        before = self.auth_path.read_bytes()
+        transport = ScriptedTransport(
+            {("POST", self.TOKEN_URL): json_response(200, {"access_token": "new-access", "expires_in": 3600})}
+        )
+        target = [t for t in discover_targets(self.home, {}) if t.provider == "kimi-coding"][0]
+        with self.assertRaises(TokenRefreshError):
+            self.policy.current("kimi-coding", target.credential, transport, NOW)
+        self.assertEqual(self.auth_path.read_bytes(), before)
+
+    def test_rejected_refresh_leaves_the_file_untouched(self):
+        self._write({"kimi-coding": _entry(EXPIRED_MS)})
+        before = self.auth_path.read_bytes()
+        transport = ScriptedTransport(
+            {("POST", self.TOKEN_URL): json_response(401, {"error": "invalid_grant", "error_description": "revoked"})}
+        )
+        target = [t for t in discover_targets(self.home, {}) if t.provider == "kimi-coding"][0]
+        with self.assertRaises(TokenRefreshError) as caught:
+            self.policy.current("kimi-coding", target.credential, transport, NOW)
+        self.assertIn("HTTP 401: invalid_grant: revoked", str(caught.exception))
+        self.assertEqual(self.auth_path.read_bytes(), before)
 
 
 if __name__ == "__main__":
