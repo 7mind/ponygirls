@@ -130,6 +130,13 @@ let
         apiKey = "FIRECRAWL_API_KEY";
       };
     }
+    {
+      name = "tavily";
+      cfg = {
+        enabled = true;
+        apiKey = "TAVILY_API_KEY";
+      };
+    }
   ];
   searchHubConfig = pkgs.writeText "pi-search-hub-config.json" ''
     {
