@@ -15,10 +15,23 @@ The cloud endpoint now returns both shapes; either may be absent:
 ``usage`` / ``limits`` rows win over a same-duration ratio: Moonshot has
 shipped responses where ``used_ratio`` stays 0 while that window is exhausted
 (MoonshotAI/kimi-code#3951). Counts in the absolute rows carry no unit.
+
+OAuth access tokens are refreshed the way pi does it (pi-ai auth/oauth/kimi-coding.ts):
+
+    POST https://auth.kimi.com/api/oauth/token
+        form: client_id, grant_type=refresh_token, refresh_token
+        {access_token, refresh_token, expires_in}
+
+pi requires the rotated refresh token and stores ``expires`` as now plus
+``expires_in``, with no skew. ``KIMI_CODE_OAUTH_HOST`` or ``KIMI_OAUTH_HOST``
+overrides the auth host, matching pi.
 """
 
 from __future__ import annotations
 
+import os
+import urllib.parse
+from datetime import datetime, timedelta
 from typing import Any, Mapping
 
 from tokemon.adapters.common import (
@@ -32,10 +45,15 @@ from tokemon.adapters.common import (
 )
 from tokemon.credentials import Credential
 from tokemon.quota import QuotaFetchError, QuotaSnapshot, QuotaWindow
-from tokemon.transport import Transport
+from tokemon.token_refresh import RefreshedToken, TokenRefreshError
+from tokemon.transport import Transport, TransportError
 
 KIMI_API = "https://api.kimi.com/coding/v1"
 USAGES_PATH = "/usages"
+KIMI_OAUTH_HOST = "https://auth.kimi.com"
+KIMI_OAUTH_TOKEN_PATH = "/api/oauth/token"
+# The public OAuth client pi logs in to Kimi Code with.
+KIMI_OAUTH_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
 
 SUMMARY_LABEL = "weekly"
 WEEKLY_DURATION = "7d"
@@ -175,3 +193,47 @@ class KimiQuota:
         if not windows:
             raise QuotaFetchError(f"kimi usages: no recognizable quota data (top-level keys: {top_level_keys(body)})")
         return QuotaSnapshot(plan_name=None, identity=None, windows=tuple(windows), note=None)
+
+
+def _oauth_host() -> str:
+    override = os.environ.get("KIMI_CODE_OAUTH_HOST") or os.environ.get("KIMI_OAUTH_HOST")
+    return (override or KIMI_OAUTH_HOST).rstrip("/")
+
+
+def _oauth_error(body: Any) -> str:
+    if not isinstance(body, Mapping):
+        return ""
+    error = body.get("error")
+    description = body.get("error_description")
+    parts = [part for part in (error, description) if isinstance(part, str) and part]
+    return ": " + ": ".join(parts) if parts else ""
+
+
+class KimiTokenEndpoint:
+    def refresh(self, refresh_token: str, transport: Transport, now: datetime) -> RefreshedToken:
+        form = {
+            "client_id": KIMI_OAUTH_CLIENT_ID,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }
+        headers = {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"}
+        url = f"{_oauth_host()}{KIMI_OAUTH_TOKEN_PATH}"
+        response = transport.request("POST", url, headers, urllib.parse.urlencode(form).encode("ascii"))
+        try:
+            body = response.json()
+        except TransportError:
+            body = None
+        if response.status != 200:
+            raise TokenRefreshError(
+                f"Kimi token refresh rejected (HTTP {response.status}{_oauth_error(body)}) — log in to Kimi Code again in pi"
+            )
+        if not isinstance(body, Mapping):
+            raise TokenRefreshError("Kimi token refresh: response is not a JSON object")
+        access = body.get("access_token")
+        rotated = body.get("refresh_token")
+        seconds = optional_float(body.get("expires_in"))
+        if not isinstance(access, str) or not access or not isinstance(rotated, str) or not rotated:
+            raise TokenRefreshError(f"Kimi token refresh: missing token fields (keys: {top_level_keys(body)})")
+        if seconds is None or seconds <= 0:
+            raise TokenRefreshError(f"Kimi token refresh: invalid expires_in {body.get('expires_in')!r}")
+        return RefreshedToken(access=access, refresh=rotated, expires_at=now + timedelta(seconds=seconds))

@@ -63,7 +63,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--refresh-tokens",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="refresh expired OAuth access tokens (xAI in pi auth.json, Claude Code .credentials.json) "
+        help="refresh expired OAuth access tokens (xAI and Kimi in pi auth.json, Claude Code .credentials.json) "
         "and write them back (default: on; --no-refresh-tokens leaves every credential file untouched)",
     )
     parser.add_argument(
