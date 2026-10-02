@@ -312,6 +312,16 @@ class ZaiAdapterTests(unittest.TestCase):
         self.assertEqual((weekly.used, weekly.limit, weekly.unit), (12.0, 100.0, "%"))
         self.assertEqual(windows["MCP (1mo)"].unit, "calls")
         self.assertEqual(len(snapshot.windows), 3)
+        self.assertIsNone(snapshot.plan_name)
+
+    def test_plan_level_is_shown_and_login_is_absent(self):
+        payload = fixture("zai_limits.json")
+        payload["data"]["level"] = "lite"
+        transport = ScriptedTransport(
+            {("GET", "https://api.z.ai/api/monitor/usage/quota/limit"): json_response(200, payload)}
+        )
+        snapshot = ZaiQuota().fetch(API_KEY, transport)
+        self.assertEqual((snapshot.plan_name, snapshot.identity), ("lite", None))
 
     def test_used_is_derived_from_remaining_and_credit_limits_are_named(self):
         payload = fixture("zai_limits.json")
@@ -671,6 +681,23 @@ class KimiAdapterTests(unittest.TestCase):
             [w.name for w in snapshot.windows], ["weekly", "limit (5h)", "monthly (membership)"]
         )
         self.assertEqual(snapshot.windows[-1].used, 25.0)
+
+    def test_me_supplies_login_and_plan_and_a_missing_me_does_not_hide_usage(self):
+        payload = fixture("kimi_usages.json")
+        me = {"email": "user@example.test", "nickname": "Nick", "user_level_name": "Plus"}
+        transport = ScriptedTransport(
+            {
+                ("GET", self.USAGES_URL): json_response(200, payload),
+                ("GET", "https://api.kimi.com/coding/v1/me"): json_response(200, me),
+            }
+        )
+        snapshot = KimiQuota().fetch(OAUTH, transport)
+        self.assertEqual((snapshot.identity, snapshot.plan_name), ("user@example.test", "Plus"))
+
+        usage_only = self._fetch(payload)
+        self.assertIsNone(usage_only.identity)
+        self.assertIsNone(usage_only.plan_name)
+        self.assertTrue(usage_only.windows)
 
     def test_payload_without_usage_raises(self):
         with self.assertRaises(QuotaFetchError):
