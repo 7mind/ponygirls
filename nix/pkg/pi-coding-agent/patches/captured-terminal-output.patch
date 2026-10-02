@@ -129,15 +129,15 @@ index 6487c1c6f..a868f4e89 100644
  		const styleSearchMatch = (text: string) => theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
  		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
 diff --git a/packages/tui/src/index.ts b/packages/tui/src/index.ts
-index 93fb8b727..aba01f85d 100644
 --- a/packages/tui/src/index.ts
 +++ b/packages/tui/src/index.ts
-@@ -108,7 +108,12 @@ export { oklabToOkhslLightness } from "./oklab.ts";
+@@ -108,7 +108,13 @@
  // Input buffering for batch splitting
  export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
  // Terminal interface and implementations
--export { ProcessTerminal, type Terminal } from "./terminal.ts";
+-export { isAppleTerminalSession, ProcessTerminal, type Terminal } from "./terminal.ts";
 +export {
++	isAppleTerminalSession,
 +	type CapturedOutputStream,
 +	ProcessTerminal,
 +	type ProcessTerminalOptions,
@@ -147,14 +147,12 @@ index 93fb8b727..aba01f85d 100644
  export {
  	parseTerminalColorSchemeReport,
 diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
-index cce2dd116..a4a2fbdaa 100644
 --- a/packages/tui/src/terminal.ts
 +++ b/packages/tui/src/terminal.ts
-@@ -131,11 +131,34 @@ export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
- 	return DEFAULT_ESCAPE_TIMEOUT_MS;
- }
- 
-+/** Stream a captured write arrived on. */
+@@ -134,8 +134,30 @@
+ /**
+  * Real terminal using process.stdin/stdout
+  */
 +export type CapturedOutputStream = "stdout" | "stderr";
 +
 +export interface ProcessTerminalOptions {
@@ -173,9 +171,6 @@ index cce2dd116..a4a2fbdaa 100644
 +	callback?: (error?: Error | null) => void,
 +) => boolean;
 +
- /**
-  * Real terminal using process.stdin/stdout
-  */
  export class ProcessTerminal implements Terminal {
  	private wasRaw = false;
 +	private readonly onCapturedOutput: ProcessTerminalOptions["onCapturedOutput"];
@@ -185,7 +180,7 @@ index cce2dd116..a4a2fbdaa 100644
  	private inputHandler?: (data: string) => void;
  	private resizeHandler?: () => void;
  	private _kittyProtocolActive = false;
-@@ -163,6 +186,10 @@ export class ProcessTerminal implements Terminal {
+@@ -163,6 +185,10 @@
  		return env;
  	})();
  
@@ -196,7 +191,7 @@ index cce2dd116..a4a2fbdaa 100644
  	get kittyProtocolActive(): boolean {
  		return this._kittyProtocolActive;
  	}
-@@ -172,6 +199,7 @@ export class ProcessTerminal implements Terminal {
+@@ -172,6 +198,7 @@
  	}
  
  	start(onInput: (data: string) => void, onResize: () => void): void {
@@ -204,7 +199,7 @@ index cce2dd116..a4a2fbdaa 100644
  		this.inputHandler = onInput;
  		this.resizeHandler = onResize;
  
-@@ -184,7 +212,7 @@ export class ProcessTerminal implements Terminal {
+@@ -184,7 +211,7 @@
  		process.stdin.resume();
  
  		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
@@ -213,7 +208,7 @@ index cce2dd116..a4a2fbdaa 100644
  
  		// Set up resize handler immediately
  		process.stdout.on("resize", this.resizeHandler);
-@@ -261,7 +289,7 @@ export class ProcessTerminal implements Terminal {
+@@ -261,7 +288,7 @@
  		this.keyboardProtocolPushed = true;
  		this.pendingKeyboardProtocolDeviceAttributes += 1;
  		this.clearKeyboardProtocolNegotiationBuffer();
@@ -222,7 +217,7 @@ index cce2dd116..a4a2fbdaa 100644
  	}
  
  	private handleKeyboardProtocolNegotiationSequence(
-@@ -363,13 +391,13 @@ export class ProcessTerminal implements Terminal {
+@@ -363,13 +390,13 @@
  
  	private enableModifyOtherKeys(): void {
  		if (this._kittyProtocolActive || this._modifyOtherKeysActive) return;
@@ -238,7 +233,7 @@ index cce2dd116..a4a2fbdaa 100644
  		this._modifyOtherKeysActive = false;
  	}
  
-@@ -394,7 +422,7 @@ export class ProcessTerminal implements Terminal {
+@@ -394,7 +421,7 @@
  		if (shouldDisableKittyProtocol) {
  			// Disable Kitty keyboard protocol first so any late key releases
  			// do not generate new Kitty escape sequences.
@@ -247,7 +242,7 @@ index cce2dd116..a4a2fbdaa 100644
  			this.keyboardProtocolPushed = false;
  			this._kittyProtocolActive = false;
  			setKittyProtocolActive(false);
-@@ -428,18 +456,18 @@ export class ProcessTerminal implements Terminal {
+@@ -428,18 +455,18 @@
  
  	stop(): void {
  		if (this.clearProgressInterval()) {
@@ -269,7 +264,7 @@ index cce2dd116..a4a2fbdaa 100644
  			this.keyboardProtocolPushed = false;
  			this._kittyProtocolActive = false;
  			setKittyProtocolActive(false);
-@@ -472,10 +500,63 @@ export class ProcessTerminal implements Terminal {
+@@ -472,10 +499,63 @@
  		if (process.stdin.setRawMode) {
  			process.stdin.setRawMode(this.wasRaw);
  		}
@@ -334,7 +329,7 @@ index cce2dd116..a4a2fbdaa 100644
  		if (this.writeLogPath) {
  			try {
  				fs.appendFileSync(this.writeLogPath, data, { encoding: "utf8" });
-@@ -496,52 +577,52 @@ export class ProcessTerminal implements Terminal {
+@@ -496,52 +576,52 @@
  	moveBy(lines: number): void {
  		if (lines > 0) {
  			// Move down
