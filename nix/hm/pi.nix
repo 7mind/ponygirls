@@ -223,7 +223,6 @@ let
   inferenceProviderPackages = {
     xai = "npm:pi-xai@0.18.0";
     ollama = "npm:pi-ollama-cloud@0.12.2";
-    minimax = "npm:@sinamtz/pi-minimax-provider@1.1.7";
   };
   defaultEnabledProviders = [ ];
   enabledProviderPackages = lib.attrValues (
@@ -419,16 +418,11 @@ in
           #   getCloudApiKey now awaits the registry lookup and falls back to
           #   OLLAMA_API_KEY), so the extension was removed — the old copy also
           #   crashed pi 0.80.8+, which dropped the SDK's AuthStorage export.
-          # - @sinamtz/pi-minimax-provider: MiniMax M3 provider (Anthropic-compat
-          #   streaming). PINNED to 1.1.7. Registers the `minimax` provider against
-          #   https://api.minimax.io (apiKey `$MINIMAX_API_KEY`). Self-contained:
-          #   `@sinclair/typebox` is a regular dep (installed) and also aliased by
-          #   Pi's loader, so the managed --legacy-peer-deps install resolves it.
           # pi-search-hub is unconditional (web search, not an inference
-          # provider). The inference-provider packages (pi-xai, pi-ollama-cloud,
-          # @sinamtz/pi-minimax-provider) are each gated by
-          # `smind.hm.dev.llm.pi.providers.<name>.enable` — all opt-in (none
-          # enabled by default); see `inferenceProviderPackages`.
+          # provider). The inference-provider packages (pi-xai, pi-ollama-cloud)
+          # are each gated by `smind.hm.dev.llm.pi.providers.<name>.enable` —
+          # all opt-in (none enabled by default); see `inferenceProviderPackages`.
+          # MiniMax uses Pi's built-in `minimax` provider (`MINIMAX_API_KEY`).
           packages = [
             "${piSearchHub}"
           ] ++ enabledProviderPackages;
