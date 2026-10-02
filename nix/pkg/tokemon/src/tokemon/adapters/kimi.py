@@ -50,6 +50,7 @@ from tokemon.transport import Transport, TransportError
 
 KIMI_API = "https://api.kimi.com/coding/v1"
 USAGES_PATH = "/usages"
+ME_PATH = "/me"
 KIMI_OAUTH_HOST = "https://auth.kimi.com"
 KIMI_OAUTH_TOKEN_PATH = "/api/oauth/token"
 # The public OAuth client pi logs in to Kimi Code with.
@@ -192,7 +193,24 @@ class KimiQuota:
             windows.extend(_ratio_windows(usages, covered))
         if not windows:
             raise QuotaFetchError(f"kimi usages: no recognizable quota data (top-level keys: {top_level_keys(body)})")
-        return QuotaSnapshot(plan_name=None, identity=None, windows=tuple(windows), note=None)
+        identity, plan_name = _account(credential, transport)
+        return QuotaSnapshot(plan_name=plan_name, identity=identity, windows=tuple(windows), note=None)
+
+
+def _account(credential: Credential, transport: Transport) -> tuple[str | None, str | None]:
+    """Login and plan from ``GET /me``. A failure here must not hide a usage snapshot."""
+    try:
+        _, payload = get_json(transport, f"{KIMI_API}{ME_PATH}", bearer_headers(credential))
+    except (QuotaFetchError, TransportError):
+        return None, None
+    if not isinstance(payload, Mapping):
+        return None, None
+    email = payload.get("email")
+    nickname = payload.get("nickname")
+    identity = email if isinstance(email, str) and email else nickname if isinstance(nickname, str) and nickname else None
+    level = payload.get("user_level_name")
+    plan = level if isinstance(level, str) and level else None
+    return identity, plan
 
 
 def _oauth_host() -> str:

@@ -6,14 +6,16 @@ the bare token — no ``Bearer`` prefix.  Error envelope observed live
 GLM Coding Plan reports ``msg = "当前用户不存在coding plan"``; that is account
 state, surfaced as a snapshot note.
 
-The success shape was not observed live.  The official ``query-usage.mjs``
+The official ``query-usage.mjs``
 post-processor reads ``data.limits[]`` items by ``type`` (TOKENS_LIMIT,
 TIME_LIMIT = monthly MCP) with ``percentage``, ``currentValue`` (used) and
 ``usage`` (the limit).  The remaining fields are taken from CodexBar's z.ai
 parser (steipete/CodexBar, Plugins/zai.js): ``remaining``; the window length as
 ``number`` × ``unit`` (1 = day, 3 = hour, 5 = minute, 6 = week), which tells a
 plan's 5-hour token limit from its weekly one; ``nextResetTime`` (epoch ms);
-and the CREDIT_LIMIT type of credit-metered plans.
+and the CREDIT_LIMIT type of credit-metered plans. ``data.level`` is the plan
+name (observed live 2026-10-02, ``"lite"``). The coding-plan API key is not
+allowed to read customer info, so there is no login to show.
 """
 
 from __future__ import annotations
@@ -93,7 +95,9 @@ class ZaiQuota:
                 windows.append(window)
         if not windows:
             raise QuotaFetchError(f"zai quota/limit: no usable windows (keys: {top_level_keys(limits[0])})")
-        return QuotaSnapshot(plan_name=None, identity=None, windows=tuple(windows), note=None)
+        level = source.get("level")
+        plan_name = level if isinstance(level, str) and level else None
+        return QuotaSnapshot(plan_name=plan_name, identity=None, windows=tuple(windows), note=None)
 
     def _window(self, entry: Mapping[str, Any]) -> QuotaWindow | None:
         limit_type = entry.get("type")
