@@ -12,8 +12,10 @@ from rich.console import Console
 
 from tokemon.adapters import TOKEN_ENDPOINTS
 from tokemon.discovery import discover_targets
+from tokemon.pacing import PacedTransport
 from tokemon.polling import make_query
 from tokemon.render import build_table
+from tokemon.state import state_db_path
 from tokemon.token_refresh import LOCK_WAIT_SECONDS, ExpiredTokenPolicy, KeepExpiredTokens, RefreshExpiredTokens
 from tokemon.transport import UrllibTransport
 
@@ -61,8 +63,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--refresh-tokens",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="refresh expired pi OAuth access tokens (xAI logins) and write them back to auth.json "
-        "(default: on; --no-refresh-tokens leaves every credential file untouched)",
+        help="refresh expired OAuth access tokens (xAI in pi auth.json, Claude Code .credentials.json) "
+        "and write them back (default: on; --no-refresh-tokens leaves every credential file untouched)",
     )
     parser.add_argument(
         "--home",
@@ -75,7 +77,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def token_policy(refresh_tokens: bool) -> ExpiredTokenPolicy:
-    """Expired pi OAuth tokens are refreshed unless the caller opts out."""
+    """Expired OAuth tokens are refreshed unless the caller opts out."""
     if not refresh_tokens:
         return KeepExpiredTokens()
     return RefreshExpiredTokens(TOKEN_ENDPOINTS, LOCK_WAIT_SECONDS)
@@ -84,12 +86,17 @@ def token_policy(refresh_tokens: bool) -> ExpiredTokenPolicy:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     console = Console()
-    transport = UrllibTransport(timeout_seconds=args.timeout)
+    clock = lambda: datetime.now(timezone.utc)
+    transport = PacedTransport(
+        UrllibTransport(timeout_seconds=args.timeout),
+        state_db_path(args.home, sys.platform, os.environ),
+        clock,
+    )
     if not discover_targets(args.home, os.environ):
         console.print(f"no codex or pi credentials found under {args.home}")
         return 1
     tokens = token_policy(args.refresh_tokens)
-    query = make_query(args.home, os.environ, transport, lambda: datetime.now(timezone.utc), tokens)
+    query = make_query(args.home, os.environ, transport, clock, tokens)
 
     if args.once:
         try:

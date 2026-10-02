@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from tokemon.adapters.claude import ClaudeQuota
+from tokemon.adapters.claude import ClaudeQuota, ClaudeTokenEndpoint
 from tokemon.adapters.codex import CodexQuota
 from tokemon.adapters.copilot import CopilotQuota
 from tokemon.adapters.kimi import KimiQuota
@@ -33,6 +33,7 @@ _ADAPTERS: dict[str, QuotaAdapter] = {
 
 # Providers whose expired pi OAuth access token tokemon can refresh.
 TOKEN_ENDPOINTS: Mapping[str, TokenEndpoint] = {
+    "anthropic": ClaudeTokenEndpoint(),
     "xai": XaiTokenEndpoint(),
 }
 

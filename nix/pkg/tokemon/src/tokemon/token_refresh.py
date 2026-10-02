@@ -1,12 +1,15 @@
-"""Refresh expired pi OAuth access tokens and write them back to ``auth.json``.
+"""Refresh expired OAuth access tokens and write them back where the client reads them.
 
-Refresh tokens can be single-use, so a refreshed token pair must be persisted
-where pi reads it, under the lock pi itself takes for the same operation.  pi
-guards ``auth.json`` with proper-lockfile: the lock is the directory
-``auth.json.lock``, created with mkdir; its holder keeps the directory's mtime
-fresh, and a lock whose mtime is older than the stale threshold may be removed
-and retaken (pi 0.99.1 core/auth-storage.js: 30 s for its async refresh path,
-proper-lockfile's 10 s default for its sync writers).
+Refresh tokens can be single-use, so a refreshed pair must be persisted before
+anything else uses the old one. pi guards ``auth.json`` with proper-lockfile:
+the lock is the directory ``auth.json.lock``, created with mkdir; its holder
+keeps the directory's mtime fresh, and a lock whose mtime is older than the
+stale threshold may be removed and retaken (pi 0.99.1 core/auth-storage.js:
+30 s for its async refresh path, proper-lockfile's 10 s default for its sync
+writers). Claude Code credentials use the same lock directory beside
+``.credentials.json`` so two tokemon processes do not both rotate the token.
+Claude Code itself does not take that lock; a running session can still refresh
+with the pre-rotation refresh token and be forced to log in again.
 """
 
 from __future__ import annotations
@@ -21,7 +24,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Protocol
 
-from tokemon.credentials import Credential, CredentialError, CredentialStore, credential_from_pi_entry
+from tokemon.credentials import (
+    Credential,
+    CredentialError,
+    CredentialStore,
+    StoreFormat,
+    credential_from_claude_oauth,
+    credential_from_pi_entry,
+)
 from tokemon.transport import Transport
 
 LOCK_SUFFIX = ".lock"
@@ -131,19 +141,40 @@ def _write_auth(path: Path, auth: Mapping[str, Any]) -> None:
 
 
 def _with_token(auth: Mapping[str, Any], store: CredentialStore, token: RefreshedToken) -> dict[str, Any]:
-    entry = {
-        **auth[store.entry],
-        "type": "oauth",
-        "access": token.access,
-        "refresh": token.refresh,
-        "expires": int(token.expires_at.timestamp() * MILLISECONDS_PER_SECOND),
-    }
+    expires_ms = int(token.expires_at.timestamp() * MILLISECONDS_PER_SECOND)
+    current = auth.get(store.entry)
+    if not isinstance(current, dict):
+        raise TokenRefreshError(f"{store.path}: entry {store.entry!r} is gone")
+    if store.format is StoreFormat.CLAUDE:
+        entry = {**current, "accessToken": token.access, "refreshToken": token.refresh, "expiresAt": expires_ms}
+    else:
+        entry = {**current, "type": "oauth", "access": token.access, "refresh": token.refresh, "expires": expires_ms}
     return {**auth, store.entry: entry}
 
 
+def _stored_credential(provider_id: str, auth: Mapping[str, Any], store: CredentialStore) -> Credential:
+    entry = auth.get(store.entry)
+    if not isinstance(entry, dict):
+        raise TokenRefreshError(f"{store.path}: entry {store.entry!r} is gone")
+    try:
+        if store.format is StoreFormat.CLAUDE:
+            return credential_from_claude_oauth(entry, store)
+        return credential_from_pi_entry(provider_id, entry, store)
+    except CredentialError as exc:
+        raise TokenRefreshError(str(exc)) from exc
+
+
+def _still_holds(auth: Mapping[str, Any], store: CredentialStore, secret: str) -> bool:
+    entry = auth.get(store.entry)
+    if not isinstance(entry, dict):
+        return False
+    field = "accessToken" if store.format is StoreFormat.CLAUDE else "access"
+    return entry.get(field) == secret
+
+
 class RefreshExpiredTokens:
-    """Refreshes an expired pi OAuth token through its provider's token endpoint
-    and persists the new pair to every ``auth.json`` entry holding the old one."""
+    """Refreshes an expired OAuth token and persists the new pair to every store
+    still holding the old access token."""
 
     def __init__(self, endpoints: Mapping[str, TokenEndpoint], lock_wait_seconds: float) -> None:
         self._endpoints = endpoints
@@ -163,22 +194,15 @@ class RefreshExpiredTokens:
         primary, *copies = credential.stores
         with auth_file_lock(primary.path, self._lock_wait_seconds):
             auth = _read_auth(primary.path)
-            entry = auth.get(primary.entry)
-            if not isinstance(entry, dict):
-                raise TokenRefreshError(f"{primary.path}: entry {primary.entry!r} is gone")
-            try:
-                stored = credential_from_pi_entry(provider_id, entry, primary)
-            except CredentialError as exc:
-                raise TokenRefreshError(str(exc)) from exc
+            stored = _stored_credential(provider_id, auth, primary)
             if stored.secret != credential.secret or stored.refresh_token is None:
-                # pi refreshed or replaced the login since discovery read it
+                # the client refreshed or replaced the login since discovery read it
                 return replace(stored, stores=credential.stores)
             token = endpoint.refresh(stored.refresh_token, transport, now)
             _write_auth(primary.path, _with_token(auth, primary, token))
         for copy in copies:
             with auth_file_lock(copy.path, self._lock_wait_seconds):
                 auth = _read_auth(copy.path)
-                entry = auth.get(copy.entry)
-                if isinstance(entry, dict) and entry.get("access") == credential.secret:
+                if _still_holds(auth, copy, credential.secret):
                     _write_auth(copy.path, _with_token(auth, copy, token))
         return replace(credential, secret=token.access, refresh_token=token.refresh, expires_at=token.expires_at)

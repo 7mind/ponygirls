@@ -19,6 +19,7 @@ from pathlib import Path
 from dummy_transport import ScriptedTransport, json_response
 from test_adapters import fixture
 from tokemon.adapters import TOKEN_ENDPOINTS
+from tokemon.adapters.claude import CLAUDE_OAUTH_CLIENT_ID, CLAUDE_OAUTH_SCOPES, CLAUDE_OAUTH_TOKEN_URL
 from tokemon.discovery import discover_targets
 from tokemon.main import _parse_args, token_policy
 from tokemon.polling import query_target
@@ -197,6 +198,94 @@ class TokenRefreshTests(unittest.TestCase):
         result = query_target(self._target("xai"), transport, self.policy)
         self.assertIn("log in to xAI again", result.error)
         self.assertEqual(transport.calls, [("POST", TOKEN_URL)])
+
+
+class ClaudeTokenRefreshTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self._tmp.name)
+        self.credentials = self.home / ".claude" / ".credentials.json"
+        self.policy = RefreshExpiredTokens(TOKEN_ENDPOINTS, LOCK_WAIT_SECONDS)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write(self, payload: dict) -> None:
+        self.credentials.parent.mkdir(parents=True, exist_ok=True)
+        self.credentials.write_text(json.dumps(payload), encoding="utf-8")
+
+    def _oauth(self, expires_ms: int, access: str = "old-access", refresh: str = "old-refresh") -> dict:
+        return {
+            "claudeAiOauth": {
+                "accessToken": access,
+                "refreshToken": refresh,
+                "expiresAt": expires_ms,
+                "scopes": ["user:inference"],
+                "subscriptionType": "max",
+            },
+            "trustedDeviceToken": "keep-me",
+        }
+
+    def test_expired_token_is_refreshed_and_other_fields_kept(self):
+        self._write(self._oauth(EXPIRED_MS))
+        transport = ScriptedTransport(
+            {("POST", CLAUDE_OAUTH_TOKEN_URL): json_response(200, {**ROTATED, "expires_in": 3600})}
+        )
+        target = [t for t in discover_targets(self.home, {}) if t.provider == "anthropic"][0]
+        credential = self.policy.current("anthropic", target.credential, transport, NOW)
+
+        self.assertEqual((credential.secret, credential.refresh_token), ("new-access", "new-refresh"))
+        self.assertEqual(credential.expires_at, NOW + timedelta(seconds=3600))
+        body = json.loads(transport.bodies[0])
+        self.assertEqual(body["grant_type"], "refresh_token")
+        self.assertEqual(body["client_id"], CLAUDE_OAUTH_CLIENT_ID)
+        self.assertEqual(body["refresh_token"], "old-refresh")
+        self.assertEqual(body["scope"], " ".join(CLAUDE_OAUTH_SCOPES))
+        self.assertEqual(transport.headers[0]["Content-Type"], "application/json")
+        stored = json.loads(self.credentials.read_text(encoding="utf-8"))
+        self.assertEqual(stored["trustedDeviceToken"], "keep-me")
+        self.assertEqual(stored["claudeAiOauth"]["scopes"], ["user:inference"])
+        self.assertEqual(stored["claudeAiOauth"]["subscriptionType"], "max")
+        self.assertEqual(stored["claudeAiOauth"]["accessToken"], "new-access")
+        self.assertEqual(stat.S_IMODE(self.credentials.stat().st_mode), 0o600)
+
+    def test_rejected_refresh_leaves_the_file_untouched(self):
+        self._write(self._oauth(EXPIRED_MS))
+        before = self.credentials.read_bytes()
+        transport = ScriptedTransport(
+            {("POST", CLAUDE_OAUTH_TOKEN_URL): json_response(403, {"error": "access_denied"})}
+        )
+        target = [t for t in discover_targets(self.home, {}) if t.provider == "anthropic"][0]
+        with self.assertRaises(TokenRefreshError) as caught:
+            self.policy.current("anthropic", target.credential, transport, NOW)
+        self.assertIn("HTTP 403: access_denied", str(caught.exception))
+        self.assertEqual(self.credentials.read_bytes(), before)
+
+    def test_login_refreshed_since_discovery_is_adopted(self):
+        self._write(self._oauth(EXPIRED_MS))
+        target = [t for t in discover_targets(self.home, {}) if t.provider == "anthropic"][0]
+        self._write(self._oauth(VALID_MS, access="claude-access", refresh="claude-refresh"))
+        transport = ScriptedTransport({})
+        credential = self.policy.current("anthropic", target.credential, transport, NOW)
+        self.assertEqual((credential.secret, credential.refresh_token), ("claude-access", "claude-refresh"))
+        self.assertEqual(transport.calls, [])
+
+    def test_unrotated_refresh_token_is_kept(self):
+        self._write(self._oauth(EXPIRED_MS))
+        transport = ScriptedTransport(
+            {
+                ("POST", CLAUDE_OAUTH_TOKEN_URL): json_response(
+                    200, {"access_token": "new-access", "expires_in": 3600}
+                )
+            }
+        )
+        target = [t for t in discover_targets(self.home, {}) if t.provider == "anthropic"][0]
+        credential = self.policy.current("anthropic", target.credential, transport, NOW)
+        self.assertEqual(credential.refresh_token, "old-refresh")
+        self.assertEqual(
+            json.loads(self.credentials.read_text(encoding="utf-8"))["claudeAiOauth"]["refreshToken"],
+            "old-refresh",
+        )
 
 
 if __name__ == "__main__":

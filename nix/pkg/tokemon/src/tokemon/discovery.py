@@ -24,6 +24,7 @@ from tokemon.credentials import (
     CredentialError,
     CredentialKind,
     CredentialStore,
+    StoreFormat,
     credential_from_claude_oauth,
     credential_from_env_api_key,
     credential_from_pi_entry,
@@ -128,8 +129,10 @@ def _claude_targets(claude_home: Path, profile: str, home: Path) -> list[Target]
     oauth = credentials.get("claudeAiOauth")
     if not isinstance(oauth, dict):
         return [Target(profile, "claude", "anthropic", label, None, "claude .credentials.json has no claudeAiOauth")]
+    credentials_path = claude_home / CLAUDE_CREDENTIALS_FILE
+    store = CredentialStore(credentials_path, "claudeAiOauth", StoreFormat.CLAUDE)
     try:
-        credential = credential_from_claude_oauth(oauth)
+        credential = credential_from_claude_oauth(oauth, store)
     except CredentialError as exc:
         return [Target(profile, "claude", "anthropic", label, None, str(exc))]
     return [Target(profile, "claude", "anthropic", label, credential, None)]
@@ -149,7 +152,7 @@ def _pi_targets(pi_root: Path, profile: str, home: Path) -> list[Target]:
                 if not isinstance(entry, dict):
                     raise DiscoveryError(f"{agent_dir / 'auth.json'}: entry {provider_id!r} is not an object")
                 try:
-                    store = CredentialStore(agent_dir / "auth.json", provider_id)
+                    store = CredentialStore(agent_dir / "auth.json", provider_id, StoreFormat.PI)
                     credential = credential_from_pi_entry(provider_id, entry, store)
                 except CredentialError as exc:
                     targets.append(Target(profile, "pi", provider_id, label, None, str(exc)))

@@ -23,6 +23,8 @@ row while enabled, a note while switched on but blocked (``disabled_reason``).
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta
 from typing import Any, Mapping
 
 from tokemon.adapters.common import (
@@ -35,11 +37,28 @@ from tokemon.adapters.common import (
 )
 from tokemon.credentials import Credential, CredentialKind
 from tokemon.quota import QuotaFetchError, QuotaSnapshot, QuotaWindow
-from tokemon.transport import Transport
+from tokemon.token_refresh import RefreshedToken, TokenRefreshError
+from tokemon.transport import Transport, TransportError
 
 ANTHROPIC_OAUTH_API = "https://api.anthropic.com/api/oauth"
 USAGE_PATH = "/usage"
 PROFILE_PATH = "/profile"
+
+# Claude Code 2.1.285 refreshes with JSON POST to TOKEN_URL (function Gce):
+# {grant_type, refresh_token, client_id, scope}. The scope list is HXe() with
+# PLUGINS_SCOPE_REGISTERED set. expires_in is seconds; a missing refresh_token
+# means the old one was not rotated. The stored expiry is the server's, not
+# skewed: writing an early expiry would make Claude Code refresh early too.
+CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+CLAUDE_OAUTH_SCOPES = (
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers",
+    "user:file_upload",
+    "user:plugins",
+)
 
 LIMIT_KIND_LABELS: Mapping[str, str] = {
     "session": "session (5h)",
@@ -139,4 +158,57 @@ class ClaudeQuota:
             identity=email if isinstance(email, str) else None,
             windows=present,
             note=note,
+        )
+
+
+def _oauth_error(body: Any) -> str:
+    if not isinstance(body, Mapping):
+        return ""
+    error = body.get("error")
+    if isinstance(error, str) and error:
+        description = body.get("error_description")
+        if isinstance(description, str) and description:
+            return f": {error}: {description}"
+        return f": {error}"
+    if isinstance(error, Mapping):
+        message = error.get("message")
+        if isinstance(message, str) and message:
+            return f": {message}"
+    return ""
+
+
+class ClaudeTokenEndpoint:
+    def refresh(self, refresh_token: str, transport: Transport, now: datetime) -> RefreshedToken:
+        payload = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": CLAUDE_OAUTH_CLIENT_ID,
+            "scope": " ".join(CLAUDE_OAUTH_SCOPES),
+        }
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        response = transport.request(
+            "POST", CLAUDE_OAUTH_TOKEN_URL, headers, json.dumps(payload).encode("utf-8")
+        )
+        try:
+            body = response.json()
+        except TransportError:
+            body = None
+        if response.status != 200:
+            detail = _oauth_error(body)
+            raise TokenRefreshError(
+                f"Claude token refresh rejected (HTTP {response.status}{detail}) — log in to Claude Code again"
+            )
+        if not isinstance(body, Mapping):
+            raise TokenRefreshError("Claude token refresh: response is not a JSON object")
+        access = body.get("access_token")
+        if not isinstance(access, str) or not access:
+            raise TokenRefreshError(f"Claude token refresh: no access_token (keys: {top_level_keys(body)})")
+        seconds = optional_float(body.get("expires_in"))
+        if seconds is None or seconds <= 0:
+            raise TokenRefreshError(f"Claude token refresh: invalid expires_in {body.get('expires_in')!r}")
+        rotated = body.get("refresh_token")
+        return RefreshedToken(
+            access=access,
+            refresh=rotated if isinstance(rotated, str) and rotated else refresh_token,
+            expires_at=now + timedelta(seconds=seconds),
         )
