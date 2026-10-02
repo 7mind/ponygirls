@@ -138,10 +138,21 @@ let
       };
     }
   ];
+  # web_read reader chain (pi-search-hub >= the reader-fallback feature,
+  # unreleased v2.9.0 — see nix/pkg/pi-search-hub/package.nix): the tool
+  # builds its chain as [ params.reader ?? reader, ...readerFallback minus the
+  # head ], so `reader` must ALSO be "firecrawl" or the implicit "jina"
+  # default would jump the queue. Firecrawl scrapes first (keyless credits),
+  # then Exa contents, then Jina (free, keyless); 422/5xx/network errors fall
+  # through, 401/403 abort the chain as fatal auth defects. An explicit
+  # `reader` argument from the model is hoisted to the front and falls
+  # through the same chain.
   searchHubConfig = pkgs.writeText "pi-search-hub-config.json" ''
     {
       "defaultBackend": "searxng",
       "selectionStrategy": "sequential",
+      "reader": "firecrawl",
+      "readerFallback": ["firecrawl", "exa", "jina"],
       "backends": {
     ${lib.concatStringsSep ",\n" (
       map (b: "    ${builtins.toJSON b.name}: ${builtins.toJSON b.cfg}") searchHubBackends
