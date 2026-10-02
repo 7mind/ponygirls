@@ -127,8 +127,9 @@ class Outlined implements Component {
 		this.bodyHeight = body.length;
 		const rule = (left: string, right: string) => this.border(left + "─".repeat(Math.max(0, width - 2)) + right);
 		const lines = body.map((line) => {
-			const gap = Math.max(0, innerWidth - visibleWidth(line));
-			return this.border("│") + " " + line + " ".repeat(gap) + " " + this.border("│");
+			const fitted = truncateToWidth(line, innerWidth);
+			const gap = Math.max(0, innerWidth - visibleWidth(fitted));
+			return this.border("│") + " " + fitted + " ".repeat(gap) + " " + this.border("│");
 		});
 		return [rule("┌", "┐"), ...lines, rule("└", "┘")];
 	}
@@ -280,7 +281,8 @@ class ModelPicker implements Component {
 			const styled = absolute === this.selected ? this.theme.fg("accent", text) : text;
 			lines.push(truncateToWidth(styled, width));
 		}
-		lines.push(this.theme.fg("dim", "enter select · space or right-click favourite · tab switch · esc close"));
+		lines.push(this.theme.fg("dim", "enter select · space or right-click favourite"));
+		lines.push(this.theme.fg("dim", "tab switch · esc close"));
 		return lines;
 	}
 
