@@ -18,12 +18,20 @@ class CredentialError(ValueError):
     """A credential entry exists but cannot be interpreted."""
 
 
+class StoreFormat(Enum):
+    """How a refreshed token is written back into ``path``."""
+
+    PI = "pi"
+    CLAUDE = "claude"
+
+
 @dataclass(frozen=True)
 class CredentialStore:
-    """One entry of a pi ``auth.json``: where a refreshed token is written back."""
+    """One credential file entry a refreshed token is written back to."""
 
     path: Path
     entry: str
+    format: StoreFormat
 
 
 @dataclass(frozen=True)
@@ -76,7 +84,7 @@ def credential_from_pi_entry(provider_id: str, entry: Mapping[str, Any], store: 
     raise CredentialError(f"pi credential {provider_id!r}: unknown type {entry_type!r}")
 
 
-def credential_from_claude_oauth(entry: Mapping[str, Any]) -> Credential:
+def credential_from_claude_oauth(entry: Mapping[str, Any], store: CredentialStore) -> Credential:
     """Parse the ``claudeAiOauth`` object of a Claude Code ``.credentials.json``."""
     secret = entry.get("accessToken")
     if not isinstance(secret, str) or not secret:
@@ -88,7 +96,7 @@ def credential_from_claude_oauth(entry: Mapping[str, Any]) -> Credential:
         refresh_token=refresh if isinstance(refresh, str) else None,
         account_id=None,
         expires_at=_epoch_ms_to_datetime(entry.get("expiresAt")),
-        stores=(),
+        stores=(store,),
     )
 
 

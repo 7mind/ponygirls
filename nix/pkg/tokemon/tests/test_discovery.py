@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 
-from tokemon.credentials import CredentialKind
+from tokemon.credentials import CredentialKind, StoreFormat
 from tokemon.discovery import DiscoveryError, discover_targets
 
 
@@ -85,6 +85,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(
             claude_default.credential.expires_at, datetime.fromtimestamp(1790679856144 / 1000, tz=timezone.utc)
         )
+        store = claude_default.credential.stores[0]
+        self.assertEqual(store.path, self.home / ".claude" / ".credentials.json")
+        self.assertEqual((store.entry, store.format), ("claudeAiOauth", StoreFormat.CLAUDE))
         self.assertEqual(claude_work.credential.secret, "claude-work")
 
     def test_claude_credentials_without_oauth_token_become_note(self):
