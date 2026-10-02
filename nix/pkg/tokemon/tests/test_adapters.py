@@ -9,6 +9,8 @@ Fixture origins:
   subscription (2026-10-01, history removed).
 - kimi_usages.json — synthetic payload built from the response handling of
   kimi-cli's own /usage command (MoonshotAI/kimi-cli, ui/shell/usage.py).
+- kimi_usages_ratio.json — live /usages response (2026-10-02); month_code ratio
+  edited from 0 to 0.18 so the percent scaling is observable.
 - minimax_remains_plan.json, zai_limits.json — synthetic payloads built from the
   field handling of CodexBar's MiniMax and z.ai parsers (steipete/CodexBar);
   the z.ai limit types also match the official zai-coding-plugins script.
@@ -628,6 +630,47 @@ class KimiAdapterTests(unittest.TestCase):
         self.assertEqual(
             snapshot.windows[0].resets_at, datetime(2026, 10, 5, 5, 24, 18, 443553, tzinfo=timezone.utc)
         )
+
+    def test_ratio_usages_add_monthly_windows_without_duplicating_5h(self):
+        snapshot = self._fetch(fixture("kimi_usages_ratio.json"))
+        self.assertEqual(
+            [(w.name, w.used, w.limit, w.unit) for w in snapshot.windows],
+            [
+                ("limit (5h)", 0.0, 100.0, "units"),
+                ("monthly (code)", 18.0, 100.0, "%"),
+                ("monthly (membership)", 0.0, 100.0, "%"),
+            ],
+        )
+        self.assertEqual(
+            snapshot.windows[1].resets_at, datetime(2026, 11, 3, tzinfo=timezone.utc)
+        )
+
+    def test_ratio_only_payload_scales_fraction_and_accepts_camel_case(self):
+        snapshot = self._fetch(
+            {
+                "usages": {
+                    "limit_7d": {"used_ratio": "0.1", "reset_time": "2026-10-08T00:00:00Z"},
+                    "monthCode": {"usedRatio": 0.18, "resetAt": "2026-11-03T00:00:00Z"},
+                    "limit_custom": {"used_ratio": 0.5, "reset_time": "2026-12-01T00:00:00Z"},
+                }
+            }
+        )
+        self.assertEqual(
+            [(w.name, w.used, w.unit) for w in snapshot.windows],
+            [("weekly (7d)", 10.0, "%"), ("monthly (code)", 18.0, "%"), ("limit custom", 50.0, "%")],
+        )
+
+    def test_weekly_summary_suppresses_duplicate_7d_ratio(self):
+        payload = fixture("kimi_usages.json")
+        payload["usages"] = {
+            "limit_7d": {"used_ratio": 0.99, "reset_time": "2026-10-05T05:24:18Z"},
+            "limit_month_total": {"used_ratio": 0.25, "reset_time": "2026-11-01T00:00:00Z"},
+        }
+        snapshot = self._fetch(payload)
+        self.assertEqual(
+            [w.name for w in snapshot.windows], ["weekly", "limit (5h)", "monthly (membership)"]
+        )
+        self.assertEqual(snapshot.windows[-1].used, 25.0)
 
     def test_payload_without_usage_raises(self):
         with self.assertRaises(QuotaFetchError):
