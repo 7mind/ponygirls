@@ -36,6 +36,8 @@ PI_DIR_NAME = ".pi"
 YOLO_CONFIG_ROOT = Path(".config") / "yolo"
 
 DEFAULT_PROFILE = "default"
+OPENAI_COMPLETIONS_API = "openai-completions"
+MODELS_JSON_NO_CREDENTIAL = "models.json provider without stored credential"
 
 # Environment variables pi resolves API keys from, mapped to pi provider ids
 # (see pi docs/providers.md).  Only providers with a plausible quota/plan
@@ -159,10 +161,28 @@ def _pi_targets(pi_root: Path, profile: str, home: Path) -> list[Target]:
                 for provider_id in sorted(providers.keys()):
                     if auth is not None and provider_id in auth:
                         continue
-                    targets.append(
-                        Target(profile, "pi", provider_id, label, None, "models.json provider without stored credential")
-                    )
+                    config = providers[provider_id]
+                    if _unreportable_openai_completions(provider_id, config):
+                        continue
+                    targets.append(Target(profile, "pi", provider_id, label, None, MODELS_JSON_NO_CREDENTIAL))
     return targets
+
+
+def _unreportable_openai_completions(provider_id: str, config: Any) -> bool:
+    """An ``openai-completions`` models.json endpoint with no auth.json
+    credential is a quota row only when this provider id has a quota adapter.
+
+    Otherwise there is nothing to query: generic compatible routers (llama-swap,
+    Ollama) do not expose quota, and a placeholder ``apiKey`` in models.json is
+    not a stored credential.  Those endpoints are omitted entirely — not shown,
+    and not counted as hidden invalid rows.
+    """
+    if not isinstance(config, dict) or config.get("api") != OPENAI_COMPLETIONS_API:
+        return False
+    # Lazy: adapters import quota, which imports Target from this module.
+    from tokemon.adapters import has_quota_adapter
+
+    return not has_quota_adapter(provider_id)
 
 
 def _env_targets(environ: Mapping[str, str], seen_secrets: frozenset[str]) -> list[Target]:

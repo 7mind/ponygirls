@@ -20,6 +20,7 @@ from dummy_transport import ScriptedTransport, json_response
 from test_adapters import fixture
 from tokemon.adapters import TOKEN_ENDPOINTS
 from tokemon.discovery import discover_targets
+from tokemon.main import _parse_args, token_policy
 from tokemon.polling import query_target
 from tokemon.token_refresh import KeepExpiredTokens, RefreshExpiredTokens, TokenRefreshError
 
@@ -123,6 +124,13 @@ class TokenRefreshTests(unittest.TestCase):
         credential, transport = self._current("kimi-coding", json_response(200, ROTATED))
         self.assertEqual(credential.secret, "old-access")
         self.assertEqual(transport.calls, [])
+
+    def test_refresh_is_the_default_and_can_be_disabled(self):
+        self.assertIsInstance(token_policy(True), RefreshExpiredTokens)
+        self.assertIsInstance(token_policy(False), KeepExpiredTokens)
+        self.assertTrue(_parse_args([]).refresh_tokens)
+        self.assertTrue(_parse_args(["--refresh-tokens"]).refresh_tokens)
+        self.assertFalse(_parse_args(["--no-refresh-tokens"]).refresh_tokens)
 
     def test_keep_policy_never_refreshes(self):
         self._write(self.auth_path, {"xai": _entry(EXPIRED_MS)})

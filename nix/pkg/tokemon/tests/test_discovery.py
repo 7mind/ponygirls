@@ -101,10 +101,41 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(kimi.credential.refresh_token, "kimi-refresh")
         self.assertEqual(kimi.credential.expires_at, datetime.fromtimestamp(1790679856144 / 1000, tz=timezone.utc))
 
+    def test_openai_completions_without_credential_or_quota_adapter_is_omitted(self):
+        self.assertFalse(any(target.provider == "llama-swap" for target in self.targets))
+
     def test_models_json_provider_without_credential_is_listed(self):
-        llama = self._find("default", "llama-swap", "~/.pi/agent")
-        self.assertIsNone(llama.credential)
-        self.assertIn("models.json", llama.note)
+        _write_json(
+            self.home / ".pi" / "agent" / "models.json",
+            {
+                "providers": {
+                    "llama-swap": {"api": "openai-completions", "apiKey": "local", "baseUrl": "http://127.0.0.1:11435/v1"},
+                    "custom-anthropic": {"api": "anthropic-messages"},
+                    "vercel-ai-gateway": {"api": "openai-completions", "baseUrl": "http://127.0.0.1:9/v1"},
+                }
+            },
+        )
+        targets = discover_targets(self.home, self.environ)
+        self.assertFalse(any(target.provider == "llama-swap" for target in targets))
+        anthropic = [target for target in targets if target.provider == "custom-anthropic"]
+        self.assertEqual(len(anthropic), 1)
+        self.assertIsNone(anthropic[0].credential)
+        self.assertIn("models.json", anthropic[0].note)
+        gateway = [target for target in targets if target.provider == "vercel-ai-gateway"]
+        self.assertEqual(len(gateway), 1)
+        self.assertIsNone(gateway[0].credential)
+        self.assertIn("models.json", gateway[0].note)
+
+    def test_openai_completions_with_stored_credential_is_still_listed(self):
+        _write_json(
+            self.home / ".pi" / "agent" / "auth.json",
+            {"llama-swap": {"type": "api_key", "key": "real-key"}},
+        )
+        targets = discover_targets(self.home, {})
+        rows = [target for target in targets if target.provider == "llama-swap"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].credential.secret, "real-key")
+        self.assertIsNone(rows[0].note)
 
     def test_env_credentials_listed_and_deduplicated_against_stored_secrets(self):
         env_labels = {(t.provider, t.label) for t in self.targets if t.source == "env"}

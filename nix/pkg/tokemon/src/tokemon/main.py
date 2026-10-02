@@ -59,9 +59,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--refresh-tokens",
-        action="store_true",
-        help="refresh expired pi OAuth access tokens (xAI logins) and write them back to auth.json; "
-        "without this flag no credential file is ever modified",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="refresh expired pi OAuth access tokens (xAI logins) and write them back to auth.json "
+        "(default: on; --no-refresh-tokens leaves every credential file untouched)",
     )
     parser.add_argument(
         "--home",
@@ -73,6 +74,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def token_policy(refresh_tokens: bool) -> ExpiredTokenPolicy:
+    """Expired pi OAuth tokens are refreshed unless the caller opts out."""
+    if not refresh_tokens:
+        return KeepExpiredTokens()
+    return RefreshExpiredTokens(TOKEN_ENDPOINTS, LOCK_WAIT_SECONDS)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     console = Console()
@@ -80,9 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     if not discover_targets(args.home, os.environ):
         console.print(f"no codex or pi credentials found under {args.home}")
         return 1
-    tokens: ExpiredTokenPolicy = (
-        RefreshExpiredTokens(TOKEN_ENDPOINTS, LOCK_WAIT_SECONDS) if args.refresh_tokens else KeepExpiredTokens()
-    )
+    tokens = token_policy(args.refresh_tokens)
     query = make_query(args.home, os.environ, transport, lambda: datetime.now(timezone.utc), tokens)
 
     if args.once:
