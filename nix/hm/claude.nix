@@ -69,6 +69,7 @@ in
       settings = {
         alwaysThinkingEnabled = true;
         theme = "dark";
+        skipDangerousModePermissionPrompt = true;
         # Workaround for Claude Code 2.1.83+ regression where sandbox
         # detection fails even when bubblewrap/socat are on PATH (the
         # error reads "sandbox required but unavailable: ${j$}").
