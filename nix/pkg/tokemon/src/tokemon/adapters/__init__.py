@@ -39,3 +39,8 @@ TOKEN_ENDPOINTS: Mapping[str, TokenEndpoint] = {
 
 def adapter_for(provider_id: str) -> QuotaAdapter:
     return _ADAPTERS.get(provider_id, _DEFAULT_ADAPTER)
+
+
+def has_quota_adapter(provider_id: str) -> bool:
+    """True when this provider id has a quota surface tokemon can query."""
+    return provider_id in _ADAPTERS
