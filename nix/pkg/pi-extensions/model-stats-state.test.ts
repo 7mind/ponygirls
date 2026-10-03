@@ -11,6 +11,7 @@ import {
 	pruneRecords,
 	renderWindow,
 	serializeStatsRecord,
+	sortModels,
 	summarize,
 	summarizeMetric,
 	tokensPerSecond,
@@ -99,6 +100,38 @@ test("pruneRecords keeps records at or after the cutoff", () => {
 	assert.deepEqual(pruneRecords(records, 200).map((record) => record.ts), [200, 300]);
 });
 
+test("sortModels defaults to mean tok/s and keeps models without a rate last", () => {
+	const fast = {
+		key: "zai/glm",
+		responses: 2,
+		failures: { aborted: 0, timeout: 0, error: 0 },
+		tps: { mean: 400, p50: 400, p90: 400, p99: 400 },
+	};
+	const slow = {
+		key: "xai/grok",
+		responses: 90,
+		failures: { aborted: 0, timeout: 0, error: 0 },
+		tps: { mean: 145, p50: 111, p90: 200, p99: 613 },
+	};
+	const unmeasured = {
+		key: "openai/gpt",
+		responses: 0,
+		failures: { aborted: 3, timeout: 0, error: 0 },
+	};
+	assert.deepEqual(
+		sortModels([slow, unmeasured, fast], "tps-mean", true).map((model) => model.key),
+		["zai/glm", "xai/grok", "openai/gpt"],
+	);
+	assert.deepEqual(
+		sortModels([slow, fast], "n", true).map((model) => model.key),
+		["xai/grok", "zai/glm"],
+	);
+	assert.deepEqual(
+		sortModels([slow, fast], "model", false).map((model) => model.key),
+		["xai/grok", "zai/glm"],
+	);
+});
+
 test("summarize windows, groups, counts failures, and sorts by activity", () => {
 	const records: StatsRecord[] = [
 		sample({ ts: NOW - 30 * 60 * 1000, key: "anthropic/claude-sonnet" }),
@@ -133,8 +166,14 @@ test("summarize windows, groups, counts failures, and sorts by activity", () => 
 	);
 });
 
+function barsAt(line: string): number[] {
+	const indexes: number[] = [];
+	for (let index = 0; index < line.length; index++) if (line[index] === "│") indexes.push(index);
+	return indexes;
+}
+
 test("renderWindow lays out header, sub-header, and one row per model", () => {
-	const lines = renderWindow({
+	const table = renderWindow({
 		label: "Last hour",
 		models: [
 			{
@@ -152,16 +191,24 @@ test("renderWindow lays out header, sub-header, and one row per model", () => {
 			},
 		],
 	});
+	const lines = [...table.header, ...table.rows];
 	assert.equal(lines.length, 4);
-	assert.match(lines[0]!, /ttft s\s+total s\s+tok\/s/);
-	assert.match(lines[1]!, /mean\s+p50\s+p90\s+p99/);
-	assert.match(lines[2]!, /^anthropic\/claude-sonnet\s+2\s+1\s+0\.5\s+0\.5\s+0\.5\s+0\.5\s+10\.0\s+10\.0\s+10\.0\s+10\.0\s+105\s+105\s+105\s+105/);
-	assert.match(lines[3]!, /^openai\/gpt-5\s+0\s+1\s+-\s+-\s+-/);
-	assert.deepEqual(renderWindow({ label: "Last hour", models: [] }), ["(no samples)"]);
+	assert.match(lines[0]!, /ttft s.+total s.+tok\/s/);
+	assert.match(lines[1]!, /mean.+p50.+p90.+p99/);
+	assert.match(lines[2]!, /^anthropic\/claude-sonnet │ +2 │ +│ +1 │/);
+	assert.match(lines[2]!, /│ +0\.5 │ +0\.5 │ +0\.5 │ +0\.5 │ +10\.0 │/);
+	assert.match(lines[3]!, /^openai\/gpt-5 +│ +0 │ +1 │/);
+	assert.match(lines[3]!, /│ +-/);
+	const headerBars = barsAt(lines[0]!);
+	const rowBars = barsAt(lines[2]!);
+	assert.ok(headerBars.length > 0);
+	assert.ok(headerBars.every((index) => rowBars.includes(index)));
+	assert.deepEqual(barsAt(lines[1]!), rowBars);
+	assert.deepEqual(renderWindow({ label: "Last hour", models: [] }), { header: ["(no samples)"], rows: [] });
 });
 
 test("renderWindow sizes each column to its content so percentiles stay separate", () => {
-	const lines = renderWindow({
+	const table = renderWindow({
 		label: "Last hour",
 		models: [
 			{
@@ -174,8 +221,8 @@ test("renderWindow sizes each column to its content so percentiles stay separate
 			},
 		],
 	});
-	const row = lines[2]!;
-	const sub = lines[1]!;
+	const row = table.rows[0]!;
+	const sub = table.header[1]!;
 	assert.match(row, /(^|\s)51831(\s|$)/);
 	assert.match(row, /(^|\s)43305(\s|$)/);
 	assert.doesNotMatch(row, /5183143305/);
