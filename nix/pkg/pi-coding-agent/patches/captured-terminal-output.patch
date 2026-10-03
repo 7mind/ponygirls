@@ -264,7 +264,7 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  			this.keyboardProtocolPushed = false;
  			this._kittyProtocolActive = false;
  			setKittyProtocolActive(false);
-@@ -472,10 +499,63 @@
+@@ -472,10 +499,72 @@
  		if (process.stdin.setRawMode) {
  			process.stdin.setRawMode(this.wasRaw);
  		}
@@ -293,7 +293,16 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
 +				if (stream === "stdout" && this.rendererWriteDepth > 0) {
 +					return passthrough(chunk, encodingOrCallback, callback);
 +				}
-+				onCapturedOutput(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"), stream);
++				const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
++				// OSC 52 clipboard writes cannot corrupt a rendered frame and are
++				// the only clipboard channel for remote/headless sessions (and the
++				// sandbox clipboard proxy upstream). Pass them through instead of
++				// capturing — copyToClipboard emits them via process.stdout while
++				// the TUI owns the terminal.
++				if (stream === "stdout" && text.startsWith("\x1b]52;")) {
++					return passthrough(chunk, encodingOrCallback, callback);
++				}
++				onCapturedOutput(text, stream);
 +				const done = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
 +				if (done) queueMicrotask(() => done());
 +				return true;
@@ -329,7 +338,7 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  		if (this.writeLogPath) {
  			try {
  				fs.appendFileSync(this.writeLogPath, data, { encoding: "utf8" });
-@@ -496,52 +576,52 @@
+@@ -496,52 +585,52 @@
  	moveBy(lines: number): void {
  		if (lines > 0) {
  			// Move down
