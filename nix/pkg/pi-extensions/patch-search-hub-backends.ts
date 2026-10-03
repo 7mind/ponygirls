@@ -9,8 +9,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // parameter enum (search-hub.ts registers them hardcoded), regardless of which
 // backends are actually enabled in search.json. So the model believes it may request, e.g.,
 // `backend: "tavily"` when tavily is unconfigured — those calls then fail, and
-// it cannot tell the configured set from the tool definition alone. Bug report:
-// docs/drafts/20260608-1016-pi-search-hub-static-backend-list-bug-report.md.
+// it cannot tell the configured set from the tool definition alone. Upstream:
+// ronnieops/pi-search-hub#49 / PR #50 (follow-up to the closed #13).
+//
+// Drop this runtime patch when the upstream pin includes both.
 //
 // This patch rewrites the `web_search` tool definition in each outgoing
 // provider request (before_provider_request — the same hook the grok
