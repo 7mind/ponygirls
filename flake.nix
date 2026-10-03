@@ -122,6 +122,14 @@
             bun test kimi-401-retry.test.ts
             touch $out
           '';
+          model-stats = pkgs.runCommand "model-stats-test" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          } ''
+            cp -r ${./nix/pkg/pi-extensions} pi-extensions
+            cd pi-extensions
+            node --test model-stats-state.test.ts
+            touch $out
+          '';
           yolo-profile = pkgs.runCommand "yolo-profile-test" {
             nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.python3 pkgs.sqlite ];
           } ''
