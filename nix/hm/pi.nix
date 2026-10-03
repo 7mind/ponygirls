@@ -104,7 +104,9 @@ let
   # walk: a search spends the same credits as a scrape, and scrape is already
   # the second reader. SearXNG and LangSearch are alwaysInclude: queried beside
   # the quality wave, each with its own deadline from query start, and never a
-  # quality slot. duckduckgo needs `ddgs` at runtime (ddgsPython, prefixed onto
+  # quality slot. Free results join the combine fusion on equal footing with
+  # quality results (full-weight RRF), each engine contributing at most its
+  # `maxResults` hits. duckduckgo needs `ddgs` at runtime (ddgsPython, prefixed onto
   # pi's PATH in piWrapped above).
   searchHubBackends = [
     {
@@ -186,8 +188,8 @@ let
       "combine": true,
       "combineMode": "targeted",
       "alwaysInclude": {
-        "searxng": { "timeoutMs": 3000 },
-        "langsearch": { "timeoutMs": 5000 }
+        "searxng": { "timeoutMs": 3000, "maxResults": 3 },
+        "langsearch": { "timeoutMs": 5000, "maxResults": 3 }
       },
       "reader": "sofya",
       "readerFallback": ["sofya", "firecrawl", "jina", "exa"],
