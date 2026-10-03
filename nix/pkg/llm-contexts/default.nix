@@ -5,6 +5,8 @@
 #   general-context.md  base global context shared by every agent
 #   pi-context.md       Pi's repo-agnostic operating manual, appended INSIDE
 #                       Pi's system prompt (~/.pi/agent/APPEND_SYSTEM.md)
+#   pi-context-cq.md    legacy cq command/subagent instructions. Not installed;
+#                       cq4 is not wired yet.
 {
   lib,
   stdenvNoCC,
