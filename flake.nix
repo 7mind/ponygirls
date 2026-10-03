@@ -99,6 +99,7 @@
           codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
           pi-search-hub = pkgs.callPackage ./nix/pkg/pi-search-hub/package.nix { };
+          pi-usage-extension = pkgs.callPackage ./nix/pkg/pi-usage-extension/package.nix { };
           codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix { src = inputs.codegraph; };
           tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
