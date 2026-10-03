@@ -95,12 +95,69 @@ for name in "${BASE_ENV_NAMES[@]}"; do
   fi
 done
 
-# Bind /tmp/exchange for host<->sandbox file sharing (create if missing)
-EXCHANGE_DIR="/tmp/exchange"
-if [[ ! -d "$EXCHANGE_DIR" ]]; then
-  mkdir -p "$EXCHANGE_DIR"
+# Host↔sandbox exchange directory.
+#
+# /tmp/exchange is a shared sticky directory (1777, root-owned): any user can
+# create an entry, and only the entry owner or root can unlink it. The
+# directory owner can also unlink entries, so a user-owned parent is not
+# multi-user safe — a NixOS tmpfiles rule must create it as root:root
+# (`d /tmp/exchange 1777 root root -`). This process creates only
+# /tmp/exchange/$USER mode 0700 and bind-mounts that path at the same absolute
+# path. SMIND_EXCHANGE_DIR is set to it after caller --env, so the variable
+# cannot name a directory that was not bound. Plain 0777 is not used: without
+# the sticky bit any user can replace another user's subdirectory.
+EXCHANGE_ROOT="/tmp/exchange"
+
+exchange_die() {
+  echo "llm-sandbox: $*" >&2
+  exit 1
+}
+
+if [[ -L "$EXCHANGE_ROOT" ]]; then
+  exchange_die "exchange parent '$EXCHANGE_ROOT' is a symlink; refusing"
 fi
-BWRAP_ARGS+=(--bind "$EXCHANGE_DIR" "$EXCHANGE_DIR")
+if [[ ! -e "$EXCHANGE_ROOT" ]]; then
+  mkdir -m 1777 -- "$EXCHANGE_ROOT" 2>/dev/null || true
+fi
+if [[ -L "$EXCHANGE_ROOT" || ! -d "$EXCHANGE_ROOT" ]]; then
+  exchange_die "exchange parent '$EXCHANGE_ROOT' is missing or not a directory. Create it as root with mode 1777 (systemd-tmpfiles rule: d /tmp/exchange 1777 root root -)"
+fi
+if [[ -O "$EXCHANGE_ROOT" || "$(id -u)" -eq 0 ]]; then
+  if [[ "$(id -u)" -eq 0 ]]; then
+    chown root:root -- "$EXCHANGE_ROOT" || exchange_die "cannot chown '$EXCHANGE_ROOT' to root:root"
+  fi
+  chmod 1777 -- "$EXCHANGE_ROOT" || exchange_die "cannot set mode 1777 on '$EXCHANGE_ROOT'"
+fi
+if [[ ! -k "$EXCHANGE_ROOT" || ! -w "$EXCHANGE_ROOT" || ! -x "$EXCHANGE_ROOT" ]]; then
+  _exchange_mode="$(stat -c %a -- "$EXCHANGE_ROOT")"
+  _exchange_owner="$(stat -c %U -- "$EXCHANGE_ROOT")"
+  exchange_die "exchange parent '$EXCHANGE_ROOT' is not a sticky world-accessible directory (mode ${_exchange_mode}, owner ${_exchange_owner}). Fix: sudo chown root:root '$EXCHANGE_ROOT' && sudo chmod 1777 '$EXCHANGE_ROOT'"
+fi
+_exchange_parent_uid="$(stat -c %u -- "$EXCHANGE_ROOT")"
+if [[ "$_exchange_parent_uid" -ne 0 && "$_exchange_parent_uid" -ne "$(id -u)" ]]; then
+  exchange_die "exchange parent '$EXCHANGE_ROOT' is owned by uid ${_exchange_parent_uid}, not root. That owner can replace other users' exchange directories. Fix: sudo chown root:root '$EXCHANGE_ROOT' && sudo chmod 1777 '$EXCHANGE_ROOT' (install the tmpfiles rule so reboot recreates it as root:root)"
+fi
+
+EXCHANGE_USER="$(id -un)"
+if [[ "$EXCHANGE_USER" == "." || "$EXCHANGE_USER" == ".." || ! "$EXCHANGE_USER" =~ ^[A-Za-z0-9._][A-Za-z0-9._-]*$ ]]; then
+  exchange_die "refusing unsafe username '$EXCHANGE_USER' for the exchange directory"
+fi
+USER_EXCHANGE="$EXCHANGE_ROOT/$EXCHANGE_USER"
+if [[ -L "$USER_EXCHANGE" || ( -e "$USER_EXCHANGE" && ! -d "$USER_EXCHANGE" ) ]]; then
+  exchange_die "exchange directory '$USER_EXCHANGE' exists and is not a real directory; refusing"
+fi
+if [[ ! -d "$USER_EXCHANGE" ]]; then
+  mkdir -m 0700 -- "$USER_EXCHANGE" || true
+fi
+if [[ -L "$USER_EXCHANGE" || ! -d "$USER_EXCHANGE" || ! -O "$USER_EXCHANGE" ]]; then
+  exchange_die "exchange directory '$USER_EXCHANGE' is not a directory owned by $EXCHANGE_USER; refusing"
+fi
+chmod 0700 -- "$USER_EXCHANGE" || exchange_die "cannot set mode 0700 on '$USER_EXCHANGE'"
+
+# /tmp inside the sandbox is a fresh tmpfs, so the parent mountpoint does not
+# exist there. Create it, then bind only this user's directory.
+BWRAP_ARGS+=(--dir "$EXCHANGE_ROOT")
+BWRAP_ARGS+=(--bind "$USER_EXCHANGE" "$USER_EXCHANGE")
 
 # Nix store must be bound first (other paths are symlinks into it)
 NIX_PATHS=(
@@ -295,6 +352,10 @@ if [[ -n "$CONFINE_SOCKET" ]]; then
 
   BWRAP_ARGS=("${_confined_args[@]}")
 fi
+
+# After caller --env and after confinement rewrites BWRAP_ARGS, so this names
+# the directory that was actually bound.
+BWRAP_ARGS+=(--setenv SMIND_EXCHANGE_DIR "$USER_EXCHANGE")
 
 PS4='+ ${EPOCHREALTIME} '
 set -x

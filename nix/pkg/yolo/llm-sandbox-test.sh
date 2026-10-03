@@ -48,6 +48,77 @@ assert_contains "sandbox clears inherited environment" "$OUT" "--clearenv"
 assert_contains "sandbox preserves HOME" "$OUT" $'--setenv\nHOME\n'"$HOME"
 assert_contains "sandbox preserves PATH" "$OUT" $'--setenv\nPATH\n'
 
+EXCHANGE_USER="$(id -un)"
+EXCHANGE_DIR="/tmp/exchange/$EXCHANGE_USER"
+assert_contains \
+  "sandbox bind-mounts only the per-user exchange directory" \
+  "$OUT" \
+  $'--dir\n/tmp/exchange\n--bind\n'"$EXCHANGE_DIR"$'
+'"$EXCHANGE_DIR"
+assert_contains \
+  "sandbox publishes the exchange directory" \
+  "$OUT" \
+  $'--setenv\nSMIND_EXCHANGE_DIR\n'"$EXCHANGE_DIR"
+assert_eq "exchange parent is sticky and world-accessible" "1777" "$(stat -c %a -- /tmp/exchange)"
+assert_eq "per-user exchange directory is private" "700" "$(stat -c %a -- "$EXCHANGE_DIR")"
+
+# Caller --env must not be able to point the variable at a directory that was
+# not the one bound above. The authoritative assignment is last.
+OUT_OVERRIDE="$(PATH="$FAKE_BIN:$PATH" bash "$SCRIPT" --env SMIND_EXCHANGE_DIR=/evil -- true 2>&1)"
+OVERRIDE_VALUE="$(printf '%s\n' "$OUT_OVERRIDE" | awk '
+  $0 == "--setenv" { getline name; getline value; if (name == "SMIND_EXCHANGE_DIR") last = value }
+  END { print last }
+')"
+assert_eq "caller cannot retarget SMIND_EXCHANGE_DIR" "$EXCHANGE_DIR" "$OVERRIDE_VALUE"
+
+# Isolated parent: a copy of the script pointed at a temporary root, so these
+# cases do not depend on the live /tmp/exchange.
+run_isolated() {
+  local root="$1"
+  shift
+  local copy="$WORKDIR/llm-sandbox-isolated.sh"
+  sed "s|^EXCHANGE_ROOT=\"/tmp/exchange\"|EXCHANGE_ROOT=\"$root\"|" "$SCRIPT" > "$copy"
+  PATH="$FAKE_BIN:$PATH" bash "$copy" "$@"
+}
+
+ISO_ROOT="$(mktemp -d "$WORKDIR/exchange.XXXXXX")"
+ISO_OUT="$(run_isolated "$ISO_ROOT" -- true 2>&1)"
+ISO_STATUS=$?
+assert_eq "isolated exchange setup succeeds" "0" "$ISO_STATUS"
+assert_eq "isolated parent mode" "1777" "$(stat -c %a -- "$ISO_ROOT")"
+assert_eq "isolated user directory mode" "700" "$(stat -c %a -- "$ISO_ROOT/$EXCHANGE_USER")"
+assert_contains \
+  "isolated sandbox binds the temporary user directory" \
+  "$ISO_OUT" \
+  $'--bind\n'"$ISO_ROOT/$EXCHANGE_USER"$'
+'"$ISO_ROOT/$EXCHANGE_USER"
+
+LINK_TARGET="$(mktemp -d "$WORKDIR/link-target.XXXXXX")"
+chmod 0755 "$LINK_TARGET"
+LINK_ROOT="$WORKDIR/exchange-link"
+ln -s "$LINK_TARGET" "$LINK_ROOT"
+LINK_OUT="$(run_isolated "$LINK_ROOT" -- true 2>&1)" && LINK_STATUS=0 || LINK_STATUS=$?
+assert_eq "symlink exchange parent is refused" "1" "$LINK_STATUS"
+assert_contains "symlink refusal names the parent" "$LINK_OUT" "is a symlink"
+assert_eq "symlink refusal does not chmod the target" "755" "$(stat -c %a -- "$LINK_TARGET")"
+
+FILE_ROOT="$WORKDIR/exchange-file"
+printf 'not a directory\n' > "$FILE_ROOT"
+FILE_OUT="$(run_isolated "$FILE_ROOT" -- true 2>&1)" && FILE_STATUS=0 || FILE_STATUS=$?
+assert_eq "non-directory exchange parent is refused" "1" "$FILE_STATUS"
+assert_contains "non-directory refusal is explicit" "$FILE_OUT" "not a directory"
+assert_eq "non-directory parent is left in place" "not a directory" "$(cat "$FILE_ROOT")"
+
+USER_LINK_ROOT="$(mktemp -d "$WORKDIR/user-link-parent.XXXXXX")"
+chmod 1777 "$USER_LINK_ROOT"
+USER_LINK_TARGET="$(mktemp -d "$WORKDIR/user-link-target.XXXXXX")"
+chmod 0755 "$USER_LINK_TARGET"
+ln -s "$USER_LINK_TARGET" "$USER_LINK_ROOT/$EXCHANGE_USER"
+USER_LINK_OUT="$(run_isolated "$USER_LINK_ROOT" -- true 2>&1)" && USER_LINK_STATUS=0 || USER_LINK_STATUS=$?
+assert_eq "symlink user exchange directory is refused" "1" "$USER_LINK_STATUS"
+assert_contains "user symlink refusal is explicit" "$USER_LINK_OUT" "not a real directory"
+assert_eq "user symlink refusal does not chmod the target" "755" "$(stat -c %a -- "$USER_LINK_TARGET")"
+
 OUT_RUNTIME="$(PATH="$FAKE_BIN:$PATH" TERMINFO_DIRS=/test/terminfo \
   TERM_PROGRAM=tmux XDG_SESSION_TYPE=tty NIX_LD=/test/ld NIXPKGS_CONFIG=/test/nixpkgs.nix \
   LOCALE_ARCHIVE=/test/locale NIX_CONFIG=host-only __NIXOS_SET_ENVIRONMENT_DONE=1 \

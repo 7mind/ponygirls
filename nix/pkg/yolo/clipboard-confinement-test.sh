@@ -61,7 +61,13 @@ TARGET_DIR="$WORKDIR/target"
 XDG_STATE_DIR="$WORKDIR/xdg-state"
 SOCKET_LEAF="sentinel-$$.sock"
 SIBLING_LEAF="sibling-$SOCKET_LEAF"
-EXCHANGE_DIR="/tmp/exchange"
+# The sandbox binds only the per-user exchange directory. A socket in the
+# parent is not an exposure path anymore; the sentinel has to live inside the
+# directory the wrapper actually mounts. Older revisions bind the parent, which
+# still covers this path, so the vulnerable-revision inventory keeps failing.
+EXCHANGE_PARENT="/tmp/exchange"
+EXCHANGE_USER="$(id -un)"
+EXCHANGE_DIR="$EXCHANGE_PARENT/$EXCHANGE_USER"
 EXCHANGE_SOCKET="$EXCHANGE_DIR/$SOCKET_LEAF"
 EXCHANGE_DIR_CREATED=0
 SENTINEL_PID=""
