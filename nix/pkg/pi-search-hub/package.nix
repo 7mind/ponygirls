@@ -15,8 +15,7 @@
 # every startup: "Host-provided extension packages must be declared in
 # peerDependencies with a "*" range, not dependencies: typebox. Installed
 # copies can bypass the extension loader and create duplicate runtime
-# modules." Upstream issue: ronnieops/pi-search-hub#33 (still open; main's
-# manifest is unchanged).
+# modules. Upstream: ronnieops/pi-search-hub#33 / PR #48.
 #
 # Source pin: GitHub main, NOT the npm tarball. The configurable web_read
 # reader-fallback feature (`readerFallback` config; web_read falls through an
@@ -46,18 +45,18 @@
 # Empty reader content is not a successful web_read. Firecrawl /v2/scrape can
 # return `data` with blank markdown, and fetchWithFallback treated any resolved
 # reader call as success, so later readers never ran. Drop the patch when
-# ronnieops/pi-search-hub#42 is merged and this pin includes it.
+# ronnieops/pi-search-hub#45 / PR #42 are merged and this pin includes it.
 #
 # alwaysInclude queries named free backends beside targeted combine, with a
 # per-backend deadline and optional maxResults cap, and removes them from the
 # quality walk. Their results join the combine fusion on equal footing with
-# quality results. Drop the patch when ronnieops/pi-search-hub#43 is merged
-# and this pin includes it.
+# quality results. Drop the patch when ronnieops/pi-search-hub#46 / PR #43
+# are merged and this pin includes it.
 #
 # Multi-source provenance: combined results list every backend that returned
 # the URL (`sources`, primary label first) instead of just the copy that
-# survived URL dedup. Upstream twin: ronnieops/pi-search-hub#44 (against
-# main). This local patch is STACKED on always-include-tier (both rewrite the
+# survived URL dedup. Upstream twin: ronnieops/pi-search-hub#47 / PR #44
+# (against main). This local patch is STACKED on always-include-tier (both rewrite the
 # RRF emit path), so drop it together with #43's patch on a pin bump that
 # includes both PRs; if upstream merges only one, regenerate the other patch
 # against the then-current shape before dropping.
