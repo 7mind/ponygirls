@@ -1,0 +1,686 @@
+diff --git a/RELEASE_NOTES.md b/RELEASE_NOTES.md
+index 3d94a0b..ce445ce 100644
+--- a/RELEASE_NOTES.md
++++ b/RELEASE_NOTES.md
+@@ -1,6 +1,7 @@
+ # Release v2.9.0
+ 
+ ## 🚀 New Features
++- **Always-include tier** — `alwaysInclude` names free backends queried beside targeted combine, each with its own deadline from query start. They are removed from the quality walk. A matching free hit adds a half-weight RRF term; free-only hits are appended after the quality fusion (cap 2). If the quality tier produces nothing, free results are the page, cut to `numResults`.
+ - **Reader auto-fallback** — `web_read` now automatically falls through to the next reader when the primary returns 422, 5xx, or a network error. Auth errors (401, 403) are fatal and do not fall through. Status line shows which reader is being tried and which succeeded.
+ - **Configurable reader fallback order** — New `readerFallback` config option in `search.json` lets users specify which readers to try and in what order. Default: `["jina", "sofya", "firecrawl", "exa", "exa_mcp"]`. Exclude expensive readers or put a preferred reader first.
+ - **`/search-setup` global settings UI** — Now includes reader fallback order configuration with validation (only valid reader names accepted).
+diff --git a/extensions/dispatch.ts b/extensions/dispatch.ts
+index a88ccfc..7b56bdd 100644
+--- a/extensions/dispatch.ts
++++ b/extensions/dispatch.ts
+@@ -2,7 +2,7 @@
+  * Dispatch logic: selection strategies, RRF combiner, fallback ordering.
+  */
+ 
+-import type { SearchResult, SearchResultWithBackend } from "./types.js";
++import type { AlwaysIncludeBackendConfig, SearchResult, SearchResultWithBackend } from "./types.js";
+ 
+ export type BackendStats = { success: boolean; count: number; error?: string };
+ import { config, roundRobinIndex, incrementRoundRobin } from "./config.js";
+@@ -65,6 +65,7 @@ export async function runTargetedCombine({
+ 	results: SearchResultWithBackend[];
+ 	backendStats: Map<string, BackendStats>;
+ 	usableBackendCount: number;
++	usableLists: Array<{ backend: string; results: SearchResultWithBackend[] }>;
+ }> {
+ 	const backendStats = new Map<string, BackendStats>();
+ 	const usableBackends: Array<{ backend: string; results: SearchResultWithBackend[] }> = [];
+@@ -111,11 +112,209 @@ export async function runTargetedCombine({
+ 	}
+ 
+ 	return {
+-		results: usableBackends.length > 1
+-			? reciprocalRankFusion(usableBackends, numResults)
+-			: (usableBackends[0]?.results.slice(0, numResults) ?? []),
++		results: fuseRanked(usableBackends, numResults),
+ 		backendStats,
+ 		usableBackendCount: usableBackends.length,
++		usableLists: usableBackends,
++	};
++}
++
++// ---------------------------------------------------------------------------
++// Always-include tier (beside targeted combine)
++// ---------------------------------------------------------------------------
++
++/** Confirmation bump for a free hit that matches a quality URL. Not a config knob. */
++export const ALWAYS_INCLUDE_RRF_WEIGHT = 0.5;
++/** Free-only URLs appended after a non-empty quality fusion. Not a config knob. */
++export const ALWAYS_INCLUDE_UNIQUE_TAIL = 2;
++
++export interface AlwaysIncludeEntry {
++	backend: string;
++	timeoutMs: number;
++}
++
++/**
++ * Validate alwaysInclude against the enabled backend list. Object key order
++ * is the query order. A missing or disabled name is a config error.
++ */
++export function resolveAlwaysInclude(
++	alwaysInclude: Record<string, AlwaysIncludeBackendConfig> | undefined,
++	activeBackends: string[],
++): AlwaysIncludeEntry[] {
++	if (alwaysInclude === undefined) return [];
++	if (!alwaysInclude || typeof alwaysInclude !== "object" || Array.isArray(alwaysInclude)) {
++		throw new Error("alwaysInclude must be an object of backend name to { timeoutMs }");
++	}
++	const active = new Set(activeBackends);
++	const entries: AlwaysIncludeEntry[] = [];
++	for (const [backend, cfg] of Object.entries(alwaysInclude)) {
++		if (!active.has(backend)) {
++			throw new Error(`alwaysInclude backend "${backend}" is not an enabled backend`);
++		}
++		if (!cfg || typeof cfg !== "object" || !Number.isFinite(cfg.timeoutMs) || cfg.timeoutMs <= 0) {
++			throw new Error(`alwaysInclude backend "${backend}" requires a positive timeoutMs`);
++		}
++		entries.push({ backend, timeoutMs: cfg.timeoutMs });
++	}
++	return entries;
++}
++
++function abortError(abortSignal: AbortSignal): Promise<never> {
++	if (abortSignal.aborted) return Promise.reject(abortSignal.reason ?? new Error("aborted"));
++	return new Promise((_, reject) => {
++		abortSignal.addEventListener("abort", () => {
++			reject(abortSignal.reason ?? new Error("aborted"));
++		}, { once: true });
++	});
++}
++
++export async function runAlwaysInclude({
++	entries,
++	query,
++	numResults,
++	signal,
++	runBackend,
++}: {
++	entries: AlwaysIncludeEntry[];
++	query: string;
++	numResults: number;
++	signal?: AbortSignal;
++	runBackend: (backend: string, query: string, numResults: number, signal?: AbortSignal) => Promise<SearchResult[]>;
++}): Promise<{
++	lists: Array<{ backend: string; results: SearchResultWithBackend[] }>;
++	stats: Map<string, BackendStats>;
++}> {
++	const stats = new Map<string, BackendStats>();
++	const lists: Array<{ backend: string; results: SearchResultWithBackend[] }> = [];
++	if (entries.length === 0) return { lists, stats };
++
++	const settled = await Promise.all(entries.map(async (entry) => {
++		const deadline = AbortSignal.timeout(entry.timeoutMs);
++		const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
++		try {
++			const results = await Promise.race([
++				runBackend(entry.backend, query, numResults, combined),
++				abortError(combined),
++			]);
++			return { entry, results, error: undefined as string | undefined };
++		} catch (err) {
++			if (signal?.aborted) throw err;
++			const timedOut = deadline.aborted;
++			return {
++				entry,
++				results: [] as SearchResult[],
++				error: timedOut ? `timed out after ${entry.timeoutMs}ms` : (err as Error).message,
++			};
++		}
++	}));
++
++	for (const { entry, results, error } of settled) {
++		if (error) {
++			stats.set(entry.backend, { success: false, count: 0, error });
++			continue;
++		}
++		const tagged = results.map((r) => ({ ...r, backend: entry.backend }));
++		stats.set(entry.backend, { success: true, count: tagged.length });
++		if (tagged.length > 0) lists.push({ backend: entry.backend, results: tagged });
++	}
++	return { lists, stats };
++}
++
++/**
++ * Quality lists are fused at full RRF weight. A free hit that matches a
++ * quality URL adds a half-weight term. Free-only URLs are appended after
++ * that fusion, capped, and only when the quality tier produced something.
++ * When the quality tier is empty, free lists are the result, cut to
++ * numResults, with no tail cap.
++ */
++export function mergeAlwaysInclude({
++	qualityLists,
++	freeLists,
++	numResults,
++}: {
++	qualityLists: Array<{ backend: string; results: SearchResultWithBackend[] }>;
++	freeLists: Array<{ backend: string; results: SearchResultWithBackend[] }>;
++	numResults: number;
++}): SearchResultWithBackend[] {
++	if (qualityLists.length === 0) {
++		return fuseRanked(freeLists, numResults);
++	}
++
++	const qualityMap = scoreLists(qualityLists, 1, true);
++	confirmExisting(qualityMap, freeLists, ALWAYS_INCLUDE_RRF_WEIGHT);
++	const fused = rankedFrom(qualityMap).slice(0, numResults).map((entry) => entry.result);
++
++	const qualityKeys = new Set(qualityMap.keys());
++	const appended: SearchResultWithBackend[] = [];
++	const appendedKeys = new Set<string>();
++	for (const { backend, results } of freeLists) {
++		for (const result of results) {
++			if (appended.length >= ALWAYS_INCLUDE_UNIQUE_TAIL) return [...fused, ...appended];
++			const key = normalizeUrl(result.url);
++			if (qualityKeys.has(key) || appendedKeys.has(key)) continue;
++			appendedKeys.add(key);
++			appended.push({ ...result, backend });
++		}
++	}
++	return [...fused, ...appended];
++}
++
++export async function runTieredTargetedCombine({
++	orderedBackends,
++	alwaysInclude,
++	query,
++	numResults,
++	signal,
++	targetUsableBackends,
++	runBackend,
++}: {
++	orderedBackends: string[];
++	alwaysInclude: AlwaysIncludeEntry[];
++	query: string;
++	numResults: number;
++	signal?: AbortSignal;
++	targetUsableBackends?: number;
++	runBackend: (backend: string, query: string, numResults: number, signal?: AbortSignal) => Promise<SearchResult[]>;
++}): Promise<{
++	results: SearchResultWithBackend[];
++	backendStats: Map<string, BackendStats>;
++	usableBackendCount: number;
++	qualityUsableCount: number;
++	freeUsableCount: number;
++}> {
++	const excluded = new Set(alwaysInclude.map((entry) => entry.backend));
++	const qualityBackends = orderedBackends.filter((backend) => !excluded.has(backend));
++
++	const freePromise = runAlwaysInclude({
++		entries: alwaysInclude,
++		query,
++		numResults,
++		signal,
++		runBackend,
++	});
++	const quality = await runTargetedCombine({
++		orderedBackends: qualityBackends,
++		query,
++		numResults,
++		signal,
++		targetUsableBackends,
++		runBackend,
++	});
++	const free = await freePromise;
++
++	const backendStats = new Map<string, BackendStats>(quality.backendStats);
++	for (const [backend, stats] of free.stats) backendStats.set(backend, stats);
++
++	return {
++		results: mergeAlwaysInclude({
++			qualityLists: quality.usableLists,
++			freeLists: free.lists,
++			numResults,
++		}),
++		backendStats,
++		usableBackendCount: quality.usableBackendCount + free.lists.length,
++		qualityUsableCount: quality.usableBackendCount,
++		freeUsableCount: free.lists.length,
+ 	};
+ }
+ 
+@@ -123,6 +322,14 @@ export async function runTargetedCombine({
+ // Reciprocal Rank Fusion (RRF)
+ // ---------------------------------------------------------------------------
+ 
++const RRF_K = 60;
++
++interface ScoredHit {
++	rrfScore: number;
++	result: SearchResultWithBackend;
++	backends: string[];
++}
++
+ function normalizeUrl(url: string): string {
+ 	try {
+ 		const u = new URL(url);
+@@ -134,52 +341,85 @@ function normalizeUrl(url: string): string {
+ 	}
+ }
+ 
+-/**
+- * Merge results from multiple backends using Reciprocal Rank Fusion (k=60).
+- * URL dedup keeps the result with the richest content.
+- */
+-export function reciprocalRankFusion(
+-	backendResults: Array<{ backend: string; results: SearchResultWithBackend[] }>,
+-	maxResults: number,
+-): SearchResultWithBackend[] {
+-	const K = 60;
+-	const urlMap = new Map<string, { rrfScore: number; result: SearchResultWithBackend; backends: string[] }>();
++function rrfTerm(rank: number, weight: number): number {
++	return weight / (RRF_K + rank + 1);
++}
+ 
++function preferRicher(existing: SearchResultWithBackend, incoming: SearchResultWithBackend): SearchResultWithBackend {
++	const existingLen = (existing.content ?? existing.snippet ?? "").length;
++	const newLen = (incoming.content ?? incoming.snippet ?? "").length;
++	return newLen > existingLen ? incoming : existing;
++}
++
++function scoreLists(
++	backendResults: Array<{ backend: string; results: SearchResultWithBackend[] }>,
++	weight: number,
++	create: boolean,
++): Map<string, ScoredHit> {
++	const urlMap = new Map<string, ScoredHit>();
+ 	for (const { backend, results } of backendResults) {
+ 		for (let rank = 0; rank < results.length; rank++) {
+-			const r = results[rank];
+-			const key = normalizeUrl(r.url);
+-
++			const result = results[rank];
++			const key = normalizeUrl(result.url);
++			const contribution = rrfTerm(rank, weight);
+ 			const existing = urlMap.get(key);
+-			const rrfContribution = 1 / (K + rank + 1);
+-
+ 			if (existing) {
+-				existing.rrfScore += rrfContribution;
++				existing.rrfScore += contribution;
+ 				existing.backends.push(backend);
+-				// Prefer result with richer content
+-				const existingLen = (existing.result.content ?? existing.result.snippet ?? "").length;
+-				const newLen = (r.content ?? r.snippet ?? "").length;
+-				if (newLen > existingLen) {
+-					existing.result = r;
+-				}
+-				// Keep backend label from higher-ranked result
+-			} else {
+-				urlMap.set(key, {
+-					rrfScore: rrfContribution,
+-					result: { ...r, backend },
+-					backends: [backend],
+-				});
++				existing.result = preferRicher(existing.result, result);
++				continue;
+ 			}
++			if (!create) continue;
++			urlMap.set(key, {
++				rrfScore: contribution,
++				result: { ...result, backend },
++				backends: [backend],
++			});
+ 		}
+ 	}
++	return urlMap;
++}
++
++function confirmExisting(
++	urlMap: Map<string, ScoredHit>,
++	freeLists: Array<{ backend: string; results: SearchResultWithBackend[] }>,
++	weight: number,
++): void {
++	for (const { backend, results } of freeLists) {
++		for (let rank = 0; rank < results.length; rank++) {
++			const result = results[rank];
++			const existing = urlMap.get(normalizeUrl(result.url));
++			if (!existing) continue;
++			existing.rrfScore += rrfTerm(rank, weight);
++			existing.backends.push(backend);
++			existing.result = preferRicher(existing.result, result);
++		}
++	}
++}
++
++function rankedFrom(urlMap: Map<string, ScoredHit>): ScoredHit[] {
++	return Array.from(urlMap.values()).sort((a, b) => {
++		if (b.rrfScore !== a.rrfScore) return b.rrfScore - a.rrfScore;
++		return b.backends.length - a.backends.length;
++	});
++}
+ 
+-	return Array.from(urlMap.values())
+-		.sort((a, b) => {
+-			// Primary: RRF score descending
+-			if (b.rrfScore !== a.rrfScore) return b.rrfScore - a.rrfScore;
+-			// Secondary: number of backends that found it
+-			return b.backends.length - a.backends.length;
+-		})
+-		.slice(0, maxResults)
+-		.map(entry => entry.result);
++function fuseRanked(
++	backendResults: Array<{ backend: string; results: SearchResultWithBackend[] }>,
++	maxResults: number,
++): SearchResultWithBackend[] {
++	if (backendResults.length === 0) return [];
++	if (backendResults.length === 1) return backendResults[0].results.slice(0, maxResults);
++	return rankedFrom(scoreLists(backendResults, 1, true)).slice(0, maxResults).map((entry) => entry.result);
++}
++
++/**
++ * Merge results from multiple backends using Reciprocal Rank Fusion (k=60).
++ * URL dedup keeps the result with the richest content.
++ */
++export function reciprocalRankFusion(
++	backendResults: Array<{ backend: string; results: SearchResultWithBackend[] }>,
++	maxResults: number,
++): SearchResultWithBackend[] {
++	return fuseRanked(backendResults, maxResults);
+ }
+diff --git a/extensions/search-hub.ts b/extensions/search-hub.ts
+index 3ce00b5..9776e0a 100644
+--- a/extensions/search-hub.ts
++++ b/extensions/search-hub.ts
+@@ -51,7 +51,7 @@ import { getKeySource } from "./credentials.js";
+ import { fetchWithReader, fetchWithFallback, readerLabel, DEFAULT_READER_FALLBACK } from "./readers/dispatch.js";
+ import { config, refreshConfig, getActiveBackends, recordLatency, latencyMap } from "./config.js";
+ import { BACKEND_DEFS, runBackend } from "./backends/registry.js";
+-import { selectBackendsForFallback, reciprocalRankFusion, runTargetedCombine } from "./dispatch.js";
++import { selectBackendsForFallback, reciprocalRankFusion, resolveAlwaysInclude, runTieredTargetedCombine } from "./dispatch.js";
+ import { formatResults, formatCombinedResults, formatResultsCompact, formatCombinedResultsCompact } from "./formatters.js";
+ 
+ 
+@@ -167,17 +167,24 @@ export default function (pi: ExtensionAPI) {
+ 
+ 			if (effectiveCombine) {
+ 				if (combineMode === "targeted") {
++					const alwaysInclude = resolveAlwaysInclude(config.alwaysInclude, activeBackends);
+ 					const orderedBackends = selectBackendsForFallback(
+ 						config.selectionStrategy ?? "sequential",
+ 						activeBackends,
+ 					);
+-					setStatus(`🔍 targeted combine: up to 3 of ${activeBackends.length} backends...`);
++					const qualityCount = activeBackends.length - alwaysInclude.length;
++					const freeLabel = alwaysInclude.length > 0
++						? `, plus ${alwaysInclude.map((entry) => entry.backend).join(", ")}`
++						: "";
++					setStatus(`🔍 targeted combine: up to 3 of ${qualityCount} backends${freeLabel}...`);
+ 					const {
+ 						results: combined,
+ 						backendStats,
+ 						usableBackendCount,
+-					} = await runTargetedCombine({
++						qualityUsableCount,
++					} = await runTieredTargetedCombine({
+ 						orderedBackends,
++						alwaysInclude,
+ 						query: params.query,
+ 						numResults,
+ 						signal,
+@@ -195,7 +202,9 @@ export default function (pi: ExtensionAPI) {
+ 					}
+ 
+ 					const attemptedCount = backendStats.size;
+-					const incomplete = usableBackendCount < 3 ? `, exhausted after ${usableBackendCount} usable` : "";
++					const incomplete = qualityUsableCount < 3 && alwaysInclude.length === 0
++						? `, exhausted after ${qualityUsableCount} usable`
++						: "";
+ 					setStatus(`🔍 targeted combined: ${combined.length} results (${usableBackendCount}/${attemptedCount} usable${incomplete})`);
+ 
+ 					return {
+diff --git a/extensions/types.ts b/extensions/types.ts
+index 0b11c2b..f627bed 100644
+--- a/extensions/types.ts
++++ b/extensions/types.ts
+@@ -33,11 +33,23 @@ export interface BackendConfig {
+ 	topic?: "general" | "news";
+ }
+ 
++/** One free backend queried beside targeted combine, not as a quality slot. */
++export interface AlwaysIncludeBackendConfig {
++	/** Deadline from query start, in milliseconds. A miss drops this backend only. */
++	timeoutMs: number;
++}
++
+ export interface SearchConfig {
+ 	defaultBackend?: string;
+ 	combine?: boolean;
+ 	/** Combine strategy when combine is enabled. "all" queries every active backend; "targeted" queries only enough ordered backends to collect up to 3 usable result sets. */
+ 	combineMode?: "all" | "targeted";
++	/**
++	 * Free backends queried in parallel with targeted combine and removed from
++	 * that walk. Honored only when combineMode is "targeted". Keys must name
++	 * enabled backends. Each timeoutMs is a deadline from query start.
++	 */
++	alwaysInclude?: Record<string, AlwaysIncludeBackendConfig>;
+ 	selectionStrategy?: "sequential" | "random" | "round-robin" | "best-latency";
+ 	/** Reader backend for web_read. "jina" (default, free), "sofya" (250+ site parsers, needs key), "firecrawl" (keyless, 1000 credits/mo), "exa" (needs key, 1000 req/mo), or "exa_mcp" (zero-config, rate-limited). */
+ 	reader?: "jina" | "sofya" | "firecrawl" | "exa" | "exa_mcp";
+diff --git a/tests/always-include.test.ts b/tests/always-include.test.ts
+new file mode 100644
+index 0000000..a817564
+--- /dev/null
++++ b/tests/always-include.test.ts
+@@ -0,0 +1,216 @@
++/**
++ * Targeted combine always-include tier.
++ *
++ * Free backends are queried beside the quality wave, not as quality slots.
++ * A matching free hit adds a half-weight RRF term. Free-only hits are appended
++ * after a non-empty quality fusion, capped at 2. When the quality tier is
++ * empty, free results are the page, cut to numResults.
++ */
++
++import { describe, it, expect } from "vitest";
++import type { SearchResult } from "../extensions/types.js";
++import {
++	ALWAYS_INCLUDE_UNIQUE_TAIL,
++	mergeAlwaysInclude,
++	resolveAlwaysInclude,
++	runTieredTargetedCombine,
++} from "../extensions/dispatch.js";
++
++function hit(title: string, url: string): SearchResult {
++	return { title, url, snippet: title };
++}
++
++describe("resolveAlwaysInclude", () => {
++	const active = ["exa", "tavily", "searxng", "langsearch"];
++
++	it("preserves config key order", () => {
++		expect(resolveAlwaysInclude({
++			searxng: { timeoutMs: 3000 },
++			langsearch: { timeoutMs: 5000 },
++		}, active)).toEqual([
++			{ backend: "searxng", timeoutMs: 3000 },
++			{ backend: "langsearch", timeoutMs: 5000 },
++		]);
++	});
++
++	it("rejects a backend that is missing or disabled", () => {
++		expect(() => resolveAlwaysInclude({
++			searxng: { timeoutMs: 3000 },
++		}, ["exa"])).toThrow(/not an enabled backend/);
++	});
++
++	it("rejects a non-positive timeout", () => {
++		expect(() => resolveAlwaysInclude({
++			searxng: { timeoutMs: 0 },
++		}, active)).toThrow(/positive timeoutMs/);
++	});
++});
++
++describe("mergeAlwaysInclude", () => {
++	it("breaks a quality tie toward the URL a free backend also found", () => {
++		const merged = mergeAlwaysInclude({
++			qualityLists: [
++				{ backend: "exa", results: [hit("A", "https://example.com/a"), hit("B", "https://example.com/b")].map((r) => ({ ...r, backend: "exa" })) },
++				{ backend: "tavily", results: [hit("B", "https://example.com/b"), hit("A", "https://example.com/a")].map((r) => ({ ...r, backend: "tavily" })) },
++			],
++			freeLists: [
++				{ backend: "searxng", results: [hit("B confirmed", "https://example.com/b")].map((r) => ({ ...r, backend: "searxng" })) },
++			],
++			numResults: 2,
++		});
++
++		expect(merged.map((r) => r.url)).toEqual([
++			"https://example.com/b",
++			"https://example.com/a",
++		]);
++	});
++
++	it("appends a free-only hit after paid ranks instead of letting it win", () => {
++		const merged = mergeAlwaysInclude({
++			qualityLists: [
++				{
++					backend: "exa",
++					results: [
++						hit("Paid 1", "https://paid.example/rank1"),
++						hit("Paid 2", "https://paid.example/rank2"),
++					].map((r) => ({ ...r, backend: "exa" })),
++				},
++			],
++			freeLists: [
++				{
++					backend: "searxng",
++					results: [
++						hit("SEO", "https://seo.example/noise"),
++						hit("Paid 2 again", "https://paid.example/rank2"),
++					].map((r) => ({ ...r, backend: "searxng" })),
++				},
++			],
++			numResults: 2,
++		});
++
++		// Half-weight confirmation of paid rank 2 can reorder the paid pair.
++		// The free-only URL must still trail both of them.
++		expect(merged.map((r) => r.url)).toEqual([
++			"https://paid.example/rank2",
++			"https://paid.example/rank1",
++			"https://seo.example/noise",
++		]);
++	});
++
++	it("caps the free-only tail at two when the quality tier produced hits", () => {
++		const free = [1, 2, 3, 4, 5].map((n) => hit(`Free ${n}`, `https://free.example/${n}`));
++		const merged = mergeAlwaysInclude({
++			qualityLists: [
++				{ backend: "exa", results: [hit("Paid", "https://paid.example/one")].map((r) => ({ ...r, backend: "exa" })) },
++			],
++			freeLists: [
++				{ backend: "searxng", results: free.map((r) => ({ ...r, backend: "searxng" })) },
++			],
++			numResults: 1,
++		});
++
++		expect(merged).toHaveLength(1 + ALWAYS_INCLUDE_UNIQUE_TAIL);
++		expect(merged[0].url).toBe("https://paid.example/one");
++		expect(merged.slice(1).map((r) => r.url)).toEqual([
++			"https://free.example/1",
++			"https://free.example/2",
++		]);
++	});
++
++	it("returns free results up to numResults when every quality backend is empty", () => {
++		const free = [1, 2, 3, 4, 5].map((n) => hit(`Free ${n}`, `https://free.example/${n}`));
++		const merged = mergeAlwaysInclude({
++			qualityLists: [],
++			freeLists: [
++				{ backend: "searxng", results: free.map((r) => ({ ...r, backend: "searxng" })) },
++			],
++			numResults: 10,
++		});
++
++		expect(merged.map((r) => r.url)).toEqual(free.map((r) => r.url));
++	});
++});
++
++describe("runTieredTargetedCombine", () => {
++	it("does not spend a quality slot on an always-include backend", async () => {
++		const calls: string[] = [];
++		let qualityFinished = false;
++		let freeSawQualityFinished = true;
++
++		const result = await runTieredTargetedCombine({
++			orderedBackends: ["exa", "tavily", "serper", "searxng", "brave"],
++			alwaysInclude: [{ backend: "searxng", timeoutMs: 3000 }],
++			query: "q",
++			numResults: 6,
++			runBackend: (backend) => {
++				calls.push(backend);
++				if (backend === "searxng") {
++					freeSawQualityFinished = qualityFinished;
++					return Promise.resolve([hit("S", "https://s.example/a")]);
++				}
++				if (backend === "brave") {
++					return Promise.resolve([hit("B", "https://b.example/a")]);
++				}
++				return new Promise((resolve) => {
++					setTimeout(() => {
++						qualityFinished = true;
++						resolve([]);
++					}, 20);
++				});
++			},
++		});
++
++		expect(calls.filter((backend) => backend === "searxng")).toEqual(["searxng"]);
++		expect(calls).toContain("brave");
++		expect(freeSawQualityFinished).toBe(false);
++		expect(result.qualityUsableCount).toBe(1);
++		expect(result.freeUsableCount).toBe(1);
++		expect(result.results.map((r) => r.url)).toContain("https://s.example/a");
++	});
++
++	it("drops only the free backend that misses its own deadline", async () => {
++		const result = await runTieredTargetedCombine({
++			orderedBackends: ["exa", "searxng", "langsearch"],
++			alwaysInclude: [
++				{ backend: "searxng", timeoutMs: 2000 },
++				{ backend: "langsearch", timeoutMs: 40 },
++			],
++			query: "q",
++			numResults: 5,
++			runBackend: (backend, _query, _numResults, signal) => {
++				if (backend === "langsearch") {
++					return new Promise((_resolve, reject) => {
++						signal?.addEventListener("abort", () => reject(new Error("aborted")));
++					});
++				}
++				if (backend === "searxng") return Promise.resolve([hit("S", "https://s.example/a")]);
++				return Promise.resolve([hit("E", "https://exa.example/a")]);
++			},
++		});
++
++		expect(result.backendStats.get("langsearch")).toMatchObject({
++			success: false,
++			error: "timed out after 40ms",
++		});
++		expect(result.backendStats.get("searxng")?.success).toBe(true);
++		expect(result.results.map((r) => r.url)).toContain("https://s.example/a");
++		expect(result.results.map((r) => r.url)).not.toContain("https://lang.example/a");
++	});
++
++	it("returns free results when the quality tier produces nothing", async () => {
++		const result = await runTieredTargetedCombine({
++			orderedBackends: ["exa", "searxng"],
++			alwaysInclude: [{ backend: "searxng", timeoutMs: 3000 }],
++			query: "q",
++			numResults: 10,
++			runBackend: (backend) => {
++				if (backend === "exa") return Promise.reject(new Error("exa down"));
++				return Promise.resolve([1, 2, 3, 4, 5].map((n) => hit(`S${n}`, `https://s.example/${n}`)));
++			},
++		});
++
++		expect(result.qualityUsableCount).toBe(0);
++		expect(result.results).toHaveLength(5);
++		expect(result.results[0].url).toBe("https://s.example/1");
++	});
++});

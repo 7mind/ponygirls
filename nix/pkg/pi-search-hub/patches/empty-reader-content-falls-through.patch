@@ -1,0 +1,145 @@
+diff --git a/extensions/backends/firecrawl.ts b/extensions/backends/firecrawl.ts
+index 10467e7..068ccb8 100644
+--- a/extensions/backends/firecrawl.ts
++++ b/extensions/backends/firecrawl.ts
+@@ -41,10 +41,16 @@ export async function fetchFirecrawl(
+ 		throw new Error(`Firecrawl scrape returned no data for ${url}`);
+ 	}
+ 	const metadata = result.metadata as Record<string, unknown> | undefined;
++	const content = (result.markdown as string) || "";
++	// `data` without markdown is not a successful scrape. Leaving it as an
++	// empty string makes web_read treat the call as success and skip fallback.
++	if (content.trim().length === 0) {
++		throw new Error(`Firecrawl scrape returned no content for ${url}`);
++	}
+ 	return {
+ 		title: (metadata?.title as string) || "",
+ 		url: (metadata?.sourceURL as string) || url,
+-		content: (result.markdown as string) || "",
++		content,
+ 	};
+ }
+ 
+diff --git a/extensions/readers/dispatch.ts b/extensions/readers/dispatch.ts
+index d122bae..ead28e7 100644
+--- a/extensions/readers/dispatch.ts
++++ b/extensions/readers/dispatch.ts
+@@ -58,7 +58,13 @@ export async function fetchWithFallback(
+ 
+ 		try {
+ 			const result = await fetchWithReader(url, candidate, params, signal, config);
+-			// Success — return immediately
++			// A resolved call with no content did not read the page. Firecrawl
++			// /v2/scrape does this when `data` exists but `markdown` is empty;
++			// other readers can return a blank body too. Treat it as a retryable
++			// failure so the chain continues.
++			if (result.content.trim().length === 0) {
++				throw new Error(`${candidate} returned no content for ${url}`);
++			}
+ 			return result;
+ 		} catch (err) {
+ 			const errorMsg = (err as Error).message;
+diff --git a/tests/firecrawl.test.ts b/tests/firecrawl.test.ts
+index 17b8306..7ce865a 100644
+--- a/tests/firecrawl.test.ts
++++ b/tests/firecrawl.test.ts
+@@ -160,7 +160,7 @@ describe("fetchFirecrawl", () => {
+ 			ok: true,
+ 			json: async () => ({
+ 				success: true,
+-				data: { markdown: "", metadata: {} },
++				data: { markdown: "# Page", metadata: {} },
+ 			}),
+ 		} as Response);
+ 
+@@ -182,6 +182,20 @@ describe("fetchFirecrawl", () => {
+ 		expect(String(err.message)).toMatch(/Firecrawl scrape/);
+ 	});
+ 
++	it("throws when markdown is empty so fallback can continue", async () => {
++		fetchSpy.mockResolvedValueOnce({
++			ok: true,
++			json: async () => ({
++				success: true,
++				data: { markdown: "   ", metadata: { title: "Empty" } },
++			}),
++		} as Response);
++
++		const err = await fetchFirecrawl("https://example.com", "key").catch(e => e);
++		expect(err).toBeInstanceOf(Error);
++		expect(String(err.message)).toMatch(/no content/);
++	});
++
+ 	it("throws when data is missing", async () => {
+ 		fetchSpy.mockResolvedValueOnce({
+ 			ok: true,
+diff --git a/tests/reader-dispatch.test.ts b/tests/reader-dispatch.test.ts
+index 912b6a7..de8b0bb 100644
+--- a/tests/reader-dispatch.test.ts
++++ b/tests/reader-dispatch.test.ts
+@@ -58,6 +58,65 @@ describe("fetchWithFallback", () => {
+ 		expect(mockFetchWithReader).toHaveBeenCalledTimes(1);
+ 	});
+ 
++	// regression: a reader that returns a body with no content must not count as
++	// success. Firecrawl /v2/scrape does this when `data` exists but `markdown` is
++	// empty, which stopped the web_read chain before the next reader ran.
++	it("falls through when a reader returns empty content", async () => {
++		mockFetchWithReader
++			.mockResolvedValueOnce(makeResult("", "firecrawl"))
++			.mockResolvedValueOnce(makeResult("hello from jina", "jina"));
++
++		const { fetchWithFallback } = await import("../extensions/readers/dispatch.js");
++		const result = await fetchWithFallback(
++			"https://example.com",
++			["firecrawl", "jina"],
++			{},
++			undefined,
++			MINIMAL_CONFIG,
++		);
++
++		expect(result.content).toBe("hello from jina");
++		expect(result.reader).toBe("jina");
++		expect(mockFetchWithReader).toHaveBeenCalledTimes(2);
++	});
++
++	it("falls through when a reader returns whitespace-only content", async () => {
++		mockFetchWithReader
++			.mockResolvedValueOnce(makeResult("  \n\t", "firecrawl"))
++			.mockResolvedValueOnce(makeResult("hello from jina", "jina"));
++
++		const { fetchWithFallback } = await import("../extensions/readers/dispatch.js");
++		const result = await fetchWithFallback(
++			"https://example.com",
++			["firecrawl", "jina"],
++			{},
++			undefined,
++			MINIMAL_CONFIG,
++		);
++
++		expect(result.reader).toBe("jina");
++		expect(mockFetchWithReader).toHaveBeenCalledTimes(2);
++	});
++
++	it("throws when every reader returns empty content", async () => {
++		mockFetchWithReader
++			.mockResolvedValueOnce(makeResult("", "firecrawl"))
++			.mockResolvedValueOnce(makeResult("   ", "jina"));
++
++		const { fetchWithFallback } = await import("../extensions/readers/dispatch.js");
++		await expect(
++			fetchWithFallback(
++				"https://example.com",
++				["firecrawl", "jina"],
++				{},
++				undefined,
++				MINIMAL_CONFIG,
++			),
++		).rejects.toThrow(/All readers failed: firecrawl: firecrawl returned no content/);
++
++		expect(mockFetchWithReader).toHaveBeenCalledTimes(2);
++	});
++
+ 	it("falls through on 422 error to next reader", async () => {
+ 		mockFetchWithReader
+ 			.mockRejectedValueOnce(new Error("Failed to read https://example.com: API error (422): No content available for URL"))

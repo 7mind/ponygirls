@@ -40,8 +40,17 @@
 # it under $out/node_modules.
 #
 # The manifest rewrite is exactly the upstream fix from #33 (typebox moves to
-# peerDependencies); everything else stays byte-identical to the pinned
-# revision.
+# peerDependencies). The source patch below is the only other delta from the
+# pinned revision.
+#
+# Empty reader content is not a successful web_read. Firecrawl /v2/scrape can
+# return `data` with blank markdown, and fetchWithFallback treated any resolved
+# reader call as success, so later readers never ran. Drop the patch when
+# ronnieops/pi-search-hub#42 is merged and this pin includes it.
+#
+# alwaysInclude queries named free backends beside targeted combine, with a
+# per-backend deadline, and removes them from the quality walk. Drop the patch
+# when ronnieops/pi-search-hub#43 is merged and this pin includes it.
 stdenvNoCC.mkDerivation rec {
   pname = "pi-search-hub";
   # Intended upstream v2.9.0, unreleased on npm (see header).
@@ -55,6 +64,11 @@ stdenvNoCC.mkDerivation rec {
   };
 
   nativeBuildInputs = [ jq ];
+
+  patches = [
+    ./patches/empty-reader-content-falls-through.patch
+    ./patches/always-include-tier.patch
+  ];
 
   dontBuild = true;
 
