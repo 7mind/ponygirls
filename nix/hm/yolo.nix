@@ -495,7 +495,7 @@ in
             target = "*";
             prompt =
               if isLinux then
-                ''Sandbox: ACTIVE (bubblewrap via the 'yolo' wrapper; SMIND_SANDBOXED=1). Writes survive sandbox sessions in the project directory, /tmp/exchange, and explicitly bound read-write paths; /tmp/exchange is tmpfs and does not survive a host reboot. For access outside granted binds, follow the /environment skill.''
+                ''Sandbox: ACTIVE (bubblewrap via the 'yolo' wrapper; SMIND_SANDBOXED=1). Compilation, tests, git, and edits inside the project directory run directly, as do explicitly bound read-write paths. Before any tool call that reads, writes, installs, or runs anything else — $HOME, dotfiles, /etc, NixOS or home-manager, systemd, packages, host networking, another user's files, or any change that must outlive this process — read the environment skill and follow it. Do not improvise an exchange path. The exchange directory is the absolute path in $SMIND_EXCHANGE_DIR (read it with printenv); it is host tmpfs and does not survive a reboot. Do not write under /tmp/exchange itself.''
               else
                 ''Sandbox: ACTIVE (macOS Seatbelt via the 'yolo' wrapper; SMIND_SANDBOXED=1). Network access remains available. Filesystem writes are confined to the project directory, agent configuration/profile directories, shared cache, temporary directories allowed by the base policy, and configured extra read-write paths; unrelated home-directory paths are denied.'';
           }

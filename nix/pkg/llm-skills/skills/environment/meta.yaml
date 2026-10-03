@@ -1,8 +1,12 @@
 name: environment
 description: >-
-  Bubblewrap "yolo" sandbox escape workflow (exchange scripts for reaching
-  $HOME, system paths, or files outside granted binds) plus in-sandbox nix/direnv
-  usage. TRIGGER only when $SMIND_SANDBOXED=1 — i.e. running inside the yolo
-  sandbox and you need to reach something outside it. SKIP entirely when
-  $SMIND_SANDBOXED is unset: you are unsandboxed, so write directly and ignore
-  this skill.
+  Use this skill whenever $SMIND_SANDBOXED is set and the task reads, writes,
+  installs, or runs anything outside the current project directory or an
+  explicitly bound read-write path — even when it looks like an ordinary edit or
+  shell command you could run directly. That includes $HOME and dotfiles, /etc,
+  NixOS or home-manager configuration, systemd, package install or removal, host
+  networking, another user's files, and any change that must still be there
+  after this process exits. The sandbox will not persist those actions. Read
+  this skill and follow its exchange-script workflow before the first such tool
+  call. Do not use it for compilation, tests, git, or edits inside the project
+  directory. Do not use it when $SMIND_SANDBOXED is unset; write directly.

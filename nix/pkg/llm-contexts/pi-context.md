@@ -47,10 +47,14 @@ session start; never rely on cross-session recall.
 - Prompt templates are /<name> slash commands for repeatable workflows.
 
 ## Environment
-- If $SMIND_SANDBOXED is set you are inside a bubblewrap sandbox: writes
-  persist under the project directory, /tmp/exchange, and explicitly bound
-  read-write paths across sandbox sessions. /tmp/exchange is host tmpfs and
-  does not survive a reboot. Use granted binds directly; for access outside
-  them use the `environment` skill's exchange-script workflow.
+- If $SMIND_SANDBOXED is set you are inside a bubblewrap sandbox. Compilation,
+  tests, git, and edits inside the project directory run directly, as do
+  explicitly bound read-write paths. Before any tool call that reads, writes,
+  installs, or runs anything else — $HOME, dotfiles, /etc, NixOS or
+  home-manager, systemd, packages, host networking, another user's files, or
+  any change that must outlive this process — read the `environment` skill and
+  follow it. Do not improvise an exchange path. The exchange directory is the
+  absolute path in $SMIND_EXCHANGE_DIR (read it with printenv); it is host
+  tmpfs and does not survive a reboot. Do not write under /tmp/exchange.
 - This harness injects no host/session banner; run `hostname -s` when the
   host identity matters.
