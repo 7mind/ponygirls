@@ -153,6 +153,52 @@ function failureTotal(model: ModelWindowStats): number {
 	return model.failures.aborted + model.failures.timeout + model.failures.error;
 }
 
+/** View sort. `descending` is the direction used when the user has not reversed it. */
+export const SORT_KEYS = [
+	{ id: "tps-mean", label: "tok/s mean", descending: true },
+	{ id: "tps-p50", label: "tok/s p50", descending: true },
+	{ id: "ttft-mean", label: "ttft mean", descending: false },
+	{ id: "total-mean", label: "total mean", descending: false },
+	{ id: "n", label: "n", descending: true },
+	{ id: "model", label: "model", descending: false },
+] as const;
+
+export type SortKeyId = (typeof SORT_KEYS)[number]["id"];
+
+function sortValue(model: ModelWindowStats, id: SortKeyId): number | undefined {
+	switch (id) {
+		case "tps-mean":
+			return model.tps?.mean;
+		case "tps-p50":
+			return model.tps?.p50;
+		case "ttft-mean":
+			return model.ttft?.mean;
+		case "total-mean":
+			return model.total?.mean;
+		case "n":
+			return model.responses;
+		case "model":
+			return undefined;
+	}
+}
+
+/** Missing numeric values sort last. Ties break by model name, ascending. */
+export function sortModels(models: readonly ModelWindowStats[], id: SortKeyId, descending: boolean): ModelWindowStats[] {
+	return [...models].sort((left, right) => {
+		if (id === "model") {
+			const cmp = left.key.localeCompare(right.key);
+			return descending ? -cmp : cmp;
+		}
+		const leftValue = sortValue(left, id);
+		const rightValue = sortValue(right, id);
+		if (leftValue === undefined && rightValue === undefined) return left.key.localeCompare(right.key);
+		if (leftValue === undefined) return 1;
+		if (rightValue === undefined) return -1;
+		const diff = descending ? rightValue - leftValue : leftValue - rightValue;
+		return diff || left.key.localeCompare(right.key);
+	});
+}
+
 /** Drop records at or past the retention cutoff (epoch milliseconds). */
 export function pruneRecords(records: readonly StatsRecord[], cutoff: number): StatsRecord[] {
 	return records.filter((record) => record.ts >= cutoff);
@@ -203,7 +249,8 @@ function isFiniteNumber(value: unknown): value is number {
 const FAILURE_KINDS: readonly FailureKind[] = ["aborted", "timeout", "error"];
 const FAILURE_HEADERS: Record<FailureKind, string> = { aborted: "abrt", timeout: "tout", error: "err" };
 const METRIC_LABELS = ["mean", "p50", "p90", "p99"] as const;
-const COLUMN_GAP = " ";
+/** Box-drawing bar, one terminal column, so string length is the display width. */
+const COLUMN_GAP = " │ ";
 
 function padLeft(text: string, width: number): string {
 	return text.length >= width ? text : `${" ".repeat(width - text.length)}${text}`;
@@ -267,14 +314,20 @@ function joinCells(cells: readonly string[]): string {
 	return cells.join(COLUMN_GAP);
 }
 
+export interface RenderedWindow {
+	/** Group titles, then the per-column header. No data rows. */
+	header: string[];
+	rows: string[];
+}
+
 /**
  * One window's table. Every column is as wide as its header or its widest
- * cell, so a value never runs into the next column. When `width` is set and
- * the natural table is wider, the model column shrinks first; metric columns
- * keep their content width and the caller truncates the line.
+ * cell, and columns are separated by `│`. When `width` is set and the natural
+ * table is wider, the model column shrinks first; metric columns keep their
+ * content width and the caller truncates the line.
  */
-export function renderWindow(summary: WindowSummary, width?: number): string[] {
-	if (summary.models.length === 0) return ["(no samples)"];
+export function renderWindow(summary: WindowSummary, width?: number): RenderedWindow {
+	if (summary.models.length === 0) return { header: ["(no samples)"], rows: [] };
 
 	const nWidth = Math.max("n".length, ...summary.models.map((model) => String(model.responses).length));
 	const failureWidths = FAILURE_KINDS.map((kind) =>
@@ -318,5 +371,5 @@ export function renderWindow(summary: WindowSummary, width?: number): string[] {
 			...groups.flatMap((group) => metricCells(group.pick(model), group.format, group.widths)),
 		]),
 	);
-	return [header, subHeader, ...rows];
+	return { header: [header, subHeader], rows };
 }
