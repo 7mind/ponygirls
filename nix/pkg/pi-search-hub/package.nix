@@ -49,8 +49,18 @@
 # ronnieops/pi-search-hub#42 is merged and this pin includes it.
 #
 # alwaysInclude queries named free backends beside targeted combine, with a
-# per-backend deadline, and removes them from the quality walk. Drop the patch
-# when ronnieops/pi-search-hub#43 is merged and this pin includes it.
+# per-backend deadline and optional maxResults cap, and removes them from the
+# quality walk. Their results join the combine fusion on equal footing with
+# quality results. Drop the patch when ronnieops/pi-search-hub#43 is merged
+# and this pin includes it.
+#
+# Multi-source provenance: combined results list every backend that returned
+# the URL (`sources`, primary label first) instead of just the copy that
+# survived URL dedup. Upstream twin: ronnieops/pi-search-hub#44 (against
+# main). This local patch is STACKED on always-include-tier (both rewrite the
+# RRF emit path), so drop it together with #43's patch on a pin bump that
+# includes both PRs; if upstream merges only one, regenerate the other patch
+# against the then-current shape before dropping.
 stdenvNoCC.mkDerivation rec {
   pname = "pi-search-hub";
   # Intended upstream v2.9.0, unreleased on npm (see header).
@@ -68,6 +78,7 @@ stdenvNoCC.mkDerivation rec {
   patches = [
     ./patches/empty-reader-content-falls-through.patch
     ./patches/always-include-tier.patch
+    ./patches/source-provenance.patch
   ];
 
   dontBuild = true;

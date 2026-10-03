@@ -1,0 +1,231 @@
+diff --git a/README.md b/README.md
+index 68efc7f..e709d88 100644
+--- a/README.md
++++ b/README.md
+@@ -240,7 +240,7 @@ By default, combine mode uses `combineMode: "all"`:
+ 1. Queries **ALL** enabled backends in parallel
+ 2. Each backend receives `numResults / numBackends` as a target
+ 3. Results are merged using **Reciprocal Rank Fusion** (RRF) — position-based scoring that works across incompatible ranking systems
+-4. Each result shows its source backend (e.g., `*Source: Tavily*`)
++4. Each result lists every backend that returned its URL (e.g., `*Source: Tavily, Exa*`)
+ 5. URL dedup prefers the result with the richest content (content > snippet)
+ 6. Backend statistics are displayed (which succeeded, result counts, errors)
+ 
+diff --git a/RELEASE_NOTES.md b/RELEASE_NOTES.md
+index 959527d..4e911cd 100644
+--- a/RELEASE_NOTES.md
++++ b/RELEASE_NOTES.md
+@@ -2,6 +2,7 @@
+ 
+ ## 🚀 New Features
+ - **Always-include tier** — `alwaysInclude` names free backends queried in parallel with targeted combine and removed from its quality walk, each with its own deadline from query start (`maxResults` caps how many of its results enter the fusion). Their results join the combine fusion on equal footing with quality results: same RRF ranking, URL dedup, and agreement boost.
++- **Multi-source provenance** — combined results now list every backend that returned a URL (`*Source: Exa, SearXNG*`), not just the one whose copy survived URL dedup.
+ - **Reader auto-fallback** — `web_read` now automatically falls through to the next reader when the primary returns 422, 5xx, or a network error. Auth errors (401, 403) are fatal and do not fall through. Status line shows which reader is being tried and which succeeded.
+ - **Configurable reader fallback order** — New `readerFallback` config option in `search.json` lets users specify which readers to try and in what order. Default: `["jina", "sofya", "firecrawl", "exa", "exa_mcp"]`. Exclude expensive readers or put a preferred reader first.
+ - **`/search-setup` global settings UI** — Now includes reader fallback order configuration with validation (only valid reader names accepted).
+diff --git a/extensions/dispatch.ts b/extensions/dispatch.ts
+index ac8defc..430b0a8 100644
+--- a/extensions/dispatch.ts
++++ b/extensions/dispatch.ts
+@@ -355,13 +355,20 @@ function rankedFrom(urlMap: Map<string, ScoredHit>): ScoredHit[] {
+ 
+ function fuseRanked(backendResults: RankedBackendList[], maxResults: number): SearchResultWithBackend[] {
+ 	if (backendResults.length === 0) return [];
+-	if (backendResults.length === 1) return backendResults[0].results.slice(0, maxResults);
+-	return rankedFrom(scoreLists(backendResults)).slice(0, maxResults).map((entry) => entry.result);
++	if (backendResults.length === 1) {
++		return backendResults[0].results
++			.slice(0, maxResults)
++			.map((result) => attachSources(result, [backendResults[0].backend]));
++	}
++	return rankedFrom(scoreLists(backendResults))
++		.slice(0, maxResults)
++		.map((entry) => attachSources(entry.result, entry.backends));
+ }
+ 
+ /**
+  * Merge results from multiple backends using Reciprocal Rank Fusion (k=60).
+- * URL dedup keeps the result with the richest content.
++ * URL dedup keeps the result with the richest content; the merged result
++ * lists every backend that returned the URL in `sources`.
+  */
+ export function reciprocalRankFusion(
+ 	backendResults: RankedBackendList[],
+@@ -369,3 +376,17 @@ export function reciprocalRankFusion(
+ ): SearchResultWithBackend[] {
+ 	return fuseRanked(backendResults, maxResults);
+ }
++
++/** All backends that returned this URL, primary label first, deduplicated. */
++function attachSources(
++	result: SearchResultWithBackend,
++	contributors: string[],
++): SearchResultWithBackend {
++	const unique = [...new Set(contributors)];
++	const primary = result.backend;
++	const sources = primary !== undefined && unique.includes(primary)
++		? [primary, ...unique.filter((backend) => backend !== primary)]
++		: unique;
++	return { ...result, sources };
++}
++
+diff --git a/extensions/formatters.ts b/extensions/formatters.ts
+index 8c6cab0..5e1bcb3 100644
+--- a/extensions/formatters.ts
++++ b/extensions/formatters.ts
+@@ -5,6 +5,12 @@
+ import type { SearchResult, SearchResultWithBackend } from "./types.js";
+ import type { BackendRunner } from "./types.js";
+ 
++/** Every backend that returned this result, falling back to its primary label. */
++function sourceNames(r: SearchResultWithBackend): string[] {
++	if (r.sources && r.sources.length > 0) return r.sources;
++	return r.backend !== undefined ? [r.backend] : [];
++}
++
+ // ---------------------------------------------------------------------------
+ // Compact formatting
+ // ---------------------------------------------------------------------------
+@@ -28,7 +34,8 @@ export function formatCombinedResultsCompact(
+ 	const lines = results.map((r, i) => {
+ 		const title = (r.title || "Untitled").slice(0, 60);
+ 		const url = r.url.length > 50 ? r.url.slice(0, 47) + "..." : r.url;
+-		const src = r.backend ? ` [${r.backend}]` : "";
++		const names = sourceNames(r);
++		const src = names.length > 0 ? ` [${names.join(", ")}]` : "";
+ 		return `${i + 1}. ${title}${src} — ${url}`;
+ 	});
+ 	return lines.join("\n");
+@@ -101,8 +108,9 @@ export function formatCombinedResults(
+ 	for (let i = 0; i < results.length; i++) {
+ 		const r = results[i];
+ 		lines.push(`### ${i + 1}. ${r.title || "Untitled"}`);
+-		if (r.backend) {
+-			lines.push(`   *Source: ${backendLabel[r.backend] || r.backend}*`);
++		const labels = sourceNames(r).map((name) => backendLabel[name] || name);
++		if (labels.length > 0) {
++			lines.push(`   *Source: ${labels.join(", ")}*`);
+ 		}
+ 		lines.push(`   URL: ${r.url}`);
+ 		const displayText = r.snippet || r.content || "";
+diff --git a/extensions/types.ts b/extensions/types.ts
+index 1522824..3cfa3b8 100644
+--- a/extensions/types.ts
++++ b/extensions/types.ts
+@@ -100,6 +100,8 @@ export interface SearchResult {
+ 
+ export interface SearchResultWithBackend extends SearchResult {
+ 	backend?: string;
++	/** Every backend that returned this URL, primary first, deduplicated. */
++	sources?: string[];
+ }
+ 
+ export interface BackendRunner {
+diff --git a/tests/integration.test.ts b/tests/integration.test.ts
+index 1f99c81..b59bcd5 100644
+--- a/tests/integration.test.ts
++++ b/tests/integration.test.ts
+@@ -209,7 +209,7 @@ describe("runTargetedCombine", () => {
+ 		});
+ 
+ 		expect(result.usableBackendCount).toBe(1);
+-		expect(result.results).toEqual([{ ...resultFor("a")[0], backend: "a" }]);
++		expect(result.results).toEqual([{ ...resultFor("a")[0], backend: "a", sources: ["a"] }]);
+ 		expect(result.backendStats.get("b")).toMatchObject({ success: true, count: 0 });
+ 		expect(result.backendStats.get("c")).toMatchObject({ success: false, count: 0, error: "c failed" });
+ 	});
+diff --git a/tests/source-provenance.test.ts b/tests/source-provenance.test.ts
+new file mode 100644
+index 0000000..ba11000
+--- /dev/null
++++ b/tests/source-provenance.test.ts
+@@ -0,0 +1,89 @@
++/**
++ * Multi-source provenance for combined results.
++ *
++ * URL dedup keeps the richest copy of a result, but the merged result lists
++ * every backend that returned the URL in `sources`, primary label first.
++ */
++
++import { describe, it, expect } from "vitest";
++import { reciprocalRankFusion } from "../extensions/dispatch.js";
++import { formatCombinedResults, formatCombinedResultsCompact } from "../extensions/formatters.js";
++import type { BackendRunner, SearchResult, SearchResultWithBackend } from "../extensions/types.js";
++
++function hit(title: string, url: string, content?: string): SearchResult {
++	return { title, url, content };
++}
++
++function tagged(backend: string, results: SearchResult[]): SearchResultWithBackend[] {
++	return results.map((r) => ({ ...r, backend }));
++}
++
++function stubRunner(label: string): BackendRunner {
++	return {
++		needsKey: true,
++		needsKeyFromConfig: false,
++		optionalKey: false,
++		needsInstanceUrl: false,
++		label,
++		setupLabel: null,
++		search: () => Promise.resolve({ results: [] }),
++	};
++}
++
++const defs: Record<string, BackendRunner> = {
++	exa: stubRunner("Exa"),
++	tavily: stubRunner("Tavily"),
++};
++
++describe("reciprocalRankFusion sources", () => {
++	it("lists every backend that returned the URL", () => {
++		const fused = reciprocalRankFusion([
++			{ backend: "exa", results: tagged("exa", [hit("A", "https://example.com/a")]) },
++			{ backend: "tavily", results: tagged("tavily", [hit("A again", "https://example.com/a")]) },
++		], 10);
++
++		expect(fused).toHaveLength(1);
++		expect(fused[0].sources).toEqual(["exa", "tavily"]);
++	});
++
++	it("puts the primary label first even when another backend contributed first", () => {
++		const fused = reciprocalRankFusion([
++			{ backend: "exa", results: tagged("exa", [hit("A", "https://example.com/a", "short")]) },
++			{ backend: "tavily", results: tagged("tavily", [hit("A rich", "https://example.com/a", "much richer content")]) },
++		], 10);
++
++		expect(fused[0].backend).toBe("tavily");
++		expect(fused[0].sources).toEqual(["tavily", "exa"]);
++	});
++
++	it("lists a lone contributor once", () => {
++		const fused = reciprocalRankFusion([
++			{ backend: "exa", results: tagged("exa", [hit("A", "https://example.com/a")]) },
++		], 10);
++
++		expect(fused[0].sources).toEqual(["exa"]);
++	});
++});
++
++describe("combined formatting provenance", () => {
++	const results: SearchResultWithBackend[] = [
++		{ title: "A", url: "https://example.com/a", snippet: "s", backend: "exa", sources: ["exa", "tavily"] },
++	];
++
++	it("labels every source with its display name", () => {
++		const text = formatCombinedResults("q", results, new Map([["exa", { success: true, count: 1 }]]), defs);
++		expect(text).toContain("*Source: Exa, Tavily*");
++	});
++
++	it("falls back to the primary backend when sources are absent", () => {
++		const text = formatCombinedResults("q", [
++			{ title: "A", url: "https://example.com/a", backend: "exa" },
++		], new Map(), defs);
++		expect(text).toContain("*Source: Exa*");
++	});
++
++	it("lists all sources in compact mode", () => {
++		const text = formatCombinedResultsCompact(results);
++		expect(text).toContain("[exa, tavily]");
++	});
++});
