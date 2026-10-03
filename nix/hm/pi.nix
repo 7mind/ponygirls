@@ -493,6 +493,8 @@ in
             "${../pkg/pi-extensions/kimi-401-retry.ts}"
             # Footer model/thinking clicks (fullscreen) plus ctrl+shift+m / ctrl+shift+e.
             "${../pkg/pi-extensions}/model-picker.ts"
+            # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
+            "${../pkg/pi-extensions}/model-stats.ts"
             # pi-search-hub advertises a static all-backends list (19 in
             # 2.8.0) in the web_search description + `backend` enum regardless
             # of what's configured, so the model picks unconfigured backends
