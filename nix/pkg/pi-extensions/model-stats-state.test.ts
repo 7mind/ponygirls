@@ -5,6 +5,7 @@ import {
 	classifyOutcome,
 	DAY_MS,
 	HOUR_MS,
+	isUsableRecord,
 	parseStatsLine,
 	percentile,
 	pruneRecords,
@@ -45,6 +46,17 @@ test("classifyOutcome buckets stop reasons", () => {
 test("tokensPerSecond uses the decode span, falling back to the full span", () => {
 	assert.equal(tokensPerSecond(sample({ ttftMs: 1_000, totalMs: 11_000, outputTokens: 500 })), 50);
 	assert.equal(tokensPerSecond(sample({ ttftMs: 5_000, totalMs: 5_000, outputTokens: 500 })), 100);
+});
+
+test("a decode span under the floor is not a stored measurement", () => {
+	const dumped = sample({ ttftMs: 7_332, totalMs: 7_334, outputTokens: 383 });
+	assert.equal(isUsableRecord(dumped), false);
+	assert.equal(isUsableRecord(sample({ ttftMs: 5_000, totalMs: 5_000, outputTokens: 500 })), true);
+	assert.equal(isUsableRecord(sample({ ttftMs: 12_000, totalMs: 10_000 })), false);
+	assert.equal(parseStatsLine(serializeStatsRecord(dumped)) !== undefined, true);
+	const [hour] = summarize([dumped, sample()], NOW);
+	assert.equal(hour?.models[0]?.responses, 1);
+	assert.ok((hour?.models[0]?.tps?.mean ?? 0) < 200);
 });
 
 test("percentile interpolates between ranks", () => {
@@ -146,4 +158,30 @@ test("renderWindow lays out header, sub-header, and one row per model", () => {
 	assert.match(lines[2]!, /^anthropic\/claude-sonnet\s+2\s+1\s+0\.5\s+0\.5\s+0\.5\s+0\.5\s+10\.0\s+10\.0\s+10\.0\s+10\.0\s+105\s+105\s+105\s+105/);
 	assert.match(lines[3]!, /^openai\/gpt-5\s+0\s+1\s+-\s+-\s+-/);
 	assert.deepEqual(renderWindow({ label: "Last hour", models: [] }), ["(no samples)"]);
+});
+
+test("renderWindow sizes each column to its content so percentiles stay separate", () => {
+	const lines = renderWindow({
+		label: "Last hour",
+		models: [
+			{
+				key: "xai/grok-4.7",
+				responses: 64,
+				failures: { aborted: 0, timeout: 0, error: 0 },
+				ttft: { mean: 3_300, p50: 2_900, p90: 4_500, p99: 9_400 },
+				total: { mean: 16_000, p50: 7_300, p90: 36_600, p99: 92_300 },
+				tps: { mean: 6_238, p50: 126, p90: 51_831, p99: 43_305 },
+			},
+		],
+	});
+	const row = lines[2]!;
+	const sub = lines[1]!;
+	assert.match(row, /(^|\s)51831(\s|$)/);
+	assert.match(row, /(^|\s)43305(\s|$)/);
+	assert.doesNotMatch(row, /5183143305/);
+	// The third metric group's p90/p99 headers end in the same column as the values.
+	const p90Header = sub.lastIndexOf("p90");
+	const p99Header = sub.lastIndexOf("p99");
+	assert.equal(row.lastIndexOf("51831") + "51831".length, p90Header + "p90".length);
+	assert.equal(row.lastIndexOf("43305") + "43305".length, p99Header + "p99".length);
 });

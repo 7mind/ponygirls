@@ -44,11 +44,34 @@ export function classifyOutcome(stopReason: string, errorMessage?: string): "ok"
 	return "ok";
 }
 
-/** Output tokens per second over the decode span (first token → done). When no first token was observed (non-streaming providers report ttft == total), the full span is the only available rate. */
+/**
+ * A decode window shorter than this is not a rate measurement. The first
+ * provider stream event then arrived at completion — a buffered dump, not a
+ * first content token — and dividing by that window produces multi-thousand
+ * tok/s from a few milliseconds. Fall back to the full request span, the same
+ * rule as a missing first-token mark.
+ */
+export const MIN_DECODE_MS = 100;
+
+/** Output tokens per second over the decode span (first token → done). When that span is missing, the full request span is the rate. A positive span shorter than {@link MIN_DECODE_MS} is not a sample — see {@link isUsableRecord}. */
 export function tokensPerSecond(sample: ResponseSample): number {
 	const decodeMs = sample.totalMs - sample.ttftMs;
-	const spanMs = decodeMs > 0 ? decodeMs : Math.max(sample.totalMs, 1);
+	const spanMs = decodeMs >= MIN_DECODE_MS ? decodeMs : Math.max(sample.totalMs, 1);
 	return sample.outputTokens / (spanMs / 1000);
+}
+
+/**
+ * A stored line is usable when it is a failure count, a measured decode
+ * (span ≥ {@link MIN_DECODE_MS}), or a response with no first-token mark
+ * (span 0; the full request is the rate). A positive span under the floor is
+ * a stream event that arrived at completion, so neither ttft nor tok/s on
+ * that line is a measurement.
+ */
+export function isUsableRecord(record: StatsRecord): boolean {
+	if (record.type === "fail") return true;
+	if (record.ttftMs < 0 || record.totalMs <= 0 || record.outputTokens < 0 || record.ttftMs > record.totalMs) return false;
+	const decodeMs = record.totalMs - record.ttftMs;
+	return decodeMs === 0 || decodeMs >= MIN_DECODE_MS;
 }
 
 /** Linear-interpolated percentile of an ascending-sorted list; NaN when empty. */
@@ -96,7 +119,7 @@ export function summarize(records: readonly StatsRecord[], now: number): WindowS
 		const cutoff = now - window.ms;
 		const byKey = new Map<string, { samples: ResponseSample[]; failures: Record<FailureKind, number> }>();
 		for (const record of records) {
-			if (record.ts < cutoff) continue;
+			if (record.ts < cutoff || !isUsableRecord(record)) continue;
 			let bucket = byKey.get(record.key);
 			if (!bucket) {
 				bucket = { samples: [], failures: { aborted: 0, timeout: 0, error: 0 } };
@@ -179,18 +202,21 @@ function isFiniteNumber(value: unknown): value is number {
 
 const FAILURE_KINDS: readonly FailureKind[] = ["aborted", "timeout", "error"];
 const FAILURE_HEADERS: Record<FailureKind, string> = { aborted: "abrt", timeout: "tout", error: "err" };
-const FAILURE_WIDTH = 4;
-const METRIC_CELL = 6;
-const METRIC_BLOCK = METRIC_CELL * 4;
-const MODEL_MAX_WIDTH = 30;
+const METRIC_LABELS = ["mean", "p50", "p90", "p99"] as const;
+const COLUMN_GAP = " ";
 
-function right(text: string, width: number): string {
+function padLeft(text: string, width: number): string {
 	return text.length >= width ? text : `${" ".repeat(width - text.length)}${text}`;
 }
 
-function fit(text: string, width: number): string {
-	if (text.length > width) return `${text.slice(0, Math.max(0, width - 1))}…`;
-	return text + " ".repeat(width - text.length);
+function padRight(text: string, width: number): string {
+	return text.length >= width ? text : text + " ".repeat(width - text.length);
+}
+
+function ellipsize(text: string, width: number): string {
+	if (text.length <= width) return text;
+	if (width <= 1) return text.slice(0, width);
+	return `${text.slice(0, width - 1)}…`;
 }
 
 function seconds(ms: number): string {
@@ -202,24 +228,95 @@ function rate(tokensPerSec: number): string {
 	return tokensPerSec < 100 ? tokensPerSec.toFixed(1) : String(Math.round(tokensPerSec));
 }
 
-function metricBlock(stats: MetricStats | undefined, format: (value: number) => string): string {
-	if (!stats) return right("-", METRIC_BLOCK);
-	return [stats.mean, stats.p50, stats.p90, stats.p99].map((value) => right(format(value), METRIC_CELL)).join("");
+function blockWidth(widths: readonly number[]): number {
+	return widths.reduce((total, width) => total + width, 0) + COLUMN_GAP.length * (widths.length - 1);
 }
 
-const SUB_HEADER = ["mean", "p50", "p90", "p99"].map((label) => right(label, METRIC_CELL)).join("");
+/** Grow the last column so a group title cannot collide with the next group. */
+function fitGroupTitle(title: string, widths: number[]): void {
+	const deficit = title.length - blockWidth(widths);
+	if (deficit > 0) widths[widths.length - 1] = widths[widths.length - 1]! + deficit;
+}
 
-/** One window's table: a group header row, a sub-header row, one row per model. */
-export function renderWindow(summary: WindowSummary): string[] {
+function metricWidths(
+	models: readonly ModelWindowStats[],
+	pick: (model: ModelWindowStats) => MetricStats | undefined,
+	format: (value: number) => string,
+): number[] {
+	const widths = METRIC_LABELS.map((label) => label.length);
+	for (const model of models) {
+		const stats = pick(model);
+		const values = stats ? [stats.mean, stats.p50, stats.p90, stats.p99].map(format) : ["-", "-", "-", "-"];
+		values.forEach((value, index) => {
+			widths[index] = Math.max(widths[index]!, value.length);
+		});
+	}
+	return widths;
+}
+
+function metricCells(
+	stats: MetricStats | undefined,
+	format: (value: number) => string,
+	widths: readonly number[],
+): string[] {
+	const values = stats ? [stats.mean, stats.p50, stats.p90, stats.p99].map(format) : ["-", "-", "-", "-"];
+	return values.map((value, index) => padLeft(value, widths[index]!));
+}
+
+function joinCells(cells: readonly string[]): string {
+	return cells.join(COLUMN_GAP);
+}
+
+/**
+ * One window's table. Every column is as wide as its header or its widest
+ * cell, so a value never runs into the next column. When `width` is set and
+ * the natural table is wider, the model column shrinks first; metric columns
+ * keep their content width and the caller truncates the line.
+ */
+export function renderWindow(summary: WindowSummary, width?: number): string[] {
 	if (summary.models.length === 0) return ["(no samples)"];
-	const modelWidth = Math.max(5, Math.min(MODEL_MAX_WIDTH, Math.max(...summary.models.map((model) => model.key.length))));
-	const counterWidth = FAILURE_KINDS.length * FAILURE_WIDTH + (FAILURE_KINDS.length - 1);
-	const counterHeader = FAILURE_KINDS.map((kind) => right(FAILURE_HEADERS[kind], FAILURE_WIDTH)).join(" ");
-	const header = `${fit("", modelWidth)} ${right("n", 4)} ${counterHeader}  ${fit("ttft s", METRIC_BLOCK)}  ${fit("total s", METRIC_BLOCK)}  ${fit("tok/s", METRIC_BLOCK)}`;
-	const subHeader = `${fit("model", modelWidth)} ${" ".repeat(4)} ${" ".repeat(counterWidth)}  ${SUB_HEADER}  ${SUB_HEADER}  ${SUB_HEADER}`;
-	const rows = summary.models.map((model) => {
-		const tally = FAILURE_KINDS.map((kind) => right(model.failures[kind] > 0 ? String(model.failures[kind]) : "", FAILURE_WIDTH)).join(" ");
-		return `${fit(model.key, modelWidth)} ${right(String(model.responses), 4)} ${tally}  ${metricBlock(model.ttft, seconds)}  ${metricBlock(model.total, seconds)}  ${metricBlock(model.tps, rate)}`;
-	});
+
+	const nWidth = Math.max("n".length, ...summary.models.map((model) => String(model.responses).length));
+	const failureWidths = FAILURE_KINDS.map((kind) =>
+		Math.max(
+			FAILURE_HEADERS[kind].length,
+			...summary.models.map((model) => (model.failures[kind] > 0 ? String(model.failures[kind]).length : 0)),
+		),
+	);
+	const groups: { title: string; widths: number[]; pick: (model: ModelWindowStats) => MetricStats | undefined; format: (value: number) => string }[] = [
+		{ title: "ttft s", widths: metricWidths(summary.models, (model) => model.ttft, seconds), pick: (model) => model.ttft, format: seconds },
+		{ title: "total s", widths: metricWidths(summary.models, (model) => model.total, seconds), pick: (model) => model.total, format: seconds },
+		{ title: "tok/s", widths: metricWidths(summary.models, (model) => model.tps, rate), pick: (model) => model.tps, format: rate },
+	];
+	for (const group of groups) fitGroupTitle(group.title, group.widths);
+
+	const fixedWidth =
+		nWidth +
+		failureWidths.reduce((total, column) => total + column, 0) +
+		groups.reduce((total, group) => total + blockWidth(group.widths), 0) +
+		COLUMN_GAP.length * (1 + failureWidths.length + groups.length);
+	let modelWidth = Math.max("model".length, ...summary.models.map((model) => model.key.length));
+	if (width !== undefined) modelWidth = Math.max(1, Math.min(modelWidth, width - fixedWidth));
+
+	const header = joinCells([
+		padRight("", modelWidth),
+		padLeft("n", nWidth),
+		...FAILURE_KINDS.map((kind, index) => padLeft(FAILURE_HEADERS[kind], failureWidths[index]!)),
+		...groups.map((group) => padRight(group.title, blockWidth(group.widths))),
+	]);
+	const subHeader = joinCells([
+		padRight("model", modelWidth),
+		padLeft("", nWidth),
+		...failureWidths.map((column) => padLeft("", column)),
+		...groups.flatMap((group) => METRIC_LABELS.map((label, index) => padLeft(label, group.widths[index]!))),
+	]);
+	const rows = summary.models.map((model) =>
+		joinCells([
+			padRight(ellipsize(model.key, modelWidth), modelWidth),
+			padLeft(String(model.responses), nWidth),
+			...FAILURE_KINDS.map((kind, index) => padLeft(model.failures[kind] > 0 ? String(model.failures[kind]) : "", failureWidths[index]!)),
+			...groups.flatMap((group) => metricCells(group.pick(model), group.format, group.widths)),
+		]),
+	);
 	return [header, subHeader, ...rows];
 }

@@ -11,11 +11,14 @@
  * clobber an open anchor.
  *
  * Records persist as JSONL in $PI_CODING_AGENT_DIR/model-stats.jsonl (default
- * ~/.pi/agent/model-stats.jsonl). Every PRUNE_EVERY appends the file is
- * rewritten without records older than a week (the longest window); a racing
- * concurrent session can lose the records it appended during the rewrite —
- * accepted for stats. /perf renders mean/p50/p90/p99 tables per model for the
- * last hour, 24 hours, and week.
+ * ~/.pi/agent/model-stats.jsonl). Lines that do not parse, and ok samples whose
+ * decode span is not a measurement, are dropped from that file on load. Every
+ * PRUNE_EVERY appends the file is also rewritten without records older than a
+ * week (the longest window); a racing concurrent session can lose the records
+ * it appended during the rewrite — accepted for stats. /perf replaces the
+ * editor with mean/p50/p90/p99 tables
+ * per model for the last hour, 24 hours, and week — the same in-place custom
+ * view as /usage, not an overlay.
  *
  * Wire-up: listed in nix/hm/pi.nix `programs.pi.settings.extensions`.
  */
@@ -30,6 +33,7 @@ import { matchesKey, parseKey, truncateToWidth } from "@earendil-works/pi-tui";
 
 import {
 	classifyOutcome,
+	isUsableRecord,
 	parseStatsLine,
 	pruneRecords,
 	renderWindow,
@@ -40,64 +44,78 @@ import {
 } from "./model-stats-state.ts";
 
 const PRUNE_EVERY = 64;
-const VIEWPORT = 26;
 
 function statsPath(): string {
 	const dir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 	return join(dir, "model-stats.jsonl");
 }
 
-function readRecords(): StatsRecord[] {
-	let raw: string;
-	try {
-		raw = readFileSync(statsPath(), "utf-8");
-	} catch {
-		return [];
-	}
-	return raw.split("\n").flatMap((line) => {
-		const record = parseStatsLine(line);
-		return record ? [record] : [];
-	});
-}
-
-function writePruned(path: string): void {
-	const kept = pruneRecords(readRecords(), Date.now() - WEEK_MS);
+function writeRecords(path: string, records: readonly StatsRecord[]): void {
 	const temporary = `${path}.${process.pid}.tmp`;
-	writeFileSync(temporary, kept.map((record) => serializeStatsRecord(record) + "\n").join(""), "utf-8");
+	writeFileSync(temporary, records.map((record) => serializeStatsRecord(record) + "\n").join(""), "utf-8");
 	renameSync(temporary, path);
 }
 
+/** Parsed usable records. Non-blank lines that do not parse, or that are not a measurement, are removed from the file. */
+function readRecords(): StatsRecord[] {
+	const path = statsPath();
+	let raw: string;
+	try {
+		raw = readFileSync(path, "utf-8");
+	} catch {
+		return [];
+	}
+	const kept: StatsRecord[] = [];
+	let dropped = 0;
+	for (const line of raw.split("\n")) {
+		if (!line.trim()) continue;
+		const record = parseStatsLine(line);
+		if (!record || !isUsableRecord(record)) {
+			dropped += 1;
+			continue;
+		}
+		kept.push(record);
+	}
+	if (dropped > 0) {
+		try {
+			writeRecords(path, kept);
+		} catch {
+			// The in-memory view is still filtered; a rewrite failure must not hide stats.
+		}
+	}
+	return kept;
+}
+
+function writePruned(path: string): void {
+	writeRecords(path, pruneRecords(readRecords(), Date.now() - WEEK_MS));
+}
+
 class StatsView implements Component {
-	private offset = 0;
 	private readonly theme: Theme;
-	private readonly lines: readonly string[];
+	private readonly summaries: ReturnType<typeof summarize>;
 	private readonly onClose: () => void;
 
-	constructor(theme: Theme, lines: readonly string[], onClose: () => void) {
+	constructor(theme: Theme, summaries: ReturnType<typeof summarize>, onClose: () => void) {
 		this.theme = theme;
-		this.lines = lines;
+		this.summaries = summaries;
 		this.onClose = onClose;
 	}
 
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const end = Math.min(this.lines.length, this.offset + VIEWPORT);
-		const body = this.lines.slice(this.offset, end).map((line) => truncateToWidth(line, width));
-		const position = this.lines.length > VIEWPORT ? `↑↓ scroll · ${end}/${this.lines.length} · ` : "";
-		return [...body, this.theme.fg("dim", `${position}⎋ close`)];
+		const lines: string[] = [];
+		for (const windowSummary of this.summaries) {
+			if (lines.length > 0) lines.push("");
+			lines.push(this.theme.fg("accent", windowSummary.label));
+			lines.push(...renderWindow(windowSummary, width));
+		}
+		const rule = this.theme.fg("border", "─".repeat(Math.max(1, width)));
+		return [rule, ...lines.map((line) => truncateToWidth(line, width)), "", this.theme.fg("dim", "[q] close"), rule];
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || parseKey(data) === "q") {
-			this.onClose();
-			return;
-		}
-		const last = Math.max(0, this.lines.length - VIEWPORT);
-		if (matchesKey(data, "up")) this.offset = Math.max(0, this.offset - 1);
-		else if (matchesKey(data, "down")) this.offset = Math.min(last, this.offset + 1);
-		else if (matchesKey(data, "pageUp")) this.offset = Math.max(0, this.offset - VIEWPORT);
-		else if (matchesKey(data, "pageDown")) this.offset = Math.min(last, this.offset + VIEWPORT);
+		if (matchesKey(data, "escape") || matchesKey(data, "q") || parseKey(data) === "q") this.onClose();
 	}
 }
 
@@ -133,6 +151,7 @@ export default function (pi: ExtensionAPI): void {
 						outputTokens: message.usage.output,
 					}
 				: { type: "fail", ts: finishedAt, key, kind: outcome };
+		if (!isUsableRecord(record)) return;
 		try {
 			const path = statsPath();
 			mkdirSync(dirname(path), { recursive: true });
@@ -155,18 +174,8 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 			const summaries = summarize(readRecords(), Date.now());
-			await ctx.ui.custom<void>(
-				(_tui, theme, _kb, done) => {
-					const lines: string[] = [];
-					for (const windowSummary of summaries) {
-						if (lines.length > 0) lines.push("");
-						lines.push(theme.fg("accent", windowSummary.label));
-						lines.push(...renderWindow(windowSummary));
-					}
-					return new StatsView(theme, lines, () => done());
-				},
-				{ overlay: true, overlayOptions: { anchor: "center", width: 120, maxHeight: 32, margin: 1 } },
-			);
+			// In place, replacing the editor, as /usage does. An overlay is a popup.
+			await ctx.ui.custom<void>((_tui, theme, _kb, done) => new StatsView(theme, summaries, () => done()));
 		},
 	});
 }
