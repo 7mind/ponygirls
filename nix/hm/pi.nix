@@ -89,45 +89,29 @@ let
   # `web_read`); for grok-*, pi-xai 0.9.1's `mergeXaiTools` drops the client
   # `web_search` in favour of xAI's native server-side one under agentic mode.
   #
-  # Fallback ORDER (selectionStrategy = "sequential"): pi-search-hub tries
-  # backends in config object-key order, with `defaultBackend` hoisted first.
-  # `pkgs.formats.json`/`toJSON` would sort keys alphabetically and lose that
-  # order, so we emit the JSON with EXPLICIT key order from searchHubBackends —
-  # edit that list to re-order. We front self-hosted SearXNG, then free DDG,
-  # then the paid APIs, so paid backends are only reached if both free ones
-  # fail. duckduckgo needs `ddgs` at runtime (ddgsPython, prefixed onto pi's
-  # PATH in piWrapped above).
+  # Search ORDER is the targeted-combine quality walk. `combine: true` forces
+  # it even when the model passes combine=false; a named backend still bypasses
+  # it. The hub hoists `defaultBackend` first, then walks this list, skipping
+  # names in `alwaysInclude`. Targeted combine launches the first 3 remaining
+  # backends in parallel and only continues to fill a failure or an empty set
+  # (the cap is hardcoded, not configurable). `pkgs.formats.json`/`toJSON`
+  # would sort keys alphabetically and lose that order, so we emit the JSON
+  # with EXPLICIT key order from searchHubBackends — edit that list to
+  # re-order. First wave is three different indexes: Exa (code/docs), Tavily
+  # (AI ranking), Serper (Google). Brave fills a hole. Sofya is next, not in
+  # the steady-state wave, because search spends the same credit pool as
+  # web_read. DuckDuckGo is the free net. Firecrawl is last in the quality
+  # walk: a search spends the same credits as a scrape, and scrape is already
+  # the second reader. SearXNG and LangSearch are alwaysInclude: queried beside
+  # the quality wave, each with its own deadline from query start, and never a
+  # quality slot. duckduckgo needs `ddgs` at runtime (ddgsPython, prefixed onto
+  # pi's PATH in piWrapped above).
   searchHubBackends = [
-    {
-      name = "searxng";
-      cfg = {
-        enabled = true;
-        instanceUrl = "https://searx.net.7mind.io";
-      };
-    }
-    {
-      name = "duckduckgo";
-      cfg.enabled = true;
-    }
-    {
-      name = "brave";
-      cfg = {
-        enabled = true;
-        apiKey = "BRAVE_SEARCH_API_KEY";
-      };
-    }
     {
       name = "exa";
       cfg = {
         enabled = true;
         apiKey = "EXA_API_KEY";
-      };
-    }
-    {
-      name = "firecrawl";
-      cfg = {
-        enabled = true;
-        apiKey = "FIRECRAWL_API_KEY";
       };
     }
     {
@@ -137,22 +121,76 @@ let
         apiKey = "TAVILY_API_KEY";
       };
     }
+    {
+      name = "serper";
+      cfg = {
+        enabled = true;
+        apiKey = "SERPER_API_KEY";
+      };
+    }
+    {
+      name = "brave";
+      cfg = {
+        enabled = true;
+        apiKey = "BRAVE_SEARCH_API_KEY";
+      };
+    }
+    {
+      name = "sofya";
+      cfg = {
+        enabled = true;
+        apiKey = "SOFYA_API_KEY";
+      };
+    }
+    {
+      name = "duckduckgo";
+      cfg.enabled = true;
+    }
+    {
+      name = "firecrawl";
+      cfg = {
+        enabled = true;
+        apiKey = "FIRECRAWL_API_KEY";
+      };
+    }
+    {
+      name = "searxng";
+      cfg = {
+        enabled = true;
+        instanceUrl = "https://searx.net.7mind.io";
+      };
+    }
+    {
+      name = "langsearch";
+      cfg = {
+        enabled = true;
+        apiKey = "LANGSEARCH_API_KEY";
+      };
+    }
   ];
   # web_read reader chain (pi-search-hub >= the reader-fallback feature,
   # unreleased v2.9.0 — see nix/pkg/pi-search-hub/package.nix): the tool
   # builds its chain as [ params.reader ?? reader, ...readerFallback minus the
-  # head ], so `reader` must ALSO be "firecrawl" or the implicit "jina"
-  # default would jump the queue. Firecrawl scrapes first (keyless credits),
-  # then Exa contents, then Jina (free, keyless); 422/5xx/network errors fall
+  # head ], so `reader` must ALSO be "sofya" or the implicit "jina"
+  # default would jump the queue. Sofya fetches first (clean markdown; a
+  # per-URL failure throws), then Firecrawl (live scrape), then Jina
+  # (unlimited, rate-limited), then Exa contents — a cache hit succeeds, so Exa
+  # must not precede the live readers. 422/5xx/network errors fall
   # through, 401/403 abort the chain as fatal auth defects. An explicit
   # `reader` argument from the model is hoisted to the front and falls
   # through the same chain.
   searchHubConfig = pkgs.writeText "pi-search-hub-config.json" ''
     {
-      "defaultBackend": "searxng",
+      "defaultBackend": "exa",
       "selectionStrategy": "sequential",
-      "reader": "firecrawl",
-      "readerFallback": ["firecrawl", "exa", "jina"],
+      "combine": true,
+      "combineMode": "targeted",
+      "alwaysInclude": {
+        "searxng": { "timeoutMs": 3000 },
+        "langsearch": { "timeoutMs": 5000 }
+      },
+      "reader": "sofya",
+      "readerFallback": ["sofya", "firecrawl", "jina", "exa"],
       "backends": {
     ${lib.concatStringsSep ",\n" (
       map (b: "    ${builtins.toJSON b.name}: ${builtins.toJSON b.cfg}") searchHubBackends
