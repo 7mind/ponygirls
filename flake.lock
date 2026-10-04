@@ -35,6 +35,23 @@
         "type": "github"
       }
     },
+    "crawl4ai": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790165349,
+        "narHash": "sha256-4mGYnNnEfdmV+IhkR1tKZf+b7mBMlcsrf5B/yK1ZqoA=",
+        "owner": "unclecode",
+        "repo": "crawl4ai",
+        "rev": "133e1d92e37885dfccc03ea2e3687d06c98b7ceb",
+        "type": "github"
+      },
+      "original": {
+        "owner": "unclecode",
+        "ref": "v0.9.4",
+        "repo": "crawl4ai",
+        "type": "github"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -124,6 +141,7 @@
       "inputs": {
         "claude-code-sandbox": "claude-code-sandbox",
         "codegraph": "codegraph",
+        "crawl4ai": "crawl4ai",
         "flake-utils": "flake-utils_2",
         "nixpkgs": "nixpkgs_2",
         "openai-codex-plugin": "openai-codex-plugin"
