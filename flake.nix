@@ -187,10 +187,14 @@
               }).config;
             in
             assert crawl4aiConfig.systemd.services ? crawl4ai-redis;
-            assert crawl4aiConfig.systemd.services.container-crawl4ai.requires == [ "crawl4ai-isolation.service" ]
-              || builtins.elem "crawl4ai-isolation.service" crawl4aiConfig.systemd.services.container-crawl4ai.requires;
+            assert !(crawl4aiConfig.systemd.services ? container-crawl4ai);
+            assert !(crawl4aiConfig.systemd.services ? "container@crawl4ai");
+            assert nixpkgs.lib.hasInfix "Requires=crawl4ai-isolation.service"
+              crawl4aiConfig.environment.etc."systemd/system/container@crawl4ai.service.d/isolation.conf".text;
+            assert !(builtins.elem "f /var/lib/crawl4ai/redis-password 0400 crawl4ai crawl4ai -" crawl4aiConfig.systemd.tmpfiles.rules);
             pkgs.runCommandLocal "crawl4ai-module-test" { } ''
               test -n ${crawl4aiConfig.systemd.services.crawl4ai.serviceConfig.ExecStart}
+              grep -q 'rm -f /var/lib/crawl4ai/redis-password' ${crawl4aiConfig.systemd.services.crawl4ai-redis.serviceConfig.ExecStart}
               touch "$out"
             '';
           crawl4ai-isolation-syntax = pkgs.runCommand "crawl4ai-isolation-syntax" { } ''

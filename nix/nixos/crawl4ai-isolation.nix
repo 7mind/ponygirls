@@ -37,10 +37,13 @@ in
 
     containerUnit = lib.mkOption {
       type = lib.types.str;
-      default = "container-crawl4ai.service";
+      default = "container@crawl4ai.service";
       description = ''
-        systemd unit that starts the container. It is ordered after the
-        filter and will not start if the filter fails to load.
+        systemd unit that starts the container. NixOS containers are
+        instances of container@.service, not container-<name>.service.
+        A drop-in orders that instance after the filter. Defining
+        systemd.services for the instance replaces the template unit and
+        drops ExecStart.
       '';
     };
   };
@@ -48,11 +51,17 @@ in
   config = lib.mkIf cfg.enable {
     boot.kernelModules = [ "nf_conntrack_bridge" ];
 
+    # Drop-in only. requiredBy/before would synthesize a unit with this
+    # name and, for container@crawl4ai.service, replace the template instance.
+    environment.etc."systemd/system/${cfg.containerUnit}.d/isolation.conf".text = ''
+      [Unit]
+      After=crawl4ai-isolation.service
+      Requires=crawl4ai-isolation.service
+    '';
+
     systemd.services.crawl4ai-isolation = {
       description = "Crawl4AI container egress isolation";
       wantedBy = [ "multi-user.target" ];
-      before = [ cfg.containerUnit ];
-      requiredBy = [ cfg.containerUnit ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -63,11 +72,6 @@ in
         ExecStart = "${pkgs.nftables}/bin/nft -f ${rules}";
         ExecStop = "${pkgs.nftables}/bin/nft delete table bridge crawl4ai_isolation";
       };
-    };
-
-    systemd.services.${lib.removeSuffix ".service" cfg.containerUnit} = {
-      after = [ "crawl4ai-isolation.service" ];
-      requires = [ "crawl4ai-isolation.service" ];
     };
   };
 }
