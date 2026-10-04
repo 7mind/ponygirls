@@ -1,0 +1,21 @@
+{
+  "api_key": "LLM|muse|synthetic-inference-key",
+  "require_payment": false,
+  "is_subs_active": true,
+  "user_full_name": "Test User",
+  "user_email": "user@example.test",
+  "subs_tier_id": "12345678901234567",
+  "subs_tier_name": "Muse Code High Usage",
+  "subs_usage": {
+    "window": {
+      "window_duration_mins": 300,
+      "used_percent": 12.5,
+      "resets_at": 1791144000
+    },
+    "weekly": {
+      "used_percent": 34.0,
+      "resets_at": 1791547200
+    },
+    "tier": "12345678901234567"
+  }
+}

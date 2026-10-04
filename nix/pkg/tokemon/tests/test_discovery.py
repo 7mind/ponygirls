@@ -150,6 +150,11 @@ class DiscoveryTests(unittest.TestCase):
         rows = [t for t in targets if t.source == "env"]
         self.assertEqual([(t.provider, t.label, t.credential.secret) for t in rows], [("xai-management", "XAI_MANAGEMENT_API_KEY", "mgmt-key")])
 
+    def test_meta_api_key_is_listed_from_env(self):
+        targets = discover_targets(self.home, {"META_API_KEY": "meta-key"})
+        rows = [t for t in targets if t.source == "env"]
+        self.assertEqual([(t.provider, t.label, t.credential.secret) for t in rows], [("meta", "META_API_KEY", "meta-key")])
+
     def test_identical_credentials_across_dirs_are_merged_with_joined_labels(self):
         _write_json(
             self.home / ".pi" / "other" / "auth.json",

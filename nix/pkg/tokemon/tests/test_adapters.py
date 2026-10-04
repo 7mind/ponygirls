@@ -14,6 +14,10 @@ Fixture origins:
 - minimax_remains_plan.json, zai_limits.json — synthetic payloads built from the
   field handling of CodexBar's MiniMax and z.ai parsers (steipete/CodexBar);
   the z.ai limit types also match the official zai-coding-plugins script.
+- meta_muse_key.json — synthetic payload built from the @ikuma.cloud/pix-usage
+  pi extension's Muse quota parsing and pi's own Meta key-mint flow (pi-ai
+  auth/oauth/meta.ts); the stored identity token on this host had expired, so
+  no live response could be captured.
 - grok_billing_credits.json, grok_billing_legacy.json — synthetic payloads built
   from the Grok CLI's BillingConfig serde model and its own test payloads
   (xai-org/grok-build, extensions/billing.rs).
@@ -39,14 +43,15 @@ from tokemon.adapters.claude import ClaudeQuota
 from tokemon.adapters.codex import CodexQuota
 from tokemon.adapters.copilot import CopilotQuota
 from tokemon.adapters.kimi import KimiQuota
+from tokemon.adapters.meta import MUSE_KEY_URL, MetaQuota
 from tokemon.adapters.minimax import MinimaxQuota
 from tokemon.adapters.openrouter import OpenRouterQuota
 from tokemon.adapters.vercel import VercelGatewayQuota
 from tokemon.adapters.xai import XaiManagementQuota, XaiQuota
 from tokemon.adapters.zai import ZaiQuota
 from tokemon.credentials import Credential, CredentialKind
-from tokemon.quota import QuotaFetchError
-from tokemon.transport import TransportError
+from tokemon.quota import QuotaFetchError, RateLimitedError
+from tokemon.transport import HttpResponse, TransportError
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
@@ -58,6 +63,14 @@ OAUTH = Credential(
     secret="test-access",
     refresh_token="test-refresh",
     account_id="test-account",
+    expires_at=None,
+    stores=(),
+)
+META_OAUTH = Credential(
+    kind=CredentialKind.OAUTH,
+    secret="LLM|muse|test-inference-key",
+    refresh_token="dca:test-identity",
+    account_id=None,
     expires_at=None,
     stores=(),
 )
@@ -702,6 +715,83 @@ class KimiAdapterTests(unittest.TestCase):
     def test_payload_without_usage_raises(self):
         with self.assertRaises(QuotaFetchError):
             self._fetch({"usages": []})
+
+
+class MetaAdapterTests(unittest.TestCase):
+    def _fetch(self, payload: object, credential: Credential = META_OAUTH, status: int = 200):
+        transport = ScriptedTransport({("POST", MUSE_KEY_URL): json_response(status, payload)})
+        return MetaQuota().fetch(credential, transport), transport
+
+    def test_parses_subscription_windows(self):
+        snapshot, transport = self._fetch(fixture("meta_muse_key.json"))
+        self.assertEqual(
+            [(w.name, w.used, w.limit, w.unit) for w in snapshot.windows],
+            [("primary (5h)", 12.5, 100.0, "%"), ("weekly (7d)", 34.0, 100.0, "%")],
+        )
+        self.assertEqual(
+            snapshot.windows[0].resets_at, datetime.fromtimestamp(1791144000, tz=timezone.utc)
+        )
+        self.assertEqual(
+            snapshot.windows[1].resets_at, datetime.fromtimestamp(1791547200, tz=timezone.utc)
+        )
+        self.assertEqual(snapshot.identity, "user@example.test")
+        self.assertEqual(snapshot.plan_name, "Muse Code High Usage")
+        self.assertIsNone(snapshot.note)
+        # the quota check is one key-mint POST against the identity token
+        self.assertEqual(transport.calls, [("POST", MUSE_KEY_URL)])
+        self.assertEqual(transport.headers[0]["Authorization"], "Bearer dca:test-identity")
+        self.assertEqual(transport.headers[0]["x-api-version"], "1.0.0")
+        self.assertEqual(transport.bodies[0], b"{}")
+
+    def test_idle_subscription_without_subs_usage_returns_note(self):
+        snapshot, _ = self._fetch({"is_subs_active": True})
+        self.assertEqual(snapshot.windows, ())
+        self.assertIsNotNone(snapshot.note)
+
+    def test_login_falls_back_to_full_name_and_missing_tier_is_silent(self):
+        payload = fixture("meta_muse_key.json")
+        del payload["user_email"]
+        del payload["subs_tier_name"]
+        snapshot, _ = self._fetch(payload)
+        self.assertEqual(snapshot.identity, "Test User")
+        self.assertIsNone(snapshot.plan_name)
+        self.assertTrue(snapshot.windows)
+
+    def test_subs_usage_without_window_pair_raises(self):
+        with self.assertRaises(QuotaFetchError):
+            self._fetch({"is_subs_active": True, "subs_usage": {"window": {}}})
+
+    def test_payment_required_raises(self):
+        with self.assertRaises(QuotaFetchError):
+            self._fetch({"require_payment": True, "is_subs_active": True})
+
+    def test_inactive_subscription_raises(self):
+        with self.assertRaises(QuotaFetchError):
+            self._fetch({"is_subs_active": False})
+        with self.assertRaises(QuotaFetchError):
+            self._fetch({})
+
+    def test_api_key_reports_note_without_network(self):
+        snapshot, transport = self._fetch({}, API_KEY)
+        self.assertEqual(transport.calls, [])
+        self.assertEqual(snapshot.windows, ())
+        self.assertIn("API key", snapshot.note)
+
+    def test_non_device_identity_raises(self):
+        # OAUTH carries refresh "test-refresh", not a dca: identity token
+        with self.assertRaises(QuotaFetchError):
+            self._fetch({}, OAUTH)
+
+    def test_expired_session_raises(self):
+        with self.assertRaises(QuotaFetchError):
+            self._fetch({"title": "restricted"}, status=401)
+
+    def test_rate_limited_raises_with_retry_after(self):
+        transport = ScriptedTransport(
+            {("POST", MUSE_KEY_URL): HttpResponse(status=429, body=b"{}", retry_after="60")}
+        )
+        with self.assertRaises(RateLimitedError):
+            MetaQuota().fetch(META_OAUTH, transport)
 
 
 if __name__ == "__main__":

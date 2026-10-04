@@ -8,6 +8,7 @@ from tokemon.adapters.claude import ClaudeQuota, ClaudeTokenEndpoint
 from tokemon.adapters.codex import CodexQuota
 from tokemon.adapters.copilot import CopilotQuota
 from tokemon.adapters.kimi import KimiQuota, KimiTokenEndpoint
+from tokemon.adapters.meta import MetaQuota, MetaTokenEndpoint
 from tokemon.adapters.minimax import MinimaxQuota
 from tokemon.adapters.openrouter import OpenRouterQuota
 from tokemon.adapters.vercel import VercelGatewayQuota
@@ -23,6 +24,7 @@ _ADAPTERS: dict[str, QuotaAdapter] = {
     "openai-codex": CodexQuota(),
     "github-copilot": CopilotQuota(),
     "kimi-coding": KimiQuota(),
+    "meta": MetaQuota(),
     "minimax": MinimaxQuota(),
     "openrouter": OpenRouterQuota(),
     "vercel-ai-gateway": VercelGatewayQuota(),
@@ -35,6 +37,7 @@ _ADAPTERS: dict[str, QuotaAdapter] = {
 TOKEN_ENDPOINTS: Mapping[str, TokenEndpoint] = {
     "anthropic": ClaudeTokenEndpoint(),
     "kimi-coding": KimiTokenEndpoint(),
+    "meta": MetaTokenEndpoint(),
     "xai": XaiTokenEndpoint(),
 }
 

@@ -11,7 +11,7 @@ from rich.console import Console
 from tokemon.discovery import Target
 from tokemon.credentials import Credential, CredentialKind
 from tokemon.quota import QueryResult, QuotaSnapshot, QuotaWindow
-from tokemon.render import build_table
+from tokemon.render import MEASURE_WIDTH, build_table
 
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 EXPIRED = datetime(2026, 9, 1, tzinfo=timezone.utc)
@@ -23,11 +23,17 @@ def _render(
     show_invalid: bool = True,
     mask_logins: bool = False,
     mask_profiles: bool = False,
+    width: int | None = None,
 ) -> str:
     buffer = io.StringIO()
     console = Console(file=buffer, width=240, force_terminal=force_terminal, color_system="256" if force_terminal else None)
-    console.print(build_table(results, NOW, "test", show_invalid, mask_logins, mask_profiles))
+    console.print(build_table(results, NOW, "test", show_invalid, mask_logins, mask_profiles, width))
     return buffer.getvalue()
+
+
+def _table_width(table) -> int:
+    probe = Console(file=io.StringIO(), width=MEASURE_WIDTH)
+    return probe.measure(table).maximum
 
 
 def _result(window: QuotaWindow | None, note: str | None, expires_at=None, error: str | None = None, extra_windows=()):
@@ -202,6 +208,71 @@ class RenderTests(unittest.TestCase):
         head_index = next(i for i, line in enumerate(lines) if "tester@example.test" in line)
         self.assertIn("demo", lines[head_index])
         self.assertIn("~/.pi/agent", lines[head_index + 1])
+
+
+class ResponsiveColumnsTests(unittest.TestCase):
+    ALL_HEADERS = (
+        "Profile",
+        "Src",
+        "Provider",
+        "Login",
+        "Plan",
+        "Window",
+        "Used / limit",
+        "Usage",
+        "Resets",
+        "Status",
+    )
+    CORE_HEADERS = ("Profile", "Src", "Login", "Window", "Used / limit", "Usage", "Resets")
+
+    def _results(self):
+        window = QuotaWindow("primary (5h)", used=12.5, limit=100.0, unit="%", resets_at=None)
+        target = Target("default", "pi", "meta", "~/.pi/agent", None, None)
+        ok = QueryResult(
+            target=target,
+            snapshot=QuotaSnapshot(
+                plan_name="Muse Code High Usage",
+                identity="user@example.test",
+                windows=(window,),
+                note=None,
+            ),
+            error=None,
+            fetched_at=NOW,
+            rate_limit=None,
+        )
+        err = _result(None, None, error="QuotaFetchError: meta session expired (HTTP 401) — run /login meta")
+        return [ok, err]
+
+    def _headers(self, table) -> list[str]:
+        return [column.header for column in table.columns]
+
+    def _build(self, width: int | None):
+        return build_table(self._results(), NOW, "test", True, False, False, width)
+
+    def test_no_width_keeps_every_column(self):
+        self.assertEqual(self._headers(self._build(None)), list(self.ALL_HEADERS))
+
+    def test_columns_drop_in_order_plan_provider_status(self):
+        full = self._build(None)
+        step1 = self._build(_table_width(full) - 1)
+        self.assertNotIn("Plan", self._headers(step1))
+        self.assertIn("Provider", self._headers(step1))
+        self.assertIn("Status", self._headers(step1))
+        step2 = self._build(_table_width(step1) - 1)
+        self.assertNotIn("Provider", self._headers(step2))
+        self.assertIn("Status", self._headers(step2))
+        step3 = self._build(_table_width(step2) - 1)
+        self.assertNotIn("Status", self._headers(step3))
+        self.assertEqual(self._headers(step3), list(self.CORE_HEADERS))
+
+    def test_hidden_columns_are_named_in_the_caption(self):
+        text = _render(self._results(), width=80)
+        self.assertIn("columns hidden:", text)
+        self.assertNotIn("columns hidden", _render(self._results(), width=None))
+
+    def test_tiny_width_keeps_core_columns(self):
+        table = self._build(40)
+        self.assertEqual(self._headers(table), list(self.CORE_HEADERS))
 
 
 if __name__ == "__main__":
