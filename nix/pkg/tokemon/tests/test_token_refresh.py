@@ -21,6 +21,7 @@ from test_adapters import fixture
 from tokemon.adapters import TOKEN_ENDPOINTS
 from tokemon.adapters.claude import CLAUDE_OAUTH_CLIENT_ID, CLAUDE_OAUTH_SCOPES, CLAUDE_OAUTH_TOKEN_URL
 from tokemon.adapters.kimi import KIMI_OAUTH_CLIENT_ID, KIMI_OAUTH_HOST, KIMI_OAUTH_TOKEN_PATH
+from tokemon.adapters.meta import MUSE_KEY_URL
 from tokemon.discovery import discover_targets
 from tokemon.main import _parse_args, token_policy
 from tokemon.polling import query_target
@@ -348,6 +349,71 @@ class KimiTokenRefreshTests(unittest.TestCase):
         with self.assertRaises(TokenRefreshError) as caught:
             self.policy.current("kimi-coding", target.credential, transport, NOW)
         self.assertIn("HTTP 401: invalid_grant: revoked", str(caught.exception))
+        self.assertEqual(self.auth_path.read_bytes(), before)
+
+
+def _meta_entry(expires_ms: int) -> dict:
+    return {
+        "type": "oauth",
+        "access": "LLM|muse|old-inference-key",
+        "refresh": "dca:identity-token",
+        "expires": expires_ms,
+    }
+
+
+class MetaTokenRefreshTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self._tmp.name)
+        self.auth_path = self.home / ".pi" / "agent" / "auth.json"
+        self.policy = RefreshExpiredTokens(TOKEN_ENDPOINTS, LOCK_WAIT_SECONDS)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write(self, auth: dict) -> None:
+        self.auth_path.parent.mkdir(parents=True, exist_ok=True)
+        self.auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    def test_expired_key_is_reminted_the_way_pi_does(self):
+        self._write({"meta": _meta_entry(EXPIRED_MS), "openrouter": {"type": "api_key", "key": "kept"}})
+        transport = ScriptedTransport(
+            {("POST", MUSE_KEY_URL): json_response(200, fixture("meta_muse_key.json"))}
+        )
+        target = [t for t in discover_targets(self.home, {}) if t.provider == "meta"][0]
+        credential = self.policy.current("meta", target.credential, transport, NOW)
+
+        # the identity token is kept; only the inference key rotates
+        self.assertEqual(
+            (credential.secret, credential.refresh_token),
+            ("LLM|muse|synthetic-inference-key", "dca:identity-token"),
+        )
+        self.assertEqual(credential.expires_at, NOW + timedelta(hours=24))
+        self.assertEqual(transport.calls, [("POST", MUSE_KEY_URL)])
+        self.assertEqual(transport.headers[0]["Authorization"], "Bearer dca:identity-token")
+        self.assertEqual(transport.bodies[0], b"{}")
+        stored = json.loads(self.auth_path.read_text(encoding="utf-8"))
+        self.assertEqual(stored["meta"]["access"], "LLM|muse|synthetic-inference-key")
+        self.assertEqual(stored["meta"]["refresh"], "dca:identity-token")
+        self.assertEqual(stored["openrouter"]["key"], "kept")
+
+    def test_response_without_api_key_leaves_the_file_untouched(self):
+        self._write({"meta": _meta_entry(EXPIRED_MS)})
+        before = self.auth_path.read_bytes()
+        transport = ScriptedTransport({("POST", MUSE_KEY_URL): json_response(200, {"is_subs_active": True})})
+        target = [t for t in discover_targets(self.home, {}) if t.provider == "meta"][0]
+        with self.assertRaises(TokenRefreshError):
+            self.policy.current("meta", target.credential, transport, NOW)
+        self.assertEqual(self.auth_path.read_bytes(), before)
+
+    def test_rejected_mint_leaves_the_file_untouched(self):
+        self._write({"meta": _meta_entry(EXPIRED_MS)})
+        before = self.auth_path.read_bytes()
+        transport = ScriptedTransport({("POST", MUSE_KEY_URL): json_response(401, {"status": 401})})
+        target = [t for t in discover_targets(self.home, {}) if t.provider == "meta"][0]
+        with self.assertRaises(TokenRefreshError) as caught:
+            self.policy.current("meta", target.credential, transport, NOW)
+        self.assertIn("/login meta", str(caught.exception))
         self.assertEqual(self.auth_path.read_bytes(), before)
 
 

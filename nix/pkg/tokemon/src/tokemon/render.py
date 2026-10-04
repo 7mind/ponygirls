@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Mapping
 
+from rich.console import Console
 from rich.table import Table
 
 from tokemon.discovery import DEFAULT_PROFILE, YOLO_CONFIG_ROOT
@@ -214,6 +216,47 @@ def _hidden_caption(hidden: list[QueryResult]) -> str | None:
     return f"{_plural(len(hidden), 'row')} hidden: {', '.join(parts)}"
 
 
+# (header, add_column kwargs). The Provider cell also carries the config
+# paths, so those go with it when the column is hidden.
+_COLUMNS: tuple[tuple[str, dict], ...] = (
+    ("Profile", {"no_wrap": True}),
+    ("Src", {"no_wrap": True}),
+    ("Provider", {}),
+    ("Login", {"no_wrap": True}),
+    ("Plan", {"no_wrap": True}),
+    ("Window", {"no_wrap": True}),
+    ("Used / limit", {"no_wrap": True, "justify": "right"}),
+    ("Usage", {"no_wrap": True}),
+    ("Resets", {"no_wrap": True, "justify": "right"}),
+    ("Status", {}),
+)
+# Optional columns in drop order: descriptive first, functional last. Status
+# carries ok/low/EXHAUSTED, error text, and rate-limit countdowns, so it is
+# hidden only when nothing else fits.
+_DROP_ORDER = ("Plan", "Provider", "Status")
+# Width the probe console measures content at; rich caps a measurement at
+# the console width, so the probe must be wider than any real terminal.
+MEASURE_WIDTH = 10**6
+_MEASURE_CONSOLE = Console(file=io.StringIO(), width=MEASURE_WIDTH)
+
+
+def _content_width(table: Table) -> int:
+    """Unconstrained content width of an assembled table."""
+    return _MEASURE_CONSOLE.measure(table).maximum
+
+
+def _assemble(
+    title: str, caption: str | None, visible: list[int], rows: list[tuple[list, str | None]]
+) -> Table:
+    table = Table(title=title, caption=caption, expand=True, show_lines=True)
+    for index in visible:
+        header, kwargs = _COLUMNS[index]
+        table.add_column(header, **kwargs)
+    for cells, style in rows:
+        table.add_row(*[cells[index] for index in visible], style=style)
+    return table
+
+
 def build_table(
     results: list[QueryResult],
     now: datetime,
@@ -221,37 +264,28 @@ def build_table(
     show_invalid: bool,
     mask_logins: bool,
     mask_profiles: bool,
+    width: int | None = None,
 ) -> Table:
     """Render results; rows without quota windows (other than rate-limited
     rows) are omitted unless ``show_invalid`` and summarized in the table
     caption instead. With
     ``mask_logins`` each login keeps its first two characters, the rest starred.
     With ``mask_profiles`` named profiles are numbered over all ``results`` (so
-    hiding rows never renumbers them) and masked in paths too."""
+    hiding rows never renumbers them) and masked in paths too.
+    With ``width`` (terminal columns) optional columns are hidden until the
+    table fits, least critical first: Plan, then Provider, then Status; the
+    caption names the hidden ones. Profile, Src, Login, Window, Used/limit,
+    Usage, and Resets are always kept. ``None`` keeps every column."""
     mask = ProfileMask.numbering(results) if mask_profiles else ProfileMask.unmasked()
     shown = results if show_invalid else [result for result in results if _is_shown_by_default(result)]
     hidden = [] if show_invalid else [result for result in results if not _is_shown_by_default(result)]
-    table = Table(
-        title=f"tokemon — token quotas · {refresh_note}",
-        caption=_hidden_caption(hidden),
-        expand=True,
-        show_lines=True,
-    )
-    table.add_column("Profile", no_wrap=True)
-    table.add_column("Src", no_wrap=True)
-    table.add_column("Provider")
-    table.add_column("Login", no_wrap=True)
-    table.add_column("Plan", no_wrap=True)
-    table.add_column("Window", no_wrap=True)
-    table.add_column("Used / limit", no_wrap=True, justify="right")
-    table.add_column("Usage", no_wrap=True)
-    table.add_column("Resets", no_wrap=True, justify="right")
-    table.add_column("Status")
+    caption = _hidden_caption(hidden)
 
     ordered = sorted(
         shown,
         key=lambda r: (r.target.profile, r.target.source, r.target.provider, r.target.label),
     )
+    rows: list[tuple[list, str | None]] = []
     for group_index, result in enumerate(ordered):
         # One rich row per account group; window sub-lines are stacked inside
         # the cells so multi-line rows band and pad as one block instead of
@@ -269,17 +303,33 @@ def build_table(
             if result.snapshot.windows:
                 windows = list(result.snapshot.windows)
         names, used_limits, bars, resets = _stacked_cells(windows, now)
-        table.add_row(
-            mask.profile(target.profile),
-            target.source,
-            target.provider + "\n" + "\n".join(mask.text(label) for label in target.label.split(", ")),
-            identity,
-            plan,
-            names,
-            used_limits,
-            bars,
-            resets,
-            _status_column(result, windows, now, mask),
-            style=row_style,
+        rows.append(
+            (
+                [
+                    mask.profile(target.profile),
+                    target.source,
+                    target.provider + "\n" + "\n".join(mask.text(label) for label in target.label.split(", ")),
+                    identity,
+                    plan,
+                    names,
+                    used_limits,
+                    bars,
+                    resets,
+                    _status_column(result, windows, now, mask),
+                ],
+                row_style,
+            )
         )
+    visible = list(range(len(_COLUMNS)))
+    droppable = [index for name in _DROP_ORDER for index, (header, _) in enumerate(_COLUMNS) if header == name]
+    dropped: list[str] = []
+    while True:
+        table = _assemble(f"tokemon — token quotas · {refresh_note}", caption, visible, rows)
+        if width is None or _content_width(table) <= width or not droppable:
+            break
+        dropped.append(_COLUMNS[droppable.pop(0)][0])
+        visible = [index for index in visible if _COLUMNS[index][0] not in dropped]
+    if dropped:
+        note = f"columns hidden: {', '.join(dropped)}"
+        table.caption = f"{caption} · {note}" if caption else note
     return table

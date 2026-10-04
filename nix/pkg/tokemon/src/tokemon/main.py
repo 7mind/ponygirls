@@ -63,7 +63,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--refresh-tokens",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="refresh expired OAuth access tokens (xAI and Kimi in pi auth.json, Claude Code .credentials.json) "
+        help="refresh expired OAuth access tokens (xAI, Kimi, and Meta in pi auth.json, Claude Code .credentials.json) "
         "and write them back (default: on; --no-refresh-tokens leaves every credential file untouched)",
     )
     parser.add_argument(
@@ -104,7 +104,8 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             return SIGINT_EXIT_STATUS
         now = datetime.now(timezone.utc)
-        console.print(build_table(results, now, "one shot", args.show_invalid, args.mask_logins, args.mask_profiles))
+        width = console.width if console.is_terminal else None
+        console.print(build_table(results, now, "one shot", args.show_invalid, args.mask_logins, args.mask_profiles, width))
         return 0
 
     from tokemon.tui import run_tui

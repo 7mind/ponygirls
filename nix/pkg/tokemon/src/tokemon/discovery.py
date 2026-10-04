@@ -48,6 +48,7 @@ ENV_PROVIDER_KEYS: Mapping[str, str] = {
     "AI_GATEWAY_API_KEY": "vercel-ai-gateway",
     "COPILOT_GITHUB_TOKEN": "github-copilot",
     "KIMI_API_KEY": "kimi-coding",
+    "META_API_KEY": "meta",
     "MINIMAX_API_KEY": "minimax",
     "MINIMAX_CN_API_KEY": "minimax-cn",
     "XAI_API_KEY": "xai",

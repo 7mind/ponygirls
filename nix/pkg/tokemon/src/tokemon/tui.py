@@ -97,6 +97,7 @@ def run_tui(
                             show_invalid,
                             mask_logins,
                             mask_profiles,
+                            console.width if console.is_terminal else None,
                         ),
                         refresh=True,
                     )
