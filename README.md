@@ -26,6 +26,14 @@ Packages are under `packages.<system>`: `pi-coding-agent`, `pi-search-hub`,
 `codex`, `claude-code`, `codegraph`, `llm-skills`, `llm-contexts`, and `yolo`.
 Linux additionally exposes `reattach-llm`; macOS exposes `yolo-darwin`.
 
+On NixOS, `nixosModules.crawl4ai` runs the Crawl4AI API/MCP server
+(Playwright Chromium, SSE at `/mcp/sse`). It does not isolate egress.
+`nixosModules.crawl4ai-isolation` is the host-side bridge filter: the
+container may answer connections and reach the public internet, and may not
+open new connections to local or non-global addresses, including the host.
+`smind.hm.dev.llm.crawl4ai` registers that endpoint with Claude Code, Codex,
+and Pi through `programs.mcp` without writing the API token into the Nix store.
+
 On NixOS, `nixosModules.podman` creates a dedicated `podsvc-llm` rootless
 Podman service and a group-restricted socket at `/run/podman-llm/podman.sock`.
 It masks the rootful Podman API socket when rootless mode is enabled. The Home

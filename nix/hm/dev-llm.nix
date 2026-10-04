@@ -27,5 +27,6 @@
     ./pi.nix
     (import ./yolo.nix { inherit inputs; })
     ./podman.nix
+    ./crawl4ai.nix
   ];
 }

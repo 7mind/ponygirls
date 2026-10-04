@@ -8,6 +8,10 @@
       url = "github:colbymchenry/codegraph";
       flake = false;
     };
+    crawl4ai = {
+      url = "github:unclecode/crawl4ai/v0.9.4";
+      flake = false;
+    };
     openai-codex-plugin = {
       url = "github:openai/codex-plugin-cc";
       flake = false;
@@ -101,8 +105,10 @@
           pi-search-hub = pkgs.callPackage ./nix/pkg/pi-search-hub/package.nix { };
           pi-usage-extension = pkgs.callPackage ./nix/pkg/pi-usage-extension/package.nix { };
           codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix { src = inputs.codegraph; };
+          crawl4ai-mcp = pkgs.callPackage ./nix/pkg/crawl4ai/mcp.nix { };
           tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          crawl4ai = pkgs.callPackage ./nix/pkg/crawl4ai/package.nix { src = inputs.crawl4ai; };
           reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
           yolo = pkgs.callPackage ./nix/pkg/yolo/default.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
@@ -144,9 +150,60 @@
           '';
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           podman-module = podmanModuleCheck;
+          crawl4ai-module =
+            let
+              crawl4aiConfig = (nixpkgs.lib.nixosSystem {
+                inherit system;
+                modules = [
+                  self.nixosModules.crawl4ai
+                  self.nixosModules.crawl4ai-isolation
+                  ({
+                    config,
+                    lib,
+                    ...
+                  }: {
+                    system.stateVersion = "26.11";
+                    smind.services.crawl4ai = {
+                      enable = true;
+                      package = self.packages.${system}.crawl4ai;
+                    };
+                    smind.services.crawl4ai.isolation.enable = true;
+                    assertions = [
+                      {
+                        assertion = config.systemd.services.crawl4ai.serviceConfig.User == "crawl4ai";
+                        message = "crawl4ai service user";
+                      }
+                      {
+                        assertion = config.systemd.services.crawl4ai-isolation.serviceConfig.Type == "oneshot";
+                        message = "crawl4ai isolation unit";
+                      }
+                      {
+                        assertion = builtins.elem 11235 config.networking.firewall.allowedTCPPorts;
+                        message = "crawl4ai port";
+                      }
+                    ];
+                  })
+                ];
+              }).config;
+            in
+            assert crawl4aiConfig.systemd.services ? crawl4ai-redis;
+            assert crawl4aiConfig.systemd.services.container-crawl4ai.requires == [ "crawl4ai-isolation.service" ]
+              || builtins.elem "crawl4ai-isolation.service" crawl4aiConfig.systemd.services.container-crawl4ai.requires;
+            pkgs.runCommandLocal "crawl4ai-module-test" { } ''
+              test -n ${crawl4aiConfig.systemd.services.crawl4ai.serviceConfig.ExecStart}
+              touch "$out"
+            '';
+          crawl4ai-isolation-syntax = pkgs.runCommand "crawl4ai-isolation-syntax" { } ''
+            substitute ${./nix/lib/crawl4ai-isolation.nft} "$out" \
+              --replace-fail '@ifname@' ve-crawl4ai
+            grep -q 'iifname "ve-crawl4ai"' "$out"
+            grep -q '192.168.0.0/16' "$out"
+          '';
         };
       })) // {
         homeManagerModules.dev-llm = import ./nix/hm/dev-llm.nix { inherit inputs; };
         nixosModules.podman = import ./nix/nixos/podman.nix;
+        nixosModules.crawl4ai = import ./nix/nixos/crawl4ai.nix;
+        nixosModules.crawl4ai-isolation = import ./nix/nixos/crawl4ai-isolation.nix;
       };
 }
