@@ -17,8 +17,12 @@ let
   startRedis = pkgs.writeShellScript "crawl4ai-redis" ''
     set -eu
     umask 077
+    # Do not pre-create this file mode 0400. The service user can read that
+    # mode but cannot open it for writing, so an empty file fails here.
     if [ ! -s ${redisPasswordFile} ]; then
+      ${pkgs.coreutils}/bin/rm -f ${redisPasswordFile}
       ${pkgs.openssl}/bin/openssl rand -hex 32 > ${redisPasswordFile}
+      ${pkgs.coreutils}/bin/chmod 0400 ${redisPasswordFile}
     fi
     password=$(${pkgs.coreutils}/bin/tr -d ' \r\n' < ${redisPasswordFile})
     exec ${pkgs.redis}/bin/redis-server \
@@ -34,18 +38,27 @@ let
 
   startServer = pkgs.writeShellScript "crawl4ai-server-start" ''
     set -eu
-    password=$(${pkgs.coreutils}/bin/tr -d ' \r\n' < ${redisPasswordFile})
     token=$(${pkgs.coreutils}/bin/tr -d ' \r\n' < ${tokenFile})
     if [ -z "$token" ]; then
       printf 'crawl4ai: API token file %s is empty\n' ${tokenFile} >&2
       exit 1
     fi
-    for _ in $(${pkgs.coreutils}/bin/seq 1 50); do
-      if ${pkgs.redis}/bin/redis-cli -a "$password" --no-auth-warning ping | ${pkgs.gnugrep}/bin/grep -qx PONG; then
-        break
+    password=""
+    ready=0
+    for _ in $(${pkgs.coreutils}/bin/seq 1 100); do
+      if [ -s ${redisPasswordFile} ]; then
+        password=$(${pkgs.coreutils}/bin/tr -d ' \r\n' < ${redisPasswordFile})
+        if ${pkgs.redis}/bin/redis-cli -a "$password" --no-auth-warning ping 2>/dev/null | ${pkgs.gnugrep}/bin/grep -qx PONG; then
+          ready=1
+          break
+        fi
       fi
       ${pkgs.coreutils}/bin/sleep 0.1
     done
+    if [ "$ready" -ne 1 ]; then
+      printf 'crawl4ai: redis did not become ready\n' >&2
+      exit 1
+    fi
     export REDIS_PASSWORD="$password"
     export CRAWL4AI_API_TOKEN="$token"
     export CRAWL4AI_ARTIFACT_DIR=${stateDir}/outputs
@@ -126,7 +139,6 @@ in
       "d ${stateDir}/cache 0700 ${cfg.user} ${cfg.group} -"
       "d ${stateDir}/outputs 0700 ${cfg.user} ${cfg.group} -"
       "d ${stateDir}/redis 0700 ${cfg.user} ${cfg.group} -"
-      "f ${redisPasswordFile} 0400 ${cfg.user} ${cfg.group} -"
     ];
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
@@ -138,6 +150,8 @@ in
       description = "Crawl4AI Redis";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
+      startLimitBurst = 5;
+      startLimitIntervalSec = 60;
       serviceConfig = {
         Type = "simple";
         User = cfg.user;
@@ -161,6 +175,8 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" "crawl4ai-redis.service" ];
       requires = [ "crawl4ai-redis.service" ];
+      startLimitBurst = 5;
+      startLimitIntervalSec = 60;
       serviceConfig = {
         Type = "simple";
         User = cfg.user;
