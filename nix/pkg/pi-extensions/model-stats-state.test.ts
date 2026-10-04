@@ -6,6 +6,7 @@ import {
 	DAY_MS,
 	HOUR_MS,
 	isUsableRecord,
+	measureWindows,
 	parseStatsLine,
 	percentile,
 	pruneRecords,
@@ -16,6 +17,7 @@ import {
 	summarizeMetric,
 	tokensPerSecond,
 	WEEK_MS,
+	type MetricStats,
 	type ResponseSample,
 	type StatsRecord,
 } from "./model-stats-state.ts";
@@ -72,7 +74,12 @@ test("percentile interpolates between ranks", () => {
 
 test("summarizeMetric reports mean and percentiles, undefined when empty", () => {
 	const stats = summarizeMetric([10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
-	assert.deepEqual(stats, { mean: 55, p50: 55, p90: 91, p99: 99.1 });
+	assert.deepEqual(
+		(( { p10, p1, ...rest } ) => rest)(stats!),
+		{ mean: 55, p50: 55, p90: 91, p99: 99.1 },
+	);
+	assert.ok(Math.abs(stats!.p10 - 19) < 1e-9);
+	assert.ok(Math.abs(stats!.p1 - 10.9) < 1e-9);
 	assert.equal(summarizeMetric([]), undefined);
 });
 
@@ -100,18 +107,22 @@ test("pruneRecords keeps records at or after the cutoff", () => {
 	assert.deepEqual(pruneRecords(records, 200).map((record) => record.ts), [200, 300]);
 });
 
+function metric(values: Partial<MetricStats> & { mean: number }): MetricStats {
+	return { p50: 0, p90: 0, p99: 0, p10: 0, p1: 0, ...values };
+}
+
 test("sortModels defaults to mean tok/s and keeps models without a rate last", () => {
 	const fast = {
 		key: "zai/glm",
 		responses: 2,
 		failures: { aborted: 0, timeout: 0, error: 0 },
-		tps: { mean: 400, p50: 400, p90: 400, p99: 400 },
+		tps: metric({ mean: 400, p50: 400, p90: 400, p99: 400 }),
 	};
 	const slow = {
 		key: "xai/grok",
 		responses: 90,
 		failures: { aborted: 0, timeout: 0, error: 0 },
-		tps: { mean: 145, p50: 111, p90: 200, p99: 613 },
+		tps: metric({ mean: 145, p50: 111, p90: 200, p99: 613 }),
 	};
 	const unmeasured = {
 		key: "openai/gpt",
@@ -180,9 +191,9 @@ test("renderWindow lays out header, sub-header, and one row per model", () => {
 				key: "anthropic/claude-sonnet",
 				responses: 2,
 				failures: { aborted: 0, timeout: 1, error: 0 },
-				ttft: { mean: 500, p50: 500, p90: 500, p99: 500 },
-				total: { mean: 10_000, p50: 10_000, p90: 10_000, p99: 10_000 },
-				tps: { mean: 105.3, p50: 105.3, p90: 105.3, p99: 105.3 },
+				ttft: metric({ mean: 500, p50: 500, p90: 500, p99: 500 }),
+				total: metric({ mean: 10_000, p50: 10_000, p90: 10_000, p99: 10_000 }),
+				tps: metric({ mean: 105.3, p50: 105.3, p90: 105.3, p99: 105.3, p10: 90.1, p1: 42.5 }),
 			},
 			{
 				key: "openai/gpt-5",
@@ -195,6 +206,10 @@ test("renderWindow lays out header, sub-header, and one row per model", () => {
 	assert.equal(lines.length, 4);
 	assert.match(lines[0]!, /ttft s.+total s.+tok\/s/);
 	assert.match(lines[1]!, /mean.+p50.+p90.+p99/);
+	// The tok/s group carries the slow-tail columns; ttft/total keep four each.
+	assert.equal(lines[1]!.split("p10").length - 1, 1);
+	assert.match(lines[1]!, /p99.+p10.+p1/);
+	assert.match(lines[2]!, /90\.1.+42\.5/);
 	assert.match(lines[2]!, /^anthropic\/claude-sonnet │ +2 │ +│ +1 │/);
 	assert.match(lines[2]!, /│ +0\.5 │ +0\.5 │ +0\.5 │ +0\.5 │ +10\.0 │/);
 	assert.match(lines[3]!, /^openai\/gpt-5 +│ +0 │ +1 │/);
@@ -215,9 +230,9 @@ test("renderWindow sizes each column to its content so percentiles stay separate
 				key: "xai/grok-4.7",
 				responses: 64,
 				failures: { aborted: 0, timeout: 0, error: 0 },
-				ttft: { mean: 3_300, p50: 2_900, p90: 4_500, p99: 9_400 },
-				total: { mean: 16_000, p50: 7_300, p90: 36_600, p99: 92_300 },
-				tps: { mean: 6_238, p50: 126, p90: 51_831, p99: 43_305 },
+				ttft: metric({ mean: 3_300, p50: 2_900, p90: 4_500, p99: 9_400 }),
+				total: metric({ mean: 16_000, p50: 7_300, p90: 36_600, p99: 92_300 }),
+				tps: metric({ mean: 6_238, p50: 126, p90: 51_831, p99: 43_305, p10: 88, p1: 12 }),
 			},
 		],
 	});
@@ -231,4 +246,31 @@ test("renderWindow sizes each column to its content so percentiles stay separate
 	const p99Header = sub.lastIndexOf("p99");
 	assert.equal(row.lastIndexOf("51831") + "51831".length, p90Header + "p90".length);
 	assert.equal(row.lastIndexOf("43305") + "43305".length, p99Header + "p99".length);
+});
+
+test("renderWindow with a shared layout aligns columns across windows", () => {
+	const short = {
+		key: "a/b",
+		responses: 1,
+		failures: { aborted: 0, timeout: 0, error: 0 },
+		tps: metric({ mean: 100, p50: 100, p90: 100, p99: 100, p10: 50, p1: 10 }),
+	};
+	const long = {
+		key: "a-much-longer-model-name/c",
+		responses: 200,
+		failures: { aborted: 0, timeout: 3, error: 0 },
+		tps: metric({ mean: 90 }),
+	};
+	const hour = { label: "Last hour", models: [short] };
+	const week = { label: "Last week", models: [short, long] };
+	const layout = measureWindows([hour, week]);
+	const hourTable = renderWindow(hour, { layout });
+	const weekTable = renderWindow(week, { layout });
+	// Same column boundaries in both sections ...
+	assert.deepEqual(barsAt(hourTable.rows[0]!), barsAt(weekTable.rows[0]!));
+	assert.deepEqual(barsAt(hourTable.header[0]!), barsAt(weekTable.header[0]!));
+	// ... and the hour's short name is padded to the shared model width.
+	assert.match(hourTable.rows[0]!, /^a\/b +│/);
+	// Measured alone, the hour table would be narrower.
+	assert.notDeepEqual(barsAt(renderWindow(hour).rows[0]!), barsAt(hourTable.rows[0]!));
 });
