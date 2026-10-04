@@ -15,8 +15,15 @@
  *
  * Favourites and last-selection times persist in
  * $PI_CODING_AGENT_DIR/model-picker.json (default ~/.pi/agent/model-picker.json).
- * The Favourites tab lists them most recently selected first. A missing catalog
- * entry is kept in the file and omitted from the list until it exists again.
+ * A favourite is a model key with an optional pinned effort level; the same
+ * model may appear several times with different efforts. Legacy string entries
+ * ("provider/id") read as bare entries with no pinned effort. The Favourites
+ * tab lists them most recently selected first. A missing catalog entry is kept
+ * in the file and omitted from the list until it exists again. Choosing a
+ * favourite applies its pinned effort (when still supported by the model);
+ * a bare entry changes only the model. Choosing while a turn is running
+ * queues the switch instead: it applies automatically at the next turn end,
+ * and the footer marks queued dimensions with the pending background.
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -29,7 +36,11 @@ import type { Component, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earend
 import { matchesKey, parseKey, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
+	cycleFavouriteEntry,
+	cycleModelEntry,
+	favouriteId,
 	favouriteModels,
+	latestEntryForKey,
 	filterModels,
 	filterChar,
 	hitAt,
@@ -38,9 +49,11 @@ import {
 	outlineContentPoint,
 	parsePickerState,
 	recordSelection,
+	removeFavouriteEntry,
 	serializePickerState,
-	toggleFavourite,
+	toggleBareFavourite,
 	windowStart,
+	type FavouriteModel,
 	type Hit,
 	type ModelKey,
 	type ModelRef,
@@ -49,6 +62,9 @@ import {
 
 const MODEL_SHORTCUT = "ctrl+shift+m";
 const THINKING_SHORTCUT = "ctrl+shift+e";
+/** Cycle the selected favourite's pinned effort through the model's native levels. */
+const EFFORT_CYCLE_SHORTCUT = "ctrl+e";
+const EFFORT_CYCLE_GLYPH = "⌃E";
 /** Keycap glyphs for the footer controls (⌃ ctrl, ⇧ shift). */
 const MODEL_SHORTCUT_GLYPH = "⌃⇧M";
 const THINKING_SHORTCUT_GLYPH = "⌃⇧E";
@@ -58,7 +74,25 @@ const STAR_WIDTH = 2;
 type PickerKind = "model" | "thinking";
 type ModelTab = "favourites" | "all";
 
-type PickerAction = "choose" | "favourite" | "switch" | "page-up" | "page-down" | "close";
+/**
+ * A model/effort switch chosen while a turn was running. Applied at the next
+ * `turn_end`; the footer marks queued dimensions with a pending background.
+ * Dimensions are independent: re-picking one replaces only that half, and
+ * picking while idle applies immediately (a leftover queue is stale by
+ * definition — its turn already ended — so it is dropped).
+ */
+interface PendingSwitch {
+	model?: ModelRef;
+	effort?: ModelThinkingLevel;
+}
+
+let pending: PendingSwitch = {};
+
+function hasPending(): boolean {
+	return pending.model !== undefined || pending.effort !== undefined;
+}
+
+type PickerAction = "choose" | "favourite" | "cycle" | "switch" | "page-up" | "page-down" | "close";
 
 /** A styled footer fragment with its plain width and optional click action. */
 interface Segment {
@@ -262,18 +296,36 @@ class ExtendedFooter implements Component {
 		const path = `${shortCwd(ctx.cwd)}${branch ? ` (${branch})` : ""}${sessionName ? ` • ${sessionName}` : ""}`;
 		const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "no-model";
 		const thinking = ctx.thinkingLevel || "off";
+		// A queued switch marks its dimension with the pending background until
+		// the turn ends. Queuing the current value is a no-op, so it shows plain.
+		const queuedModel = pending.model && `${pending.model.provider}/${pending.model.id}` !== model
+			? `${pending.model.provider}/${pending.model.id}`
+			: undefined;
+		const queuedEffort = pending.effort && pending.effort !== thinking ? pending.effort : undefined;
 		const controls: Segment[] = [
-			{
-				plain: `${model} ${MODEL_SHORTCUT_GLYPH}`,
-				styled: `${this.theme.fg("accent", model)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`,
-				action: "model",
-			},
+			queuedModel
+				? {
+						plain: `${model} → ${queuedModel} ${MODEL_SHORTCUT_GLYPH}`,
+						styled: `${this.theme.fg("accent", model)} ${this.theme.fg("dim", "→")} ${this.theme.bg("toolPendingBg", queuedModel)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`,
+						action: "model",
+					}
+				: {
+						plain: `${model} ${MODEL_SHORTCUT_GLYPH}`,
+						styled: `${this.theme.fg("accent", model)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`,
+						action: "model",
+					},
 			{ plain: " • ", styled: this.theme.fg("dim", " • ") },
-			{
-				plain: `${thinking} ${THINKING_SHORTCUT_GLYPH}`,
-				styled: `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`,
-				action: "thinking",
-			},
+			queuedEffort
+				? {
+						plain: `${thinking} → ${queuedEffort} ${THINKING_SHORTCUT_GLYPH}`,
+						styled: `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", "→")} ${this.theme.bg("toolPendingBg", queuedEffort)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`,
+						action: "thinking",
+					}
+				: {
+						plain: `${thinking} ${THINKING_SHORTCUT_GLYPH}`,
+						styled: `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`,
+						action: "thinking",
+					},
 		];
 		const controlsWidth = controls.reduce((total, segment) => total + visibleWidth(segment.plain), 0);
 
@@ -333,15 +385,17 @@ class ModelPicker implements Component {
 		private readonly theme: Theme,
 		private readonly models: ModelRef[],
 		private state: PickerState,
-		private readonly onFavourites: (favourites: readonly ModelKey[]) => void,
-		private readonly onChoose: (model: ModelRef) => void,
+		private readonly levelsFor: (key: ModelKey) => readonly string[],
+		private readonly onFavourites: (next: PickerState) => void,
+		private readonly onChoose: (model: FavouriteModel) => void,
 		private readonly onCancel: () => void,
 	) {}
 
 	invalidate(): void {}
 
-	private visible(): ModelRef[] {
-		const base = this.tab === "favourites" ? favouriteModels(this.models, this.state) : this.models;
+	private visible(): FavouriteModel[] {
+		const base: readonly FavouriteModel[] =
+			this.tab === "favourites" ? favouriteModels(this.models, this.state) : this.models.map((model) => ({ ...model }));
 		return filterModels(base, this.query);
 	}
 
@@ -376,9 +430,13 @@ class ModelPicker implements Component {
 				continue;
 			}
 			const absolute = start + index;
-			const marked = this.state.favourites.includes(modelKey(model)) ? "* " : "  ";
+			// Every Favourites-tab row is an entry; in the All tab the star means
+			// at least one entry (bare or effort-pinned) exists for the model.
+			const marked =
+				this.tab === "favourites" || this.state.favourites.some((item) => item.key === modelKey(model)) ? "* " : "  ";
 			const cursor = absolute === this.selected ? "> " : "  ";
-			const text = `${cursor}${marked}${model.provider}/${model.id}`;
+			const effort = this.rowEffort(model);
+			const text = `${cursor}${marked}${model.provider}/${model.id}${effort ? ` • ${effort}` : ""}`;
 			const styled = absolute === this.selected ? this.theme.fg("accent", text) : text;
 			lines.push(truncateToWidth(styled, width));
 		}
@@ -389,6 +447,8 @@ class ModelPicker implements Component {
 				hintButton(this.theme, "⏎ select", "choose"),
 				separator,
 				hintButton(this.theme, "␣ or right-click favourite", "favourite"),
+				separator,
+				hintButton(this.theme, `${EFFORT_CYCLE_GLYPH} cycle effort`, "cycle"),
 			]),
 		);
 		lines.push(
@@ -465,6 +525,10 @@ class ModelPicker implements Component {
 			this.favourite();
 			return;
 		}
+		if (matchesKey(data, EFFORT_CYCLE_SHORTCUT)) {
+			this.cycle();
+			return;
+		}
 		if (matchesKey(data, "backspace")) {
 			this.query = this.query.slice(0, -1);
 			this.selected = 0;
@@ -477,14 +541,42 @@ class ModelPicker implements Component {
 		}
 	}
 
+	/**
+	 * Choosing a Favourites-tab row applies exactly that entry. An All-tab row
+	 * aggregates all entries for the model, so it applies the most recently
+	 * stored one (bare when the model is not favourited): the same target the
+	 * effort hotkey advances.
+	 */
 	private choose(): void {
-		const model = this.visible()[this.selected];
-		if (model) this.onChoose(model);
+		const row = this.visible()[this.selected];
+		if (!row) return;
+		if (this.tab === "favourites") {
+			this.onChoose(row);
+			return;
+		}
+		const key = modelKey(row);
+		const latest = latestEntryForKey(this.state.favourites, key);
+		this.onChoose(latest?.effort === undefined ? row : { ...row, effort: latest.effort });
 	}
 
 	private favourite(): void {
 		const model = this.visible()[this.selected];
 		if (model) this.toggle(model);
+	}
+
+	private cycle(): void {
+		const row = this.visible()[this.selected];
+		if (!row) return;
+		const key = modelKey(row);
+		const levels = this.levelsFor(key);
+		// Cycling carries the entry's selection timestamp to its new id, so the
+		// row keeps its sort position instead of dropping as "never selected".
+		const next =
+			this.tab === "favourites"
+				? cycleFavouriteEntry(this.state, { key, effort: row.effort }, levels)
+				: cycleModelEntry(this.state, key, levels);
+		this.state = next;
+		this.onFavourites(next);
 	}
 
 	private switchTab(): void {
@@ -504,6 +596,9 @@ class ModelPicker implements Component {
 			case "favourite":
 				this.favourite();
 				break;
+			case "cycle":
+				this.cycle();
+				break;
 			case "switch":
 				this.switchTab();
 				break;
@@ -519,9 +614,39 @@ class ModelPicker implements Component {
 		}
 	}
 
-	private toggle(model: ModelRef): void {
-		this.state = { ...this.state, favourites: toggleFavourite(this.state.favourites, modelKey(model)) };
-		this.onFavourites(this.state.favourites);
+	/**
+	 * Displayed effort for a row: the entry's own pin in the Favourites tab,
+	 * or the model's pinned efforts (stored order) in the All tab, where one
+	 * catalog row aggregates all entries. Bare entries show no suffix.
+	 */
+	private rowEffort(model: FavouriteModel): string | undefined {
+		if (this.tab === "favourites") return model.effort;
+		const pinned = this.state.favourites.flatMap((item) =>
+			item.key === modelKey(model) && item.effort !== undefined ? [item.effort] : [],
+		);
+		return pinned.length > 0 ? pinned.join(", ") : undefined;
+	}
+
+	/**
+	 * Space (or right-click) removes exactly the entry under the cursor in the
+	 * Favourites tab. In the All tab it toggles only the bare entry, so
+	 * effort-pinned variants of the same model survive; they are removed
+	 * from the Favourites tab.
+	 */
+	private toggle(model: FavouriteModel): void {
+		const key = modelKey(model);
+		this.save({
+			...this.state,
+			favourites:
+				this.tab === "favourites"
+					? removeFavouriteEntry(this.state.favourites, { key, effort: model.effort })
+					: toggleBareFavourite(this.state.favourites, key),
+		});
+	}
+
+	private save(next: PickerState): void {
+		this.state = next;
+		this.onFavourites(next);
 	}
 }
 
@@ -630,11 +755,74 @@ async function dialog<T>(
 	return chosen;
 }
 
-async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-	if (!ctx.isIdle()) {
-		ctx.ui.notify("Wait for the current turn to finish before changing model", "warning");
+/** Apply a favourite now: the model, plus its pinned effort when supported. */
+async function applyFavourite(pi: ExtensionAPI, ctx: ExtensionContext, models: Model<any>[], chosen: FavouriteModel): Promise<void> {
+	const model = models.find((item) => item.provider === chosen.provider && item.id === chosen.id);
+	if (!model) return;
+	const accepted = await pi.setModel(model);
+	if (!accepted) {
+		ctx.ui.notify(`No credentials for ${model.provider}`, "error");
 		return;
 	}
+	if (chosen.effort === undefined) {
+		ctx.ui.notify(`Model: ${model.provider}/${model.id}`, "info");
+		return;
+	}
+	const effort = chosen.effort as ModelThinkingLevel;
+	if (!thinkingLevels(model).includes(effort)) {
+		ctx.ui.notify(`Model: ${model.provider}/${model.id} (pinned effort '${chosen.effort}' is not supported, effort unchanged)`, "warning");
+		return;
+	}
+	pi.setThinkingLevel(effort);
+	ctx.ui.notify(`Model: ${model.provider}/${model.id} • ${chosen.effort}`, "info");
+}
+
+/** Queue a favourite for the next turn end. A pinned effort queues alongside the model. */
+function queueFavourite(ctx: ExtensionContext, chosen: FavouriteModel): void {
+	pending = {
+		...pending,
+		model: { provider: chosen.provider, id: chosen.id },
+		...(chosen.effort === undefined ? {} : { effort: chosen.effort as ModelThinkingLevel }),
+	};
+	const label = chosen.effort === undefined ? modelKey(chosen) : `${modelKey(chosen)} • ${chosen.effort}`;
+	ctx.ui.notify(`Queued ${label} — applies when the turn finishes`, "info");
+	requestRender?.();
+}
+
+/** Apply the queued switch against a fresh catalog; stale entries are dropped with a warning. */
+async function applyPending(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	const queued = pending;
+	pending = {};
+	requestRender?.();
+	if (queued.model === undefined && queued.effort === undefined) return;
+	const models = catalog(ctx);
+	let current = ctx.model;
+	if (queued.model) {
+		const label = `${queued.model.provider}/${queued.model.id}`;
+		const model = models.find((item) => item.provider === queued.model!.provider && item.id === queued.model!.id);
+		if (!model) {
+			ctx.ui.notify(`Queued model ${label} is no longer available — dropped`, "warning");
+			return;
+		}
+		const accepted = await pi.setModel(model);
+		if (!accepted) {
+			ctx.ui.notify(`No credentials for ${model.provider} (queued ${label} dropped)`, "error");
+			return;
+		}
+		current = model;
+		ctx.ui.notify(`Model: ${label}`, "info");
+	}
+	if (queued.effort !== undefined) {
+		if (!thinkingLevels(current).includes(queued.effort)) {
+			ctx.ui.notify(`Queued effort '${queued.effort}' is not supported by the current model — dropped`, "warning");
+			return;
+		}
+		pi.setThinkingLevel(queued.effort);
+		ctx.ui.notify(`Effort: ${queued.effort}`, "info");
+	}
+}
+
+async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	const models = catalog(ctx);
 	if (models.length === 0) {
 		ctx.ui.notify("No models available", "warning");
@@ -649,13 +837,18 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 			ctx.ui.notify(`Could not save model picker state: ${error instanceof Error ? error.message : String(error)}`, "error");
 		}
 	};
-	const chosen = await dialog<ModelRef>("model", ctx, 72, 20, (kind) => open(pi, kind), (theme, done) =>
+	const levelsFor = (key: ModelKey): readonly string[] => {
+		const model = models.find((item) => modelKey(item) === key);
+		return thinkingLevels(model);
+	};
+	const chosen = await dialog<FavouriteModel>("model", ctx, 72, 20, (kind) => open(pi, kind), (theme, done) =>
 		new Outlined(
 			new ModelPicker(
 				theme,
 				models,
 				state,
-				(favourites) => save({ ...state, favourites: [...favourites] }),
+				levelsFor,
+				save,
 				(model) => done(model),
 				() => done(undefined),
 			),
@@ -663,18 +856,17 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 		),
 	);
 	if (!chosen) return;
-	save(recordSelection(state, modelKey(chosen), Date.now()));
-	const model = models.find((item) => item.provider === chosen.provider && item.id === chosen.id);
-	if (!model) return;
-	const accepted = await pi.setModel(model);
-	ctx.ui.notify(accepted ? `Model: ${model.provider}/${model.id}` : `No credentials for ${model.provider}`, accepted ? "info" : "error");
+	save(recordSelection(state, favouriteId({ key: modelKey(chosen), effort: chosen.effort }), Date.now()));
+	if (ctx.isIdle()) {
+		pending = {};
+		requestRender?.();
+		await applyFavourite(pi, ctx, models, chosen);
+	} else {
+		queueFavourite(ctx, chosen);
+	}
 }
 
 async function openThinkingPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-	if (!ctx.isIdle()) {
-		ctx.ui.notify("Wait for the current turn to finish before changing effort", "warning");
-		return;
-	}
 	const levels = thinkingLevels(ctx.model);
 	const chosen = await dialog<ModelThinkingLevel>("thinking", ctx, 40, 16, (kind) => open(pi, kind), (theme, done) =>
 		new Outlined(
@@ -683,8 +875,16 @@ async function openThinkingPicker(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 		),
 	);
 	if (!chosen) return;
-	pi.setThinkingLevel(chosen);
-	ctx.ui.notify(`Effort: ${chosen}`, "info");
+	if (ctx.isIdle()) {
+		pending = {};
+		requestRender?.();
+		pi.setThinkingLevel(chosen);
+		ctx.ui.notify(`Effort: ${chosen}`, "info");
+	} else {
+		pending = { ...pending, effort: chosen };
+		ctx.ui.notify(`Queued effort ${chosen} — applies when the turn finishes`, "info");
+		requestRender?.();
+	}
 }
 
 async function withPicker(ctx: ExtensionContext, run: () => Promise<void>): Promise<void> {
@@ -722,30 +922,39 @@ export default function (pi: ExtensionAPI): void {
 	});
 	pi.on("model_select", remember);
 	pi.on("thinking_level_select", remember);
+	pi.on("turn_end", (_event, ctx) => {
+		latestCtx = ctx;
+		if (!hasPending()) return;
+		void applyPending(pi, ctx).catch((error) => {
+			pending = {};
+			requestRender?.();
+			ctx.ui.notify(`Could not apply queued switch: ${error instanceof Error ? error.message : String(error)}`, "error");
+		});
+	});
 
 	pi.registerShortcut(MODEL_SHORTCUT, {
-		description: "Open the model picker (favourites, then all models)",
+		description: "Open the model picker (favourites, then all models; queued when a turn is running)",
 		handler: (ctx) => {
 			latestCtx = ctx;
 			open(pi, "model");
 		},
 	});
 	pi.registerShortcut(THINKING_SHORTCUT, {
-		description: "Open the effort picker",
+		description: "Open the effort picker (queued when a turn is running)",
 		handler: (ctx) => {
 			latestCtx = ctx;
 			open(pi, "thinking");
 		},
 	});
 	pi.registerCommand("pick-model", {
-		description: "Pick a model (favourites tab first; space marks a favourite)",
+		description: "Pick a model (favourites tab first; space marks a favourite, ctrl+e cycles its effort; queued when a turn is running)",
 		handler: async (_args, ctx) => {
 			latestCtx = ctx;
 			await withPicker(ctx, () => openModelPicker(pi, ctx));
 		},
 	});
 	pi.registerCommand("pick-thinking", {
-		description: "Pick the effort / thinking level",
+		description: "Pick the effort / thinking level (queued when a turn is running)",
 		handler: async (_args, ctx) => {
 			latestCtx = ctx;
 			await withPicker(ctx, () => openThinkingPicker(pi, ctx));

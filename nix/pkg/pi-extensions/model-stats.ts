@@ -16,9 +16,10 @@
  * PRUNE_EVERY appends the file is also rewritten without records older than a
  * week (the longest window); a racing concurrent session can lose the records
  * it appended during the rewrite — accepted for stats. /perf replaces the
- * editor with mean/p50/p90/p99 tables
+ * editor with mean/p50/p90/p99 tables (tok/s also shows the slow tail, p10/p1)
  * per model for the last hour, 24 hours, and week — the same in-place custom
- * view as /usage, not an overlay.
+ * view as /usage, not an overlay. All three sections share one column layout,
+ * so columns stay aligned across windows.
  *
  * Wire-up: listed in nix/hm/pi.nix `programs.pi.settings.extensions`.
  */
@@ -42,6 +43,7 @@ import {
 import {
 	classifyOutcome,
 	isUsableRecord,
+	measureWindows,
 	parseStatsLine,
 	pruneRecords,
 	renderWindow,
@@ -148,12 +150,14 @@ class StatsView implements Component {
 	render(width: number): string[] {
 		const lines: string[] = [];
 		const sort = this.sortDirection();
+		// One layout for all windows: columns keep the same width in every section.
+		const layout = measureWindows(this.summaries);
 		for (const windowSummary of this.summaries) {
 			if (lines.length > 0) lines.push("");
 			lines.push(this.theme.fg("accent", fitLine(windowSummary.label, width)));
 			const table = renderWindow(
 				{ ...windowSummary, models: sortModels(windowSummary.models, sort.id, sort.descending) },
-				width,
+				{ layout, width },
 			);
 			lines.push(...table.header.map((line) => this.theme.fg("dim", fitLine(line, width))));
 			table.rows.forEach((row, index) => {

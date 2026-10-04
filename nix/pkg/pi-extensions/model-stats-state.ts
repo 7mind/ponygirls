@@ -90,13 +90,22 @@ export interface MetricStats {
 	p50: number;
 	p90: number;
 	p99: number;
+	p10: number;
+	p1: number;
 }
 
 export function summarizeMetric(values: readonly number[]): MetricStats | undefined {
 	if (values.length === 0) return undefined;
 	const sorted = [...values].sort((left, right) => left - right);
 	const mean = sorted.reduce((total, value) => total + value, 0) / sorted.length;
-	return { mean, p50: percentile(sorted, 50), p90: percentile(sorted, 90), p99: percentile(sorted, 99) };
+	return {
+		mean,
+		p50: percentile(sorted, 50),
+		p90: percentile(sorted, 90),
+		p99: percentile(sorted, 99),
+		p10: percentile(sorted, 10),
+		p1: percentile(sorted, 1),
+	};
 }
 
 export interface ModelWindowStats {
@@ -248,7 +257,9 @@ function isFiniteNumber(value: unknown): value is number {
 
 const FAILURE_KINDS: readonly FailureKind[] = ["aborted", "timeout", "error"];
 const FAILURE_HEADERS: Record<FailureKind, string> = { aborted: "abrt", timeout: "tout", error: "err" };
-const METRIC_LABELS = ["mean", "p50", "p90", "p99"] as const;
+/** Percentile columns per group: tok/s also shows the slow tail (p10, p1). */
+const STANDARD_LABELS: readonly (keyof MetricStats)[] = ["mean", "p50", "p90", "p99"];
+const TPS_LABELS: readonly (keyof MetricStats)[] = [...STANDARD_LABELS, "p10", "p1"];
 /** Box-drawing bar, one terminal column, so string length is the display width. */
 const COLUMN_GAP = " │ ";
 
@@ -289,11 +300,12 @@ function metricWidths(
 	models: readonly ModelWindowStats[],
 	pick: (model: ModelWindowStats) => MetricStats | undefined,
 	format: (value: number) => string,
+	labels: readonly (keyof MetricStats)[],
 ): number[] {
-	const widths = METRIC_LABELS.map((label) => label.length);
+	const widths = labels.map((label) => label.length);
 	for (const model of models) {
 		const stats = pick(model);
-		const values = stats ? [stats.mean, stats.p50, stats.p90, stats.p99].map(format) : ["-", "-", "-", "-"];
+		const values = stats ? labels.map((label) => format(stats[label])) : labels.map(() => "-");
 		values.forEach((value, index) => {
 			widths[index] = Math.max(widths[index]!, value.length);
 		});
@@ -305,8 +317,9 @@ function metricCells(
 	stats: MetricStats | undefined,
 	format: (value: number) => string,
 	widths: readonly number[],
+	labels: readonly (keyof MetricStats)[],
 ): string[] {
-	const values = stats ? [stats.mean, stats.p50, stats.p90, stats.p99].map(format) : ["-", "-", "-", "-"];
+	const values = stats ? labels.map((label) => format(stats[label])) : labels.map(() => "-");
 	return values.map((value, index) => padLeft(value, widths[index]!));
 }
 
@@ -320,36 +333,68 @@ export interface RenderedWindow {
 	rows: string[];
 }
 
-/**
- * One window's table. Every column is as wide as its header or its widest
- * cell, and columns are separated by `│`. When `width` is set and the natural
- * table is wider, the model column shrinks first; metric columns keep their
- * content width and the caller truncates the line.
- */
-export function renderWindow(summary: WindowSummary, width?: number): RenderedWindow {
-	if (summary.models.length === 0) return { header: ["(no samples)"], rows: [] };
+export interface MetricGroup {
+	title: string;
+	labels: readonly (keyof MetricStats)[];
+	widths: number[];
+	pick: (model: ModelWindowStats) => MetricStats | undefined;
+	format: (value: number) => string;
+}
 
-	const nWidth = Math.max("n".length, ...summary.models.map((model) => String(model.responses).length));
+/** Column widths shared by several windows, so stacked tables stay aligned. */
+export interface WindowsLayout {
+	nWidth: number;
+	failureWidths: number[];
+	groups: MetricGroup[];
+	/** Widest model key across the measured windows, before `width` clamping. */
+	modelWidth: number;
+}
+
+/** Measure every column across `summaries`: one layout keeps all tables aligned. */
+export function measureWindows(summaries: readonly WindowSummary[]): WindowsLayout {
+	const models = summaries.flatMap((summary) => summary.models);
+	const nWidth = Math.max("n".length, ...models.map((model) => String(model.responses).length));
 	const failureWidths = FAILURE_KINDS.map((kind) =>
 		Math.max(
 			FAILURE_HEADERS[kind].length,
-			...summary.models.map((model) => (model.failures[kind] > 0 ? String(model.failures[kind]).length : 0)),
+			...models.map((model) => (model.failures[kind] > 0 ? String(model.failures[kind]).length : 0)),
 		),
 	);
-	const groups: { title: string; widths: number[]; pick: (model: ModelWindowStats) => MetricStats | undefined; format: (value: number) => string }[] = [
-		{ title: "ttft s", widths: metricWidths(summary.models, (model) => model.ttft, seconds), pick: (model) => model.ttft, format: seconds },
-		{ title: "total s", widths: metricWidths(summary.models, (model) => model.total, seconds), pick: (model) => model.total, format: seconds },
-		{ title: "tok/s", widths: metricWidths(summary.models, (model) => model.tps, rate), pick: (model) => model.tps, format: rate },
+	const groups: MetricGroup[] = [
+		{ title: "ttft s", labels: STANDARD_LABELS, widths: metricWidths(models, (model) => model.ttft, seconds, STANDARD_LABELS), pick: (model) => model.ttft, format: seconds },
+		{ title: "total s", labels: STANDARD_LABELS, widths: metricWidths(models, (model) => model.total, seconds, STANDARD_LABELS), pick: (model) => model.total, format: seconds },
+		{ title: "tok/s", labels: TPS_LABELS, widths: metricWidths(models, (model) => model.tps, rate, TPS_LABELS), pick: (model) => model.tps, format: rate },
 	];
 	for (const group of groups) fitGroupTitle(group.title, group.widths);
+	return {
+		nWidth,
+		failureWidths,
+		groups,
+		modelWidth: Math.max("model".length, ...models.map((model) => model.key.length)),
+	};
+}
 
+/**
+ * One window's table. Every column is as wide as its header or its widest
+ * cell, and columns are separated by `│`. With a shared `layout` (see
+ * {@link measureWindows}) columns keep the same width across windows; without
+ * one the window is measured alone. When `width` is set and the natural table
+ * is wider, the model column shrinks first; metric columns keep their content
+ * width and the caller truncates the line.
+ */
+export function renderWindow(summary: WindowSummary, opts?: { layout?: WindowsLayout; width?: number }): RenderedWindow {
+	if (summary.models.length === 0) return { header: ["(no samples)"], rows: [] };
+
+	const layout = opts?.layout ?? measureWindows([summary]);
+	const { nWidth, failureWidths, groups } = layout;
 	const fixedWidth =
 		nWidth +
 		failureWidths.reduce((total, column) => total + column, 0) +
 		groups.reduce((total, group) => total + blockWidth(group.widths), 0) +
 		COLUMN_GAP.length * (1 + failureWidths.length + groups.length);
-	let modelWidth = Math.max("model".length, ...summary.models.map((model) => model.key.length));
-	if (width !== undefined) modelWidth = Math.max(1, Math.min(modelWidth, width - fixedWidth));
+	const modelWidth = opts?.width === undefined
+		? layout.modelWidth
+		: Math.max(1, Math.min(layout.modelWidth, opts.width - fixedWidth));
 
 	const header = joinCells([
 		padRight("", modelWidth),
@@ -361,14 +406,14 @@ export function renderWindow(summary: WindowSummary, width?: number): RenderedWi
 		padRight("model", modelWidth),
 		padLeft("", nWidth),
 		...failureWidths.map((column) => padLeft("", column)),
-		...groups.flatMap((group) => METRIC_LABELS.map((label, index) => padLeft(label, group.widths[index]!))),
+		...groups.flatMap((group) => group.labels.map((label, index) => padLeft(label, group.widths[index]!))),
 	]);
 	const rows = summary.models.map((model) =>
 		joinCells([
 			padRight(ellipsize(model.key, modelWidth), modelWidth),
 			padLeft(String(model.responses), nWidth),
 			...FAILURE_KINDS.map((kind, index) => padLeft(model.failures[kind] > 0 ? String(model.failures[kind]) : "", failureWidths[index]!)),
-			...groups.flatMap((group) => metricCells(group.pick(model), group.format, group.widths)),
+			...groups.flatMap((group) => metricCells(group.pick(model), group.format, group.widths, group.labels)),
 		]),
 	);
 	return { header: [header, subHeader], rows };
