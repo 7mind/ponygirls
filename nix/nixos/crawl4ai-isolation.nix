@@ -39,11 +39,14 @@ in
       type = lib.types.str;
       default = "container@crawl4ai.service";
       description = ''
-        systemd unit that starts the container. NixOS containers are
-        instances of container@.service, not container-<name>.service.
-        A drop-in orders that instance after the filter. Defining
-        systemd.services for the instance replaces the template unit and
-        drops ExecStart.
+        systemd unit that starts the container. NixOS declarative
+        containers are container@<name>.service. This unit is ordered
+        after the filter with Before= and requiredBy, which adds a
+        .requires symlink. Do not define systemd.services for that
+        name here: a partial definition is a unit with no ExecStart.
+        Do not install a drop-in through environment.etc either:
+        /etc/systemd/system is a symlink, and mkdir of a subdirectory
+        follows it into the read-only unit package.
       '';
     };
   };
@@ -51,17 +54,11 @@ in
   config = lib.mkIf cfg.enable {
     boot.kernelModules = [ "nf_conntrack_bridge" ];
 
-    # Drop-in only. requiredBy/before would synthesize a unit with this
-    # name and, for container@crawl4ai.service, replace the template instance.
-    environment.etc."systemd/system/${cfg.containerUnit}.d/isolation.conf".text = ''
-      [Unit]
-      After=crawl4ai-isolation.service
-      Requires=crawl4ai-isolation.service
-    '';
-
     systemd.services.crawl4ai-isolation = {
       description = "Crawl4AI container egress isolation";
       wantedBy = [ "multi-user.target" ];
+      before = [ cfg.containerUnit ];
+      requiredBy = [ cfg.containerUnit ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
