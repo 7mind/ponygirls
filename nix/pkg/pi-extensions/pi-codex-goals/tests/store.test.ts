@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import test, { after } from "node:test";
+import fs, { mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -32,6 +33,7 @@ type Factory = (sessionId: SessionId) => { store: GoalStore; cleanup?: () => voi
 
 function fileFactory(): Factory {
   const dir = mkdtempSync(join(tmpdir(), "codex-goals-"));
+  after(() => rmSync(dir, { recursive: true, force: true }));
   return (sessionId: SessionId) => {
     const sessionFile = join(dir, `${sessionId}.jsonl`);
     return { store: new FileGoalStore(sessionId, sessionFile) };
@@ -51,19 +53,17 @@ async function contractSuite(name: string, factory: Factory): Promise<void> {
     const rev = (first as { ok: true; value: SidecarEnvelope }).value.revision;
     const committed = store.commit(rev, (c) => ({ ...c, goal: sampleGoal() }));
     assert.equal(committed.ok, true);
-    const reloaded = store.load();
+    store.releaseLock();
+    const reloaded = factory("sess-1" as SessionId).store.load();
     assert.equal(reloaded.ok, true);
     assert.equal((reloaded as { ok: true; value: SidecarEnvelope }).value.goal?.objective, "Do the thing");
   });
 
-  await test(`${name}: failed commit never authorizes a dispatch`, () => {
+  await test(`${name}: invalid mutation never changes state`, () => {
     const { store } = factory("sess-2" as SessionId);
-    const mem = store as InMemoryGoalStore;
-    if (mem instanceof InMemoryGoalStore) mem.failWriteOnce = true;
     const first = store.load();
     assert.equal(first.ok, true);
     const rev = (first as { ok: true; value: SidecarEnvelope }).value.revision;
-    // File adapter: force failure via invalid mutation (validation rejects).
     const bad = store.commit(rev, (c) => ({ ...c, goal: { ...sampleGoal(), tokensUsed: -1 } }));
     assert.equal(bad.ok, false);
     const after = store.load();
@@ -114,18 +114,17 @@ async function contractSuite(name: string, factory: Factory): Promise<void> {
   });
 
   await test(`${name}: second writer gets a visible ownership conflict`, () => {
-    const backing = new Map<string, string>();
-    const a = new InMemoryGoalStore("sess-6" as SessionId, backing);
-    const b = new InMemoryGoalStore("sess-6" as SessionId, backing);
+    const a = factory("sess-6" as SessionId).store;
+    const b = factory("sess-6" as SessionId).store;
     assert.equal(a.acquireLock().ok, true);
     const second = b.acquireLock();
     assert.equal(second.ok, false);
     assert.equal((second as { ok: false; error: { code: string } }).error.code, "locked");
+    b.releaseLock();
+    assert.equal(b.acquireLock().ok, false);
     a.releaseLock();
-    // Releasing another process's lock is forbidden: b still blocked until a releases (already did).
     assert.equal(b.acquireLock().ok, true);
     b.releaseLock();
-    void factory;
   });
 
   await test(`${name}: tombstone distinguishes clear from never-created`, () => {
@@ -145,12 +144,26 @@ async function contractSuite(name: string, factory: Factory): Promise<void> {
 
   await test(`${name}: indeterminate durability window is reported`, () => {
     const { store } = factory("sess-8" as SessionId);
-    const mem = store as unknown as InMemoryGoalStore;
-    if (mem instanceof InMemoryGoalStore) {
-      mem.failDirFlushOnce = true;
+    const original = fs.fsyncSync;
+    if (store instanceof InMemoryGoalStore) store.failDirFlushOnce = true;
+    else {
+      fs.fsyncSync = (fd) => {
+        if (fs.fstatSync(fd).isDirectory()) throw new Error("injected directory fsync failure");
+        original(fd);
+      };
+      syncBuiltinESMExports();
+    }
+    try {
       const r = store.commit(0, (c) => ({ ...c, goal: sampleGoal() }));
-      assert.equal(r.ok, false);
-      assert.equal((r as { ok: false; error: { code: string } }).error.code, "indeterminate");
+      assert.ok(!r.ok);
+      assert.equal(r.error.code, "indeterminate");
+      const visible = store.load();
+      assert.ok(visible.ok);
+      assert.equal(visible.value.goal!.objective, "Do the thing");
+    } finally {
+      fs.fsyncSync = original;
+      syncBuiltinESMExports();
+      store.releaseLock();
     }
   });
 }
@@ -175,6 +188,7 @@ test("file store rejects ephemeral sessions", () => {
 
 test("file adapter writes atomically with restrictive permissions", () => {
   const dir = mkdtempSync(join(tmpdir(), "codex-goals-perm-"));
+  after(() => rmSync(dir, { recursive: true, force: true }));
   const sessionFile = join(dir, "s.jsonl");
   const store = new FileGoalStore("s" as SessionId, sessionFile);
   const c = store.commit(0, (e) => ({ ...e, goal: sampleGoal() }));

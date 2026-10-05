@@ -37,7 +37,7 @@ function view(overrides: Partial<SessionView> = {}): SessionView {
 
 function activeEnvelope(store: InMemoryGoalStore): SidecarEnvelope {
   let env = (store.load() as { ok: true; value: SidecarEnvelope }).value;
-  const created = handleCreateGoal(store, env, { objective: "lifecycle target" }, clocks);
+  const created = handleCreateGoal(store, env, { objective: "lifecycle target" }, clocks, 0);
   assert.equal(created.isError, false);
   return (store.load() as { ok: true; value: SidecarEnvelope }).value;
 }
@@ -64,6 +64,7 @@ test("finalized abort classifies as abort (user-interrupt path pauses, preserves
   const log = { instructions: [] as unknown[], notices: [] as string[] };
   const controller = new GoalController(store, clocks, sender(log));
   const envelope = activeEnvelope(store);
+  controller.provisional.aborted = true;
   controller.observeAgentEnd([{ role: "assistant", stopReason: "aborted" }]);
   assert.equal(controller.classifyPreviousExecution().kind, "aborted");
   // Usage retained: settle first, then pause keeps tokens.
@@ -94,7 +95,7 @@ test("replacement retains history entries and resets identity/baseline", () => {
   assert.equal(complete.ok, true);
   const done = (complete as { ok: true; value: SidecarEnvelope }).value;
   assert.equal(done.goal!.status, "complete");
-  const recreated = handleCreateGoal(store, done, { objective: "next objective" }, clocks);
+  const recreated = handleCreateGoal(store, done, { objective: "next objective" }, clocks, 0);
   assert.equal(recreated.isError, false);
   assert.notEqual(recreated.state!.id, firstId);
   assert.equal(recreated.state!.tokensUsed, 0);
@@ -163,7 +164,7 @@ test("transcript failure after state commit disables admission explicitly", () =
   assert.equal(controller.state.admissionDisabled, true);
 });
 
-test("file adapter lock: same-process reentry succeeds, live foreign holder conflicts", async () => {
+test("file adapter lock: only the owning instance can reenter, live foreign holder conflicts", async () => {
   const { spawn } = await import("node:child_process");
   const { writeFileSync } = await import("node:fs");
   const { hostname } = await import("node:os");
@@ -172,9 +173,9 @@ test("file adapter lock: same-process reentry succeeds, live foreign holder conf
   const lockPath = `${sessionFile}.codex-goals.json.lock`;
   const a = new FileGoalStore("s" as SessionId, sessionFile);
   assert.equal(a.acquireLock().ok, true);
-  // Same process reentry is the same owner: succeeds without conflict.
+  assert.equal(a.acquireLock().ok, true);
   const b = new FileGoalStore("s" as SessionId, sessionFile);
-  assert.equal(b.acquireLock().ok, true);
+  assert.equal(b.acquireLock().ok, false);
   a.releaseLock();
   b.releaseLock();
   // Foreign live holder: spawn a sleeper and forge its lock.
@@ -203,12 +204,12 @@ test("in-memory session has no sidecar path and is rejected", () => {
   assert.equal(store.sidecarPath, null);
 });
 
-test("tool-safe ordering: overshoot settled before update blocks completion-as-budgeted", () => {
+test("tool-safe ordering: completion after exhaustion preserves and reports overshoot", () => {
   const store = new InMemoryGoalStore("sess" as SessionId);
   const log = { instructions: [] as unknown[], notices: [] as string[] };
   const controller = new GoalController(store, clocks, sender(log));
   let env = (store.load() as { ok: true; value: SidecarEnvelope }).value;
-  const created = handleCreateGoal(store, env, { objective: "capped", token_budget: 10 }, clocks);
+  const created = handleCreateGoal(store, env, { objective: "capped", token_budget: 10 }, clocks, 0);
   assert.equal(created.isError, false);
   env = (store.load() as { ok: true; value: SidecarEnvelope }).value;
   // Tool-safe checkpoint first: the run already overspent.
@@ -227,9 +228,8 @@ test("tool-safe ordering: overshoot settled before update blocks completion-as-b
   );
   assert.equal(settled.budgetHit, true);
   assert.equal(settled.envelope.goal?.status, "budget_limited");
-  // A subsequent complete against the settled state is rejected: the goal
-  // is budget_limited, and exhaustion is never labeled completion.
   const done = handleUpdateGoal(store, settled.envelope, { status: "complete" }, clocks);
-  assert.equal(done.isError, true);
-  assert.match(done.content, /Only an active goal can complete|budget/i);
+  assert.equal(done.isError, false);
+  assert.equal(done.state!.tokensUsed, 13);
+  assert.match(done.content, /13 of 10/);
 });

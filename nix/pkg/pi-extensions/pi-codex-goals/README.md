@@ -33,7 +33,7 @@ One command, `goal`:
 | `/goal edit <objective>` | Apply an explicit objective edit. |
 | `/goal edit -- <reserved>` | Edit to an objective beginning with a reserved word. |
 | `/goal pause` | Pause the active goal, cancel admission. |
-| `/goal resume` | Reactivate a paused/blocked/usage-limited goal. |
+| `/goal resume` | Reactivate a paused/blocked/usage-limited goal, or recover an interrupted active dispatch. |
 | `/goal resume --tokens 80000` | Raise the cap and resume (usage retained). |
 | `/goal clear` | Clear state (tombstone). Transcript entries are retained. |
 
@@ -67,8 +67,10 @@ where Pi reports disjoint fields). `cacheRead` is never subtracted;
 `reasoning` (a subset of `output`) is never added twice. Reaching the cap
 persists `budget_limited`, emits one visible wrap-up instruction (not
 completion), and stops autonomous work; overshoot is reported. A
-`budget_limited` goal resumes only with a raised cap. Missing usage that
-would prevent enforcing a cap stops admission explicitly.
+`budget_limited` goal resumes only with a raised cap. Verified completion remains possible after exhaustion, and retains final-report
+usage. Missing usage that would prevent enforcing a cap stops admission explicitly.
+Accounting excludes pre-goal history and unrelated runs while the goal is paused.
+Elapsed time uses monotonic active-run spans, including checkpoints at goal tools.
 
 ## Same-session execution
 
@@ -97,7 +99,8 @@ Atomic JSON sidecar next to the session file:
 monotonic revision, goal or tombstone, dispatch record, usage
 checkpoints). Writes go to a unique temp file (mode `0600`), flush,
 atomic rename, directory flush; restrictive permissions. A lock file
-(`.lock`) enforces one live writer per session; stale locks recover only
+(`.lock`) enforces one owning store instance per session, including within a
+single Pi process; every commit checks ownership. Stale locks recover only
 for a positively absent owner. Malformed state is reported, never treated
 as "no goal". Native commit metadata (`codex-goal-commit` entries) is
 audit evidence, not a second store.
@@ -145,6 +148,12 @@ behavioral scenarios:
 node --test tests/*.test.ts
 ```
 
-Host verification uses the real Pi session manager/JSONL/HTML export with
-temporary saved sessions (see the implementation report); live-model runs
-are reported separately from deterministic gates.
+Real-host tests use the pinned Pi SDK, a deterministic local provider, temporary
+saved sessions, JSONL/HTML export, and actual interactive message components:
+
+```bash
+PI_OFFLINE=1 PI_GOALS_SDK_ROOT=/path/to/pi-monorepo node --test tests/host.test.mjs
+```
+
+`nix build .#checks.x86_64-linux.codex-goals` runs strict TypeScript checking and
+both suites against the packaged Pi host. No live-model behavior is claimed.

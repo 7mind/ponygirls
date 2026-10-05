@@ -10,7 +10,8 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { defineTool } from "@earendil-works/pi-coding-agent";
+import { defineTool, SessionManager } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 
 import {
   blockRecord,
@@ -38,7 +39,6 @@ import {
 import { GoalController, type ClockPort, type SenderPort, type SessionView } from "./src/runtime.ts";
 import {
   FileGoalStore,
-  emptyEnvelope,
   type GoalStore,
   type SidecarEnvelope,
 } from "./src/store.ts";
@@ -79,7 +79,7 @@ interface SessionBinding {
 function clocks(): ClockPort {
   return {
     nowIso: () => new Date().toISOString(),
-    nowMs: () => Date.now(),
+    nowMs: () => performance.now(),
   };
 }
 
@@ -94,14 +94,6 @@ function safeNotify(ctx: { ui: { notify(m: string, t?: NotifyLevel): void } }, m
     ctx.ui.notify(message, type);
   } catch {
     // Stale runtime after session replacement/reload: nothing to do.
-  }
-}
-
-function safeAppend(pi: { appendEntry(t: string, d?: unknown): void }, customType: string, data: unknown): void {
-  try {
-    pi.appendEntry(customType, data);
-  } catch {
-    // Evidence failure or stale runtime; sidecar already committed.
   }
 }
 
@@ -179,16 +171,15 @@ export default function (pi: ExtensionAPI): void {
   const clk = clocks();
 
   function sessionKey(ctx: ExtensionContext): string {
+    return ctx.sessionManager.getSessionId();
+  }
+
+  function appendEvidence(binding: SessionBinding, customType: string, data: unknown): void {
     try {
-      const file = ctx.sessionManager.getSessionFile();
-      if (file) return file;
-    } catch {
-      // fall through
-    }
-    try {
-      return `id:${ctx.sessionManager.getSessionId()}`;
-    } catch {
-      return `cwd:${ctx.cwd}`;
+      pi.appendEntry(customType, data);
+    } catch (err) {
+      binding.controller.disableAdmission();
+      throw new Error(`Sidecar state may already be committed, but transcript evidence failed: ${(err as Error).message}. Admission disabled pending recovery.`);
     }
   }
 
@@ -270,17 +261,14 @@ export default function (pi: ExtensionAPI): void {
         );
       },
       sendNotice: (content) => {
-        try {
-          pi.appendEntry(GOAL_NOTICE_TYPE, { text: content, at: clk.nowIso() });
-        } catch {
-          // buffered until materialization
-        }
+        pi.appendEntry(GOAL_NOTICE_TYPE, { text: content, at: clk.nowIso() });
       },
       appendCommitMeta: (meta) => {
         pi.appendEntry(COMMIT_META_TYPE, meta);
       },
     };
     const controller = new GoalController(store, clk, sender);
+    controller.everCommitted = ctx.sessionManager.getEntries().some((e) => e.type === "custom" && e.customType === COMMIT_META_TYPE && (e.data as { sessionId?: unknown }).sessionId === sessionId);
     const binding: SessionBinding = {
       sessionId,
       sessionFile,
@@ -311,11 +299,14 @@ export default function (pi: ExtensionAPI): void {
   function loadEnvelope(binding: SessionBinding): SidecarEnvelope {
     const loaded = binding.store.load();
     if (!loaded.ok) {
-      if (loaded.error.code === "malformed" || loaded.error.code === "session_mismatch") {
-        binding.controller.disableAdmission();
-      }
-      return emptyEnvelope(binding.sessionId);
+      binding.controller.disableAdmission();
+      throw new Error(loaded.error.message);
     }
+    if (loaded.value.revision === 0 && binding.controller.everCommitted) {
+      binding.controller.disableAdmission();
+      throw new Error("Sidecar disappeared after a committed goal: storage failure.");
+    }
+    if (loaded.value.revision > 0) binding.controller.everCommitted = true;
     return loaded.value;
   }
 
@@ -323,7 +314,8 @@ export default function (pi: ExtensionAPI): void {
   function settleForTool(
     binding: SessionBinding,
     ctx: { sessionManager: ExtensionContext["sessionManager"] },
-  ): { envelope: SidecarEnvelope; budgetHit: boolean } {
+    triggerWrapup: boolean,
+  ): { envelope: SidecarEnvelope; budgetHit: boolean; unknownUsage: boolean } {
     const sm = ctx.sessionManager;
     const live: SessionView = {
       sessionId: binding.sessionId,
@@ -351,7 +343,7 @@ export default function (pi: ExtensionAPI): void {
       hasPendingMessages: () => false,
     };
     const envelope = loadEnvelope(binding);
-    const settled = binding.controller.settleAccounting(envelope, live);
+    const settled = binding.controller.checkpointAccounting(envelope, live);
     if (settled.budgetHit && settled.envelope.goal) {
       const goal = settled.envelope.goal;
       const sent = safeSendCustom(
@@ -368,7 +360,7 @@ export default function (pi: ExtensionAPI): void {
             purpose: "budget_wrapup",
           },
         },
-        { triggerTurn: true, deliverAs: "followUp" },
+        { triggerTurn: triggerWrapup, deliverAs: "followUp" },
       );
       if (!sent.ok) binding.controller.disableAdmission();
     }
@@ -412,7 +404,13 @@ export default function (pi: ExtensionAPI): void {
         }
         const outcome = await binding.controller.serialized(() => {
           const envelope = loadEnvelope(binding);
-          return handleCreateGoal(binding.store, envelope, params as unknown, clk);
+          const outcome = handleCreateGoal(binding.store, envelope, params as unknown, clk, ctx.sessionManager.getEntries().length);
+          if (!outcome.isError && outcome.state) {
+            binding.controller.invalidate("tool:create");
+            binding.controller.beginRun(outcome.state.id);
+            appendEvidence(binding, COMMIT_META_TYPE, { sessionId: binding.sessionId, goalId: outcome.state.id, revision: outcome.revision });
+          }
+          return outcome;
         });
         return {
           content: [{ type: "text" as const, text: outcome.content }],
@@ -472,8 +470,8 @@ export default function (pi: ExtensionAPI): void {
           // Tool-safe checkpoint: attribute finalized usage and enforce the
           // cap before applying the requested transition, so a run that
           // already overspent cannot complete as if within budget.
-          const settled = settleForTool(binding, ctx);
-          if (settled.budgetHit) {
+          const settled = settleForTool(binding, ctx, true);
+          if (settled.budgetHit && params.status !== "complete") {
             const g = settled.envelope.goal!;
             const remaining = g.tokenBudget !== null ? Math.max(0, g.tokenBudget - g.tokensUsed) : null;
             return {
@@ -500,7 +498,10 @@ export default function (pi: ExtensionAPI): void {
           const envelope = settled.envelope;
           return handleUpdateGoal(binding.store, envelope, params as unknown, clk);
         });
-        if (!outcome.isError) binding.controller.invalidate("tool:update");
+        if (!outcome.isError) {
+          binding.controller.invalidate("tool:update");
+          appendEvidence(binding, COMMIT_META_TYPE, { sessionId: binding.sessionId, goalId: outcome.state!.id, revision: outcome.revision });
+        }
         return {
           content: [{ type: "text" as const, text: outcome.content }],
           details: undefined,
@@ -566,13 +567,13 @@ export default function (pi: ExtensionAPI): void {
           } catch {
             // Idle when no run is active; stopping is best-effort.
           }
-          safeAppend(pi, COMMIT_META_TYPE, {
+          appendEvidence(binding, COMMIT_META_TYPE, {
             sessionId: binding.sessionId,
             goalId: null,
             revision: committed.value.revision,
             tombstone: true,
           });
-          safeAppend(pi, GOAL_NOTICE_TYPE, { text: "Goal cleared. Transcript entries retained.", at: clk.nowIso() });
+          appendEvidence(binding, GOAL_NOTICE_TYPE, { text: "Goal cleared. Transcript entries retained.", at: clk.nowIso() });
           safeNotify(ctx, "Goal cleared. Transcript entries retained.", "info");
         } catch (err) {
           safeNotify(ctx, `/goal clear failed: ${(err as Error).message}`, "error");
@@ -611,12 +612,12 @@ export default function (pi: ExtensionAPI): void {
           } catch {
             // Idle when no run is active; stopping is best-effort.
           }
-          safeAppend(pi, COMMIT_META_TYPE, {
+          appendEvidence(binding, COMMIT_META_TYPE, {
             sessionId: binding.sessionId,
             goalId: committed.value.goal!.id,
             revision: committed.value.revision,
           });
-          safeAppend(pi, GOAL_NOTICE_TYPE, { text: `Goal paused (${committed.value.goal!.id}).`, at: clk.nowIso() });
+          appendEvidence(binding, GOAL_NOTICE_TYPE, { text: `Goal paused (${committed.value.goal!.id}).`, at: clk.nowIso() });
           safeNotify(ctx, "Goal paused.", "info");
         } catch (err) {
           safeNotify(ctx, `/goal pause failed: ${(err as Error).message}`, "error");
@@ -628,11 +629,22 @@ export default function (pi: ExtensionAPI): void {
         // Synchronous commit first; only the kickoff send follows.
         let resumed: { ok: true; record: GoalRecord; revision: number } | { ok: false; message: string };
         try {
-          const envelope = loadEnvelope(binding);
+          let envelope = loadEnvelope(binding);
+          if (envelope.goal?.status === "active" && (envelope.dispatch !== null || binding.controller.state.admissionDisabled || binding.controller.state.needsRecovery)) {
+            const reconciled = binding.controller.checkpointAccounting(envelope, viewOf(ctx));
+            envelope = reconciled.envelope;
+            if (reconciled.unknownUsage && envelope.goal!.tokenBudget !== null) {
+              binding.controller.disableAdmission();
+              resumed = { ok: false, message: "Cannot resume under a spending cap: persisted usage is unknown." };
+              return;
+            }
+          }
           if (!envelope.goal) {
             resumed = { ok: false, message: "No goal to resume." };
           } else {
-            const next = resumeRecord(envelope.goal, clk, { tokenBudget: cmd.tokenBudget });
+            const recovering = envelope.dispatch !== null || binding.controller.state.needsRecovery || binding.controller.state.admissionDisabled;
+            const resumable = recovering && envelope.goal.status === "active" ? { ...envelope.goal, status: "paused" as const } : envelope.goal;
+            const next = resumeRecord(resumable, clk, { tokenBudget: cmd.tokenBudget });
             if (!next.ok) {
               resumed = { ok: false, message: next.error.message };
             } else {
@@ -640,13 +652,14 @@ export default function (pi: ExtensionAPI): void {
                 ...current,
                 goal: next.value,
                 dispatch: null,
+                baselineEntryCount: ctx.sessionManager.getEntries().length,
               }));
               if (!committed.ok) {
                 resumed = { ok: false, message: committed.error.message };
               } else {
                 binding.controller.invalidate("resume");
                 binding.controller.markRecoveryComplete();
-                safeAppend(pi, COMMIT_META_TYPE, {
+                appendEvidence(binding, COMMIT_META_TYPE, {
                   sessionId: binding.sessionId,
                   goalId: committed.value.goal!.id,
                   revision: committed.value.revision,
@@ -705,17 +718,19 @@ export default function (pi: ExtensionAPI): void {
             safeNotify(ctx, `/goal edit rejected: ${next.error.message}`, "warning");
             return;
           }
-          const committed = binding.store.commit(envelope.revision, (c) => ({ ...c, goal: next.value }));
+          const committed = binding.store.commit(envelope.revision, (c) => ({ ...c, goal: next.value, dispatch: null }));
           if (!committed.ok) {
             safeNotify(ctx, `/goal edit failed: ${committed.error.message}`, "error");
             return;
           }
-          safeAppend(pi, COMMIT_META_TYPE, {
+          appendEvidence(binding, COMMIT_META_TYPE, {
             sessionId: binding.sessionId,
             goalId: committed.value.goal!.id,
             revision: committed.value.revision,
           });
-          if (ctx.hasUI) {
+          binding.controller.invalidate("edit");
+          binding.controller.resetStreakOnUserWork();
+          if (ctx.hasUI && committed.value.goal!.status === "active") {
             const sent = safeSendCustom(
               pi,
               {
@@ -783,13 +798,13 @@ export default function (pi: ExtensionAPI): void {
               cleared: false,
               clearedAt: null,
               chargedEntryIds: [],
-              baselineEntryCount: null,
+              baselineEntryCount: ctx.sessionManager.getEntries().length,
               remainderMs: 0,
               dispatch: null,
             }));
             if (!committed.ok) return { ok: false, message: committed.error.message };
             binding.controller.invalidate("create");
-            safeAppend(pi, COMMIT_META_TYPE, {
+            appendEvidence(binding, COMMIT_META_TYPE, {
               sessionId: binding.sessionId,
               goalId: committed.value.goal!.id,
               revision: committed.value.revision,
@@ -849,7 +864,7 @@ export default function (pi: ExtensionAPI): void {
     }
   });
 
-  async function sessionStartInner(event: { reason: string }, ctx: ExtensionContext): Promise<void> {
+  async function sessionStartInner(event: { reason: string; previousSessionFile?: string }, ctx: ExtensionContext): Promise<void> {
     if (!collisionChecked) {
       collisionChecked = true;
       try {
@@ -898,23 +913,52 @@ export default function (pi: ExtensionAPI): void {
       safeNotify(ctx, "pi-codex-goals: unresolved dispatch found; run /goal resume to recover.", "warning");
       return;
     }
+    if (event.reason === "fork" && event.previousSessionFile) {
+      const parentManager = SessionManager.open(event.previousSessionFile);
+      const parentStore = new FileGoalStore(parentManager.getSessionId() as SessionId, event.previousSessionFile);
+      const parent = parentStore.load();
+      if (!parent.ok) throw new Error(`Cannot inherit parent goal: ${parent.error.message}`);
+      binding.parentGoal = parent.value.goal;
+    }
     if (event.reason === "fork" && binding.parentGoal) {
       const current = binding.store.load();
       if (current.ok && !current.value.goal) {
         const now = clk.nowIso();
-        binding.store.commit(current.value.revision, (c) => ({
+        const inherited = binding.store.commit(current.value.revision, (c) => ({
           ...c,
           goal: { ...binding.parentGoal!, updatedAt: now },
           cleared: false,
           clearedAt: null,
           chargedEntryIds: [],
-          baselineEntryCount: null,
+          baselineEntryCount: ctx.sessionManager.getEntries().length,
           remainderMs: 0,
           dispatch: null,
         }));
+        if (!inherited.ok) throw new Error(`Cannot persist inherited goal: ${inherited.error.message}`);
+        appendEvidence(binding, COMMIT_META_TYPE, { sessionId: binding.sessionId, goalId: inherited.value.goal!.id, revision: inherited.value.revision });
       }
       binding.parentGoal = null;
     }
+    if (loadEnvelope(binding).goal?.status === "active") {
+      const reconciled = settleForTool(binding, ctx, false);
+      if (reconciled.unknownUsage && reconciled.envelope.goal!.tokenBudget !== null) {
+        binding.controller.disableAdmission();
+        throw new Error("Cannot admit budgeted goal work after restart: persisted usage is unknown.");
+      }
+    }
+    if (ctx.mode === "tui" || ctx.mode === "rpc") {
+      admitIfIdle(binding, viewOf(ctx));
+    }
+  }
+
+  function admitIfIdle(binding: SessionBinding, view: SessionView): void {
+    const envelope = loadEnvelope(binding);
+    if (!binding.controller.canAdmit(binding.controller.checkAdmission(view, envelope)).ok) return;
+    const generation = binding.controller.state.generation;
+    const admitted = binding.controller.admitDispatch(envelope, view);
+    if (!admitted.ok) throw new Error(admitted.error);
+    const delivered = binding.controller.deliverContinuation(admitted.value, view, generation);
+    if (!delivered.ok) binding.controller.cancelStaleDispatch(admitted.value, view, delivered.error);
   }
 
   pi.on("session_before_fork", async (_event, ctx) => {
@@ -993,7 +1037,7 @@ export default function (pi: ExtensionAPI): void {
             dispatchId: envelope.dispatch.dispatchId,
             reason: "queued user input",
           });
-          safeAppend(pi, GOAL_NOTICE_TYPE, { text: content, at: clk.nowIso() });
+          appendEvidence(binding, GOAL_NOTICE_TYPE, { text: content, at: clk.nowIso() });
           const committed = binding.store.commit(envelope.revision, (c) => ({ ...c, dispatch: null }));
           if (committed.ok) binding.controller.invalidate("input");
         } else {
@@ -1016,7 +1060,8 @@ export default function (pi: ExtensionAPI): void {
     if (!binding) return undefined;
     const envelope = loadEnvelope(binding);
     const goal = envelope.goal;
-    if (!goal || goal.status !== "active") return undefined;
+    if (!goal || goal.status !== "active" || binding.controller.state.admissionDisabled || binding.controller.state.needsRecovery) return undefined;
+    binding.controller.beginRun(goal.id);
     if (binding.pendingKickoff) {
       binding.pendingKickoff = null;
       return {
@@ -1065,15 +1110,29 @@ export default function (pi: ExtensionAPI): void {
       details?: { dispatchId?: unknown };
     };
     if (message.role === "custom" && message.customType === GOAL_CUSTOM_TYPE) {
-      const dispatchId = message.details?.dispatchId;
-      if (typeof dispatchId === "string" && dispatchId) {
-        const envelope = loadEnvelope(binding);
-        if (envelope.dispatch?.dispatchId === dispatchId) {
-          binding.controller.confirmDelivery(
-            dispatchId as unknown as Parameters<GoalController["confirmDelivery"]>[0],
-            envelope,
-          );
-        }
+      const details = message.details as { dispatchId?: unknown; sessionId?: unknown; goalId?: unknown; revision?: unknown; purpose?: unknown } | undefined;
+      let envelope: SidecarEnvelope;
+      try {
+        envelope = loadEnvelope(binding);
+      } catch (err) {
+        ctx.abort();
+        throw err;
+      }
+      const dispatchId = details === undefined ? undefined : details.dispatchId;
+      const valid = details !== undefined && details.sessionId === binding.sessionId && details.goalId === envelope.goal?.id && details.revision === envelope.revision &&
+        (details.purpose === "budget_wrapup" ? envelope.goal?.status === "budget_limited" || envelope.goal?.status === "complete" : envelope.goal?.status === "active") &&
+        (dispatchId === undefined || envelope.dispatch?.dispatchId === dispatchId);
+      if (!valid) {
+        ctx.abort();
+        appendEvidence(binding, GOAL_NOTICE_TYPE, { text: renderStaleCancellation({ sessionId: binding.sessionId,
+          goalId: String(details?.goalId), revision: Number(details?.revision), dispatchId: String(dispatchId), reason: "stale delivered goal identity or revision" }), at: clk.nowIso() });
+        return;
+      }
+      if (typeof dispatchId === "string") {
+        binding.controller.confirmDelivery(dispatchId as Parameters<GoalController["confirmDelivery"]>[0], envelope);
+        if (!binding.controller.running) ctx.abort();
+      } else if (!binding.controller.running && envelope.goal) {
+        binding.controller.beginRun(envelope.goal.id);
       }
     }
   });
@@ -1087,6 +1146,9 @@ export default function (pi: ExtensionAPI): void {
       return;
     }
     if (!binding) return;
+    if ((event.message as { role?: string }).role === "assistant" && ctx.signal !== undefined && ctx.signal.aborted) {
+      binding.controller.provisional.aborted = true;
+    }
     const text = assistantTextOf(event.message);
     if (text) binding.controller.observeAssistantText(text);
   });
@@ -1136,6 +1198,13 @@ export default function (pi: ExtensionAPI): void {
     await binding.controller.serialized(async () => {
       const genAtEntry = binding.controller.state.generation;
       let envelope = loadEnvelope(binding);
+      const automatic = binding.controller.running !== null && binding.controller.running.dispatchId !== null;
+      if (envelope.goal !== null && envelope.goal.status !== "active" && binding.controller.running === null) {
+        const advanced = binding.store.commit(envelope.revision, (c) => ({ ...c, baselineEntryCount: view.entryCount() }));
+        if (!advanced.ok) binding.controller.disableAdmission();
+        binding.controller.noteSettledOutcome({ kind: "activity" });
+        return;
+      }
       const settled = binding.controller.settleAccounting(envelope, view);
       envelope = settled.envelope;
       if (settled.budgetHit && envelope.goal) {
@@ -1208,7 +1277,7 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
 
-      const guard = binding.controller.noteSettledOutcome(outcome);
+      const guard = binding.controller.noteSettledOutcome(automatic ? outcome : { kind: "activity" });
       if (guard.blocked) {
         const current = loadEnvelope(binding);
         if (current.goal?.status === "active") {
@@ -1342,6 +1411,6 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerMessageRenderer(GOAL_CUSTOM_TYPE, () => undefined);
-  pi.registerEntryRenderer(GOAL_NOTICE_TYPE, () => undefined);
-  pi.registerEntryRenderer(COMMIT_META_TYPE, () => undefined);
+  pi.registerEntryRenderer(GOAL_NOTICE_TYPE, (entry) => new Text((entry.data as { text: string }).text, 0, 0));
+  pi.registerEntryRenderer(COMMIT_META_TYPE, (entry) => new Text(`[codex-goal-commit] ${JSON.stringify(entry.data)}`, 0, 0));
 }
