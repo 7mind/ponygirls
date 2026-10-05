@@ -55,13 +55,6 @@ let
   # ronnieops/pi-search-hub#33). See the derivation header for the full story.
   piSearchHub = pkgs.callPackage ../pkg/pi-search-hub/package.nix { };
 
-  # /usage — usage statistics dashboard for Pi sessions
-  # (https://pi.dev/packages/@tmustier/pi-usage-extension), as a Pi LOCAL
-  # package built from the tmustier/pi-extensions monorepo and pinned to a
-  # commit (usage-extension/v0.9.5). See the derivation header for why not the
-  # npm:/git: specs.
-  piUsageExtension = pkgs.callPackage ../pkg/pi-usage-extension/package.nix { };
-
   # Provider/API-key secrets are no longer injected by the pi wrapper. They are
   # supplied to ALL harnesses by the yolo sandbox via
   # `smind.hm.dev.llm.yolo.secretSessionVariables` (composed into one file,
@@ -490,10 +483,6 @@ in
           # MiniMax uses Pi's built-in `minimax` provider (`MINIMAX_API_KEY`).
           packages = [
             "${piSearchHub}"
-            # /usage: usage statistics dashboard (piUsageExtension above,
-            # pkg/pi-usage-extension/package.nix — commit-pinned vendored
-            # monorepo subdir, not an npm:/git: spec).
-            "${piUsageExtension}"
           ] ++ enabledProviderPackages;
           extensions = [
             # Codemode (model-written JS calling tools in a QuickJS sandbox)
@@ -506,6 +495,10 @@ in
             "${../pkg/pi-extensions}/model-picker.ts"
             # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
             "${../pkg/pi-extensions}/model-stats.ts"
+            # /usage table: period tabs with flat per-provider/per-model rows,
+            # scrollable. Data collection is vendored in usage-data.ts (same
+            # cache file); insights, graphs, and export are out of scope.
+            "${../pkg/pi-extensions}/usage.ts"
             # pi-search-hub advertises a static all-backends list (19 in
             # 2.8.0) in the web_search description + `backend` enum regardless
             # of what's configured, so the model picks unconfigured backends

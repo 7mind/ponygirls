@@ -1,5 +1,16 @@
 /** Pure model-stats logic. No Pi imports, so the tests can run under node. */
 
+import {
+	DEFAULT_VIEWPORT_BUDGET,
+	MIN_VIEWPORT_BUDGET,
+	MAX_VIEWPORT_BUDGET,
+	WHEEL_LINES,
+	VIEWPORT_BUDGET_STEP,
+	clampViewportBudget,
+	clampScrollTop,
+	visibleRange,
+} from "./scroll-state.ts";
+
 export interface ResponseSample {
 	type: "ok";
 	/** Completion time, epoch milliseconds. */
@@ -377,44 +388,26 @@ export function measureWindows(summaries: readonly WindowSummary[]): WindowsLayo
 /**
  * Scrollable /perf viewport. `Component.render(width)` never sees the
  * allocated height, so the view keeps its own line budget — the files-widget
- * `browserHeight` precedent — instead of estimating the dock.
+ * `browserHeight` precedent — instead of estimating the dock. The math lives
+ * in ./scroll-state.ts; the STATS_* names stay for existing importers.
  */
-export const STATS_DEFAULT_BUDGET = 15;
-export const STATS_MIN_BUDGET = 5;
-export const STATS_MAX_BUDGET = 60;
+export const STATS_DEFAULT_BUDGET = DEFAULT_VIEWPORT_BUDGET;
+export const STATS_MIN_BUDGET = MIN_VIEWPORT_BUDGET;
+export const STATS_MAX_BUDGET = MAX_VIEWPORT_BUDGET;
 /** Wheel lines per notch; a selection moves one row, a table moves a few lines. */
-export const STATS_WHEEL_STEP = 3;
+export const STATS_WHEEL_STEP = WHEEL_LINES;
 /** Budget resize step for the `+`/`-` keys. */
-export const STATS_BUDGET_STEP = 5;
+export const STATS_BUDGET_STEP = VIEWPORT_BUDGET_STEP;
+export const clampStatsBudget = clampViewportBudget;
+export const clampStatsScrollTop = clampScrollTop;
+export const statsVisibleRange = visibleRange;
 /** View chrome around the scrollable content: top/bottom rules, blank, footer. */
 export const STATS_CHROME_LINES = 4;
-
-/** Clamp a viewport budget to the adjustable range. */
-export function clampStatsBudget(budget: number): number {
-	if (!Number.isFinite(budget)) return STATS_DEFAULT_BUDGET;
-	return Math.max(STATS_MIN_BUDGET, Math.min(STATS_MAX_BUDGET, Math.floor(budget)));
-}
 
 /** Half the terminal height for content, less the view chrome. Falls back to the default when the size is unknown (a stub TUI, no tty). */
 export function defaultStatsBudget(rows: number | undefined): number {
 	if (typeof rows !== "number" || !Number.isFinite(rows)) return STATS_DEFAULT_BUDGET;
 	return clampStatsBudget(Math.floor(rows / 2) - STATS_CHROME_LINES);
-}
-
-/** Clamp a scroll offset so the window stays within `lineCount` content lines. */
-export function clampStatsScrollTop(scrollTop: number, lineCount: number, budget: number): number {
-	if (!Number.isFinite(scrollTop)) return 0;
-	const total = Math.max(0, Math.floor(lineCount));
-	const size = Math.max(1, Math.floor(budget));
-	return Math.max(0, Math.min(Math.max(0, total - size), Math.floor(scrollTop)));
-}
-
-/** Visible `[start, end)` content lines for an offset; every line is reachable. */
-export function statsVisibleRange(lineCount: number, scrollTop: number, budget: number): { start: number; end: number } {
-	const total = Math.max(0, Math.floor(lineCount));
-	const size = Math.max(1, Math.floor(budget));
-	const start = clampStatsScrollTop(scrollTop, total, size);
-	return { start, end: Math.min(total, start + size) };
 }
 
 /**
