@@ -4,8 +4,8 @@ import test from "node:test";
 import {
 	cycleFavouriteEntry,
 	cycleModelEntry,
-	favouriteId,
-	transferSelection,
+	entryIdBase,
+	mintEntryId,
 	favouriteModels,
 	filterChar,
 	filterModels,
@@ -30,144 +30,235 @@ const models = [
 	{ provider: "openai", id: "gpt-5", name: "GPT" },
 ];
 
+/** Display rows as `provider/id[@effort]`, in picker order. */
+const rowLabels = (state: PickerState) =>
+	favouriteModels(models, state).map((model) => `${modelKey(model)}${model.effort ? `@${model.effort}` : ""}`);
+
 test("modelKey joins provider and id", () => {
 	assert.equal(modelKey(models[0]!), "anthropic/claude-sonnet");
 });
 
-test("favouriteId is the bare key, or key@effort when pinned", () => {
-	assert.equal(favouriteId({ key: "a/b" }), "a/b");
-	assert.equal(favouriteId({ key: "a/b", effort: "high" }), "a/b@high");
+test("entryIdBase is the bare key, or key@effort when pinned", () => {
+	assert.equal(entryIdBase({ key: "a/b" }), "a/b");
+	assert.equal(entryIdBase({ key: "a/b", effort: "high" }), "a/b@high");
+});
+
+test("mintEntryId uses the base and suffixes equal duplicates", () => {
+	const duplicates: Favourite[] = [
+		{ id: "a/b@high", key: "a/b", effort: "high" },
+		{ id: "a/b@high#2", key: "a/b", effort: "high" },
+	];
+	assert.equal(mintEntryId([], { key: "a/b" }), "a/b");
+	assert.equal(mintEntryId(duplicates, { key: "a/b", effort: "low" }), "a/b@low");
+	assert.equal(mintEntryId(duplicates, { key: "a/b", effort: "high" }), "a/b@high#3");
+	assert.equal(mintEntryId([{ id: "a/b", key: "a/b", effort: "high" }], { key: "a/b" }), "a/b#2");
 });
 
 test("toggleBareFavourite adds then removes the bare entry", () => {
 	const added = toggleBareFavourite([], "anthropic/claude-sonnet");
-	assert.deepEqual(added, [{ key: "anthropic/claude-sonnet" }]);
+	assert.deepEqual(added, [{ id: "anthropic/claude-sonnet", key: "anthropic/claude-sonnet" }]);
 	assert.deepEqual(toggleBareFavourite(added, "anthropic/claude-sonnet"), []);
 });
 
 test("toggleBareFavourite leaves effort-pinned entries alone", () => {
-	const state: Favourite[] = [{ key: "a/b", effort: "high" }];
-	assert.deepEqual(toggleBareFavourite(state, "a/b"), [{ key: "a/b", effort: "high" }, { key: "a/b" }]);
-	const both: Favourite[] = [{ key: "a/b", effort: "high" }, { key: "a/b" }];
-	assert.deepEqual(toggleBareFavourite(both, "a/b"), [{ key: "a/b", effort: "high" }]);
+	const pinned: Favourite[] = [{ id: "a/b@high", key: "a/b", effort: "high" }];
+	assert.deepEqual(toggleBareFavourite(pinned, "a/b"), [
+		{ id: "a/b@high", key: "a/b", effort: "high" },
+		{ id: "a/b", key: "a/b" },
+	]);
+	const both: Favourite[] = [
+		{ id: "a/b@high", key: "a/b", effort: "high" },
+		{ id: "a/b", key: "a/b" },
+	];
+	assert.deepEqual(toggleBareFavourite(both, "a/b"), [{ id: "a/b@high", key: "a/b", effort: "high" }]);
 });
 
-test("removeFavouriteEntry removes the first equal entry only", () => {
+test("removeFavouriteEntry removes exactly the entry with the given id", () => {
 	const state: Favourite[] = [
-		{ key: "a/b", effort: "high" },
-		{ key: "a/b" },
-		{ key: "a/b", effort: "high" },
+		{ id: "a/b@high", key: "a/b", effort: "high" },
+		{ id: "a/b", key: "a/b" },
+		{ id: "a/b@high#2", key: "a/b", effort: "high" },
 	];
-	assert.deepEqual(removeFavouriteEntry(state, { key: "a/b", effort: "high" }), [{ key: "a/b" }, { key: "a/b", effort: "high" }]);
-	assert.deepEqual(removeFavouriteEntry(state, { key: "a/b", effort: "low" }), state);
-	assert.deepEqual(removeFavouriteEntry([], { key: "a/b" }), []);
+	assert.deepEqual(removeFavouriteEntry(state, "a/b@high#2"), [state[0]!, state[1]!]);
+	assert.deepEqual(removeFavouriteEntry(state, "a/b@high"), [state[1]!, state[2]!]);
+	assert.deepEqual(removeFavouriteEntry(state, "unknown"), state);
+	assert.deepEqual(removeFavouriteEntry([], "a/b"), []);
 });
 
 test("cycleFavouriteEntry advances through [none, ...levels] and wraps", () => {
 	const levels = ["off", "low", "high"];
-	const start: PickerState = { favourites: [{ key: "a/b" }], selections: [] };
-	const once = cycleFavouriteEntry(start, { key: "a/b" }, levels);
-	assert.deepEqual(once.favourites, [{ key: "a/b", effort: "off" }]);
-	const twice = cycleFavouriteEntry(once, { key: "a/b", effort: "off" }, levels);
-	assert.deepEqual(twice.favourites, [{ key: "a/b", effort: "low" }]);
-	const thrice = cycleFavouriteEntry(twice, { key: "a/b", effort: "low" }, levels);
-	assert.deepEqual(thrice.favourites, [{ key: "a/b", effort: "high" }]);
-	assert.deepEqual(cycleFavouriteEntry(thrice, { key: "a/b", effort: "high" }, levels).favourites, [{ key: "a/b" }]);
+	const start: PickerState = { favourites: [{ id: "x", key: "a/b" }], selections: [] };
+	const once = cycleFavouriteEntry(start, "x", levels);
+	assert.deepEqual(once.favourites, [{ id: "x", key: "a/b", effort: "off" }]);
+	const twice = cycleFavouriteEntry(once, "x", levels);
+	assert.deepEqual(twice.favourites, [{ id: "x", key: "a/b", effort: "low" }]);
+	const thrice = cycleFavouriteEntry(twice, "x", levels);
+	assert.deepEqual(thrice.favourites, [{ id: "x", key: "a/b", effort: "high" }]);
+	assert.deepEqual(cycleFavouriteEntry(thrice, "x", levels).favourites, [{ id: "x", key: "a/b" }]);
 });
 
-test("cycleFavouriteEntry resets a stale effort to none and ignores unknown entries", () => {
-	const start: PickerState = { favourites: [{ key: "a/b", effort: "max" }], selections: [] };
-	assert.deepEqual(cycleFavouriteEntry(start, { key: "a/b", effort: "max" }, ["off", "low"]).favourites, [{ key: "a/b" }]);
-	assert.deepEqual(cycleFavouriteEntry(start, { key: "c/d" }, ["off"]), start);
-	assert.deepEqual(cycleFavouriteEntry({ favourites: [], selections: [] }, { key: "a/b" }, ["off"]).favourites, []);
+test("cycleFavouriteEntry resets a stale effort to none and ignores unknown ids", () => {
+	const start: PickerState = { favourites: [{ id: "x", key: "a/b", effort: "max" }], selections: [] };
+	assert.deepEqual(cycleFavouriteEntry(start, "x", ["off", "low"]).favourites, [{ id: "x", key: "a/b" }]);
+	assert.deepEqual(cycleFavouriteEntry(start, "unknown", ["off"]), start);
+	assert.deepEqual(cycleFavouriteEntry({ favourites: [], selections: [] }, "x", ["off"]).favourites, []);
+});
+
+test("cycleFavouriteEntry targets the given id among equal duplicates", () => {
+	const levels = ["low", "medium", "high"];
+	const start: PickerState = {
+		favourites: [
+			{ id: "first", key: "a/b", effort: "medium" },
+			{ id: "second", key: "a/b", effort: "medium" },
+		],
+		selections: [],
+	};
+	assert.deepEqual(cycleFavouriteEntry(start, "second", levels).favourites, [
+		{ id: "first", key: "a/b", effort: "medium" },
+		{ id: "second", key: "a/b", effort: "high" },
+	]);
+	assert.deepEqual(cycleFavouriteEntry(start, "first", levels).favourites, [
+		{ id: "first", key: "a/b", effort: "high" },
+		{ id: "second", key: "a/b", effort: "medium" },
+	]);
 });
 
 test("cycleModelEntry appends the first level for unfavourited models", () => {
 	const empty: PickerState = { favourites: [], selections: [] };
-	assert.deepEqual(cycleModelEntry(empty, "a/b", ["off", "high"]).favourites, [{ key: "a/b", effort: "off" }]);
+	assert.deepEqual(cycleModelEntry(empty, "a/b", ["off", "high"]).favourites, [{ id: "a/b@off", key: "a/b", effort: "off" }]);
 	assert.deepEqual(cycleModelEntry(empty, "a/b", []), empty);
 });
 
 test("cycleModelEntry advances the most recently stored entry", () => {
 	const start: PickerState = {
-		favourites: [{ key: "a/b" }, { key: "a/b", effort: "low" }],
+		favourites: [
+			{ id: "a/b", key: "a/b" },
+			{ id: "a/b@low", key: "a/b", effort: "low" },
+		],
 		selections: [],
 	};
 	assert.deepEqual(cycleModelEntry(start, "a/b", ["off", "low", "high"]).favourites, [
-		{ key: "a/b" },
-		{ key: "a/b", effort: "high" },
+		{ id: "a/b", key: "a/b" },
+		{ id: "a/b@low", key: "a/b", effort: "high" },
 	]);
 });
 
 test("cycleModelEntry replaces the latest occurrence, not the first equal one", () => {
 	const start: PickerState = {
-		favourites: [{ key: "a/b", effort: "off" }, { key: "a/b", effort: "low" }, { key: "a/b", effort: "off" }],
+		favourites: [
+			{ id: "one", key: "a/b", effort: "off" },
+			{ id: "two", key: "a/b", effort: "low" },
+			{ id: "three", key: "a/b", effort: "off" },
+		],
 		selections: [],
 	};
 	assert.deepEqual(cycleModelEntry(start, "a/b", ["off", "low"]).favourites, [
-		{ key: "a/b", effort: "off" },
-		{ key: "a/b", effort: "low" },
-		{ key: "a/b", effort: "low" },
+		{ id: "one", key: "a/b", effort: "off" },
+		{ id: "two", key: "a/b", effort: "low" },
+		{ id: "three", key: "a/b", effort: "low" },
 	]);
-});
-
-test("transferSelection moves the timestamp to the new id", () => {
-	const log = [
-		{ key: "a/b", at: 100 },
-		{ key: "c/d", at: 50 },
-	];
-	assert.deepEqual(transferSelection(log, "a/b", "a/b@off"), [
-		{ key: "c/d", at: 50 },
-		{ key: "a/b@off", at: 100 },
-	]);
-});
-
-test("transferSelection merges collisions with max and drops absent sources", () => {
-	const log = [
-		{ key: "a/b", at: 50 },
-		{ key: "a/b@off", at: 300 },
-	];
-	assert.deepEqual(transferSelection(log, "a/b", "a/b@off"), [{ key: "a/b@off", at: 300 }]);
-	assert.deepEqual(transferSelection([], "a/b", "a/b@off"), []);
-	assert.deepEqual(transferSelection(log, "a/b", "a/b"), log);
 });
 
 test("latestEntryForKey returns the most recently stored entry", () => {
-	const state: Favourite[] = [{ key: "a/b", effort: "off" }, { key: "c/d" }, { key: "a/b", effort: "low" }];
-	assert.deepEqual(latestEntryForKey(state, "a/b"), { key: "a/b", effort: "low" });
-	assert.deepEqual(latestEntryForKey(state, "c/d"), { key: "c/d" });
+	const state: Favourite[] = [
+		{ id: "one", key: "a/b", effort: "off" },
+		{ id: "two", key: "c/d" },
+		{ id: "three", key: "a/b", effort: "low" },
+	];
+	assert.deepEqual(latestEntryForKey(state, "a/b"), { id: "three", key: "a/b", effort: "low" });
+	assert.deepEqual(latestEntryForKey(state, "c/d"), { id: "two", key: "c/d" });
 	assert.equal(latestEntryForKey(state, "e/f"), undefined);
 	assert.equal(latestEntryForKey([], "a/b"), undefined);
 });
 
-test("cycling a selected-first entry keeps it first", () => {
+test("cycling a selected-first entry keeps it first and the log untouched", () => {
 	const state: PickerState = {
-		favourites: [{ key: "openai/gpt-5" }, { key: "anthropic/claude-sonnet" }],
+		favourites: [
+			{ id: "gpt", key: "openai/gpt-5" },
+			{ id: "sonnet", key: "anthropic/claude-sonnet" },
+		],
 		selections: [
-			{ key: "openai/gpt-5", at: 100 },
-			{ key: "anthropic/claude-sonnet", at: 50 },
+			{ key: "gpt", at: 100 },
+			{ key: "sonnet", at: 50 },
 		],
 	};
-	assert.deepEqual(favouriteModels(models, state).map(modelKey), ["openai/gpt-5", "anthropic/claude-sonnet"]);
-	const cycled = cycleFavouriteEntry(state, { key: "openai/gpt-5" }, ["off", "low"]);
-	assert.deepEqual(
-		favouriteModels(models, cycled).map((model) => `${modelKey(model)}${model.effort ? `@${model.effort}` : ""}`),
-		["openai/gpt-5@off", "anthropic/claude-sonnet"],
-	);
-	assert.deepEqual(cycled.selections, [
-		{ key: "anthropic/claude-sonnet", at: 50 },
-		{ key: "openai/gpt-5@off", at: 100 },
-	]);
+	assert.deepEqual(rowLabels(state), ["openai/gpt-5", "anthropic/claude-sonnet"]);
+	const cycled = cycleFavouriteEntry(state, "gpt", ["off", "low"]);
+	assert.deepEqual(rowLabels(cycled), ["openai/gpt-5@off", "anthropic/claude-sonnet"]);
+	assert.deepEqual(cycled.selections, state.selections);
 });
 
 test("cycling keeps the entry at its stored position", () => {
 	const state: PickerState = {
-		favourites: [{ key: "openai/gpt-5" }, { key: "anthropic/claude-sonnet" }],
-		selections: [{ key: "anthropic/claude-sonnet", at: 2_000 }],
+		favourites: [
+			{ id: "gpt", key: "openai/gpt-5" },
+			{ id: "sonnet", key: "anthropic/claude-sonnet" },
+		],
+		selections: [{ key: "sonnet", at: 2_000 }],
 	};
 	const before = favouriteModels(models, state).map(modelKey);
-	const cycled = cycleFavouriteEntry(state, { key: "openai/gpt-5" }, ["off", "low"]);
+	const cycled = cycleFavouriteEntry(state, "gpt", ["off", "low"]);
 	assert.deepEqual(favouriteModels(models, cycled).map(modelKey), before);
+});
+
+test("cycling into a sibling's effort keeps the display order", () => {
+	const state: PickerState = {
+		favourites: [
+			{ id: "openai/gpt-5@medium", key: "openai/gpt-5", effort: "medium" },
+			{ id: "openai/gpt-5@high", key: "openai/gpt-5", effort: "high" },
+			{ id: "anthropic/claude-sonnet", key: "anthropic/claude-sonnet" },
+		],
+		selections: [
+			{ key: "openai/gpt-5@high", at: 100 },
+			{ key: "anthropic/claude-sonnet", at: 75 },
+			{ key: "openai/gpt-5@medium", at: 50 },
+		],
+	};
+	assert.deepEqual(rowLabels(state), ["openai/gpt-5@high", "anthropic/claude-sonnet", "openai/gpt-5@medium"]);
+	// The row-2 entry cycles "medium" to "high", landing on the row-1 entry's
+	// effort. It must stay at row 2: no jump into the place of the first.
+	const cycled = cycleFavouriteEntry(state, "openai/gpt-5@medium", ["low", "medium", "high"]);
+	assert.deepEqual(rowLabels(cycled), ["openai/gpt-5@high", "anthropic/claude-sonnet", "openai/gpt-5@high"]);
+});
+
+const equalDuplicates: PickerState = {
+	favourites: [
+		{ id: "openai/gpt-5@high", key: "openai/gpt-5", effort: "high" },
+		{ id: "openai/gpt-5@high#2", key: "openai/gpt-5", effort: "high" },
+		{ id: "anthropic/claude-sonnet", key: "anthropic/claude-sonnet" },
+	],
+	selections: [
+		{ key: "openai/gpt-5@high", at: 100 },
+		{ key: "openai/gpt-5@high#2", at: 100 },
+		{ key: "anthropic/claude-sonnet", at: 75 },
+	],
+};
+
+test("cycling one of two equal entries leaves the sibling in place", () => {
+	assert.deepEqual(rowLabels(equalDuplicates), ["openai/gpt-5@high", "openai/gpt-5@high", "anthropic/claude-sonnet"]);
+	// Cycling the first of the two equal entries must not steal the sibling's
+	// sort position: the second entry stays put and the third row keeps its
+	// place below both.
+	const cycled = cycleFavouriteEntry(equalDuplicates, "openai/gpt-5@high", ["low", "medium", "high", "xhigh"]);
+	assert.deepEqual(rowLabels(cycled), ["openai/gpt-5@xhigh", "openai/gpt-5@high", "anthropic/claude-sonnet"]);
+});
+
+test("cycling the second of two equal entries keeps every row in place", () => {
+	const cycled = cycleFavouriteEntry(equalDuplicates, "openai/gpt-5@high#2", ["low", "medium", "high", "xhigh"]);
+	assert.deepEqual(rowLabels(cycled), ["openai/gpt-5@high", "openai/gpt-5@xhigh", "anthropic/claude-sonnet"]);
+});
+
+test("favouriteModels tracks recency per entry, not per effort", () => {
+	const state: PickerState = {
+		favourites: [
+			{ id: "first", key: "openai/gpt-5", effort: "high" },
+			{ id: "second", key: "openai/gpt-5", effort: "high" },
+		],
+		selections: [{ key: "second", at: 1_000 }],
+	};
+	assert.deepEqual(favouriteModels(models, state).map((model) => model.entryId), ["second", "first"]);
+	const selected = recordSelection(state, "first", 2_000);
+	assert.deepEqual(favouriteModels(models, selected).map((model) => model.entryId), ["first", "second"]);
 });
 
 test("filterModels matches provider, id, or name", () => {
@@ -185,39 +276,50 @@ test("filterModels preserves the entry subtype", () => {
 
 test("favouriteModels keeps stored order and drops missing keys when never selected", () => {
 	const state: PickerState = {
-		favourites: [{ key: "openai/gpt-5" }, { key: "missing/model" }, { key: "anthropic/claude-sonnet" }],
+		favourites: [
+			{ id: "openai/gpt-5", key: "openai/gpt-5" },
+			{ id: "missing/model", key: "missing/model" },
+			{ id: "anthropic/claude-sonnet", key: "anthropic/claude-sonnet" },
+		],
 		selections: [],
 	};
-	assert.deepEqual(favouriteModels(models, state).map(modelKey), ["openai/gpt-5", "anthropic/claude-sonnet"]);
+	assert.deepEqual(rowLabels(state), ["openai/gpt-5", "anthropic/claude-sonnet"]);
 });
 
 test("favouriteModels keeps duplicate models with different efforts", () => {
 	const state: PickerState = {
-		favourites: [{ key: "openai/gpt-5" }, { key: "openai/gpt-5", effort: "high" }],
+		favourites: [
+			{ id: "openai/gpt-5", key: "openai/gpt-5" },
+			{ id: "openai/gpt-5@high", key: "openai/gpt-5", effort: "high" },
+		],
 		selections: [],
 	};
-	assert.deepEqual(
-		favouriteModels(models, state).map((model) => `${modelKey(model)}${model.effort ? `@${model.effort}` : ""}`),
-		["openai/gpt-5", "openai/gpt-5@high"],
-	);
+	assert.deepEqual(rowLabels(state), ["openai/gpt-5", "openai/gpt-5@high"]);
 });
 
 test("favouriteModels sorts by most recent per-entry selection, then stored order", () => {
 	const state: PickerState = {
-		favourites: [{ key: "openai/gpt-5" }, { key: "anthropic/claude-sonnet" }, { key: "missing/model" }],
+		favourites: [
+			{ id: "openai/gpt-5", key: "openai/gpt-5" },
+			{ id: "anthropic/claude-sonnet", key: "anthropic/claude-sonnet" },
+			{ id: "missing/model", key: "missing/model" },
+		],
 		selections: [
 			{ key: "anthropic/claude-sonnet", at: 1_000 },
 			{ key: "missing/model", at: 2_000 },
 		],
 	};
-	assert.deepEqual(favouriteModels(models, state).map(modelKey), ["anthropic/claude-sonnet", "openai/gpt-5"]);
+	assert.deepEqual(rowLabels(state), ["anthropic/claude-sonnet", "openai/gpt-5"]);
 	const later = recordSelection(state, "openai/gpt-5", 3_000);
-	assert.deepEqual(favouriteModels(models, later).map(modelKey), ["openai/gpt-5", "anthropic/claude-sonnet"]);
+	assert.deepEqual(rowLabels(later), ["openai/gpt-5", "anthropic/claude-sonnet"]);
 });
 
 test("favouriteModels tracks recency per effort entry", () => {
 	const state: PickerState = {
-		favourites: [{ key: "openai/gpt-5" }, { key: "openai/gpt-5", effort: "high" }],
+		favourites: [
+			{ id: "openai/gpt-5", key: "openai/gpt-5" },
+			{ id: "openai/gpt-5@high", key: "openai/gpt-5", effort: "high" },
+		],
 		selections: [],
 	};
 	const selected = recordSelection(state, "openai/gpt-5@high", 4_000);
@@ -241,7 +343,7 @@ test("recordSelection replaces the previous selection time and leaves other keys
 
 test("parsePickerState reads a legacy string-only file as bare entries", () => {
 	assert.deepEqual(parsePickerState('{"favourites":["a/b"]}'), {
-		favourites: [{ key: "a/b" }],
+		favourites: [{ id: "a/b", key: "a/b" }],
 		selections: [],
 	});
 });
@@ -252,7 +354,11 @@ test("parsePickerState reads effort entries and drops malformed ones", () => {
 			'{"favourites":["a/b", {"key":"c/d","effort":"high"}, {"key":"e/f"}, {"key":"g/h","effort":"bogus"}, {"key":"noseparator","effort":"low"}, {"effort":"low"}, 1], "selections":[{"key":"a/b","at":5}, {"key":"c/d@high","at":6}, {"key":"bad"}, {"at":7}, {"key":"c/d","at":"x"}]}',
 		),
 		{
-			favourites: [{ key: "a/b" }, { key: "c/d", effort: "high" }, { key: "e/f" }],
+			favourites: [
+				{ id: "a/b", key: "a/b" },
+				{ id: "c/d@high", key: "c/d", effort: "high" },
+				{ id: "e/f", key: "e/f" },
+			],
 			selections: [
 				{ key: "a/b", at: 5 },
 				{ key: "c/d@high", at: 6 },
@@ -263,10 +369,34 @@ test("parsePickerState reads effort entries and drops malformed ones", () => {
 	assert.deepEqual(parsePickerState('"nope"'), { favourites: [], selections: [] });
 });
 
+test("parsePickerState mints ids for legacy duplicates and keeps persisted ones", () => {
+	assert.deepEqual(
+		parsePickerState(
+			'{"favourites":[{"key":"a/b","effort":"high"}, {"key":"a/b","effort":"high"}, {"id":"kept","key":"a/b","effort":"high"}, {"key":"a/b","effort":"high"}, {"id":"","key":"c/d"}], "selections":[{"key":"a/b@high","at":5}, {"key":"a/b@high#2","at":9}]}',
+		),
+		{
+			// The empty persisted id is malformed and drops its entry, like an unknown effort.
+			favourites: [
+				{ id: "a/b@high", key: "a/b", effort: "high" },
+				{ id: "a/b@high#2", key: "a/b", effort: "high" },
+				{ id: "kept", key: "a/b", effort: "high" },
+				{ id: "a/b@high#3", key: "a/b", effort: "high" },
+			],
+			selections: [
+				{ key: "a/b@high", at: 5 },
+				{ key: "a/b@high#2", at: 9 },
+			],
+		},
+	);
+});
+
 test("serializePickerState round-trips through parsePickerState", () => {
 	const state: PickerState = {
-		favourites: [{ key: "anthropic/claude-sonnet" }, { key: "openai/gpt-5", effort: "high" }],
-		selections: [{ key: "openai/gpt-5@high", at: 5 }],
+		favourites: [
+			{ id: "anthropic/claude-sonnet", key: "anthropic/claude-sonnet" },
+			{ id: "openai/gpt-5@high#2", key: "openai/gpt-5", effort: "high" },
+		],
+		selections: [{ key: "openai/gpt-5@high#2", at: 5 }],
 	};
 	assert.deepEqual(parsePickerState(serializePickerState(state)), state);
 });
