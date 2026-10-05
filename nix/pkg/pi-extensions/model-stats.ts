@@ -19,7 +19,11 @@
  * editor with mean/p50/p90/p99 tables (tok/s also shows the slow tail, p10/p1)
  * per model for the last hour, 24 hours, and week — the same in-place custom
  * view as /usage, not an overlay. All three sections share one column layout,
- * so columns stay aligned across windows.
+ * so columns stay aligned across windows. The view is scrollable (up/down,
+ * j/k, pgup/pgdn, home/end, wheel) with an adjustable viewport (+/-):
+ * `Component.render(width)` never sees the allocated height, so the line
+ * budget is view state, not an estimate of the dock. Untouched, the budget
+ * is half the terminal height; the first manual resize makes it sticky.
  *
  * Wire-up: listed in nix/hm/pi.nix `programs.pi.settings.extensions`.
  */
@@ -38,10 +42,15 @@ import {
 	type Component,
 	type OverlayHandle,
 	type TUI,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
 import {
 	classifyOutcome,
+	clampStatsBudget,
+	clampStatsScrollTop,
+	defaultStatsBudget,
 	isUsableRecord,
 	measureWindows,
 	parseStatsLine,
@@ -50,6 +59,10 @@ import {
 	SORT_KEYS,
 	serializeStatsRecord,
 	sortModels,
+	STATS_BUDGET_STEP,
+	STATS_DEFAULT_BUDGET,
+	STATS_WHEEL_STEP,
+	statsVisibleRange,
 	summarize,
 	WEEK_MS,
 	type StatsRecord,
@@ -131,6 +144,11 @@ class StatsView implements Component {
 	private sortIndex = 0;
 	private reversed = false;
 	private picker: OverlayHandle | undefined;
+	private scrollTop = 0;
+	private budget = STATS_DEFAULT_BUDGET;
+	private budgetTouched = false;
+	/** Content lines from the last render; summaries are fixed for the view lifetime. */
+	private lineCount = 0;
 
 	constructor(theme: Theme, tui: TUI, summaries: ReturnType<typeof summarize>, onClose: () => void, requestRender: () => void) {
 		this.theme = theme;
@@ -148,27 +166,37 @@ class StatsView implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const lines: string[] = [];
+		const content: string[] = [];
 		const sort = this.sortDirection();
 		// One layout for all windows: columns keep the same width in every section.
 		const layout = measureWindows(this.summaries);
 		for (const windowSummary of this.summaries) {
-			if (lines.length > 0) lines.push("");
-			lines.push(this.theme.fg("accent", fitLine(windowSummary.label, width)));
+			if (content.length > 0) content.push("");
+			content.push(this.theme.fg("accent", fitLine(windowSummary.label, width)));
 			const table = renderWindow(
 				{ ...windowSummary, models: sortModels(windowSummary.models, sort.id, sort.descending) },
 				{ layout, width },
 			);
-			lines.push(...table.header.map((line) => this.theme.fg("dim", fitLine(line, width))));
+			content.push(...table.header.map((line) => this.theme.fg("dim", fitLine(line, width))));
 			table.rows.forEach((row, index) => {
 				const line = fitLine(row, width);
 				// toolPendingBg is the theme's neutral panel, a stripe rather than a selection.
-				lines.push(index % 2 === 1 ? this.theme.bg("toolPendingBg", line) : line);
+				content.push(index % 2 === 1 ? this.theme.bg("toolPendingBg", line) : line);
 			});
 		}
+		this.lineCount = content.length;
+		const budget = this.effectiveBudget();
+		this.scrollTop = clampStatsScrollTop(this.scrollTop, this.lineCount, budget);
+		const { start, end } = statsVisibleRange(this.lineCount, this.scrollTop, budget);
 		const rule = this.theme.fg("border", "─".repeat(Math.max(1, width)));
 		const arrow = sort.descending ? "↓" : "↑";
-		return [rule, ...lines, "", this.theme.fg("dim", `[s] sort: ${sort.label} ${arrow}  [r] reverse  [q] close`), rule];
+		const lines = [rule, ...content.slice(start, end)];
+		if (this.lineCount > budget) {
+			const moreAbove = start > 0 ? "↑ " : "";
+			const moreBelow = end < this.lineCount ? " ↓" : "";
+			lines.push(this.theme.fg("dim", `${moreAbove}lines ${start + 1}–${end} of ${this.lineCount}${moreBelow}`));
+		}
+		return [...lines, "", this.theme.fg("dim", `[↑↓/j/k] scroll [pgup/pgdn] page [+-] size [s] sort: ${sort.label} ${arrow} [r] reverse [q] close`), rule];
 	}
 
 	handleInput(data: string): void {
@@ -185,8 +213,66 @@ class StatsView implements Component {
 		}
 		if (matchesKey(data, "r")) {
 			this.reversed = !this.reversed;
+			this.scrollTop = 0;
 			this.requestRender();
+			return;
 		}
+		if (matchesKey(data, "up") || matchesKey(data, "down") || parseKey(data) === "k" || parseKey(data) === "j") {
+			const delta = matchesKey(data, "up") || parseKey(data) === "k" ? -1 : 1;
+			this.scrollBy(delta);
+			return;
+		}
+		if (matchesKey(data, "pageUp") || matchesKey(data, "pageDown")) {
+			this.scrollBy(matchesKey(data, "pageUp") ? -this.effectiveBudget() : this.effectiveBudget());
+			return;
+		}
+		if (matchesKey(data, "home") || matchesKey(data, "end")) {
+			this.scrollTo(matchesKey(data, "home") ? 0 : Number.MAX_SAFE_INTEGER);
+			return;
+		}
+		const typed = parseKey(data);
+		if (typed === "+" || typed === "=") {
+			this.growBudget(STATS_BUDGET_STEP);
+			return;
+		}
+		if (typed === "-" || typed === "_") {
+			this.growBudget(-STATS_BUDGET_STEP);
+			return;
+		}
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (this.picker) return undefined;
+		if (event.type === "wheel" && event.wheelDelta) {
+			this.scrollBy(event.wheelDelta < 0 ? -STATS_WHEEL_STEP : STATS_WHEEL_STEP);
+			return { handled: true };
+		}
+		return undefined;
+	}
+
+	private scrollBy(delta: number): void {
+		this.scrollTo(this.scrollTop + delta);
+	}
+
+	private scrollTo(target: number): void {
+		const next = clampStatsScrollTop(target, this.lineCount, this.effectiveBudget());
+		if (next === this.scrollTop) return;
+		this.scrollTop = next;
+		this.requestRender();
+	}
+
+	private growBudget(delta: number): void {
+		const next = clampStatsBudget(this.effectiveBudget() + delta);
+		if (next === this.effectiveBudget()) return;
+		this.budget = next;
+		this.budgetTouched = true;
+		this.scrollTop = clampStatsScrollTop(this.scrollTop, this.lineCount, next);
+		this.requestRender();
+	}
+
+	/** Half the terminal height until the first manual resize, then the sticky budget. */
+	private effectiveBudget(): number {
+		return this.budgetTouched ? this.budget : defaultStatsBudget(this.tui.terminal?.rows);
 	}
 
 	private openSortPicker(): void {
@@ -215,6 +301,7 @@ class StatsView implements Component {
 				const key = SORT_KEYS[index]!;
 				this.sortIndex = index;
 				this.reversed = (direction === "desc") !== key.descending;
+				this.scrollTop = 0;
 			}
 			close();
 		};
