@@ -499,6 +499,10 @@ in
             # scrollable. Data collection is vendored in usage-data.ts (same
             # cache file); insights, graphs, and export are out of scope.
             "${../pkg/pi-extensions}/usage.ts"
+            # Codex-style session goals with fully visible transcript
+            # instructions (same-session continuation, three model tools,
+            # atomic session sidecar). See nix/pkg/pi-extensions/pi-codex-goals.
+            "${../pkg/pi-extensions/pi-codex-goals}"
             # pi-search-hub advertises a static all-backends list (19 in
             # 2.8.0) in the web_search description + `backend` enum regardless
             # of what's configured, so the model picks unconfigured backends

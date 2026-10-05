@@ -136,6 +136,14 @@
             node --test model-stats-state.test.ts
             touch $out
           '';
+          codex-goals = pkgs.runCommand "codex-goals-test" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          } ''
+            cp -r ${./nix/pkg/pi-extensions/pi-codex-goals} pi-codex-goals
+            cd pi-codex-goals
+            node --test tests/*.test.ts
+            touch $out
+          '';
           yolo-profile = pkgs.runCommand "yolo-profile-test" {
             nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.python3 pkgs.sqlite ];
           } ''
