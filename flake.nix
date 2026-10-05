@@ -137,11 +137,22 @@
             touch $out
           '';
           codex-goals = pkgs.runCommand "codex-goals-test" {
-            nativeBuildInputs = [ pkgs.nodejs ];
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
+            PI_GOALS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
           } ''
             cp -r ${./nix/pkg/pi-extensions/pi-codex-goals} pi-codex-goals
+            chmod -R u+w pi-codex-goals
             cd pi-codex-goals
+            mkdir -p node_modules/@earendil-works
+            ln -s "$PI_GOALS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_GOALS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
+            ln -s "$PI_GOALS_SDK_ROOT/node_modules/typebox" node_modules/typebox
+            ln -s "$PI_GOALS_SDK_ROOT/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
             node --test tests/*.test.ts
+            node --test tests/host.test.mjs
             touch $out
           '';
           yolo-profile = pkgs.runCommand "yolo-profile-test" {

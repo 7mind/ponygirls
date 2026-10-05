@@ -26,7 +26,7 @@ test("ordinary get with no goal creates nothing", () => {
 test("model cannot resume or edit through update_goal", () => {
   const store = freshStore("s2");
   let env = (store.load() as { ok: true; value: never }).value as never;
-  const created = handleCreateGoal(store, env, { objective: "do x" }, clocks);
+  const created = handleCreateGoal(store, env, { objective: "do x" }, clocks, 0);
   assert.equal(created.isError, false);
   env = (store.load() as { ok: true; value: never }).value as never;
   const bad = handleUpdateGoal(store, env, { status: "active" }, clocks);
@@ -38,9 +38,9 @@ test("model cannot resume or edit through update_goal", () => {
 test("create refuses unfinished including budget_limited; completion reports consumption", () => {
   const store = freshStore("s3");
   let env = (store.load() as { ok: true; value: never }).value as never;
-  assert.equal(handleCreateGoal(store, env, { objective: "first", token_budget: 100 }, clocks).isError, false);
+  assert.equal(handleCreateGoal(store, env, { objective: "first", token_budget: 100 }, clocks, 0).isError, false);
   env = (store.load() as { ok: true; value: never }).value as never;
-  assert.equal(handleCreateGoal(store, env, { objective: "second" }, clocks).isError, true);
+  assert.equal(handleCreateGoal(store, env, { objective: "second" }, clocks, 0).isError, true);
   // Complete the budgeted goal: final consumption report.
   const done = handleUpdateGoal(store, env, { status: "complete" }, clocks);
   assert.equal(done.isError, false);
@@ -48,14 +48,14 @@ test("create refuses unfinished including budget_limited; completion reports con
   assert.match(done.content, /visible follow-up/);
   // After complete, creation is allowed (replacement).
   env = (store.load() as { ok: true; value: never }).value as never;
-  assert.equal(handleCreateGoal(store, env, { objective: "next" }, clocks).isError, false);
+  assert.equal(handleCreateGoal(store, env, { objective: "next" }, clocks, 0).isError, false);
 });
 
 test("invalid objective and budget are domain errors, state unchanged", () => {
   const store = freshStore("s4");
   let env = (store.load() as { ok: true; value: never }).value as never;
-  assert.equal(handleCreateGoal(store, env, { objective: "   " }, clocks).isError, true);
-  assert.equal(handleCreateGoal(store, env, { objective: "x", token_budget: -1 }, clocks).isError, true);
+  assert.equal(handleCreateGoal(store, env, { objective: "   " }, clocks, 0).isError, true);
+  assert.equal(handleCreateGoal(store, env, { objective: "x", token_budget: -1 }, clocks, 0).isError, true);
   const after = store.load() as { ok: true; value: { goal: null; revision: number } };
   assert.equal(after.value.goal, null);
   assert.equal(after.value.revision, 0);

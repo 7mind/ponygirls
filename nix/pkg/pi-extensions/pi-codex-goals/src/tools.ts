@@ -1,6 +1,6 @@
 /** Model-tool handlers. Pure logic; Pi ToolDefinition wiring lives in index.ts. */
 import {
-  completeRecord,
+  completeFromBudgetLimited,
   blockRecord,
   pauseRecord,
   modelCreate,
@@ -48,6 +48,7 @@ export function handleCreateGoal(
   envelope: SidecarEnvelope,
   args: unknown,
   clocks: { nowIso(): string },
+  baselineEntryCount: number,
 ): ToolOutcome {
   const params = (args ?? {}) as { objective?: unknown; token_budget?: unknown };
   const obj = validateObjective(params.objective);
@@ -94,16 +95,16 @@ export function handleCreateGoal(
     cleared: false,
     clearedAt: null,
     chargedEntryIds: [],
-    baselineEntryCount: null,
+    baselineEntryCount,
     remainderMs: 0,
-    dispatch: current.dispatch,
+    dispatch: null,
   }));
   if (!committed.ok) {
     return {
       state: envelope.goal,
       revision: envelope.revision,
       remainingTokens: remainingTokens(envelope.goal),
-      content: `create_goal failed: ${committed.error.message}. No state was changed.`,
+      content: `create_goal failed: ${committed.error.message}.${committed.error.code === "indeterminate" ? " The sidecar may already contain the new state; recovery is required." : " The proposed transition was not committed."}`,
       structuredContent: { ...statePayload(envelope.goal, envelope.revision), error: committed.error.message },
       isError: true,
     };
@@ -172,7 +173,7 @@ export function handleUpdateGoal(
   const now = { nowIso: () => clocks.nowIso() };
   const next =
     params.status === "complete"
-      ? completeRecord(goal, now)
+      ? completeFromBudgetLimited(goal, now)
       : params.status === "blocked"
         ? blockRecord(goal, now)
         : pauseRecord(goal, now, "model");
@@ -196,7 +197,7 @@ export function handleUpdateGoal(
       state: goal,
       revision: envelope.revision,
       remainingTokens: remainingTokens(goal),
-      content: `update_goal failed: ${committed.error.message}. No state was changed.`,
+      content: `update_goal failed: ${committed.error.message}.${committed.error.code === "indeterminate" ? " The sidecar may already contain the new state; recovery is required." : " The proposed transition was not committed."}`,
       structuredContent: { ...statePayload(goal, envelope.revision), error: committed.error.message },
       isError: true,
     };

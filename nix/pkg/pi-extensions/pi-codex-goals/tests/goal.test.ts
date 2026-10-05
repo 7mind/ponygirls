@@ -29,8 +29,8 @@ const ids = { makeId: () => `goal-${++seq}` as never };
 
 function fresh(overrides = {}) {
   const r = createRecord({ objective: "ship it" }, clocks, ids);
-  assert.equal(r.ok, true);
-  return { ...(r as { ok: true; value: never }).value, ...overrides } as never as import("../src/goal.ts").GoalRecord;
+  assert.ok(r.ok);
+  return { ...r.value, ...overrides };
 }
 
 test("objective validation trims, rejects empty, counts Unicode scalars not UTF-16 units", () => {

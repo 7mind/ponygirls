@@ -201,6 +201,7 @@ interface LockFile {
   pid: number;
   host: string;
   acquiredAt: string;
+  ownerId?: string;
 }
 
 function readLockFile(path: string): LockFile | null {
@@ -274,7 +275,9 @@ function atomicWriteJson(path: string, value: unknown): { indeterminate: boolean
 export class FileGoalStore implements GoalStore {
   readonly sessionId: SessionId;
   readonly sidecarPath: string;
+  readonly ownerId = randomUUID();
   held = false;
+  expectedState = false;
 
   constructor(sessionId: SessionId, sessionFile: string | undefined) {
     if (!sessionFile) {
@@ -294,7 +297,7 @@ export class FileGoalStore implements GoalStore {
       raw = readFileSync(this.sidecarPath, "utf-8");
     } catch (err: unknown) {
       const code = (err as { code?: string }).code;
-      if (code === "ENOENT") return { ok: true, value: emptyEnvelope(this.sessionId) };
+      if (code === "ENOENT" && !this.expectedState) return { ok: true, value: emptyEnvelope(this.sessionId) };
       return { ok: false, error: { code: "storage_failure", message: `Cannot read sidecar: ${(err as Error).message}` } };
     }
     let parsed: unknown;
@@ -303,13 +306,17 @@ export class FileGoalStore implements GoalStore {
     } catch {
       return { ok: false, error: { code: "malformed", message: "Sidecar contains malformed JSON." } };
     }
-    return validateEnvelope(parsed, this.sessionId);
+    const validated = validateEnvelope(parsed, this.sessionId);
+    if (validated.ok && validated.value.revision > 0) this.expectedState = true;
+    return validated;
   }
 
   commit(
     expectedRevision: number,
     mutate: (current: SidecarEnvelope) => SidecarEnvelope,
   ): StoreResult<SidecarEnvelope> {
+    const lock = this.acquireLock();
+    if (!lock.ok) return lock;
     const loaded = this.load();
     if (!loaded.ok) return loaded;
     if (loaded.value.revision !== expectedRevision) {
@@ -332,6 +339,7 @@ export class FileGoalStore implements GoalStore {
     if (!validated.ok) return { ok: false, error: validated.error };
     try {
       const { indeterminate } = atomicWriteJson(this.sidecarPath, validated.value);
+      this.expectedState = true;
       if (indeterminate) {
         const observed = this.load();
         return {
@@ -353,7 +361,7 @@ export class FileGoalStore implements GoalStore {
     const path = lockPathFor(this.sidecarPath);
     const existing = readLockFile(path);
     if (existing) {
-      if (existing.pid === process.pid && existing.host === hostname()) {
+      if (existing.pid === process.pid && existing.host === hostname() && existing.ownerId === this.ownerId) {
         this.held = true;
         return { ok: true, value: undefined };
       }
@@ -380,7 +388,7 @@ export class FileGoalStore implements GoalStore {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(
         path,
-        JSON.stringify({ pid: process.pid, host: hostname(), acquiredAt: new Date().toISOString() } satisfies LockFile, null, 2),
+        JSON.stringify({ pid: process.pid, host: hostname(), ownerId: this.ownerId, acquiredAt: new Date().toISOString() } satisfies LockFile, null, 2),
         { flag: "wx", mode: 0o600 },
       );
       this.held = true;
@@ -400,7 +408,7 @@ export class FileGoalStore implements GoalStore {
     const path = lockPathFor(this.sidecarPath);
     const existing = readLockFile(path);
     // Never remove another process's lock or unrelated files.
-    if (existing && existing.pid === process.pid && existing.host === hostname()) {
+    if (existing && existing.pid === process.pid && existing.host === hostname() && existing.ownerId === this.ownerId) {
       try {
         unlinkSync(path);
       } catch {
@@ -456,6 +464,8 @@ export class InMemoryGoalStore implements GoalStore {
     expectedRevision: number,
     mutate: (current: SidecarEnvelope) => SidecarEnvelope,
   ): StoreResult<SidecarEnvelope> {
+    const lock = this.acquireLock();
+    if (!lock.ok) return lock;
     if (this.failWriteOnce) {
       this.failWriteOnce = false;
       return { ok: false, error: { code: "storage_failure", message: "Injected write failure." } };

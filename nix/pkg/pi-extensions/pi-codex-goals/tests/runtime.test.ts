@@ -36,7 +36,7 @@ function view(overrides: Partial<SessionView> = {}): SessionView {
 
 function activeEnvelope(store: InMemoryGoalStore): SidecarEnvelope {
   let env = (store.load() as { ok: true; value: SidecarEnvelope }).value;
-  const created = handleCreateGoal(store, env, { objective: "build the feature" }, clocks);
+  const created = handleCreateGoal(store, env, { objective: "build the feature" }, clocks, 0);
   assert.equal(created.isError, false);
   env = (store.load() as { ok: true; value: SidecarEnvelope }).value;
   assert.ok(env.goal && env.goal.status === "active");
@@ -58,6 +58,8 @@ test("three successful unfinished runs keep one session and three instruction/an
     const gen = controller.state.generation;
     const delivered = controller.deliverContinuation(envelope, v, gen);
     assert.equal(delivered.ok, true);
+    controller.confirmDelivery(envelope.dispatch!.dispatchId, envelope);
+    envelope = (store.load() as { ok: true; value: SidecarEnvelope }).value;
     // Delivery observed; settle with activity so the streak resets.
     controller.observeAssistantText(`progress part ${i}`);
     controller.observeAgentEnd([{ role: "assistant", stopReason: "stop" }]);
@@ -147,7 +149,7 @@ test("budget overshoot persists and completion from budget_limited works", () =>
   const log = { instructions: [] as never[], notices: [] as string[] };
   const controller = new GoalController(store, clocks, sender(log as never));
   let env = (store.load() as { ok: true; value: SidecarEnvelope }).value;
-  const created = handleCreateGoal(store, env, { objective: "capped", token_budget: 10 }, clocks);
+  const created = handleCreateGoal(store, env, { objective: "capped", token_budget: 10 }, clocks, 0);
   assert.equal(created.isError, false);
   env = (store.load() as { ok: true; value: SidecarEnvelope }).value;
   const entries: SessionView["entries"] = () => [

@@ -78,7 +78,7 @@ export class GoalController {
   everCommitted = false;
   emptyStreak = 0;
   executionCount = 0;
-  running: { dispatchId: DispatchId; goalId: GoalId; spanStartMs: number } | null = null;
+  running: { dispatchId: DispatchId | null; goalId: GoalId; spanStartMs: number } | null = null;
   provisional: RunObservation = { assistantTexts: [], hadToolActivity: false };
   lastDispatchContent: { dispatchId: DispatchId; content: string } | null = null;
   store: GoalStore;
@@ -113,7 +113,7 @@ export class GoalController {
   invalidate(reason: string): void {
     void reason;
     this.generation += 1;
-    this.running = null;
+    this.emptyStreak = 0;
   }
 
   /** Serialize admission-relevant mutations. */
@@ -123,7 +123,12 @@ export class GoalController {
 
   loadState(): { envelope: SidecarEnvelope | null; error?: string } {
     const loaded = this.store.load();
+    if (loaded.ok && loaded.value.revision === 0 && this.everCommitted) {
+      this.admissionDisabled = true;
+      return { envelope: null, error: "Sidecar disappeared after a committed goal: storage failure." };
+    }
     if (!loaded.ok) {
+      this.admissionDisabled = true;
       // Malformed/missing-when-expected disables admission until recovery.
       if (loaded.error.code === "malformed" || loaded.error.code === "session_mismatch") {
         this.admissionDisabled = true;
@@ -134,9 +139,10 @@ export class GoalController {
         return { envelope: null, error: "Sidecar disappeared after a committed goal: storage failure." };
       }
       if (loaded.error.code === "malformed") return { envelope: null, error: loaded.error.message };
-      return { envelope: null, error: loaded.error.code === "session_mismatch" ? loaded.error.message : undefined };
+      return { envelope: null, error: loaded.error.message };
     }
     const env = loaded.value;
+    if (env.revision > 0) this.everCommitted = true;
     if (env.dispatch && env.dispatch.sessionId !== this.store.sessionId) {
       this.admissionDisabled = true;
       return { envelope: env, error: "Dispatch session mismatch." };
@@ -206,6 +212,10 @@ export class GoalController {
     view: SessionView,
     generationAtCheck: number,
   ): { ok: true; dispatchId: DispatchId } | { ok: false; error: string } {
+    const authoritative = this.store.load();
+    if (!authoritative.ok || authoritative.value.revision !== envelope.revision || authoritative.value.goal?.status !== "active") {
+      return { ok: false, error: "stale authoritative state before delivery" };
+    }
     if (generationAtCheck !== this.generation) {
       return { ok: false, error: "invalidated before delivery" };
     }
@@ -276,28 +286,41 @@ export class GoalController {
     }
   }
 
+  beginRun(goalId: GoalId): void {
+    this.running = { goalId, dispatchId: null, spanStartMs: this.clocks.nowMs() };
+  }
+
+  settleAccounting(envelope: SidecarEnvelope, view: SessionView) {
+    return this.account(envelope, view, true);
+  }
+
+  checkpointAccounting(envelope: SidecarEnvelope, view: SessionView) {
+    return this.account(envelope, view, false);
+  }
+
   /** Settle attributable accounting for new entries since baseline; enforce budget. */
-  settleAccounting(
+  private account(
     envelope: SidecarEnvelope,
     view: SessionView,
+    finished: boolean,
   ): { envelope: SidecarEnvelope; budgetHit: boolean; unknownUsage: boolean } {
     const goal = envelope.goal;
     if (!goal) return { envelope, budgetHit: false, unknownUsage: false };
     const charged = new Set(envelope.chargedEntryIds);
     let tokens = goal.tokensUsed;
     let unknown = false;
-    let baseline = envelope.baselineEntryCount;
+    const baseline = envelope.baselineEntryCount === null ? 0 : envelope.baselineEntryCount;
     const all = view.entries();
-    if (baseline === null) {
-      baseline = all.length;
-    }
-    for (const entry of all) {
+    for (const entry of all.slice(baseline)) {
       if (entry.type !== "message" || !entry.message) continue;
       if (charged.has(entry.id)) continue;
       const role = entry.message.role;
       if (role !== "assistant" && role !== "toolResult") continue;
       const usage = entry.message.usage;
-      if (!usage) continue;
+      if (!usage) {
+        if (role === "assistant") unknown = true;
+        continue;
+      }
       const normalized = normalizeTokens(usage as Record<string, unknown>);
       if (normalized === undefined) {
         unknown = true;
@@ -309,12 +332,11 @@ export class GoalController {
     // Active time span.
     let timeUsed = goal.timeUsedSeconds;
     let remainder = envelope.remainderMs;
-    if (this.running) {
+    if (this.running && this.running.goalId === goal.id) {
       const { seconds, remainderMs } = elapsedSeconds(this.running.spanStartMs, this.clocks.nowMs(), envelope.remainderMs);
       timeUsed += seconds;
       remainder = remainderMs;
     }
-    this.running = null;
     const nextGoal: GoalRecord = { ...goal, tokensUsed: tokens, timeUsedSeconds: timeUsed, updatedAt: this.clocks.nowIso() };
     const budgetHit = nextGoal.tokenBudget !== null && nextGoal.tokensUsed >= nextGoal.tokenBudget && nextGoal.status === "active";
     const finalGoal = budgetHit ? { ...nextGoal, status: "budget_limited" as const, updatedAt: this.clocks.nowIso() } : nextGoal;
@@ -324,23 +346,26 @@ export class GoalController {
       chargedEntryIds: [...charged],
       baselineEntryCount: baseline,
       remainderMs: remainder,
-      // Clear a completed admission at settle; keep admitted if delivery never confirmed?
-      dispatch: null,
+      dispatch: finished && current.dispatch !== null && current.dispatch.phase === "running" ? null : current.dispatch,
     }));
     if (!committed.ok) {
       this.admissionDisabled = true;
-      return { envelope, budgetHit: false, unknownUsage: unknown };
+      this.needsRecovery = true;
+      throw new Error(`Goal accounting commit failed: ${committed.error.message}. Admission disabled pending recovery.`);
     }
     this.everCommitted = true;
+    if (finished) this.running = null;
+    else if (this.running) this.running.spanStartMs = this.clocks.nowMs();
     try {
       this.sender.appendCommitMeta({
         sessionId: view.sessionId,
         goalId: finalGoal.id,
         revision: committed.value.revision,
       });
-    } catch {
-      // Commit metadata is evidence, not authoritative; ignore failure here
-      // (the sidecar already committed and remains inspectable).
+    } catch (err) {
+      this.admissionDisabled = true;
+      this.needsRecovery = true;
+      throw new Error(`Accounting sidecar committed, but transcript evidence failed: ${(err as Error).message}. Admission disabled pending recovery.`);
     }
     return { envelope: committed.value, budgetHit, unknownUsage: unknown };
   }
@@ -375,12 +400,9 @@ export class GoalController {
 
   classifyPreviousExecution(): ClassifyOutcome {
     const texts = this.provisional.assistantTexts.join("").trim();
-    // User abort / host abort surfaces as the finalized stop reason. Pi
-    // 1.0.0 exposes no separate typed abort signal at this boundary; see
-    // the host-limitation disclosure (provider stopReason "aborted" alone
-    // is not proof of human action, but no finer signal exists here).
-    if (this.provisional.aborted || this.provisional.lastAssistant?.stopReason === "aborted") {
-      return { kind: "aborted" };
+    if (this.provisional.aborted) return { kind: "aborted" };
+    if (this.provisional.lastAssistant?.stopReason === "aborted") {
+      return { kind: "error_exhausted", errorText: "Provider aborted without a host abort signal." };
     }
     if (this.provisional.quotaSignal) return { kind: "quota", errorText: this.provisional.quotaSignal };
     if (this.provisional.exhaustedError) {
