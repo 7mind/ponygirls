@@ -17,7 +17,7 @@ const usage = { input: 2, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 3
 
 async function fixture(t, replies, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), "goals-host-"));
-  const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+  const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false, ...(options.compaction ?? {}) }, retry: { enabled: false } });
   const loader = new sdk.DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager,
     additionalExtensionPaths: [extensionPath], noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true });
   await loader.reload();
@@ -25,7 +25,7 @@ async function fixture(t, replies, options = {}) {
   const runtime = await sdk.ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
   let calls = 0;
   runtime.registerProvider("goals-fixture", { baseUrl: "http://fixture.invalid", apiKey: "fixture-only", api: "openai-completions",
-    models: [{ id: "scripted", name: "Scripted", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 }],
+    models: [{ id: "scripted", name: "Scripted", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: options.contextWindow ?? 100000, maxTokens: 1000 }],
     streamSimple(model, context, streamOptions) {
       const stream = createAssistantMessageEventStream();
       const reply = replies[calls++];
@@ -249,4 +249,86 @@ test("host: reloading settled active state admits work without another user prom
   await f.session.waitForIdle();
   assert.equal(f.calls(), 2);
   assert.equal(f.envelope().goal.status, "complete");
+});
+
+test("host: manual compaction while idle resyncs visibly and goal work continues", async (t) => {
+  // Manual compact() while idle aborts nothing, so the run is race-free:
+  // settle, summarize, resync, then later prompts continue the goal.
+  // small keepRecentTokens gives prepareCompaction something to summarize;
+  // enabled:false keeps automatic compaction out of the reply budget.
+  // In this programmatic binding hasUI is false, so /goal persists without
+  // queuing a kickoff turn (calls stays 1 until the explicit Start prompt).
+  const f = await fixture(t,
+    ["unrelated one", "unrelated two", "compact summary", "continued work", complete, "final report"],
+    { compaction: { enabled: false, keepRecentTokens: 50 } });
+  // Two padded exchanges: prepareCompaction only summarizes complete turns
+  // before the cut, so one exchange can never compact deterministically.
+  await f.session.prompt("Unrelated one " + "lorem ipsum ".repeat(1500));
+  await f.session.waitForIdle();
+  await f.session.prompt("Unrelated two " + "lorem ipsum ".repeat(1500));
+  await f.session.waitForIdle();
+  await f.session.prompt("/goal generic host objective");
+  assert.equal(f.calls(), 2);
+  assert.equal(f.envelope().goal.status, "active");
+  await f.session.compact();
+  await f.session.waitForIdle();
+  assert.equal(f.calls(), 3);
+  const resyncs = f.manager.getEntries().filter((e) =>
+    e.type === "custom_message" && e.customType === "codex-goal-context" && e.details?.purpose === "resync");
+  assert.equal(resyncs.length, 1);
+  initTheme("dark");
+  for (const e of resyncs) {
+    assert.equal(e.display, true);
+    assert.match(e.content, /generic host objective/);
+    assert.match(e.content, /compacted/);
+    const rendered = new CustomMessageComponent({ role: "custom", ...e }).render(160).join("\n");
+    assert.match(rendered, /generic host objective/);
+  }
+  const raw = readFileSync(f.manager.getSessionFile(), "utf8");
+  for (const e of resyncs) assert.ok(raw.includes(JSON.stringify(e.content)));
+  assert.equal(f.envelope().goal.status, "active");
+  await f.session.prompt("Start the recorded goal");
+  await f.session.waitForIdle();
+  assert.equal(f.calls(), 6);
+  assert.equal(f.envelope().goal.status, "complete");
+  assert.equal(f.envelope().goal.tokensUsed, 9);
+  const html = await f.session.exportToHtml(join(f.dir, "session.html"));
+  const exported = readFileSync(html, "utf8");
+  const encoded = exported.match(/<script id="session-data" type="application\/json">([A-Za-z0-9+/=]+)<\/script>/);
+  assert.ok(encoded, "HTML export must contain embedded session data");
+  const exportedData = Buffer.from(encoded[1], "base64").toString("utf8");
+  for (const e of resyncs) assert.ok(exportedData.includes(JSON.stringify(e.content)));
+  assert.deepEqual(f.errors, []);
+});
+
+test("host: compacting while paused notifies instead of resyncing", async (t) => {
+  // No turn is ever queued here (/goal and /goal pause queue nothing in
+  // this binding), so the flow is fully sequential: pause, compact, notice.
+  const f = await fixture(t, ["unrelated one", "unrelated two", "compact summary"],
+    { compaction: { enabled: false, keepRecentTokens: 50 } });
+  await f.session.prompt("Unrelated one " + "lorem ipsum ".repeat(1500));
+  await f.session.waitForIdle();
+  await f.session.prompt("Unrelated two " + "lorem ipsum ".repeat(1500));
+  await f.session.waitForIdle();
+  await f.session.prompt("/goal generic host objective");
+  assert.equal(f.calls(), 2);
+  await f.session.prompt("/goal pause");
+  await f.session.waitForIdle();
+  assert.equal(f.calls(), 2);
+  assert.equal(f.envelope().goal.status, "paused");
+  await f.session.compact();
+  await f.session.waitForIdle();
+  assert.equal(f.calls(), 3);
+  const resyncs = f.manager.getEntries().filter((e) =>
+    e.type === "custom_message" && e.customType === "codex-goal-context" && e.details?.purpose === "resync");
+  assert.equal(resyncs.length, 0);
+  const notice = f.manager.getEntries().find((e) =>
+    e.type === "custom" && e.customType === "codex-goal-notice" && e.data.text.includes("compacted"));
+  assert.ok(notice, "compacting while paused must leave a resume hint");
+  initTheme("dark");
+  const renderer = f.loader.getExtensions().extensions[0].entryRenderers.get("codex-goal-notice");
+  const rendered = new CustomEntryComponent(notice, renderer).render(100).join("\n");
+  assert.match(rendered, /resume/);
+  assert.equal(f.envelope().goal.status, "paused");
+  assert.deepEqual(f.errors, []);
 });
