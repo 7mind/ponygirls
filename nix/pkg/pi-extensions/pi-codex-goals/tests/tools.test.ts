@@ -51,6 +51,22 @@ test("create refuses unfinished including budget_limited; completion reports con
   assert.equal(handleCreateGoal(store, env, { objective: "next" }, clocks, 0).isError, false);
 });
 
+test("completion on a fresh goal with no work is allowed by code; the audit stays a model instruction", () => {
+  // Deliberate non-enforcement: no independent verifier inspects artifacts,
+  // so a vacuous objective can complete vacuously. The completion audit lives
+  // in the instruction text (acceptance-criteria steering), and recovery is a
+  // new goal. This test pins the boundary so future changes do not silently
+  // add an auditor, a confirmation gate, or evidence requirements here.
+  const store = freshStore("s5");
+  let env = (store.load() as { ok: true; value: never }).value as never;
+  assert.equal(handleCreateGoal(store, env, { objective: "do something" }, clocks, 0).isError, false);
+  env = (store.load() as { ok: true; value: never }).value as never;
+  const done = handleUpdateGoal(store, env, { status: "complete" }, clocks);
+  assert.equal(done.isError, false);
+  assert.equal(done.state!.status, "complete");
+  assert.equal(done.state!.tokensUsed, 0);
+});
+
 test("invalid objective and budget are domain errors, state unchanged", () => {
   const store = freshStore("s4");
   let env = (store.load() as { ok: true; value: never }).value as never;

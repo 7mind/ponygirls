@@ -138,6 +138,18 @@ audit evidence, not a second store.
   are an interactive/RPC behavior.
 - **Exactly-once across crashes** is not claimed: at most one admitted
   continuation, stale-dispatch rejection, explicit recovery.
+- **Completion is a model claim:** code enforces only the tool schema and
+  the active precondition, so a vague objective can complete with no work
+  performed. The audit (including asking for acceptance criteria when the
+  objective states no verifiable outcome) lives in the instruction text;
+  recovery is a new goal with verifiable criteria, which is cheap because
+  history is preserved. A token budget bounds the cost of such a failure.
+- **Manual compaction mid-run aborts the run:** Pi's `compact()` aborts the
+  current agent operation first, even when the session turns out too small
+  to compact. An aborted goal run pauses the goal (same as Escape) and no
+  resync is emitted for a non-active goal; resume explicitly. Automatic
+  threshold compaction fires between runs instead, flows through the normal
+  resync path, and never pauses the goal.
 
 ## Tests
 

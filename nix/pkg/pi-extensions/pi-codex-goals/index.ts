@@ -868,13 +868,8 @@ export default function (pi: ExtensionAPI): void {
     if (!collisionChecked) {
       collisionChecked = true;
       try {
-        const names = new Set(pi.getAllTools().map((t) => t.name));
-        const dups = [TOOL_CREATE, TOOL_GET, TOOL_UPDATE].filter((n) => {
-          let count = 0;
-          for (const name of names) if (name === n) count++;
-          return count > 1;
-        });
-        void dups;
+        // Pi rejects duplicate tool/command registration at load time; this
+        // advisory check only covers a competing `/goal` command owner.
         const commands = pi.getCommands().map((c) => c.name);
         if (commands.filter((n) => n === COMMAND_GOAL).length > 1) {
           safeNotify(ctx, `pi-codex-goals: command "/${COMMAND_GOAL}" is owned by another extension; refusing to compete silently.`, "error");
@@ -1058,7 +1053,14 @@ export default function (pi: ExtensionAPI): void {
       return undefined;
     }
     if (!binding) return undefined;
-    const envelope = loadEnvelope(binding);
+    let envelope: SidecarEnvelope;
+    try {
+      envelope = loadEnvelope(binding);
+    } catch {
+      // Fail-closed store already disabled admission; attach no context
+      // rather than surfacing an extension error on every turn.
+      return undefined;
+    }
     const goal = envelope.goal;
     if (!goal || goal.status !== "active" || binding.controller.state.admissionDisabled || binding.controller.state.needsRecovery) return undefined;
     binding.controller.beginRun(goal.id);
@@ -1378,6 +1380,15 @@ export default function (pi: ExtensionAPI): void {
     }
     if (!binding) return;
     const envelope = loadEnvelope(binding);
+    if (envelope.goal?.status === "paused") {
+      // Informative only: a paused goal stays paused across compaction
+      // (including compaction-aborted runs, which pause like Escape).
+      // No autonomous work follows; resume explicitly to continue.
+      appendEvidence(binding, GOAL_NOTICE_TYPE, {
+        text: `Session compacted while goal ${envelope.goal.id} is paused. Run /goal resume to continue under the fresh context.`,
+        at: clk.nowIso(),
+      });
+    }
     if (envelope.goal?.status === "active") {
       binding.pendingKickoff = { purpose: "resync", revision: envelope.revision };
       try {
