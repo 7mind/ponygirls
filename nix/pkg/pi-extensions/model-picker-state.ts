@@ -154,6 +154,19 @@ export function windowStart(selected: number, count: number, size: number): numb
 	return Math.max(0, Math.min(selected - Math.floor(size / 2), Math.max(0, count - size)));
 }
 
+/** Fallback list rows when the terminal size is unknown (a stub TUI, no tty). */
+export const PICKER_FALLBACK_ROWS = 10;
+export const PICKER_MIN_ROWS = 5;
+export const PICKER_MAX_ROWS = 30;
+/** Dialog chrome around the list: overlay margin (2) + border (2) + tabs (1) + filter (1) + hints (2). */
+const PICKER_CHROME_ROWS = 8;
+
+/** Model-picker list rows for a terminal height: two thirds for the dialog, less chrome. */
+export function pickerVisibleRows(termRows: number | undefined): number {
+	if (typeof termRows !== "number" || !Number.isFinite(termRows)) return PICKER_FALLBACK_ROWS;
+	return Math.max(PICKER_MIN_ROWS, Math.min(PICKER_MAX_ROWS, Math.floor((termRows * 2) / 3) - PICKER_CHROME_ROWS));
+}
+
 export function filterModels<T extends ModelRef>(models: readonly T[], query: string): T[] {
 	const needle = query.trim().toLowerCase();
 	if (!needle) return [...models];

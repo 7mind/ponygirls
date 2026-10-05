@@ -15,6 +15,7 @@ import {
 	moveSelection,
 	outlineContentPoint,
 	parsePickerState,
+	pickerVisibleRows,
 	recordSelection,
 	removeFavouriteEntry,
 	serializePickerState,
@@ -311,4 +312,13 @@ test("hitAt matches the half-open column range on the right line", () => {
 	assert.equal(hitAt(hits, 4, 1)?.action, "model");
 	assert.equal(hitAt(hits, 8, 1), undefined);
 	assert.equal(hitAt(hits, 5, 0), undefined);
+});
+
+test("pickerVisibleRows takes two thirds of the terminal, less the dialog chrome", () => {
+	assert.equal(pickerVisibleRows(undefined), 10);
+	assert.equal(pickerVisibleRows(Number.NaN), 10);
+	assert.equal(pickerVisibleRows(30), 12);
+	assert.equal(pickerVisibleRows(24), 8);
+	assert.equal(pickerVisibleRows(90), 30);
+	assert.equal(pickerVisibleRows(9), 5);
 });

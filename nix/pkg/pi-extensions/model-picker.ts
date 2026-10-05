@@ -32,8 +32,8 @@ import { dirname, join } from "node:path";
 
 import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { FooterComponent, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { matchesKey, parseKey, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { Component, SizeValue, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { Input, matchesKey, parseKey, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
 	cycleFavouriteEntry,
@@ -48,6 +48,7 @@ import {
 	moveSelection,
 	outlineContentPoint,
 	parsePickerState,
+	pickerVisibleRows,
 	recordSelection,
 	removeFavouriteEntry,
 	serializePickerState,
@@ -68,8 +69,11 @@ const EFFORT_CYCLE_GLYPH = "⌃E";
 /** Keycap glyphs for the footer controls (⌃ ctrl, ⇧ shift). */
 const MODEL_SHORTCUT_GLYPH = "⌃⇧M";
 const THINKING_SHORTCUT_GLYPH = "⌃⇧E";
-const LIST_VISIBLE = 10;
 const STAR_WIDTH = 2;
+/** Mouse wheel lines per notch, matching the /perf view. */
+const WHEEL_LINES = 3;
+/** Filter line index in ModelPicker.render output (below the tab line). */
+const FILTER_LINE = 1;
 
 type PickerKind = "model" | "thinking";
 type ModelTab = "favourites" | "all";
@@ -259,7 +263,7 @@ class Outlined implements Component {
 	}
 }
 
-function popup(width: number, maxHeight: number) {
+function popup(width: SizeValue, maxHeight: SizeValue) {
 	return {
 		overlay: true as const,
 		overlayOptions: { anchor: "center" as const, width, maxHeight, margin: 1 },
@@ -375,11 +379,11 @@ class ExtendedFooter implements Component {
 
 class ModelPicker implements Component {
 	private tab: ModelTab = "favourites";
-	private query = "";
+	private readonly filter: Input;
 	private selected = 0;
 	private tabHits: Hit[] = [];
 	private hintHits: Hit[] = [];
-	private listStart = 3;
+	private listStart = 2;
 
 	constructor(
 		private readonly theme: Theme,
@@ -389,46 +393,58 @@ class ModelPicker implements Component {
 		private readonly onFavourites: (next: PickerState) => void,
 		private readonly onChoose: (model: FavouriteModel) => void,
 		private readonly onCancel: () => void,
-	) {}
+		private readonly visibleRows: number,
+	) {
+		this.filter = new Input({
+			prompt: "filter: ",
+			placeholder: "type to search",
+			placeholderStyle: (text) => theme.fg("dim", text),
+		});
+		// Focus is ours to manage: the TUI only tracks components in its own
+		// tree, and the cursor stays pinned at the end (append/backspace only).
+		this.filter.focused = true;
+	}
 
-	invalidate(): void {}
+	invalidate(): void {
+		this.filter.invalidate();
+	}
 
 	private visible(): FavouriteModel[] {
 		const base: readonly FavouriteModel[] =
 			this.tab === "favourites" ? favouriteModels(this.models, this.state) : this.models.map((model) => ({ ...model }));
-		return filterModels(base, this.query);
+		return filterModels(base, this.filter.getValue());
 	}
 
 	render(width: number): string[] {
 		const rows = this.visible();
 		if (this.selected >= rows.length) this.selected = Math.max(0, rows.length - 1);
-		const favouritesLabel = this.tab === "favourites" ? "[Favourites]" : " Favourites ";
-		const allLabel = this.tab === "all" ? "[All]" : " All ";
+		const favouritesLabel = this.tab === "favourites" ? "[Favourite models]" : " Favourite models ";
+		const allLabel = this.tab === "all" ? "[All models]" : " All models ";
 		this.tabHits = [
-			{ line: 1, start: 0, end: visibleWidth(favouritesLabel), action: "favourites" },
+			{ line: 0, start: 0, end: visibleWidth(favouritesLabel), action: "favourites" },
 			{
-				line: 1,
+				line: 0,
 				start: visibleWidth(favouritesLabel) + 1,
 				end: visibleWidth(favouritesLabel) + 1 + visibleWidth(allLabel),
 				action: "all",
 			},
 		];
 		const tabLine = `${this.theme.fg(this.tab === "favourites" ? "accent" : "dim", favouritesLabel)} ${this.theme.fg(this.tab === "all" ? "accent" : "dim", allLabel)}`;
-		const lines = [
-			this.theme.fg("accent", "Model"),
-			truncateToWidth(tabLine, width),
-			this.theme.fg("dim", this.query ? `filter: ${this.query}` : "filter: type to search"),
-		];
+		const lines = [truncateToWidth(tabLine, width), this.filter.render(width)[0] ?? ""];
 		this.listStart = lines.length;
-		const start = windowStart(this.selected, rows.length, LIST_VISIBLE);
-		const shown = rows.slice(start, start + LIST_VISIBLE);
-		// Exactly LIST_VISIBLE rows so the popup height does not jump while filtering.
-		for (let index = 0; index < LIST_VISIBLE; index++) {
+		const size = this.visibleRows;
+		const start = windowStart(this.selected, rows.length, size);
+		const shown = rows.slice(start, start + size);
+		// Scrollbar rail when the list overflows; the thumb tracks the window.
+		const maxStart = Math.max(0, rows.length - size);
+		const thumb = maxStart === 0 ? -1 : Math.round((start / maxStart) * (size - 1));
+		// Exactly `size` rows so the popup height does not jump while filtering.
+		for (let index = 0; index < size; index++) {
 			const model = shown[index];
 			if (!model) {
-				lines.push(index === 0 ? this.theme.fg("dim", this.tab === "favourites" ? "no favourites — ⇥ to All, ␣ to mark" : "no match") : "");
+				lines.push(index === 0 ? this.theme.fg("dim", this.tab === "favourites" ? "no favourites — ⇥ to All models, ␣ to mark" : "no match") : "");
 				continue;
-			}
+		}
 			const absolute = start + index;
 			// Every Favourites-tab row is an entry; in the All tab the star means
 			// at least one entry (bare or effort-pinned) exists for the model.
@@ -438,7 +454,14 @@ class ModelPicker implements Component {
 			const effort = this.rowEffort(model);
 			const text = `${cursor}${marked}${model.provider}/${model.id}${effort ? ` • ${effort}` : ""}`;
 			const styled = absolute === this.selected ? this.theme.fg("accent", text) : text;
-			lines.push(truncateToWidth(styled, width));
+			if (thumb < 0) {
+				lines.push(truncateToWidth(styled, width));
+				continue;
+			}
+			const rail = index === thumb ? this.theme.fg("accent", "█") : this.theme.fg("dim", "│");
+			const clipped = truncateToWidth(styled, Math.max(0, width - 1));
+			const gap = Math.max(0, width - 1 - visibleWidth(clipped));
+			lines.push(clipped + " ".repeat(gap) + rail);
 		}
 		const separator: Segment = { plain: " · ", styled: this.theme.fg("dim", " · ") };
 		this.hintHits = [];
@@ -466,6 +489,10 @@ class ModelPicker implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type === "wheel" && event.wheelDelta) {
+			this.move(event.wheelDelta < 0 ? -WHEEL_LINES : WHEEL_LINES);
+			return { handled: true };
+		}
 		if (event.type !== "click" || (event.button !== "left" && event.button !== "right")) return undefined;
 		const hint = hitAt(this.hintHits, event.x, event.y);
 		if (hint) {
@@ -478,10 +505,15 @@ class ModelPicker implements Component {
 			this.selected = 0;
 			return { handled: true };
 		}
+		// The filter is a real input with its cursor pinned at the end (append
+		// and backspace are the only edits); clicks there select nothing.
+		// Cursor placement is not forwarded: Input maps clicks assuming its
+		// default two-column prompt, and ours is wider.
+		if (event.y === FILTER_LINE) return { handled: true };
 		const row = event.y - this.listStart;
-		if (row < 0 || row >= LIST_VISIBLE) return { handled: true };
+		if (row < 0 || row >= this.visibleRows) return { handled: true };
 		const rows = this.visible();
-		const start = windowStart(this.selected, rows.length, LIST_VISIBLE);
+		const start = windowStart(this.selected, rows.length, this.visibleRows);
 		const model = rows[start + row];
 		if (!model) return { handled: true };
 		if (event.button === "right" || event.x < STAR_WIDTH + 2) {
@@ -510,11 +542,11 @@ class ModelPicker implements Component {
 			return;
 		}
 		if (matchesKey(data, "pageUp")) {
-			this.move(-LIST_VISIBLE);
+			this.move(-this.visibleRows);
 			return;
 		}
 		if (matchesKey(data, "pageDown")) {
-			this.move(LIST_VISIBLE);
+			this.move(this.visibleRows);
 			return;
 		}
 		if (matchesKey(data, "enter")) {
@@ -529,16 +561,21 @@ class ModelPicker implements Component {
 			this.cycle();
 			return;
 		}
-		if (matchesKey(data, "backspace")) {
-			this.query = this.query.slice(0, -1);
-			this.selected = 0;
+		if (matchesKey(data, "backspace") || matchesKey(data, "delete")) {
+			this.editFilter(data);
 			return;
 		}
 		const typed = filterChar(parseKey(data));
 		if (typed) {
-			this.query += typed;
-			this.selected = 0;
+			this.editFilter(data);
 		}
+	}
+
+	/** Forward an edit key to the filter input; a changed filter resets the selection. */
+	private editFilter(data: string): void {
+		const before = this.filter.getValue();
+		this.filter.handleInput(data);
+		if (this.filter.getValue() !== before) this.selected = 0;
 	}
 
 	/**
@@ -603,10 +640,10 @@ class ModelPicker implements Component {
 				this.switchTab();
 				break;
 			case "page-up":
-				this.move(-LIST_VISIBLE);
+				this.move(-this.visibleRows);
 				break;
 			case "page-down":
-				this.move(LIST_VISIBLE);
+				this.move(this.visibleRows);
 				break;
 			case "close":
 				this.onCancel();
@@ -722,13 +759,13 @@ class ThinkingPicker implements Component {
 async function dialog<T>(
 	kind: PickerKind,
 	ctx: ExtensionContext,
-	width: number,
-	maxHeight: number,
+	width: SizeValue,
+	maxHeight: SizeValue,
 	onShortcut: (kind: PickerKind) => void,
-	build: (theme: Theme, done: (value: T | undefined) => void) => Component,
+	build: (tui: TUI, theme: Theme, done: (value: T | undefined) => void) => Component,
 ): Promise<T | undefined> {
 	let closed = false;
-	const chosen = await ctx.ui.custom<T | undefined>((_tui, theme, _kb, done) => {
+	const chosen = await ctx.ui.custom<T | undefined>((tui, theme, _kb, done) => {
 		activePicker = {
 			kind,
 			close: () => {
@@ -737,7 +774,7 @@ async function dialog<T>(
 				done(undefined);
 			},
 		};
-		const inner = build(theme, done);
+		const inner = build(tui, theme, done);
 		return {
 			invalidate: () => inner.invalidate(),
 			render: (atWidth: number) => inner.render(atWidth),
@@ -841,7 +878,7 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 		const model = models.find((item) => modelKey(item) === key);
 		return thinkingLevels(model);
 	};
-	const chosen = await dialog<FavouriteModel>("model", ctx, 72, 20, (kind) => open(pi, kind), (theme, done) =>
+	const chosen = await dialog<FavouriteModel>("model", ctx, "66%", "66%", (kind) => open(pi, kind), (tui, theme, done) =>
 		new Outlined(
 			new ModelPicker(
 				theme,
@@ -851,6 +888,7 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 				save,
 				(model) => done(model),
 				() => done(undefined),
+				pickerVisibleRows(tui.terminal?.rows),
 			),
 			(text) => theme.fg("border", text),
 		),
@@ -868,7 +906,7 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 
 async function openThinkingPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	const levels = thinkingLevels(ctx.model);
-	const chosen = await dialog<ModelThinkingLevel>("thinking", ctx, 40, 16, (kind) => open(pi, kind), (theme, done) =>
+	const chosen = await dialog<ModelThinkingLevel>("thinking", ctx, 40, 16, (kind) => open(pi, kind), (_tui, theme, done) =>
 		new Outlined(
 			new ThinkingPicker(theme, levels, ctx.thinkingLevel ?? "off", (level) => done(level), () => done(undefined)),
 			(text) => theme.fg("border", text),
