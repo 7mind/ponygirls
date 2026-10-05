@@ -503,6 +503,12 @@ in
             # instructions (same-session continuation, three model tools,
             # atomic session sidecar). See nix/pkg/pi-extensions/pi-codex-goals.
             "${../pkg/pi-extensions/pi-codex-goals}"
+            # Supervisor/worker subagents: durable delegation, sandbox-brokered
+            # tools, worktrees, gates, /agents inspector.
+            # See nix/pkg/pi-extensions/pi-subagents (opt-in policy file at
+            # ~/.pi/agent/subagents-policy.json; without registered repos,
+            # readers work and writer spawns are denied fail-closed).
+            "${../pkg/pi-extensions/pi-subagents}"
             # pi-search-hub advertises a static all-backends list (19 in
             # 2.8.0) in the web_search description + `backend` enum regardless
             # of what's configured, so the model picks unconfigured backends
