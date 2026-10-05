@@ -3,7 +3,10 @@ import test from "node:test";
 
 import {
 	classifyOutcome,
+	clampStatsBudget,
+	clampStatsScrollTop,
 	DAY_MS,
+	defaultStatsBudget,
 	HOUR_MS,
 	isUsableRecord,
 	measureWindows,
@@ -13,6 +16,11 @@ import {
 	renderWindow,
 	serializeStatsRecord,
 	sortModels,
+	STATS_CHROME_LINES,
+	STATS_DEFAULT_BUDGET,
+	STATS_MAX_BUDGET,
+	STATS_MIN_BUDGET,
+	statsVisibleRange,
 	summarize,
 	summarizeMetric,
 	tokensPerSecond,
@@ -273,4 +281,50 @@ test("renderWindow with a shared layout aligns columns across windows", () => {
 	assert.match(hourTable.rows[0]!, /^a\/b +│/);
 	// Measured alone, the hour table would be narrower.
 	assert.notDeepEqual(barsAt(renderWindow(hour).rows[0]!), barsAt(hourTable.rows[0]!));
+});
+
+test("stats scroll budget clamps to the adjustable range", () => {
+	assert.equal(clampStatsBudget(15), 15);
+	assert.equal(clampStatsBudget(0), STATS_MIN_BUDGET);
+	assert.equal(clampStatsBudget(1000), STATS_MAX_BUDGET);
+	assert.equal(clampStatsBudget(Number.NaN), STATS_DEFAULT_BUDGET);
+});
+
+test("clampStatsScrollTop keeps the window inside the content", () => {
+	assert.equal(clampStatsScrollTop(0, 0, 15), 0);
+	assert.equal(clampStatsScrollTop(99, 10, 15), 0);
+	assert.equal(clampStatsScrollTop(-4, 37, 15), 0);
+	assert.equal(clampStatsScrollTop(99, 37, 15), 22);
+	assert.equal(clampStatsScrollTop(10, 37, 15), 10);
+});
+
+test("statsVisibleRange pages through content with no unreachable lines", () => {
+	const total = 37;
+	const budget = 15;
+	assert.deepEqual(statsVisibleRange(total, 0, budget), { start: 0, end: 15 });
+	assert.deepEqual(statsVisibleRange(total, 99, budget), { start: 22, end: 37 });
+	// Paging down by a full budget from the top reaches the bottom with no gaps.
+	let top = 0;
+	const seen = new Set<number>();
+	for (;;) {
+		const { start, end } = statsVisibleRange(total, top, budget);
+		for (let index = start; index < end; index++) seen.add(index);
+		if (end >= total) break;
+		top += budget;
+	}
+	assert.equal(seen.size, total);
+	// Every line is visible at its own clamped offset.
+	for (let index = 0; index < total; index++) {
+		const { start, end } = statsVisibleRange(total, index, budget);
+		assert.ok(start <= index && index < end, `line ${index} visible at offset ${index}`);
+	}
+});
+
+test("defaultStatsBudget takes half the terminal, less the chrome", () => {
+	assert.equal(defaultStatsBudget(undefined), STATS_DEFAULT_BUDGET);
+	assert.equal(defaultStatsBudget(Number.NaN), STATS_DEFAULT_BUDGET);
+	assert.equal(defaultStatsBudget(50), 25 - STATS_CHROME_LINES);
+	assert.equal(defaultStatsBudget(24), 12 - STATS_CHROME_LINES);
+	assert.equal(defaultStatsBudget(1000), STATS_MAX_BUDGET);
+	assert.equal(defaultStatsBudget(6), STATS_MIN_BUDGET);
 });
