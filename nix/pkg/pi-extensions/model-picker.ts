@@ -16,9 +16,12 @@
  * Favourites and last-selection times persist in
  * $PI_CODING_AGENT_DIR/model-picker.json (default ~/.pi/agent/model-picker.json).
  * A favourite is a model key with an optional pinned effort level; the same
- * model may appear several times with different efforts. Legacy string entries
+ * model may appear several times with different efforts, each entry with its
+ * own stable id, sort position, and selection time. Legacy string entries
  * ("provider/id") read as bare entries with no pinned effort. The Favourites
- * tab lists them most recently selected first. A missing catalog entry is kept
+ * tab lists entries most recently selected first and edits their efforts one
+ * entry at a time; the All models tab aggregates one row per model and shows
+ * no efforts. A missing catalog entry is kept
  * in the file and omitted from the list until it exists again. Choosing a
  * favourite applies its pinned effort (when still supported by the model);
  * a bare entry changes only the model. Choosing while a turn is running
@@ -38,7 +41,7 @@ import { Input, matchesKey, parseKey, stripTerminalSequences, truncateToWidth, v
 import {
 	cycleFavouriteEntry,
 	cycleModelEntry,
-	favouriteId,
+	entryIdBase,
 	favouriteModels,
 	latestEntryForKey,
 	filterModels,
@@ -582,7 +585,8 @@ class ModelPicker implements Component {
 	 * Choosing a Favourites-tab row applies exactly that entry. An All-tab row
 	 * aggregates all entries for the model, so it applies the most recently
 	 * stored one (bare when the model is not favourited): the same target the
-	 * effort hotkey advances.
+	 * effort hotkey advances. The chosen row carries the applied entry's id for
+	 * the selection log.
 	 */
 	private choose(): void {
 		const row = this.visible()[this.selected];
@@ -591,9 +595,8 @@ class ModelPicker implements Component {
 			this.onChoose(row);
 			return;
 		}
-		const key = modelKey(row);
-		const latest = latestEntryForKey(this.state.favourites, key);
-		this.onChoose(latest?.effort === undefined ? row : { ...row, effort: latest.effort });
+		const latest = latestEntryForKey(this.state.favourites, modelKey(row));
+		this.onChoose({ ...row, entryId: latest?.id, ...(latest?.effort === undefined ? {} : { effort: latest.effort }) });
 	}
 
 	private favourite(): void {
@@ -606,11 +609,11 @@ class ModelPicker implements Component {
 		if (!row) return;
 		const key = modelKey(row);
 		const levels = this.levelsFor(key);
-		// Cycling carries the entry's selection timestamp to its new id, so the
-		// row keeps its sort position instead of dropping as "never selected".
+		// Cycling keeps the entry's id, so the row keeps its sort position and
+		// stays distinct from a sibling entry with the same key and effort.
 		const next =
 			this.tab === "favourites"
-				? cycleFavouriteEntry(this.state, { key, effort: row.effort }, levels)
+				? cycleFavouriteEntry(this.state, row.entryId!, levels)
 				: cycleModelEntry(this.state, key, levels);
 		this.state = next;
 		this.onFavourites(next);
@@ -652,16 +655,12 @@ class ModelPicker implements Component {
 	}
 
 	/**
-	 * Displayed effort for a row: the entry's own pin in the Favourites tab,
-	 * or the model's pinned efforts (stored order) in the All tab, where one
-	 * catalog row aggregates all entries. Bare entries show no suffix.
+	 * Displayed effort for a row: the entry's own pin on the Favourites tab.
+	 * All-tab rows aggregate a model's entries and show no effort — efforts
+	 * live on entries and are edited on the Favourites tab.
 	 */
 	private rowEffort(model: FavouriteModel): string | undefined {
-		if (this.tab === "favourites") return model.effort;
-		const pinned = this.state.favourites.flatMap((item) =>
-			item.key === modelKey(model) && item.effort !== undefined ? [item.effort] : [],
-		);
-		return pinned.length > 0 ? pinned.join(", ") : undefined;
+		return this.tab === "favourites" ? model.effort : undefined;
 	}
 
 	/**
@@ -676,7 +675,7 @@ class ModelPicker implements Component {
 			...this.state,
 			favourites:
 				this.tab === "favourites"
-					? removeFavouriteEntry(this.state.favourites, { key, effort: model.effort })
+					? removeFavouriteEntry(this.state.favourites, model.entryId!)
 					: toggleBareFavourite(this.state.favourites, key),
 		});
 	}
@@ -894,7 +893,7 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 		),
 	);
 	if (!chosen) return;
-	save(recordSelection(state, favouriteId({ key: modelKey(chosen), effort: chosen.effort }), Date.now()));
+	save(recordSelection(state, chosen.entryId ?? entryIdBase({ key: modelKey(chosen), effort: chosen.effort }), Date.now()));
 	if (ctx.isIdle()) {
 		pending = {};
 		requestRender?.();
