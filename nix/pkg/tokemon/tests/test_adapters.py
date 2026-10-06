@@ -131,27 +131,14 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual((extra.name, extra.used, extra.limit, extra.unit), ("extra usage", 12.34, 200.0, "EUR"))
         self.assertIsNone(snapshot.note)
 
-    # shape observed live 2026-10-01: extra usage out of credits. No credits
-    # means nothing to spend and nothing to show, so the note is suppressed.
-    def test_out_of_credits_extra_is_silent_not_a_note(self):
-        usage = fixture("claude_oauth_usage.json")
-        usage["spend"].update(
-            {
-                "enabled": False,
-                "disabled_reason": "out_of_credits",
-                "limit": {"amount_minor": 20000, "currency": "EUR", "exponent": 2},
-            }
-        )
-        snapshot, _ = self._fetch(usage, fixture("claude_oauth_profile.json"))
-        self.assertEqual(len(snapshot.windows), 3)
-        self.assertIsNone(snapshot.note)
-
-    def test_other_block_reasons_stay_a_note_not_a_row(self):
-        usage = fixture("claude_oauth_usage.json")
-        usage["spend"].update({"enabled": False, "disabled_reason": "admin_disabled"})
-        snapshot, _ = self._fetch(usage, fixture("claude_oauth_profile.json"))
-        self.assertEqual(len(snapshot.windows), 3)
-        self.assertEqual(snapshot.note, "extra usage off: admin_disabled")
+    def test_blocked_extra_for_any_reason_is_silent(self):
+        for reason in ("out_of_credits", "admin_disabled"):
+            with self.subTest(reason=reason):
+                usage = fixture("claude_oauth_usage.json")
+                usage["spend"].update({"enabled": False, "disabled_reason": reason})
+                snapshot, _ = self._fetch(usage, fixture("claude_oauth_profile.json"))
+                self.assertEqual(len(snapshot.windows), 3)
+                self.assertIsNone(snapshot.note)
 
     def test_extra_usage_never_enabled_is_silent(self):
         snapshot, _ = self._fetch(fixture("claude_oauth_usage.json"), fixture("claude_oauth_profile.json"))
