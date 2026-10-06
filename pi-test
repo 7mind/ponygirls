@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Run pi with this checkout's extensions instead of their deployed copies,
+# without a home-manager switch:  ./pi-test [pi arguments...]
+#
+# The extension list is the one nix/hm/pi.nix deploys. Everything else
+# matches the live ~/.pi/agent/settings.json: its packages, its other
+# configured extensions, and pi's built-in extensions minus the ones it
+# disables. pi runs in the caller's working directory.
+set -euo pipefail
+
+root=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
+settings=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/settings.json
+# pi 1.0.0's built-in extensions (docs/settings.md); --no-extensions drops them.
+builtins=(mcp llama.cpp codemode tool-search)
+
+die() {
+  echo "pi-test: $*" >&2
+  exit 1
+}
+
+command -v pi >/dev/null || die "pi is not on PATH"
+command -v jq >/dev/null || die "jq is required"
+
+args=(--no-extensions)
+
+# Deployed configuration, except the deployed copies (store paths) of the
+# checkout extensions loaded below.
+disabled=()
+if [[ -f $settings ]]; then
+  while IFS= read -r entry; do
+    case $entry in
+      -builtin:*) disabled+=("${entry#-builtin:}") ;;
+      +builtin:* | /nix/store/*) ;;
+      *) args+=(-e "$entry") ;;
+    esac
+  done < <(jq -r '.extensions // [] | .[]' "$settings")
+  while IFS= read -r pkg; do
+    args+=(-e "$pkg")
+  done < <(jq -r '.packages // [] | .[] | if type == "string" then . else .source end' "$settings")
+fi
+for b in "${builtins[@]}"; do
+  [[ " ${disabled[*]} " == *" $b "* ]] || args+=(-e "builtin:$b")
+done
+
+# Checkout extensions as pi.nix lists them: "${../pkg/pi-extensions/x}" or "${../pkg/pi-extensions}/x".
+mapfile -t rels < <(grep -v '^[[:space:]]*#' "$root/nix/hm/pi.nix" |
+  grep -o '"\${\.\./pkg/pi-extensions[^"]*"' |
+  sed -E 's|^"\$\{\.\./pkg/pi-extensions([^}]*)\}(.*)"$|\1\2|')
+((${#rels[@]} > 0)) || die "no extensions found in nix/hm/pi.nix"
+for rel in "${rels[@]}"; do
+  path="$root/nix/pkg/pi-extensions$rel"
+  [[ -e $path ]] || die "$path (listed in nix/hm/pi.nix) does not exist"
+  args+=(-e "$path")
+done
+
+# pi-subagents workers import the SDK of the pi that runs them. The deployed
+# wrapper sets this once switched; otherwise follow pi's launcher scripts to
+# the package that holds its cli.js.
+if [[ -z ${PI_SUBAGENTS_SDK_ROOT:-} ]]; then
+  sdk=""
+  launcher=$(realpath "$(command -v pi)")
+  for _ in 1 2 3 4 5 6; do
+    sdk=$(grep -o '/nix/store/[^"[:space:]]*/lib/node_modules/pi-monorepo' "$launcher" | head -n1 || true)
+    [[ -n $sdk ]] && break
+    next=$(grep '^exec ' "$launcher" | grep -o '/nix/store/[^"[:space:]]*' | head -n1 || true)
+    [[ -n $next ]] || break
+    launcher=$(realpath "$next")
+  done
+  [[ -n $sdk ]] || die "cannot locate pi's SDK; set PI_SUBAGENTS_SDK_ROOT"
+  export PI_SUBAGENTS_SDK_ROOT=$sdk
+fi
+
+exec pi "${args[@]}" "$@"
