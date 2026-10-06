@@ -37,7 +37,9 @@ notice delivery. They talk over private newline-delimited JSON pipes.
 
 ## Agent surface
 
-`bg_task` takes `{ request: { action, ... } }` (a discriminated union):
+`bg_task` takes flat arguments: a required `action` plus that action's fields
+(all top-level primitives; each action's exact field set is checked at
+execution):
 
 | action | arguments | result |
 |---|---|---|
@@ -188,11 +190,13 @@ nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).pon
 
 ## Deviations from the plan (with evidence)
 
-- **Tool schema:** a top-level object `{ request: <union> }` instead of a
-  top-level union. Pi's Anthropic adapter forwards only top-level
-  `properties`/`required` (`pi-ai/dist/api/anthropic-messages.js`,
-  `convertTools`), so a top-level union would reach the model as an empty
-  object.
+- **Tool schema:** flat top-level primitives (`action` required, other fields
+  optional) with the plan's discriminated union enforced at execution. A
+  top-level union reaches Anthropic models as an empty object (Pi's adapter
+  forwards only top-level `properties`/`required`,
+  `pi-ai/dist/api/anthropic-messages.js` `convertTools`), and a nested
+  `request` object was sent as a JSON string by `mimo-v2.6-pro` in live use,
+  failing every call with `request: must be object`.
 - **Explicit-input release timing:** deferred/unconfirmed events are released
   when the input's run settles, not when the input arrives. The probes show an
   SDK/RPC abort keeps the custom follow-up queued and Pi consumes it after the
