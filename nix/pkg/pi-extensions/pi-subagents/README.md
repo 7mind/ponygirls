@@ -153,7 +153,12 @@ list refreshes on its own.
   finished one under the same gate (from the agent or its reviewer row),
   `r` refresh, `esc` close. Nothing here stops children by closing it.
 
-A gate reviewer's conversation is disposable, so it has no transcript.
+A gated agent's transcript also shows each gate review where it happened:
+the reviewer's own conversation inside a `┃` gate frame, headed
+`╭─ gate review-N · candidate · model` and closed by the decision (live
+while the review runs); the gate's repair requests are labeled. A
+reviewer's row shows the reviews it ran. Each review is a fresh
+conversation (never resumed); its file is kept for the transcript.
 The footer status (`agents 3 · running 1 · questions 1`) sorts ahead of
 other extensions' statuses.
 

@@ -16,7 +16,7 @@ import { readFileSync, statSync } from "node:fs";
 import { Input, Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { PLAIN_STYLE, sanitizeDisplay, type UiStyle } from "./display.ts";
 import type { AgentView, TranscriptSource } from "./supervisor.ts";
-import { parseTranscript, renderTranscript, type TranscriptItem } from "./transcript.ts";
+import { parseTranscript, renderConversation, type ReviewBlock, type TranscriptItem } from "./transcript.ts";
 
 export { sanitizeDisplay } from "./display.ts";
 
@@ -336,6 +336,8 @@ export class TranscriptView implements Component, Focusable {
   private input: Input;
   private items: TranscriptItem[] = [];
   private version: string | null = null;
+  /** Parsed gate evaluations by session file. */
+  private reviewItems = new Map<string, { version: string; items: TranscriptItem[] }>();
   private source: TranscriptSource;
   private snapshot: AgentView | null;
   private scrollFromBottom = 0;
@@ -369,16 +371,26 @@ export class TranscriptView implements Component, Focusable {
 
   /** Re-read state and session; true when anything visible changed. */
   refresh(): boolean {
-    const before = JSON.stringify([this.snapshot, this.source.streaming, this.source.sessionFile, this.version]);
+    const before = this.stateKey();
     this.source = this.deps.source();
     this.snapshot = this.deps.view();
     this.reload();
     if (this.source.streaming) this.lastStream = { text: this.source.streaming, version: this.version };
     else if (this.lastStream && this.lastStream.version !== this.version) this.lastStream = null;
-    return JSON.stringify([this.snapshot, this.source.streaming, this.source.sessionFile, this.version]) !== before;
+    return this.stateKey() !== before;
+  }
+
+  private stateKey(): string {
+    return JSON.stringify([this.snapshot, this.source.streaming, this.source.sessionFile, this.version, this.source.reviews, [...this.reviewItems.values()].map((r) => r.version)]);
   }
 
   private reload(): void {
+    for (const review of this.source.reviews) {
+      const version = this.deps.reader.version(review.sessionFile);
+      if (version !== null && version !== this.reviewItems.get(review.sessionFile)?.version) {
+        this.reviewItems.set(review.sessionFile, { version, items: parseTranscript(this.deps.reader.read(review.sessionFile)) });
+      }
+    }
     const file = this.source.sessionFile;
     if (!file) {
       this.items = [];
@@ -443,12 +455,22 @@ export class TranscriptView implements Component, Focusable {
 
   private bodyLines(width: number): string[] {
     const s = this.deps.style;
-    if (this.source.ephemeral) return [s.muted("A gate reviewer's conversation is disposable and not kept; its decisions are in the agent's events.")];
-    if (!this.source.sessionFile) return [s.muted("No conversation yet: the agent has not started.")];
-    const lines = renderTranscript(this.items, width, s, this.source.messages);
     const view = this.snapshot;
+    const reviews: ReviewBlock[] = this.source.reviews.map((r) => ({
+      label: `gate ${r.reviewId} · ${r.candidateId} · ${r.model}`,
+      at: r.at,
+      items: this.reviewItems.get(r.sessionFile)?.items ?? [],
+      active: r.active,
+      streaming: r.streaming,
+    }));
+    if (!this.source.sessionFile && reviews.length === 0) {
+      return [s.muted(view?.managedGateFor ? "No reviews yet." : "No conversation yet: the agent has not started.")];
+    }
+    const lines = renderConversation(this.items, reviews, width, s, this.source.messages);
     const streaming = this.source.streaming ?? this.lastStream?.text ?? null;
-    if (streaming) {
+    if (!this.source.sessionFile) {
+      // A reviewer: its live state is shown inside the review being executed.
+    } else if (streaming) {
       lines.push("", ...sanitizeDisplay(streaming).split("\n").flatMap((l) => (l === "" ? [""] : wrapTextWithAnsi(l, width))));
       lines[lines.length - 1] = `${lines[lines.length - 1]}${s.accent("▍")}`;
     } else if (view && (view.observed === "running" || view.observed === "starting")) {

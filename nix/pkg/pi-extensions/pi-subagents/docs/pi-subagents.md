@@ -153,6 +153,7 @@ counts.
   worktree writer's changes are inspected with `git -C <workdir> diff`.
 - **Transcripts show what the session file holds.** Text being generated
   streams into the view; thinking and tool calls appear when their message
-  completes. A gate reviewer's conversation is not kept, so it has no
-  transcript. The `/agents` screen was exercised in a real terminal (tmux)
-  in pi's fullscreen and regular modes at 160×45, 120×32, and 100×30.
+  completes. Gate reviews appear inside the gated agent's transcript (each
+  review is a fresh session file, never resumed). The `/agents` screen was
+  exercised in a real terminal (tmux) in pi's fullscreen and regular modes
+  at 160×45, 150×50, 120×32, and 100×30.
