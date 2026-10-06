@@ -1,5 +1,6 @@
 /**
- * usage — period tabs with a flat per-provider/per-model table, scrollable.
+ * usage — period tabs with a flat per-provider/per-model table, scrollable,
+ * plus a global input-size distribution view (ascii chart/table, switchable).
  *
  * A replacement for the pinned tmustier usage-extension table tab: the same
  * period tabs (Today / This Week / Last 30 Days / All Time), each a flat
@@ -7,6 +8,12 @@
  * expandable tree. Insights, graphs, and export are out of scope. Data
  * collection and caching are vendored in ./usage-data.ts and run unchanged,
  * so the on-disk cache stays compatible; see that file's header for the pin.
+ * The distribution view histograms per-assistant-message ctx tokens
+ * (input + cacheRead + cacheWrite) globally across providers/models per
+ * period; see ./usage-state.ts. [v] switches table/distribution, [c] switches
+ * the distribution between chart and table. The chart stacks each bucket's
+ * input/cacheRead/cacheWrite token shares: accent input, warning cacheWrite
+ * (newly written cache, billed at a premium), success cacheRead (cheap reread).
  *
  * Wire-up: listed in nix/hm/pi.nix `programs.pi.settings.extensions`.
  */
@@ -16,7 +23,7 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 
 import { DEFAULT_VIEWPORT_BUDGET, WHEEL_LINES, VIEWPORT_BUDGET_STEP, clampScrollTop, clampViewportBudget, visibleRange } from "./scroll-state.ts";
 import { collectUsageData, TAB_ORDER, type CollectProgress, type TabName, type UsageData } from "./usage-data.ts";
-import { buildUsageRows, measureUsageTable, renderUsageTable, usageTotalsRow, USAGE_TAB_DEFAULT_MODE, USAGE_TAB_LABELS, type UsageTableLayout, type UsageTableMode } from "./usage-state.ts";
+import { buildInputDistribution, buildUsageRows, INPUT_DIST_COMPONENTS, measureUsageTable, renderInputDistChart, renderInputDistTable, renderUsageTable, usageTotalsRow, USAGE_TAB_DEFAULT_MODE, USAGE_TAB_LABELS, type InputDistComponentKey, type InputDistPalette, type InputDistStyle, type UsageTableLayout, type UsageTableMode, type UsageView } from "./usage-state.ts";
 
 /** View chrome around the scrollable content: rule, tabs, blank, footer, rule. */
 const USAGE_CHROME_LINES = 5;
@@ -48,6 +55,9 @@ function fitLine(line: string, width: number): string {
 class UsageTableView implements Component {
 	private tab: TabName = "allTime";
 	private modes: Record<TabName, UsageTableMode> = { ...USAGE_TAB_DEFAULT_MODE };
+	/** Table vs distribution; distribution style. Both global, sticky across tabs. */
+	private view: UsageView = "table";
+	private distStyle: InputDistStyle = "chart";
 	private scrollTop = 0;
 	private budget = DEFAULT_VIEWPORT_BUDGET;
 	private budgetTouched = false;
@@ -78,16 +88,7 @@ class UsageTableView implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const stats = this.data[this.tab];
-		const rows = buildUsageRows(stats, this.modes[this.tab]!);
-		const table = renderUsageTable(rows, usageTotalsRow(stats.totals), { layout: this.layout });
-		const aggregate = new Set(rows.flatMap((row, index) => (row.model === null ? [index] : [])));
-		const content: string[] = [...table.header];
-		table.rows.forEach((line, index) => {
-			const fitted = fitLine(line, width);
-			content.push(aggregate.has(index) ? this.theme.fg("accent", fitted) : fitted);
-		});
-		if (table.totals.length > 0) content.push("", ...table.totals.map((line) => this.theme.fg("accent", fitLine(line, width))));
+		const content: string[] = this.view === "table" ? this.tableContent(width) : this.distContent(width);
 		this.lineCount = content.length;
 		const budget = this.effectiveBudget();
 		this.scrollTop = clampScrollTop(this.scrollTop, this.lineCount, budget);
@@ -102,7 +103,65 @@ class UsageTableView implements Component {
 			const moreBelow = end < this.lineCount ? " ↓" : "";
 			lines.push(this.theme.fg("dim", `${moreAbove}lines ${start + 1}–${end} of ${this.lineCount}${moreBelow}`));
 		}
-		return [...lines, "", this.theme.fg("dim", `[tab/←→] period  [m] ${this.modes[this.tab] === "models" ? "per-model" : "aggregates"}  [↑↓/j/k] scroll  [pgup/pgdn] page  [+-] size  [q] close`), rule];
+		return [...lines, "", this.theme.fg("dim", this.footerHint()), rule];
+	}
+
+	private footerHint(): string {
+		const period = "[tab/←→] period";
+		const scroll = "[↑↓/j/k] scroll  [pgup/pgdn] page  [+-] size  [q] close";
+		if (this.view === "dist") return `${period}  [v] table  [c] ${this.distStyle === "chart" ? "chart" : "table"}  ${scroll}`;
+		return `${period}  [m] ${this.modes[this.tab] === "models" ? "per-model" : "aggregates"}  [v] distribution  ${scroll}`;
+	}
+
+	private tableContent(width: number): string[] {
+		const stats = this.data[this.tab];
+		const rows = buildUsageRows(stats, this.modes[this.tab]!);
+		const table = renderUsageTable(rows, usageTotalsRow(stats.totals), { layout: this.layout });
+		const aggregate = new Set(rows.flatMap((row, index) => (row.model === null ? [index] : [])));
+		const content: string[] = [...table.header];
+		table.rows.forEach((line, index) => {
+			const fitted = fitLine(line, width);
+			content.push(aggregate.has(index) ? this.theme.fg("accent", fitted) : fitted);
+		});
+		if (table.totals.length > 0) content.push("", ...table.totals.map((line) => this.theme.fg("accent", fitLine(line, width))));
+		return content;
+	}
+
+	private distContent(width: number): string[] {
+		const bins = buildInputDistribution(this.data[this.tab].inputSizes);
+		const subtitle = this.theme.fg("dim", "Input size per assistant message (ctx tokens, all models)");
+		if (this.distStyle === "table") {
+			const rendered = renderInputDistTable(bins);
+			const content: string[] = [subtitle, "", ...rendered.header, ...rendered.rows];
+			if (rendered.totals.length > 0) content.push("", ...rendered.totals.map((line) => this.theme.fg("accent", line)));
+			return content;
+	}
+		const rendered = renderInputDistChart(bins, width, this.distPalette());
+		if (rendered.totals.length === 0) return [subtitle, "", ...rendered.header];
+		const content: string[] = [subtitle, "", this.distLegend(), ...rendered.rows];
+		content.push("", ...rendered.totals.map((line) => this.theme.fg("accent", line)));
+		return content;
+	}
+
+	/** Stacked-segment colors; empty segments stay empty (no stray escapes). */
+	private distPalette(): InputDistPalette {
+		const paint = (color: "accent" | "success" | "warning", bar: string): string =>
+			bar === "" ? "" : this.theme.fg(color, bar);
+		return {
+			input: (bar) => paint("accent", bar),
+			cacheRead: (bar) => paint("success", bar),
+			cacheWrite: (bar) => paint("warning", bar),
+		};
+	}
+
+	private distLegend(): string {
+		const palette = this.distPalette();
+		const swatch: Record<InputDistComponentKey, string> = {
+			input: palette.input("█"),
+			cacheRead: palette.cacheRead("█"),
+			cacheWrite: palette.cacheWrite("█"),
+		};
+		return INPUT_DIST_COMPONENTS.map((component) => `${swatch[component.key]} ${this.theme.fg("dim", component.label)}`).join("  ");
 	}
 
 	handleInput(data: string): void {
@@ -118,8 +177,20 @@ class UsageTableView implements Component {
 			this.switchTab(-1);
 			return;
 		}
-		if (matchesKey(data, "m")) {
+		if (matchesKey(data, "m") && this.view === "table") {
 			this.modes[this.tab] = this.modes[this.tab] === "models" ? "aggregates" : "models";
+			this.scrollTop = 0;
+			this.requestRender();
+			return;
+		}
+		if (matchesKey(data, "v")) {
+			this.view = this.view === "table" ? "dist" : "table";
+			this.scrollTop = 0;
+			this.requestRender();
+			return;
+		}
+		if (matchesKey(data, "c") && this.view === "dist") {
+			this.distStyle = this.distStyle === "chart" ? "table" : "chart";
 			this.scrollTop = 0;
 			this.requestRender();
 			return;
@@ -182,7 +253,7 @@ class UsageTableView implements Component {
 
 export default function (pi: ExtensionAPI): void {
 	pi.registerCommand("usage", {
-		description: "Usage by provider and model per period (scrollable table)",
+		description: "Usage by provider and model per period, plus input-size distribution (scrollable)",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/usage needs the interactive UI", "warning");

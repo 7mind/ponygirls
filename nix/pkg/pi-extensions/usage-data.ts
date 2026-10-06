@@ -123,6 +123,23 @@ export interface TimeFilteredStats {
 	providers: Map<string, ProviderStats>;
 	totals: TotalStats;
 	insights: PeriodInsights;
+	/**
+	 * LOCAL EXTENSION (ponygirls): per-assistant-message input components in
+	 * tokens, aggregated globally across providers/models per period. Powers
+	 * the /usage input-size distribution view (see usage-state.ts): messages
+	 * bucket by the component sum (input + cacheRead + cacheWrite) and each
+	 * bucket stacks the three components. In-memory only — not part of the
+	 * on-disk cache format, so CACHE_VERSION is unchanged. Re-apply on
+	 * upstream refresh.
+	 */
+	inputSizes: InputSize[];
+}
+
+/** One assistant message's input components, in tokens. */
+export interface InputSize {
+	input: number;
+	cacheRead: number;
+	cacheWrite: number;
 }
 
 /**
@@ -1016,6 +1033,7 @@ function emptyTimeFilteredStats(): TimeFilteredStats {
 		providers: new Map(),
 		totals: { sessions: 0, messages: 0, cost: 0, tokens: emptyTokens() },
 		insights: { insights: [] },
+		inputSizes: [], // LOCAL EXTENSION (ponygirls): see TimeFilteredStats.
 	};
 }
 
@@ -1221,6 +1239,8 @@ function addMessagesToUsageData(
 			raw.assistantCost += msg.cost;
 
 			const ctx = msg.input + msg.cacheRead + msg.cacheWrite;
+			// LOCAL EXTENSION (ponygirls): see TimeFilteredStats.
+			stats.inputSizes.push({ input: msg.input, cacheRead: msg.cacheRead, cacheWrite: msg.cacheWrite });
 			if (ctx >= CTX_TAX_THRESHOLD) {
 				raw.ctxHigh.cost += msg.cost;
 				raw.ctxHigh.messages++;

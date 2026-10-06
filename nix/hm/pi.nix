@@ -73,9 +73,12 @@ let
     name = "pi-coding-agent-wrapped";
     paths = [ piBase ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
+    # pi-subagents forks SDK workers outside the extension loader; they
+    # import pi's built package tree from this exact derivation.
     postBuild = ''
       wrapProgram $out/bin/pi \
-        --prefix PATH : ${ddgsPython}/bin
+        --prefix PATH : ${ddgsPython}/bin \
+        --set-default PI_SUBAGENTS_SDK_ROOT ${piBase}/lib/node_modules/pi-monorepo
     '';
   };
 
@@ -496,8 +499,10 @@ in
             # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
             "${../pkg/pi-extensions}/model-stats.ts"
             # /usage table: period tabs with flat per-provider/per-model rows,
-            # scrollable. Data collection is vendored in usage-data.ts (same
-            # cache file); insights, graphs, and export are out of scope.
+            # scrollable, plus a global input-size distribution view (ascii
+            # chart/table, [v]/[c]). Data collection is vendored in usage-data.ts
+            # (same cache file, plus a marked local inputSizes extension);
+            # insights, graphs, and export are out of scope.
             "${../pkg/pi-extensions}/usage.ts"
             # Codex-style session goals with fully visible transcript
             # instructions (same-session continuation, three model tools,

@@ -136,6 +136,14 @@
             node --test model-stats-state.test.ts
             touch $out
           '';
+          usage-state = pkgs.runCommand "usage-state-test" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          } ''
+            cp -r ${./nix/pkg/pi-extensions} pi-extensions
+            cd pi-extensions
+            node --test usage-state.test.ts
+            touch $out
+          '';
           codex-goals = pkgs.runCommand "codex-goals-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
             PI_GOALS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
