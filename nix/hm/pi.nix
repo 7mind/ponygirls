@@ -75,10 +75,12 @@ let
     nativeBuildInputs = [ pkgs.makeWrapper ];
     # ponygirls-subagents forks SDK workers outside the extension loader; they
     # import pi's built package tree from this exact derivation.
+    # ponygirls-bg-tasks gets its supervisor interpreter and task shell here.
     postBuild = ''
       wrapProgram $out/bin/pi \
         --prefix PATH : ${ddgsPython}/bin \
-        --set-default PI_SUBAGENTS_SDK_ROOT ${piBase}/lib/node_modules/pi-monorepo
+        --set-default PI_SUBAGENTS_SDK_ROOT ${piBase}/lib/node_modules/pi-monorepo \
+        ${pkgs.callPackage ../pkg/pi-extensions/ponygirls-bg-tasks/wrapper-args.nix { }}
     '';
   };
 
@@ -521,6 +523,12 @@ in
             # file ~/.pi/agent/subagents-policy.json: repos for `sandbox`
             # children, nesting, model, and gate limits).
             "${../pkg/pi-extensions/ponygirls-subagents}"
+            # Background shell tasks: the `bg_task` tool, the /bg terminal
+            # output inspector, and completion notices that wake an idle
+            # session. Runtime executables come from piWrapped above; state
+            # lives beside each session file. See
+            # nix/pkg/pi-extensions/ponygirls-bg-tasks.
+            "${../pkg/pi-extensions/ponygirls-bg-tasks}"
             # Provider quotas: the `tokemon` tool for agents (optionally with
             # each provider's available models) and a /tokemon table — tokemon
             # without Claude, Codex, or yolo profiles.

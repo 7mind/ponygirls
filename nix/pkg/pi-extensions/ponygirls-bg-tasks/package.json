@@ -1,0 +1,12 @@
+{
+  "name": "ponygirls-bg-tasks",
+  "version": "0.1.0",
+  "description": "Background shell tasks for Pi: the bg_task tool, the /bg terminal-output inspector, and completion notices",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.ts tests/*.test.mjs && python3 -m unittest discover -s tests -p '*_test.py'"
+  }
+}
