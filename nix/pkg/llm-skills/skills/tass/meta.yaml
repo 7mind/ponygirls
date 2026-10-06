@@ -1,6 +1,7 @@
 name: tass
 description: >-
-  Target/Actual State Separation (TASS) pattern for reliable state management
-  in event-driven control systems. TRIGGER when: implementing device or entity
-  state management, designing control systems, working with target vs actual
-  state separation, or building event-driven systems with commanded/observed state.
+  Design, implement, or review event-driven controllers that must keep desired
+  target state, issued commands, and observed actual state distinct. Use for
+  device or entity control, reconciliation loops, retries, freshness,
+  out-of-order observations, and target/actual state machines. Do not use for
+  ordinary CRUD or UI state with no independently observed external process.
