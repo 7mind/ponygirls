@@ -65,6 +65,49 @@ test("the tool lists configured providers and, on request, their models; /tokemo
   }
 });
 
+test("/tokemon opens in place as a bottom panel, not a popup overlay", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "tokemon-ext-"));
+  const saved = new Map(ENV_PROVIDER_KEYS.map(([name]) => [name, process.env[name]]));
+  for (const [name] of ENV_PROVIDER_KEYS) delete process.env[name];
+  try {
+    writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ xiaomi: { type: "api_key", key: "x" } }));
+    process.env["PI_CODING_AGENT_DIR"] = agentDir;
+    const tools = new Map<string, Execute>();
+    const commands = new Map<string, Handler>();
+    let customOptions: unknown = "not called";
+    const noopTheme = { bold: (s: string) => s, fg: (_c: string, s: string) => s };
+    const fakeTui = { terminal: { rows: 30 }, requestRender: () => {} };
+    const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
+    const pi = {
+      registerTool: (t: { name: string; execute: Execute }) => tools.set(t.name, t.execute),
+      registerCommand: (name: string, c: { handler: Handler }) => commands.set(name, c.handler),
+      on: (_event: string, _handler: unknown) => {},
+    };
+    mod.default(pi);
+    const tuiCtx = {
+      mode: "tui",
+      hasUI: true,
+      ui: {
+        notify: () => {},
+        custom: async (factory: (...args: Array<any>) => { render: (width: number) => string[]; handleInput?: (data: string) => void }, options?: unknown) => {
+          customOptions = options;
+          const component = factory(fakeTui, noopTheme, {}, () => {});
+          await new Promise((r) => setTimeout(r, 0));
+          component.handleInput?.("i");
+          assert.ok(component.render(80).some((l) => l.includes("xiaomi")));
+        },
+      },
+      modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "x" } }), getAvailable: () => [] },
+    };
+    await commands.get("tokemon")!("", tuiCtx);
+    assert.equal(customOptions, undefined, "in place like /usage and /perf: no overlay option");
+  } finally {
+    for (const [name, value] of saved) if (value !== undefined) process.env[name] = value;
+    delete process.env["PI_CODING_AGENT_DIR"];
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
 test("toolReport omits quota windows only when asked; plan and login stay", () => {
   const result: QueryResult = {
     target: { provider: "zai", origin: "auth.json", label: "~/.pi/agent/auth.json", credential: null, note: null },

@@ -78,10 +78,11 @@ minute; `fetchedAt` says when they were fetched.
 
 ## Command
 
-`/tokemon` opens a content-sized pane with tokemon's table: one row group per
+`/tokemon` opens a bottom panel replacing the editor (like `/usage` and
+`/perf`) with tokemon's table: one row group per
 account, its windows stacked inside the cells, sorted by provider and login.
-The pane takes only the rows its table needs, so the transcript stays visible
-below short tables. It refreshes every five minutes and shows a countdown.
+The panel takes only the rows its table needs, so the transcript stays visible
+above it. It refreshes every five minutes and shows a countdown.
 
 | Key | Action |
 |---|---|
