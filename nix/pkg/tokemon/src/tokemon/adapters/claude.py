@@ -18,7 +18,8 @@ are reported with a note.  Schemas pinned against live responses (2026-09-29):
 The per-window top-level keys include opaque codenames that change over time,
 so windows are read from the ``limits`` list, which names them explicitly.
 ``spend`` is extra usage beyond the plan, billed in the account's currency: a
-row while enabled, a note while switched on but blocked (``disabled_reason``).
+row while enabled, a note while blocked for a reason other than empty credits
+(``disabled_reason``). Out of credits means nothing to spend, so nothing shows.
 """
 
 from __future__ import annotations
@@ -108,13 +109,21 @@ def _money(node: Any) -> tuple[float, str] | None:
     return amount_minor / 10**exponent, currency
 
 
+# ``disabled_reason`` values that mean the account simply has no extra-usage
+# credits: nothing to spend, nothing to show, so no note. Any other reason
+# means extra usage exists but is blocked, which stays visible as one note.
+_NO_EXTRA_CREDIT_REASONS = frozenset({"out_of_credits"})
+
+
 def _extra_usage(spend: Any) -> tuple[QuotaWindow | None, str | None]:
     """Return (window, note) for the extra-usage spend object."""
     if not isinstance(spend, Mapping):
         return None, None
     if spend.get("enabled") is not True:
         reason = spend.get("disabled_reason")
-        return None, f"extra usage off: {reason}" if isinstance(reason, str) and reason else None
+        if isinstance(reason, str) and reason and reason not in _NO_EXTRA_CREDIT_REASONS:
+            return None, f"extra usage off: {reason}"
+        return None, None
     used = _money(spend.get("used"))
     if used is None:
         return None, None
