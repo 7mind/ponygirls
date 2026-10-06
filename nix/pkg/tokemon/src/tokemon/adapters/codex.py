@@ -127,7 +127,7 @@ class CodexQuota:
         if isinstance(reset_credits, dict):
             available = optional_int(reset_credits.get("available_count"))
             if available is not None:
-                notes.append(f"reset credits: {available}")
+                notes.append(f"resets: {available}")
 
         if not windows:
             raise QuotaFetchError(f"codex usage: no recognizable quota data (top-level keys: {top_level_keys(body)})")

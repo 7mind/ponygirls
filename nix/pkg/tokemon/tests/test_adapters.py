@@ -180,7 +180,7 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual(credits.name, "credits")
         self.assertEqual(credits.limit, 0.0)
         self.assertEqual(credits.unit, "credits")  # OpenAI credits, not a currency
-        self.assertEqual(snapshot.note, "reset credits: 0")
+        self.assertEqual(snapshot.note, "resets: 0")
 
     # regression: live payload has secondary_window: null — crashed with AttributeError
     def test_null_windows_are_skipped(self):
