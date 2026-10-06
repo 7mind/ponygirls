@@ -209,16 +209,23 @@ function nativeSession(): NativeSession {
 	} as unknown as NativeSession;
 }
 
+/** Extension statuses rendered inline at the end of the first line's left part (after path + stats). */
+const LEFT_INLINE_STATUS_KEYS = ["bg", "goal"] as const;
+/** Extension statuses rendered on the right, before the model controls. */
+const RIGHT_INLINE_STATUS_KEYS = ["tokemon"] as const;
+/** All statuses the merged row owns (filtered out of the native status rows). */
+const MERGED_STATUS_KEYS = [...LEFT_INLINE_STATUS_KEYS, ...RIGHT_INLINE_STATUS_KEYS];
+
 /** FooterDataProvider stand-in: the "(provider)" prefix is suppressed because the swapped-in controls show the provider. */
 function nativeFooterData(footerData: FooterData): NativeFooterData {
 	return {
 		getGitBranch: () => footerData.getGitBranch(),
-		// "tokemon" renders on the right via mergeRow, not in the native rows.
+		// Merged keys render in the first row via mergeRow, not in the native rows.
 		getExtensionStatuses: () => {
 			const all = footerData.getExtensionStatuses();
-			if (!all.has("tokemon")) return all;
+			if (!MERGED_STATUS_KEYS.some((key) => all.has(key))) return all;
 			const rest = new Map(all);
-			rest.delete("tokemon");
+			for (const key of MERGED_STATUS_KEYS) rest.delete(key);
 			return rest;
 		},
 		getAvailableProviderCount: () => 1,
@@ -343,18 +350,35 @@ class ExtendedFooter implements Component {
 		];
 		const controlsWidth = controls.reduce((total, segment) => total + visibleWidth(segment.plain), 0);
 
-		// One status line: [path (branch) • session] [native stats] [tokemon] [controls]. The
+		// One status line: [path (branch) • session] [native stats] [bg] [goal] [tokemon] [controls]. The
 		// native stats row keeps its formatting and loses only its right side, which
-		// the clickable controls replace. The tokemon quota line sits immediately
-		// before the controls; when it fits nowhere, the row without it is tried.
-		// The path yields in tiers (full, half,
-		// dropped) before the swap gives up and the native rows pass through.
+		// the clickable controls replace. Active background tasks and the session
+		// goal render as badges directly behind the stats text, on the left
+		// (blue for tasks, magenta for the goal; the native row's right-align
+		// padding is re-laid after them);
+		// the tokemon quota line sits immediately before the controls; when it
+		// fits nowhere, the row without it is tried. The path yields in tiers
+		// (full, half, dropped) before the swap gives up and the native rows
+		// pass through.
 		const natural = visibleWidth(this.theme.fg("dim", path));
-		const quotaText = this.footerData.getExtensionStatuses().get("tokemon");
+		const statuses = this.footerData.getExtensionStatuses();
+		const quotaText = statuses.get("tokemon");
 		const quota: Segment | undefined = quotaText ? { plain: quotaText, styled: this.theme.fg("dim", quotaText) } : undefined;
+		const inlineItems: Segment[] = LEFT_INLINE_STATUS_KEYS.flatMap((key) => {
+			const text = statuses.get(key);
+			if (text === undefined) return [];
+			// Blue for background tasks, magenta for the goal (selectedBg and
+			// customMessageBg are the theme's blue and magenta in both themes).
+			const padded = ` ${text} `;
+			return [{ plain: padded, styled: this.theme.bg(key === "bg" ? "selectedBg" : "customMessageBg", padded) }];
+		});
+		const inline: Segment | undefined = inlineItems.length === 0 ? undefined : {
+			plain: inlineItems.map((item) => item.plain).join(" "),
+			styled: inlineItems.map((item) => item.styled).join(" "),
+		};
 		for (const budget of [natural, Math.floor(natural / 2), 0]) {
 			for (const q of quota === undefined ? [undefined] : [quota, undefined]) {
-				const merged = this.mergeRow(width, budget, path, controls, controlsWidth, nativeRightSide(ctx.model, ctx.thinkingLevel), q);
+				const merged = this.mergeRow(width, budget, path, controls, controlsWidth, nativeRightSide(ctx.model, ctx.thinkingLevel), inline, q);
 				if (merged) return merged;
 			}
 		}
@@ -368,22 +392,34 @@ class ExtendedFooter implements Component {
 		controls: readonly Segment[],
 		controlsWidth: number,
 		nativeRight: string,
+		inline?: Segment,
 		quota?: Segment,
 	): string[] | undefined {
 		const left = budget <= 0 ? "" : truncateToWidth(this.theme.fg("dim", path), budget, this.theme.fg("dim", "..."));
 		const leftWidth = visibleWidth(left);
 		const gap = leftWidth > 0 ? 2 : 0;
+		const inlineWidth = inline ? visibleWidth(inline.plain) : 0;
+		const inlineGap = inlineWidth > 0 ? 1 : 0;
 		const quotaWidth = quota ? visibleWidth(quota.plain) : 0;
 		const quotaGap = quotaWidth > 0 ? 1 : 0;
 		const rowBudget = width - leftWidth - gap;
 		const nativeWidth = rowBudget + visibleWidth(nativeRight) - controlsWidth;
-		if (rowBudget <= controlsWidth + quotaWidth + quotaGap || nativeWidth <= 0) return undefined;
+		if (rowBudget <= controlsWidth + inlineWidth + inlineGap + quotaWidth + quotaGap || nativeWidth <= 0) return undefined;
 		const rows = this.native.render(nativeWidth);
 		const stats = rows[1] ?? "";
 		if (!stripTerminalSequences(stats).endsWith(nativeRight)) return undefined;
-		const cut = truncateToWidth(stats, visibleWidth(stats) - visibleWidth(nativeRight) - quotaWidth - quotaGap, "");
+		const cut = truncateToWidth(stats, visibleWidth(stats) - visibleWidth(nativeRight) - inlineWidth - inlineGap - quotaWidth - quotaGap, "");
+		// The native row pads the stats to full width to right-align the model
+		// controls; that padding would shunt the indicator to the right. Strip
+		// it (ANSI-aware: the padding may sit inside a dim span) so the badges
+		// sit directly behind the stats text, on the left, and re-pad after them.
+		const cutPlain = stripTerminalSequences(cut);
+		const padCount = cutPlain.length - cutPlain.trimEnd().length;
+		const statsPart = padCount > 0 ? truncateToWidth(cut, visibleWidth(cut) - padCount, "") : cut;
+		const padWidth = width - (leftWidth + gap + visibleWidth(statsPart) + inlineWidth + inlineGap + quotaWidth + quotaGap + controlsWidth);
+		if (padWidth < 0) return undefined;
 		const startColumn = leftWidth + gap + rowBudget - controlsWidth;
-		const row = left + " ".repeat(gap) + cut + (quota ? quota.styled + " ".repeat(quotaGap) : "") + segmentLine(this.hits, 0, startColumn, controls);
+		const row = left + " ".repeat(gap) + statsPart + (inline ? inline.styled + " ".repeat(inlineGap) : "") + " ".repeat(padWidth) + (quota ? quota.styled + " ".repeat(quotaGap) : "") + segmentLine(this.hits, 0, startColumn, controls);
 		return [row, ...rows.slice(2)]; // native status rows pass through
 	}
 
