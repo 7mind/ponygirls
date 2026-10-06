@@ -267,18 +267,32 @@ let
       config.programs.mcp.servers;
   };
 
-  # Declarative subagents model policy (see the `subagentsAllowAllModels` /
-  # `subagentsAllowedModels` options): only the model allowlist is managed
-  # here — repos, nesting, and gate limits stay hand-maintained (the
-  # extension overlays the file onto its deny-by-default policy). `null`
-  # disables the allowlist check for spawn overrides and gate reviewers.
-  piSubagentsPolicyJson = jsonFormat.generate "pi-subagents-policy.json" {
-    allowedModels =
-      if cfg.pi.subagentsAllowAllModels then
-        null
-      else
-        map (m: { provider = m.provider; id = m.id; }) cfg.pi.subagentsAllowedModels;
-  };
+  # Declarative subagents model policy (see the `subagents*` options): the
+  # managed file is always complete — every field the extension reads — so
+  # enabling any subagents option can never half-clobber a hand-maintained
+  # partial file. `null` models disables the allowlist check for spawn
+  # overrides and gate reviewers.
+  piSubagentsPolicyJson = jsonFormat.generate "pi-subagents-policy.json" (import ../lib/subagents-policy.nix {
+    allowAllModels = cfg.pi.subagentsAllowAllModels;
+    allowedModels = cfg.pi.subagentsAllowedModels;
+    maxDepth = cfg.pi.subagentsMaxDepth;
+    nesting = cfg.pi.subagentsNesting;
+    repos = cfg.pi.subagentsRepos;
+    gateBypassAllowed = cfg.pi.subagentsGateBypassAllowed;
+    gateMaxRoundsCeiling = cfg.pi.subagentsGateMaxRoundsCeiling;
+  });
+
+  # The managed subagents-policy.json is complete, so emit it as soon as any
+  # subagents option diverges from the extension defaults; otherwise leave a
+  # hand-maintained file (or none) alone.
+  subagentsPolicyManaged =
+    cfg.pi.subagentsAllowAllModels
+    || cfg.pi.subagentsAllowedModels != [ ]
+    || cfg.pi.subagentsMaxDepth != 1
+    || cfg.pi.subagentsNesting
+    || cfg.pi.subagentsRepos != [ ]
+    || cfg.pi.subagentsGateBypassAllowed
+    || cfg.pi.subagentsGateMaxRoundsCeiling != 3;
 
   # Repo-agnostic operating manual appended INSIDE Pi's system prompt (via
   # ~/.pi/agent/APPEND_SYSTEM.md, auto-discovered by the resource loader). Pi's
@@ -430,6 +444,82 @@ in
         {option}`smind.hm.dev.llm.pi.subagentsAllowAllModels`). Empty (the
         default) denies every explicit model override; children then inherit
         the governing session's model.
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsMaxDepth = lib.mkOption {
+      type = lib.types.enum [ 1 2 ];
+      default = 1;
+      description = ''
+        Maximum subagent tree depth (the root's children are depth 1),
+        written as `maxDepth` into `subagents-policy.json`. The extension
+        supports nothing deeper. {option}`smind.hm.dev.llm.pi.subagentsNesting`
+        needs 2 (asserted below; the extension would otherwise silently drop
+        nesting).
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsNesting = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Let subagents delegate to their own children, written as `nesting`
+        into `subagents-policy.json`. Requires
+        {option}`smind.hm.dev.llm.pi.subagentsMaxDepth` 2.
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsRepos = lib.mkOption {
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          repoId = lib.mkOption {
+            type = lib.types.str;
+            description = ''Repository id, referenced by `sandbox`-isolated children as `repo_id`.'';
+          };
+          checkoutPath = lib.mkOption {
+            type = lib.types.str;
+            description = ''Absolute host checkout path, as a plain string (never a store path).'';
+          };
+          readRoots = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = ''Readable roots. Empty (the default) means just `checkoutPath`, mirroring the extension.'';
+          };
+          allowWriters = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = ''Whether `sandbox`-isolated writers are permitted for this repository.'';
+          };
+        };
+      });
+      default = [ ];
+      example = [
+        { repoId = "myrepo"; checkoutPath = "/home/user/src/myrepo"; allowWriters = true; }
+      ];
+      description = ''
+        Repositories registered for `sandbox`-isolated children, written as
+        `repos` into `subagents-policy.json`. Host-isolated
+        (`worktree`/`none`) children need no registration. Empty (the
+        default) registers nothing.
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsGateBypassAllowed = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Let the governor accept a gated result without validation
+        (`manage_gate` bypass, recorded as `gate_bypassed`, never approval).
+        Written as `gateBypassAllowed` into `subagents-policy.json`.
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsGateMaxRoundsCeiling = lib.mkOption {
+      type = lib.types.nullOr lib.types.int;
+      default = 3;
+      description = ''
+        Ceiling for gate agreement rounds (`null` permits unlimited rounds),
+        written as `gateMaxRoundsCeiling` into `subagents-policy.json`.
       '';
     };
 
@@ -606,14 +696,23 @@ in
     (lib.mkIf piCfg.enableMcpIntegration {
       home.file."${piCfg.configDir}/mcp.json".source = piMcpJson;
     })
-    # Declarative subagents model policy (see piSubagentsPolicyJson). RO store
-    # symlink like mcp.json: manage models via the subagents* options, not by
-    # hand-editing the file. Emitted only when the allow-all flag or a
-    # non-empty allowlist is configured; otherwise a hand-maintained file (or
-    # none) is left alone.
-    (lib.mkIf (cfg.pi.subagentsAllowAllModels || cfg.pi.subagentsAllowedModels != [ ]) {
+    # Declarative subagents policy (see piSubagentsPolicyJson, always
+    # complete). RO store symlink like mcp.json: manage the policy via the
+    # subagents* options, not by hand-editing the file. Emitted only when an
+    # option diverges from the extension defaults (see subagentsPolicyManaged);
+    # otherwise a hand-maintained file (or none) is left alone.
+    (lib.mkIf subagentsPolicyManaged {
       home.file."${piCfg.configDir}/subagents-policy.json".source = piSubagentsPolicyJson;
     })
+    {
+      # The extension silently drops nesting below depth 2; fail fast instead.
+      assertions = [
+        {
+          assertion = !(cfg.pi.subagentsNesting && cfg.pi.subagentsMaxDepth < 2);
+          message = "smind.hm.dev.llm.pi.subagentsNesting needs smind.hm.dev.llm.pi.subagentsMaxDepth = 2.";
+        }
+      ];
+    }
     (lib.mkIf (piCfg.extensionsDir != null) {
       home.file."${piCfg.configDir}/extensions" = {
         source = piCfg.extensionsDir;

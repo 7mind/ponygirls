@@ -126,9 +126,14 @@ Children inherit the governing session's current model and thinking level;
 `model` on `spawn_agent` overrides it only with an `allowedModels` entry
 (`"allowedModels": null` allows every model instead of listing them).
 Gate reviewer models must also be allowlisted (or run under `null`).
-Both are declarative in home-manager: `smind.hm.dev.llm.pi.subagentsAllowAllModels`
-skips the allowlist, `smind.hm.dev.llm.pi.subagentsAllowedModels` writes it;
-setting either manages `subagents-policy.json` (the flag wins on conflict).
+The whole file is declarative in home-manager — setting any of these
+manages `subagents-policy.json` complete, so partial files are never
+half-clobbered:
+`smind.hm.dev.llm.pi.subagentsAllowAllModels` (allow every model, wins on
+conflict), `...AllowedModels`, `...MaxDepth` (1–2), `...Nesting` (needs
+depth 2), `...Repos` (`repoId`, `checkoutPath`, optional `readRoots`,
+`allowWriters`), `...GateBypassAllowed`, `...GateMaxRoundsCeiling`
+(`null` for unlimited).
 
 Provider credentials stay in `~/.pi/agent/auth.json` (declarative custom
 models in `models.json`). Workers open that store live through

@@ -90,6 +90,55 @@
           assert defaultModels.pi.provider == "xiaomi-token-plan-ams";
           assert defaultModels.pi.model == "mimo-v2.6-pro";
           pkgs.runCommandLocal "default-models-test" { } "touch $out";
+        # The declarative subagents-policy.json must stay complete: every
+        # field the extension's loadPolicy reads, with the hm-level empty
+        # readRoots rewritten to [checkoutPath] exactly like the extension.
+        subagentsPolicyShapeCheck =
+          let
+            mkPolicy = import ./nix/lib/subagents-policy.nix;
+            listed = mkPolicy {
+              allowAllModels = false;
+              allowedModels = [ { provider = "meta"; id = "muse-spark-1.3"; } ];
+              maxDepth = 2;
+              nesting = true;
+              repos = [
+                { repoId = "myrepo"; checkoutPath = "/home/user/src/myrepo"; readRoots = [ ]; allowWriters = true; }
+                { repoId = "other"; checkoutPath = "/o"; readRoots = [ "/o" "/o/lib" ]; allowWriters = false; }
+              ];
+              gateBypassAllowed = true;
+              gateMaxRoundsCeiling = null;
+            };
+            open = mkPolicy {
+              allowAllModels = true;
+              allowedModels = [ { provider = "zai"; id = "glm-5.3"; } ];
+              maxDepth = 1;
+              nesting = false;
+              repos = [ ];
+              gateBypassAllowed = false;
+              gateMaxRoundsCeiling = 3;
+            };
+          in
+          assert builtins.attrNames listed == [ "allowedModels" "gateBypassAllowed" "gateMaxRoundsCeiling" "maxDepth" "nesting" "repos" ];
+          assert listed == {
+            maxDepth = 2;
+            nesting = true;
+            repos = [
+              { repoId = "myrepo"; checkoutPath = "/home/user/src/myrepo"; readRoots = [ "/home/user/src/myrepo" ]; allowWriters = true; }
+              { repoId = "other"; checkoutPath = "/o"; readRoots = [ "/o" "/o/lib" ]; allowWriters = false; }
+            ];
+            allowedModels = [ { provider = "meta"; id = "muse-spark-1.3"; } ];
+            gateBypassAllowed = true;
+            gateMaxRoundsCeiling = null;
+          };
+          assert open == {
+            maxDepth = 1;
+            nesting = false;
+            repos = [ ];
+            allowedModels = null;
+            gateBypassAllowed = false;
+            gateMaxRoundsCeiling = 3;
+          };
+          pkgs.runCommandLocal "subagents-policy-shape-test" { } "touch $out";
       in
       {
         packages = {
@@ -118,6 +167,7 @@
         };
         checks = {
           default-models = defaultModelsCheck;
+          subagents-policy-shape = subagentsPolicyShapeCheck;
           tokemon = self.packages.${system}.tokemon;
           dev-llm-module-boundary = devLlmModuleBoundaryCheck;
           ponygirls-quirk-kimi-401-retry = pkgs.runCommand "ponygirls-quirk-kimi-401-retry-test" {
