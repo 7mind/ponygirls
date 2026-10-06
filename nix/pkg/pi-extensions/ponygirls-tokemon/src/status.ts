@@ -1,16 +1,15 @@
 /**
- * ponygirls-tokemon — one-line quota summary for a widget above the editor
- * (on the text input border): the current provider's limited windows with
- * short bars. Replacing the footer is not an option (the model picker owns
- * it), and footer statuses land in the left block, away from the model
- * indicator. Errors, rate limits, and providers without quota rows clear
- * the widget instead of parking stale or noisy text above the input.
+ * ponygirls-tokemon — one-line quota summary for our status bar: the
+ * current provider's limited windows with short bars. Published through
+ * setStatus under the "tokemon" key; the model-picker footer (which owns
+ * the bar) renders it on the right, before the model indicator, and hides
+ * it from the native rows. Errors, rate limits, and providers without
+ * quota rows clear the status instead of parking stale text there.
  */
 
 import { formatUsedLimit, sortResults } from "./format.ts";
 import type { QuotaWindow } from "./quota.ts";
 import type { QueryResult } from "./service.ts";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const BAR_WIDTH = 5;
 
@@ -47,7 +46,7 @@ function windowSegment(window: QuotaWindow, now: Date): string | null {
   return `{${shortName(window.name)}${resets === null ? "" : `/${resets}`} [${bar} ${Math.round(used * 100)}%]}`;
 }
 
-export function widgetLine(provider: string, results: QueryResult[], now: Date): string | null {
+export function quotaLine(provider: string, results: QueryResult[], now: Date): string | null {
   const row = sortResults(results).find((r) => r.target.provider === provider);
   if (!row || row.rateLimited || row.error !== null) return null;
   const windows = row.snapshot?.windows ?? [];
@@ -55,19 +54,4 @@ export function widgetLine(provider: string, results: QueryResult[], now: Date):
   const segments = windows.map((w) => windowSegment(w, now)).filter((s): s is string => s !== null);
   if (segments.length === 0) return `${provider} unlimited`;
   return `${provider} ${segments.join(" ")}`;
-}
-
-export interface BorderStyle {
-  border(s: string): string;
-}
-
-/**
- * The quota line framed as editor border chrome: dashes around the text,
- * padded to full width, so the widget reads as part of the input border
- * rather than a floating text row.
- */
-export function widgetBorderLine(line: string, width: number, style: BorderStyle): string {
-  const label = ` ${line} `;
-  if (2 + visibleWidth(label) > width) return truncateToWidth(label, width, "\u2026");
-  return `${style.border("\u2500\u2500")}${label}${style.border("\u2500".repeat(width - 2 - visibleWidth(label)))}`;
 }

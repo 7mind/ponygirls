@@ -109,7 +109,7 @@ test("/tokemon opens in place as a bottom panel, not a popup overlay", async () 
   }
 });
 
-test("turn_end refreshes the quota widget below the editor", async () => {
+test("turn_end publishes the quota line through setStatus", async () => {
   const agentDir = mkdtempSync(join(tmpdir(), "tokemon-ext-"));
   const saved = new Map(ENV_PROVIDER_KEYS.map(([name]) => [name, process.env[name]]));
   for (const [name] of ENV_PROVIDER_KEYS) delete process.env[name];
@@ -117,7 +117,7 @@ test("turn_end refreshes the quota widget below the editor", async () => {
     writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ xiaomi: { type: "api_key", key: "x" } }));
     process.env["PI_CODING_AGENT_DIR"] = agentDir;
     const handlers = new Map<string, (event: unknown, ctx: any) => unknown>();
-    const widgets: Array<unknown[]> = [];
+    const statuses: Array<unknown[]> = [];
     const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
     mod.default({
       registerTool: () => {},
@@ -129,12 +129,12 @@ test("turn_end refreshes the quota widget below the editor", async () => {
       mode: "tui",
       model: { provider: "xiaomi" },
       modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "x" } }), getAvailable: () => [] },
-      ui: { setWidget: (...args: unknown[]) => { widgets.push(args); } },
+      ui: { setStatus: (...args: unknown[]) => { statuses.push(args); } },
     };
     await handlers.get("turn_end")!({}, tuiCtx);
     await new Promise((r) => setTimeout(r, 20));
-    // xiaomi has no quota endpoint, so the widget clears instead of going stale.
-    assert.deepEqual(widgets, [["tokemon", undefined, { placement: "belowEditor" }]]);
+    // xiaomi has no quota endpoint, so the status clears instead of going stale.
+    assert.deepEqual(statuses, [["tokemon", undefined]]);
   } finally {
     for (const [name, value] of saved) if (value !== undefined) process.env[name] = value;
     delete process.env["PI_CODING_AGENT_DIR"];
