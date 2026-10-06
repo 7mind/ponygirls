@@ -203,6 +203,41 @@
             node --test tests/*.test.ts
             touch $out
           '';
+          ponygirls-bg-tasks =
+            let
+              pi = self.packages.${system}.pi-coding-agent;
+              # The same executables the Home Manager wrapper supplies (wrapper-args.nix).
+              piWrapped = pkgs.runCommand "pi-bg-tasks-wrapped" { nativeBuildInputs = [ pkgs.makeWrapper ]; } ''
+                makeWrapper ${pi}/bin/pi $out/bin/pi \
+                  ${pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-bg-tasks/wrapper-args.nix { }}
+              '';
+            in
+            pkgs.runCommand "ponygirls-bg-tasks-test" {
+              nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.python3 pkgs.bash pkgs.coreutils pkgs.procps ];
+              PI_BG_TASKS_SDK_ROOT = "${pi}/lib/node_modules/pi-monorepo";
+              PI_BG_TASKS_PYTHON = "${pkgs.python3}/bin/python3";
+              PI_BG_TASKS_SHELL = "${pkgs.bash}/bin/bash";
+              PI_BG_TASKS_PI = "${piWrapped}/bin/pi";
+              PI_BG_TASKS_EXTENSION = "${./nix/pkg/pi-extensions/ponygirls-bg-tasks}";
+              PI_OFFLINE = "1";
+              PI_TELEMETRY = "0";
+            } ''
+              export HOME=$TMPDIR
+              cp -r ${./nix/pkg/pi-extensions/ponygirls-bg-tasks} ponygirls-bg-tasks
+              chmod -R u+w ponygirls-bg-tasks
+              cd ponygirls-bg-tasks
+              mkdir -p node_modules/@earendil-works
+              ln -s "$PI_BG_TASKS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+              ln -s "$PI_BG_TASKS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
+              ln -s "$PI_BG_TASKS_SDK_ROOT/node_modules/@earendil-works/pi-ai" node_modules/@earendil-works/pi-ai
+              ln -s "$PI_BG_TASKS_SDK_ROOT/node_modules/@earendil-works/pi-agent-core" node_modules/@earendil-works/pi-agent-core
+              ln -s "$PI_BG_TASKS_SDK_ROOT/node_modules/typebox" node_modules/typebox
+              ln -s "$PI_BG_TASKS_SDK_ROOT/node_modules/@types" node_modules/@types
+              tsc -p tsconfig.json
+              python3 -m unittest discover -s tests -p '*_test.py'
+              node --test tests/*.test.ts tests/*.test.mjs
+              touch $out
+            '';
           yolo-profile = pkgs.runCommand "yolo-profile-test" {
             nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.python3 pkgs.sqlite ];
           } ''
