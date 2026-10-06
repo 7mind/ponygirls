@@ -28,7 +28,7 @@ import { FetchHttp } from "./src/http.ts";
 import { secretOf } from "./src/pi-auth.ts";
 import { toolReport, type ModelReport } from "./src/report.ts";
 import { QuotaService, type ProviderAuth } from "./src/service.ts";
-import { widgetLine } from "./src/status.ts";
+import { widgetBorderLine, widgetLine } from "./src/status.ts";
 import { buildTable, PLAIN_TABLE_STYLE, type TableStyle } from "./src/table.ts";
 import { TokemonView } from "./src/view.ts";
 
@@ -87,20 +87,33 @@ export default function (pi: ExtensionAPI): void {
     now: () => new Date(),
   });
 
-  /** Quota widget below the editor: the current provider's windows as short bars. */
+  /**
+   * Quota widget below the editor: the current provider's windows as short
+   * bars, framed as editor border chrome so the line reads as part of the
+   * input border rather than a floating text row.
+   */
   const refreshWidget = (ctx: ExtensionContext): void => {
     if (ctx.mode !== "tui") return;
+    const show = (line: string | null): void => {
+      ctx.ui.setWidget(
+        WIDGET_KEY,
+        line === null
+          ? undefined
+          : (_tui, theme) => ({
+              invalidate() {},
+              render: (width: number) => [widgetBorderLine(line, width, { border: (s) => theme.fg("border", s) })],
+            }),
+        WIDGET_OPTIONS,
+      );
+    };
     const provider = ctx.model?.provider;
     if (!provider) {
-      ctx.ui.setWidget(WIDGET_KEY, undefined, WIDGET_OPTIONS);
+      show(null);
       return;
     }
     service.report(authOf(ctx), TOOL_MAX_AGE_MS).then(
-      (report) => {
-        const line = widgetLine(provider, report.results, new Date());
-        ctx.ui.setWidget(WIDGET_KEY, line === null ? undefined : [line], WIDGET_OPTIONS);
-      },
-      () => ctx.ui.setWidget(WIDGET_KEY, undefined, WIDGET_OPTIONS),
+      (report) => show(widgetLine(provider, report.results, new Date())),
+      () => show(null),
     );
   };
   pi.on("turn_end", (_event, ctx) => refreshWidget(ctx));

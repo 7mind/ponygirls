@@ -10,6 +10,7 @@
 import { formatUsedLimit, sortResults } from "./format.ts";
 import type { QuotaWindow } from "./quota.ts";
 import type { QueryResult } from "./service.ts";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const BAR_WIDTH = 5;
 
@@ -54,4 +55,19 @@ export function widgetLine(provider: string, results: QueryResult[], now: Date):
   const segments = windows.map((w) => windowSegment(w, now)).filter((s): s is string => s !== null);
   if (segments.length === 0) return `${provider} unlimited`;
   return `${provider} ${segments.join(" ")}`;
+}
+
+export interface BorderStyle {
+  border(s: string): string;
+}
+
+/**
+ * The quota line framed as editor border chrome: dashes around the text,
+ * padded to full width, so the widget reads as part of the input border
+ * rather than a floating text row.
+ */
+export function widgetBorderLine(line: string, width: number, style: BorderStyle): string {
+  const label = ` ${line} `;
+  if (2 + visibleWidth(label) > width) return truncateToWidth(label, width, "\u2026");
+  return `${style.border("\u2500\u2500")}${label}${style.border("\u2500".repeat(width - 2 - visibleWidth(label)))}`;
 }

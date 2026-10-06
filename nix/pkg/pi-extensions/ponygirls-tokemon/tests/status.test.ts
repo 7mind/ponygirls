@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { quotaWindow } from "../src/quota.ts";
 import type { QueryResult } from "../src/service.ts";
-import { widgetLine } from "../src/status.ts";
+import { widgetBorderLine, widgetLine } from "../src/status.ts";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const hour = 3600_000;
@@ -38,6 +39,22 @@ test("windows without a reset or fraction still read compactly", () => {
     widgetLine("zai", [result("zai", [quotaWindow("credits", null, 2000, "credits", null)])], NOW),
     "zai {credits/2000}",
   );
+});
+
+test("the border line pads the quota text with dashes to full width", () => {
+  const plain = { border: (s: string) => s };
+  const D = "─";
+  assert.equal(widgetBorderLine("ab", 12, plain), `${D}${D} ab ${D.repeat(6)}`);
+  const full = widgetBorderLine("openai-codex {7d/5d:21:46 [██░░░ 2%]}", 46, plain);
+  assert.equal([...full].length, 46);
+  assert.ok(full.startsWith(`${D}${D} openai-codex`));
+});
+
+test("the border line truncates rather than overflow", () => {
+  // truncateToWidth wraps the ellipsis in resets, so measure cells, not chars.
+  const out = widgetBorderLine("abcdefghij", 8, { border: (s: string) => s });
+  assert.equal(visibleWidth(out), 8);
+  assert.ok(out.includes("…"));
 });
 
 test("unlimited, errors, and unknown providers clear the widget", () => {

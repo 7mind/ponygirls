@@ -101,8 +101,8 @@ command emits the table once as a notification.
 ## Quota widget
 
 Below the editor, directly under the text input, pi shows the current
-provider's limited windows as short
-bars (`zai {5h/1:30 [██░░░ 30%]} {7d/3d:05:40 [█░░░░ 10%]}`: each window's
+provider's limited windows framed as editor border chrome
+(`── zai {5h/1:30 [██░░░ 30%]} {7d/3d:05:40 [█░░░░ 10%]} ──…`: each window's
 trailing duration, reset countdown, and usage bar), refreshed
 at each turn end and on model switches; providers without quota rows,
 errors, and rate limits clear it instead of parking stale text there.
