@@ -28,16 +28,14 @@ import { FetchHttp } from "./src/http.ts";
 import { secretOf } from "./src/pi-auth.ts";
 import { toolReport, type ModelReport } from "./src/report.ts";
 import { QuotaService, type ProviderAuth } from "./src/service.ts";
-import { widgetBorderLine, widgetLine } from "./src/status.ts";
+import { quotaLine } from "./src/status.ts";
 import { buildTable, PLAIN_TABLE_STYLE, type TableStyle } from "./src/table.ts";
 import { TokemonView } from "./src/view.ts";
 
 /** How stale an answer to the agent tool may be. */
 const TOOL_MAX_AGE_MS = 60_000;
-/** Widget key for the quota line below the editor. */
-const WIDGET_KEY = "tokemon";
-/** The quota line sits directly under the text input, next to the footer with the model indicator. */
-const WIDGET_OPTIONS = { placement: "belowEditor" } as const;
+/** Status key for the quota line our footer renders on the right. */
+const STATUS_KEY = "tokemon";
 /** The pane's auto-refresh interval (tokemon's default). */
 const PANE_REFRESH_MS = 300_000;
 const HTTP_TIMEOUT_MS = 15_000;
@@ -88,36 +86,24 @@ export default function (pi: ExtensionAPI): void {
   });
 
   /**
-   * Quota widget below the editor: the current provider's windows as short
-   * bars, framed as editor border chrome so the line reads as part of the
-   * input border rather than a floating text row.
+   * Quota line for our status bar: the current provider's windows as short
+   * bars. Published through setStatus; the model-picker footer (which owns
+   * the bar) renders it on the right, before the model indicator.
    */
-  const refreshWidget = (ctx: ExtensionContext): void => {
+  const refreshStatus = (ctx: ExtensionContext): void => {
     if (ctx.mode !== "tui") return;
-    const show = (line: string | null): void => {
-      ctx.ui.setWidget(
-        WIDGET_KEY,
-        line === null
-          ? undefined
-          : (_tui, theme) => ({
-              invalidate() {},
-              render: (width: number) => [widgetBorderLine(line, width, { border: (s) => theme.fg("border", s) })],
-            }),
-        WIDGET_OPTIONS,
-      );
-    };
     const provider = ctx.model?.provider;
     if (!provider) {
-      show(null);
+      ctx.ui.setStatus(STATUS_KEY, undefined);
       return;
     }
     service.report(authOf(ctx), TOOL_MAX_AGE_MS).then(
-      (report) => show(widgetLine(provider, report.results, new Date())),
-      () => show(null),
+      (report) => ctx.ui.setStatus(STATUS_KEY, quotaLine(provider, report.results, new Date()) ?? undefined),
+      () => ctx.ui.setStatus(STATUS_KEY, undefined),
     );
   };
-  pi.on("turn_end", (_event, ctx) => refreshWidget(ctx));
-  pi.on("model_select", (_event, ctx) => refreshWidget(ctx));
+  pi.on("turn_end", (_event, ctx) => refreshStatus(ctx));
+  pi.on("model_select", (_event, ctx) => refreshStatus(ctx));
 
   pi.registerTool(
     defineTool({

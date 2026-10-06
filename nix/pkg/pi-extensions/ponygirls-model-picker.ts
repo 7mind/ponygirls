@@ -213,7 +213,14 @@ function nativeSession(): NativeSession {
 function nativeFooterData(footerData: FooterData): NativeFooterData {
 	return {
 		getGitBranch: () => footerData.getGitBranch(),
-		getExtensionStatuses: () => footerData.getExtensionStatuses(),
+		// "tokemon" renders on the right via mergeRow, not in the native rows.
+		getExtensionStatuses: () => {
+			const all = footerData.getExtensionStatuses();
+			if (!all.has("tokemon")) return all;
+			const rest = new Map(all);
+			rest.delete("tokemon");
+			return rest;
+		},
 		getAvailableProviderCount: () => 1,
 		onBranchChange: (callback: () => void) => footerData.onBranchChange(callback),
 	};
@@ -336,14 +343,20 @@ class ExtendedFooter implements Component {
 		];
 		const controlsWidth = controls.reduce((total, segment) => total + visibleWidth(segment.plain), 0);
 
-		// One status line: [path (branch) • session] [native stats] [controls]. The
+		// One status line: [path (branch) • session] [native stats] [tokemon] [controls]. The
 		// native stats row keeps its formatting and loses only its right side, which
-		// the clickable controls replace. The path yields in tiers (full, half,
+		// the clickable controls replace. The tokemon quota line sits immediately
+		// before the controls; when it fits nowhere, the row without it is tried.
+		// The path yields in tiers (full, half,
 		// dropped) before the swap gives up and the native rows pass through.
 		const natural = visibleWidth(this.theme.fg("dim", path));
+		const quotaText = this.footerData.getExtensionStatuses().get("tokemon");
+		const quota: Segment | undefined = quotaText ? { plain: quotaText, styled: this.theme.fg("dim", quotaText) } : undefined;
 		for (const budget of [natural, Math.floor(natural / 2), 0]) {
-			const merged = this.mergeRow(width, budget, path, controls, controlsWidth, nativeRightSide(ctx.model, ctx.thinkingLevel));
-			if (merged) return merged;
+			for (const q of quota === undefined ? [undefined] : [quota, undefined]) {
+				const merged = this.mergeRow(width, budget, path, controls, controlsWidth, nativeRightSide(ctx.model, ctx.thinkingLevel), q);
+				if (merged) return merged;
+			}
 		}
 		return this.native.render(width);
 	}
@@ -355,19 +368,22 @@ class ExtendedFooter implements Component {
 		controls: readonly Segment[],
 		controlsWidth: number,
 		nativeRight: string,
+		quota?: Segment,
 	): string[] | undefined {
 		const left = budget <= 0 ? "" : truncateToWidth(this.theme.fg("dim", path), budget, this.theme.fg("dim", "..."));
 		const leftWidth = visibleWidth(left);
 		const gap = leftWidth > 0 ? 2 : 0;
+		const quotaWidth = quota ? visibleWidth(quota.plain) : 0;
+		const quotaGap = quotaWidth > 0 ? 1 : 0;
 		const rowBudget = width - leftWidth - gap;
 		const nativeWidth = rowBudget + visibleWidth(nativeRight) - controlsWidth;
-		if (rowBudget <= controlsWidth || nativeWidth <= 0) return undefined;
+		if (rowBudget <= controlsWidth + quotaWidth + quotaGap || nativeWidth <= 0) return undefined;
 		const rows = this.native.render(nativeWidth);
 		const stats = rows[1] ?? "";
 		if (!stripTerminalSequences(stats).endsWith(nativeRight)) return undefined;
-		const cut = truncateToWidth(stats, visibleWidth(stats) - visibleWidth(nativeRight), "");
+		const cut = truncateToWidth(stats, visibleWidth(stats) - visibleWidth(nativeRight) - quotaWidth - quotaGap, "");
 		const startColumn = leftWidth + gap + rowBudget - controlsWidth;
-		const row = left + " ".repeat(gap) + cut + segmentLine(this.hits, 0, startColumn, controls);
+		const row = left + " ".repeat(gap) + cut + (quota ? quota.styled + " ".repeat(quotaGap) : "") + segmentLine(this.hits, 0, startColumn, controls);
 		return [row, ...rows.slice(2)]; // native status rows pass through
 	}
 
