@@ -89,18 +89,52 @@ test("/tokemon opens in place as a bottom panel, not a popup overlay", async () 
       hasUI: true,
       ui: {
         notify: () => {},
-        custom: async (factory: (...args: Array<any>) => { render: (width: number) => string[]; handleInput?: (data: string) => void }, options?: unknown) => {
+        custom: async (factory: (...args: Array<any>) => { render: (width: number) => string[]; handleInput?: (data: string) => void; dispose?: () => void }, options?: unknown) => {
           customOptions = options;
           const component = factory(fakeTui, noopTheme, {}, () => {});
           await new Promise((r) => setTimeout(r, 0));
           component.handleInput?.("i");
           assert.ok(component.render(80).some((l) => l.includes("xiaomi")));
+          component.dispose?.();
         },
       },
       modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "x" } }), getAvailable: () => [] },
     };
     await commands.get("tokemon")!("", tuiCtx);
     assert.equal(customOptions, undefined, "in place like /usage and /perf: no overlay option");
+  } finally {
+    for (const [name, value] of saved) if (value !== undefined) process.env[name] = value;
+    delete process.env["PI_CODING_AGENT_DIR"];
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("turn_end refreshes the quota widget below the editor", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "tokemon-ext-"));
+  const saved = new Map(ENV_PROVIDER_KEYS.map(([name]) => [name, process.env[name]]));
+  for (const [name] of ENV_PROVIDER_KEYS) delete process.env[name];
+  try {
+    writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ xiaomi: { type: "api_key", key: "x" } }));
+    process.env["PI_CODING_AGENT_DIR"] = agentDir;
+    const handlers = new Map<string, (event: unknown, ctx: any) => unknown>();
+    const widgets: Array<unknown[]> = [];
+    const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
+    mod.default({
+      registerTool: () => {},
+      registerCommand: () => {},
+      on: (event: string, handler: (event: unknown, ctx: any) => unknown) => { handlers.set(event, handler); },
+    });
+    assert.ok(handlers.has("turn_end") && handlers.has("model_select"));
+    const tuiCtx = {
+      mode: "tui",
+      model: { provider: "xiaomi" },
+      modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "x" } }), getAvailable: () => [] },
+      ui: { setWidget: (...args: unknown[]) => { widgets.push(args); } },
+    };
+    await handlers.get("turn_end")!({}, tuiCtx);
+    await new Promise((r) => setTimeout(r, 20));
+    // xiaomi has no quota endpoint, so the widget clears instead of going stale.
+    assert.deepEqual(widgets, [["tokemon", undefined, { placement: "belowEditor" }]]);
   } finally {
     for (const [name, value] of saved) if (value !== undefined) process.env[name] = value;
     delete process.env["PI_CODING_AGENT_DIR"];
