@@ -150,7 +150,7 @@ export function normalizeGateSpec(input: GateSpecInput, policy: SupervisorPolicy
   if (typeof input.prompt !== "string" || !input.prompt) {
     return { ok: false, error: err("INVALID", "gate.prompt required") };
   }
-  const allowed = policy.allowedModels.some((m) => m.provider === input.model.provider && m.id === input.model.id);
+  const allowed = policy.allowedModels === null || policy.allowedModels.some((m) => m.provider === input.model.provider && m.id === input.model.id);
   if (!allowed) {
     return { ok: false, error: err("POLICY_DENIED", `gate model ${input.model.provider}/${input.model.id} not in root allowlist`) };
   }

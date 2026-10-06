@@ -30,6 +30,13 @@ test("gate model outside the allowlist is rejected (no silent clamp)", () => {
   assert.equal(res.ok, false);
 });
 
+test("null allowlist permits any gate model", () => {
+  const p = policy();
+  p.allowedModels = null;
+  const res = normalizeGateSpec({ model: { provider: "any", id: "thing" }, thinkingLevel: "high", prompt: "r" }, p);
+  assert.ok(res.ok);
+});
+
 test("approve/revise/blocked validate strictly; malformed output is distinct", () => {
   const paths = new Set(["src/a.ts"]);
   const checks = new Set(["check-1"]);

@@ -267,6 +267,19 @@ let
       config.programs.mcp.servers;
   };
 
+  # Declarative subagents model policy (see the `subagentsAllowAllModels` /
+  # `subagentsAllowedModels` options): only the model allowlist is managed
+  # here — repos, nesting, and gate limits stay hand-maintained (the
+  # extension overlays the file onto its deny-by-default policy). `null`
+  # disables the allowlist check for spawn overrides and gate reviewers.
+  piSubagentsPolicyJson = jsonFormat.generate "pi-subagents-policy.json" {
+    allowedModels =
+      if cfg.pi.subagentsAllowAllModels then
+        null
+      else
+        map (m: { provider = m.provider; id = m.id; }) cfg.pi.subagentsAllowedModels;
+  };
+
   # Repo-agnostic operating manual appended INSIDE Pi's system prompt (via
   # ~/.pi/agent/APPEND_SYSTEM.md, auto-discovered by the resource loader). Pi's
   # built-in prompt is intentionally minimal (four core tools, no plan mode /
@@ -373,6 +386,50 @@ in
         {option}`programs.mcp.servers`; a list of server names enables it for
         those additional servers. Pi-only: applied in `piMcpJson`, not leaked
         into the shared MCP registry used by claude/codex.
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsAllowAllModels = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Let Pi subagents use any model: writes `"allowedModels": null` to
+        `subagents-policy.json` (see {option}`smind.hm.dev.llm.pi.subagentsAllowedModels`),
+        skipping the root model allowlist for `spawn_agent` overrides and
+        gate reviewers. Deny-by-default stays when this is false and the
+        list is empty. Takes precedence over
+        {option}`smind.hm.dev.llm.pi.subagentsAllowedModels` when both are set.
+        Setting this or a non-empty list manages `subagents-policy.json`
+        declaratively (read-only store symlink); otherwise a hand-maintained
+        file is left alone.
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsAllowedModels = lib.mkOption {
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          provider = lib.mkOption {
+            type = lib.types.str;
+            description = ''Model provider id (e.g. "meta", "zai").'';
+          };
+          id = lib.mkOption {
+            type = lib.types.str;
+            description = ''Model id within the provider (e.g. "muse-spark-1.3").'';
+          };
+        };
+      });
+      default = [ ];
+      example = [
+        { provider = "meta"; id = "muse-spark-1.3"; }
+        { provider = "zai"; id = "glm-5.3"; }
+      ];
+      description = ''
+        Models Pi subagents may be assigned explicitly (`spawn_agent`
+        `model` overrides and gate reviewers), written as `allowedModels`
+        into `subagents-policy.json` (see
+        {option}`smind.hm.dev.llm.pi.subagentsAllowAllModels`). Empty (the
+        default) denies every explicit model override; children then inherit
+        the governing session's model.
       '';
     };
 
@@ -548,6 +605,14 @@ in
     # update …"; make them in programs.mcp / mcpDirectTools instead.
     (lib.mkIf piCfg.enableMcpIntegration {
       home.file."${piCfg.configDir}/mcp.json".source = piMcpJson;
+    })
+    # Declarative subagents model policy (see piSubagentsPolicyJson). RO store
+    # symlink like mcp.json: manage models via the subagents* options, not by
+    # hand-editing the file. Emitted only when the allow-all flag or a
+    # non-empty allowlist is configured; otherwise a hand-maintained file (or
+    # none) is left alone.
+    (lib.mkIf (cfg.pi.subagentsAllowAllModels || cfg.pi.subagentsAllowedModels != [ ]) {
+      home.file."${piCfg.configDir}/subagents-policy.json".source = piSubagentsPolicyJson;
     })
     (lib.mkIf (piCfg.extensionsDir != null) {
       home.file."${piCfg.configDir}/extensions" = {

@@ -38,8 +38,8 @@ export interface SupervisorPolicy {
   nesting: boolean;
   /** Registered repositories: the only writable/readable origins. */
   repos: RegisteredRepo[];
-  /** Models a child may be assigned by explicit override (children inherit their owner's otherwise). */
-  allowedModels: Array<{ provider: string; id: string }>;
+  /** Models a child may be assigned by explicit override (children inherit their owner's otherwise). Null allows every model (no allowlist check). */
+  allowedModels: Array<{ provider: string; id: string }> | null;
   /** Whether gate bypass is permitted by the governor. */
   gateBypassAllowed: boolean;
   /** Round ceiling; null permits unlimited agreement rounds. */
@@ -153,7 +153,7 @@ export function intersectGrants(
   } else if (request.profile === "writer") {
     return { ok: false, error: err("POLICY_DENIED", "a sandboxed writer requires an approved repository (repo_id)") };
   }
-  if (request.model) {
+  if (request.model && policy.allowedModels !== null) {
     const allowed = policy.allowedModels.some(
       (m) => m.provider === request.model!.provider && m.id === request.model!.id,
     );

@@ -59,6 +59,13 @@ test("model outside the root allowlist is denied", () => {
   assert.equal(res.ok, false);
 });
 
+test("null allowlist permits any explicit model override", () => {
+  const p = policy();
+  p.allowedModels = null;
+  const res = intersectGrants(p, rootGrants(p), { profile: "reader", isolation: "sandbox", repoId: null, shell: false, network: false, model: { provider: "any", id: "thing" }, depth: 1 });
+  assert.ok(res.ok);
+});
+
 test("tool authorization is post-transform and closed-world", () => {
   const p = policy();
   const root = rootGrants(p);
