@@ -10,7 +10,7 @@ const EXTENSION = resolve(import.meta.dirname, "../index.ts");
 const TYPE = "bg-task-completion";
 const SETTLE_QUIET_MS = 1200;
 
-const spawnCall = (id, command, notify = true, label = id) => ({ type: "toolCall", id, name: "bg_task", arguments: { request: { action: "spawn", label, command, cwd: "/", notify } } });
+const spawnCall = (id, command, notify = true, label = id) => ({ type: "toolCall", id, name: "bg_task", arguments: { action: "spawn", label, command, cwd: "/", notify } });
 const holdCall = (id) => ({ type: "toolCall", id, name: "hold", arguments: {} });
 const reply = (...content) => ({ content });
 const isNotice = (request) => contextLabels(request).at(-1)?.startsWith("user:[bg-task]");
@@ -266,7 +266,7 @@ test("muting an in-flight notice cannot retract it and does not block later noti
     if (r.index === 1) return reply(spawnCall("a", "echo a"), spawnCall("b", "sleep 1.5; echo b"), holdCall("h"));
     if (r.index === 2) {
       const ids = r.context.messages.filter((m) => m.role === "toolResult" && m.toolName === "bg_task").map((m) => m.details.task.id);
-      return reply({ type: "toolCall", id: "mute", name: "bg_task", arguments: { request: { action: "notify", id: ids[0], enabled: false } } });
+      return reply({ type: "toolCall", id: "mute", name: "bg_task", arguments: { action: "notify", id: ids[0], enabled: false } });
     }
     return isNotice(r) ? text("ack") : text("done");
   });
@@ -475,4 +475,12 @@ test("a session switch never wakes the closing runtime with a notice released by
   await f.rt.runtime.switchSession(fileA);
   await receipt(f.rt.session, a);
   await receipt(f.rt.session, b);
+});
+
+test("an action missing its required fields fails the tool call with the fields it needs", async (t) => {
+  const f = await setup(t, (r) => (r.index === 1 ? reply({ type: "toolCall", id: "bad", name: "bg_task", arguments: { action: "spawn", label: "x", command: "true" } }) : text("done")));
+  await f.rt.session.prompt("go");
+  const result = f.rt.session.sessionManager.getEntries().find((e) => e.type === "message" && e.message.role === "toolResult");
+  assert.equal(result.message.isError, true);
+  assert.match(result.message.content.map((p) => p.text).join(""), /INVALID_REQUEST.*spawn.*(cwd|notify)/s);
 });

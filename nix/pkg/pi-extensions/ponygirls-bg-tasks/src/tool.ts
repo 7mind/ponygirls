@@ -3,7 +3,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import type { TaskBackend } from "./backend.ts";
 import {
-  BgTaskError, BgTaskParamsSchema, LIST_LABEL_DISPLAY_CHARS, MAX_COMMAND_BYTES, MAX_TOOL_RESPONSE_BYTES, decodeCursor, encodeCursor,
+  BgTaskError, BgTaskParamsSchema, BgTaskRequestSchema, LIST_LABEL_DISPLAY_CHARS, MAX_COMMAND_BYTES, MAX_TOOL_RESPONSE_BYTES, decodeCursor, encodeCursor,
   isFinalized, type BgTaskRequest, type ExitEvidence, type SessionId, type SignalName, type TaskId, type TaskRecord,
 } from "./protocol.ts";
 import { consumableLength, decodeAndSanitize, displayValue, leadingContinuationBytes, shorten } from "./terminal-text.ts";
@@ -103,12 +103,20 @@ export function fitListItems<T>(items: T[], size: (subset: T[]) => number, budge
   return items.slice(0, lo);
 }
 
+const ACTION_SCHEMAS = new Map(BgTaskRequestSchema.anyOf.map((s) => [s.properties.action.const as string, s]));
+
 function validate(params: unknown): BgTaskRequest {
   if (!Value.Check(BgTaskParamsSchema, params)) {
     const first = [...Value.Errors(BgTaskParamsSchema, params)][0];
-    throw new BgTaskError("INVALID_REQUEST", `invalid bg_task request${first ? ` at ${first.instancePath || "/"}: ${first.message}` : ""}`);
+    throw new BgTaskError("INVALID_REQUEST", `invalid bg_task arguments${first ? ` at ${first.instancePath || "/"}: ${first.message}` : ""}`);
   }
-  const request = params.request;
+  const schema = ACTION_SCHEMAS.get(params.action)!;
+  if (!Value.Check(schema, params)) {
+    const fields = Object.keys(schema.properties).filter((k) => k !== "action");
+    const first = [...Value.Errors(schema, params)][0];
+    throw new BgTaskError("INVALID_REQUEST", `${params.action} takes exactly {${fields.join(", ")}}${first ? `; ${first.instancePath || "/"}: ${first.message}` : ""}`);
+  }
+  const request = params as BgTaskRequest;
   if (request.action === "spawn" && !request.cwd.startsWith("/")) throw new BgTaskError("INVALID_REQUEST", "cwd must be an absolute path");
   if (request.action === "spawn" && Buffer.byteLength(request.command) > MAX_COMMAND_BYTES) throw new BgTaskError("INVALID_REQUEST", `command exceeds ${MAX_COMMAND_BYTES} bytes`);
   return request;
@@ -213,7 +221,7 @@ export async function runBgTask(host: ToolHost, request: BgTaskRequest, signal: 
 
 const DESCRIPTION = [
   "Run and manage local background shell commands in this session. Each task gets its own PTY and process group;",
-  "output is kept on disk until explicitly cleared. Actions (pass one object as `request`):",
+  "output is kept on disk until explicitly cleared. Pass `action` plus that action's fields:",
   "spawn {label, command, cwd (absolute), notify} returns immediately after launch;",
   "list {cursor (null = newest page), limit} pages through all retained tasks;",
   "read {id, offset (byte offset or \"tail\"), limit} returns sanitized output and the next offset;",

@@ -182,13 +182,28 @@ export const BgTaskRequestSchema = Type.Union([
 export type BgTaskRequest = Static<typeof BgTaskRequestSchema>;
 export type SpawnRequest = Static<typeof SpawnRequestSchema>;
 
+export const BG_TASK_ACTIONS = ["spawn", "list", "read", "signal", "terminate", "notify", "clear"] as const;
+
 /**
- * The discriminated union is wrapped in a top-level object: Pi's Anthropic
- * adapter forwards only the top-level `properties`/`required` of a tool schema
- * (pi-ai anthropic-messages convertTools), so a top-level union would reach the
- * model as an empty object.
+ * Flat parameters as models see them; `execute` then checks the per-action
+ * union above. A top-level union reaches Anthropic models as an empty object
+ * (pi-ai anthropic-messages convertTools keeps only top-level properties), and
+ * a nested `request` object was sent as a JSON string by mimo-v2.6-pro, so
+ * every parameter is a top-level primitive.
  */
-export const BgTaskParamsSchema = Type.Object({ request: BgTaskRequestSchema }, { additionalProperties: false });
+export const BgTaskParamsSchema = Type.Object({
+  action: Type.Enum(BG_TASK_ACTIONS, { description: "spawn | list | read | signal | terminate | notify | clear" }),
+  label: Type.Optional(Type.String({ minLength: 1, maxLength: MAX_LABEL_CHARS, description: "spawn: short human-readable label" })),
+  command: Type.Optional(Type.String({ minLength: 1, maxLength: MAX_COMMAND_BYTES, description: "spawn: shell command, run with bash --noprofile --norc -c in its own PTY and process group" })),
+  cwd: Type.Optional(Type.String({ minLength: 1, maxLength: MAX_CWD_CHARS, description: "spawn: absolute working directory" })),
+  notify: Type.Optional(Type.Boolean({ description: "spawn (required): true posts a completion notice and wakes you; false sends none" })),
+  cursor: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: "list: null for the newest page, else nextCursor from the previous page" })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_READ_BYTES, description: `list: page size 1..${MAX_LIST_ITEMS}; read: raw log bytes 1..${MAX_READ_BYTES}` })),
+  id: Type.Optional(Type.String({ minLength: 1, description: "read/signal/terminate/notify/clear: exact task ID" })),
+  offset: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Literal("tail")], { description: "read: byte offset into the terminal log, or \"tail\"" })),
+  signal: Type.Optional(Type.Enum(SIGNAL_NAMES, { description: "signal: POSIX signal for the task's process group" })),
+  enabled: Type.Optional(Type.Boolean({ description: "notify: completion notices on or off" })),
+}, { additionalProperties: false });
 export type BgTaskParams = Static<typeof BgTaskParamsSchema>;
 
 // ---- cursors ------------------------------------------------------------------

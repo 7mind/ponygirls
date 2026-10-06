@@ -1,7 +1,7 @@
 """Provider-free OpenAI-compatible chat-completions endpoint for packaged Pi tests.
 
 Echo protocol: a user message "SPAWN <json>" makes the model call bg_task with
-{"request": <json>}; a "[bg-task]" completion notice gets "ack notice"; a tool
+the flat <json> arguments; a "[bg-task]" completion notice gets "ack notice"; a tool
 result gets "spawned"; anything else gets "ok". Every request is appended to
 the JSONL log given as argv[2]. The chosen port is printed on stdout.
 """
@@ -35,7 +35,7 @@ class Handler(BaseHTTPRequestHandler):
         if last.get("role") == "user" and text_of(last).startswith("SPAWN "):
             request = json.loads(text_of(last)[len("SPAWN "):])
             delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": f"call_{len(messages)}", "type": "function",
-                                                          "function": {"name": "bg_task", "arguments": json.dumps({"request": request})}}]}
+                                                          "function": {"name": "bg_task", "arguments": json.dumps(request)}}]}
             finish = "tool_calls"
         else:
             if last.get("role") == "tool":

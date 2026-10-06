@@ -70,4 +70,17 @@ if [[ -z ${PI_SUBAGENTS_SDK_ROOT:-} ]]; then
   export PI_SUBAGENTS_SDK_ROOT=$sdk
 fi
 
+# ponygirls-bg-tasks needs its supervisor interpreter and task shell; the deployed
+# wrapper sets them once switched (wrapper-args.nix). Otherwise build the same
+# packages from this flake's pinned nixpkgs.
+if [[ -z ${PI_BG_TASKS_PYTHON:-} || -z ${PI_BG_TASKS_SHELL:-} ]]; then
+  command -v nix >/dev/null || die "nix is required to resolve ponygirls-bg-tasks executables"
+  mapfile -t outs < <(nix build --no-link --print-out-paths --inputs-from "$root" nixpkgs#python3 nixpkgs#bash)
+  for out in "${outs[@]}"; do
+    [[ -x $out/bin/python3 ]] && export PI_BG_TASKS_PYTHON=${PI_BG_TASKS_PYTHON:-$out/bin/python3}
+    [[ -x $out/bin/bash ]] && export PI_BG_TASKS_SHELL=${PI_BG_TASKS_SHELL:-$out/bin/bash}
+  done
+  [[ -n ${PI_BG_TASKS_PYTHON:-} && -n ${PI_BG_TASKS_SHELL:-} ]] || die "cannot build python3/bash for ponygirls-bg-tasks"
+fi
+
 exec pi "${args[@]}" "$@"

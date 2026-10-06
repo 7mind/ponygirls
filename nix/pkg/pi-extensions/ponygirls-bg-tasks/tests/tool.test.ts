@@ -29,7 +29,7 @@ type Result = { content: Array<{ type: string; text: string }>; details: any };
 
 async function call(s: Setup, request: Record<string, unknown>, signal?: AbortSignal): Promise<Result> {
   const tool = createBgTaskTool(hostFor(s));
-  const result = (await tool.execute("call-1", { request } as never, signal, undefined, {} as never)) as Result;
+  const result = (await tool.execute("call-1", request as never, signal, undefined, {} as never)) as Result;
   const encoded = Buffer.byteLength(JSON.stringify({ content: result.content, details: result.details }));
   assert.ok(encoded <= MAX_TOOL_RESPONSE_BYTES, `response of ${encoded} bytes exceeds the budget`);
   return result;
