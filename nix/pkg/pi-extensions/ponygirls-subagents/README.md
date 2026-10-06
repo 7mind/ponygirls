@@ -123,8 +123,12 @@ A sandboxed writer without a registered repository is denied
 `close_agent` and may delegate within their own authority.
 
 Children inherit the governing session's current model and thinking level;
-`model` on `spawn_agent` overrides it only with an `allowedModels` entry.
-Gate reviewer models must also be allowlisted.
+`model` on `spawn_agent` overrides it only with an `allowedModels` entry
+(`"allowedModels": null` allows every model instead of listing them).
+Gate reviewer models must also be allowlisted (or run under `null`).
+Both are declarative in home-manager: `smind.hm.dev.llm.pi.subagentsAllowAllModels`
+skips the allowlist, `smind.hm.dev.llm.pi.subagentsAllowedModels` writes it;
+setting either manages `subagents-policy.json` (the flag wins on conflict).
 
 Provider credentials stay in `~/.pi/agent/auth.json` (declarative custom
 models in `models.json`). Workers open that store live through

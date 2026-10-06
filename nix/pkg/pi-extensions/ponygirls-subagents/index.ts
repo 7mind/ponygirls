@@ -68,7 +68,12 @@ function loadPolicy(): SupervisorPolicy {
   if (raw.gateMaxRoundsCeiling === null || typeof raw.gateMaxRoundsCeiling === "number") {
     policy.gateMaxRoundsCeiling = raw.gateMaxRoundsCeiling;
   }
-  if (Array.isArray(raw.allowedModels)) {
+  // Explicit null opts out of the model allowlist: every model may be
+  // assigned (availability/credentials still fail naturally at launch).
+  // Absent (or any other shape) keeps the default: explicit model overrides
+  // are denied, children inherit their owner's model.
+  if (raw.allowedModels === null) policy.allowedModels = null;
+  else if (Array.isArray(raw.allowedModels)) {
     policy.allowedModels = raw.allowedModels.filter((m) => typeof m?.provider === "string" && typeof m?.id === "string");
   }
   policy.revision += 1;
