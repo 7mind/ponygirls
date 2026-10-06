@@ -131,8 +131,9 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual((extra.name, extra.used, extra.limit, extra.unit), ("extra usage", 12.34, 200.0, "EUR"))
         self.assertIsNone(snapshot.note)
 
-    # shape observed live 2026-10-01: extra usage switched on but blocked
-    def test_blocked_extra_usage_is_a_note_not_a_row(self):
+    # shape observed live 2026-10-01: extra usage out of credits. No credits
+    # means nothing to spend and nothing to show, so the note is suppressed.
+    def test_out_of_credits_extra_is_silent_not_a_note(self):
         usage = fixture("claude_oauth_usage.json")
         usage["spend"].update(
             {
@@ -143,7 +144,14 @@ class ClaudeAdapterTests(unittest.TestCase):
         )
         snapshot, _ = self._fetch(usage, fixture("claude_oauth_profile.json"))
         self.assertEqual(len(snapshot.windows), 3)
-        self.assertEqual(snapshot.note, "extra usage off: out_of_credits")
+        self.assertIsNone(snapshot.note)
+
+    def test_other_block_reasons_stay_a_note_not_a_row(self):
+        usage = fixture("claude_oauth_usage.json")
+        usage["spend"].update({"enabled": False, "disabled_reason": "admin_disabled"})
+        snapshot, _ = self._fetch(usage, fixture("claude_oauth_profile.json"))
+        self.assertEqual(len(snapshot.windows), 3)
+        self.assertEqual(snapshot.note, "extra usage off: admin_disabled")
 
     def test_extra_usage_never_enabled_is_silent(self):
         snapshot, _ = self._fetch(fixture("claude_oauth_usage.json"), fixture("claude_oauth_profile.json"))
