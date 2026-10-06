@@ -1,9 +1,10 @@
 /**
- * Adapter registry: pi provider id -> quota adapter. Claude (anthropic) and
- * Codex (openai-codex) are tokemon-only and not part of this extension.
+ * Adapter registry: pi provider id -> quota adapter. Claude (anthropic) is
+ * tokemon-only and not part of this extension.
  */
 
 import { NoQuotaEndpoint, type QuotaAdapter } from "../quota.ts";
+import { CodexQuota } from "./codex.ts";
 import { CopilotQuota } from "./copilot.ts";
 import { KimiQuota } from "./kimi.ts";
 import { MetaQuota } from "./meta.ts";
@@ -20,6 +21,7 @@ const ADAPTERS = new Map<string, QuotaAdapter>([
   ["kimi-coding", new KimiQuota()],
   ["meta", new MetaQuota()],
   ["minimax", new MinimaxQuota()],
+  ["openai-codex", new CodexQuota()],
   ["openrouter", new OpenRouterQuota()],
   ["vercel-ai-gateway", new VercelGatewayQuota()],
   ["xai", new XaiQuota()],

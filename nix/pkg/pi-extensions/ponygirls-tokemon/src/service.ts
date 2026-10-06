@@ -130,7 +130,7 @@ export class QuotaService {
         if (!hasQuotaAdapter(target.provider)) return done({ plan: null, identity: null, windows: [], note: "no quota endpoint" }, null);
         const key = await auth.apiKey(target.provider);
         if (!key) return done(null, "models.json provider without a resolvable credential");
-        credential = { kind: "api_key", secret: key, refreshToken: null };
+        credential = { kind: "api_key", secret: key, refreshToken: null, accountId: null };
       } else if (!target.credential) {
         return done(null, target.note ?? "no credential");
       } else if (target.origin === "auth.json" && adapter.usesAccessToken) {

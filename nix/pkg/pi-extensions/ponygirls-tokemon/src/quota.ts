@@ -12,6 +12,8 @@ export interface Credential {
   kind: CredentialKind;
   secret: string;
   refreshToken: string | null;
+  /** ChatGPT account id for openai-codex (the ChatGPT-Account-Id header); null when unknown. */
+  accountId: string | null;
 }
 
 export interface QuotaWindow {

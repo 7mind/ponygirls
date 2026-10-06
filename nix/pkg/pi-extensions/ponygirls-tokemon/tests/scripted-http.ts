@@ -38,8 +38,8 @@ export function fixture(name: string): Record<string, any> {
   return JSON.parse(readFileSync(join(import.meta.dirname, "fixtures", name), "utf8")) as Record<string, any>;
 }
 
-export const API_KEY: Credential = { kind: "api_key", secret: "test-key", refreshToken: null };
-export const OAUTH: Credential = { kind: "oauth", secret: "test-access", refreshToken: "test-refresh" };
-export const META_OAUTH: Credential = { kind: "oauth", secret: "test-access", refreshToken: "dca:test-identity" };
+export const API_KEY: Credential = { kind: "api_key", secret: "test-key", refreshToken: null, accountId: null };
+export const OAUTH: Credential = { kind: "oauth", secret: "test-access", refreshToken: "test-refresh", accountId: null };
+export const META_OAUTH: Credential = { kind: "oauth", secret: "test-access", refreshToken: "dca:test-identity", accountId: null };
 
 export const at = (seconds: number): string => new Date(seconds * 1000).toISOString();

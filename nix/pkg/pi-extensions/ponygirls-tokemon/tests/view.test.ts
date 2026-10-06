@@ -29,7 +29,7 @@ function view(report: QuotaReport, rows = 20): { v: TokemonView; asked: number[]
       asked.push(maxAgeMs);
       return report;
     },
-    models: () => new Map([["p00", ["model-a", "model-b"]]]),
+    models: () => new Map([["p00", [{ id: "model-a", efforts: ["off"] }, { id: "model-b", efforts: ["low", "high"] }]]]),
     now: () => NOW,
     rows: () => rows,
     requestRender: () => {},
@@ -42,16 +42,17 @@ function view(report: QuotaReport, rows = 20): { v: TokemonView; asked: number[]
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-test("the pane shows the table with a refresh countdown and fits the terminal", async () => {
+test("the pane shows the table with a refresh countdown and is sized to its content", async () => {
   const { v, asked } = view({ refreshedAt: NOW, results: results(3) });
   await settle();
   const lines = v.render(100);
-  v.dispose();
-  assert.equal(lines.length, 20);
+  assert.ok(lines.length < 20, `the pane must not pad to full height: ${lines.length} lines`);
+  assert.equal(v.wantedHeight(), lines.length);
   assert.ok(lines.every((l) => visibleWidth(l) <= 100));
   assert.match(lines[0]!, /tokemon — token quotas .* next refresh in 5:00/);
   assert.ok(lines.some((l) => l.includes("p02")));
   assert.deepEqual(asked, [300_000], "opening reuses a report younger than the refresh interval");
+  v.dispose();
 });
 
 test("keys refresh, toggle models, scroll, and close", async () => {
@@ -64,7 +65,7 @@ test("keys refresh, toggle models, scroll, and close", async () => {
   assert.ok(v.render(80).some((l) => l.includes("p29")));
   v.handleInput("m");
   v.handleInput("G");
-  assert.ok(v.render(80).some((l) => l.includes("model-a, model-b")));
+  assert.ok(v.render(80).some((l) => l.includes("model-a, model-b [low, high]")));
   v.handleInput("r");
   await settle();
   assert.deepEqual(asked, [300_000, 0], "r forces a refresh");
