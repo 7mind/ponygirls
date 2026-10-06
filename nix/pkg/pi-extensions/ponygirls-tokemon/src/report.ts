@@ -34,21 +34,44 @@ export interface ProviderReport {
   retryAt: string | null;
 }
 
+export interface ModelReport {
+  id: string;
+  /** Effort levels pi can run this model at (getSupportedThinkingLevels). */
+  efforts: string[];
+}
+
+export interface ContextReport {
+  /** Estimated context tokens, or null if unknown. */
+  tokens: number | null;
+  contextWindow: number;
+  /** Usage as a percentage of the window, or null if tokens is unknown. */
+  percent: number | null;
+}
+
 export interface ToolReport {
   fetchedAt: string;
   providers: ProviderReport[];
-  /** Available model ids by provider; present only when requested. */
-  models?: Record<string, string[]>;
+  /** Available models by provider, with effort levels; present only when requested. */
+  models?: Record<string, ModelReport[]>;
+  /** The calling session's context size and usage; present only when requested and known. */
+  context?: ContextReport;
 }
 
-export function toolReport(report: QuotaReport, now: Date, models: Map<string, string[]> | null): ToolReport {
+export interface ReportOptions {
+  models: Map<string, ModelReport[]> | null;
+  /** False drops the quota windows (plan, login, notes, and errors stay). */
+  quotas: boolean;
+  context: ContextReport | null;
+}
+
+export function toolReport(report: QuotaReport, now: Date, options: ReportOptions): ToolReport {
   const providers = sortResults(report.results).map((r): ProviderReport => ({
     provider: r.target.provider,
     source: r.target.origin,
     location: r.target.label,
     login: r.snapshot?.identity ?? null,
     plan: r.snapshot?.plan ?? null,
-    windows: (r.snapshot?.windows ?? []).map((w) => ({
+    windows: options.quotas ? (r.snapshot?.windows ?? []).map((w) => ({
       name: w.name,
       used: w.used,
       limit: w.limit,
@@ -57,13 +80,16 @@ export function toolReport(report: QuotaReport, now: Date, models: Map<string, s
       state: windowState(w),
       resetsAt: w.resetsAt?.toISOString() ?? null,
       resetsIn: w.resetsAt ? formatResets(w, now) : null,
-    })),
+    })) : [],
     note: r.snapshot?.note ?? null,
     error: r.rateLimited ? rateLimitedStatus(r.retryAt, now) : r.error,
     rateLimited: r.rateLimited,
     retryAt: r.retryAt?.toISOString() ?? null,
   }));
   const out: ToolReport = { fetchedAt: report.refreshedAt.toISOString(), providers };
-  if (models !== null) out.models = Object.fromEntries([...models.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  if (options.models !== null) {
+    out.models = Object.fromEntries([...options.models.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([provider, models]) => [provider, [...models].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))]));
+  }
+  if (options.context !== null) out.context = options.context;
   return out;
 }

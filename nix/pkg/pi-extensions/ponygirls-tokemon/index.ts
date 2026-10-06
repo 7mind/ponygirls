@@ -5,8 +5,13 @@
  * - Tool `tokemon`: every provider this pi is configured for (auth.json
  *   logins and keys, API-key environment variables, models.json providers)
  *   with its plan, login, and quota windows; `include_models` adds each
- *   provider's available models. Answers are cached for a minute.
- * - Command `/tokemon`: the same data as a scrollable, auto-refreshing table.
+ *   provider's available models with effort levels. Quota windows are
+ *   included unless `include_quotas` is false; the calling session's
+ *   context size and usage ride along unless `include_context` is false.
+ *   Answers are cached for a minute.
+ * - Command `/tokemon`: the same data as a content-sized, auto-refreshing table.
+ * - Footer status: the current provider's tightest quota window, refreshed
+ *   at each turn end and on model switches.
  *
  * Wire-up: listed in nix/hm/pi.nix `programs.pi.settings.extensions`.
  */
@@ -15,17 +20,21 @@ import { homedir } from "node:os";
 import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getTerminalColorMode, parseColor, styleText } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { providerColor } from "./src/colors.ts";
 import { discoverTargets } from "./src/discovery.ts";
 import { FetchHttp } from "./src/http.ts";
 import { secretOf } from "./src/pi-auth.ts";
-import { toolReport } from "./src/report.ts";
+import { toolReport, type ModelReport } from "./src/report.ts";
 import { QuotaService, type ProviderAuth } from "./src/service.ts";
+import { statusSummary } from "./src/status.ts";
 import { buildTable, PLAIN_TABLE_STYLE, type TableStyle } from "./src/table.ts";
 import { TokemonView } from "./src/view.ts";
 
 /** How stale an answer to the agent tool may be. */
 const TOOL_MAX_AGE_MS = 60_000;
+/** Footer status key for the current-limits line. */
+const STATUS_KEY = "tokemon";
 /** The pane's auto-refresh interval (tokemon's default). */
 const PANE_REFRESH_MS = 300_000;
 const HTTP_TIMEOUT_MS = 15_000;
@@ -40,13 +49,13 @@ function authOf(ctx: ExtensionContext): ProviderAuth {
   };
 }
 
-/** Model ids with configured auth, by provider. */
-function modelsOf(ctx: ExtensionContext): Map<string, string[]> {
-  const byProvider = new Map<string, string[]>();
+/** Available models with their effort levels, by provider. */
+function modelsOf(ctx: ExtensionContext): Map<string, ModelReport[]> {
+  const byProvider = new Map<string, ModelReport[]>();
   for (const model of ctx.modelRegistry.getAvailable()) {
-    const ids = byProvider.get(model.provider) ?? [];
-    ids.push(model.id);
-    byProvider.set(model.provider, ids);
+    const models = byProvider.get(model.provider) ?? [];
+    models.push({ id: model.id, efforts: getSupportedThinkingLevels(model) });
+    byProvider.set(model.provider, models);
   }
   return byProvider;
 }
@@ -75,20 +84,43 @@ export default function (pi: ExtensionAPI): void {
     now: () => new Date(),
   });
 
+  /** Footer status near the model indicator: the current provider's tightest window. */
+  const refreshStatus = (ctx: ExtensionContext): void => {
+    if (ctx.mode !== "tui") return;
+    const provider = ctx.model?.provider;
+    if (!provider) {
+      ctx.ui.setStatus(STATUS_KEY, undefined);
+      return;
+    }
+    service.report(authOf(ctx), TOOL_MAX_AGE_MS).then(
+      (report) => ctx.ui.setStatus(STATUS_KEY, statusSummary(provider, report.results, new Date()) ?? undefined),
+      () => ctx.ui.setStatus(STATUS_KEY, undefined),
+    );
+  };
+  pi.on("turn_end", (_event, ctx) => refreshStatus(ctx));
+  pi.on("model_select", (_event, ctx) => refreshStatus(ctx));
+
   pi.registerTool(
     defineTool({
       name: "tokemon",
       label: "Provider quotas",
       description:
-        "List the model providers this pi is configured for (auth.json logins and keys, API-key environment variables, models.json providers) with each account's plan, login, and quota windows: used and limit with their unit, state (ok, low at 90%+, EXHAUSTED, unlimited), and reset time. Providers without a quota endpoint or whose query failed are listed with a note or error. Set include_models to also get each provider's available model ids. Answers may be up to a minute old (see fetchedAt).",
+        "List the model providers this pi is configured for (auth.json logins and keys, API-key environment variables, models.json providers) with each account's plan, login, and quota windows: used and limit with their unit, state (ok, low at 90%+, EXHAUSTED, unlimited), and reset time. Providers without a quota endpoint or whose query failed are listed with a note or error. Set include_models to also get each provider's available models with their effort levels; set include_quotas to false to drop the quota windows; the calling session's context size and usage ride along unless include_context is false. Answers may be up to a minute old (see fetchedAt).",
       parameters: Type.Object({
-        include_models: Type.Optional(Type.Boolean({ description: "Also list each provider's available model ids (default false)" })),
+        include_models: Type.Optional(Type.Boolean({ description: "Also list each provider's available models with effort levels (default false)" })),
+        include_quotas: Type.Optional(Type.Boolean({ description: "Include the quota windows (default true)" })),
+        include_context: Type.Optional(Type.Boolean({ description: "Include the calling session's context size and usage (default true)" })),
       }),
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
         try {
           const report = await service.report(authOf(ctx), TOOL_MAX_AGE_MS);
-          const p = params as { include_models?: boolean };
-          const body = toolReport(report, new Date(), p.include_models === true ? modelsOf(ctx) : null);
+          const p = params as { include_models?: boolean; include_quotas?: boolean; include_context?: boolean };
+          const usage = p.include_context === false ? null : ctx.getContextUsage() ?? null;
+          const body = toolReport(report, new Date(), {
+            models: p.include_models === true ? modelsOf(ctx) : null,
+            quotas: p.include_quotas !== false,
+            context: usage,
+          });
           return { content: [{ type: "text", text: JSON.stringify(body) }], details: {} };
         } catch (e) {
           return { content: [{ type: "text", text: `tokemon failed: ${(e as Error).message}` }], details: {}, isError: true };
@@ -110,9 +142,10 @@ export default function (pi: ExtensionAPI): void {
         }
         return;
       }
+      let view: TokemonView | undefined;
       await ctx.ui.custom<void>(
-        (tui, theme, _kb, done) =>
-          new TokemonView({
+        (tui, theme, _kb, done) => {
+          view = new TokemonView({
             report: (maxAgeMs) => service.report(authOf(ctx), maxAgeMs),
             models: () => modelsOf(ctx),
             now: () => new Date(),
@@ -121,9 +154,13 @@ export default function (pi: ExtensionAPI): void {
             close: () => done(),
             style: tableStyle(theme),
             refreshEveryMs: PANE_REFRESH_MS,
-          }),
-        // Full-terminal overlay: pi's fullscreen viewport otherwise takes PgUp/PgDn.
-        { overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 } },
+          });
+          return view;
+        },
+        // A content-sized overlay: the pane takes only the rows its table
+        // needs (pi's fullscreen viewport would otherwise take PgUp/PgDn),
+        // so the transcript stays visible below short tables.
+        { overlay: true, overlayOptions: () => ({ anchor: "top-left", width: "100%", maxHeight: view?.wantedHeight() ?? 5, margin: 0 }) },
       );
     },
   });

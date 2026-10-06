@@ -9,6 +9,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ENV_PROVIDER_KEYS } from "../src/discovery.ts";
+import { quotaWindow } from "../src/quota.ts";
+import { toolReport } from "../src/report.ts";
+import type { QueryResult } from "../src/service.ts";
 
 type Execute = (id: string, params: unknown, signal: undefined, onUpdate: undefined, ctx: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
 type Handler = (args: string, ctx: unknown) => Promise<void>;
@@ -26,6 +29,7 @@ test("the tool lists configured providers and, on request, their models; /tokemo
     const pi = {
       registerTool: (t: { name: string; execute: Execute }) => tools.set(t.name, t.execute),
       registerCommand: (name: string, c: { handler: Handler }) => commands.set(name, c.handler),
+      on: (_event: string, _handler: unknown) => {},
     };
     const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
     mod.default(pi);
@@ -36,14 +40,21 @@ test("the tool lists configured providers and, on request, their models; /tokemo
       ui: { notify: (text: string) => notices.push(text) },
       modelRegistry: {
         getProviderAuth: async (provider: string) => ({ auth: { apiKey: provider === "meta" ? "m" : "x" } }),
-        getAvailable: () => [{ provider: "meta", id: "muse-spark" }, { provider: "xiaomi", id: "mimo-1" }, { provider: "xiaomi", id: "mimo-2" }],
+        getAvailable: () => [{ provider: "meta", id: "muse-spark" }, { provider: "xiaomi", id: "mimo-1", reasoning: true }, { provider: "xiaomi", id: "mimo-2" }],
       },
+      getContextUsage: () => ({ tokens: 12345, contextWindow: 200000, percent: 6.17 }),
     };
-    const plain = JSON.parse((await tools.get("tokemon")!("t1", {}, undefined, undefined, ctx)).content[0]!.text) as { providers: Array<{ provider: string; note: string | null }>; models?: unknown };
+    const plain = JSON.parse((await tools.get("tokemon")!("t1", {}, undefined, undefined, ctx)).content[0]!.text) as { providers: Array<{ provider: string; note: string | null; windows: unknown[] }>; models?: unknown; context?: unknown };
     assert.deepEqual(plain.providers.map((p) => [p.provider, p.note]), [["meta", "API key: no plan quota endpoint"], ["xiaomi", "no quota endpoint"]]);
     assert.equal(plain.models, undefined);
-    const withModels = JSON.parse((await tools.get("tokemon")!("t2", { include_models: true }, undefined, undefined, ctx)).content[0]!.text) as { models: Record<string, string[]> };
-    assert.deepEqual(withModels.models, { meta: ["muse-spark"], xiaomi: ["mimo-1", "mimo-2"] });
+    assert.deepEqual(plain.context, { tokens: 12345, contextWindow: 200000, percent: 6.17 }, "context rides along by default");
+    const withModels = JSON.parse((await tools.get("tokemon")!("t2", { include_models: true }, undefined, undefined, ctx)).content[0]!.text) as { models: Record<string, Array<{ id: string; efforts: string[] }>> };
+    assert.deepEqual(withModels.models, {
+      meta: [{ id: "muse-spark", efforts: ["off"] }],
+      xiaomi: [{ id: "mimo-1", efforts: ["off", "minimal", "low", "medium", "high"] }, { id: "mimo-2", efforts: ["off"] }],
+    });
+    const noContext = JSON.parse((await tools.get("tokemon")!("t3", { include_context: false }, undefined, undefined, ctx)).content[0]!.text) as { context?: unknown };
+    assert.equal(noContext.context, undefined);
     await commands.get("tokemon")!("", ctx);
     assert.match(notices[0]!, /Provider\s+Src\s+Login/);
     assert.match(notices[0]!, /2 rows hidden: 2 without quota data/);
@@ -52,4 +63,20 @@ test("the tool lists configured providers and, on request, their models; /tokemo
     delete process.env["PI_CODING_AGENT_DIR"];
     rmSync(agentDir, { recursive: true, force: true });
   }
+});
+
+test("toolReport omits quota windows only when asked; plan and login stay", () => {
+  const result: QueryResult = {
+    target: { provider: "zai", origin: "auth.json", label: "~/.pi/agent/auth.json", credential: null, note: null },
+    snapshot: { plan: "lite", identity: "user@example.test", windows: [quotaWindow("tokens (5h)", 94, 2000, "credits", null)], note: null },
+    error: null,
+    fetchedAt: new Date("2026-10-06T12:00:00Z"),
+    rateLimited: false,
+    retryAt: null,
+  };
+  const report = { results: [result], refreshedAt: new Date("2026-10-06T12:00:00Z") };
+  const withQuotas = toolReport(report, new Date("2026-10-06T12:00:00Z"), { models: null, quotas: true, context: null });
+  assert.equal(withQuotas.providers[0]!.windows.length, 1);
+  const without = toolReport(report, new Date("2026-10-06T12:00:00Z"), { models: null, quotas: false, context: null });
+  assert.deepEqual([without.providers[0]!.windows, without.providers[0]!.plan, without.providers[0]!.login], [[], "lite", "user@example.test"]);
 });

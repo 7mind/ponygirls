@@ -1,6 +1,6 @@
 /**
  * ponygirls-tokemon — the providers this pi is configured for, as query
- * targets (tokemon's discovery without yolo profiles, Codex, or Claude):
+ * targets (tokemon's discovery without yolo profiles or Claude):
  *
  * - every entry of the agent dir's `auth.json` (OAuth logins and API keys);
  * - the API-key environment variables pi resolves for providers with a plan
@@ -47,6 +47,8 @@ export interface StoredCredential {
   kind: CredentialKind;
   secret: string;
   refreshToken: string | null;
+  /** Optional ChatGPT account id (openai-codex OAuth entries may carry `account_id`). */
+  accountId: string | null;
 }
 
 export interface Target {
@@ -86,11 +88,12 @@ function storedCredential(provider: string, entry: unknown): StoredCredential | 
   if (!isObject(entry)) return `pi credential ${provider}: entry is not an object`;
   if (entry["type"] === "oauth") {
     const access = optionalString(entry["access"]);
-    return access ? { kind: "oauth", secret: access, refreshToken: optionalString(entry["refresh"]) } : `pi credential ${provider}: oauth entry has no access token`;
+    const accountId = optionalString(entry["account_id"]) ?? optionalString(entry["accountId"]);
+    return access ? { kind: "oauth", secret: access, refreshToken: optionalString(entry["refresh"]), accountId } : `pi credential ${provider}: oauth entry has no access token`;
   }
   if (entry["type"] === "api_key") {
     const key = optionalString(entry["key"]);
-    return key ? { kind: "api_key", secret: key, refreshToken: null } : `pi credential ${provider}: api_key entry has no key`;
+    return key ? { kind: "api_key", secret: key, refreshToken: null, accountId: null } : `pi credential ${provider}: api_key entry has no key`;
   }
   return `pi credential ${provider}: unknown type ${JSON.stringify(entry["type"] ?? null)}`;
 }
@@ -109,7 +112,7 @@ export function discoverTargets(agentDir: string, home: string, env: Readonly<Re
   for (const [name, provider] of ENV_PROVIDER_KEYS) {
     const key = env[name];
     if (!key || stored.has(key)) continue;
-    targets.push({ provider, origin: "env", label: name, credential: { kind: "api_key", secret: key, refreshToken: null }, note: null });
+    targets.push({ provider, origin: "env", label: name, credential: { kind: "api_key", secret: key, refreshToken: null, accountId: null }, note: null });
   }
   const modelsPath = join(agentDir, "models.json");
   const providers = readJsonObject(modelsPath)?.["providers"];

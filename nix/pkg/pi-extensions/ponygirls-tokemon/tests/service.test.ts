@@ -40,9 +40,9 @@ test("auth.json targets query with pi's current token; Copilot uses its stored G
   const clock = new Clock();
   const service = new QuotaService({
     discover: () => [
-      target("zai", "auth.json", { kind: "api_key", secret: "stored-stale", refreshToken: null }),
-      target("github-copilot", "auth.json", { kind: "oauth", secret: "copilot-session", refreshToken: "gho_github" }),
-      target("openrouter", "env", { kind: "api_key", secret: "or-env", refreshToken: null }),
+      target("zai", "auth.json", { kind: "api_key", secret: "stored-stale", refreshToken: null, accountId: null }),
+      target("github-copilot", "auth.json", { kind: "oauth", secret: "copilot-session", refreshToken: "gho_github", accountId: null }),
+      target("openrouter", "env", { kind: "api_key", secret: "or-env", refreshToken: null, accountId: null }),
     ],
     http,
     now: clock.now,
@@ -58,10 +58,10 @@ test("one failing provider never hides the rest; missing credentials are explain
   const http = new ScriptedHttp([["GET", ZAI_URL, json(500, {})], ["GET", MINIMAX_URL, json(200, fixture("minimax_remains_plan.json"))]]);
   const service = new QuotaService({
     discover: () => [
-      target("zai", "env", { kind: "api_key", secret: "k", refreshToken: null }),
-      target("minimax", "env", { kind: "api_key", secret: "m", refreshToken: null }),
+      target("zai", "env", { kind: "api_key", secret: "k", refreshToken: null, accountId: null }),
+      target("minimax", "env", { kind: "api_key", secret: "m", refreshToken: null, accountId: null }),
       { provider: "broken", origin: "auth.json", label: "auth", credential: null, note: "pi credential broken: oauth entry has no access token" },
-      target("kimi-coding", "auth.json", { kind: "oauth", secret: "s", refreshToken: "r" }),
+      target("kimi-coding", "auth.json", { kind: "oauth", secret: "s", refreshToken: "r", accountId: null }),
       target("custom", "models.json", null),
       target("zai", "models.json", null, "models:zai"),
     ],
@@ -84,7 +84,7 @@ test("a credential resolution failure is the provider's error, not a missing cre
     override name = "OAuthRefreshError";
   }
   const service = new QuotaService({
-    discover: () => [target("kimi-coding", "auth.json", { kind: "oauth", secret: "s", refreshToken: "r" })],
+    discover: () => [target("kimi-coding", "auth.json", { kind: "oauth", secret: "s", refreshToken: "r", accountId: null })],
     http: new ScriptedHttp([]),
     now: new Clock().now,
   });
@@ -106,7 +106,7 @@ test("answers are cached for maxAge, concurrent callers share one refresh, and a
       return calls === 1 ? json(429, {}, "120") : json(200, fixture("zai_limits.json"));
     },
   };
-  const service = new QuotaService({ discover: () => [target("zai", "env", { kind: "api_key", secret: "k", refreshToken: null })], http, now: clock.now });
+  const service = new QuotaService({ discover: () => [target("zai", "env", { kind: "api_key", secret: "k", refreshToken: null, accountId: null })], http, now: clock.now });
   const [a, b] = await Promise.all([service.report(auth({}), 60_000), service.report(auth({}), 60_000)]);
   assert.equal(a, b);
   assert.deepEqual([calls, a.results[0]!.rateLimited, a.results[0]!.retryAt !== null], [1, true, true]);
@@ -127,7 +127,7 @@ test("two credentials reporting the same account merge into one row", async () =
     ["GET", "https://api.kimi.com/coding/v1/me", json(200, me)],
   ]);
   const service = new QuotaService({
-    discover: () => [target("kimi-coding", "auth.json", { kind: "oauth", secret: "a", refreshToken: "r" }, "~/.pi/agent/auth.json"), target("kimi-coding", "env", { kind: "api_key", secret: "b", refreshToken: null }, "KIMI_API_KEY")],
+    discover: () => [target("kimi-coding", "auth.json", { kind: "oauth", secret: "a", refreshToken: "r", accountId: null }, "~/.pi/agent/auth.json"), target("kimi-coding", "env", { kind: "api_key", secret: "b", refreshToken: null, accountId: null }, "KIMI_API_KEY")],
     http,
     now: new Clock().now,
   });

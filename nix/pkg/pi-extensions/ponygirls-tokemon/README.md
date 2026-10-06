@@ -1,7 +1,7 @@
 # ponygirls-tokemon
 
 Provider quotas inside pi (`v1.0.0` verified): this repository's `tokemon`
-dashboard (`nix/pkg/tokemon`) without the Claude and Codex profiles and
+dashboard (`nix/pkg/tokemon`) without the Claude profiles and
 without yolo profile discovery. It covers only the providers the running pi
 is configured for.
 
@@ -36,7 +36,9 @@ kimi-coding's `Authorization: Bearer …`. Copilot and Meta query with the
 stored refresh/identity token instead, as tokemon does.
 
 Quota adapters, ported from tokemon: `zai`, `kimi-coding`, `minimax`,
-`openrouter`, `vercel-ai-gateway`, `github-copilot`, `xai` (Grok
+`openrouter`, `vercel-ai-gateway`, `github-copilot`, `openai-codex` (ChatGPT
+plan; the `ChatGPT-Account-Id` header is sent when the login carries an
+account id), `xai` (Grok
 subscription; inference-key status), `xai-management`, and `meta` (Muse; one
 key-mint POST, no retry). Any other provider is listed as "no quota endpoint".
 Each target fails independently. An HTTP 429 holds that target's last result
@@ -45,7 +47,7 @@ merged into one row.
 
 ## Tool
 
-`tokemon({ include_models?: boolean })` returns JSON:
+`tokemon({ include_models?: boolean, include_quotas?: boolean, include_context?: boolean })` returns JSON (`include_models` defaults to false, `include_quotas` and `include_context` to true):
 
 ```json
 {
@@ -61,20 +63,25 @@ merged into one row.
       "note": null, "error": null, "rateLimited": false, "retryAt": null
     }
   ],
-  "models": { "zai": ["glm-5.3", "…"] }
+  "models": { "zai": [{ "id": "glm-5.3", "efforts": ["off", "minimal", "low", "medium", "high"] }] },
+  "context": { "tokens": 12345, "contextWindow": 200000, "percent": 6.17 }
 }
 ```
 
 `state` is `ok`, `low` (90% or more used), `EXHAUSTED`, or `unlimited`.
-`models` (the available model ids per provider, from pi's model registry) is
-present only with `include_models: true`. Answers are cached for a minute;
-`fetchedAt` says when they were fetched.
+`models` (each provider's available models with the effort levels pi can run
+them at) is present only with `include_models: true`. `include_quotas: false`
+drops the quota `windows` (plan, login, notes, and errors stay). `context` is
+the calling session's context size and usage; it is present unless
+`include_context: false` or the usage is unknown. Answers are cached for a
+minute; `fetchedAt` says when they were fetched.
 
 ## Command
 
-`/tokemon` opens a full-terminal pane with tokemon's table: one row group per
+`/tokemon` opens a content-sized pane with tokemon's table: one row group per
 account, its windows stacked inside the cells, sorted by provider and login.
-The pane refreshes every five minutes and shows a countdown.
+The pane takes only the rows its table needs, so the transcript stays visible
+below short tables. It refreshes every five minutes and shows a countdown.
 
 | Key | Action |
 |---|---|
@@ -89,6 +96,13 @@ wraps between words, and each window's other cells stay level with its
 status. Then Plan, Provider, and Status are hidden, in that order. The
 caption names what was hidden. Outside the TUI (print/json modes) the
 command emits the table once as a notification.
+
+## Footer status
+
+Near the model indicator pi shows the current provider's tightest quota
+window (`zai tokens (7d) 95% · resets 2h 22m`), refreshed at each turn end
+and on model switches; providers without quota rows, errors, and rate
+limits clear it instead of parking stale text there.
 
 ## Tests
 

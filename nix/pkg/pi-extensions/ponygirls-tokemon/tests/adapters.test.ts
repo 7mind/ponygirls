@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { CodexQuota } from "../src/adapters/codex.ts";
 import { CopilotQuota } from "../src/adapters/copilot.ts";
 import { KimiQuota } from "../src/adapters/kimi.ts";
 import { MetaQuota, MUSE_KEY_URL } from "../src/adapters/meta.ts";
@@ -17,6 +18,47 @@ import { API_KEY, META_OAUTH, OAUTH, ScriptedHttp, at, fixture, json, type Route
 
 const rows = (s: QuotaSnapshot): Array<[string, number | null, number | null, string]> => s.windows.map((w) => [w.name, w.used, w.limit, w.unit]);
 const byName = (s: QuotaSnapshot): Map<string, QuotaWindow> => new Map(s.windows.map((w) => [w.name, w]));
+
+// -- Codex -----------------------------------------------------------------------------------
+
+const CODEX_URL = "https://chatgpt.com/backend-api/wham/usage";
+const codex = (payload: unknown): Promise<QuotaSnapshot> => new CodexQuota().fetch(OAUTH, new ScriptedHttp([["GET", CODEX_URL, json(200, payload)]]));
+
+test("codex: the observed schema", async () => {
+  const s = await codex(fixture("codex_wham_usage.json"));
+  assert.deepEqual([s.plan, s.identity, s.note], ["pro", "<email>", "resets: 0"]);
+  assert.deepEqual(rows(s), [["primary (7d)", 91, 100, "%"], ["credits", null, 0, "credits"]]);
+  assert.equal(byName(s).get("primary (7d)")!.resetsAt?.toISOString(), at(1791104309));
+});
+
+test("codex: null windows are skipped; the account id goes in a header when known", async () => {
+  const payload = fixture("codex_wham_usage.json");
+  payload["rate_limit"]["primary_window"] = null;
+  payload["rate_limit"]["secondary_window"] = null;
+  assert.deepEqual(rows(await codex(payload)).map(([name]) => name), ["credits"]);
+  const http = new ScriptedHttp([["GET", CODEX_URL, json(200, fixture("codex_wham_usage.json"))]]);
+  await new CodexQuota().fetch({ ...OAUTH, accountId: "acc-1" }, http);
+  assert.deepEqual([http.headers[0]!["Authorization"], http.headers[0]!["ChatGPT-Account-Id"]], ["Bearer test-access", "acc-1"]);
+  const bare = new ScriptedHttp([["GET", CODEX_URL, json(200, fixture("codex_wham_usage.json"))]]);
+  await new CodexQuota().fetch(OAUTH, bare);
+  assert.equal(bare.headers[0]!["ChatGPT-Account-Id"], undefined);
+});
+
+test("codex: chatpass, code review, and additional rate limits are windows", async () => {
+  const payload = fixture("codex_wham_usage.json");
+  payload["chatpass"] = { windows: [{ used_percent: 7, limit_window_seconds: 604800, reset_after_seconds: 604800, reset_at: 1791458686 }] };
+  payload["code_review_rate_limit"] = { allowed: true, limit_reached: false, primary_window: { used_percent: 33, limit_window_seconds: 604800, reset_at: 1791104309 }, secondary_window: null };
+  payload["additional_rate_limits"] = [{ limit_name: "codex_other", metered_feature: "codex_other", rate_limit: { allowed: true, limit_reached: true, primary_window: { used_percent: 100, limit_window_seconds: 900, reset_at: 1791104309 }, secondary_window: { used_percent: 84, limit_window_seconds: 3600, reset_at: 1791104309 } } }];
+  const windows = byName(await codex(payload));
+  assert.deepEqual([windows.get("chatpass (7d)")!.used, windows.get("code review (7d)")!.used], [7, 33]);
+  assert.equal(windows.get("codex_other (15m)")!.exhausted, true);
+  assert.equal(windows.get("codex_other (1h)")!.used, 84);
+});
+
+test("codex: no quota data and auth rejection raise", async () => {
+  await assert.rejects(codex({ plan_type: "pro" }), QuotaFetchError);
+  await assert.rejects(new CodexQuota().fetch(OAUTH, new ScriptedHttp([["GET", CODEX_URL, json(401, { detail: "expired" })]])), QuotaFetchError);
+});
 
 // -- Copilot -------------------------------------------------------------------------------
 

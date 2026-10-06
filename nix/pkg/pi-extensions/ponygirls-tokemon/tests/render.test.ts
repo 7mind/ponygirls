@@ -83,12 +83,12 @@ test("the tool report lists every provider with window states, errors, and optio
   const report = toolReport(
     { refreshedAt: NOW, results: [result("zai", [win("tokens (5h)", 95, 100, "%", reset)]), result("meta", [], { snapshot: null, rateLimited: true, retryAt: new Date(NOW.getTime() + 90_000), error: "rate limited" })] },
     NOW,
-    new Map([["zai", ["glm-5.3", "glm-4.6"]]]),
+    { models: new Map([["zai", [{ id: "glm-5.3", efforts: ["off"] }, { id: "glm-4.6", efforts: ["low", "high"] }]]]), quotas: true, context: null },
   );
   assert.deepEqual(report.providers.map((p) => [p.provider, p.windows.map((w) => [w.name, w.state, w.resetsIn]), p.error, p.rateLimited]), [
     ["meta", [], "rate limited (429) · retry in 1m 30s", true],
     ["zai", [["tokens (5h)", "low", "1h 00m"]], null, false],
   ]);
-  assert.deepEqual(report.models, { zai: ["glm-5.3", "glm-4.6"] });
-  assert.equal(toolReport({ refreshedAt: NOW, results: [] }, NOW, null).models, undefined);
+  assert.deepEqual(report.models, { zai: [{ id: "glm-4.6", efforts: ["low", "high"] }, { id: "glm-5.3", efforts: ["off"] }] });
+  assert.equal(toolReport({ refreshedAt: NOW, results: [] }, NOW, { models: null, quotas: true, context: null }).models, undefined);
 });

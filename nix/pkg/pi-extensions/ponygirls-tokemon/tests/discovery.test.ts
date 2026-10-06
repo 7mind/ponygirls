@@ -27,9 +27,9 @@ test("auth.json logins and keys become targets; unusable entries carry the reaso
     const targets = discoverTargets(dir, home, {});
     assert.deepEqual(targets.map((t) => [t.provider, t.origin, t.label, t.credential, t.note]), [
       ["broken", "auth.json", "~/.pi/agent/auth.json", null, "pi credential broken: oauth entry has no access token"],
-      ["kimi-coding", "auth.json", "~/.pi/agent/auth.json", { kind: "oauth", secret: "kimi-access", refreshToken: "kimi-refresh" }, null],
+      ["kimi-coding", "auth.json", "~/.pi/agent/auth.json", { kind: "oauth", secret: "kimi-access", refreshToken: "kimi-refresh", accountId: null }, null],
       ["odd", "auth.json", "~/.pi/agent/auth.json", null, 'pi credential odd: unknown type "magic"'],
-      ["zai", "auth.json", "~/.pi/agent/auth.json", { kind: "api_key", secret: "zai-key", refreshToken: null }, null],
+      ["zai", "auth.json", "~/.pi/agent/auth.json", { kind: "api_key", secret: "zai-key", refreshToken: null, accountId: null }, null],
     ]);
   } finally {
     cleanup();
@@ -58,7 +58,7 @@ test("models.json providers without a credential are queried through pi; plain o
   try {
     const targets = discoverTargets(dir, home, {});
     assert.deepEqual(targets.map((t) => [t.provider, t.origin, t.credential]), [
-      ["zai", "auth.json", { kind: "api_key", secret: "k", refreshToken: null }],
+      ["zai", "auth.json", { kind: "api_key", secret: "k", refreshToken: null, accountId: null }],
       ["custom", "models.json", null],
       ["minimax", "models.json", null],
     ]);
