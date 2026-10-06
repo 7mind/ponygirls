@@ -218,8 +218,37 @@ defects, all reproduced and fixed with regression tests
   timeout up to 600 s, writer requirement and command/timeout validation at
   spawn and retry).
 
+## /agents screen: transcripts with chat (2026-10-06)
+
+Driven in a real terminal (tmux 3.7c, `./pi-test`, `zai/glm-5.3` and
+`kimi-coding/k3`); each defect below was reproduced there before its fix.
+
+- `g` retried a finished review without the gate's checks (the linked
+  run's spec had `checks: []`), and worked only from the reviewer's row,
+  not the gated agent's. `manage_gate retry_review` now reuses the run's
+  own specification when no `gate` is given; the TUI passes none and
+  resolves the gate from either row.
+- The detail pane showed only status, captured once on `enter`; rows
+  repeated `settled · settled` and omitted outcome, isolation, and
+  workdir; nothing refreshed while open; the footer status was truncated
+  behind the search hub's (statuses sort by key); no colors.
+- After a restart an idle gate reviewer was shown `queued` (and counted
+  as queued) because replay ignored that reviewer executions are not
+  journaled as generations.
+- In fullscreen mode pi's viewport consumes `PgUp`/`PgDn`, so the screen
+  is a full-terminal overlay, which receives them (and the mouse wheel).
+- New: transcript view of any agent (active branch of its native session,
+  tool results under their calls, thinking marked, senders and replies
+  named, JSON output wrapped by column), live streaming of text being
+  generated (throttled previews from the worker), and a chat line that
+  answers, steers, or starts a task. Verified live: steering a running
+  glm writer, answering a kimi child's question, a new task to an idle
+  agent, streaming from both providers (kimi's stream arrives in bursts),
+  and a `g` retry whose linked run kept `checks`.
+- Suite: 213 pass locally.
+
 ## Not executed
 
-- Interactive TUI flows (`/agents` inspector key handling, editor dialogs).
+- The `/agents` editor dialogs (`m`, `t`, `a`); the screen itself was driven in tmux.
 - Abrupt host reboot with kernel-buffer loss (guest/storage harness).
 - Token/cost budget stops (not implemented).

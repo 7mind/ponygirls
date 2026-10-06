@@ -711,7 +711,8 @@ export class GateController {
     this.host.startReviewerExecution(task.reviewerId, { taskRunId, reviewId: task.review.reviewId, candidateId: task.candidate.candidateId, prompt: this.buildReviewPrompt(task, [], false) });
   }
 
-  retryReview(priorTaskRunId: TaskRunId, candidateId: string, spec: GateSpecInput, commandId: string): TaskRunId {
+  /** `spec` null reviews under the prior run's own specification (revalidated against current policy). */
+  retryReview(priorTaskRunId: TaskRunId, candidateId: string, spec: GateSpecInput | null, commandId: string): TaskRunId {
     this.dedupCommand(commandId, "retry_review", priorTaskRunId);
     const prior = this.tasks.get(priorTaskRunId);
     if (!prior || !prior.terminal) throw err("NOT_FOUND", `no terminal run ${priorTaskRunId}`);
@@ -722,7 +723,7 @@ export class GateController {
     if (!this.host.workspaceMatches(prior.agentId, prior.candidate)) {
       throw err("CONFLICT", "candidate no longer matches current workspace; submit current work as a new task");
     }
-    const normalized = normalizeGateSpec(spec, this.host.activePolicy);
+    const normalized = normalizeGateSpec(spec ?? prior.spec, this.host.activePolicy);
     if (!normalized.ok) throw normalized.error;
     const taskRunId = randomUUID();
     this.host.runStore.append("gate.registered", {

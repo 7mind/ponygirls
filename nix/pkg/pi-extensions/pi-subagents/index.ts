@@ -17,14 +17,19 @@ import { instructionsFromPromptOptions, parseSelection } from "./src/instruction
 import { defaultSupervisorPolicy, type SupervisorPolicy } from "./src/policy.ts";
 import { gateParameters, readParameters, spawnParameters, waitParameters } from "./src/tools.ts";
 import type { InstructionSet, Isolation, ResolvedModel } from "./src/types.ts";
-import { AgentInspector, renderHeadless, sanitizeDisplay, widgetLine } from "./src/ui.ts";
+import { AgentsScreen, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
+import { themeStyle } from "./src/display.ts";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CUSTOM_NOTICE = "pi-subagents-notice";
-const STATUS_KEY = "subagents";
+/** Footer statuses sort by key; this one sorts ahead of long ones such as "search". */
+const STATUS_KEY = "agents";
+/** How often an open /agents screen re-reads state and transcripts. */
+const SCREEN_POLL_MS = 500;
 const NOTICE_BATCH = 20;
 const NOTICE_TEXT_MAX = 48_000;
 const STATUS_THROTTLE_MS = 250;
@@ -314,7 +319,7 @@ export default function (pi: ExtensionAPI): void {
     defineTool({
       name: "manage_gate",
       label: "Manage validation gate",
-      description: "Governor-only controls for gated tasks: resume_review (interrupted review, same run and counters; needs review_id), retry_review (terminal run: linked new run reviewing the same candidate; needs candidate_id and gate), bypass (explicit acceptance without validation, recorded as gate_bypassed, never approval; needs candidate_id and reason), set_limits (agreement cap within root authority; max_rounds).",
+      description: "Governor-only controls for gated tasks: resume_review (interrupted review, same run and counters; needs review_id), retry_review (terminal run: linked new run reviewing the same candidate; needs candidate_id; gate replaces the run's own specification when given), bypass (explicit acceptance without validation, recorded as gate_bypassed, never approval; needs candidate_id and reason), set_limits (agreement cap within root authority; max_rounds).",
       parameters: Type.Object({
         target: Type.String({ description: "Task-run id the action applies to" }),
         action: Type.Union([Type.Literal("resume_review"), Type.Literal("retry_review"), Type.Literal("bypass"), Type.Literal("set_limits")]),
@@ -340,8 +345,7 @@ export default function (pi: ExtensionAPI): void {
           };
           if (p.action === "resume_review") return ok(await supervisor.manageGate(caller, { kind: "resume_review", taskRunId: p.target, reviewId: need(p.review_id, "review_id") }, commandId));
           if (p.action === "retry_review") {
-            if (!p.gate) throw new Error("INVALID: retry_review requires gate");
-            return ok(await supervisor.manageGate(caller, { kind: "retry_review", taskRunId: p.target, candidateId: need(p.candidate_id, "candidate_id"), gate: p.gate }, commandId));
+            return ok(await supervisor.manageGate(caller, { kind: "retry_review", taskRunId: p.target, candidateId: need(p.candidate_id, "candidate_id"), gate: p.gate ?? null }, commandId));
           }
           if (p.action === "bypass") return ok(await supervisor.manageGate(caller, { kind: "bypass", taskRunId: p.target, candidateId: need(p.candidate_id, "candidate_id"), reason: need(p.reason, "reason") }, commandId));
           if (p.max_rounds === undefined) throw new Error("INVALID: set_limits requires max_rounds (a positive integer or null)");
@@ -354,7 +358,7 @@ export default function (pi: ExtensionAPI): void {
   );
 
   pi.registerCommand("agents", {
-    description: "Inspect subagents: tree, status, results, questions",
+    description: "Subagents: tree, details, transcripts with chat, and controls",
     handler: async (_args, ctx) => {
       let binding: SessionBinding;
       try {
@@ -364,41 +368,72 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       const sub = binding.supervisor;
-      const views = sub.list("user");
       if (ctx.mode !== "tui" || !ctx.hasUI) {
+        const views = sub.list("user");
         ctx.ui.notify(`${widgetLine(views)}\n${renderHeadless(views)}`, "info");
         return;
       }
-      await ctx.ui.custom<void>((tui, _theme, _kb, done) => {
-        let inspector: AgentInspector | null = null;
+      await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+        const style = themeStyle(theme);
         const render = (): void => tui.requestRender();
+        const requestId = (): string => `ui:${randomUUID()}`;
+        const questionOf = (agentId: string): { messageId: string; text: string } | null => {
+          const q = sub.pendingQuestions("user").find((x) => x.from === agentId && x.to === "governor");
+          return q ? { messageId: q.messageId, text: q.text } : null;
+        };
+        let poll: ReturnType<typeof setInterval> | null = null;
+        const finish = (): void => {
+          if (poll) clearInterval(poll);
+          poll = null;
+          done();
+        };
         const afterAction = (note: string): void => {
-          if (inspector) {
-            inspector.refreshViews(sub.list("user"));
-            inspector.notice(note);
-          }
+          screen.inspector.notice(note);
+          screen.refresh();
           render();
         };
-        const handleAction = (action: { kind: string; agentId: string }): void => {
+        const handleAction = (action: InspectorAction): void => {
           const id = action.agentId;
           const short = id.slice(0, 8);
           if (action.kind === "interrupt") {
-            void sub.interrupt("user", id, `ui:${Date.now()}`).then(
+            void sub.interrupt("user", id, requestId()).then(
               () => afterAction(`interrupt accepted for ${short}; confirm stopped state separately`),
               (e: Error) => afterAction(`interrupt rejected: ${e.message}`),
             );
             return;
           }
           if (action.kind === "close") {
-            void sub.close("user", id, `ui:${Date.now()}`).then(
+            void sub.close("user", id, requestId()).then(
               () => afterAction(`closed ${short}; sessions and dirty worktrees preserved`),
               (e: Error) => afterAction(`close rejected: ${e.message}`),
             );
             return;
           }
-          // Editor-based flows dismiss the inspector first: the editor owns
-          // the terminal while open. Every action records human origin.
-          done();
+          if (action.kind === "retry_review") {
+            const view = sub.list("user").find((v) => v.id === id);
+            const taskRunId = view?.managedGateFor ?? view?.gateTaskRunId ?? null;
+            const state = taskRunId ? sub.gateController.inspect(taskRunId) : null;
+            if (!taskRunId || !state) {
+              afterAction(`no gate for ${short}`);
+              return;
+            }
+            if (!state.terminal && state.review?.status === "interrupted") {
+              void sub.manageGate("user", { kind: "resume_review", taskRunId, reviewId: state.review.reviewId }, requestId()).then(
+                () => afterAction(`review ${state.review?.reviewId} resumed with fresh context; counters kept`),
+                (e: Error) => afterAction(`resume rejected: ${e.message}`),
+              );
+            } else if (state.terminal && state.candidate) {
+              void sub.manageGate("user", { kind: "retry_review", taskRunId, candidateId: state.candidate.candidateId, gate: null }, requestId()).then(
+                (next) => afterAction(`linked review run ${next.taskRunId.slice(0, 8)} started under the same gate; the original outcome stays`),
+                (e: Error) => afterAction(`retry rejected: ${e.message}`),
+              );
+            } else {
+              afterAction(`nothing to resume or retry for ${short} (review active, or no candidate)`);
+            }
+            return;
+          }
+          // Editor flows leave the screen: the editor owns the terminal while open.
+          finish();
           void (async () => {
             try {
               if (action.kind === "message" || action.kind === "task") {
@@ -407,7 +442,7 @@ export default function (pi: ExtensionAPI): void {
                   ctx.ui.notify(`${action.kind} cancelled.`, "info");
                   return;
                 }
-                const res = await sub.sendMessage("user", id, action.kind === "message" ? "note" : "task", text, {}, `ui:${Date.now()}`);
+                const res = await sub.sendMessage("user", id, action.kind === "message" ? "note" : "task", text, {}, requestId());
                 ctx.ui.notify(`${action.kind} accepted (message ${res.messageId.slice(0, 8)}).`, "info");
               } else if (action.kind === "answer") {
                 const open = sub.pendingQuestions("user").filter((q) => q.from === id || q.to === id);
@@ -421,38 +456,47 @@ export default function (pi: ExtensionAPI): void {
                   ctx.ui.notify("Answer cancelled.", "info");
                   return;
                 }
-                await sub.sendMessage("user", open[0]!.from, "note", text, { replyTo: open[0]!.messageId }, `ui:${Date.now()}`);
+                await sub.sendMessage("user", open[0]!.from, "note", text, { replyTo: open[0]!.messageId }, requestId());
                 ctx.ui.notify("Answer recorded; the asker resumes without a new root turn.", "info");
-              } else if (action.kind === "retry_review") {
-                const taskRunId = sub.list("user").find((v) => v.id === id)?.managedGateFor;
-                const state = taskRunId ? sub.gateController.inspect(taskRunId) : null;
-                if (!taskRunId || !state) {
-                  ctx.ui.notify(`No managed gate for ${short}.`, "warning");
-                  return;
-                }
-                if (!state.terminal && state.review?.status === "interrupted") {
-                  await sub.manageGate("user", { kind: "resume_review", taskRunId, reviewId: state.review.reviewId }, `ui:${Date.now()}`);
-                  ctx.ui.notify(`Review ${state.review.reviewId} resumed with fresh context; counters kept.`, "info");
-                } else if (state.terminal && state.candidate) {
-                  const next = await sub.manageGate("user", { kind: "retry_review", taskRunId, candidateId: state.candidate.candidateId, gate: { model: state.spec.model, thinkingLevel: state.spec.thinkingLevel, prompt: state.spec.prompt, maxRounds: state.spec.maxRounds } }, `ui:${Date.now()}`);
-                  ctx.ui.notify(`Linked review run ${next.taskRunId.slice(0, 8)} started; original outcome immutable.`, "info");
-                } else {
-                  ctx.ui.notify(`Nothing resumable for ${short} (review active or gate terminal without candidate).`, "warning");
-                }
               }
             } catch (e) {
               ctx.ui.notify(`${action.kind} rejected: ${(e as Error).message}`, "error");
             }
           })();
         };
-        inspector = new AgentInspector(views, {
-          refresh: () => sub.list("user"),
-          onClose: () => done(),
+        const screen = new AgentsScreen({
+          list: () => sub.list("user"),
+          describe: (agentId) => {
+            const read = sub.read("user", agentId, "result", 0, 1, null);
+            return { result: read.result?.text || null, question: read.status.openQuestion?.text ?? null };
+          },
+          transcript: (agentId, back) => ({
+            view: () => sub.list("user").find((v) => v.id === agentId) ?? null,
+            source: () => sub.transcript("user", agentId),
+            question: () => questionOf(agentId),
+            send: async (text, mode) => {
+              if (mode.kind === "unavailable") throw new Error(mode.reason);
+              const res = await sub.sendMessage("user", agentId, mode.kind === "task" ? "task" : mode.kind === "steer" ? "steer" : "note", text, mode.kind === "answer" ? { replyTo: mode.replyTo } : {}, requestId());
+              return mode.kind === "answer" ? "answer delivered" : mode.kind === "steer" ? "steer delivered to the running task" : `new task ${res.taskRunId?.slice(0, 8) ?? ""} accepted`;
+            },
+            back,
+            requestRender: render,
+            rows: () => tui.terminal.rows,
+            reader: fileSessionReader,
+            style,
+          }),
           onAction: handleAction,
+          onClose: finish,
           requestRender: render,
+          rows: () => tui.terminal.rows,
+          style,
         });
-        return inspector;
-      });
+        poll = setInterval(() => {
+          screen.refresh();
+          render();
+        }, SCREEN_POLL_MS);
+        return Object.assign(screen, { dispose: () => { if (poll) clearInterval(poll); poll = null; } });
+      }, { overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 } });
     },
   });
 

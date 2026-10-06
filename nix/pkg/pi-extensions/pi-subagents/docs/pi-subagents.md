@@ -149,5 +149,10 @@ counts.
 - **No manual approvals.** Every child tool call is decided by grants
   alone: a granted call runs, anything else fails with `POLICY_DENIED`.
   There is no `ask` setting or approval mechanism.
-- **Not exercised end to end:** the paged diff view in `read_agent` and the
-  `/agents` inspector's terminal key handling.
+- **No diff view.** `read_agent` returns status, results, and events; a
+  worktree writer's changes are inspected with `git -C <workdir> diff`.
+- **Transcripts show what the session file holds.** Text being generated
+  streams into the view; thinking and tool calls appear when their message
+  completes. A gate reviewer's conversation is not kept, so it has no
+  transcript. The `/agents` screen was exercised in a real terminal (tmux)
+  in pi's fullscreen and regular modes at 160×45, 120×32, and 100×30.
