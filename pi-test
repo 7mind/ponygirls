@@ -53,7 +53,7 @@ for rel in "${rels[@]}"; do
   args+=(-e "$path")
 done
 
-# pi-subagents workers import the SDK of the pi that runs them. The deployed
+# ponygirls-subagents workers import the SDK of the pi that runs them. The deployed
 # wrapper sets this once switched; otherwise follow pi's launcher scripts to
 # the package that holds its cli.js.
 if [[ -z ${PI_SUBAGENTS_SDK_ROOT:-} ]]; then

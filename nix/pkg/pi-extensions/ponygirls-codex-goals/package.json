@@ -1,0 +1,9 @@
+{
+  "name": "ponygirls-codex-goals",
+  "version": "0.1.0",
+  "description": "Codex-style session goals for Pi with fully visible transcript instructions",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.ts"
+  }
+}
