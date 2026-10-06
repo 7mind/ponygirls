@@ -47,7 +47,6 @@ test("the pane shows the table with a refresh countdown and is sized to its cont
   await settle();
   const lines = v.render(100);
   assert.ok(lines.length < 20, `the pane must not pad to full height: ${lines.length} lines`);
-  assert.equal(v.wantedHeight(), lines.length);
   assert.ok(lines.every((l) => visibleWidth(l) <= 100));
   assert.match(lines[0]!, /tokemon — token quotas .* next refresh in 5:00/);
   assert.ok(lines.some((l) => l.includes("p02")));

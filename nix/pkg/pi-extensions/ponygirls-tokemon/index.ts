@@ -9,7 +9,8 @@
  *   included unless `include_quotas` is false; the calling session's
  *   context size and usage ride along unless `include_context` is false.
  *   Answers are cached for a minute.
- * - Command `/tokemon`: the same data as a content-sized, auto-refreshing table.
+ * - Command `/tokemon`: the same data as a bottom panel replacing the editor
+ *   (like /usage and /perf), auto-refreshing.
  * - Footer status: the current provider's tightest quota window, refreshed
  *   at each turn end and on model switches.
  *
@@ -142,25 +143,18 @@ export default function (pi: ExtensionAPI): void {
         }
         return;
       }
-      let view: TokemonView | undefined;
-      await ctx.ui.custom<void>(
-        (tui, theme, _kb, done) => {
-          view = new TokemonView({
-            report: (maxAgeMs) => service.report(authOf(ctx), maxAgeMs),
-            models: () => modelsOf(ctx),
-            now: () => new Date(),
-            rows: () => tui.terminal.rows,
-            requestRender: () => tui.requestRender(),
-            close: () => done(),
-            style: tableStyle(theme),
-            refreshEveryMs: PANE_REFRESH_MS,
-          });
-          return view;
-        },
-        // A content-sized overlay: the pane takes only the rows its table
-        // needs (pi's fullscreen viewport would otherwise take PgUp/PgDn),
-        // so the transcript stays visible below short tables.
-        { overlay: true, overlayOptions: () => ({ anchor: "top-left", width: "100%", maxHeight: view?.wantedHeight() ?? 5, margin: 0 }) },
+      // In place, replacing the editor, as /usage and /perf do. An overlay is a popup.
+      await ctx.ui.custom<void>((tui, theme, _kb, done) =>
+        new TokemonView({
+          report: (maxAgeMs) => service.report(authOf(ctx), maxAgeMs),
+          models: () => modelsOf(ctx),
+          now: () => new Date(),
+          rows: () => tui.terminal.rows,
+          requestRender: () => tui.requestRender(),
+          close: () => done(),
+          style: tableStyle(theme),
+          refreshEveryMs: PANE_REFRESH_MS,
+        }),
       );
     },
   });

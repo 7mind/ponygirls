@@ -1,11 +1,12 @@
 /**
- * ponygirls-tokemon — the /tokemon pane: the quota table in a content-sized
- * overlay, scrollable, auto-refreshing on an interval with a countdown
- * (tokemon's TUI). `r` refreshes now, `i` shows or hides rows without quota
- * data, `m` lists each provider's available models below the table.
+ * ponygirls-tokemon — the /tokemon bottom panel: the quota table replacing
+ * the editor (like /usage and /perf), scrollable, auto-refreshing on an
+ * interval with a countdown (tokemon's TUI). `r` refreshes now, `i` shows
+ * or hides rows without quota data, `m` lists each provider's available
+ * models below the table.
  *
- * The pane reports how many rows it needs (wantedHeight) so the overlay
- * covers only the table; the transcript stays visible below it.
+ * The panel is only as tall as its content (up to the terminal budget),
+ * so short tables leave the transcript visible above it.
  */
 
 import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
@@ -48,8 +49,6 @@ export class TokemonView implements Component {
   private showModels = false;
   private scrollTop = 0;
   private nextRefreshAt: Date;
-  /** Rows the last render produced; the overlay sizes itself to this (5 = the loading state). */
-  private lastHeight = CHROME_LINES + 1;
   private readonly timer: ReturnType<typeof setInterval>;
 
   constructor(deps: TokemonViewDeps) {
@@ -92,11 +91,6 @@ export class TokemonView implements Component {
     return Math.max(3, this.deps.rows() - CHROME_LINES);
   }
 
-  /** Rows the overlay needs: title, visible content, blank, caption, keys. */
-  wantedHeight(): number {
-    return this.lastHeight;
-  }
-
   private content(width: number): { lines: string[]; caption: string | null } {
     const s = this.deps.style;
     if (this.error !== null) return { lines: [s.error(`quota refresh failed: ${this.error}`)], caption: null };
@@ -130,15 +124,13 @@ export class TokemonView implements Component {
     const visible = lines.slice(this.scrollTop, this.scrollTop + height);
     const below = lines.length - this.scrollTop - height;
     const position = this.scrollTop > 0 || below > 0 ? ` · lines ${this.scrollTop + 1}-${Math.min(lines.length, this.scrollTop + height)} of ${lines.length}` : "";
-    const out = [
+    return [
       truncateToWidth(`${s.bold("tokemon — token quotas")}  ${s.dim(status)}`, w, "…"),
       ...visible.map((l) => truncateToWidth(l, w, "…")),
       "",
       truncateToWidth(s.dim(`${caption ?? ""}${position}`), w, "…"),
       truncateToWidth(s.dim(`r refresh · i ${this.showInvalid ? "hide" : "show"} invalid · m ${this.showModels ? "hide" : "show"} models · ↑↓ PgUp PgDn scroll · esc close`), w, "…"),
     ];
-    this.lastHeight = out.length;
-    return out;
   }
 
   handleInput(data: string): void {
