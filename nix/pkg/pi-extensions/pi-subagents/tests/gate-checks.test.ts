@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GitWorkspaceManager } from "../src/workspace.ts";
-import { gateSpec, mkSup, tick } from "./ctl-worker.ts";
+import { blocked, gateSpec, mkSup, tick } from "./ctl-worker.ts";
 import { testGovernor } from "./fake-worker.ts";
 
 function gitCheckout(dir: string): string {
@@ -54,4 +54,29 @@ test("checks and promised outputs need a writer; malformed checks are rejected a
   await assert.rejects(() => spawn("writer", { checks: [{ id: "t", command: "true", timeoutMs: 0 }] }), /INVALID: gate check t timeoutMs/);
   await assert.rejects(() => spawn("writer", { checks: [{ id: "t", command: "x".repeat(40 * 1024) }] }), /PAYLOAD_TOO_LARGE/);
   assert.equal(sup.admissionScheduler.agentsCreatedCount, 0);
+});
+
+test("a retry review without a new spec reviews under the original one, checks included", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "subagents-checks-retry-"));
+  try {
+    const repo = gitCheckout(dir);
+    const { sup, byAgent, executors } = mkSup({ dir: join(dir, "root"), workspace: new GitWorkspaceManager(), governor: () => ({ ...testGovernor(), cwd: repo }) });
+    const g = await sup.spawn("governor", {
+      taskName: "g", message: "m", profile: "writer",
+      gate: { ...gateSpec(), checks: [{ id: "tests", command: "node test.js", timeoutMs: 7000 }], promisedOutputs: ["a.txt"] },
+    }, "rg");
+    byAgent(g.agentId)[0]!.settle("succeeded", "done");
+    await tick(100);
+    const reviewerId = sup.gateController.inspect(g.taskRunId)!.reviewerId!;
+    await byAgent(reviewerId)[0]!.decide(blocked("candidate-1"));
+    await tick(50);
+    const retry = await sup.manageGate("user", { kind: "retry_review", taskRunId: g.taskRunId, candidateId: "candidate-1", gate: null }, "cmd-retry");
+    await tick(100);
+    const spec = sup.gateController.inspect(retry.taskRunId)!.spec;
+    assert.deepEqual({ checks: spec.checks, promisedOutputs: spec.promisedOutputs }, { checks: [{ id: "tests", command: "node test.js", timeoutMs: 7000 }], promisedOutputs: ["a.txt"] });
+    assert.deepEqual(executors.host.specs.map((s) => s.timeoutMs), [7000, 7000], "the check ran again for the retried review");
+    await sup.shutdown();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

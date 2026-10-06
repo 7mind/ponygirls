@@ -8,9 +8,9 @@ One supervisor owns the governing pi session. Each resident child runs in a
 separate SDK worker process with a native pi session, reached over a private
 validated IPC protocol. All child tools execute through a supervisor-owned
 broker, either directly on the host or in a Linux bubblewrap sandbox, as
-chosen per child (see Isolation). A single TUI inspector
-(`/agents`) and seven core tools plus `manage_gate` share the same
-controller methods. There are no manual approvals: a child's tool call is
+chosen per child (see Isolation). One `/agents` screen (the agent tree,
+live transcripts with a chat line) and seven core tools plus
+`manage_gate` share the same controller methods. There are no manual approvals: a child's tool call is
 allowed by its grants or fails with `POLICY_DENIED`.
 
 ## Status
@@ -41,7 +41,10 @@ genuine limitations.
 - `src/worker.ts` — SDK worker process (native child session, proxy tools)
 - `src/worker-launch.ts` — supervisor-side transport (fork, handshake, guard)
 - `src/gate.ts` — optional validation gate controller + decision schema
-- `src/ui.ts` — widget, headless projection, tree inspector, sanitization
+- `src/ui.ts` — footer status, headless projection, the `/agents` screen
+  (tree inspector, transcript view with chat)
+- `src/transcript.ts` — a child's native session as transcript lines
+- `src/display.ts` — sanitization and theme styles shared by the views
 - `src/deterministic.ts` — scripted provider for credential-free tests
 - `tests/` — behavioral/contract suites (`node --test`), dual-test pairs,
   deterministic provider tests, real SDK/filesystem/IPC/Git/sandbox checks
@@ -130,6 +133,29 @@ copied and is hidden from sandboxed tool views. Workers import pi's built
 package tree from `PI_SUBAGENTS_SDK_ROOT`, which the home-manager pi wrapper
 sets to the exact pi derivation (`nix/hm/pi.nix`); without it spawning fails
 explicitly.
+
+## The /agents screen
+
+`/agents` opens a full-screen view of the tree: path (nested agents
+indented), profile and isolation, state, outcome, and model per row, with
+the selected agent's workdir, usage, open question, and result below. The
+list refreshes on its own.
+
+- `enter` (or a double click) opens the agent's **transcript**: its
+  conversation as its native pi session records it (tasks, thinking, tool
+  calls with their results, delivered notes and replies), streamed live
+  while it runs. `↑↓`, `PgUp`/`PgDn`, and the mouse wheel scroll.
+- The transcript's **chat line** messages that agent: it answers the
+  agent's open question, steers a running task, or otherwise starts a new
+  task run. Messages are recorded as from the governing session.
+- On the list: `m` note and `t` task (editor), `a` answer a question, `i`
+  interrupt, `c` close, `g` resume an interrupted review or retry a
+  finished one under the same gate (from the agent or its reviewer row),
+  `r` refresh, `esc` close. Nothing here stops children by closing it.
+
+A gate reviewer's conversation is disposable, so it has no transcript.
+The footer status (`agents 3 · running 1 · questions 1`) sorts ahead of
+other extensions' statuses.
 
 ## Child tools
 

@@ -31,6 +31,8 @@ export class CtlWorker implements WorkerPort {
   delivered: Array<{ mode: string; text: string; messageId: string }> = [];
   initText: string | null = null;
   initTools: string[] = [];
+  /** What initialize reports as the native session file. */
+  sessionFile: string | null = null;
   /** The latest initialize payload (workdir, instructions, ...). */
   init: Record<string, unknown> | null = null;
   settleOnInterrupt = true;
@@ -52,7 +54,7 @@ export class CtlWorker implements WorkerPort {
       this.initText = (p["taskText"] as string | null) ?? null;
       this.initTools = (p["tools"] as string[]) ?? [];
       if (this.initText !== null) queueMicrotask(() => this.fire("started", {}));
-      return { ok: true, sessionId: "s", sessionFile: null };
+      return { ok: true, sessionId: "s", sessionFile: this.sessionFile };
     }
     if (op === "deliver") {
       this.delivered.push({ mode: String(p["mode"]), text: String(p["text"]), messageId: String(p["messageId"] ?? "") });

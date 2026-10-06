@@ -37,6 +37,8 @@ const CAPABILITIES = ["proxy-tools", "sequential", "checkpoint", "gate-decision"
 const TOOL_REQUEST_TIMEOUT_MS = 15 * 60_000;
 const CHECKPOINT_MAX_BYTES = 16 * 1024 * 1024;
 const PREVIEW_MAX = 2000;
+/** In-flight assistant text is forwarded at most this often (the transcript view shows it live). */
+const STREAM_PREVIEW_INTERVAL_MS = 300;
 const RESULT_TEXT_MAX = 8000;
 
 interface PendingToolCall {
@@ -54,6 +56,8 @@ interface GenerationState {
   stopReason: string | null;
   errorMessage: string | null;
   usage: { input: number; output: number; cost: number | null; unknown: boolean };
+  /** When in-flight text was last forwarded. */
+  previewAt: number;
 }
 
 interface SdkModules {
@@ -147,7 +151,7 @@ const state: {
 };
 
 function freshGeneration(taskRunId: string | null, generation: number | null): GenerationState {
-  return { taskRunId, generation, interruptRequested: false, settled: false, lastText: "", stopReason: null, errorMessage: null, usage: { input: 0, output: 0, cost: null, unknown: false } };
+  return { taskRunId, generation, interruptRequested: false, settled: false, lastText: "", stopReason: null, errorMessage: null, usage: { input: 0, output: 0, cost: null, unknown: false }, previewAt: 0 };
 }
 
 function send(envelope: Partial<IpcEnvelope> & { operation: string }): void {
@@ -425,8 +429,18 @@ function onSessionEvent(event: { type: string } & Record<string, unknown>): void
       const text = (message.content ?? []).filter((c) => c.type === "text" && typeof c.text === "string").map((c) => c.text).join("");
       if (text) {
         gen.lastText = text;
-        emitWorkerEvent({ kind: "preview", detail: { text: text.slice(0, PREVIEW_MAX) } });
+        emitWorkerEvent({ kind: "preview", detail: { text: text.slice(0, PREVIEW_MAX), partial: false } });
       }
+      break;
+    }
+    case "message_update": {
+      const message = event["message"] as { role?: string; content?: Array<{ type: string; text?: string }> } | undefined;
+      if (message?.role !== "assistant" || Date.now() - gen.previewAt < STREAM_PREVIEW_INTERVAL_MS) break;
+      const text = (message.content ?? []).filter((c) => c.type === "text" && typeof c.text === "string").map((c) => c.text).join("");
+      if (!text) break;
+      gen.previewAt = Date.now();
+      // The tail is what is being written; message_end delivers the whole text.
+      emitWorkerEvent({ kind: "preview", detail: { text: text.slice(-PREVIEW_MAX), partial: true } });
       break;
     }
     case "tool_execution_start": {
