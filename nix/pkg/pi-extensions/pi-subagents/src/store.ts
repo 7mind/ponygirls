@@ -12,8 +12,9 @@
  *   replace + manifest-sync. Only bytes beyond the committed boundary may be
  *   treated as an uncommitted torn tail; corruption at or before it fails
  *   recovery (RECOVERY_CORRUPT).
- * - OS-owned exclusive root lock (lock dir + owner file); epochs fence
- *   protocol activity but never replace the lock.
+ * - Exclusive root lock published atomically with an identity-verified
+ *   owner (pid + boot id + start time); epochs fence protocol activity but
+ *   never replace the lock.
  * - Command deduplication by requestId: repeated accepted spawns return one
  *   identity; conflicting reuse fails.
  * - Bounded checkpoint retention: latest committed + prior-during-replacement
@@ -31,14 +32,16 @@ import {
   openSync,
   readFileSync,
   readdirSync,
-  readSync,
   renameSync,
   rmSync,
+  statSync,
+  truncateSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { err } from "./errors.ts";
+import { readBootId, readProcessIdentity } from "./process-identity.ts";
 
 export const STORE_VERSION = 1;
 
@@ -49,6 +52,7 @@ export type JournalKind =
   | "mailbox.accepted"
   | "mailbox.receipt"
   | "mailbox.answered"
+  | "mailbox.question_expired"
   | "generation.started"
   | "generation.settled"
   | "task.terminal"
@@ -58,13 +62,13 @@ export type JournalKind =
   | "tool.outcome"
   | "usage.reported"
   | "policy.changed"
-  | "approval.recorded"
   | "gate.registered"
   | "gate.round_admitted"
   | "gate.candidate"
   | "gate.evidence"
   | "gate.decision"
   | "gate.repair_command"
+  | "gate.limits"
   | "checkpoint.published"
   | "checkpoint.superseded"
   | "recovery.event"
@@ -162,70 +166,139 @@ export function fsyncFile(path: string): void {
   }
 }
 
+/** Write a file durably: temp file, fsync, atomic rename, directory fsync. */
+function writeDurably(path: string, data: string | Uint8Array): void {
+  const tmp = `${path}.${randomUUID()}.tmp`;
+  writeFileSync(tmp, data);
+  fsyncFile(tmp);
+  renameSync(tmp, path);
+  fsyncDir(dirname(path));
+}
+
+interface LockOwner {
+  pid: number;
+  bootId: string;
+  starttime: string | null;
+  acquiredAt: string;
+  /** Distinguishes lock incarnations, so a contender retires only the lock it saw. */
+  nonce: string;
+}
+
 /**
- * Exclusive root ownership lock. Lock dir creation is atomic; the owner file
- * records pid + boot identity so a second process cannot adopt a live root.
- * Epochs fence protocol activity; they never replace this lock.
+ * Exclusive root ownership lock. The lock directory is published by an
+ * atomic rename of a fully written staging directory, so a lock never exists
+ * without its owner record. The owner is identified by pid + boot id +
+ * process start time; a lock whose owner process no longer exists (crash,
+ * reboot, pid reuse) is retired by an atomic rename that exactly one
+ * contender wins, and only if it is still the incarnation that contender
+ * observed. Epochs fence protocol activity; they never replace this lock.
  */
 export class RootLock {
+  private rootDir: string;
   private lockDir: string;
   private held = false;
 
   constructor(rootDir: string) {
+    this.rootDir = rootDir;
     this.lockDir = join(rootDir, "root.lock");
   }
 
   acquire(): { ok: true } | { ok: false; error: ReturnType<typeof err> } {
-    try {
-      mkdirSync(this.lockDir);
-    } catch (e: unknown) {
-      const existing = this.readOwner();
-      if (existing && isLiveOwner(existing)) {
-        return { ok: false, error: err("CONFLICT", `root store locked by pid ${existing.pid} (epoch ${existing.epoch})`) };
+    mkdirSync(this.rootDir, { recursive: true });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (this.tryPublish()) {
+        this.held = true;
+        return { ok: true };
       }
-      return { ok: false, error: err("CONFLICT", `root store locked (stale owner: ${(e as Error).message})`) };
+      const owner = this.readOwner();
+      if (owner === null || ownerAlive(owner)) {
+        const who = owner ? `pid ${owner.pid} since ${owner.acquiredAt}` : "an owner still publishing its record";
+        return { ok: false, error: err("CONFLICT", `root store locked by ${who}`) };
+      }
+      if (!this.retireIfOwner(owner)) break;
     }
-    const owner = { pid: process.pid, epoch: randomUUID(), startedAt: new Date().toISOString(), bootId: readBootId() };
-    writeFileSync(join(this.lockDir, "owner.json"), JSON.stringify(owner));
-    fsyncFile(join(this.lockDir, "owner.json"));
-    fsyncDir(this.lockDir);
-    this.held = true;
-    return { ok: true };
+    return { ok: false, error: err("CONFLICT", "root store lock contended; retry") };
   }
 
   release(): void {
     if (!this.held) return;
     this.held = false;
-    rmSync(this.lockDir, { recursive: true, force: true });
+    // Rename first: a contender can never publish into a half-removed lock.
+    const released = join(this.rootDir, `root.lock.released-${randomUUID()}`);
+    try {
+      renameSync(this.lockDir, released);
+    } catch {
+      return; // The root directory itself is gone: nothing left to release.
+    }
+    rmSync(released, { recursive: true, force: true });
   }
 
-  private readOwner(): { pid: number; epoch: string; bootId: string } | null {
+  /**
+   * Retire the lock only if it is still the dead incarnation observed: the
+   * rename is atomic, and a lock found to be a newer incarnation is put back.
+   */
+  private retireIfOwner(seen: LockOwner): boolean {
+    const retired = join(this.rootDir, `root.lock.stale-${randomUUID()}`);
     try {
-      const raw = readFileSync(join(this.lockDir, "owner.json"), "utf8");
-      return JSON.parse(raw) as { pid: number; epoch: string; bootId: string };
+      renameSync(this.lockDir, retired);
+    } catch {
+      return true; // Another contender retired it; publishing decides.
+    }
+    let found: LockOwner | null = null;
+    try {
+      found = JSON.parse(readFileSync(join(retired, "owner.json"), "utf8")) as LockOwner;
+    } catch {
+      found = null;
+    }
+    if (found?.nonce === seen.nonce) {
+      rmSync(retired, { recursive: true, force: true });
+      return true;
+    }
+    try {
+      renameSync(retired, this.lockDir);
+    } catch {
+      // A third contender published meanwhile; leave the moved lock for diagnosis.
+    }
+    return false;
+  }
+
+  private tryPublish(): boolean {
+    const staging = join(this.rootDir, `root.lock.staging-${randomUUID()}`);
+    mkdirSync(staging);
+    const self = readProcessIdentity(process.pid);
+    const owner: LockOwner = { pid: process.pid, bootId: readBootId(), starttime: self?.starttime ?? null, acquiredAt: new Date().toISOString(), nonce: randomUUID() };
+    writeFileSync(join(staging, "owner.json"), JSON.stringify(owner));
+    fsyncFile(join(staging, "owner.json"));
+    fsyncDir(staging);
+    try {
+      renameSync(staging, this.lockDir);
+    } catch {
+      rmSync(staging, { recursive: true, force: true });
+      return false;
+    }
+    fsyncDir(this.rootDir);
+    return true;
+  }
+
+  private readOwner(): LockOwner | null {
+    try {
+      return JSON.parse(readFileSync(join(this.lockDir, "owner.json"), "utf8")) as LockOwner;
     } catch {
       return null;
     }
   }
 }
 
-function readBootId(): string {
-  try {
-    return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-  } catch {
-    return "unknown";
-  }
+function ownerAlive(owner: LockOwner): boolean {
+  if (owner.bootId !== readBootId()) return false;
+  const live = readProcessIdentity(owner.pid);
+  if (!live) return false;
+  return owner.starttime === null || owner.starttime === live.starttime;
 }
 
-function isLiveOwner(owner: { pid: number; bootId: string }): boolean {
-  try {
-    process.kill(owner.pid, 0);
-  } catch {
-    return false;
-  }
-  if (owner.bootId !== "unknown" && owner.bootId !== readBootId()) return false;
-  return true;
-}
+const JOURNAL_FILE = "journal.log";
+const MANIFEST_FILE = "MANIFEST.json";
+const CHECKPOINT_PREFIX = "gen-";
 
 export class FileRunStore implements RunStore {
   readonly rootId: string;
@@ -234,44 +307,59 @@ export class FileRunStore implements RunStore {
   private manifestPath: string;
   private checkpointDir: string;
   private seq = 0;
+  /** Byte length of the committed journal prefix (the manifest boundary). */
+  private committedBytes = 0;
+  /** Committed records in seq order (seq n at index n - 1). */
+  private records: JournalRecord[] = [];
   private commands = new Map<string, JournalRecord>();
+  /** Set when a durability barrier failed; the store refuses further writes. */
+  private failure: string | null = null;
 
   constructor(rootDir: string, rootId: string) {
     this.dir = rootDir;
     this.rootId = rootId;
+    const created = !existsSync(rootDir);
     mkdirSync(rootDir, { recursive: true });
-    this.journalPath = join(rootDir, "journal.log");
-    this.manifestPath = join(rootDir, "MANIFEST.json");
+    if (created) fsyncDir(dirname(rootDir));
+    this.journalPath = join(rootDir, JOURNAL_FILE);
+    this.manifestPath = join(rootDir, MANIFEST_FILE);
     this.checkpointDir = join(rootDir, "checkpoints");
-    mkdirSync(this.checkpointDir, { recursive: true });
-    this.recover();
-  }
-
-  static manifestOf(rootDir: string): Manifest | null {
-    try {
-      return JSON.parse(readFileSync(join(rootDir, "MANIFEST.json"), "utf8")) as Manifest;
-    } catch {
-      return null;
+    if (!existsSync(this.checkpointDir)) {
+      mkdirSync(this.checkpointDir, { recursive: true });
+      fsyncDir(rootDir);
     }
+    this.open();
   }
 
   append(kind: JournalKind, body: Record<string, unknown>): JournalRecord {
-    const record: JournalRecord = { seq: ++this.seq, kind, at: new Date().toISOString(), body };
+    if (this.failure !== null) throw err("STORE_FAILED", `journal unavailable after a failed durability barrier: ${this.failure}`);
+    const record: JournalRecord = { seq: this.seq + 1, kind, at: new Date().toISOString(), body };
     const framed = frame(record);
-    const fd = openSync(this.journalPath, "a");
     try {
-      writeSync(fd, framed);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
+      const fd = openSync(this.journalPath, "a");
+      try {
+        const written = writeSync(fd, framed);
+        if (written !== framed.length) throw new Error(`short journal write (${written}/${framed.length} bytes)`);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      this.writeManifest(record.seq, this.committedBytes + framed.length);
+    } catch (e) {
+      // Bytes past the committed boundary are an uncommitted tail; the next
+      // open truncates them. This process must not append behind them.
+      this.failure = (e as Error).message;
+      throw err("STORE_FAILED", `journal append failed: ${this.failure}`);
     }
-    this.commitManifest();
+    this.seq = record.seq;
+    this.committedBytes += framed.length;
+    this.index(record);
     return record;
   }
 
   readSince(cursor: number, limit: number): { records: JournalRecord[]; cursor: number } {
-    const all = this.readCommitted();
-    const out = all.filter((r) => r.seq > cursor).slice(0, Math.max(0, limit));
+    const start = Math.max(0, Math.min(cursor, this.records.length));
+    const out = this.records.slice(start, start + Math.max(0, limit));
     return { records: out, cursor: out.length > 0 ? out[out.length - 1]!.seq : cursor };
   }
 
@@ -284,75 +372,56 @@ export class FileRunStore implements RunStore {
     this.append("command.accepted", { requestId, seq: record.seq, kind: record.kind });
   }
 
+  /**
+   * Publish a checkpoint: synchronize the new copy, commit the journal
+   * record that references it, then retire predecessors (superseded record
+   * first, file removal after). At most two copies exist during replacement.
+   */
   saveCheckpoint(ref: CheckpointRef, bytes: Uint8Array): void {
     const agentDir = join(this.checkpointDir, ref.agentId);
-    mkdirSync(agentDir, { recursive: true });
-    // Stage the predecessor: keep at most two live copies during replacement.
-    const live = this.liveCheckpointFiles(ref.agentId);
-    const tmp = join(agentDir, `gen-${ref.generation}.${randomUUID()}.tmp`);
-    writeFileSync(tmp, bytes);
-    fsyncFile(tmp);
-    const final = join(agentDir, `gen-${ref.generation}.bin`);
-    renameSync(tmp, final);
-    writeFileSync(`${final}.json`, JSON.stringify({ ...ref, superseded: false }));
-    fsyncFile(`${final}.json`);
-    fsyncFile(final);
-    fsyncDir(agentDir);
-    fsyncDir(this.checkpointDir);
-    for (const stale of live.slice(0, Math.max(0, live.length - 1))) {
-      rmSync(stale.bin, { force: true });
-      rmSync(stale.meta, { force: true });
+    if (!existsSync(agentDir)) {
+      mkdirSync(agentDir, { recursive: true });
+      fsyncDir(this.checkpointDir);
     }
+    const file = `${CHECKPOINT_PREFIX}${ref.generation}-${randomUUID()}.bin`;
+    writeDurably(join(agentDir, file), bytes);
     this.append("checkpoint.published", {
       agentId: ref.agentId,
       taskRunId: ref.taskRunId,
       generation: ref.generation,
+      leafEntryId: ref.leafEntryId,
       sha256: ref.sha256,
       bytes: ref.bytes,
+      createdAt: ref.createdAt,
+      file,
     });
+    this.retirePredecessors(ref.agentId, file);
   }
 
+  /** The live checkpoint is the latest committed publication; it must validate. */
   loadCheckpoint(agentId: string): { ref: CheckpointRef; bytes: Uint8Array } | null {
-    const agentDir = join(this.checkpointDir, agentId);
-    let files: string[];
+    const published = this.latestPublished(agentId);
+    if (!published) return null;
+    const b = published.body as { taskRunId: string; generation: number; leafEntryId: string | null; sha256: string; bytes: number; createdAt: string; file: string };
+    let bytes: Buffer;
     try {
-      files = readdirSync(agentDir).filter((f) => f.endsWith(".bin")).sort();
-    } catch {
-      return null;
+      bytes = readFileSync(join(this.checkpointDir, agentId, b.file));
+    } catch (e) {
+      throw err("RECOVERY_CORRUPT", `live checkpoint ${agentId}/${b.file} unreadable: ${(e as Error).message}`);
     }
-    for (let i = files.length - 1; i >= 0; i--) {
-      const bin = join(agentDir, files[i]!);
-      const metaPath = `${bin}.json`;
-      try {
-        const ref = JSON.parse(readFileSync(metaPath, "utf8")) as CheckpointRef;
-        if (ref.superseded) continue;
-        const bytes = readFileSync(bin);
-        if (sha256Hex(bytes) !== ref.sha256 || bytes.length !== ref.bytes) {
-          throw err("RECOVERY_CORRUPT", `checkpoint ${agentId} failed validation`);
-        }
-        return { ref, bytes };
-      } catch (e) {
-        if (e instanceof Error && e.message.startsWith("RECOVERY_CORRUPT")) throw e;
-        continue;
-      }
+    if (bytes.length !== b.bytes || sha256Hex(bytes) !== b.sha256) {
+      throw err("RECOVERY_CORRUPT", `live checkpoint ${agentId}/${b.file} failed validation`);
     }
-    return null;
+    return {
+      ref: { agentId, taskRunId: b.taskRunId, generation: b.generation, leafEntryId: b.leafEntryId, sha256: b.sha256, bytes: b.bytes, createdAt: b.createdAt, superseded: false },
+      bytes,
+    };
   }
 
   supersedeCheckpoint(agentId: string): void {
-    const agentDir = join(this.checkpointDir, agentId);
-    let files: string[];
-    try {
-      files = readdirSync(agentDir).filter((f) => f.endsWith(".bin")).sort();
-    } catch {
-      return;
-    }
-    // Retire all but the newest live copy.
-    for (const f of files.slice(0, Math.max(0, files.length - 1))) {
-      rmSync(join(agentDir, f), { force: true });
-      rmSync(join(agentDir, `${f}.json`), { force: true });
-    }
-    this.append("checkpoint.superseded", { agentId });
+    const published = this.latestPublished(agentId);
+    if (!published) return;
+    this.retirePredecessors(agentId, (published.body as { file: string }).file);
   }
 
   durableSeq(): number {
@@ -361,96 +430,98 @@ export class FileRunStore implements RunStore {
 
   close(): void {}
 
-  private liveCheckpointFiles(agentId: string): Array<{ bin: string; meta: string }> {
-    try {
-      return readdirSync(join(this.checkpointDir, agentId))
-        .filter((f) => f.endsWith(".bin"))
-        .sort()
-        .map((f) => ({ bin: join(this.checkpointDir, agentId, f), meta: join(this.checkpointDir, agentId, `${f}.json`) }));
-    } catch {
-      return [];
+  private latestPublished(agentId: string): JournalRecord | null {
+    for (let i = this.records.length - 1; i >= 0; i--) {
+      const r = this.records[i]!;
+      if (r.kind === "checkpoint.published" && (r.body as { agentId?: string })["agentId"] === agentId) return r;
     }
+    return null;
   }
 
-  private commitManifest(): void {
-    let size = 0;
+  private retirePredecessors(agentId: string, liveFile: string): void {
+    const agentDir = join(this.checkpointDir, agentId);
+    let stale: string[];
     try {
-      const st = readFileSync(this.journalPath);
-      size = st.length;
+      stale = readdirSync(agentDir).filter((f) => f.startsWith(CHECKPOINT_PREFIX) && f !== liveFile);
     } catch {
-      size = 0;
-    }
-    const manifest: Manifest = { version: STORE_VERSION, rootId: this.rootId, durableSeq: this.seq, journalBytes: size };
-    const tmp = `${this.manifestPath}.${randomUUID()}.tmp`;
-    writeFileSync(tmp, JSON.stringify(manifest));
-    fsyncFile(tmp);
-    renameSync(tmp, this.manifestPath);
-    fsyncDir(dirname(this.manifestPath));
-  }
-
-  private readCommitted(): JournalRecord[] {
-    const manifest = FileRunStore.manifestOf(this.dir);
-    if (!manifest) return [];
-    let raw: Buffer;
-    try {
-      raw = readFileSync(this.journalPath);
-    } catch {
-      return [];
-    }
-    const committed = raw.subarray(0, Math.min(manifest.journalBytes, raw.length));
-    const out: JournalRecord[] = [];
-    for (const line of committed.toString("utf8").split("\n")) {
-      if (!line) continue;
-      const parsed = parseFrame(line);
-      if ("record" in parsed) out.push(parsed.record);
-      else if ("corrupt" in parsed) {
-        throw err("RECOVERY_CORRUPT", `committed journal corruption: ${parsed.corrupt}`);
-      }
-    }
-    return out;
-  }
-
-  private recover(): void {
-    const manifest = FileRunStore.manifestOf(this.dir);
-    if (!manifest) {
-      this.seq = 0;
-      this.commitManifest();
       return;
+    }
+    if (stale.length === 0) return;
+    this.append("checkpoint.superseded", { agentId, files: stale });
+    for (const f of stale) rmSync(join(agentDir, f), { force: true });
+    fsyncDir(agentDir);
+  }
+
+  private index(record: JournalRecord): void {
+    this.records.push(record);
+    const requestId = (record.body as { requestId?: unknown })["requestId"];
+    if (typeof requestId === "string" && !this.commands.has(requestId)) this.commands.set(requestId, record);
+  }
+
+  private writeManifest(durableSeq: number, journalBytes: number): void {
+    const manifest: Manifest = { version: STORE_VERSION, rootId: this.rootId, durableSeq, journalBytes };
+    writeDurably(this.manifestPath, JSON.stringify(manifest));
+  }
+
+  /**
+   * Validate the committed prefix strictly and discard only bytes beyond the
+   * manifest boundary (an uncommitted tail), with an explicit recovery event.
+   */
+  private open(): void {
+    if (!existsSync(this.manifestPath)) {
+      if (existsSync(this.journalPath) && statSync(this.journalPath).size > 0) {
+        throw err("RECOVERY_CORRUPT", "journal present without a manifest");
+      }
+      writeDurably(this.journalPath, "");
+      this.writeManifest(0, 0);
+      return;
+    }
+    let manifest: Manifest;
+    try {
+      manifest = JSON.parse(readFileSync(this.manifestPath, "utf8")) as Manifest;
+    } catch (e) {
+      throw err("RECOVERY_CORRUPT", `manifest unreadable: ${(e as Error).message}`);
     }
     if (manifest.version !== STORE_VERSION || manifest.rootId !== this.rootId) {
       throw err("RECOVERY_CORRUPT", "manifest version/root mismatch");
     }
+    if (!Number.isInteger(manifest.durableSeq) || !Number.isInteger(manifest.journalBytes) || manifest.durableSeq < 0 || manifest.journalBytes < 0) {
+      throw err("RECOVERY_CORRUPT", "manifest boundary malformed");
+    }
     let raw: Buffer;
     try {
       raw = readFileSync(this.journalPath);
-    } catch {
-      this.seq = manifest.durableSeq;
-      return;
+    } catch (e) {
+      throw err("RECOVERY_CORRUPT", `journal unreadable: ${(e as Error).message}`);
     }
-    const committed = raw.subarray(0, Math.min(manifest.journalBytes, raw.length));
-    let maxSeq = 0;
-    for (const line of committed.toString("utf8").split("\n")) {
-      if (!line) continue;
+    if (raw.length < manifest.journalBytes) {
+      throw err("RECOVERY_CORRUPT", `journal (${raw.length} bytes) shorter than its committed boundary (${manifest.journalBytes} bytes)`);
+    }
+    const committed = raw.subarray(0, manifest.journalBytes).toString("utf8");
+    if (committed.length > 0 && !committed.endsWith("\n")) {
+      throw err("RECOVERY_CORRUPT", "committed journal does not end on a frame boundary");
+    }
+    const lines = committed.length > 0 ? committed.slice(0, -1).split("\n") : [];
+    for (const line of lines) {
       const parsed = parseFrame(line);
-      if ("record" in parsed) {
-        maxSeq = Math.max(maxSeq, parsed.record.seq);
-        const body = parsed.record.body as { requestId?: string };
-        if (parsed.record.kind === "command.accepted" && typeof body["requestId"] === "string") {
-          void 0;
-        }
-      } else if ("corrupt" in parsed) {
-        throw err("RECOVERY_CORRUPT", `committed journal corruption on open: ${parsed.corrupt}`);
+      if (!("record" in parsed)) {
+        throw err("RECOVERY_CORRUPT", `committed journal corruption: ${"corrupt" in parsed ? parsed.corrupt : "malformed frame"}`);
       }
-      // Torn tail beyond the committed boundary is discarded; only bytes
-      // past manifest.journalBytes may be torn.
+      if (parsed.record.seq !== this.records.length + 1) {
+        throw err("RECOVERY_CORRUPT", `committed journal seq ${parsed.record.seq} out of order`);
+      }
+      this.index(parsed.record);
     }
-    this.seq = Math.max(manifest.durableSeq, maxSeq);
-    // Rebuild command dedup index from committed history.
-    for (const r of this.readCommitted()) {
-      const body = r.body as { requestId?: string };
-      if (typeof body["requestId"] === "string" && !this.commands.has(body["requestId"])) {
-        this.commands.set(body["requestId"], r);
-      }
+    if (this.records.length !== manifest.durableSeq) {
+      throw err("RECOVERY_CORRUPT", `committed journal holds ${this.records.length} records; manifest says ${manifest.durableSeq}`);
+    }
+    this.seq = manifest.durableSeq;
+    this.committedBytes = manifest.journalBytes;
+    const tail = raw.length - manifest.journalBytes;
+    if (tail > 0) {
+      truncateSync(this.journalPath, manifest.journalBytes);
+      fsyncFile(this.journalPath);
+      this.append("recovery.event", { phase: "uncommitted_tail_discarded", bytes: tail });
     }
   }
 }

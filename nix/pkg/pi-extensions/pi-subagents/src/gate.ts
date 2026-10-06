@@ -12,8 +12,9 @@
  * (other cost/time/resource budgets still apply; no hidden stagnation cap).
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { err } from "./errors.ts";
+import { BASH_DEFAULT_TIMEOUT_MS, BASH_MAX_TIMEOUT_MS, MAX_COMMAND_BYTES } from "./tools.ts";
 import type { RunStore } from "./store.ts";
 import type { SupervisorPolicy } from "./policy.ts";
 import type { AgentId, TaskPhase, TaskRunId } from "./types.ts";
@@ -25,6 +26,12 @@ export interface GateCheckSpec {
   id: string;
   command: string;
   timeoutMs?: number;
+}
+
+export interface NormalizedGateCheck {
+  id: string;
+  command: string;
+  timeoutMs: number;
 }
 
 export interface GateSpecInput {
@@ -41,7 +48,7 @@ export interface NormalizedGateSpec {
   thinkingLevel: string;
   prompt: string;
   maxRounds: number | null;
-  checks: GateCheckSpec[];
+  checks: NormalizedGateCheck[];
   promisedOutputs: string[];
   rubricRevision: string;
 }
@@ -78,6 +85,7 @@ export type GateDecisionInput =
   | { schemaVersion: 1; candidateId: string; decision: "blocked"; reason: string; missingPrerequisites: [string, ...string[]] };
 
 export type GateTerminalOutcome =
+  | "interrupted"
   | "passed"
   | "review_limit_reached"
   | "gate_blocked"
@@ -116,13 +124,14 @@ interface GateTaskState {
 export interface GateHost {
   activePolicy: SupervisorPolicy;
   runStore: RunStore;
-  createManagedReviewer(mainAgentId: AgentId, taskRunId: TaskRunId, spec: NormalizedGateSpec): AgentId;
-  startReviewerExecution(reviewerId: AgentId, input: { reviewId: string; candidateId: string; prompt: string }): void;
+  startReviewerExecution(reviewerId: AgentId, input: { taskRunId: TaskRunId; reviewId: string; candidateId: string; prompt: string }): void;
   startRepairExecution(mainAgentId: AgentId, taskRunId: TaskRunId, criticism: string): void;
   cancelReviewer(reviewerId: AgentId): Promise<void>;
   fingerprintWorkspace(agentId: AgentId, promisedOutputs: string[]): WorkspaceFingerprint;
-  runCheck(agentId: AgentId, check: GateCheckSpec): Promise<{ exitCode: number | null; output: string }>;
+  runCheck(agentId: AgentId, check: NormalizedGateCheck): Promise<{ exitCode: number | null; output: string }>;
   settleGatedTask(agentId: AgentId, taskRunId: TaskRunId, outcome: string, detail: string): void;
+  /** A linked retry/bypass run becomes the agent's current task run. */
+  beginLinkedRun(agentId: AgentId, taskRunId: TaskRunId): void;
   setTaskPhase(agentId: AgentId, phase: TaskPhase): void;
   workspaceMatches(agentId: AgentId, candidate: CandidateRecord): boolean;
   quiescent(agentId: AgentId): boolean;
@@ -160,13 +169,20 @@ export function normalizeGateSpec(input: GateSpecInput, policy: SupervisorPolicy
   if (maxRounds !== null && policy.gateMaxRoundsCeiling !== null && maxRounds > policy.gateMaxRoundsCeiling) {
     return { ok: false, error: err("POLICY_DENIED", `gate.maxRounds exceeds root ceiling ${policy.gateMaxRoundsCeiling}`) };
   }
-  const checks = input.checks ?? [];
+  const checks: NormalizedGateCheck[] = [];
   const seen = new Set<string>();
-  for (const c of checks) {
-    if (!c.id || seen.has(c.id)) return { ok: false, error: err("INVALID", "gate checks need unique ids") };
+  for (const c of input.checks ?? []) {
+    if (typeof c.id !== "string" || !c.id || seen.has(c.id)) return { ok: false, error: err("INVALID", "gate checks need unique ids") };
     seen.add(c.id);
-    if (!c.command) return { ok: false, error: err("INVALID", `gate check ${c.id} needs a command`) };
+    if (typeof c.command !== "string" || !c.command) return { ok: false, error: err("INVALID", `gate check ${c.id} needs a command`) };
+    if (Buffer.byteLength(c.command, "utf8") > MAX_COMMAND_BYTES) return { ok: false, error: err("PAYLOAD_TOO_LARGE", `gate check ${c.id} command exceeds ${MAX_COMMAND_BYTES} bytes`) };
+    if (c.timeoutMs !== undefined && (!Number.isInteger(c.timeoutMs) || c.timeoutMs < 1 || c.timeoutMs > BASH_MAX_TIMEOUT_MS)) {
+      return { ok: false, error: err("INVALID", `gate check ${c.id} timeoutMs must be an integer in 1..${BASH_MAX_TIMEOUT_MS}`) };
+    }
+    checks.push({ id: c.id, command: c.command, timeoutMs: c.timeoutMs ?? BASH_DEFAULT_TIMEOUT_MS });
   }
+  const promisedOutputs = input.promisedOutputs ?? [];
+  if (!promisedOutputs.every((p) => typeof p === "string" && p.length > 0)) return { ok: false, error: err("INVALID", "gate promisedOutputs must be nonempty paths") };
   return {
     ok: true,
     spec: {
@@ -175,7 +191,7 @@ export function normalizeGateSpec(input: GateSpecInput, policy: SupervisorPolicy
       prompt: input.prompt,
       maxRounds,
       checks,
-      promisedOutputs: input.promisedOutputs ?? [],
+      promisedOutputs,
       rubricRevision: `rubric-${hashString(input.prompt)}`,
     },
   };
@@ -294,6 +310,9 @@ function evidenceResolves(ref: string, candidateId: string, manifestPaths: Set<s
 export class GateController {
   private host: GateHost;
   private tasks = new Map<TaskRunId, GateTaskState>();
+  /** Every protected reviewer identity (a reviewer stays one after its tasks end). */
+  private reviewers = new Set<AgentId>();
+  /** Reviewer -> the newest gated task run it reviews for. */
   private reviewerToTask = new Map<AgentId, TaskRunId>();
   private commandIds = new Map<string, { action: string; taskRunId: TaskRunId }>();
 
@@ -312,27 +331,27 @@ export class GateController {
   }
 
   isReviewer(agentId: AgentId): boolean {
-    return this.reviewerToTask.has(agentId);
+    return this.reviewers.has(agentId);
   }
 
-  /** Preflight before dispatching the main agent: model, policy, identities. */
-  preflight(agentId: AgentId, taskRunId: TaskRunId, input: GateSpecInput, taskText: string): void {
+  /** Preflight validation of a gate specification (no side effects). */
+  validateSpec(input: GateSpecInput): NormalizedGateSpec {
     const normalized = normalizeGateSpec(input, this.host.activePolicy);
     if (!normalized.ok) throw normalized.error;
+    return normalized.spec;
+  }
+
+  /** Register a gated task with its protected reviewer identity (both exist before dispatch). */
+  register(agentId: AgentId, taskRunId: TaskRunId, spec: NormalizedGateSpec, taskText: string, reviewerId: AgentId): void {
     if (this.tasks.has(taskRunId)) throw err("CONFLICT", `gate already registered for ${taskRunId}`);
-    this.host.runStore.append("gate.registered", {
-      agentId,
-      taskRunId,
-      spec: normalized.spec,
-      taskText: taskText.slice(0, 65536),
-    });
+    this.host.runStore.append("gate.registered", { agentId, taskRunId, spec, taskText: taskText.slice(0, 65536), reviewerId });
     this.tasks.set(taskRunId, {
       agentId,
       taskRunId,
       taskText,
-      spec: normalized.spec,
+      spec,
       roundsAdmitted: 0,
-      reviewerId: null,
+      reviewerId,
       candidate: null,
       review: null,
       previousFindings: [],
@@ -345,101 +364,90 @@ export class GateController {
       stagnationWarning: null,
       linkedFrom: null,
     });
+    this.reviewers.add(reviewerId);
+    this.reviewerToTask.set(reviewerId, taskRunId);
   }
 
   /** Called by the supervisor when an eligible gated main execution settles. */
   candidateSettled(agentId: AgentId, taskRunId: TaskRunId, generation: number, resultText: string): void {
     const task = this.tasks.get(taskRunId);
     if (!task || task.terminal || task.agentId !== agentId) return;
-    // Freeze the candidate: fingerprint the paused workspace now.
-    const fingerprint = this.host.fingerprintWorkspace(agentId, task.spec.promisedOutputs);
-    const candidate: CandidateRecord = {
-      candidateId: `candidate-${task.roundsAdmitted + 1}`,
-      taskRunId,
-      generation,
-      baseCommit: fingerprint.baseCommit,
-      rubricRevision: task.spec.rubricRevision,
-      resultRef: `task:${taskRunId}:gen:${generation}`,
-      fingerprint,
-      createdAt: this.host.nowIso(),
-    };
-    task.candidate = candidate;
-    task.lastResponse = resultText.slice(0, 4000);
-    this.host.runStore.append("gate.candidate", {
-      agentId,
-      taskRunId,
-      candidate,
-      resultText: resultText.slice(0, 8000),
-    });
-    // Stagnation is an observation, never an implicit stop: warn when the
-    // candidate or blockers repeat without progress.
-    const summary = fingerprintSummary(fingerprint);
-    const prev = task.fingerprintHistory[task.fingerprintHistory.length - 1];
-    task.fingerprintHistory.push(summary);
-    if (prev !== undefined && prev === summary) {
-      task.stagnationWarning = `round ${task.roundsAdmitted + 1}: candidate unchanged since previous round; no implicit stop applied`;
-    }
-    // Durably charge the round at admission, before dispatch.
-    task.roundsAdmitted += 1;
-    const round = task.roundsAdmitted;
-    this.host.runStore.append("gate.round_admitted", {
-      agentId,
-      taskRunId,
-      round,
-      candidateId: candidate.candidateId,
-      fingerprint: fingerprintSummary(fingerprint),
-    });
-    if (task.spec.maxRounds !== null && round > task.spec.maxRounds) {
-      this.terminate(task, "review_limit_reached", `round ${round} exceeds maxRounds ${task.spec.maxRounds}`);
+    try {
+      // Freeze the candidate: fingerprint the paused workspace now.
+      const fingerprint = this.host.fingerprintWorkspace(agentId, task.spec.promisedOutputs);
+      const candidate: CandidateRecord = {
+        candidateId: `candidate-${task.roundsAdmitted + 1}`,
+        taskRunId,
+        generation,
+        baseCommit: fingerprint.baseCommit,
+        rubricRevision: task.spec.rubricRevision,
+        resultRef: `task:${taskRunId}:gen:${generation}`,
+        fingerprint,
+        createdAt: this.host.nowIso(),
+      };
+      task.candidate = candidate;
+      task.lastResponse = resultText.slice(0, 4000);
+      task.repairReserved = false;
+      this.host.runStore.append("gate.candidate", { agentId, taskRunId, candidate, resultText: resultText.slice(0, 8000) });
+      // Stagnation is an observation, never an implicit stop.
+      const summary = fingerprintSummary(fingerprint);
+      const prev = task.fingerprintHistory[task.fingerprintHistory.length - 1];
+      task.fingerprintHistory.push(summary);
+      if (prev !== undefined && prev === summary) {
+        task.stagnationWarning = `round ${task.roundsAdmitted + 1}: candidate unchanged since previous round; no implicit stop applied`;
+      }
+      // Durably charge the round at admission, before dispatch.
+      task.roundsAdmitted += 1;
+      const round = task.roundsAdmitted;
+      this.host.runStore.append("gate.round_admitted", { agentId, taskRunId, round, candidateId: candidate.candidateId, fingerprint: summary });
+      if (task.spec.maxRounds !== null && round > task.spec.maxRounds) {
+        this.terminate(task, "review_limit_reached", `round ${round} exceeds maxRounds ${task.spec.maxRounds}`);
+        return;
+      }
+      this.host.setTaskPhase(agentId, "review_queued");
+    } catch (e) {
+      this.terminate(task, "gate_error", `candidate recording failed: ${(e as Error).message}`);
       return;
     }
-    this.host.setTaskPhase(agentId, "review_queued");
     // Run required checks against the paused candidate view first.
     void this.runChecksAndReview(task);
   }
 
   private async runChecksAndReview(task: GateTaskState): Promise<void> {
-    if (task.terminal) return;
-    const evidence: Array<{ id: string; exitCode: number | null; output: string }> = [];
-    for (const check of task.spec.checks) {
-      try {
-        const res = await this.host.runCheck(task.agentId, check);
-        evidence.push({ id: check.id, exitCode: res.exitCode, output: res.output.slice(0, 4000) });
-      } catch (e) {
-        evidence.push({ id: check.id, exitCode: null, output: `check failed to run: ${(e as Error).message}` });
+    try {
+      if (task.terminal) return;
+      const evidence: Array<{ id: string; exitCode: number | null; output: string }> = [];
+      for (const check of task.spec.checks) {
+        try {
+          const res = await this.host.runCheck(task.agentId, check);
+          evidence.push({ id: check.id, exitCode: res.exitCode, output: res.output.slice(0, 4000) });
+        } catch (e) {
+          evidence.push({ id: check.id, exitCode: null, output: `check failed to run: ${(e as Error).message}` });
+        }
       }
+      // Retained per round (bounded): bypass and inspectors reference the
+      // failed/unperformed check evidence of terminal runs.
+      this.host.runStore.append("gate.evidence", {
+        agentId: task.agentId,
+        taskRunId: task.taskRunId,
+        round: task.roundsAdmitted,
+        evidence: evidence.map((e) => ({ id: e.id, exitCode: e.exitCode, output: e.output.slice(0, 2000) })),
+      });
+      for (const e of evidence) {
+        task.evidence.push({ round: task.roundsAdmitted, id: e.id, exitCode: e.exitCode, output: e.output.slice(0, 2000) });
+      }
+      while (task.evidence.length > 30) task.evidence.shift();
+      if (task.terminal) return;
+      if (!task.reviewerId) throw err("NOT_FOUND", "no managed reviewer identity linked to this gated task");
+      task.review = { reviewId: `review-${task.roundsAdmitted}`, status: "running", candidateId: task.candidate!.candidateId, decisionUsed: false };
+      this.host.setTaskPhase(task.agentId, "reviewing");
+      const prompt = this.buildReviewPrompt(task, evidence, evidence.some((e) => e.exitCode !== 0));
+      this.host.startReviewerExecution(task.reviewerId, { taskRunId: task.taskRunId, reviewId: task.review.reviewId, candidateId: task.candidate!.candidateId, prompt });
+    } catch (e) {
+      // Admission failures end the run explicitly; they never escape as
+      // unhandled rejections.
+      this.terminateQuietly(task, "gate_error", `reviewer admission failed: ${(e as Error).message}`);
     }
-    // Retained per round (bounded): bypass and inspectors reference the
-    // failed/unperformed check evidence of terminal runs.
-    this.host.runStore.append("gate.evidence", {
-      agentId: task.agentId,
-      taskRunId: task.taskRunId,
-      round: task.roundsAdmitted,
-      evidence: evidence.map((e) => ({ id: e.id, exitCode: e.exitCode, output: e.output.slice(0, 2000) })),
-    });
-    for (const e of evidence) {
-      task.evidence.push({ round: task.roundsAdmitted, id: e.id, exitCode: e.exitCode, output: e.output.slice(0, 2000) });
-    }
-    while (task.evidence.length > 30) task.evidence.shift();
-    if (task.terminal) return;
-    const failedRequired = evidence.filter((e) => e.exitCode !== 0);
-    task.review = {
-      reviewId: `review-${task.roundsAdmitted}`,
-      status: "running",
-      candidateId: task.candidate!.candidateId,
-      decisionUsed: false,
-    };
-    if (!task.reviewerId) {
-      task.reviewerId = this.host.createManagedReviewer(task.agentId, task.taskRunId, task.spec);
-      this.reviewerToTask.set(task.reviewerId, task.taskRunId);
-    }
-    this.host.setTaskPhase(task.agentId, "reviewing");
-    const prompt = this.buildReviewPrompt(task, evidence, failedRequired.length > 0);
-    this.host.startReviewerExecution(task.reviewerId, {
-      reviewId: task.review.reviewId,
-      candidateId: task.candidate!.candidateId,
-      prompt,
-    });
   }
 
   private buildReviewPrompt(
@@ -479,8 +487,10 @@ export class GateController {
       lines.push(`Required checks failed or are missing. A syntactically valid approve contradicting this evidence is invalid. Use "blocked" when a prerequisite is unavailable, otherwise "revise".`);
       lines.push(``);
     }
+    const files = candidate.fingerprint.files.map((f) => `${candidate.candidateId}:${f.path}`).slice(0, 20);
     lines.push(
-      `Return your verdict ONLY through submit_gate_decision with schemaVersion 1, this candidateId, and one of approve (advisories only), revise (at least one blocker with evidenceRefs resolving to candidate:<path>, candidate:answer for the recorded answer text, or <checkId>:output), or blocked (reason + missingPrerequisites). Advisory improvements alone must not force another round.`,
+      `Return your verdict ONLY through submit_gate_decision with schemaVersion 1, candidateId "${candidate.candidateId}", and one of: approve (advisories only); revise (at least one blocker); blocked (reason + missingPrerequisites). Advisory improvements alone must not force another round.`,
+      `Every finding's evidenceRefs entries must be exactly one of: "${candidate.candidateId}:answer" (the recorded answer text)${files.length > 0 ? `, a changed file such as ${files.map((f) => `"${f}"`).join(", ")}` : ""}${task.spec.checks.length > 0 ? `, or a check output such as "${task.spec.checks[0]!.id}:output"` : ""}.`,
     );
     return lines.join("\n");
   }
@@ -501,7 +511,7 @@ export class GateController {
     const checked = validateGateDecision(rawArgs, task.candidate.candidateId, manifestPaths, checkIds);
     if (!checked.ok) {
       task.review.status = "failed";
-      this.terminate(task, "gate_error", `GATE_PROTOCOL_ERROR: ${checked.error.message}`);
+      this.terminate(task, "gate_error", checked.error.message);
       return { ok: false, error: checked.error };
     }
     task.review.decisionUsed = true;
@@ -519,16 +529,19 @@ export class GateController {
     // controller stops/joins the reviewer before committing the outcome so
     // a sequential repair can reuse the lease. Tagged separately from user
     // interruption, timeout, or worker failure.
-    void this.host.cancelReviewer(reviewerId).catch(() => {}).then(() => this.applyDecision(task, checked.decision));
+    void this.host
+      .cancelReviewer(reviewerId)
+      .then(() => this.applyDecision(task, checked.decision))
+      .catch((e: unknown) => this.terminateQuietly(task, "gate_error", `decision application failed: ${(e as Error).message}`));
     return { ok: true };
   }
 
-  /** Reviewer worker died without a committed verdict. */
+  /** A running review ended without a committed verdict (an interrupted one stays resumable). */
   executionFailed(reviewerId: AgentId, diagnostics: string): void {
     const taskRunId = this.reviewerToTask.get(reviewerId);
     if (!taskRunId) return;
     const task = this.tasks.get(taskRunId);
-    if (!task || task.terminal || !task.review || task.review.decisionUsed) return;
+    if (!task || task.terminal || !task.review || task.review.decisionUsed || task.review.status !== "running") return;
     task.review.status = "failed";
     this.terminate(task, "gate_error", `reviewer execution failed: ${diagnostics.slice(0, 1000)}`);
   }
@@ -547,7 +560,6 @@ export class GateController {
         this.terminate(task, "gate_error", `GATE_INVALID_APPROVAL: ${evidenceOk.message}`);
         return;
       }
-      this.host.setTaskPhase(task.agentId, "terminal");
       this.terminate(task, "passed", `approved candidate ${task.candidate.candidateId}`);
       return;
     }
@@ -582,9 +594,9 @@ export class GateController {
       criticism: criticism.slice(0, 8000),
     });
     this.host.setTaskPhase(task.agentId, "repair_queued");
-    // Reservation clears only when the host confirms dispatch
-    // (noteRepairDispatched); a parked repair keeps it, so a cap decrease
-    // that would orphan it is rejected with RESERVED_ROUND_CONFLICT.
+    // The reservation holds until the repaired candidate is admitted, so a
+    // cap decrease that would orphan a queued or running repair is rejected
+    // with RESERVED_ROUND_CONFLICT.
     this.host.startRepairExecution(task.agentId, task.taskRunId, criticism);
   }
 
@@ -602,17 +614,61 @@ export class GateController {
     return { ok: true };
   }
 
+  /** terminate() from an async path: a failing store must not become an unhandled rejection. */
+  private terminateQuietly(task: GateTaskState, outcome: GateTerminalOutcome, detail: string): void {
+    try {
+      this.terminate(task, outcome, detail);
+    } catch {
+      // The store refused the write; it already reports its failure.
+    }
+  }
+
   private terminate(task: GateTaskState, outcome: GateTerminalOutcome, detail: string): void {
     if (task.terminal) return;
     task.terminal = outcome;
     task.review = null;
-    this.host.setTaskPhase(task.agentId, "terminal");
+    // A terminal gate admits no further reviewer inference.
+    if (task.reviewerId) void this.host.cancelReviewer(task.reviewerId);
     this.host.settleGatedTask(task.agentId, task.taskRunId, outcome, detail);
   }
 
-  noteRepairDispatched(taskRunId: TaskRunId): void {
+  /** The supervisor settled the gated run itself (main failed/interrupted/lost). */
+  cancelTask(taskRunId: TaskRunId, outcome: string): void {
     const task = this.tasks.get(taskRunId);
-    if (task) task.repairReserved = false;
+    if (!task || task.terminal) return;
+    task.terminal = outcome as GateTerminalOutcome;
+    task.review = null;
+    if (task.reviewerId) void this.host.cancelReviewer(task.reviewerId);
+  }
+
+  /**
+   * Interrupt the gated work of an agent. A running main generation settles
+   * itself as interrupted; a task paused in review or repair stops here.
+   * Interrupting the reviewer itself leaves an interrupted, resumable review.
+   */
+  interruptForAgent(agentId: AgentId, mainActive: boolean): void {
+    for (const task of this.tasks.values()) {
+      if (task.terminal) continue;
+      if (task.reviewerId === agentId) {
+        if (task.review?.status === "running") task.review.status = "interrupted";
+        void this.host.cancelReviewer(agentId);
+        continue;
+      }
+      if (task.agentId !== agentId) continue;
+      // The outcome is decided before the reviewer stops, so its stop cannot
+      // be mistaken for a failed review.
+      if (!mainActive) this.terminate(task, "interrupted", "gated task interrupted during review/repair");
+      else if (task.reviewerId) void this.host.cancelReviewer(task.reviewerId);
+    }
+  }
+
+  /** Reviewer identities owned by gated tasks of a main agent. */
+  reviewersOf(agentId: AgentId): AgentId[] {
+    const out = new Set<AgentId>();
+    for (const task of this.tasks.values()) {
+      if (task.agentId === agentId && task.reviewerId) out.add(task.reviewerId);
+    }
+    return [...out];
   }
 
   /** Recovery: running reviews become interrupted (resumable), never inferred. */
@@ -622,16 +678,6 @@ export class GateController {
       if (task.review && task.review.status === "running") {
         task.review.status = "interrupted";
       }
-    }
-  }
-  cancelForAgent(agentId: AgentId, reason: string): void {
-    for (const task of this.tasks.values()) {
-      if (task.terminal) continue;
-      if (task.agentId !== agentId && task.reviewerId !== agentId) continue;
-      if (task.reviewerId) {
-        void this.host.cancelReviewer(task.reviewerId).catch(() => {});
-      }
-      this.terminate(task, reason === "closed" ? "gate_error" : "gate_error", `gate cancelled: ${reason}`);
     }
   }
 
@@ -658,10 +704,11 @@ export class GateController {
     if (!task.candidate || !this.host.workspaceMatches(task.agentId, task.candidate)) {
       throw err("CONFLICT", "recorded candidate no longer matches; cannot resume");
     }
+    if (!task.reviewerId) throw err("NOT_FOUND", "no managed reviewer identity linked to this gated task");
     task.review.status = "running";
     task.review.decisionUsed = false;
     this.host.setTaskPhase(task.agentId, "reviewing");
-    this.host.startReviewerExecution(task.reviewerId!, { reviewId: task.review.reviewId, candidateId: task.candidate.candidateId, prompt: this.buildReviewPrompt(task, [], false) });
+    this.host.startReviewerExecution(task.reviewerId, { taskRunId, reviewId: task.review.reviewId, candidateId: task.candidate.candidateId, prompt: this.buildReviewPrompt(task, [], false) });
   }
 
   retryReview(priorTaskRunId: TaskRunId, candidateId: string, spec: GateSpecInput, commandId: string): TaskRunId {
@@ -684,6 +731,7 @@ export class GateController {
       spec: normalized.spec,
       taskText: prior.taskText.slice(0, 65536),
       linkedFrom: priorTaskRunId,
+      reviewerId: prior.reviewerId,
     });
     this.tasks.set(taskRunId, {
       agentId: prior.agentId,
@@ -705,6 +753,7 @@ export class GateController {
       linkedFrom: priorTaskRunId,
     });
     if (prior.reviewerId) this.reviewerToTask.set(prior.reviewerId, taskRunId);
+    this.host.beginLinkedRun(prior.agentId, taskRunId);
     // Assign the verified content as the new run's candidate without rerunning main work.
     const task = this.tasks.get(taskRunId)!;
     task.candidate = { ...prior.candidate, taskRunId };
@@ -726,6 +775,9 @@ export class GateController {
     if (!prior || !prior.terminal) throw err("NOT_FOUND", `no terminal run ${priorTaskRunId}`);
     if (!prior.candidate || prior.candidate.candidateId !== candidateId) throw err("NOT_FOUND", `candidate ${candidateId} not recorded`);
     if (!this.host.quiescent(prior.agentId)) throw err("CONFLICT", "actor/workspace not quiescent");
+    if (!this.host.workspaceMatches(prior.agentId, prior.candidate)) {
+      throw err("CONFLICT", "candidate no longer matches the current workspace; reconcile and submit current work as a new task");
+    }
     const taskRunId = randomUUID();
     this.host.runStore.append("gate.registered", {
       agentId: prior.agentId,
@@ -753,6 +805,7 @@ export class GateController {
       fingerprintHistory: [...prior.fingerprintHistory],
       stagnationWarning: prior.stagnationWarning,
     });
+    this.host.beginLinkedRun(prior.agentId, taskRunId);
     this.host.settleGatedTask(prior.agentId, taskRunId, "gate_bypassed", bypassDetail(reason, prior.evidence));
     return taskRunId;
   }
@@ -786,6 +839,7 @@ export class GateController {
       }
     }
     task.spec = { ...task.spec, maxRounds };
+    this.host.runStore.append("gate.limits", { agentId: task.agentId, taskRunId, maxRounds, commandId });
   }
 
   inspect(taskRunId: TaskRunId): GateTaskState | null {
@@ -809,25 +863,24 @@ export class GateController {
     repairCommandId: string | null;
     terminal: GateTerminalOutcome | null;
     linkedFrom: TaskRunId | null;
+    reviewerId: AgentId | null;
     evidence: GateTaskState["evidence"];
     fingerprintHistory: string[];
     stagnationWarning: string | null;
   }): void {
     if (this.tasks.has(restored.taskRunId)) return;
-    this.tasks.set(restored.taskRunId, {
-      ...restored,
-      reviewerId: null,
-      review: null,
-      repairReserved: false,
-    });
+    this.tasks.set(restored.taskRunId, { ...restored, review: null, repairReserved: false });
+    // Imported in journal order: a later (linked) run takes the reviewer.
+    if (restored.reviewerId) this.linkReviewer(restored.reviewerId, restored.taskRunId);
   }
 
   /** Link a restored reviewer identity to its task (recovery only). */
   linkReviewer(reviewerId: AgentId, taskRunId: TaskRunId): void {
+    this.reviewers.add(reviewerId);
     const task = this.tasks.get(taskRunId);
-    if (!task || task.terminal) return;
-    task.reviewerId = reviewerId;
-    this.reviewerToTask.set(reviewerId, taskRunId);
+    if (!task) return;
+    task.reviewerId ??= reviewerId;
+    if (!task.terminal || !this.reviewerToTask.has(reviewerId)) this.reviewerToTask.set(reviewerId, taskRunId);
   }
 
   /** Review state for a reviewer identity: undecided / decided / none. */
@@ -840,9 +893,11 @@ export class GateController {
   }
 }
 
+/** Content-addressed summary: equal summaries mean equal manifests (paths, kinds, modes, hashes). */
 export function fingerprintSummary(f: WorkspaceFingerprint): string {
   if (f.textOnly) return `text:${f.textHash}`;
-  return `${f.files.length} files @${f.baseCommit?.slice(0, 12) ?? "none"}`;
+  const digest = createHash("sha256").update(JSON.stringify(f.files)).digest("hex").slice(0, 16);
+  return `${f.files.length} files @${f.baseCommit?.slice(0, 12) ?? "none"} #${digest}`;
 }
 
 function bypassDetail(reason: string, evidence: Array<{ round: number; id: string; exitCode: number | null; output: string }>): string {

@@ -8,7 +8,7 @@
  * turn never reset cumulative counters.
  */
 
-import { err, type ErrorCode } from "./errors.ts";
+import type { ErrorCode } from "./errors.ts";
 
 export interface SchedulerLimits {
   maxRunnable: number;
@@ -53,13 +53,18 @@ export class AdmissionScheduler {
     return { ...this.limits };
   }
 
-  /** Acquire a runnable lease, or return null when saturated (never blocks). */
+  /** Acquire a runnable lease, or return null when saturated or others queue first (never blocks). */
   tryAcquireRunnable(owner: string): LeaseTicket | null {
-    if (this.runnableHeld >= this.limits.maxRunnable) return null;
+    if (this.queue.length > 0 || this.runnableHeld >= this.limits.maxRunnable) return null;
     const ticket: LeaseTicket = { leaseId: `lease-${this.nextLease++}`, owner, runnable: true };
     this.leases.set(ticket.leaseId, ticket);
     this.runnableHeld++;
     return ticket;
+  }
+
+  /** Whether a runnable lease could be granted now (no queued waiter ahead). */
+  hasRunnableCapacity(): boolean {
+    return this.queue.length === 0 && this.runnableHeld < this.limits.maxRunnable;
   }
 
   /** Fair queued acquisition: resolves when a lease is available or cancelled. */
@@ -91,11 +96,6 @@ export class AdmissionScheduler {
     this.pumpQueue();
   }
 
-  /** Park: release runnable capacity while waiting (lease returned later). */
-  park(ticket: LeaseTicket): void {
-    this.release(ticket);
-  }
-
   /** Track a resident (loaded but not runnable) worker. */
   tryAcquireResident(owner: string): LeaseTicket | null {
     if (this.residentHeld >= this.limits.maxResidentWorkers) return null;
@@ -105,13 +105,18 @@ export class AdmissionScheduler {
     return ticket;
   }
 
-  /** Charge one created agent against the cumulative spawn budget. */
-  chargeAgentCreation(): { ok: true } | { ok: false; code: ErrorCode; message: string } {
-    if (this.agentsCreated >= this.limits.maxAgentsCreated) {
-      return { ok: false, code: "CAPACITY_EXCEEDED", message: "maxAgentsCreated exhausted" };
+  /** Charge created identities against the cumulative spawn budget (all or none). */
+  chargeAgentCreation(count: number): { ok: true } | { ok: false; code: ErrorCode; message: string } {
+    if (this.agentsCreated + count > this.limits.maxAgentsCreated) {
+      return { ok: false, code: "CAPACITY_EXCEEDED", message: `maxAgentsCreated (${this.limits.maxAgentsCreated}) exhausted` };
     }
-    this.agentsCreated++;
+    this.agentsCreated += count;
     return { ok: true };
+  }
+
+  /** Undo a charge whose identities were never created (rollback before creation). */
+  refundAgentCreation(count: number): void {
+    this.agentsCreated = Math.max(0, this.agentsCreated - count);
   }
 
   get agentsCreatedCount(): number {

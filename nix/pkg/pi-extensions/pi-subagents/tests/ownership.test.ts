@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Supervisor, killAndConfirm, readProcessIdentity, verifyOwnership } from "../src/supervisor.ts";
+import { Supervisor } from "../src/supervisor.ts";
+import { killAndConfirm, readProcessIdentity, verifyOwnership } from "../src/process-identity.ts";
 import { FileRunStore } from "../src/store.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
 import { DummyWorkspaceManager } from "../src/workspace.ts";
 import { defaultSupervisorPolicy } from "../src/policy.ts";
-import { FakeWorker, until } from "./fake-worker.ts";
+import { FakeWorker, until, testGovernor, bothExecutors } from "./fake-worker.ts";
 
 function sleepChild(): Promise<{ pid: number; kill: () => void }> {
   return new Promise((resolve, reject) => {
@@ -50,15 +51,16 @@ test("crash with unconfirmed writer effects quarantines the workspace", async ()
     const mkSup = (): Supervisor =>
       new Supervisor({
         rootId: "root-1",
+        governor: testGovernor,
         rootDir: dir,
         store: new FileRunStore(dir, "root-1"),
         policy,
-        executor: exec,
+        executors: bothExecutors(exec),
         workspace: new DummyWorkspaceManager(),
         workerFactory: () => new FakeWorker("tool-then-settle"),
       });
     const sup1 = mkSup();
-    const res = await sup1.spawn("governor", { taskName: "w", message: "write", profile: "writer", repoId: "r1", baseCommit: "c0" }, "req-1");
+    const res = await sup1.spawn("governor", { taskName: "w", message: "write", profile: "writer", isolation: "sandbox", repoId: "r1", baseCommit: "c0" }, "req-1");
     // Wait until the tool intent is durable, then simulate a crash: the
     // outcome can never arrive, effects are uncertain.
     const store1 = sup1.runStore;
@@ -99,10 +101,11 @@ test("cross-process restart restores tree, mailbox, queues, outcomes, gates", as
     const mkSup = (): Supervisor =>
       new Supervisor({
         rootId: "root-1",
+        governor: testGovernor,
         rootDir: dir,
         store: new FileRunStore(dir, "root-1"),
         policy,
-        executor: new DummyToolExecutor(),
+        executors: bothExecutors(new DummyToolExecutor()),
         workspace: new DummyWorkspaceManager(),
         workerFactory: () => {
           calls++;
@@ -112,12 +115,13 @@ test("cross-process restart restores tree, mailbox, queues, outcomes, gates", as
         },
       });
     const sup1 = mkSup();
-    const a = await sup1.spawn("governor", {
+    const gatedSpawn = {
       taskName: "g",
       message: "gated work",
-      profile: "reader",
+      profile: "reader" as const,
       gate: { model: { provider: "p", id: "m" }, thinkingLevel: "high", prompt: "rubric", maxRounds: 3 },
-    }, "req-g");
+    };
+    const a = await sup1.spawn("governor", gatedSpawn, "req-g");
     await until(() => sup1.list("governor")[0]?.taskOutcome === "passed", 8000, "gate pass");
     const noted = await sup1.sendMessage("governor", a.agentId, "note", "remember this", {}, "req-note");
     const kid = await sup1.spawn(a.agentId, { taskName: "kid", message: "help", profile: "reader" }, "req-k");
@@ -129,14 +133,17 @@ test("cross-process restart restores tree, mailbox, queues, outcomes, gates", as
       const views = sup2.list("governor");
       assert.equal(views.length, 3); // main + reviewer + child
       assert.equal(views.find((v) => v.id === a.agentId)?.taskOutcome, "passed");
-      const read = sup2.read("governor", a.agentId, "result", 0, 10);
+      const read = sup2.read("governor", a.agentId, "result", 0, 10, null);
       assert.equal(read.result?.outcome, "passed");
       const gate = sup2.gateController.inspect(a.taskRunId);
       assert.equal(gate?.terminal, "passed");
       assert.equal(gate?.roundsAdmitted, 1);
-      // Durable dedup survives restart: identical retries return identities.
-      const again = await sup2.spawn("governor", { taskName: "other", message: "x", profile: "reader" }, "req-g");
+      // Durable dedup survives restart: identical retries return the
+      // original identity; conflicting reuse of the request id fails.
+      const again = await sup2.spawn("governor", gatedSpawn, "req-g");
       assert.equal(again.agentId, a.agentId);
+      assert.equal(again.taskRunId, a.taskRunId);
+      await assert.rejects(() => sup2.spawn("governor", { taskName: "other", message: "x", profile: "reader" }, "req-g"), /DUPLICATE_REQUEST/);
       const renote = await sup2.sendMessage("governor", a.agentId, "note", "remember this", {}, "req-note");
       assert.equal(renote.messageId, noted.messageId);
       const report = await sup2.recover();
@@ -148,4 +155,15 @@ test("cross-process restart restores tree, mailbox, queues, outcomes, gates", as
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("ownership: process identity uses the start time, which survives memory growth", async () => {
+  const stat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
+  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  // /proc/<pid>/stat field 22 (starttime) is index 19 after the comm field.
+  assert.equal(readProcessIdentity(process.pid)?.starttime, fields[19]);
+  const before = readProcessIdentity(process.pid);
+  const ballast = Buffer.alloc(64 * 1024 * 1024, 1);
+  assert.equal(verifyOwnership(process.pid, before), "live-match");
+  void ballast;
 });

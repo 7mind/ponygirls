@@ -8,7 +8,7 @@ import { InMemoryRunStore } from "../src/store.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
 import { DummyWorkspaceManager } from "../src/workspace.ts";
 import { defaultSupervisorPolicy } from "../src/policy.ts";
-import { FakeWorker, until } from "./fake-worker.ts";
+import { FakeWorker, until, testGovernor, bothExecutors } from "./fake-worker.ts";
 
 function setup(limits: Record<string, number> = {}, nesting = true) {
   const dir = mkdtempSync(join(tmpdir(), "subagents-nest-"));
@@ -19,11 +19,12 @@ function setup(limits: Record<string, number> = {}, nesting = true) {
   policy.allowedModels = [];
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy,
     schedulerLimits: { maxRunnable: 1, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 2, ...limits },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => new FakeWorker("settle-text"),
   });
@@ -56,16 +57,17 @@ test("nested writer gets its own worktree; cannot target parent workspace", asyn
   const workspace = new DummyWorkspaceManager();
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy,
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 2 },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace,
     workerFactory: () => new FakeWorker("hang"),
   });
-  const parent = await sup.spawn("governor", { taskName: "p", message: "w", profile: "writer", repoId: "r1", baseCommit: "c0" }, "req-p");
-  const child = await sup.spawn(parent.agentId, { taskName: "k", message: "w", profile: "writer", repoId: "r1", baseCommit: "c0" }, "req-k");
+  const parent = await sup.spawn("governor", { taskName: "p", message: "w", profile: "writer", isolation: "sandbox", repoId: "r1", baseCommit: "c0" }, "req-p");
+  const child = await sup.spawn(parent.agentId, { taskName: "k", message: "w", profile: "writer", isolation: "sandbox", repoId: "r1", baseCommit: "c0" }, "req-k");
   assert.equal(workspace.allocations.length, 2);
   assert.notEqual(workspace.allocations[0]!.worktreePath, workspace.allocations[1]!.worktreePath);
   const views = sup.list("governor");
@@ -78,7 +80,7 @@ test("reader-to-writer escalation is rejected", async () => {
   const { sup, cleanup } = setup();
   const reader = await sup.spawn("governor", { taskName: "r", message: "w", profile: "reader" }, "req-r");
   await assert.rejects(
-    () => sup.spawn(reader.agentId, { taskName: "k", message: "w", profile: "writer", repoId: "r1", baseCommit: "c0" }, "req-k"),
+    () => sup.spawn(reader.agentId, { taskName: "k", message: "w", profile: "writer", isolation: "sandbox", repoId: "r1", baseCommit: "c0" }, "req-k"),
     /POLICY_DENIED/,
   );
   cleanup();
@@ -98,11 +100,12 @@ test("closing a child owner cancels active descendants before its terminal outco
   policy.nesting = true;
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy,
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 2 },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => new FakeWorker("hang"),
   });

@@ -12,7 +12,8 @@
  */
 
 import { err, type ErrorCode } from "./errors.ts";
-import { PROTOCOL_VERSION } from "./types.ts";
+import { parseInstructionSet } from "./instructions.ts";
+import { PROTOCOL_VERSION, type InstructionSet } from "./types.ts";
 
 export const MAX_PAYLOAD_BYTES = 256 * 1024;
 export const MAX_TEXT_BYTES = 64 * 1024;
@@ -22,7 +23,6 @@ export type EnvelopeType = "request" | "response" | "event";
 /** Supervisor -> worker operations. */
 export type SupervisorOperation =
   | "initialize"
-  | "run"
   | "deliver"
   | "interrupt"
   | "dispose"
@@ -33,15 +33,10 @@ export type SupervisorOperation =
 export type WorkerOperation =
   | "ready"
   | "event"
-  | "tool.execute"
-  | "tool.cancel"
-  | "gate.decision";
+  | "tool.execute";
 
-export type Operation = SupervisorOperation | WorkerOperation;
-
-const SUPERVISOR_OPS: ReadonlySet<string> = new Set([
+const SUPERVISOR_OPS: ReadonlySet<string> = new Set<SupervisorOperation>([
   "initialize",
-  "run",
   "deliver",
   "interrupt",
   "dispose",
@@ -49,12 +44,10 @@ const SUPERVISOR_OPS: ReadonlySet<string> = new Set([
   "find_entry",
 ]);
 
-const WORKER_OPS: ReadonlySet<string> = new Set([
+const WORKER_OPS: ReadonlySet<string> = new Set<WorkerOperation>([
   "ready",
   "event",
   "tool.execute",
-  "tool.cancel",
-  "gate.decision",
 ]);
 
 export interface IpcEnvelope {
@@ -189,22 +182,24 @@ export function validateEnvelope(
   };
 }
 
-/** Worker-side: build the handshake ready event. */
-export function readyPayload(piVersion: string, capabilities: string[]): { piVersion: string; capabilities: string[] } {
-  return { piVersion, capabilities };
-}
-
 /** Initialize payload (supervisor -> worker). */
 export interface InitializePayload {
-  taskText: string;
+  /** First task to prompt, or null to load the session without inference. */
+  taskText: string | null;
   profile: "reader" | "writer";
   instructionHash: string;
+  /** Skills and context files the child's session lists (its loader discovers none). */
+  instructions: InstructionSet;
   model: { provider: string; id: string; thinkingLevel: string };
   taskRunId: string;
   executionGeneration: number;
   workdir: string;
   readRoots: string[];
   writable: boolean;
+  /** Exact tool allowlist the worker registers (the supervisor re-checks every call). */
+  tools: string[];
+  /** Disposable in-memory conversation (gate reviewer): nothing persisted. */
+  ephemeral?: boolean;
   /**
    * Native-session restore: the supervisor wrote validated checkpoint bytes
    * to sessionFile before launch (single owner: no worker was running).
@@ -219,11 +214,14 @@ export function validateInitializePayload(raw: unknown): { ok: true; value: Init
     return { ok: false, error: err("INVALID", "initialize payload must be an object") };
   }
   const p = raw as Record<string, unknown>;
-  if (typeof p["taskText"] !== "string" || p["taskText"].length === 0) {
-    return { ok: false, error: err("INVALID", "initialize.taskText must be nonempty") };
+  if (p["taskText"] !== null && (typeof p["taskText"] !== "string" || p["taskText"].length === 0)) {
+    return { ok: false, error: err("INVALID", "initialize.taskText must be nonempty or null") };
   }
-  if (Buffer.byteLength(p["taskText"] as string, "utf8") > MAX_TEXT_BYTES) {
+  if (typeof p["taskText"] === "string" && Buffer.byteLength(p["taskText"], "utf8") > MAX_TEXT_BYTES) {
     return { ok: false, error: err("PAYLOAD_TOO_LARGE", "initialize.taskText exceeds 64KiB") };
+  }
+  if (!Array.isArray(p["tools"]) || !(p["tools"] as unknown[]).every(isNonEmptyString)) {
+    return { ok: false, error: err("INVALID", "initialize.tools must be an array of tool names") };
   }
   if (p["profile"] !== "reader" && p["profile"] !== "writer") {
     return { ok: false, error: err("INVALID", "initialize.profile must be reader/writer") };
@@ -238,6 +236,11 @@ export function validateInitializePayload(raw: unknown): { ok: true; value: Init
   if (!Number.isInteger(p["executionGeneration"])) {
     return { ok: false, error: err("INVALID", "initialize.executionGeneration required") };
   }
+  try {
+    parseInstructionSet(p["instructions"]);
+  } catch (e) {
+    return { ok: false, error: err("INVALID", `initialize.instructions: ${(e as Error).message}`) };
+  }
   return { ok: true, value: p as unknown as InitializePayload };
 }
 
@@ -247,10 +250,7 @@ export type WorkerEventKind =
   | "settled"
   | "tool_start"
   | "tool_end"
-  | "preview"
-  | "usage"
-  | "question"
-  | "checkpoint_ready";
+  | "preview";
 
 export interface WorkerEvent {
   kind: WorkerEventKind;

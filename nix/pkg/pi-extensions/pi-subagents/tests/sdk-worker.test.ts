@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { WorkerHandle } from "../src/worker-launch.ts";
 import type { WorkerEvent } from "../src/protocol.ts";
 import type { DeterministicModelRuntime } from "../src/deterministic.ts";
+import { testGovernor, bothExecutors } from "./fake-worker.ts";
 
 const SDK_ROOT = process.env["PI_SUBAGENTS_SDK_ROOT"] ?? null;
 const WORKER_PATH = new URL("../src/worker.ts", import.meta.url).pathname;
@@ -65,12 +66,17 @@ test("M1: real worker process runs a native session (handshake, proxy tool, agen
       taskText: "read the file",
       profile: "reader",
       instructionHash: "",
+      instructions: {
+        contextFiles: [{ path: "/proj/AGENTS.md", content: "M1-CONTEXT-MARKER: answer tersely" }],
+        skills: [{ name: "m1-skill", description: "M1 skill description", filePath: "/skills/m1/SKILL.md", baseDir: "/skills/m1", disableModelInvocation: false }],
+      },
       model: { provider: "openai", id: "deterministic-test", thinkingLevel: "off" },
       taskRunId: "task-m1",
       executionGeneration: 1,
       workdir: dir,
       readRoots: [dir],
       writable: false,
+      tools: ["read"],
     }, { taskRunId: "task-m1", generation: 1, timeoutMs: 60_000 })) as { ok?: boolean; sessionId?: string };
     assert.equal(ack.ok, true);
     assert.ok(typeof ack.sessionId === "string" && ack.sessionId.length > 0);
@@ -88,13 +94,17 @@ test("M1: real worker process runs a native session (handshake, proxy tool, agen
     assert.ok(events.some((e) => e.kind === "started"));
     // Settled boundary checkpoint: fsynced native bytes with the selected leaf.
     const cp = (await handle.request("checkpoint", {}, { taskRunId: "task-m1", generation: 1, timeoutMs: 15_000 })) as {
-      leafEntryId?: string | null; materialized?: boolean; byteCount?: number; sha256?: string; bytesBase64?: string;
+      leafEntryId?: string | null; materialized?: boolean; byteCount?: number; sha256?: string; sessionFile?: string;
     };
     assert.equal(cp.materialized, true);
     assert.ok(typeof cp.leafEntryId === "string" && cp.leafEntryId.length > 0);
-    const bytes = Buffer.from(cp.bytesBase64 ?? "", "base64");
+    const { readFileSync } = await import("node:fs");
+    const bytes = readFileSync(cp.sessionFile!).subarray(0, cp.byteCount);
     assert.equal(bytes.length, cp.byteCount);
     assert.ok(bytes.toString("utf8").includes("read the file"));
+    // The owner-selected context file and skill are what the child's prompt lists.
+    assert.ok(bytes.toString("utf8").includes("M1-CONTEXT-MARKER"), "context file missing from the child's system prompt");
+    assert.ok(bytes.toString("utf8").includes("/skills/m1/SKILL.md"), "skill missing from the child's system prompt");
   } finally {
     handle.kill();
     rmSync(dir, { recursive: true, force: true });
@@ -221,10 +231,11 @@ test("M1: evict + reload restores the recorded leaf through the native branch AP
   let launches = 0;
   const sup = new Supervisor({
     rootId: "root-restore",
+    governor: testGovernor,
     rootDir: dir,
     store,
     policy: defaultSupervisorPolicy(),
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: ({ agentId, instanceId, rootEpoch }) => new WorkerHandle({
       workerPath: WORKER_PATH,
@@ -316,3 +327,193 @@ function assistantWithTools(calls: Array<{ id: string; name: string; args: Recor
     timestamp: Date.now(),
   };
 }
+
+async function deterministicWorker(dir: string, script: Array<Record<string, unknown>>, onTool: (tool: string) => Promise<{ content: string; isError: boolean }>): Promise<{ handle: WorkerHandle; events: WorkerEvent[] }> {
+  const { bindChannel } = await import("../src/protocol.ts");
+  const events: WorkerEvent[] = [];
+  const handle = new WorkerHandle({
+    workerPath: WORKER_PATH,
+    rootEpoch: "epoch-x",
+    agentId: "agent-x",
+    sdkRoot: SDK_ROOT,
+    deterministic: true,
+    agentDir: join(dir, "worker-home"),
+    sessionsDir: join(dir, "sessions"),
+    script: script as Array<{ text?: string; tool?: string; args?: Record<string, unknown> }>,
+  }, bindChannel("epoch-x", "agent-x", "instance-x"));
+  handle.setEventHandler((e) => events.push(e));
+  handle.setToolRequestHandler(async (payload) => onTool(payload.tool));
+  await handle.launch();
+  const ack = (await handle.request("initialize", {
+    taskText: "go",
+    profile: "reader",
+    instructionHash: "",
+    instructions: { contextFiles: [], skills: [] },
+    model: { provider: "test", id: "model", thinkingLevel: "off" },
+    taskRunId: "task-1",
+    executionGeneration: 1,
+    workdir: dir,
+    readRoots: [dir],
+    writable: false,
+    tools: ["read"],
+  }, { taskRunId: "task-1", generation: 1, timeoutMs: 60_000 })) as { ok?: boolean };
+  assert.equal(ack.ok, true);
+  return { handle, events };
+}
+
+async function untilEvent(events: WorkerEvent[], pred: (e: WorkerEvent) => boolean, timeoutMs = 30_000): Promise<WorkerEvent> {
+  const start = Date.now();
+  for (;;) {
+    const found = events.find(pred);
+    if (found) return found;
+    if (Date.now() - start > timeoutMs) throw new Error(`no matching event; saw ${events.map((e) => e.kind).join(",")}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+test("real worker: a provider error settles the generation as failed, never succeeded", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; settlement-status check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-err-"));
+  const { handle, events } = await deterministicWorker(dir, [{ error: "upstream exploded" }], async () => ({ content: "", isError: false }));
+  try {
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    assert.equal(settled.detail["status"], "failed");
+    assert.ok(String(settled.detail["error"]).includes("upstream exploded"));
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: an interrupt mid-tool settles once, as interrupted", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; interrupt check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-int-"));
+  let toolStarted = false;
+  const { handle, events } = await deterministicWorker(dir, [{ tool: "read", args: { path: "x" } }, { text: "should not finish" }], async () => {
+    toolStarted = true;
+    await new Promise((r) => setTimeout(r, 500));
+    return { content: "late tool result", isError: false };
+  });
+  try {
+    const start = Date.now();
+    while (!toolStarted && Date.now() - start < 30_000) await new Promise((r) => setTimeout(r, 20));
+    await handle.request("interrupt", {}, { taskRunId: "task-1", generation: 1, timeoutMs: 15_000 });
+    await new Promise((r) => setTimeout(r, 800));
+    const settled = events.filter((e) => e.kind === "settled");
+    assert.equal(settled.length, 1, `settled events: ${JSON.stringify(settled.map((e) => e.detail["status"]))}`);
+    assert.equal(settled[0]!.detail["status"], "interrupted");
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: a second task while a generation runs is refused before acknowledgement", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; delivery precondition check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-dbl-"));
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const { handle, events } = await deterministicWorker(dir, [{ tool: "read", args: { path: "x" } }, { text: "first done" }], async () => {
+    await gate;
+    return { content: "ok", isError: false };
+  });
+  try {
+    await untilEvent(events, (e) => e.kind === "tool_start");
+    const res = (await handle.request("deliver", { mode: "task", text: "second" }, { taskRunId: "task-2", generation: 2, timeoutMs: 15_000 })) as { ok?: boolean; code?: string };
+    assert.equal(res.ok, false);
+    assert.equal(res.code, "CONFLICT");
+    release();
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    assert.equal(settled.detail["status"], "succeeded");
+  } finally {
+    release();
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: death during a tool settles the run and never crashes the supervisor", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; worker-death check skipped, not passed");
+    return;
+  }
+  const { Supervisor } = await import("../src/supervisor.ts");
+  const { InMemoryRunStore } = await import("../src/store.ts");
+  const { DummyToolExecutor } = await import("../src/sandbox.ts");
+  const { DummyWorkspaceManager } = await import("../src/workspace.ts");
+  const { defaultSupervisorPolicy } = await import("../src/policy.ts");
+  const { newWorkerBinding } = await import("../src/worker-launch.ts");
+  const dir = mkdtempSync(join(tmpdir(), "subagents-death-"));
+  let handle: WorkerHandle | null = null;
+  const executor = new DummyToolExecutor();
+  executor.handler = async () => {
+    // The worker dies while its tool runs; the tool then completes.
+    process.kill(handle!.pid!, "SIGKILL");
+    await new Promise((r) => setTimeout(r, 300));
+    return { exitCode: 0, signal: null, stdout: "late", stderr: "", truncated: false, timedOut: false };
+  };
+  const sup = new Supervisor({
+    rootId: "root-death",
+    governor: testGovernor,
+    rootDir: dir,
+    store: new InMemoryRunStore("root-death"),
+    policy: defaultSupervisorPolicy(),
+    executors: bothExecutors(executor),
+    workspace: new DummyWorkspaceManager(),
+    workerFactory: ({ agentId, rootEpoch }) => {
+      handle = new WorkerHandle({
+        workerPath: WORKER_PATH,
+        rootEpoch,
+        agentId,
+        sdkRoot: SDK_ROOT,
+        deterministic: true,
+        agentDir: join(dir, "wah", agentId),
+        sessionsDir: join(dir, "sessions"),
+        script: [{ tool: "read", args: { path: "x" } }, { text: "never" }],
+      }, newWorkerBinding(rootEpoch, agentId));
+      return handle;
+    },
+  });
+  try {
+    const res = await sup.spawn("governor", { taskName: "d", message: "go", profile: "reader" }, "req-d");
+    const joined = await sup.wait("governor", 0, 30_000, [{ agentId: res.agentId, taskRunId: res.taskRunId }], "all_settled");
+    assert.equal(joined.completed, true);
+    await new Promise((r) => setTimeout(r, 500)); // the late tool response is sent into a closed channel
+    const outcome = sup.list("governor")[0]!.taskOutcome;
+    assert.ok(outcome === "uncertain" || outcome === "failed", `outcome ${outcome}`);
+    assert.equal(sup.admissionScheduler.runnableCount, 0);
+  } finally {
+    await sup.shutdown();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: a checkpoint of a session larger than the IPC payload cap succeeds", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; large checkpoint check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-bigcp-"));
+  const { handle, events } = await deterministicWorker(dir, [{ tool: "read", args: { path: "a.txt" } }, { text: "done" }], async () => ({ content: "y".repeat(200 * 1024), isError: false }));
+  try {
+    await untilEvent(events, (e) => e.kind === "settled");
+    const cp = (await handle.request("checkpoint", {}, { taskRunId: "task-1", generation: 1, timeoutMs: 5000 })) as { ok?: boolean; byteCount?: number; sessionFile?: string };
+    assert.equal(cp.ok, true);
+    // Base64 of this session alone would exceed the 256 KiB IPC payload cap.
+    assert.ok((cp.byteCount ?? 0) * 4 / 3 > 256 * 1024, `byteCount ${cp.byteCount}`);
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

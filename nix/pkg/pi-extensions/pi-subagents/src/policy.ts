@@ -12,20 +12,23 @@
  * Prompt text, model output, and copied session metadata are not grants.
  *
  * Fixed profiles:
- * - reader: read/grep/find/ls on approved read roots; no write/edit/bash,
- *   no project code execution, no tool-job network.
- * - writer: reader reads plus write/edit inside its own worktree; shell only
- *   through the verified sandbox backend, no tool-job network by default.
+ * - reader: read/grep/find/ls; no write/edit/bash, no project code execution.
+ * - writer: reader reads plus write/edit/bash in its writer workspace.
+ *
+ * Isolation (see Isolation in types.ts) is chosen per child and never
+ * decreases down the tree. Registered repositories, read roots, and
+ * tool-job network denial bound sandboxed agents only; host-isolated
+ * agents ("none", "worktree") run with the user's own authority.
  */
 
 import { err } from "./errors.ts";
-import type { AgentProfile, GrantSet, RepoGrant } from "./types.ts";
+import { ISOLATION_LEVELS, type AgentProfile, type GrantSet, type Isolation, type RepoGrant } from "./types.ts";
 
 export const READER_TOOLS = ["read", "grep", "find", "ls"] as const;
 export const WRITER_TOOLS = ["read", "grep", "find", "ls", "write", "edit", "bash"] as const;
 
 /** Tools the worker proxy layer may ever expose. Closed set. */
-export const KNOWN_PROXY_TOOLS = ["read", "grep", "find", "ls", "write", "edit", "bash", "ask_user"] as const;
+export const KNOWN_PROXY_TOOLS = ["read", "grep", "find", "ls", "write", "edit", "bash"] as const;
 
 export interface SupervisorPolicy {
   revision: number;
@@ -35,12 +38,8 @@ export interface SupervisorPolicy {
   nesting: boolean;
   /** Registered repositories: the only writable/readable origins. */
   repos: RegisteredRepo[];
-  /** Default model identity inherited when the caller omits overrides. */
-  defaultModel: { provider: string; id: string; thinkingLevel: string };
-  /** Models a child may be assigned (provider/id pairs). */
+  /** Models a child may be assigned by explicit override (children inherit their owner's otherwise). */
   allowedModels: Array<{ provider: string; id: string }>;
-  /** Whether reader agents may spawn children (default false). */
-  readerNesting: boolean;
   /** Whether gate bypass is permitted by the governor. */
   gateBypassAllowed: boolean;
   /** Round ceiling; null permits unlimited agreement rounds. */
@@ -61,6 +60,7 @@ export interface RegisteredRepo {
 
 export interface GrantRequest {
   profile: AgentProfile;
+  isolation: Isolation;
   repoId: string | null;
   shell: boolean;
   network: boolean;
@@ -74,9 +74,7 @@ export function defaultSupervisorPolicy(): SupervisorPolicy {
     maxDepth: 1,
     nesting: false,
     repos: [],
-    defaultModel: { provider: "default", id: "default", thinkingLevel: "medium" },
     allowedModels: [],
-    readerNesting: false,
     gateBypassAllowed: false,
     gateMaxRoundsCeiling: 3,
     toolNetwork: false,
@@ -115,6 +113,12 @@ export function intersectGrants(
     if (request.depth > owner.maxDepth) {
       return { ok: false, error: err("POLICY_DENIED", "request exceeds owner delegable depth") };
     }
+    if (request.depth > 1 && !owner.nesting) {
+      return { ok: false, error: err("POLICY_DENIED", "owner holds no delegation grant") };
+    }
+    if (ISOLATION_LEVELS.indexOf(request.isolation) < ISOLATION_LEVELS.indexOf(owner.isolation)) {
+      return { ok: false, error: err("POLICY_DENIED", `owner runs with isolation ${owner.isolation}; a child cannot be less isolated (${request.isolation})`) };
+    }
   }
   if (request.profile === "reader" && request.shell) {
     return { ok: false, error: err("POLICY_DENIED", "reader profile cannot hold shell authority") };
@@ -123,7 +127,14 @@ export function intersectGrants(
     return { ok: false, error: err("POLICY_DENIED", "tool-job network denied by root policy") };
   }
   let repos: RepoGrant[] = [];
-  if (request.repoId !== null) {
+  if (request.isolation !== "sandbox") {
+    if (request.repoId !== null) {
+      return { ok: false, error: err("INVALID", "repo_id applies to sandbox isolation only") };
+    }
+    // Host-isolated agents keep their owner's repository grants (reads only
+    // for readers) so they can still delegate sandboxed work.
+    repos = (owner ?? rootGrants(policy)).repos.map((r) => ({ repoId: r.repoId, read: r.read, write: r.write && request.profile === "writer" }));
+  } else if (request.repoId !== null) {
     const reg = policy.repos.find((r) => r.repoId === request.repoId);
     if (!reg) {
       return { ok: false, error: err("POLICY_DENIED", `unknown repository ${request.repoId}`) };
@@ -140,7 +151,7 @@ export function intersectGrants(
     }
     repos = [{ repoId: reg.repoId, read: true, write: request.profile === "writer" }];
   } else if (request.profile === "writer") {
-    return { ok: false, error: err("POLICY_DENIED", "writer requires an approved repository") };
+    return { ok: false, error: err("POLICY_DENIED", "a sandboxed writer requires an approved repository (repo_id)") };
   }
   if (request.model) {
     const allowed = policy.allowedModels.some(
@@ -157,8 +168,9 @@ export function intersectGrants(
       repos,
       shell: request.profile === "writer" && request.shell,
       network: request.network && policy.toolNetwork,
-      nesting: policy.nesting && (request.profile === "writer" || policy.readerNesting),
+      nesting: policy.nesting,
       maxDepth: Math.min(policy.maxDepth, owner?.maxDepth ?? policy.maxDepth),
+      isolation: request.isolation,
     },
   };
 }
@@ -172,6 +184,7 @@ export function rootGrants(policy: SupervisorPolicy): GrantSet {
     network: policy.toolNetwork,
     nesting: policy.nesting,
     maxDepth: policy.maxDepth,
+    isolation: "none",
   };
 }
 

@@ -5,8 +5,34 @@
  * with the actual pi adapter on the event contract.
  */
 import { randomUUID } from "node:crypto";
-import type { WorkerPort } from "../src/supervisor.ts";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ToolExecutors } from "../src/broker.ts";
+import type { ToolExecutor } from "../src/sandbox.ts";
+import type { GovernorContext, WorkerPort } from "../src/supervisor.ts";
+import type { InstructionSet } from "../src/types.ts";
 import type { WorkerEvent } from "../src/protocol.ts";
+import type { ToolRequest } from "../src/worker-launch.ts";
+
+/** The governing model top-level test children inherit. */
+export const TEST_MODEL = { provider: "test", id: "model", thinkingLevel: "off" };
+/** The governing session's working directory (host-isolated test children start here). */
+export const TEST_GOVERNOR_CWD = mkdtempSync(join(tmpdir(), "subagents-governor-"));
+/** What the governing test session "loaded": one context file and two skills. */
+export const TEST_INSTRUCTIONS: InstructionSet = {
+  contextFiles: [{ path: "/proj/AGENTS.md", content: "Answer tersely." }],
+  skills: [
+    { name: "deploy", description: "Deploy things", filePath: "/skills/deploy/SKILL.md", baseDir: "/skills/deploy", disableModelInvocation: false },
+    { name: "review", description: "Review things", filePath: "/skills/review/SKILL.md", baseDir: "/skills/review", disableModelInvocation: false },
+  ],
+};
+export const testGovernor = (): GovernorContext => ({ model: TEST_MODEL, cwd: TEST_GOVERNOR_CWD, instructions: TEST_INSTRUCTIONS });
+
+/** One executor for both execution modes (tests assert on the recorded specs). */
+export function bothExecutors(executor: ToolExecutor): ToolExecutors {
+  return { sandbox: executor, host: executor };
+}
 
 export type FakeScript =
   | "settle-text" // started, preview, settled/succeeded
@@ -28,7 +54,10 @@ export class FakeWorker implements WorkerPort {
   branchEntries = new Set<string>();
   /** When true, checkpoint requests fail (receipts never verify). */
   failCheckpoint = false;
-  private answerTool: ((payload: { tool: string; args: Record<string, unknown>; toolCallId: string }) => Promise<{ content: string; isError: boolean }>) | null = null;
+  /** When true, task/repair delivers answer with an application rejection. */
+  rejectDeliverTask = false;
+  private onExit: ((info: { code: number | null; signal: string | null }) => void) | null = null;
+  private answerTool: ((payload: ToolRequest) => Promise<{ content: string; isError: boolean }>) | null = null;
   private taskRunId: string | null = null;
   private generation: number | null = null;
   private settledFor = new Set<string>();
@@ -63,7 +92,7 @@ export class FakeWorker implements WorkerPort {
     if (!text) throw new Error("no review prompt received yet");
     const match = text.match(/Candidate (candidate-\d+)/);
     const candidateId = match?.[1] ?? "candidate-1";
-    await this.answerTool?.({ tool: "submit_gate_decision", args: this.decisionFor(candidateId), toolCallId: "tc-gate" });
+    await this.answerTool?.({ tool: "submit_gate_decision", args: this.decisionFor(candidateId), toolCallId: "tc-gate", usage: null });
     this.emitSettled(this.taskRunId ?? "task-fake", this.generation ?? 1, "succeeded", "review submitted");
   }
 
@@ -71,8 +100,18 @@ export class FakeWorker implements WorkerPort {
     this.emit = h;
   }
 
-  setToolRequestHandler(h: (payload: { tool: string; args: Record<string, unknown>; toolCallId: string }) => Promise<{ content: string; isError: boolean }>): void {
+  setToolRequestHandler(h: (payload: ToolRequest) => Promise<{ content: string; isError: boolean }>): void {
     this.answerTool = h;
+  }
+
+  setExitHandler(h: (info: { code: number | null; signal: string | null }) => void): void {
+    this.onExit = h;
+  }
+
+  /** Simulate an abrupt worker process exit (no settled event). */
+  crash(): void {
+    this.killed = true;
+    this.onExit?.({ code: null, signal: "SIGKILL" });
   }
 
   async launch(): Promise<void> {
@@ -96,7 +135,10 @@ export class FakeWorker implements WorkerPort {
       if (mode === "note" && this.script === "question-then-settle") {
         // A reply note satisfies the parked question: settle now.
         queueMicrotask(() => this.emitSettled(taskRunId, generation, "succeeded", "answered result"));
-        return { inserted: true };
+        return { ok: true, inserted: true };
+      }
+      if ((mode === "task" || mode === "repair") && this.rejectDeliverTask) {
+        return { ok: false, code: "CONFLICT", message: "worker busy" };
       }
       if (mode === "task" || mode === "repair") {
         this.taskRunId = taskRunId;
@@ -104,7 +146,7 @@ export class FakeWorker implements WorkerPort {
         this.schedule(taskRunId, generation, String(p["text"] ?? ""));
         return { ok: true, generation };
       }
-      return { inserted: true };
+      return { ok: true, inserted: true };
     }
     if (operation === "interrupt") {
       const taskRunId = opts?.taskRunId ?? this.taskRunId ?? "task-fake";
@@ -114,15 +156,8 @@ export class FakeWorker implements WorkerPort {
     }
     if (operation === "checkpoint") {
       if (this.failCheckpoint) throw new Error("checkpoint failed");
-      const { createHash } = await import("node:crypto");
-      const bytes = Buffer.from(JSON.stringify({ session: this.instanceId, entries: [...this.branchEntries] }), "utf8");
-      return {
-        leafEntryId: `leaf-${this.instanceId.slice(0, 8)}`,
-        materialized: true,
-        byteCount: bytes.length,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
-        bytesBase64: bytes.toString("base64"),
-      };
+      // No session file: real-worker tests cover checkpoint bytes.
+      return { ok: true, materialized: false, leafEntryId: `leaf-${this.instanceId.slice(0, 8)}` };
     }
     if (operation === "find_entry") {
       const messageId = String((p["messageId"] as string) ?? "");
@@ -130,9 +165,9 @@ export class FakeWorker implements WorkerPort {
       // present (even if compacted out of model context) and are not
       // reinserted. Same message ID preserved either way.
       if (this.branchEntries.has(messageId)) {
-        return { found: `entry-${messageId.slice(0, 8)}`, entryId: `entry-${messageId.slice(0, 8)}` };
+        return { ok: true, found: true, entryId: `entry-${messageId.slice(0, 8)}` };
       }
-      return { found: null, entryId: null };
+      return { ok: true, found: false, entryId: null };
     }
     throw new Error(`unknown op ${operation}`);
   }
@@ -154,9 +189,10 @@ export class FakeWorker implements WorkerPort {
         return;
       }
       if (this.script === "question-then-settle") {
-        queueMicrotask(() =>
-          this.fire({ kind: "question", taskRunId, executionGeneration: generation, detail: { text: "need parent input", to: "parent" } }),
-        );
+        // A real child asks through its send_message control tool.
+        queueMicrotask(() => {
+          void this.answerTool?.({ tool: "send_message", args: { target: "parent", message: "need parent input", mode: "note", request_reply: true }, toolCallId: "tc-q", usage: null });
+        });
         return;
       }
       if (this.script === "gate") {
@@ -164,7 +200,7 @@ export class FakeWorker implements WorkerPort {
           if (this.killed) return;
           const match = _text.match(/Candidate (candidate-\d+)/);
           const candidateId = match?.[1] ?? "candidate-1";
-          await this.answerTool?.({ tool: "submit_gate_decision", args: this.decisionFor(candidateId), toolCallId: "tc-gate" });
+          await this.answerTool?.({ tool: "submit_gate_decision", args: this.decisionFor(candidateId), toolCallId: "tc-gate", usage: null });
           this.emitSettled(taskRunId, generation, "succeeded", "review submitted");
         });
         return;
@@ -177,7 +213,7 @@ export class FakeWorker implements WorkerPort {
         queueMicrotask(async () => {
           if (this.killed) return;
           this.toolCalls.push({ tool: "read", args: { path: "." } });
-          await this.answerTool?.({ tool: "read", args: { path: "." }, toolCallId: "tc-1" });
+          await this.answerTool?.({ tool: "read", args: { path: "." }, toolCallId: "tc-1", usage: null });
           this.emitSettled(taskRunId, generation, "succeeded", this.settleText);
         });
         return;

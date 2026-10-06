@@ -8,7 +8,7 @@ import { InMemoryRunStore } from "../src/store.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
 import { DummyWorkspaceManager } from "../src/workspace.ts";
 import { defaultSupervisorPolicy } from "../src/policy.ts";
-import { FakeWorker, until } from "./fake-worker.ts";
+import { FakeWorker, until, testGovernor, bothExecutors } from "./fake-worker.ts";
 import type { WorkerPort } from "../src/supervisor.ts";
 
 function gateSpec(maxRounds: number | null = 3) {
@@ -37,11 +37,12 @@ function setup(opts: { mainScript?: "settle-text" | "hang" | "fail"; decide?: (c
   };
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy,
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: factory,
   });
@@ -52,9 +53,9 @@ test("approve ends the task passed (candidate settlement is not success)", async
   const { sup, cleanup } = setup();
   const res = await sup.spawn("governor", { taskName: "g", message: "do work", profile: "reader", gate: gateSpec() }, "req-1");
   // The candidate's SDK settlement must NOT settle the task.
-  await until(() => (sup.read("governor", res.agentId, "status", 0, 1).status.pendingIntent ?? "").includes("review") || sup.list("governor")[0]?.taskOutcome !== null, 5000, "review phase");
+  await until(() => (sup.read("governor", res.agentId, "status", 0, 1, null).status.pendingIntent ?? "").includes("review") || sup.list("governor")[0]?.taskOutcome !== null, 5000, "review phase");
   await until(() => sup.list("governor")[0]?.taskOutcome === "passed", 5000, "gate pass");
-  const read = sup.read("governor", res.agentId, "result", 0, 10);
+  const read = sup.read("governor", res.agentId, "result", 0, 10, null);
   assert.equal(read.result?.outcome, "passed");
   cleanup();
 });
@@ -95,7 +96,7 @@ test("valid revise at the round limit ends review_limit_reached without repair",
   });
   const res = await sup.spawn("governor", { taskName: "g", message: "do work", profile: "reader", gate: gateSpec(1) }, "req-1");
   await until(() => sup.list("governor")[0]?.taskOutcome === "review_limit_reached", 8000, "limit");
-  const read = sup.read("governor", res.agentId, "result", 0, 10);
+  const read = sup.read("governor", res.agentId, "result", 0, 10, null);
   assert.equal(read.result?.outcome, "review_limit_reached");
   cleanup();
 });
@@ -121,11 +122,12 @@ test("failed required check turns approval into gate_error (GATE_INVALID_APPROVA
   };
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy,
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: factory,
   });
@@ -133,6 +135,7 @@ test("failed required check turns approval into gate_error (GATE_INVALID_APPROVA
     taskName: "g",
     message: "do work",
     profile: "writer",
+    isolation: "sandbox",
     repoId: "r1",
     baseCommit: "c0",
     gate: { ...gateSpec(), checks: [{ id: "must-pass", command: "exit 1" }] },
@@ -154,11 +157,12 @@ test("closing the main agent cancels its linked sibling gate", async () => {
   let calls = 0;
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy,
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => {
       calls++;
@@ -170,12 +174,12 @@ test("closing the main agent cancels its linked sibling gate", async () => {
   });
   try {
     const res = await sup.spawn("governor", { taskName: "g", message: "do work", profile: "reader", gate: gateSpec() }, "req-1");
-    await until(() => (sup.read("governor", res.agentId, "status", 0, 1).status.pendingIntent ?? "").includes("review"), 5000, "in review");
+    await until(() => (sup.read("governor", res.agentId, "status", 0, 1, null).status.pendingIntent ?? "").includes("review"), 5000, "in review");
     await sup.close("governor", res.agentId, "req-close");
     // The linked reviewer has no independent lifecycle: it dies with the
-    // main task, and the gate ends gate_error (cancelled), never approval.
+    // main task, and the gated run ends interrupted, never approval.
     const gate = sup.gateController.inspect(res.taskRunId);
-    assert.equal(gate?.terminal, "gate_error");
+    assert.equal(gate?.terminal, "interrupted");
     assert.ok(reviewers.length === 1 && reviewers[0]!.killed);
     assert.equal(sup.list("governor").find((v) => v.id === res.agentId)?.pendingIntent, "closed");
   } finally {
@@ -221,11 +225,12 @@ test("round-2 revision reserving repair 3 races a cap decrease to 2: one side re
   };
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy,
     schedulerLimits: { maxRunnable: 1, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: factory,
   });
@@ -268,16 +273,17 @@ test("recovery marks running reviews interrupted; resume_review continues withou
   };
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy,
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: factory,
   });
   const res = await sup.spawn("governor", { taskName: "g", message: "do work", profile: "reader", gate: gateSpec() }, "req-1");
-  await until(() => (sup.read("governor", res.agentId, "status", 0, 1).status.pendingIntent ?? "").includes("review"), 5000, "in review");
+  await until(() => (sup.read("governor", res.agentId, "status", 0, 1, null).status.pendingIntent ?? "").includes("review"), 5000, "in review");
   const report = await sup.recover();
   assert.ok(report.epoch);
   const gate = sup.gateController.inspect(res.taskRunId);

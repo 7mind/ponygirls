@@ -38,10 +38,17 @@ export interface WorkerLaunchOptions {
 }
 
 export type WorkerEventHandler = (event: WorkerEvent, envelope: IpcEnvelope) => void;
-export type ToolRequestHandler = (
-  payload: { tool: string; args: Record<string, unknown>; toolCallId: string },
-  envelope: IpcEnvelope,
-) => Promise<{ content: string; isError: boolean }>;
+export interface ToolRequest {
+  tool: string;
+  args: Record<string, unknown>;
+  toolCallId: string;
+  /** The generation's provider usage up to this call (worker-reported). */
+  usage: { input: number; output: number; cost: number | null; unknown: boolean } | null;
+}
+
+export type ToolRequestHandler = (payload: ToolRequest, envelope: IpcEnvelope) => Promise<{ content: string; isError: boolean }>;
+
+export type WorkerExitHandler = (info: { code: number | null; signal: string | null }) => void;
 
 export class WorkerHandle {
   private proc: ChildProcess | null = null;
@@ -50,6 +57,7 @@ export class WorkerHandle {
   private pending = new Map<string, { resolve: (p: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private onEvent: WorkerEventHandler | null = null;
   private onToolRequest: ToolRequestHandler | null = null;
+  private onExit: WorkerExitHandler | null = null;
   private stdoutTail = Buffer.alloc(0);
   private stderrTail = Buffer.alloc(0);
   private exited: { code: number | null; signal: string | null } | null = null;
@@ -90,6 +98,11 @@ export class WorkerHandle {
     this.onToolRequest = handler;
   }
 
+  /** Called once if the process exits without being disposed by the supervisor. */
+  setExitHandler(handler: WorkerExitHandler): void {
+    this.onExit = handler;
+  }
+
   /** Launch and complete the handshake. Guard owns the child until ready. */
   async launch(): Promise<void> {
     const env: Record<string, string> = {
@@ -110,6 +123,9 @@ export class WorkerHandle {
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     this.proc = proc;
+    // Without a listener, a failed spawn or send would be thrown in the
+    // governing process; failures surface through exit and request errors.
+    proc.on("error", () => {});
     proc.stdout?.on("data", (d: Buffer) => {
       this.stdoutTail = Buffer.concat([this.stdoutTail, d]).subarray(-MAX_DIAG_BYTES);
     });
@@ -119,6 +135,22 @@ export class WorkerHandle {
     proc.on("message", (raw: unknown) => {
       void this.onInbound(raw);
     });
+    const ready = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("worker handshake timeout")), HANDSHAKE_TIMEOUT_MS);
+      const check = (raw: unknown): void => {
+        const e = raw as Record<string, unknown>;
+        if (e?.["operation"] === "ready" && validateEnvelope(raw, this.binding, "from-worker").ok) {
+          clearTimeout(timer);
+          proc.off("message", check);
+          resolve();
+        }
+      };
+      proc.on("message", check);
+      proc.once("exit", (code, signal) => {
+        clearTimeout(timer);
+        reject(new Error(`worker exited during handshake (code ${code}, signal ${signal}): ${this.stderrTail.toString("utf8").slice(-2000)}`));
+      });
+    });
     proc.on("exit", (code, signal) => {
       this.exited = { code, signal };
       for (const [id, p] of this.pending) {
@@ -126,30 +158,10 @@ export class WorkerHandle {
         p.reject(new Error(`worker exited before response (request ${id})`));
       }
       this.pending.clear();
+      if (!this.disposed) this.onExit?.({ code, signal });
     });
-
     // Hello carries the binding; worker answers with a `ready` event.
-    const ready = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("worker handshake timeout")), HANDSHAKE_TIMEOUT_MS);
-      const check = (raw: unknown): void => {
-        const e = raw as Record<string, unknown>;
-        if (e?.["operation"] === "ready") {
-          const checked = validateEnvelope(raw, this.binding, "from-worker");
-          if (checked.ok) {
-            clearTimeout(timer);
-            proc.off("message", check);
-            resolve();
-          }
-        }
-      };
-      proc.on("message", check);
-    });
-    proc.send?.({
-      operation: "__hello",
-      rootEpoch: this.options.rootEpoch,
-      agentId: this.options.agentId,
-      workerInstanceId: this.workerInstanceId,
-    });
+    this.send({ operation: "__hello", rootEpoch: this.options.rootEpoch, agentId: this.options.agentId, workerInstanceId: this.workerInstanceId });
     try {
       await ready;
     } catch (e) {
@@ -183,14 +195,12 @@ export class WorkerHandle {
         reject(new Error(`worker request timeout: ${operation}`));
       }, opts?.timeoutMs ?? REQUEST_TIMEOUT_MS);
       this.pending.set(requestId, { resolve, reject, timer });
-      this.proc?.send?.(envelope, (sendErr) => {
-        if (sendErr) {
-          clearTimeout(timer);
-          this.pending.delete(requestId);
-          reject(sendErr instanceof Error ? sendErr : new Error(String(sendErr)));
-        }
-        // Send callback is transport progress, not receiver acceptance;
-        // the application response resolves the promise.
+      // Send callback is transport progress, not receiver acceptance;
+      // the application response resolves the promise.
+      this.send(envelope, (sendErr) => {
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        reject(sendErr);
       });
     });
   }
@@ -209,33 +219,63 @@ export class WorkerHandle {
     }
   }
 
-  private async onInbound(raw: unknown): Promise<void> {
-    const asRecord = raw as Record<string, unknown>;
-    if (asRecord?.["operation"] === "ready") return; // consumed by handshake
-    // Responses to supervisor requests.
-    if (asRecord?.["type"] === "response" && typeof asRecord["requestId"] === "string") {
-      const pending = this.pending.get(asRecord["requestId"] as string);
-      if (!pending) return;
-      this.pending.delete(asRecord["requestId"] as string);
-      clearTimeout(pending.timer);
-      pending.resolve((asRecord["payload"] as unknown) ?? null);
+  /** IPC send that never throws or emits: a closed channel is reported to onError. */
+  private send(message: unknown, onError?: (e: Error) => void): void {
+    const proc = this.proc;
+    if (!proc || !proc.connected) {
+      onError?.(new Error("worker channel closed"));
       return;
     }
+    proc.send(message as object, (sendErr) => {
+      if (sendErr) onError?.(sendErr instanceof Error ? sendErr : new Error(String(sendErr)));
+    });
+  }
+
+  private async onInbound(raw: unknown): Promise<void> {
     const checked = validateEnvelope(raw, this.binding, "from-worker");
-    if (!checked.ok) return; // Drop malformed/foreign/stale frames.
+    if (!checked.ok) {
+      // A request is answered even when rejected, so its caller never waits
+      // for a timer; anything else malformed is dropped.
+      const r = raw as Record<string, unknown> | null;
+      if (r?.["type"] === "request" && r["operation"] === "tool.execute" && typeof r["requestId"] === "string") {
+        const hint = checked.code === "PAYLOAD_TOO_LARGE" ? "; split the content into smaller pieces" : "";
+        this.send({
+          protocolVersion: PROTOCOL_VERSION,
+          rootEpoch: this.binding.rootEpoch,
+          agentId: this.binding.agentId,
+          workerInstanceId: this.workerInstanceId,
+          requestId: r["requestId"],
+          seq: null,
+          type: "response",
+          operation: "tool.execute",
+          taskRunId: null,
+          executionGeneration: null,
+          payload: { ok: false, content: `${checked.code}: ${checked.message}${hint}` },
+        });
+      }
+      return;
+    }
     const env = checked.envelope;
+    if (env.operation === "ready") return; // consumed by the handshake
+    if (env.type === "response" && env.requestId !== null) {
+      const pending = this.pending.get(env.requestId);
+      if (!pending) return;
+      this.pending.delete(env.requestId);
+      clearTimeout(pending.timer);
+      pending.resolve(env.payload);
+      return;
+    }
     if (env.operation === "event") {
       const payload = env.payload as { kind?: string; detail?: Record<string, unknown> } & Record<string, unknown>;
       // The worker sends the WorkerEvent as payload while the envelope
       // carries the fenced ids; unwrap one level (never double-nest).
       if (typeof payload?.["kind"] === "string" && this.onEvent) {
-        const inner = (payload["detail"] ?? {}) as Record<string, unknown>;
         this.onEvent(
           {
             kind: payload["kind"] as WorkerEvent["kind"],
             taskRunId: env.taskRunId,
             executionGeneration: env.executionGeneration,
-            detail: inner,
+            detail: (payload["detail"] ?? {}) as Record<string, unknown>,
           },
           env,
         );
@@ -243,7 +283,7 @@ export class WorkerHandle {
       return;
     }
     if (env.operation === "tool.execute") {
-      const payload = env.payload as { tool?: string; args?: Record<string, unknown>; toolCallId?: string };
+      const payload = env.payload as { tool?: string; args?: Record<string, unknown>; toolCallId?: string; usage?: ToolRequest["usage"] };
       if (typeof payload?.["tool"] !== "string" || !this.onToolRequest) {
         this.respondTool(env, { content: "INVALID: malformed tool request", isError: true });
         return;
@@ -253,6 +293,7 @@ export class WorkerHandle {
           tool: payload["tool"] as string,
           args: (payload["args"] as Record<string, unknown>) ?? {},
           toolCallId: typeof payload["toolCallId"] === "string" ? (payload["toolCallId"] as string) : "",
+          usage: payload["usage"] ?? null,
         }, env);
         this.respondTool(env, result);
       } catch (e) {
@@ -275,7 +316,9 @@ export class WorkerHandle {
       executionGeneration: env.executionGeneration,
       payload: { ok: !result.isError, content: result.content },
     };
-    this.proc?.send?.(response);
+    // A worker that died while its tool ran gets no answer; that is not an
+    // error in the governing process.
+    this.send(response);
   }
 }
 
