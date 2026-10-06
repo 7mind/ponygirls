@@ -7,7 +7,9 @@ import { Text } from "@earendil-works/pi-tui";
 import { Value } from "typebox/value";
 import { Activation, readRuntimeConfig } from "./src/activation.ts";
 import { NoticeDispatcher, SessionFileReceipts, connectBackend, systemTimers, type ReceiptSource } from "./src/delivery.ts";
-import { BgTaskError, COMPLETION_CUSTOM_TYPE, CompletionDetailsSchema, MAX_LIST_ITEMS, SIGNAL_NAMES, type SessionId, type SignalName } from "./src/protocol.ts";
+import { BgTaskError, COMPLETION_CUSTOM_TYPE, CompletionDetailsSchema, MAX_LIST_ITEMS, SIGNAL_NAMES, type SessionId, type SignalName, type TaskRecord } from "./src/protocol.ts";
+import { BG_STATUS_KEY, bgStatusLine } from "./src/status.ts";
+import type { TaskBackend } from "./src/backend.ts";
 import { createBgTaskTool, taskLine } from "./src/tool.ts";
 import { BgInspector, renderCompletion, type ViewerStyle } from "./src/ui.ts";
 
@@ -17,6 +19,49 @@ interface Bound {
   ctx: ExtensionContext;
   /** Open /bg views; closed when the activation ends. */
   views: Set<{ view: BgInspector; close: () => void }>;
+  statusTimer: ReturnType<typeof setTimeout> | null;
+}
+
+/** Throttle for footer status refreshes on rapid task changes. */
+const STATUS_THROTTLE_MS = 250;
+
+/** Newest-first walk over retained tasks, counting unfinished ones for the footer. */
+async function readStatusTasks(backend: TaskBackend): Promise<TaskRecord[]> {
+  const seen: TaskRecord[] = [];
+  let page = await backend.list(null, null, MAX_LIST_ITEMS);
+  seen.push(...page.items);
+  while (page.next !== null) {
+    page = await backend.list(page.upper, page.next, MAX_LIST_ITEMS);
+    seen.push(...page.items);
+  }
+  return seen;
+}
+
+async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<void> {
+  if (!isCurrent()) return;
+  try {
+    const backend = await entry.activation.backend();
+    if (!isCurrent()) return;
+    const line = bgStatusLine(await readStatusTasks(backend));
+    if (!isCurrent()) return;
+    entry.ctx.ui.setStatus(BG_STATUS_KEY, line ?? undefined);
+  } catch {
+    // No persistent session, missing executables, disposed activation, or a
+    // lost supervisor: no indicator rather than a stale one.
+    try {
+      if (isCurrent()) entry.ctx.ui.setStatus(BG_STATUS_KEY, undefined);
+    } catch {
+      // Stale UI after session replacement/reload: nothing to do.
+    }
+  }
+}
+
+function scheduleStatus(entry: Bound, isCurrent: () => boolean): void {
+  if (entry.statusTimer) return;
+  entry.statusTimer = setTimeout(() => {
+    entry.statusTimer = null;
+    void refreshStatus(entry, isCurrent);
+  }, STATUS_THROTTLE_MS);
 }
 
 function themeStyle(theme: Theme): ViewerStyle {
@@ -68,11 +113,18 @@ export default function bgTasks(pi: ExtensionAPI): void {
       },
       timers: systemTimers,
     });
-    activation.onBackend((backend) => connectBackend(dispatcher, backend));
-    self.value = { activation, dispatcher, ctx, views: new Set() };
+    activation.onBackend((backend) => {
+      connectBackend(dispatcher, backend);
+      backend.onChanged(() => {
+        if (self.value) scheduleStatus(self.value, () => bound === self.value);
+      });
+      if (self.value) scheduleStatus(self.value, () => bound === self.value);
+    });
+    self.value = { activation, dispatcher, ctx, views: new Set(), statusTimer: null };
     bound = self.value;
     // Recover earlier activations' records and replay their notices without waiting for a tool call.
     if (activation.hasExistingState()) activation.backend().catch((error: unknown) => report(ctx, errorText(error), "error"));
+    else scheduleStatus(self.value, () => bound === self.value);
   });
 
   pi.on("session_shutdown", async (event) => {
@@ -80,6 +132,13 @@ export default function bgTasks(pi: ExtensionAPI): void {
     bound = null;
     if (!ending) return;
     ending.dispatcher.dispose();
+    if (ending.statusTimer) clearTimeout(ending.statusTimer);
+    ending.statusTimer = null;
+    try {
+      ending.ctx.ui.setStatus(BG_STATUS_KEY, undefined);
+    } catch {
+      // Stale UI after replacement/reload: nothing to do.
+    }
     for (const { view, close } of ending.views) {
       view.dispose();
       close();
@@ -144,7 +203,15 @@ export default function bgTasks(pi: ExtensionAPI): void {
   pi.on("agent_before_settle", (event) => {
     bound?.dispatcher.beforeSettle(event.outcome);
   });
-  pi.on("agent_settled", () => bound?.dispatcher.settled());
+  pi.on("agent_settled", () => {
+    const entry = bound;
+    entry?.dispatcher.settled();
+    if (entry) scheduleStatus(entry, () => bound === entry);
+  });
+  pi.on("turn_end", () => {
+    const entry = bound;
+    if (entry) scheduleStatus(entry, () => bound === entry);
+  });
   pi.on("input", (event) => {
     if (event.source !== "extension") bound?.dispatcher.input(event.streamingBehavior !== undefined);
   });

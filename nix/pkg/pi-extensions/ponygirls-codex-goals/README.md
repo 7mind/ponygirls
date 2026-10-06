@@ -92,6 +92,12 @@ and commit metadata are custom entries (not model context). Nothing is
 deleted on clear/replace/resume/compaction; Pi's normal compaction
 manages context size.
 
+While an unfinished goal exists the footer shows `goal <status>` (active,
+paused, blocked, budget_limited, usage_limited) as a magenta badge
+directly behind the stats text on the first line, next to the
+background-tasks badge when both are present; it clears when the goal
+completes or is cleared.
+
 ## Persistence
 
 Atomic JSON sidecar next to the session file:

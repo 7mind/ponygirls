@@ -63,6 +63,11 @@ live output (follow mode); ↑/PgUp pauses and scrolls back, `f`/End resumes.
 tasks only, with a confirmation naming the ID and bytes). Closing the viewer
 never affects a task. The detail view holds at most 128 KiB of a log.
 
+While any task is unfinished the footer shows `bg N running` as a blue
+badge directly behind the stats text on the first line (next to
+the session goal badge when both are present); it clears when no running
+task remains.
+
 ## Outcomes
 
 | state | meaning |
@@ -185,6 +190,8 @@ nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).pon
 | `pi-runtime-probe.test.mjs` | pinned Pi delivery semantics (scripted provider, `pi.sendMessage()` path) |
 | `delivery.test.mjs` | the real extension in a scripted Pi runtime: idle/active/burst/opt-out, aborts, dropped follow-up, no-start, mute, crash windows, switch/fork, reload, compaction, provider retry |
 | `delivery-unit.test.ts` | deterministic dispatcher guard transitions |
+| `status.test.ts` | footer status line: running counts, singular/plural, clear when idle |
+| `extension-status.test.ts` | the real extension with a faked host: status follows spawn/terminate/clear |
 | `ui.test.ts` | the inspector on a real supervisor: live follow/scroll, escape fixtures, bounded windows, dead/missing labels, actions |
 | `packaged.test.mjs` | wrapped pi binary + packaged extension in RPC, print, and TUI (PTY) sessions with a local fake provider |
 

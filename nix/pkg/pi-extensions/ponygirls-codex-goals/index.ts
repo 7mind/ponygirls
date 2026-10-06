@@ -43,6 +43,7 @@ import {
   type SidecarEnvelope,
 } from "./src/store.ts";
 import { handleCreateGoal, handleGetGoal, handleUpdateGoal } from "./src/tools.ts";
+import { GOAL_STATUS_KEY, goalStatusLine } from "./src/status.ts";
 
 const COMMIT_META_TYPE = "codex-goal-commit";
 const TOOL_CREATE = "create_goal";
@@ -94,6 +95,23 @@ function safeNotify(ctx: { ui: { notify(m: string, t?: NotifyLevel): void } }, m
     ctx.ui.notify(message, type);
   } catch {
     // Stale runtime after session replacement/reload: nothing to do.
+  }
+}
+
+/** Publish (or clear) the footer goal indicator from the persisted sidecar. */
+function refreshGoalStatus(
+  binding: { store: GoalStore },
+  ui: { setStatus(key: string, text: string | undefined): void },
+): void {
+  try {
+    const loaded = binding.store.load();
+    ui.setStatus(GOAL_STATUS_KEY, (loaded.ok ? goalStatusLine(loaded.value.goal) : null) ?? undefined);
+  } catch {
+    try {
+      ui.setStatus(GOAL_STATUS_KEY, undefined);
+    } catch {
+      // Stale runtime after session replacement/reload: nothing to do.
+    }
   }
 }
 
@@ -412,6 +430,7 @@ export default function (pi: ExtensionAPI): void {
           }
           return outcome;
         });
+        refreshGoalStatus(binding, ctx.ui);
         return {
           content: [{ type: "text" as const, text: outcome.content }],
           details: undefined,
@@ -502,6 +521,7 @@ export default function (pi: ExtensionAPI): void {
           binding.controller.invalidate("tool:update");
           appendEvidence(binding, COMMIT_META_TYPE, { sessionId: binding.sessionId, goalId: outcome.state!.id, revision: outcome.revision });
         }
+        refreshGoalStatus(binding, ctx.ui);
         return {
           content: [{ type: "text" as const, text: outcome.content }],
           details: undefined,
@@ -575,6 +595,7 @@ export default function (pi: ExtensionAPI): void {
           });
           appendEvidence(binding, GOAL_NOTICE_TYPE, { text: "Goal cleared. Transcript entries retained.", at: clk.nowIso() });
           safeNotify(ctx, "Goal cleared. Transcript entries retained.", "info");
+          refreshGoalStatus(binding, ctx.ui);
         } catch (err) {
           safeNotify(ctx, `/goal clear failed: ${(err as Error).message}`, "error");
         }
@@ -619,6 +640,7 @@ export default function (pi: ExtensionAPI): void {
           });
           appendEvidence(binding, GOAL_NOTICE_TYPE, { text: `Goal paused (${committed.value.goal!.id}).`, at: clk.nowIso() });
           safeNotify(ctx, "Goal paused.", "info");
+          refreshGoalStatus(binding, ctx.ui);
         } catch (err) {
           safeNotify(ctx, `/goal pause failed: ${(err as Error).message}`, "error");
         }
@@ -671,6 +693,7 @@ export default function (pi: ExtensionAPI): void {
         } catch (err) {
           resumed = { ok: false, message: (err as Error).message };
         }
+        refreshGoalStatus(binding, ctx.ui);
         if (!resumed.ok) {
           safeNotify(ctx, `/goal resume rejected: ${resumed.message}`, "warning");
           return;
@@ -730,6 +753,7 @@ export default function (pi: ExtensionAPI): void {
           });
           binding.controller.invalidate("edit");
           binding.controller.resetStreakOnUserWork();
+          refreshGoalStatus(binding, ctx.ui);
           if (ctx.hasUI && committed.value.goal!.status === "active") {
             const sent = safeSendCustom(
               pi,
@@ -829,6 +853,7 @@ export default function (pi: ExtensionAPI): void {
             return;
           }
           binding.pendingKickoff = { purpose: "kickoff", revision: second.revision };
+          refreshGoalStatus(binding, ctx.ui);
           // Print/json modes are single-turn: persist and let the next run
           // pick the goal up via before_agent_start instead of queuing here.
           if (ctx.hasUI) {
@@ -845,6 +870,7 @@ export default function (pi: ExtensionAPI): void {
           return;
         }
         binding.pendingKickoff = { purpose: "kickoff", revision: created.revision };
+        refreshGoalStatus(binding, ctx.ui);
         if (ctx.hasUI) {
           const sent = safeSendUser(pi, ctx, created.record.objective);
           if (!sent.ok) safeNotify(ctx, `/goal: state saved but kickoff failed: ${sent.error}`, "error");
@@ -859,6 +885,12 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_start", async (event, ctx) => {
     try {
       await sessionStartInner(event, ctx);
+    } catch (err) {
+      if (!isStaleError(err)) throw err;
+    }
+    try {
+      const binding = bindingFor(ctx);
+      if (binding) refreshGoalStatus(binding, ctx.ui);
     } catch (err) {
       if (!isStaleError(err)) throw err;
     }
@@ -1004,6 +1036,11 @@ export default function (pi: ExtensionAPI): void {
     }
     if (!binding) return;
     binding.controller.invalidate("shutdown");
+    try {
+      ctx.ui.setStatus(GOAL_STATUS_KEY, undefined);
+    } catch {
+      // Stale runtime after replacement/reload: nothing to do.
+    }
     try {
       binding.store.releaseLock();
     } catch {
@@ -1342,6 +1379,11 @@ export default function (pi: ExtensionAPI): void {
     }).catch((err) => {
       if (!isStaleError(err)) throw err;
     });
+    try {
+      refreshGoalStatus(binding, ctx.ui);
+    } catch (err) {
+      if (!isStaleError(err)) throw err;
+    }
   });
 
   pi.on("session_before_compact", async (_event, ctx) => {
@@ -1368,6 +1410,11 @@ export default function (pi: ExtensionAPI): void {
       .catch((err) => {
         if (!isStaleError(err)) throw err;
       });
+    try {
+      refreshGoalStatus(binding, ctx.ui);
+    } catch (err) {
+      if (!isStaleError(err)) throw err;
+    }
   });
 
   pi.on("session_compact", async (_event, ctx) => {
