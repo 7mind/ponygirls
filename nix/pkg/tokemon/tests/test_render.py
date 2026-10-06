@@ -11,7 +11,7 @@ from rich.console import Console
 from tokemon.discovery import Target
 from tokemon.credentials import Credential, CredentialKind
 from tokemon.quota import QueryResult, QuotaSnapshot, QuotaWindow
-from tokemon.render import MEASURE_WIDTH, build_table
+from tokemon.render import MEASURE_WIDTH, PROVIDER_STYLES, _provider_style, build_table
 
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 EXPIRED = datetime(2026, 9, 1, tzinfo=timezone.utc)
@@ -55,6 +55,13 @@ def _result(window: QuotaWindow | None, note: str | None, expires_at=None, error
     )
 
 
+def _login_result(provider: str, login: str) -> QueryResult:
+    target = Target("default", "pi", provider, "~/.pi/agent", None, None)
+    window = QuotaWindow("5h", used=1.0, limit=100.0, unit="%", resets_at=None)
+    snapshot = QuotaSnapshot(plan_name=None, identity=login, windows=(window,), note=None)
+    return QueryResult(target=target, snapshot=snapshot, error=None, fetched_at=NOW, rate_limit=None)
+
+
 def _profile_result(profile: str, label: str, window: QuotaWindow | None, error: str | None = None) -> QueryResult:
     target = Target(profile, "pi", "demo", label, None, None)
     snapshot = QuotaSnapshot(plan_name=None, identity=None, windows=(window,) if window else (), note=None)
@@ -94,8 +101,8 @@ class RenderTests(unittest.TestCase):
 
     def test_note_and_expired_auth_are_surfaced(self):
         window = QuotaWindow("5h", used=1.0, limit=100.0, unit="%", resets_at=None)
-        text = _render([_result(window, "reset credits: 0", expires_at=EXPIRED)])
-        self.assertIn("reset credits: 0", text)
+        text = _render([_result(window, "resets: 0", expires_at=EXPIRED)])
+        self.assertIn("resets: 0", text)
         self.assertIn("auth expired", text)
 
     def test_error_row_keeps_target_visible(self):
@@ -212,9 +219,9 @@ class RenderTests(unittest.TestCase):
 
 class ResponsiveColumnsTests(unittest.TestCase):
     ALL_HEADERS = (
+        "Provider",
         "Profile",
         "Src",
-        "Provider",
         "Login",
         "Plan",
         "Window",
@@ -252,9 +259,68 @@ class ResponsiveColumnsTests(unittest.TestCase):
     def test_no_width_keeps_every_column(self):
         self.assertEqual(self._headers(self._build(None)), list(self.ALL_HEADERS))
 
+    def test_provider_is_the_first_column(self):
+        self.assertEqual(self._headers(self._build(None))[0], "Provider")
+
+    def test_rows_sort_by_provider_then_login(self):
+        results = [
+            _login_result("zai", "b@example.test"),
+            _login_result("anthropic", "z@example.test"),
+            _login_result("anthropic", "a@example.test"),
+        ]
+        text = _render(results)
+        first = text.find("a@example.test")
+        second = text.find("z@example.test")
+        third = text.find("b@example.test")
+        self.assertTrue(0 <= first < second < third, text)
+
+    def test_provider_colours_stay_distinct_across_families(self):
+        families = [
+            "anthropic",
+            "openai-codex",
+            "github-copilot",
+            "kimi-coding",
+            "meta",
+            "minimax",
+            "openrouter",
+            "vercel-ai-gateway",
+            "xai",
+            "zai",
+            "xiaomi",
+            "qwen-token-plan",
+        ]
+        styles = {_provider_style(provider) for provider in families}
+        self.assertEqual(len(styles), len(families))
+        self.assertIn("xiaomi-token-plan-ams", PROVIDER_STYLES)
+        self.assertEqual(_provider_style("xiaomi-token-plan-ams"), _provider_style("xiaomi"))
+        unknown = _provider_style("some-future-provider")
+        self.assertEqual(unknown, _provider_style("some-future-provider"))
+
+    def test_provider_name_carries_a_colour(self):
+        # A style close before the name: rich emits an SGR sequence ending in
+        # "m" right before the styled provider name.
+        window = QuotaWindow("5h", used=1.0, limit=100.0, unit="%", resets_at=None)
+        text = _render([_result(window, None)], force_terminal=True)
+        self.assertIn("demo", text)
+        self.assertRegex(text, "mdemo")
+
+    def test_status_note_is_shown_once_for_multiwindow_rows(self):
+        first = QuotaWindow("primary (7d)", used=91.0, limit=100.0, unit="%", resets_at=None)
+        second = QuotaWindow("credits", used=None, limit=0.0, unit="credits", resets_at=None)
+        text = _render([_result(first, "resets: 2", extra_windows=(second,))])
+        self.assertEqual(text.count("resets: 2"), 1)
+
+    def test_paths_hide_before_columns_drop(self):
+        full = self._build(None)
+        compact = self._build(_table_width(full) - 1)
+        self.assertEqual(self._headers(compact), list(self.ALL_HEADERS))
+        self.assertIn("provider paths hidden", str(compact.caption))
+        self.assertNotIn("columns hidden", str(compact.caption))
+
     def test_columns_drop_in_order_plan_provider_status(self):
         full = self._build(None)
-        step1 = self._build(_table_width(full) - 1)
+        compact = self._build(_table_width(full) - 1)
+        step1 = self._build(_table_width(compact) - 1)
         self.assertNotIn("Plan", self._headers(step1))
         self.assertIn("Provider", self._headers(step1))
         self.assertIn("Status", self._headers(step1))
