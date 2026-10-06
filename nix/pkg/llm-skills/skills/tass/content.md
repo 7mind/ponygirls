@@ -1,453 +1,494 @@
 # TASS: Target/Actual State Separation
 
-A pattern for reliable state management in event-driven control systems.
+Use TASS to build controllers for systems whose state is observed indirectly
+and changed through commands that may be delayed, duplicated, rejected, or
+have no observable effect.
 
-## Problem
+TASS makes epistemic gaps between intent, command execution, observations, and
+physical state explicit; it prevents decisions from treating missing or
+insufficient evidence as established knowledge.
 
-Control systems manage devices and subsystems whose state is observed indirectly
-(via sensors, network messages, or periodic readings) and changed via commands
-that may fail, be delayed, or produce unexpected results. Ad-hoc state tracking
-leads to:
+The governing rule is:
 
-- **State confusion**: no clear distinction between "what we want" and "what we
-  know." Boolean flags like `is_on` conflate commanded state with observed state.
-- **Corner cases**: stale readings, out-of-order events, partial updates, and
-  startup races each require one-off workarounds.
-- **Hard debugging**: reconstructing "why is the system in this state?" requires
-  mental replay of event logs.
-- **Fragile tests**: tests must carefully sequence mock events and assert on
-  interleaved boolean flags rather than inspecting structured state.
-
-## Core Concept
-
-Every controllable entity is represented as a **quadruple**:
-
-```
-Entity = (TargetState, TargetPhase, ActualState, ActualFreshness)
+```text
+target intent != command attempt != observation != inferred convergence != decision
 ```
 
-| Component         | Meaning                                         |
-|-------------------|-------------------------------------------------|
-| **TargetState**   | What we want the entity to be (value)           |
-| **TargetPhase**   | Lifecycle of the current target (state machine) |
-| **ActualState**   | Last observed state of the entity (value)       |
-| **ActualFreshness** | How recent/reliable the observation is (state machine) |
+Do not write a command into actual state. Do not treat a matching value as
+confirmation until the observation is applicable to the current target. Do
+not turn missing evidence into a diagnosis of actuator failure.
 
-Read-only entities (sensors) have only the actual half. Event sources (buttons)
-have no persistent TASS state.
+## Establish the Boundary
 
-## Target Phase State Machine
+Before changing a controller, identify:
 
-```
-         set_target()           emit_command()           confirm()
-  Unset ───────────→ Pending ──────────────→ Commanded ──────────→ Confirmed
-                        ↑                                             │
-                        └─────────────────────────────────────────────┘
-                                     set_target() [new target]
-```
+1. controllable entities and read-only observations;
+2. target sources and precedence rules;
+3. command transports and their delivery guarantees;
+4. observation sources, ordering information, and correlation capabilities;
+5. persisted records, derived views, and clock semantics;
+6. safety constraints and the conditions under which doing nothing is allowed.
 
-| Phase       | Meaning                                                      |
-|-------------|--------------------------------------------------------------|
-| **Unset**   | Initial. No target has been defined. System is passive.      |
-| **Pending** | A target value was set (by user, logic, or schedule). The    |
-|             | system has not yet emitted the command to the physical world.|
-| **Commanded** | The command was emitted (e.g., MQTT publish). Awaiting      |
-|             | confirmation from actual state.                              |
-| **Confirmed** | An actual state reading confirms the entity matches the    |
-|             | target. The system is at rest for this entity.               |
+State material assumptions when the transport or device protocol cannot
+establish ordering, correlation, or delivery. Do not silently promote those
+assumptions into observed facts.
 
-### Transitions
+TASS is unnecessary for local state with a single authoritative writer and no
+independently observed external process. A normal state machine is sufficient
+there.
 
-- `Unset → Pending`: User, automation rule, or schedule sets a target value.
-- `Pending → Commanded`: The runtime emits the command (after a core returns
-  it as an effect). In fire-and-forget systems (MQTT QoS 0), this transition
-  is immediate. In request-response systems, it may await an acknowledgment.
-- `Commanded → Confirmed`: An actual state reading arrives that matches the target
-  value (within tolerance for analog values).
-- `Confirmed → Pending`: A new target value is set, invalidating the previous
-  confirmation.
-- `Commanded → Pending`: A new target value is set before confirmation arrived.
-  The old command is superseded.
+## Separate the Epistemic Layers
 
-### Collapsing Pending and Commanded
+Keep these layers distinct in code, logs, tests, and explanations:
 
-In fire-and-forget systems where command emission is synchronous with effect
-processing (e.g., a core returns effects that are immediately published),
-`Pending` and `Commanded` can be collapsed. The core sets the target **and**
-emits the command in one step, transitioning directly to `Commanded`. This is
-the common case for MQTT controllers.
+| Layer | Meaning |
+|---|---|
+| Physical state | What the external system is actually doing; ordinarily not directly available to the controller. |
+| Evidence | Accepted observation records and their provenance. |
+| Inference | Derived freshness, applicability, convergence, aggregates, and diagnoses. |
+| Decision | A rule that authorizes a command, evidence request, deferral, or fault response. |
 
-### Phase Never Returns to Unset
+In TASS, `actual` means an accepted observation or an explicitly derived view
+of observations. It is not observer-independent physical state. Declare each
+view's question and dependencies. Keep target-independent last-observed state
+separate from target-relative applicability and convergence.
 
-Once a target is set, the entity stays in the target lifecycle. There is no
-"un-targeting." To stop controlling an entity, set the target to a neutral value
-(e.g., Off) rather than returning to Unset.
+Recomputation may change a derived view without adding or retracting evidence.
+It must not rewrite the underlying observation records.
 
-### Command Retries
+## Persist Records; Derive the Entity View
 
-When a command is emitted (`Pending → Commanded`) but the matching actual
-reading never arrives, the entity stays in `Commanded`. The system does not
-silently give up — it retries.
+Prefer primary records similar to the following domain types:
 
-Each actuator type defines its own **retry policy**:
+```text
+TargetRecord
+  entity
+  targetRevision
+  value
+  source
+  setAt
 
-- **Backoff**: constant, exponential, or decorrelated jitter
-- **Max attempts**: usually unbounded — keep retrying until confirmed or until
-  a new target supersedes the current one
-- **Per-attempt deadline**: how long to wait before re-emitting
+CommandAttempt
+  entity
+  targetRevision
+  attemptId
+  command
+  plannedAt
+  dispatchState
 
-Retries are the rule, not the exception. Devices drop messages, networks have
-transient failures, gateways reboot mid-transaction. The default assumption is
-that any single command may not take effect, so a working TASS controller
-almost always defines a non-trivial retry policy per actuator type.
-
-Crucially, retry detection uses the **same sensor path** as confirmation.
-There is no separate channel for "did the command land?" — if a command's
-effect is not observable via the entity's actual state, the system has no way
-to confirm or retry it. Design actuators so that all consequential effects are
-visible through sensors.
-
-## Actual Freshness State Machine
-
-```
-                  reading()                    time_passes()
-  Unknown ──────────────→ Fresh(timestamp) ──────────────→ Stale(timestamp)
-                              ↑                                │
-                              └────────────────────────────────┘
-                                        reading()
-
-  On set_target() when actual is Fresh or Stale:
-  Fresh/Stale ──→ Deprecated ──→ Fresh(timestamp) [new reading arrives]
+ObservationRecord
+  observationId
+  entity
+  value
+  source
+  observedAt
+  receivedAt
+  sourcePosition
+  correlation
+  validation
 ```
 
-| Freshness      | Meaning                                                   |
-|----------------|-----------------------------------------------------------|
-| **Unknown**    | No reading has ever been received. The entity's actual    |
-|                | state is not known at all.                                |
-| **Fresh**      | A recent reading was received. The timestamp records when.|
-|                | "Recent" is defined by a configurable threshold per entity|
-|                | type (e.g., 60s for motion sensors, 300s for TRVs).      |
-| **Stale**      | The reading is older than the freshness threshold. The    |
-|                | last known value is still stored but should be treated    |
-|                | with lower confidence.                                    |
-| **Deprecated** | The target changed, making this reading irrelevant. The   |
-|                | old value describes the *previous* target's state, not    |
-|                | the *current* target's. A new reading is needed to        |
-|                | confirm the new target.                                   |
+Represent unavailable protocol information explicitly, for example
+`Unsequenced` rather than a fabricated sequence number and `Uncorrelated`
+rather than an absent required value.
 
-### Transitions
+Derive the convenient entity view from these records, the current clock,
+knobs, and topology:
 
-- `Unknown → Fresh`: First reading arrives.
-- `Fresh → Stale`: Time exceeds the freshness threshold since the last reading.
-- `Stale → Fresh`: A new reading arrives, resetting the timestamp.
-- `Fresh/Stale → Deprecated`: Target changes to `Pending`. The current reading
-  describes the old target, not the new one.
-- `Deprecated → Fresh`: A new reading arrives that describes the new target's
-  state.
-
-### Actual State Always Stores a Value (When Known)
-
-Even when freshness is `Stale` or `Deprecated`, the actual value is preserved.
-This allows the UI to show "last known: ON, 5 minutes ago (stale)" rather than
-just "unknown."
-
-## Target Owner
-
-Optionally, each target carries an **owner** — who or what set it:
-
-| Owner        | Meaning                                |
-|--------------|----------------------------------------|
-| **Unset**    | No target has been set                 |
-| **User**     | A physical button press                |
-| **Motion**   | Motion sensor automation               |
-| **Schedule** | Time-based schedule trigger            |
-| **WebUI**    | Web dashboard command                  |
-| **System**   | System-level action (startup, etc.)    |
-| **Rule**     | An automation rule (e.g., kill switch) |
-
-The owner enables owner-aware logic. For example:
-- Motion-off only fires when owner is `Motion` (user presses override).
-- Cooldown after off only applies when owner is `User` or `Motion`.
-- Kill switch can override any owner.
-
-## Knobs
-
-A typical TASS program exposes a set of **knobs** — dynamically modifiable
-parameters that affect decisions. Examples:
-
-- Motion timeout duration
-- Temperature setpoints and offsets
-- Schedule enable/disable
-- Holdoff and cooldown durations
-- Threshold levels (lux, power, temperature)
-- Mode selectors (Away, Sleep, Vacation)
-
-Knobs are read by the decision logic at every tick. They are typically:
-
-- Settable by the user via a control interface (WebUI, MQTT topic, API)
-- Persisted across restarts in their own store
-- Treated as inputs to cores, alongside sensor data and ledger entries
-
-Knobs are runtime state, not static configuration: changing a knob takes
-immediate effect on subsequent decisions, without code changes or restarts.
-
-**Knobs are distinct from the ledger.** The ledger holds the system's
-internal state — what the controller has observed, decided, and remembered.
-Knobs are external inputs that the user (or another system) writes; the
-controller only reads them. Conflating the two would let the controller
-mutate user intent, or let user writes corrupt internal bookkeeping. Keep
-the stores separate.
-
-## Ledger
-
-The controller's internal state persists between ticks in a key-value
-storage called the **ledger**. The ledger is **not user-modifiable** — it is
-written exclusively by the controller's own decision logic. User-facing
-inputs go through Knobs; the ledger records what the system observed and
-decided.
-
-Ledger entries fall into two categories:
-
-| Type        | Description                                                   |
-|-------------|---------------------------------------------------------------|
-| **Primary** | Authoritative, stored values: TASS quadruples, latest sensor  |
-|             | readings, owners, timestamps, retry counters, history records.|
-| **Derived** | Mechanically computed from primary entries (and knob values): |
-|             | aggregates ("any motion in zone"), pressure-group verdicts,   |
-|             | freshness classifications, cross-entity rollups.              |
-
-Primary entries form the minimal authoritative state. Derived entries are
-pure functions of primary state (plus knobs and clock) — they may be cached
-for performance but must always be reproducible from primaries alone.
-
-This split has two practical consequences:
-
-1. **Recovery**: after a restart, only primary entries need to be reloaded.
-   All derived state is recomputed from them.
-2. **Auditability**: any derived value can be re-derived from a snapshot of
-   primaries, making "why did the system decide this?" answerable from the
-   ledger and knob values alone.
-
-The `world_state` parameter passed to cores (see below) is precisely the
-ledger's primary entries, possibly with derived entries materialized on demand.
-
-## Cores
-
-The unit of computation in a TASS system is a **core** — a pure function
-that consumes inputs and returns effects and ledger updates:
-
-```
-core(event, world_state, knobs, clock, topology) → (effects, world_state')
+```text
+EntityView
+  target
+  latestObservedObservation
+  latestApplicableObservation
+  freshness
+  convergence
+  outstandingCommand
+  retryDue
 ```
 
-- **event**: A typed, parsed event from the outside world (button press,
-  sensor reading, MQTT message, timer tick, WebSocket command).
-- **world_state**: The slice of the ledger this core reads — TASS quadruples
-  for the entities it owns, plus upstream core outputs and history it
-  depends on.
-- **knobs**: Current values of the user-modifiable parameters this core
-  depends on. Read-only from the core's perspective.
-- **clock**: Abstracted time source (injectable for testing).
-- **topology**: Immutable structural metadata (rooms, bindings, schedules).
-- **effects**: Commands to emit, messages to broadcast, timers to schedule.
-- **world_state'**: The updated ledger entries this core writes.
+The view may be cached, but it must be reproducible from its declared primary
+inputs. If the implementation stores a derived value, record enough revision
+information to detect an invalid cache.
 
-No I/O happens inside a core. Effects are **returned**, not **executed**;
-ledger writes are **returned**, not applied. The runtime applies ledger
-updates and dispatches effects after the core returns.
+### Target Revisions
 
-Each core owns a coherent slice of behavior — for example:
+Every active target has a revision. Increment it whenever a change can
+invalidate a prior command, confirmation, or decision: value, tolerance,
+owner precedence, deadline, or another material target condition. An
+identical request may retain the revision only when the domain defines it as
+idempotent in every material respect.
 
-- "kitchen lighting"
-- "heating pressure groups"
-- "kill-switch logic"
-- "schedule evaluator"
+A target change supersedes command attempts for earlier revisions. This is
+logical supersession, not cancellation of effects already sent to the external
+system. It does not mutate or invalidate the factual content of earlier
+observations.
 
-A small TASS program may consist of a single core covering all entities.
-Larger programs decompose into many.
+Allow explicit target release when the domain supports relinquishing control.
+Do not encode “no longer controlling” as a neutral target such as `Off` unless
+the domain defines those states as equivalent. No target also does not prove
+that passive behavior is safe; independent safety obligations may remain.
 
-### Effect Types
+### Observations
 
-Effects are the outputs of a core:
+Preserve at least the distinction between:
 
-| Effect                | Description                                         |
-|-----------------------|-----------------------------------------------------|
-| **Command**           | Publish an MQTT message to control a device/group   |
-| **RequestState**      | Publish a `/get` request for fresh state            |
-| **BroadcastState**    | Push state update to WebSocket clients              |
-| **PublishDiscovery**  | Publish HA MQTT discovery config                    |
-| **ScheduleTimer**     | Schedule a deferred callback (e.g., holdoff expiry) |
-| **CancelTimer**       | Cancel a previously scheduled timer                 |
+- when the source says the state was observed;
+- when the controller received the record;
+- the source's sequence or revision, when available;
+- correlation with a target revision or command attempt, when available;
+- whether boundary validation accepted, rejected, or could not resolve it.
 
-### Cross-Entity Logic
+Receiving a record later does not make its observed state later. Do not let a
+retained, duplicated, or out-of-order message replace a newer observation
+merely because it arrived last.
 
-A single core typically reads **multiple entities** to compute effects:
+Scope source positions to a declared stream and incarnation, such as a device
+boot or producer epoch. A sequence reset after restart is not evidence that
+the new reading is older. Do not compare counters from independent streams or
+incarnations as though they shared an order. Declare how incarnation changes
+are established and how delayed records from prior incarnations are handled.
+If the protocol cannot establish that order, preserve the uncertainty.
 
-```
-fn evaluate_motion(
-    sensor: &MotionSensorEntity,
-    zone: &mut LightZoneEntity,
-    all_sensors_for_room: &[&MotionSensorEntity],
-    clock: &dyn Clock,
-) -> Vec<Effect>
-```
+Define dominance and merge rules before selecting a latest observation. For
+incomparable sources, use an explicit precedence or fusion policy, or retain
+an unresolved result; do not fabricate a total order.
 
-This is critical for:
-- **Multi-sensor OR-gate**: Motion-off waits for ALL sensors in a room to be
-  vacant.
-- **Pressure groups**: When any heating zone needs heat, force-open all TRVs
-  in the group.
-- **Kill switch**: Reads plug power, sets plug target to Off when conditions
-  met.
-- **Parent-child rooms**: Parent zone off propagates to child zones.
+Observation acceptance, abstract recomputation, and evidence retraction are
+different operations:
 
-### Target May Change in Response to Actual
+- acceptance adds a validated record;
+- recomputation changes a derived view while retaining the evidence;
+- retraction withdraws previously accepted evidence under an explicit policy.
 
-A core may change a target in response to an actual state reading:
+Do not implement retraction by silently deleting whichever reading obstructs
+the desired decision.
 
-- A physical button press (actual event) sets a light zone's target.
-- A motion sensor's actual state change triggers a light zone target change.
-- A plug's actual power reading (below threshold) triggers a target change
-  (off).
+## Freshness, Applicability, and Convergence
 
-This is not a violation of the pattern — it's how the pattern connects the
-physical world to the control logic.
+Do not combine these concepts in one state machine.
 
-### Execution DAG
+### Freshness
 
-When a TASS program has multiple cores, they may depend on one another's
-outputs. These dependencies form a **directed acyclic graph (DAG)** that
-defines execution order within a tick:
+Freshness measures age relative to a domain threshold:
 
-- Independent cores can run in any order (or in parallel).
-- A dependent core runs only after its predecessors have written their
-  outputs to the ledger.
-
-Core outputs are stored in the ledger — either as primary entries (decisions
-made: target updates, scheduled actions, retry counters) or as derived
-entries (computed views, aggregates). Downstream cores read these like any
-other ledger data, with no direct coupling to the producer's internals.
-
-This decomposition enables:
-
-- **Independent testing**: each core is a pure function of
-  (event, sensors, knobs, ledger slice) → (effects, ledger updates).
-- **Local reasoning**: a core's behavior is determined by its inputs from
-  sensors, knobs, and the ledger, not by hidden cross-module state.
-- **Modular extension**: a new core can subscribe to existing ledger entries
-  without modifying upstream producers.
-
-## Typical Tick Loop
-
-A complete TASS program runs as a tick loop. Each tick proceeds in four
-phases:
-
-1. **Ingest sensor data**: Collect observations from all sources (MQTT
-   messages, periodic polls, button presses, timer firings, WebSocket
-   commands). Update actual state, freshness, and sensor readings in the
-   ledger.
-
-2. **Compute decisions**: Run the core DAG. For each core, derive new
-   targets and effects from:
-   - sensor data (just-updated actual state)
-   - knob values (current dynamic parameters)
-   - ledger data (previous primary state, history, upstream core outputs)
-
-3. **Issue commands**: Emit effects for any entities whose target advanced
-   to `Commanded`. Persist target updates and core outputs to the ledger.
-
-4. **Validate and retry**: In subsequent ticks, step (1) supplies
-   confirmation through normal sensor readings. Entities still in
-   `Commanded` past their actuator's retry deadline have their commands
-   re-emitted — through the **same code path** as new commands.
-
-The new-command path and the retry path share infrastructure: there is no
-separate "did the command land?" check and no separate retry queue. Both
-are driven by the discrepancy between target and actual, observed through
-sensors.
-
-## Timestamps
-
-Every phase and freshness transition is timestamped:
-
-```rust
-struct Timestamped<T> {
-    value: T,
-    since: Instant,
-}
+```text
+Freshness = Unknown | Fresh(age) | Stale(age)
 ```
 
-This enables:
-- Freshness decay (`Fresh` → `Stale` after N seconds)
-- Holdoff evaluation ("power has been below threshold for 30 minutes")
-- Cooldown enforcement ("don't re-trigger motion for 30 seconds after off")
-- Debugging ("when did this transition happen?")
+Declare the age basis. Measurement freshness requires a validated observation
+time or a protocol-established age bound. Receipt freshness measures only time
+since receipt; it does not establish measurement freshness. If measurement age
+cannot be established, report `Unknown` for that question. When only an age
+bound is available, use a conservative bound and expose that basis.
 
-## Observability
+Fresh does not mean reliable, ordered, correlated, or true. Stale does not
+mean false. Associate freshness with an identified observation, threshold, and
+age basis. At a fixed clock and policy, target changes do not alter that
+observation's freshness, although a target-relative view may select a different
+observation or none.
 
-Every entity's complete state is serializable:
+### Applicability
 
-```json
-{
-  "entity": "kitchen-cooker",
-  "target": { "value": "On(scene=1)", "phase": "Confirmed", "owner": "User", "since": "12:34:56" },
-  "actual": { "value": "On", "freshness": "Fresh", "since": "12:34:57" }
-}
+Applicability states whether an observation may answer a particular question:
+
+```text
+Applicability = Applicable(basis) | Inapplicable(reason) | Unresolved(reason)
 ```
 
-A monitoring dashboard can show every entity's target/actual/phase/freshness
-in real time. Debugging is: "Why isn't the light on?" → check target phase and
-actual freshness. Everything is visible.
+Applicability is question-relative. A pre-command observation may be usable
+for “what was last observed?” while being unusable for “was this command's
+effect observed?” A protocol may establish applicability through a command
+identifier, target revision, source sequence, trustworthy observation time,
+or a documented weaker assumption.
 
-## Testing Strategy
+If the protocol supplies none of these, report the correlation limit. Arrival
+after a command alone does not establish that the observation was produced
+after the command.
 
-Because cores are pure functions, tests are straightforward:
+### Convergence
 
-```
-// Arrange
-let mut world = test_world();
-let knobs = test_knobs();
-assert_eq!(world.light_zone("kitchen").target_phase(), Unset);
+Derive convergence only from the current target and observations applicable
+to the convergence question:
 
-// Act: button press
-let effects = lighting_core(
-    button_press("switch", "1", Press), &mut world, &knobs, &clock,
-);
-
-// Assert: target set, command emitted
-assert_eq!(world.light_zone("kitchen").target_value(), On(scene=1));
-assert_eq!(world.light_zone("kitchen").target_phase(), Commanded);
-assert_eq!(effects, [Command("hue-lz-kitchen", scene_recall(1))]);
-
-// Act: z2m confirms group is on
-let effects = lighting_core(
-    group_state("hue-lz-kitchen", true), &mut world, &knobs, &clock,
-);
-
-// Assert: target confirmed
-assert_eq!(world.light_zone("kitchen").target_phase(), Confirmed);
-assert_eq!(world.light_zone("kitchen").actual_freshness(), Fresh);
+```text
+Convergence =
+  NoTarget
+  | Indeterminate(reason)
+  | Matching(targetRevision, observationId)
+  | Mismatching(targetRevision, observationId)
 ```
 
-No mocking of MQTT. No sequencing of boolean flags. Every state is explicit
-and inspectable. Property-based testing becomes natural: generate random
-event sequences and assert invariants hold (e.g., "target phase never skips
-Commanded").
+Matching means that a qualifying observation satisfies the target's declared
+comparison rule. It does not by itself prove that the command caused the
+state. Keep transport acknowledgment, command-effect observation, and target
+convergence separate when the distinction matters.
 
-## Summary
+A newer applicable mismatch under the declared observation ordering must end
+convergence and re-enter reconciliation. A delayed, dominated mismatch must not
+reopen reconciliation merely because it arrived after convergence.
 
-TASS provides:
+Correlation with an older command revision does not by itself make an
+observation irrelevant to current state. A newer observation of a superseded
+command's delayed effect can establish drift from the current target without
+confirming that target's command attempt.
 
-1. **Clarity**: "What we want" and "what we know" are always separate.
-2. **Discipline**: State machines define all valid states and transitions.
-3. **Resilience**: Actual state naturally fades (Fresh → Stale). Communication
-   failures are visible, not hidden. Unconfirmed commands are retried
-   automatically through the same sensor path.
-4. **Runtime configurability**: Knobs expose decision parameters that take
-   effect immediately, without code changes or restarts.
-5. **Persistent, inspectable state**: The ledger holds primary state and
-   derived views, fully recoverable after restart from primary entries alone.
-6. **Composability**: Cores form a DAG; cross-entity logic reads multiple
-   entities cleanly.
-7. **Testability**: Cores are pure functions with inspectable state.
-8. **Debuggability**: Every entity's complete state is visible and timestamped.
+Do not leave an entity permanently `Confirmed` after observed drift. Prefer
+`Converged` or `Matching` to “system at rest”: future stability requires a
+separate decision over a declared horizon.
+
+## Decisions and Effects
+
+A core is a pure transition function:
+
+```text
+core(event, ledgerSnapshot, knobsSnapshot, clock, topology)
+  -> (effects, ledgerUpdates, diagnostics)
+```
+
+No I/O occurs inside a core. All required inputs are explicit. The core may
+return:
+
+| Outcome | Meaning |
+|---|---|
+| `Quiescent(until, basis)` | Deferring corrective action is justified until a declared horizon. |
+| `RequestEvidence(question)` | Acquire evidence relevant to a current decision. |
+| `Execute(command, targetRevision, snapshotRevision)` | Issue an operational effect for the indexed target and decision inputs. |
+| `Undecided(reason)` | Available evidence or procedure does not authorize a stronger conclusion. |
+| `Fault(kind)` | Evidence, protocol, storage, or runtime invariants were violated. |
+| `Infeasible(scope, basis)` | No admissible policy in an explicitly declared scope can satisfy the target. |
+
+Most controllers should use `Undecided` or `Fault` when retry or search limits
+are exhausted. Use `Infeasible` only when the stated policy scope was actually
+exhausted; a timeout or unsupported operation is not an impossibility result.
+
+Classify effects by purpose:
+
+- **Epistemic:** request a sensor refresh, run a diagnostic, or acquire another
+  observation.
+- **Operational:** command an actuator or change an external target.
+- **Coordination:** schedule or cancel a timer.
+- **Publication:** expose state or diagnostics to another component.
+
+An epistemic effect may also perturb the world. A diagnostic that cycles a
+relay is both evidence-seeking and operational and must satisfy the same safety
+constraints as ordinary actuation.
+
+### Quiescence
+
+Returning no command is not evidence that doing nothing is safe. A quiescent
+decision must account for:
+
+- the current effective target;
+- convergence and evidence validity;
+- freshness expiry before the next reconciliation;
+- scheduled timers and pending target changes;
+- expected disturbances and relevant safety constraints;
+- an explicit reevaluation horizon.
+
+Revalidate the decision when any indexed target, evidence, knob, topology, or
+safety input changes.
+
+## Command Dispatch and Retry
+
+Returning a command effect, persisting it, dispatching it, receiving a
+transport acknowledgment, and observing its external effect are distinct
+events. Represent only the events the runtime can actually observe.
+
+Before dispatch, revalidate the effect's target revision and indexed decision
+inputs, including clock-dependent validity and safety constraints. Cancel
+undispatched effects for superseded or released targets and reconcile again
+when their authorization is no longer valid. Coordinate this check with target
+and policy updates through a serialized handoff or a declared concurrency
+policy; an unchecked gap between validation and dispatch permits a stale effect
+to escape. A storage transaction does not make external actuation atomic.
+
+Commands already dispatched may still execute after supersession or release.
+Declare transport ordering and any actuator-side fencing or cancellation
+capability. Idempotence makes repeated execution equivalent within its declared
+scope; deduplication suppresses repetition within its key scope. Neither
+prevents an obsolete command from overriding a newer one. Without effective
+fencing or cancellation, expose the residual in-flight uncertainty and define
+an evidence, reconciliation, or safety response rather than claiming that
+supersession revoked the command.
+
+Where possible, persist command intent and an outbox entry atomically, then
+dispatch idempotently. Even with an outbox, define crash recovery for both
+windows:
+
+- state persisted but command not dispatched;
+- command dispatched but dispatch state not persisted.
+
+A pending outbox entry after restart does not prove that its command was never
+sent. If recovery cannot distinguish these windows, preserve dispatch
+uncertainty. Revalidate authorization before replay and apply the declared
+fencing or uncertainty policy; canceling an entry does not revoke a command
+that may already be in flight.
+
+Every retry policy must declare:
+
+- attempt deadlines and backoff;
+- a stopping or escalation condition;
+- whether the command is idempotent or carries a deduplication key;
+- applicable rate, wear, and safety limits;
+- when to request evidence instead of reissuing actuation;
+- how a new target revision supersedes outstanding attempts.
+
+Do not make unbounded retry the generic default. It is admissible only when
+repetition remains safe and bounded in effect under explicit domain
+assumptions.
+
+Use the normal observation path to evaluate convergence after a command. Do
+not create a second fictitious truth channel. However, absence of a qualifying
+observation does not identify the cause: the command may be delayed or lost,
+the actuator may have failed, the observation may be delayed or lost, or an
+external actor may have changed the state. Retry policy is a decision under
+that uncertainty, not a diagnosis.
+
+## Ledger, Knobs, and Time
+
+Keep primary ledger state separate from derived views.
+
+Primary state normally includes:
+
+- target set, supersession, and release records;
+- command attempts and observable dispatch transitions;
+- accepted observation records and required provenance;
+- timer registrations and firings;
+- explicit faults, retractions, and decision records needed for audit.
+
+Derived state normally includes:
+
+- current target and outstanding attempt;
+- latest applicable observation;
+- freshness, applicability, and convergence;
+- retry deadlines and cross-entity aggregates;
+- UI projections and reconciliation status.
+
+Retain rejected or unresolved observations when they are needed to diagnose
+boundary failures. Apply an explicit retention policy rather than assuming an
+unbounded event history.
+
+Keep user-modifiable knobs outside the controller-owned ledger. Record the
+knob revision or input snapshot used for a decision when later audit or
+revalidation requires it. If a knob changes desired state rather than merely
+decision policy, model the resulting effective target explicitly instead of
+hiding intent inside a parameter.
+
+Use monotonic time for live deadlines and backoff. Use a persistable civil or
+epoch timestamp for audit records. A process-local monotonic instant cannot be
+restored meaningfully after restart; recovery must recompute deadlines under a
+declared policy. Treat device-provided timestamps as untrusted until the
+protocol establishes clock quality.
+
+## Multi-Entity Controllers
+
+A core may derive one entity's target from observations of other entities.
+Record the source and inputs of that derivation so that ownership and
+causality remain inspectable.
+
+When cores form a DAG:
+
+- declare every read and write dependency;
+- evaluate a tick against a coherent snapshot or define merge/conflict rules;
+- prevent downstream cores from reading a mixture of old and new upstream
+  revisions;
+- reject dependency cycles or implement them as an explicit iterative
+  reconciliation algorithm with a termination policy.
+
+Do not mutate user intent through controller-owned bookkeeping. Do not let a
+user write derived ledger state directly.
+
+## Validation and Failure Policy
+
+Validate observations, commands, and target requests at system boundaries.
+Fail fast on internal invariant violations.
+
+If accepted evidence is contradictory or its consistency cannot be resolved,
+do not exploit the contradiction to authorize arbitrary action. Return an
+observable evidence fault, request relevant evidence, or execute a separately
+declared conservative safety policy. State the residual uncertainty.
+
+Do not invent numerical confidence. If the system uses probabilistic sensor
+fusion, identify the model, inputs, calibration, and decision threshold. A
+decision threshold authorizes action under that model; it does not make the
+inferred state certain.
+
+## Testing
+
+Put most controller tests in Behavioral-Active Blackbox Atomic or Group form:
+drive the public core interface with event sequences and assert returned
+effects, public entity views, and diagnostics. Use a deterministic clock.
+
+Property- or model-based sequence tests should cover these invariants:
+
+1. Setting or releasing a target never rewrites observation records.
+2. Returning, enqueueing, or dispatching a command never fabricates observation
+   evidence or overwrites last-observed values. Derived observation views may
+   recompute when their declared command-related inputs change.
+3. Only explicit evidence transitions change the accepted evidence set.
+   Derived views may change when their declared inputs change, but recomputation
+   never rewrites observation records.
+4. A superseded target revision cannot be confirmed by an old command attempt.
+5. A retained, duplicated, or out-of-order observation cannot replace a newer
+   applicable observation.
+6. A matching but inapplicable observation cannot establish convergence.
+7. A newer applicable mismatch under the declared observation ordering reopens
+   reconciliation; a delayed, dominated mismatch does not.
+8. Freshness decay changes no observation value. At a fixed clock, threshold,
+   and age basis, target changes do not change a given observation's freshness.
+9. Retry respects idempotence, deduplication, deadlines, stopping conditions,
+   and supersession.
+10. Retry exhaustion produces the declared escalation, not fabricated
+    infeasibility or success.
+11. Quiescence expires and is revalidated when an indexed input changes.
+12. Contradictory or unresolved evidence follows the declared failure or safe
+    policy.
+13. Crash recovery follows its declared replay policy; uncertainty around a
+    non-idempotent effect is surfaced rather than silently replayed.
+14. Queued effects are revalidated before dispatch. Supersession or release
+    cancels undispatched attempts; delayed in-flight effects follow the declared
+    fencing or uncertainty policy.
+15. Source restarts, incomparable source positions, and unknown measurement
+    age follow their declared ordering and freshness policies.
+
+Put transports, clocks, persistence, and device protocols behind narrow
+interfaces. Write one black-box contract suite and run it against both:
+
+- a small hand-written in-memory dummy for fast deterministic runs;
+- the production adapter with a controllable broker, database, filesystem, or
+  device simulator for full verification.
+
+The production leg is a communication test, not a substitute for the cheap
+core suite. If its environment is unavailable, mark it explicitly skipped;
+full-verification CI must fail if a required production leg is skipped.
+
+Add targeted production-adapter tests for exact transport semantics that a
+dummy should not imitate: retained delivery, duplicate delivery, reconnect
+ordering, broker acknowledgment, persistence crash windows, stale outbox
+entries, delayed superseded effects, source restarts, and concurrency.
+Prefer behavioral assertions over call-sequence mocks. Use an interaction mock
+only when the interaction protocol itself is the behavior under test.
+
+## Review Checklist
+
+Before completing TASS work, verify:
+
+- target, command, observation, inference, and decision are not collapsed;
+- every target and command attempt has sufficient revision identity;
+- freshness is separate from validity and applicability;
+- confirmation states its comparison and applicability rules;
+- observed drift is represented and triggers reconciliation;
+- retry safety and stopping behavior are explicit;
+- quiescence has a horizon and invalidation inputs;
+- primary records and derived views are classified consistently;
+- persisted and monotonic time are not confused;
+- command dispatch revalidates authorization and has explicit crash,
+  duplication, ordering, and superseded in-flight effect semantics;
+- tests cover event reordering, supersession, drift, retry, and restart;
+- claims are limited to the transport, evidence, and policy scope actually
+  checked.
+
+Do not import theorem-prover machinery, arbitrary semantic predicates, or
+proof certificates into an ordinary controller merely because they inspired
+these constraints. Use formal artefacts only when the project requests them or
+the safety case requires machine-checked assurance.
