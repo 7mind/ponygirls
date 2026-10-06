@@ -514,6 +514,10 @@ in
             # ~/.pi/agent/subagents-policy.json; without registered repos,
             # readers work and writer spawns are denied fail-closed).
             "${../pkg/pi-extensions/pi-subagents}"
+            # Provider quotas: the `tokemon` tool for agents (optionally with
+            # each provider's available models) and a /tokemon table — tokemon
+            # without Claude, Codex, or yolo profiles.
+            "${../pkg/pi-extensions/ponygirls-tokemon}"
             # pi-search-hub advertises a static all-backends list (19 in
             # 2.8.0) in the web_search description + `backend` enum regardless
             # of what's configured, so the model picks unconfigured backends

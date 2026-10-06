@@ -1,0 +1,38 @@
+{
+  "coreInvoice": {
+    "lines": [
+      {
+        "clusterName": "us-east-1",
+        "description": "API OAuth grok-4.7",
+        "unitType": "Cached prompt text tokens",
+        "unitPrice": "1700",
+        "numUnits": "992128",
+        "amount": "16",
+        "product": "api"
+      },
+      {
+        "clusterName": "us-west-2",
+        "description": "API OAuth grok-4.7",
+        "unitType": "Prompt text tokens",
+        "unitPrice": "6800",
+        "numUnits": "1502941",
+        "amount": "102",
+        "product": "api"
+      }
+    ],
+    "amountBeforeVatLimited": {"val": "0"},
+    "amountBeforeVatUnlimited": {"val": "0"},
+    "amountBeforeVatLimitedAndUnlimited": {"val": "0"},
+    "amountBeforeVat": "0",
+    "vatCost": "0",
+    "amountAfterVat": "0",
+    "autoCreditsIssued": "0",
+    "defaultCreditsIssued": "-118",
+    "totalWithCorr": {"val": "118"},
+    "prepaidCredits": {"val": "0"},
+    "prepaidCreditsUsed": {"val": "0"}
+  },
+  "effectiveSpendingLimit": "0",
+  "defaultCredits": "14819",
+  "billingCycle": {"year": 2026, "month": 10}
+}
