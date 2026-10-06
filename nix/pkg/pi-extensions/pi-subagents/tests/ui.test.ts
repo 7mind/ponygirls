@@ -124,7 +124,7 @@ function transcriptView(over: Partial<TranscriptDeps> & { file?: () => { version
   const file = over.file ?? (() => ({ version: "1", text: session(["hello"]) }));
   const ui = new TranscriptView({
     view: () => view(),
-    source: () => ({ sessionFile: "/s.jsonl", ephemeral: false, streaming: null, messages: new Map() }),
+    source: () => ({ sessionFile: "/s.jsonl", reviews: [], streaming: null, messages: new Map() }),
     question: () => null,
     send: async (text, mode) => {
       sent.push({ text, mode });
@@ -156,7 +156,7 @@ test("the transcript re-reads the session only when it changes and stays within 
 test("streamed text shows with a cursor and stays until the session holds the message", () => {
   let streaming: string | null = "partial answ";
   let current = { version: "1", text: session(["earlier"]) };
-  const { ui } = transcriptView({ file: () => current, source: () => ({ sessionFile: "/s.jsonl", ephemeral: false, streaming, messages: new Map() }) });
+  const { ui } = transcriptView({ file: () => current, source: () => ({ sessionFile: "/s.jsonl", reviews: [], streaming, messages: new Map() }) });
   ui.refresh();
   assert.ok(ui.render(70).some((l) => l.includes("partial answ▍")));
   streaming = null;
@@ -181,14 +181,14 @@ test("the chat line sends with the agent's mode and clears; escape goes back", a
   assert.equal(back(), true);
 });
 
-test("a closed agent cannot be messaged; a reviewer's transcript explains why it is absent", () => {
+test("a closed agent cannot be messaged; a reviewer without reviews says so", () => {
   const closed = transcriptView({ view: () => view({ pendingIntent: "closed" }) });
   for (const ch of "hi") closed.ui.handleInput(ch);
   closed.ui.handleInput(ENTER);
   assert.equal(closed.sent.length, 0);
   assert.ok(closed.ui.render(70).some((l) => l.includes("not sent: the agent is closed")));
-  const reviewer = transcriptView({ source: () => ({ sessionFile: null, ephemeral: true, streaming: null, messages: new Map() }) });
-  assert.ok(reviewer.ui.render(70).some((l) => l.includes("disposable")));
+  const reviewer = transcriptView({ view: () => view({ managedGateFor: "t1" }), source: () => ({ sessionFile: null, reviews: [], streaming: null, messages: new Map() }) });
+  assert.ok(reviewer.ui.render(70).some((l) => l.includes("No reviews yet.")));
 });
 
 test("scrolling moves through history by line, page, and wheel", () => {
@@ -210,7 +210,7 @@ test("the screen switches between the list and a transcript and passes focus to 
     describe: () => ({ result: null, question: null }),
     transcript: (_id, back) => ({
       view: () => views[0]!,
-      source: () => ({ sessionFile: null, ephemeral: false, streaming: null, messages: new Map() }),
+      source: () => ({ sessionFile: null, reviews: [], streaming: null, messages: new Map() }),
       question: () => null,
       send: async () => "ok",
       back,
@@ -233,4 +233,34 @@ test("the screen switches between the list and a transcript and passes focus to 
   screen.handleInput(ESC);
   assert.equal(screen.transcript, null);
   assert.ok(screen.render(70).some((l) => l.includes("Subagents")));
+});
+
+test("a gated agent's transcript shows each review in a gate frame where it happened", () => {
+  const entry = (id: string, parentId: string | null, at: string, message: Record<string, unknown>): string => JSON.stringify({ type: "message", id, parentId, timestamp: at, message });
+  const main = [
+    entry("m1", null, "2026-10-06T10:00:00.000Z", { role: "user", content: "fix it" }),
+    entry("m2", "m1", "2026-10-06T10:00:05.000Z", { role: "assistant", content: [{ type: "text", text: "FIRST ANSWER" }] }),
+    entry("m3", "m2", "2026-10-06T10:01:00.000Z", { role: "user", content: "Reviewer requires changes to candidate candidate-1 (round 1):\n- [F1] add docs" }),
+    entry("m4", "m3", "2026-10-06T10:01:05.000Z", { role: "assistant", content: [{ type: "text", text: "SECOND ANSWER" }] }),
+  ].join("\n");
+  const review = [
+    entry("r1", null, "2026-10-06T10:00:30.000Z", { role: "user", content: "[subagent r task t1]\nrubric line 1\nline 2\nline 3\nline 4\nline 5\nline 6" }),
+    entry("r2", "r1", "2026-10-06T10:00:40.000Z", { role: "assistant", content: [{ type: "toolCall", id: "d1", name: "submit_gate_decision", arguments: { decision: "revise", candidateId: "candidate-1", blockers: [{ id: "F1" }], reason: "LONG REASON" } }] }),
+    entry("r3", "r2", "2026-10-06T10:00:41.000Z", { role: "toolResult", toolCallId: "d1", toolName: "submit_gate_decision", content: [{ type: "text", text: "{\"accepted\":true}" }] }),
+  ].join("\n");
+  const files = new Map([["/main.jsonl", main], ["/review-1.jsonl", review]]);
+  const { ui } = transcriptView({
+    view: () => view({ observed: "settled", pendingIntent: "settled" }),
+    rows: () => 60,
+    source: () => ({ sessionFile: "/main.jsonl", streaming: null, messages: new Map(), reviews: [{ reviewId: "review-1", taskRunId: "t1", candidateId: "candidate-1", model: "zai/glm", sessionFile: "/review-1.jsonl", at: "2026-10-06T10:00:30.000Z", active: false, streaming: null }] }),
+    reader: { version: (p) => (files.has(p) ? "1" : null), read: (p) => files.get(p)! },
+  });
+  const lines = ui.render(90);
+  const at = (needle: string): number => lines.findIndex((l) => l.includes(needle));
+  assert.ok(at("FIRST ANSWER") < at("╭─ gate review-1 · candidate-1 · zai/glm") && at("╰─ decision: revise · candidate-1 · 1 blocker") < at("repair requested by the gate") && at("repair requested by the gate") < at("SECOND ANSWER"), lines.join("\n"));
+  const inside = lines.slice(at("╭─ gate"), at("╰─ decision") + 1);
+  assert.ok(inside.slice(1, -1).every((l) => l.startsWith("┃ ")), inside.join("\n"));
+  assert.ok(inside.some((l) => l.includes("▸ review prompt")) && !inside.some((l) => l.includes("line 6")), "the review prompt is collapsed");
+  assert.ok(inside.some((l) => l.includes("rubric line 1")) && !lines.some((l) => l.includes("[subagent")), "the worker's task header is not shown");
+  assert.ok(!lines[at("╰─ decision")]!.includes("LONG REASON"), "the frame's footer is compact");
 });

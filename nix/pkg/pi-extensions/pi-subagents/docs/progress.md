@@ -247,6 +247,28 @@ Driven in a real terminal (tmux 3.7c, `./pi-test`, `zai/glm-5.3` and
   and a `g` retry whose linked run kept `checks`.
 - Suite: 213 pass locally.
 
+## Gate reviews in transcripts (2026-10-06)
+
+- Each gate evaluation now runs in a fresh session file (still never
+  resumed: a retried or recovered review starts a new conversation); the
+  supervisor journals it as `gate.review_session`, so reviews stay
+  viewable after a restart.
+- A gated agent's transcript places each review where it started, inside
+  a `┃` gate frame (`╭─ gate review-N · candidate · model` … `╰─ decision`),
+  with the review prompt collapsed and the reviewer's live text streamed
+  inside the frame; the gate's repair requests are labeled. A reviewer's
+  own transcript lists the reviews it ran.
+- Found in the terminal: while a gate was active, the gated agent was
+  labeled `gate reviewer` and its chat line refused messages, because
+  `managedGateFor` also named the gated task for the agent under review.
+  It now names it only for reviewers (`gateTaskRunId` covers the gated
+  agent).
+- Verified live (`kimi-coding/k3` writer, `zai/glm-5.3` reviewer): a
+  revise → repair → approve run shown as two framed reviews around the
+  repair, with the second review streaming; both still shown after pi was
+  restarted.
+- Suite: 214 pass locally.
+
 ## Not executed
 
 - The `/agents` editor dialogs (`m`, `t`, `a`); the screen itself was driven in tmux.

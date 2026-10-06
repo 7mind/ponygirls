@@ -54,12 +54,45 @@ test("delivered messages carry their sender and whether they answer a question",
   assert.deepEqual([messages.get(note.messageId), messages.get(reply.messageId)], [{ from: "governor", reply: false }, { from: "governor", reply: true }]);
 });
 
-test("a gate reviewer's conversation is disposable; its gated agent names the gated run", async () => {
-  const { sup } = mkSup({});
-  const g = await sup.spawn("governor", { taskName: "g", message: "m", profile: "reader", gate: gateSpec() }, "rg");
-  const reviewerId = sup.gateController.inspect(g.taskRunId)!.reviewerId!;
-  assert.deepEqual({ ephemeral: sup.transcript("governor", reviewerId).ephemeral, file: sup.transcript("governor", reviewerId).sessionFile }, { ephemeral: true, file: null });
-  assert.equal(sup.list("governor").find((v) => v.id === g.agentId)!.gateTaskRunId, g.taskRunId);
+test("each review's conversation is kept and shown with its gated agent and its reviewer", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { FileRunStore } = await import("../src/store.ts");
+  const dir = mkdtempSync(join(tmpdir(), "subagents-review-sessions-"));
+  const factory = (o: { agentId: string }): CtlWorker => {
+    const w = new CtlWorker(o.agentId);
+    w.sessionFile = `/sessions/${o.agentId}/${Math.random().toString(36).slice(2)}.jsonl`;
+    return w;
+  };
+  try {
+    const workers: CtlWorker[] = [];
+    const a = mkSup({ dir, store: new FileRunStore(dir, "root-1"), factory: (o) => { const w = factory(o); workers.push(w); return w; } });
+    const g = await a.sup.spawn("governor", { taskName: "g", message: "m", profile: "reader", gate: gateSpec() }, "rg");
+    assert.equal(a.sup.list("governor").find((v) => v.id === g.agentId)!.gateTaskRunId, g.taskRunId);
+    workers.find((w) => w.agentId === g.agentId)!.settle("succeeded", "answer");
+    await tick();
+    const reviewerId = a.sup.gateController.inspect(g.taskRunId)!.reviewerId!;
+    const reviewer = workers.find((w) => w.agentId === reviewerId)!;
+    await tick();
+    const during = a.sup.list("governor");
+    assert.deepEqual([during.find((v) => v.id === g.agentId)!.managedGateFor, during.find((v) => v.id === reviewerId)!.managedGateFor], [null, g.taskRunId], "only the reviewer is a gate reviewer");
+    const expected = [{ reviewId: "review-1", taskRunId: g.taskRunId, candidateId: "candidate-1", model: "p/m", sessionFile: reviewer.sessionFile }];
+    const pick = (src: { reviews: Array<{ reviewId: string; taskRunId: string; candidateId: string; model: string; sessionFile: string | null }> }) =>
+      src.reviews.map(({ reviewId, taskRunId, candidateId, model, sessionFile }) => ({ reviewId, taskRunId, candidateId, model, sessionFile }));
+    assert.deepEqual(pick(a.sup.transcript("governor", g.agentId)), expected);
+    assert.deepEqual(pick(a.sup.transcript("governor", reviewerId)), expected);
+    assert.equal(a.sup.transcript("governor", reviewerId).sessionFile, null, "a reviewer has no conversation of its own");
+    reviewer.fire("preview", { text: "looks right", partial: true });
+    await tick();
+    assert.equal(a.sup.transcript("governor", g.agentId).reviews[0]!.streaming, "looks right");
+    await a.sup.shutdown();
+    const b = mkSup({ dir, store: new FileRunStore(dir, "root-1"), factory });
+    if (b.sup.needsRecovery) await b.sup.recover();
+    assert.deepEqual(pick(b.sup.transcript("governor", g.agentId)), expected, "reviews survive a restart");
+    await b.sup.shutdown();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("after a restart an idle gate reviewer is shown settled, not queued", async () => {

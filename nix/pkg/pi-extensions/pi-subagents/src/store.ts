@@ -69,6 +69,7 @@ export type JournalKind =
   | "gate.decision"
   | "gate.repair_command"
   | "gate.limits"
+  | "gate.review_session"
   | "checkpoint.published"
   | "checkpoint.superseded"
   | "recovery.event"

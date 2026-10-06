@@ -35,11 +35,11 @@ test("messages, tools, delivered notes, compaction, and failures become items", 
     entry("n1", { type: "compaction", summary: "earlier work", firstKeptEntryId: "n1", tokensBefore: 10 }, "k1"),
     entry("k1", msg({ role: "assistant", content: [], stopReason: "error", errorMessage: "overloaded" }), "a2"),
   ]));
-  assert.deepEqual(items, [
+  assert.deepEqual(items.map(({ at: _at, ...content }) => content), [
     { kind: "task", text: "do it" },
     { kind: "thinking", text: "hmm" },
     { kind: "assistant", text: "on it" },
-    { kind: "tool_call", id: "c1", name: "bash", summary: "ls -la" },
+    { kind: "tool_call", id: "c1", name: "bash", summary: "ls -la", verdict: null },
     { kind: "tool_result", callId: "c1", name: "bash", text: "out", isError: false },
     { kind: "message", mode: "steer", messageId: "m1", text: "faster" },
     { kind: "compaction", summary: "earlier work" },

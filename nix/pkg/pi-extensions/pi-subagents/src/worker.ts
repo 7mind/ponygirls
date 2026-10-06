@@ -26,7 +26,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InitializePayload, IpcEnvelope, WorkerEvent } from "./protocol.ts";
-import { bindChannel, validateEnvelope, validateInitializePayload } from "./protocol.ts";
+import { bindChannel, taskHeader, validateEnvelope, validateInitializePayload } from "./protocol.ts";
 import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, childToolSpec, type TypeBuilder } from "./tools.ts";
 import { MAX_PAYLOAD_BYTES } from "./protocol.ts";
 import { PROTOCOL_VERSION, type InstructionSet } from "./types.ts";
@@ -337,11 +337,10 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
     });
     const { modelRuntime, model } = await resolveModel(sdk, init, agentDir);
     // Native sessions are file-backed and supervisor-owned (under the root
-    // store, outside tool views); a reviewer's conversation is disposable.
+    // store, outside tool views). A gate reviewer gets a fresh file for each
+    // evaluation (it is never restored), kept for its transcript.
     let sessionManager: SessionManagerLike;
-    if (init.ephemeral === true) {
-      sessionManager = sdk.SessionManager.inMemory(init.workdir);
-    } else if (init.restore?.sessionFile) {
+    if (init.restore?.sessionFile) {
       try {
         sessionManager = sdk.SessionManager.open(init.restore.sessionFile);
       } catch (e) {
@@ -390,7 +389,7 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
     return;
   }
   emitWorkerEvent({ kind: "started", detail: {} });
-  await runPrompt(`[subagent ${state.binding!.agentId} task ${init.taskRunId}]\n${init.taskText}`);
+  await runPrompt(`${taskHeader(state.binding!.agentId, init.taskRunId)}${init.taskText}`);
 }
 
 /** Prompt the current generation; a prompt that throws still settles it. */

@@ -4,22 +4,55 @@
  * The source is the child's native pi session file (JSONL, an entry tree).
  * Only the active branch is shown: the path from the last written entry to
  * the root. The file is appended while the child runs, so an incomplete
- * trailing line is skipped rather than reported. Child content is untrusted
+ * trailing line is skipped rather than reported. A gated agent's
+ * transcript also shows each gate evaluation (the reviewer's own session)
+ * where it happened, inside a gate gutter. Child content is untrusted
  * display input and is sanitized before rendering.
  */
 
 import { sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { sanitizeDisplay, type UiStyle } from "./display.ts";
+import { REPAIR_PREFIX } from "./gate.ts";
+import { TASK_HEADER_PATTERN } from "./protocol.ts";
 
-export type TranscriptItem =
+type TranscriptContent =
   | { kind: "task"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
-  | { kind: "tool_call"; id: string | null; name: string; summary: string }
+  /** `verdict`: a gate decision's compact form (decision, candidate, blockers); null for other tools. */
+  | { kind: "tool_call"; id: string | null; name: string; summary: string; verdict: string | null }
   | { kind: "tool_result"; callId: string | null; name: string; text: string; isError: boolean }
   | { kind: "message"; mode: string; messageId: string | null; text: string }
   | { kind: "compaction"; summary: string }
   | { kind: "error"; text: string };
+
+/** One displayed part of a conversation, with its session entry's timestamp. */
+export type TranscriptItem = TranscriptContent & { at: string };
+
+/** A gate evaluation shown inside a gated agent's transcript. */
+export interface ReviewBlock {
+  label: string;
+  at: string;
+  items: TranscriptItem[];
+  /** The reviewer is executing it now. */
+  active: boolean;
+  streaming: string | null;
+}
+
+export type MessageInfo = Map<string, { from: string; reply: boolean }>;
+
+interface RenderOptions {
+  taskLabel: string;
+  /** Lines of task text shown, or null for all. */
+  taskLines: number | null;
+  /** Mark tasks that are the gate's repair requests. */
+  labelRepairs: boolean;
+}
+
+const MAIN_OPTIONS: RenderOptions = { taskLabel: "task", taskLines: null, labelRepairs: true };
+/** A review prompt is controller-written and long; its start is enough. */
+const REVIEW_OPTIONS: RenderOptions = { taskLabel: "review prompt", taskLines: 4, labelRepairs: false };
+const DECISION_TOOL = "submit_gate_decision";
 
 interface SessionEntry {
   type: string;
@@ -64,12 +97,13 @@ export function parseTranscript(jsonl: string): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   for (const e of entries) {
     if (typeof e.id !== "string" || !onBranch.has(e.id)) continue;
-    items.push(...itemsOf(e));
+    const at = typeof e["timestamp"] === "string" ? e["timestamp"] : "";
+    items.push(...itemsOf(e).map((content): TranscriptItem => ({ ...content, at })));
   }
   return items;
 }
 
-function itemsOf(e: SessionEntry): TranscriptItem[] {
+function itemsOf(e: SessionEntry): TranscriptContent[] {
   if (e.type === "compaction") return [{ kind: "compaction", summary: String(e["summary"] ?? "") }];
   if (e.type === "custom_message") {
     const customType = String(e["customType"] ?? "");
@@ -84,14 +118,17 @@ function itemsOf(e: SessionEntry): TranscriptItem[] {
   if (e.type !== "message") return [];
   const m = e["message"] as { role?: string; content?: unknown; toolName?: string; toolCallId?: string; isError?: boolean; stopReason?: string; errorMessage?: string } | undefined;
   if (!m) return [];
-  if (m.role === "user") return [{ kind: "task", text: textOf(m.content) }];
+  if (m.role === "user") return [{ kind: "task", text: textOf(m.content).replace(TASK_HEADER_PATTERN, "") }];
   if (m.role === "toolResult") return [{ kind: "tool_result", callId: typeof m.toolCallId === "string" ? m.toolCallId : null, name: String(m.toolName ?? "tool"), text: textOf(m.content), isError: m.isError === true }];
   if (m.role !== "assistant") return [];
-  const out: TranscriptItem[] = [];
+  const out: TranscriptContent[] = [];
   for (const block of Array.isArray(m.content) ? (m.content as ContentBlock[]) : []) {
     if (block.type === "thinking" && block.thinking) out.push({ kind: "thinking", text: block.thinking });
     else if (block.type === "text" && block.text) out.push({ kind: "assistant", text: block.text });
-    else if (block.type === "toolCall") out.push({ kind: "tool_call", id: typeof block.id === "string" ? block.id : null, name: String(block.name ?? "tool"), summary: summarizeArgs(String(block.name ?? ""), block.arguments) });
+    else if (block.type === "toolCall") {
+      const name = String(block.name ?? "tool");
+      out.push({ kind: "tool_call", id: typeof block.id === "string" ? block.id : null, name, summary: summarizeArgs(name, block.arguments), verdict: name === DECISION_TOOL ? verdictOf(block.arguments) : null });
+    }
   }
   if (m.stopReason === "error") out.push({ kind: "error", text: m.errorMessage ?? "provider error" });
   if (m.stopReason === "aborted") out.push({ kind: "error", text: "interrupted" });
@@ -112,10 +149,17 @@ function summarizeArgs(tool: string, args: unknown): string {
   if (tool === "send_message") return oneLine(`→ ${str("target")}${a["request_reply"] === true ? " (asks)" : ""}: ${str("message")}`);
   if (tool === "spawn_agent") return oneLine(`${str("task_name")} (${str("profile")}): ${str("message")}`);
   if (tool === "wait_agent") return oneLine(str("condition") || "activity");
+  if (tool === DECISION_TOOL) return oneLine(`${verdictOf(args)}${str("reason") ? ` · ${str("reason")}` : ""}`);
   for (const key of ["command", "path", "pattern", "target"]) {
     if (str(key)) return oneLine(str(key));
   }
   return oneLine(JSON.stringify(a));
+}
+
+function verdictOf(args: unknown): string {
+  const a = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
+  const blockers = Array.isArray(a["blockers"]) ? a["blockers"].length : 0;
+  return `${String(a["decision"] ?? "?")} · ${String(a["candidateId"] ?? "?")}${blockers > 0 ? ` · ${blockers} blocker${blockers === 1 ? "" : "s"}` : ""}`;
 }
 
 function oneLine(s: string): string {
@@ -144,11 +188,13 @@ function wrapped(text: string, width: number, indent: string, style: (s: string)
   return out;
 }
 
-/**
- * Render items to lines of at most `width` columns. A tool result is shown
- * under its own call (parallel calls finish after all of them are issued).
- */
-export function renderTranscript(items: TranscriptItem[], width: number, style: UiStyle, messages: Map<string, { from: string; reply: boolean }>): string[] {
+/** Render one conversation's items to lines of at most `width` columns. */
+export function renderTranscript(items: TranscriptItem[], width: number, style: UiStyle, messages: MessageInfo): string[] {
+  return renderItems(items, width, style, messages, MAIN_OPTIONS);
+}
+
+/** A tool result is shown under its own call (parallel calls finish after all of them are issued). */
+function renderItems(items: TranscriptItem[], width: number, style: UiStyle, messages: MessageInfo, options: RenderOptions): string[] {
   const out: string[] = [];
   const head = (s: string): string => truncateToWidth(s, width, "…");
   const calls = new Set(items.flatMap((i) => (i.kind === "tool_call" && i.id ? [i.id] : [])));
@@ -160,10 +206,12 @@ export function renderTranscript(items: TranscriptItem[], width: number, style: 
     const after = previous;
     previous = item.kind;
     switch (item.kind) {
-      case "task":
-        out.push("", head(style.accent(style.bold("▸ task"))));
-        out.push(...wrapped(item.text, width, "  ", style.text, null, false));
+      case "task": {
+        const repair = options.labelRepairs && item.text.startsWith(REPAIR_PREFIX);
+        out.push("", head(repair ? style.warning(style.bold("▸ repair requested by the gate")) : style.accent(style.bold(`▸ ${options.taskLabel}`))));
+        out.push(...wrapped(item.text, width, "  ", style.text, options.taskLines, false));
         break;
+      }
       case "assistant":
         out.push("", ...wrapped(item.text, width, "", style.text, null, false));
         break;
@@ -196,4 +244,50 @@ export function renderTranscript(items: TranscriptItem[], width: number, style: 
     }
   }
   return out[0] === "" ? out.slice(1) : out;
+}
+
+/**
+ * A gated agent's conversation with its gate evaluations placed where they
+ * started (between the agent's generations).
+ */
+export function renderConversation(main: TranscriptItem[], reviews: ReviewBlock[], width: number, style: UiStyle, messages: MessageInfo): string[] {
+  const out: string[] = [];
+  const pending = [...reviews].sort((a, b) => a.at.localeCompare(b.at));
+  let segment: TranscriptItem[] = [];
+  const flush = (): void => {
+    if (segment.length > 0) out.push("", ...renderItems(segment, width, style, messages, MAIN_OPTIONS));
+    segment = [];
+  };
+  for (const item of main) {
+    while (pending.length > 0 && pending[0]!.at < item.at) {
+      flush();
+      out.push("", ...renderReview(pending.shift()!, width, style, messages));
+    }
+    segment.push(item);
+  }
+  flush();
+  for (const review of pending) out.push("", ...renderReview(review, width, style, messages));
+  return out[0] === "" ? out.slice(1) : out;
+}
+
+/** The decision a review submitted, or why it was not accepted. */
+function decisionOf(items: TranscriptItem[]): string | null {
+  const call = [...items].reverse().find((i): i is Extract<TranscriptItem, { kind: "tool_call" }> => i.kind === "tool_call" && i.name === DECISION_TOOL);
+  if (!call) return null;
+  const result = items.find((i): i is Extract<TranscriptItem, { kind: "tool_result" }> => i.kind === "tool_result" && i.callId !== null && i.callId === call.id);
+  return result?.isError ? `decision rejected: ${oneLine(result.text)}` : `decision: ${call.verdict ?? call.summary}`;
+}
+
+function renderReview(review: ReviewBlock, width: number, style: UiStyle, messages: MessageInfo): string[] {
+  const inner = Math.max(20, width - 2);
+  const body = renderItems(review.items, inner, style, messages, REVIEW_OPTIONS);
+  if (review.streaming) {
+    body.push("", ...clean(review.streaming).split("\n").flatMap((l) => (l === "" ? [""] : wrapTextWithAnsi(l, inner))));
+    body[body.length - 1] = `${body[body.length - 1]}${style.accent("▍")}`;
+  } else if (review.active) {
+    body.push(style.accent("… reviewing"));
+  }
+  const rule = (text: string): string => truncateToWidth(`${style.warning(style.bold(text))} ${style.warning("─".repeat(width))}`, width, "");
+  const footer = decisionOf(review.items) ?? (review.active ? "reviewing" : "no decision recorded");
+  return [rule(`╭─ ${clean(review.label)}`), ...body.map((l) => `${style.warning("┃")} ${l}`), rule(`╰─ ${clean(footer)}`)];
 }

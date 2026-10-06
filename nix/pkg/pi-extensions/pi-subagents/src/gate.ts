@@ -20,6 +20,8 @@ import type { SupervisorPolicy } from "./policy.ts";
 import type { AgentId, TaskPhase, TaskRunId } from "./types.ts";
 
 export const DEFAULT_GATE_MAX_ROUNDS = 3;
+/** First words of a repair request the gate sends its main agent (transcripts label it by them). */
+export const REPAIR_PREFIX = "Reviewer requires changes to candidate";
 export const GATE_SCHEMA_VERSION = 1;
 
 export interface GateCheckSpec {
@@ -579,7 +581,7 @@ export class GateController {
     task.repairCommandId = commandId;
     task.repairReserved = true;
     const criticism = [
-      `Reviewer requires changes to candidate ${task.candidate.candidateId} (round ${task.roundsAdmitted}):`,
+      `${REPAIR_PREFIX} ${task.candidate.candidateId} (round ${task.roundsAdmitted}):`,
       ...decision.blockers.map((b) => `- [${b.id}] ${b.target}: ${b.problem} Required: ${b.requiredChange} (evidence: ${b.evidenceRefs.join(", ")})`),
       ...(decision.advisories.length > 0
         ? [`Advisories (do not block):`, ...decision.advisories.map((a) => `- [${a.id}] ${a.target}: ${a.problem}`)]

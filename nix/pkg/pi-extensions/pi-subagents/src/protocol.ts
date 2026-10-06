@@ -182,6 +182,14 @@ export function validateEnvelope(
   };
 }
 
+/** The line a worker puts before an agent's first task text (identifies agent and task run to the model). */
+export function taskHeader(agentId: string, taskRunId: string): string {
+  return `[subagent ${agentId} task ${taskRunId}]\n`;
+}
+
+/** Matches taskHeader() at the start of a prompt. */
+export const TASK_HEADER_PATTERN = /^\[subagent \S+ task \S+\]\n/;
+
 /** Initialize payload (supervisor -> worker). */
 export interface InitializePayload {
   /** First task to prompt, or null to load the session without inference. */
@@ -198,8 +206,6 @@ export interface InitializePayload {
   writable: boolean;
   /** Exact tool allowlist the worker registers (the supervisor re-checks every call). */
   tools: string[];
-  /** Disposable in-memory conversation (gate reviewer): nothing persisted. */
-  ephemeral?: boolean;
   /**
    * Native-session restore: the supervisor wrote validated checkpoint bytes
    * to sessionFile before launch (single owner: no worker was running).
