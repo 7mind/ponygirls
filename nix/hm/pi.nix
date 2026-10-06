@@ -73,7 +73,7 @@ let
     name = "pi-coding-agent-wrapped";
     paths = [ piBase ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
-    # pi-subagents forks SDK workers outside the extension loader; they
+    # ponygirls-subagents forks SDK workers outside the extension loader; they
     # import pi's built package tree from this exact derivation.
     postBuild = ''
       wrapProgram $out/bin/pi \
@@ -443,7 +443,7 @@ in
           #   so the corrected manifest removes both effects (measured: the
           #   package's whole import surface is host-aliased — see the
           #   derivation header). PINNED to 2.8.0 (in
-          #   pkg/pi-search-hub/package.nix): patch-search-hub-backends.ts
+          #   pkg/pi-search-hub/package.nix): ponygirls-quirk-search-hub-backends.ts
           #   mirrors upstream's credentials.ts FALLBACK_ENV_MAP; a floating
           #   install could drift ahead of the mirror and silently trim
           #   env-enabled backends from the rewritten enum. Bump the pin (and
@@ -492,32 +492,6 @@ in
             # is deliberately off; MCP tools use `deferred` / `direct`
             # exposure instead (see piMcpJson).
             "-builtin:codemode"
-            "${../pkg/pi-extensions/patch-search-hub-backends.ts}"
-            "${../pkg/pi-extensions/kimi-401-retry.ts}"
-            # Footer model/thinking clicks (fullscreen) plus ctrl+shift+m / ctrl+shift+e.
-            "${../pkg/pi-extensions}/model-picker.ts"
-            # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
-            "${../pkg/pi-extensions}/model-stats.ts"
-            # /usage table: period tabs with flat per-provider/per-model rows,
-            # scrollable, plus a global input-size distribution view (ascii
-            # chart/table, [v]/[c]). Data collection is vendored in usage-data.ts
-            # (same cache file, plus a marked local inputSizes extension);
-            # insights, graphs, and export are out of scope.
-            "${../pkg/pi-extensions}/usage.ts"
-            # Codex-style session goals with fully visible transcript
-            # instructions (same-session continuation, three model tools,
-            # atomic session sidecar). See nix/pkg/pi-extensions/pi-codex-goals.
-            "${../pkg/pi-extensions/pi-codex-goals}"
-            # Supervisor/worker subagents: durable delegation, sandbox-brokered
-            # tools, worktrees, gates, /agents inspector.
-            # See nix/pkg/pi-extensions/pi-subagents (opt-in policy file at
-            # ~/.pi/agent/subagents-policy.json; without registered repos,
-            # readers work and writer spawns are denied fail-closed).
-            "${../pkg/pi-extensions/pi-subagents}"
-            # Provider quotas: the `tokemon` tool for agents (optionally with
-            # each provider's available models) and a /tokemon table — tokemon
-            # without Claude, Codex, or yolo profiles.
-            "${../pkg/pi-extensions/ponygirls-tokemon}"
             # pi-search-hub advertises a static all-backends list (19 in
             # 2.8.0) in the web_search description + `backend` enum regardless
             # of what's configured, so the model picks unconfigured backends
@@ -525,6 +499,32 @@ in
             # This rewrites the web_search tool definition per request to list
             # only the backends actually active per the live search.json. See
             # the extension header and the upstream bug-report draft.
+            "${../pkg/pi-extensions/ponygirls-quirk-search-hub-backends.ts}"
+            "${../pkg/pi-extensions/ponygirls-quirk-kimi-401-retry.ts}"
+            # Footer model/thinking clicks (fullscreen) plus ctrl+shift+m / ctrl+shift+e.
+            "${../pkg/pi-extensions}/ponygirls-model-picker.ts"
+            # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
+            "${../pkg/pi-extensions}/ponygirls-model-stats.ts"
+            # /usage table: period tabs with flat per-provider/per-model rows,
+            # scrollable, plus a global input-size distribution view (ascii
+            # chart/table, [v]/[c]). Data collection is vendored in ponygirls-usage-data.ts
+            # (same cache file, plus a marked local inputSizes extension);
+            # insights, graphs, and export are out of scope.
+            "${../pkg/pi-extensions}/ponygirls-usage.ts"
+            # Codex-style session goals with fully visible transcript
+            # instructions (same-session continuation, three model tools,
+            # atomic session sidecar). See nix/pkg/pi-extensions/ponygirls-codex-goals.
+            "${../pkg/pi-extensions/ponygirls-codex-goals}"
+            # Supervisor/worker subagents: durable delegation, sandbox-brokered
+            # tools, worktrees, gates, /agents inspector.
+            # See nix/pkg/pi-extensions/ponygirls-subagents (optional policy
+            # file ~/.pi/agent/subagents-policy.json: repos for `sandbox`
+            # children, nesting, model, and gate limits).
+            "${../pkg/pi-extensions/ponygirls-subagents}"
+            # Provider quotas: the `tokemon` tool for agents (optionally with
+            # each provider's available models) and a /tokemon table — tokemon
+            # without Claude, Codex, or yolo profiles.
+            "${../pkg/pi-extensions/ponygirls-tokemon}"
           ];
         };
       };

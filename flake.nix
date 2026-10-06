@@ -120,39 +120,39 @@
           default-models = defaultModelsCheck;
           tokemon = self.packages.${system}.tokemon;
           dev-llm-module-boundary = devLlmModuleBoundaryCheck;
-          kimi-401-retry = pkgs.runCommand "kimi-401-retry-test" {
+          ponygirls-quirk-kimi-401-retry = pkgs.runCommand "ponygirls-quirk-kimi-401-retry-test" {
             nativeBuildInputs = [ pkgs.bun ];
           } ''
             cp -r ${./nix/pkg/pi-extensions} pi-extensions
             cd pi-extensions
-            bun test kimi-401-retry.test.ts
+            bun test ponygirls-quirk-kimi-401-retry.test.ts
             touch $out
           '';
-          model-stats = pkgs.runCommand "model-stats-test" {
+          ponygirls-model-stats = pkgs.runCommand "ponygirls-model-stats-test" {
             nativeBuildInputs = [ pkgs.nodejs ];
           } ''
             cp -r ${./nix/pkg/pi-extensions} pi-extensions
             cd pi-extensions
-            node --test model-stats-state.test.ts
+            node --test ponygirls-model-stats-state.test.ts
             touch $out
           '';
-          usage-state = pkgs.runCommand "usage-state-test" {
+          ponygirls-usage = pkgs.runCommand "ponygirls-usage-test" {
             nativeBuildInputs = [ pkgs.nodejs ];
           } ''
             cp -r ${./nix/pkg/pi-extensions} pi-extensions
             cd pi-extensions
-            node --test usage-state.test.ts
+            node --test ponygirls-usage-state.test.ts
             touch $out
           '';
-          codex-goals = pkgs.runCommand "codex-goals-test" {
+          ponygirls-codex-goals = pkgs.runCommand "ponygirls-codex-goals-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
             PI_GOALS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
             PI_OFFLINE = "1";
             PI_TELEMETRY = "0";
           } ''
-            cp -r ${./nix/pkg/pi-extensions/pi-codex-goals} pi-codex-goals
-            chmod -R u+w pi-codex-goals
-            cd pi-codex-goals
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-codex-goals} ponygirls-codex-goals
+            chmod -R u+w ponygirls-codex-goals
+            cd ponygirls-codex-goals
             mkdir -p node_modules/@earendil-works
             ln -s "$PI_GOALS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
             ln -s "$PI_GOALS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
@@ -163,15 +163,15 @@
             node --test tests/host.test.mjs
             touch $out
           '';
-          pi-subagents = pkgs.runCommand "pi-subagents-test" {
+          ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.bubblewrap ];
             PI_SUBAGENTS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
             PI_OFFLINE = "1";
             PI_TELEMETRY = "0";
           } ''
-            cp -r ${./nix/pkg/pi-extensions/pi-subagents} pi-subagents
-            chmod -R u+w pi-subagents
-            cd pi-subagents
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-subagents} ponygirls-subagents
+            chmod -R u+w ponygirls-subagents
+            cd ponygirls-subagents
             mkdir -p node_modules/@earendil-works
             ln -s "$PI_SUBAGENTS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
             ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
