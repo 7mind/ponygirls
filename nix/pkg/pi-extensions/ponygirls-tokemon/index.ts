@@ -11,8 +11,8 @@
  *   Answers are cached for a minute.
  * - Command `/tokemon`: the same data as a bottom panel replacing the editor
  *   (like /usage and /perf), auto-refreshing.
- * - Footer status: the current provider's tightest quota window, refreshed
- *   at each turn end and on model switches.
+ * - Quota widget: the current provider's quota windows as short bars below
+ *   the editor, refreshed at each turn end and on model switches.
  *
  * Wire-up: listed in nix/hm/pi.nix `programs.pi.settings.extensions`.
  */
@@ -28,14 +28,16 @@ import { FetchHttp } from "./src/http.ts";
 import { secretOf } from "./src/pi-auth.ts";
 import { toolReport, type ModelReport } from "./src/report.ts";
 import { QuotaService, type ProviderAuth } from "./src/service.ts";
-import { statusSummary } from "./src/status.ts";
+import { widgetLine } from "./src/status.ts";
 import { buildTable, PLAIN_TABLE_STYLE, type TableStyle } from "./src/table.ts";
 import { TokemonView } from "./src/view.ts";
 
 /** How stale an answer to the agent tool may be. */
 const TOOL_MAX_AGE_MS = 60_000;
-/** Footer status key for the current-limits line. */
-const STATUS_KEY = "tokemon";
+/** Widget key for the quota line below the editor. */
+const WIDGET_KEY = "tokemon";
+/** The quota line sits directly under the text input, next to the footer with the model indicator. */
+const WIDGET_OPTIONS = { placement: "belowEditor" } as const;
 /** The pane's auto-refresh interval (tokemon's default). */
 const PANE_REFRESH_MS = 300_000;
 const HTTP_TIMEOUT_MS = 15_000;
@@ -85,21 +87,24 @@ export default function (pi: ExtensionAPI): void {
     now: () => new Date(),
   });
 
-  /** Footer status near the model indicator: the current provider's tightest window. */
-  const refreshStatus = (ctx: ExtensionContext): void => {
+  /** Quota widget below the editor: the current provider's windows as short bars. */
+  const refreshWidget = (ctx: ExtensionContext): void => {
     if (ctx.mode !== "tui") return;
     const provider = ctx.model?.provider;
     if (!provider) {
-      ctx.ui.setStatus(STATUS_KEY, undefined);
+      ctx.ui.setWidget(WIDGET_KEY, undefined, WIDGET_OPTIONS);
       return;
     }
     service.report(authOf(ctx), TOOL_MAX_AGE_MS).then(
-      (report) => ctx.ui.setStatus(STATUS_KEY, statusSummary(provider, report.results, new Date()) ?? undefined),
-      () => ctx.ui.setStatus(STATUS_KEY, undefined),
+      (report) => {
+        const line = widgetLine(provider, report.results, new Date());
+        ctx.ui.setWidget(WIDGET_KEY, line === null ? undefined : [line], WIDGET_OPTIONS);
+      },
+      () => ctx.ui.setWidget(WIDGET_KEY, undefined, WIDGET_OPTIONS),
     );
   };
-  pi.on("turn_end", (_event, ctx) => refreshStatus(ctx));
-  pi.on("model_select", (_event, ctx) => refreshStatus(ctx));
+  pi.on("turn_end", (_event, ctx) => refreshWidget(ctx));
+  pi.on("model_select", (_event, ctx) => refreshWidget(ctx));
 
   pi.registerTool(
     defineTool({

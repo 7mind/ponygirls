@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { quotaWindow } from "../src/quota.ts";
 import type { QueryResult } from "../src/service.ts";
-import { statusSummary } from "../src/status.ts";
+import { widgetLine } from "../src/status.ts";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
+const hour = 3600_000;
 
 function result(provider: string, windows: ReturnType<typeof quotaWindow>[], extra: Partial<QueryResult> = {}): QueryResult {
   return {
@@ -18,20 +19,31 @@ function result(provider: string, windows: ReturnType<typeof quotaWindow>[], ext
   };
 }
 
-test("the status names the tightest window with its reset", () => {
-  const text = statusSummary("zai", [
-    result("zai", [quotaWindow("tokens (5h)", 10, 100, "%", null), quotaWindow("tokens (7d)", 95, 100, "%", new Date(NOW.getTime() + 2 * 3600_000 + 22 * 60_000))]),
+test("the widget shows every limited window with a short bar", () => {
+  const text = widgetLine("zai", [
+    result("zai", [
+      quotaWindow("primary (5h)", 30, 100, "%", new Date(NOW.getTime() + 90 * 60_000)),
+      quotaWindow("weekly (7d)", 10, 100, "%", new Date(NOW.getTime() + 3 * 24 * hour + 5 * hour + 40 * 60_000)),
+    ]),
   ], NOW);
-  assert.equal(text, "zai tokens (7d) 95% · resets 2h 22m");
+  assert.equal(text, "zai {5h/1:30 [██░░░ 30%]} {7d/3d:05:40 [█░░░░ 10%]}");
 });
 
-test("unlimited, errors, and unknown providers clear the status", () => {
-  assert.equal(statusSummary("zai", [result("zai", [{ ...quotaWindow("chat", null, null, "requests", null), unlimited: true }])], NOW), "zai chat unlimited");
-  assert.equal(statusSummary("zai", [result("zai", [], { snapshot: null, error: "QuotaFetchError: x" })], NOW), null);
-  assert.equal(statusSummary("zai", [result("zai", [], { rateLimited: true, retryAt: null, error: "rate limited" })], NOW), null);
-  assert.equal(statusSummary("anthropic", [result("zai", [quotaWindow("w", 1, 100, "%", null)])], NOW), null);
+test("windows without a reset or fraction still read compactly", () => {
+  assert.equal(
+    widgetLine("zai", [result("zai", [quotaWindow("5h", 30, 100, "%", null)])], NOW),
+    "zai {5h [██░░░ 30%]}",
+  );
+  assert.equal(
+    widgetLine("zai", [result("zai", [quotaWindow("credits", null, 2000, "credits", null)])], NOW),
+    "zai {credits/2000}",
+  );
 });
 
-test("a window without a reset shows no resets suffix", () => {
-  assert.equal(statusSummary("zai", [result("zai", [quotaWindow("credits", null, 2000, "credits", null)])], NOW), "zai credits 2000");
+test("unlimited, errors, and unknown providers clear the widget", () => {
+  assert.equal(widgetLine("zai", [result("zai", [{ ...quotaWindow("chat", null, null, "requests", null), unlimited: true }])], NOW), "zai unlimited");
+  assert.equal(widgetLine("zai", [result("zai", [], { snapshot: null, error: "QuotaFetchError: x" })], NOW), null);
+  assert.equal(widgetLine("zai", [result("zai", [], { rateLimited: true, retryAt: null, error: "rate limited" })], NOW), null);
+  assert.equal(widgetLine("zai", [result("zai", [])], NOW), null);
+  assert.equal(widgetLine("anthropic", [result("zai", [quotaWindow("w", 1, 100, "%", null)])], NOW), null);
 });
