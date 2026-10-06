@@ -18,7 +18,7 @@ test("park releases capacity; queued acquirers are served fairly", async () => {
   const { ticket, cancel } = s.acquireRunnableQueued("b");
   void cancel;
   assert.equal(s.queuedCount, 1);
-  s.park(a!); // wait releases the lease while waiting
+  s.release(a!); // wait releases the lease while waiting
   const b = await ticket;
   assert.ok(b);
   assert.equal(b!.owner, "b");
@@ -32,9 +32,9 @@ test("resident limit returns capacity error, never self-deadlock", () => {
 
 test("cumulative spawn budget survives release (never reset)", () => {
   const s = new AdmissionScheduler({ maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 2, maxDepth: 1 });
-  assert.ok(s.chargeAgentCreation().ok);
-  assert.ok(s.chargeAgentCreation().ok);
-  const third = s.chargeAgentCreation();
+  assert.ok(s.chargeAgentCreation(1).ok);
+  assert.ok(s.chargeAgentCreation(1).ok);
+  const third = s.chargeAgentCreation(1);
   assert.equal(third.ok, false);
   if (!third.ok) assert.equal(third.code, "CAPACITY_EXCEEDED");
 });

@@ -8,7 +8,7 @@ import { InMemoryRunStore } from "../src/store.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
 import { DummyWorkspaceManager } from "../src/workspace.ts";
 import { defaultSupervisorPolicy } from "../src/policy.ts";
-import { FakeWorker, until } from "./fake-worker.ts";
+import { FakeWorker, until, testGovernor, bothExecutors } from "./fake-worker.ts";
 
 function setup(script: "settle-text" | "hang" | "fail" = "settle-text", limits = {}, questionTtlMs = 15 * 60_000) {
   const dir = mkdtempSync(join(tmpdir(), "subagents-sup-"));
@@ -17,11 +17,12 @@ function setup(script: "settle-text" | "hang" | "fail" = "settle-text", limits =
   policy.nesting = true;
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy,
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 2, ...limits },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => new FakeWorker(script),
     questionTtlMs,
@@ -41,11 +42,13 @@ test("spawn returns while the child remains active (async delegation)", async ()
   cleanup();
 });
 
-test("repeated spawn with the same request id returns one identity", async () => {
+test("repeated spawn with the same request id returns one identity; conflicting reuse fails", async () => {
   const { sup, cleanup } = setup();
   const a = await sup.spawn("governor", { taskName: "builder", message: "build", profile: "reader" }, "req-dup");
-  const b = await sup.spawn("governor", { taskName: "other", message: "build", profile: "reader" }, "req-dup");
+  const b = await sup.spawn("governor", { taskName: "builder", message: "build", profile: "reader" }, "req-dup");
   assert.equal(a.agentId, b.agentId);
+  assert.equal(a.taskRunId, b.taskRunId);
+  await assert.rejects(() => sup.spawn("governor", { taskName: "other", message: "build", profile: "reader" }, "req-dup"), /DUPLICATE_REQUEST/);
   assert.equal(sup.list("governor").length, 1);
   cleanup();
 });
@@ -54,7 +57,7 @@ test("child settles to a terminal task outcome with result text", async () => {
   const { sup, cleanup } = setup("settle-text");
   const res = await sup.spawn("governor", { taskName: "builder", message: "build", profile: "reader" }, "req-1");
   await until(() => sup.list("governor")[0]?.taskOutcome === "succeeded", 5000, "settlement");
-  const read = sup.read("governor", res.agentId, "result", 0, 10);
+  const read = sup.read("governor", res.agentId, "result", 0, 10, null);
   assert.equal(read.result?.outcome, "succeeded");
   assert.ok(read.result?.text.includes("fake result"));
   cleanup();
@@ -64,10 +67,11 @@ test("startup failure keeps a terminal record, never a ghost identity", async ()
   const dir = mkdtempSync(join(tmpdir(), "subagents-supfail-"));
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy: defaultSupervisorPolicy(),
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => {
       const f = new FakeWorker("hang");
@@ -190,5 +194,114 @@ test("child sees parent and owned subtree; root sees the whole tree", async () =
   const aView = sup.list(a.agentId).map((v) => v.id).sort();
   assert.deepEqual(aView, [a.agentId, kid.agentId].sort());
   assert.ok(!sup.list(a.agentId).some((v) => v.id === b.agentId));
+  cleanup();
+});
+
+function setupWorkers(workers: FakeWorker[], limits = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "subagents-supw-"));
+  const queue = [...workers];
+  const sup = new Supervisor({
+    rootId: "root-1",
+    governor: testGovernor,
+    rootDir: dir,
+    store: new InMemoryRunStore("root-1"),
+    policy: defaultSupervisorPolicy(),
+    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1, ...limits },
+    executors: bothExecutors(new DummyToolExecutor()),
+    workspace: new DummyWorkspaceManager(),
+    workerFactory: () => {
+      const next = queue.shift();
+      if (!next) throw new Error("no scripted worker left");
+      return next;
+    },
+  });
+  return { sup, cleanup: () => { void sup.shutdown(); rmSync(dir, { recursive: true, force: true }); } };
+}
+
+function runningCount(sup: Supervisor): number {
+  return sup.list("governor").filter((v) => v.observed === "running" || v.observed === "starting").length;
+}
+
+test("a task resumed after eviction publishes its own terminal outcome", async () => {
+  const { sup, cleanup } = setup("settle-text");
+  const res = await sup.spawn("governor", { taskName: "a", message: "work", profile: "reader" }, "req-1");
+  await until(() => sup.list("governor")[0]?.taskOutcome === "succeeded", 5000, "first settlement");
+  await sup.evictWorker("governor", res.agentId);
+  const second = await sup.sendMessage("governor", res.agentId, "task", "again", {}, "req-2");
+  const wait = await sup.wait("governor", 0, 2000, [{ agentId: res.agentId, taskRunId: second.taskRunId }], "all_settled");
+  assert.equal(wait.completed, true, `resumed task never settled (reason ${wait.reason})`);
+  assert.equal(sup.read("governor", res.agentId, "result", 0, 10, null).result?.taskRunId, second.taskRunId);
+  cleanup();
+});
+
+test("settlement joins see terminal records beyond the first page after the cursor", async () => {
+  const { sup, cleanup } = setupWorkers([new FakeWorker("hang"), new FakeWorker("settle-text")]);
+  const busy = await sup.spawn("governor", { taskName: "busy", message: "work", profile: "reader" }, "req-busy");
+  for (let i = 0; i < 60; i++) {
+    await sup.sendMessage("governor", busy.agentId, "note", `note ${i}`, {}, `req-note-${i}`);
+  }
+  const res = await sup.spawn("governor", { taskName: "late", message: "work", profile: "reader" }, "req-late");
+  const wait = await sup.wait("governor", 0, 2000, [{ agentId: res.agentId, taskRunId: res.taskRunId }], "all_settled");
+  assert.equal(wait.completed, true, `join missed the terminal record (reason ${wait.reason})`);
+  cleanup();
+});
+
+test("an already-settled captured run satisfies a join whose cursor is past its terminal record", async () => {
+  const { sup, cleanup } = setup("settle-text");
+  const res = await sup.spawn("governor", { taskName: "a", message: "work", profile: "reader" }, "req-1");
+  await until(() => sup.list("governor")[0]?.taskOutcome === "succeeded", 5000, "settlement");
+  const cursor = sup.runStore.durableSeq();
+  const wait = await sup.wait("governor", cursor, 500, [{ agentId: res.agentId, taskRunId: res.taskRunId }], "all_settled");
+  assert.equal(wait.completed, true, `settled run did not satisfy the join (reason ${wait.reason})`);
+  cleanup();
+});
+
+test("queued tasks dispatched after settlement respect maxRunnable", async () => {
+  const { sup, cleanup } = setupWorkers([new FakeWorker("hang"), new FakeWorker("hang")], { maxRunnable: 1 });
+  const a = await sup.spawn("governor", { taskName: "a", message: "work", profile: "reader" }, "req-a");
+  await sup.sendMessage("governor", a.agentId, "task", "second", {}, "req-a2");
+  await sup.spawn("governor", { taskName: "b", message: "work", profile: "reader" }, "req-b");
+  await sup.interrupt("governor", a.agentId, "req-int");
+  await until(() => sup.list("governor").some((v) => v.taskOutcome === "interrupted" || v.generation === 2), 5000, "the freed lease is handed over");
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(runningCount(sup), 1, `maxRunnable=1 but ${runningCount(sup)} agents run`);
+  cleanup();
+});
+
+test("a task sent to an idle loaded agent waits for a runnable lease", async () => {
+  const { sup, cleanup } = setupWorkers([new FakeWorker("hang"), new FakeWorker("hang")], { maxRunnable: 1 });
+  const a = await sup.spawn("governor", { taskName: "a", message: "work", profile: "reader" }, "req-a");
+  await sup.interrupt("governor", a.agentId, "req-int");
+  await until(() => sup.list("governor")[0]?.taskOutcome === "interrupted", 5000, "a settles");
+  await sup.spawn("governor", { taskName: "b", message: "work", profile: "reader" }, "req-b");
+  await sup.sendMessage("governor", a.agentId, "task", "second", {}, "req-a2");
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(runningCount(sup) <= 1, `maxRunnable=1 but ${runningCount(sup)} agents run`);
+  cleanup();
+});
+
+test("a rejected task delivery settles the run as failed instead of hanging", async () => {
+  const worker = new FakeWorker("settle-text");
+  const { sup, cleanup } = setupWorkers([worker]);
+  const a = await sup.spawn("governor", { taskName: "a", message: "work", profile: "reader" }, "req-a");
+  await until(() => sup.list("governor")[0]?.taskOutcome === "succeeded", 5000, "a settles");
+  worker.rejectDeliverTask = true;
+  const second = await sup.sendMessage("governor", a.agentId, "task", "second", {}, "req-a2");
+  const wait = await sup.wait("governor", 0, 1000, [{ agentId: a.agentId, taskRunId: second.taskRunId }], "all_settled");
+  assert.equal(wait.completed, true, "rejected delivery left the run unsettled");
+  assert.equal(sup.list("governor")[0]?.taskOutcome, "failed");
+  cleanup();
+});
+
+test("an abrupt worker exit settles the active run and releases its lease", async () => {
+  const worker = new FakeWorker("hang");
+  const { sup, cleanup } = setupWorkers([worker, new FakeWorker("settle-text")], { maxRunnable: 1 });
+  const a = await sup.spawn("governor", { taskName: "a", message: "work", profile: "reader" }, "req-a");
+  worker.crash();
+  const wait = await sup.wait("governor", 0, 1000, [{ agentId: a.agentId, taskRunId: a.taskRunId }], "all_settled");
+  assert.equal(wait.completed, true, "worker exit left the run unsettled");
+  assert.notEqual(sup.list("governor")[0]?.taskOutcome, "succeeded");
+  const b = await sup.spawn("governor", { taskName: "b", message: "work", profile: "reader" }, "req-b");
+  await until(() => sup.list("governor").find((v) => v.id === b.agentId)?.taskOutcome === "succeeded", 2000, "lease handed over");
   cleanup();
 });

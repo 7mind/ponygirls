@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AgentInspector, countTree, describePendingItem, renderHeadless, sanitizeDisplay, widgetLine } from "../src/ui.ts";
+import { AgentInspector, countTree, renderHeadless, sanitizeDisplay, widgetLine } from "../src/ui.ts";
 import type { AgentView } from "../src/supervisor.ts";
 
 function view(overrides: Partial<AgentView> = {}): AgentView {
@@ -10,14 +10,18 @@ function view(overrides: Partial<AgentView> = {}): AgentView {
     parentId: null,
     depth: 1,
     profile: "reader",
+    isolation: "none",
+    workdir: "/proj",
     model: "p/m",
     observed: "running",
     pendingIntent: "running",
+    currentTaskRunId: null,
     generation: 1,
     taskOutcome: null,
     usage: { inputTokens: 1, outputTokens: 2, cost: null, unknown: false },
     lastActivityAt: "2026-10-05T00:00:00.000Z",
     managedGateFor: null,
+    openQuestion: null,
     ...overrides,
   };
 }
@@ -36,7 +40,7 @@ test("widget line summarizes counts without a transcript", () => {
   const line = widgetLine(views);
   assert.ok(line.includes("running 1"));
   assert.ok(line.includes("queued 1"));
-  assert.deepEqual(countTree(views), { running: 1, queued: 1, parked: 0, questions: 0, approvals: 0 });
+  assert.deepEqual(countTree(views), { running: 1, queued: 1, parked: 0, questions: 0 });
 });
 
 test("headless output contains no terminal escapes", () => {
@@ -65,12 +69,4 @@ test("inspector navigates, opens detail, and dismisses on escape", () => {
   assert.deepEqual(actions, ["interrupt"]);
   inspector.handleInput("");
   assert.equal(closed, true);
-});
-
-test("approvals and questions are described distinctly", () => {
-  const approval = describePendingItem({ kind: "approval", text: "run tests?", scope: "bash: npm test" });
-  const question = describePendingItem({ kind: "question", text: "which file?" });
-  assert.ok(approval.startsWith("Authorization requested:"));
-  assert.ok(approval.includes("bash: npm test"));
-  assert.ok(question.startsWith("Task question:"));
 });

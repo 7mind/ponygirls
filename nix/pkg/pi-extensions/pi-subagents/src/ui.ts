@@ -23,8 +23,8 @@ export type InspectorAction =
 
 /** Strip ANSI CSI/OSC sequences and control characters for safe display. */
 export function sanitizeDisplay(input: string, maxLength = 4000): string {
-  let out = input.replace(/\][^\x07]*(?:\x07|\x1b\\)/g, "");
-  out = out.replace(/\[[0-9;?]*[A-Za-z]/g, "");
+  let out = input.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "");
+  out = out.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
   out = out.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
   return out.length > maxLength ? `${out.slice(0, maxLength)}…[truncated]` : out;
 }
@@ -34,17 +34,15 @@ export interface TreeCounts {
   queued: number;
   parked: number;
   questions: number;
-  approvals: number;
 }
 
 export function countTree(views: AgentView[]): TreeCounts {
-  const counts: TreeCounts = { running: 0, queued: 0, parked: 0, questions: 0, approvals: 0 };
+  const counts: TreeCounts = { running: 0, queued: 0, parked: 0, questions: 0 };
   for (const v of views) {
     if (v.observed === "running" || v.observed === "starting") counts.running++;
     else if (v.observed === "queued") counts.queued++;
     else counts.parked++;
     if (v.pendingIntent === "awaiting parent reply") counts.questions++;
-    if (v.pendingIntent === "awaiting approval") counts.approvals++;
   }
   return counts;
 }
@@ -54,7 +52,6 @@ export function widgetLine(views: AgentView[]): string {
   const c = countTree(views);
   const parts = [`agents: ${views.length}`, `running ${c.running}`, `queued ${c.queued}`];
   if (c.questions > 0) parts.push(`questions ${c.questions}`);
-  if (c.approvals > 0) parts.push(`approvals ${c.approvals}`);
   return parts.join(" · ");
 }
 
@@ -199,15 +196,4 @@ function keyName(data: string): string {
   if (data === "\x1b[A") return "up";
   if (data === "\x1b[B") return "down";
   return data;
-}
-
-/**
- * Distinguish task clarifications from authorization requests in prompts.
- * Returns the exact capability/action needing approval for approval items.
- */
-export function describePendingItem(item: { kind: "question" | "approval"; text: string; scope?: string }): string {
-  if (item.kind === "approval") {
-    return `Authorization requested: ${sanitizeDisplay(item.scope ?? item.text, 300)}`;
-  }
-  return `Task question: ${sanitizeDisplay(item.text, 300)}`;
 }

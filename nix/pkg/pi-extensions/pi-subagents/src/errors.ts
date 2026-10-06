@@ -33,6 +33,7 @@ export const ERROR_CODES = [
   "GATE_INVALID_APPROVAL",
   "MODEL_UNAVAILABLE",
   "WORKSPACE_UNAVAILABLE",
+  "STORE_FAILED",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -51,9 +52,4 @@ export class SubagentsError extends Error {
 
 export function err(code: ErrorCode, message: string, details?: unknown): SubagentsError {
   return new SubagentsError(code, message, details);
-}
-
-/** Tool-call-shaped failure payload (content + isError). */
-export function toolFailure(code: ErrorCode, message: string): { text: string; isError: true } {
-  return { text: `${code}: ${message}`, isError: true as const };
 }

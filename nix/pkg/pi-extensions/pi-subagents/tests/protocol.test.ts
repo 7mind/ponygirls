@@ -14,7 +14,7 @@ function envelope(overrides: Record<string, unknown> = {}): Record<string, unkno
     requestId: null,
     seq: 0,
     type: "request",
-    operation: "run",
+    operation: "deliver",
     taskRunId: null,
     executionGeneration: null,
     payload: {},
@@ -22,7 +22,7 @@ function envelope(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
-test("accepts a well-formed supervisor->worker run envelope", () => {
+test("accepts a well-formed supervisor->worker deliver envelope", () => {
   const res = validateEnvelope(envelope(), BINDING, "to-worker");
   assert.equal(res.ok, true);
 });
@@ -87,21 +87,29 @@ test("tool.execute responses answer worker requests (correlation, no new authori
   assert.equal(req.ok, false);
 });
 
-test("initialize payload requires task text, profile, model, run ids", () => {
+test("initialize payload requires task text, profile, model, run ids, instructions", () => {
   assert.equal(validateInitializePayload(null).ok, false);
   assert.equal(validateInitializePayload({}).ok, false);
   const good = {
     taskText: "do it",
     profile: "reader",
     instructionHash: "",
+    instructions: { contextFiles: [{ path: "/p/AGENTS.md", content: "x" }], skills: [] },
     model: { provider: "p", id: "m", thinkingLevel: "low" },
     taskRunId: "t-1",
     executionGeneration: 1,
     workdir: "/tmp",
     readRoots: [],
     writable: false,
+    tools: ["read"],
   };
   const res = validateInitializePayload(good);
   assert.equal(res.ok, true);
+  // Loading without inference is explicit (null task text); the exact
+  // tool allowlist is required.
+  assert.equal(validateInitializePayload({ ...good, taskText: null }).ok, true);
+  assert.equal(validateInitializePayload({ ...good, tools: undefined }).ok, false);
+  assert.equal(validateInitializePayload({ ...good, instructions: undefined }).ok, false);
+  assert.equal(validateInitializePayload({ ...good, instructions: { contextFiles: [{ path: "/p/AGENTS.md" }], skills: [] } }).ok, false);
   assert.equal(PROTOCOL_VERSION, 1);
 });

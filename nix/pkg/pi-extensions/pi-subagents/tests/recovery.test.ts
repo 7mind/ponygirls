@@ -8,18 +8,19 @@ import { FileRunStore, InMemoryRunStore } from "../src/store.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
 import { DummyWorkspaceManager } from "../src/workspace.ts";
 import { defaultSupervisorPolicy } from "../src/policy.ts";
-import { FakeWorker, until } from "./fake-worker.ts";
+import { FakeWorker, until, testGovernor, bothExecutors } from "./fake-worker.ts";
 
 test("task T → crash → reconciliation → one terminal outcome → replacement T2", async () => {
   const dir = mkdtempSync(join(tmpdir(), "subagents-rec-"));
   const policy = defaultSupervisorPolicy();
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new FileRunStore(dir, "root-1"),
     policy,
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => new FakeWorker("hang"),
   });
@@ -49,11 +50,12 @@ test("accepted but never-dispatched tasks keep their ids; explicit resume dispat
   const policy = defaultSupervisorPolicy();
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new FileRunStore(dir, "root-1"),
     policy,
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => new FakeWorker("hang"),
   });
@@ -78,10 +80,11 @@ function reconcileSetup(retained: Set<string>): { sup: Supervisor; dir: string; 
   const fakes: FakeWorker[] = [];
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy: defaultSupervisorPolicy(),
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => {
       const f = new FakeWorker("hang");
@@ -135,20 +138,21 @@ test("late events from an evicted instance are fenced", async () => {
   const dir = mkdtempSync(join(tmpdir(), "subagents-fence-"));
   const sup = new Supervisor({
     rootId: "root-1",
+    governor: testGovernor,
     rootDir: dir,
     store: new FileRunStore(dir, "root-1"),
     policy: defaultSupervisorPolicy(),
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
-    executor: new DummyToolExecutor(),
+    executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => new FakeWorker("settle-text"),
   });
   const res = await sup.spawn("governor", { taskName: "t", message: "work", profile: "reader" }, "req-1");
   await until(() => sup.list("governor")[0]?.taskOutcome === "succeeded", 5000, "settle");
   // A duplicate terminal publication for the old generation is ignored.
-  const before = sup.read("governor", res.agentId, "events", 0, 100).events.length;
+  const before = sup.read("governor", res.agentId, "events", 0, 100, null).events.length;
   await sup.recover();
-  const after = sup.read("governor", res.agentId, "events", 0, 100).events.length;
+  const after = sup.read("governor", res.agentId, "events", 0, 100, null).events.length;
   assert.ok(after >= before);
   await sup.shutdown();
   rmSync(dir, { recursive: true, force: true });

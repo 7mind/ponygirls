@@ -18,10 +18,6 @@ export type ScriptStep =
   | { kind: "batch"; calls: Array<{ name: string; args: Record<string, unknown> }> }
   | { kind: "error"; message: string };
 
-export interface DeterministicRuntime {
-  createModelRuntime: (options: Record<string, unknown>) => Promise<DeterministicModelRuntime>;
-}
-
 export interface DeterministicModelRuntime {
   registerProvider: (id: string, config: Record<string, unknown>) => void;
   getModel: (provider: string, id: string) => Record<string, unknown> | undefined;
@@ -121,7 +117,8 @@ export function registerDeterministicProvider(
             },
           });
         } else {
-          stream.push({ type: "error", reason: "error", error: assistantText(`error: ${step.message}`) });
+          // Provider failures end with stopReason "error" and an errorMessage, as real providers report them.
+          stream.push({ type: "error", reason: "error", error: { ...assistantText(""), content: [], stopReason: "error", errorMessage: step.message } });
         }
       });
       return stream;
@@ -141,18 +138,4 @@ export function registerDeterministicProvider(
     ],
   });
   return { provider: SIM_PROVIDER, id: SIM_MODEL };
-}
-
-export function fakeModel(): Record<string, unknown> {
-  return {
-    id: SIM_MODEL,
-    name: "deterministic sim",
-    api: "openai-responses",
-    provider: SIM_PROVIDER,
-    reasoning: false,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 32768,
-    maxTokens: 4096,
-  };
 }
