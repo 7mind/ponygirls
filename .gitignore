@@ -4,3 +4,5 @@ result-*
 debug/
 __pycache__/
 *.egg-info/
+# local credentials (xAI keys, OAuth tokens) — never commit
+tokens.env
