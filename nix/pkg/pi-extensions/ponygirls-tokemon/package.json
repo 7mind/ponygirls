@@ -1,0 +1,9 @@
+{
+  "name": "ponygirls-tokemon",
+  "version": "0.1.0",
+  "description": "Provider quota dashboard for pi: a tool for agents and a /tokemon table",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.ts"
+  }
+}
