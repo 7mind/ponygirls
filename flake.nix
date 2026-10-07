@@ -167,6 +167,7 @@
         };
         checks = {
           default-models = defaultModelsCheck;
+          notify-module = pkgs.callPackage ./nix/tests/notify-module.nix { };
           subagents-policy-shape = subagentsPolicyShapeCheck;
           tokemon = self.packages.${system}.tokemon;
           dev-llm-module-boundary = devLlmModuleBoundaryCheck;
