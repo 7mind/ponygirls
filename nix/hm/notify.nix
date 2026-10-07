@@ -7,7 +7,7 @@ let
     && notifyCfg.homeserver != null
     && notifyCfg.roomId != null
     && notifyCfg.tokenFile != null;
-  notifyScript = pkgs.writeShellScript "agent-notify-matrix" ''
+  notifyScript = pkgs.writeShellScriptBin "agent-notify-matrix" ''
     set -eu
     printf '\a'
     HARNESS="''${1:-agent}"
@@ -68,7 +68,7 @@ let
           session = "";
         }
         const args = ["pi", session, process.cwd()];
-        execFile("${notifyScript}", args, { stdio: "ignore" }, (error) => {
+        execFile("${notifyScript}/bin/agent-notify-matrix", args, { stdio: "ignore" }, (error) => {
           if (error) console.error("[agent-notify-matrix] failed: " + error.message);
         });
       });
@@ -126,7 +126,7 @@ in
           hooks = [
             {
               type = "command";
-              command = "${notifyScript} claude";
+              command = "${notifyScript}/bin/agent-notify-matrix claude";
             }
           ];
         }
@@ -136,14 +136,14 @@ in
           hooks = [
             {
               type = "command";
-              command = "${notifyScript} claude";
+              command = "${notifyScript}/bin/agent-notify-matrix claude";
             }
           ];
         }
       ];
     })
     (lib.mkIf (active && notifyCfg.codex.enable) {
-      programs.codex.settings.notify = [ "${notifyScript}" "codex" ];
+      programs.codex.settings.notify = [ "${notifyScript}/bin/agent-notify-matrix" "codex" ];
     })
     (lib.mkIf (active && notifyCfg.pi.enable) {
       programs.pi.settings.extensions = lib.mkAfter [ "${notifyExtension}" ];
