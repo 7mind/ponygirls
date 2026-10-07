@@ -143,6 +143,7 @@ pkgs.writeShellScriptBin "yolo" ''
   export YOLO_SANDBOX_ENTRYPOINT="${sandboxEntrypoint}/bin/yolo-sandbox-entrypoint"
   export YOLO_NIX_LD="${nix-ld}/bin/nix-ld"
   export YOLO_JQ="${jq}/bin/jq"
+  export YOLO_TASKSET="${pkgs.util-linux}/bin/taskset"
   export YOLO_SQLITE="${pkgs.sqlite}/bin/sqlite3"
   export YOLO_CUSTOM_PROMPT="${customPromptScript}"
   export YOLO_CLIPBOARD_PROXY="${clipboardProxy}/bin/yolo-clipboard-proxy"

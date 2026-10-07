@@ -66,6 +66,7 @@ OUT="$({
     YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
     YOLO_NIX_LD="$(command -v true)" \
     YOLO_JQ="$(command -v jq)" \
+    YOLO_TASKSET="$(command -v taskset)" \
     YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
     bash "$SCRIPT" cmd true
 } 2>&1)"
