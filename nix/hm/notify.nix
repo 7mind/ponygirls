@@ -118,6 +118,7 @@ in
     }
     (lib.mkIf active {
       home.packages = [ notifyScript ];
+      smind.hm.dev.llm.yolo.extraReadOnlyPaths = [ "${notifyCfg.tokenFile}" ];
     })
     (lib.mkIf (active && notifyCfg.claude.enable) {
       programs.claude-code.settings.hooks.Notification = [
