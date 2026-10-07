@@ -11,6 +11,7 @@
 #               registry, and the common host packages. (needs inputs + self)
 #   claude.nix  Claude Code configuration (programs.claude-code).
 #   codex.nix   Codex configuration (programs.codex).
+#   notify.nix  Matrix notifications for Claude/Codex/Pi (smind.hm.dev.llm.notify).
 #   pi.nix      Pi configuration (programs.pi); also carries the in-flake
 #               programs.pi module definition (shared factory + Pi options).
 #   podman.nix  NixOS-provided restricted rootless-Podman socket wiring.
@@ -24,6 +25,7 @@
     (import ./tools.nix { inherit inputs; })
     (import ./claude.nix { inherit inputs; })
     ./codex.nix
+    ./notify.nix
     ./pi.nix
     (import ./yolo.nix { inherit inputs; })
     ./podman.nix
