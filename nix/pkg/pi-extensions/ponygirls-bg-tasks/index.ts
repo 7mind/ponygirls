@@ -7,7 +7,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Value } from "typebox/value";
 import { Activation, readRuntimeConfig } from "./src/activation.ts";
 import { NoticeDispatcher, SessionFileReceipts, connectBackend, systemTimers, type ReceiptSource } from "./src/delivery.ts";
-import { BgTaskError, COMPLETION_CUSTOM_TYPE, CompletionDetailsSchema, MAX_LIST_ITEMS, SIGNAL_NAMES, type SessionId, type SignalName, type TaskRecord } from "./src/protocol.ts";
+import { BgTaskError, COMPLETION_CUSTOM_TYPE, CompletionDetailsSchema, MAX_LIST_ITEMS, SIGNAL_NAMES, STATUS_CUSTOM_TYPE, type SessionId, type SignalName, type TaskRecord } from "./src/protocol.ts";
 import { BG_STATUS_KEY, bgStatusLine } from "./src/status.ts";
 import type { TaskBackend } from "./src/backend.ts";
 import { createBgTaskTool, taskLine } from "./src/tool.ts";
@@ -20,6 +20,10 @@ interface Bound {
   /** Open /bg views; closed when the activation ends. */
   views: Set<{ view: BgInspector; close: () => void }>;
   statusTimer: ReturnType<typeof setTimeout> | null;
+  /** Last status-backend error, or null when reachable (outage episode state). */
+  statusError: string | null;
+  /** Submit a model-visible status follow-up (also shown in the chat). */
+  submitNotice: (status: "unavailable" | "recovered", text: string) => void;
 }
 
 /** Throttle for border badge refreshes on rapid task changes. */
@@ -60,22 +64,56 @@ function publishBadge(entry: Bound, line: string | null): void {
   );
 }
 
+/**
+ * Advance a status-backend outage episode. Returns the follow-up notice to
+ * submit when an episode boundary is crossed (first failure, recovery), or
+ * null when the state did not change. Exported for unit tests.
+ */
+export function advanceStatusEpisode(
+  episode: { statusError: string | null },
+  failed: boolean,
+  error: string,
+): { status: "unavailable" | "recovered"; text: string } | null {
+  if (!failed) {
+    if (episode.statusError === null) return null;
+    episode.statusError = null;
+    return { status: "recovered", text: "bg-tasks: status backend reachable again." };
+  }
+  if (episode.statusError === error) return null;
+  episode.statusError = error;
+  return { status: "unavailable", text: `bg-tasks: status backend unreachable (${error}); the badge keeps its last state.` };
+}
+
 async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<void> {
   if (!isCurrent()) return;
+  let line: string | null;
   try {
     const backend = await entry.activation.backend();
     if (!isCurrent()) return;
-    const line = bgStatusLine(await readStatusTasks(backend));
+    line = bgStatusLine(await readStatusTasks(backend));
+  } catch (error) {
+    // The backend is unreachable (no persistent session, missing executables,
+    // disposed activation, lost supervisor): keep the last known badge — the
+    // error is reported once per episode instead, since a clear here could
+    // never be repaired by a later refresh until something else changes.
     if (!isCurrent()) return;
-    publishBadge(entry, line);
-  } catch {
-    // No persistent session, missing executables, disposed activation, or a
-    // lost supervisor: no indicator rather than a stale one.
     try {
-      if (isCurrent()) publishBadge(entry, null);
+      const notice = advanceStatusEpisode(entry, true, errorText(error));
+      if (notice) entry.submitNotice(notice.status, notice.text);
     } catch {
       // Stale UI after session replacement/reload: nothing to do.
     }
+    return;
+  }
+  if (!isCurrent()) return;
+  const notice = advanceStatusEpisode(entry, false, "");
+  if (notice && isCurrent()) entry.submitNotice(notice.status, notice.text);
+  try {
+    publishBadge(entry, line);
+  } catch {
+    // Badge rendering failed (e.g. the theme is not initialized in a headless
+    // runtime): not a backend outage, so outside the episode above — a later
+    // refresh retries.
   }
 }
 
@@ -178,7 +216,14 @@ export default function bgTasks(pi: ExtensionAPI): void {
       });
       if (self.value) scheduleStatus(self.value, () => bound === self.value);
     });
-    self.value = { activation, dispatcher, ctx, views: new Set(), statusTimer: null };
+    self.value = {
+      activation, dispatcher, ctx, views: new Set(), statusTimer: null, statusError: null,
+      submitNotice: (status, text) =>
+        pi.sendMessage(
+          { customType: STATUS_CUSTOM_TYPE, content: text, display: true, details: { status } },
+          { deliverAs: "followUp", triggerTurn: true },
+        ),
+    };
     bound = self.value;
     // Recover earlier activations' records and replay their notices without waiting for a tool call.
     if (activation.hasExistingState()) activation.backend().catch((error: unknown) => report(ctx, errorText(error), "error"));
