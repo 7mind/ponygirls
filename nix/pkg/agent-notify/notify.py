@@ -146,6 +146,21 @@ def parse_turn(harness: str, payload: str) -> Turn:
     return Turn(harness, session, text_field(data, ("turn_id", "turn-id")))
 
 
+def make_sender(configuration: dict[str, object]):
+    if configuration.get("transport", "plaintext") == "e2ee":
+        from matrix_e2ee import NioMatrixSender
+        return NioMatrixSender(
+            str(configuration["homeserver"]),
+            str(configuration["roomId"]),
+            configuration.get("sender"),
+            configuration.get("passwordFile"),
+        )
+    token_file = configuration.get("tokenFile")
+    if not isinstance(token_file, str):
+        raise ValueError("plaintext transport needs tokenFile set")
+    return MatrixSender(configuration["homeserver"], configuration["roomId"], Path(token_file))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("config", type=Path)
@@ -153,12 +168,18 @@ def main() -> None:
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--start", action="store_true")
     actions.add_argument("--attention", action="store_true")
+    actions.add_argument("--setup", action="store_true")
     parser.add_argument("payload", nargs="?")
     arguments = parser.parse_args()
     configuration = json.loads(arguments.config.read_text())
+    if arguments.setup:
+        if configuration.get("transport", "plaintext") != "e2ee":
+            raise ValueError("--setup requires e2ee transport")
+        make_sender(configuration).setup()
+        return
     cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path(os.environ["HOME"]) / ".cache")))
     store = FileTurnStore(cache / "ponygirls-notify" / "turns")
-    sender = MatrixSender(configuration["homeserver"], configuration["roomId"], Path(configuration["tokenFile"]))
+    sender = make_sender(configuration)
     notifier = Notifier(store, sender, time.monotonic, configuration["minTurnSeconds"], configuration["onlyWhenUnfocused"])
     payload = arguments.payload if arguments.payload is not None else sys.stdin.read()
     turn = parse_turn(arguments.harness, payload)
