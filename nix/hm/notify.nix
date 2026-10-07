@@ -12,6 +12,7 @@ let
     printf '\a'
     HARNESS="''${1:-agent}"
     SESSION="''${2:-}"
+    CWD_RAW="''${3:-}"
     INPUT=""
     if [ ! -t 0 ]; then
       INPUT=$(head -c 8192 2>/dev/null || true)
@@ -23,6 +24,9 @@ let
     done
     HOOK_SESSION=$(printf '%s' "$INPUT" | ${pkgs.jq}/bin/jq -r '.session_id // .sessionId // .thread_id // ."thread-id" // empty' 2>/dev/null || true)
     HOOK_MSG=$(printf '%s' "$INPUT" | ${pkgs.jq}/bin/jq -r '.message // .title // ."last-assistant-message" // empty' 2>/dev/null | head -c 200 || true)
+    if [ -z "$CWD_RAW" ]; then
+      CWD_RAW=$(printf '%s' "$INPUT" | ${pkgs.jq}/bin/jq -r '.cwd // empty' 2>/dev/null || true)
+    fi
     case "$SESSION" in
       '{'*) SESSION="" ;;
     esac
@@ -32,7 +36,11 @@ let
     case "$SESSION" in
       ????????-????-????-????-????????????) SESSION="''${SESSION:0:8}" ;;
     esac
-    BODY="agent: input needed [$HARNESS]"
+    TAG="$HARNESS"
+    if [ -n "$CWD_RAW" ]; then
+      TAG="$TAG/''${CWD_RAW##*/}"
+    fi
+    BODY="agent: input needed [$TAG]"
     if [ -n "$SESSION" ]; then
       BODY="$BODY ''${SESSION:0:64}"
     fi
@@ -59,8 +67,8 @@ let
         } catch {
           session = "";
         }
-        const args = session ? ["pi", session] : ["pi"];
-        execFile("${notifyScript}", args, (error) => {
+        const args = ["pi", session, process.cwd()];
+        execFile("${notifyScript}", args, { stdio: "ignore" }, (error) => {
           if (error) console.error("[agent-notify-matrix] failed: " + error.message);
         });
       });
