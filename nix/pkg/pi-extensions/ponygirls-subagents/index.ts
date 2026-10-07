@@ -107,6 +107,16 @@ function failed(e: unknown): ToolText {
   return { content: [{ type: "text", text: code && !message.startsWith(code) ? `${code}: ${message}` : message }], details: {}, isError: true };
 }
 
+/** Publish (or clear) the bottom-left badge on the editor's border. */
+function publishBadge(ui: ExtensionContext["ui"] | null, line: string | null): void {
+  if (!ui) return;
+  if (line === null) {
+    ui.setWidget(STATUS_KEY, undefined);
+    return;
+  }
+  ui.setWidget(STATUS_KEY, [ui.theme.bg("toolSuccessBg", ` ${line} `)], { placement: "borderBottomLeft" });
+}
+
 export default function (pi: ExtensionAPI): void {
   const bindings = new Map<string, SessionBinding>();
 
@@ -115,7 +125,7 @@ export default function (pi: ExtensionAPI): void {
     binding.statusTimer = setTimeout(() => {
       binding.statusTimer = null;
       const views = binding.supervisor.list("user");
-      binding.ui?.setStatus(STATUS_KEY, views.length > 0 ? widgetLine(views) : undefined);
+      publishBadge(binding.ui, views.length > 0 ? widgetLine(views) : null);
     }, STATUS_THROTTLE_MS);
   }
 
@@ -565,7 +575,7 @@ export default function (pi: ExtensionAPI): void {
     if (!binding) return;
     bindings.delete(sessionId);
     if (binding.statusTimer) clearTimeout(binding.statusTimer);
-    binding.ui?.setStatus(STATUS_KEY, undefined);
+    publishBadge(binding.ui, null);
     // Switching sessions cancels and joins the live subtree, closes owned
     // tool jobs, and preserves durable state.
     await binding.supervisor.shutdown();

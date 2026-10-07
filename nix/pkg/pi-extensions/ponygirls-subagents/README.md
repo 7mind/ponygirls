@@ -41,7 +41,7 @@ genuine limitations.
 - `src/worker.ts` — SDK worker process (native child session, proxy tools)
 - `src/worker-launch.ts` — supervisor-side transport (fork, handshake, guard)
 - `src/gate.ts` — optional validation gate controller + decision schema
-- `src/ui.ts` — footer status, headless projection, the `/agents` screen
+- `src/ui.ts` — border badge, headless projection, the `/agents` screen
   (tree inspector, transcript view with chat)
 - `src/transcript.ts` — a child's native session as transcript lines
 - `src/display.ts` — sanitization and theme styles shared by the views
@@ -168,8 +168,8 @@ the reviewer's own conversation inside a `┃` gate frame, headed
 while the review runs); the gate's repair requests are labeled. A
 reviewer's row shows the reviews it ran. Each review is a fresh
 conversation (never resumed); its file is kept for the transcript.
-The footer status (`agents 3 · running 1 · questions 1`) sorts ahead of
-other extensions' statuses.
+The badge (`agents 3 · running 1 · questions 1`) shows on the editor's
+bottom-left border, next to the background-tasks and goal badges.
 
 ## Child tools
 

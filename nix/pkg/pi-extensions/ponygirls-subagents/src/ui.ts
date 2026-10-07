@@ -47,7 +47,7 @@ export function countTree(views: AgentView[]): TreeCounts {
   return counts;
 }
 
-/** Compact footer status: the total, plus whatever is running, queued, or waiting on a reply. */
+/** Compact badge text: the total, plus whatever is running, queued, or waiting on a reply. */
 export function widgetLine(views: AgentView[]): string {
   const c = countTree(views);
   const parts = [`agents ${views.length}`];
