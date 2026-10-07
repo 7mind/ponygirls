@@ -38,10 +38,17 @@ buildNpmPackage (finalAttrs: {
   # persisted. SettingsManager.onWriteError + an interactive-mode listener
   # report each failed save in the chat (earendil-works/pi#10168, PR #10437).
   # Drop when a released pi version includes it.
+  #
+  # earendil-works/pi#10601 (re-filed from #9595, bot-closed unreviewed; PR
+  # #10600, open, not merged): agent-level retry honors server Retry-After /
+  # retry-after-ms delays — AssistantMessage.retryAfterMs raises the
+  # per-attempt delay floor, clamped by maxAgentDelayMs.
+  # Drop when a released pi version includes it.
   patches = [
     ./patches/oauth-refresh-on-401.patch
     ./patches/captured-terminal-output.patch
     ./patches/surface-settings-write-errors.patch
+    ./patches/agent-retry-after-delays.patch
   ];
 
   npmDepsHash = "sha256-ndEvWdB6sa5nNNtabk2OMZKUFG9x3op185deZHxFnXk=";
