@@ -86,6 +86,8 @@ ENV_ARGS=()
 # They are appended last — after every built-in bind (BASE_ARGS + the
 # profile-specific EXTRA_ARGS) and after the declarative EXTRA_PATH_ARGS —
 # because bwrap applies mounts in argv order: the last bind covering a path wins.
+# `--bind SRC,DST` / `--ro-bind SRC,DST` remap a host SRC onto a different
+# sandbox DST in the same list; see add_adhoc_remap for their validation.
 ADHOC_BIND_ARGS=()
 # Credential borrowing: `--auth-override AGENT:PROFILE` (repeatable, one per
 # agent) binds PROFILE's credentials file read-write over the launched
@@ -128,6 +130,15 @@ Flags (must precede the subcommand):
                          at the same location (repeatable; skipped if missing).
       --rw PATH          Ad-hoc read-write bind of a host PATH (repeatable;
                          skipped if missing).
+      --bind SRC,DST     Ad-hoc read-write bind of host SRC at sandbox path DST
+                         (repeatable). SRC must exist (yolo refuses to launch
+                         otherwise) and must not contain a comma; DST must be
+                         absolute ('~' is not expanded). Missing parents of DST
+                         are created inside the sandbox; if they fall under
+                         another read-write bind (e.g. $PWD, ~/.claude) the
+                         empty mountpoint is created on the host too, and under
+                         a read-only bind the launch fails.
+      --ro-bind SRC,DST  Same as --bind, read-only.
       --env KEY=VAL      Set an env var inside the sandbox (repeatable).
       --mem-limit=SIZE   Memory limit for this launch: KiB, or with a K/M/G/T
                          (1024-based) suffix, e.g. 8G. 'none' removes the
@@ -169,6 +180,34 @@ and devices are also configured declaratively via the home-manager module
 The sandbox clears other inherited host environment variables; use --env or
 declarative session/secret variables to pass them explicitly.
 EOF
+}
+
+# `--bind SRC,DST` / `--ro-bind SRC,DST`: validate and queue an ad-hoc remap.
+# Unlike --ro/--rw, a missing SRC is fatal — a remap that silently disappears
+# would let the sandboxed tool fall back to (and write into) whatever else is at
+# DST. SRC is canonicalized on the host; llm-sandbox splits the spec at its first
+# comma, so the canonical SRC must be comma-free. DST is resolved by bwrap inside
+# the sandbox, where a literal '~' is not expanded, so it must be absolute.
+add_adhoc_remap() {
+  local _flag="$1" _spec="$2" _src _dst _src_real
+  if [[ "$_spec" != *,* ]]; then
+    echo "Error: $_flag expects SRC,DST (got '$_spec')" >&2; exit 1
+  fi
+  _src="${_spec%%,*}"
+  _dst="${_spec#*,}"
+  if [[ -z "$_src" || ! -e "$_src" ]]; then
+    echo "Error: $_flag source '$_src' does not exist on the host" >&2; exit 1
+  fi
+  if [[ "$_dst" != /* ]]; then
+    echo "Error: $_flag destination '$_dst' must be an absolute sandbox path ('~' is not expanded)" >&2; exit 1
+  fi
+  _src_real="$(realpath -- "$_src")" || {
+    echo "Error: $_flag cannot canonicalize source '$_src'" >&2; exit 1
+  }
+  if [[ "$_src_real" == *,* ]]; then
+    echo "Error: $_flag source '$_src_real' contains a comma, which SRC,DST cannot express" >&2; exit 1
+  fi
+  ADHOC_BIND_ARGS+=("$_flag" "$_src_real,$_dst")
 }
 
 while [[ $# -gt 0 ]]; do
@@ -213,6 +252,11 @@ while [[ $# -gt 0 ]]; do
         echo "Error: $1 requires a path" >&2; exit 1
       fi
       ADHOC_BIND_ARGS+=(--rw "$2"); shift 2 ;;
+    --bind|--ro-bind)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: $1 requires SRC,DST" >&2; exit 1
+      fi
+      add_adhoc_remap "$1" "$2"; shift 2 ;;
     --mem-limit=*) MEM_LIMIT_SPEC="${1#*=}"; shift ;;
     --mem-limit)
       if [[ $# -lt 2 || -z "$2" ]]; then
