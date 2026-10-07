@@ -14,7 +14,8 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from notify import FileTurnStore, Focus, MatrixSender, Notifier, Turn, parse_turn
+from unittest import mock
+from notify import FileTurnStore, Focus, MatrixSender, Notifier, Turn, make_sender, parse_turn
 from terminal import FOCUS_IN, FOCUS_OUT, FOCUS_REPORTING_OFF, FOCUS_REPORTING_ON, FocusInput, FocusOutput
 
 
@@ -207,6 +208,36 @@ class NotificationTests(unittest.TestCase):
                 self.assertEqual(turn.session, "session")
         with self.assertRaisesRegex(ValueError, "session identifier"):
             parse_turn("codex", "{}")
+
+
+class E2EESelectionTests(unittest.TestCase):
+    def base_config(self):
+        return {
+            "homeserver": "https://matrix.test",
+            "roomId": "!room:test",
+            "tokenFile": "/tmp/test-token",
+            "minTurnSeconds": 0,
+            "onlyWhenUnfocused": False,
+        }
+
+    def test_plaintext_stays_default_without_transport_key(self):
+        sender = make_sender(self.base_config())
+        self.assertIsInstance(sender, MatrixSender)
+
+    def test_e2ee_selects_nio_sender_without_network(self):
+        from matrix_e2ee import NioMatrixSender
+        config = dict(self.base_config(), transport="e2ee", sender="@bot:test", passwordFile=None)
+        sender = make_sender(config)
+        self.assertIsInstance(sender, NioMatrixSender)
+        self.assertEqual(sender.room, "!room:test")
+
+    def test_unprovisioned_e2ee_send_fails_closed(self):
+        from matrix_e2ee import NioMatrixSender
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.dict(os.environ, {"XDG_DATA_HOME": directory}):
+                sender = NioMatrixSender("https://matrix.test", "!room:test", "@bot:test")
+                with self.assertRaisesRegex(ValueError, "not provisioned"):
+                    sender.send("hello")
 
 
 class TerminalTests(unittest.TestCase):

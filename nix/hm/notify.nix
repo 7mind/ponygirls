@@ -2,16 +2,20 @@
 let
   cfg = config.smind.hm.dev.llm;
   notifyCfg = cfg.notify;
+  transportE2EE = notifyCfg.transport == "e2ee";
   active =
     notifyCfg.enable
     && notifyCfg.homeserver != null
     && notifyCfg.roomId != null
-    && notifyCfg.tokenFile != null;
+    && (transportE2EE || notifyCfg.tokenFile != null);
   runtime = ../pkg/agent-notify;
+  e2eEnv = pkgs.python3.withPackages (ps: [ ps.matrix-nio ps.vodozemac ps.cachetools ps.atomicwrites ps.peewee ]);
   settings = pkgs.writeText "agent-notify-matrix.json" (builtins.toJSON {
     inherit (notifyCfg) homeserver roomId tokenFile minTurnSeconds onlyWhenUnfocused;
+    inherit (notifyCfg) transport sender passwordFile;
   });
   notifyScript = pkgs.writeShellScriptBin "agent-notify-matrix" ''
+    export PYTHONPATH="${e2eEnv}/${pkgs.python3.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
     exec ${pkgs.python3}/bin/python3 ${runtime}/notify.py ${settings} "$@"
   '';
   notifyCommand = "${notifyScript}/bin/agent-notify-matrix";
@@ -56,6 +60,23 @@ in
       example = "/run/agenix/matrix-notify-token";
       description = "File holding a Matrix access token, read at runtime so the token never lands in the store. Null disables delivery.";
     };
+    transport = lib.mkOption {
+      type = lib.types.enum [ "plaintext" "e2ee" ];
+      default = "plaintext";
+      description = "Matrix delivery transport. Plaintext posts raw events with tokenFile and needs no setup. E2EE encrypts via matrix-nio with per-host provisioning (agent-notify-matrix --setup plus one device verification in Element); the key store lives under ~/.local/share/agent-notify-matrix and is bound into the sandbox, so XDG_DATA_HOME overrides need manual binding.";
+    };
+    sender = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "@kai-notifier:matrix.org";
+      description = "Full user ID of the notifier account for e2ee transport. Used at setup; runtime restores credentials from the provisioned store. Null prompts interactively during setup.";
+    };
+    passwordFile = lib.mkOption {
+      type = lib.types.nullOr (lib.types.either lib.types.str lib.types.path);
+      default = null;
+      example = "/run/agenix/matrix-notify-password";
+      description = "File holding the notifier account password, read only by one-time e2ee setup so it never lands in the store. Null prompts interactively during setup.";
+    };
     minTurnSeconds = lib.mkOption {
       type = lib.types.ints.unsigned;
       default = 60;
@@ -87,14 +108,19 @@ in
     {
       assertions = [
         {
-          assertion = !notifyCfg.enable || active;
-          message = "smind.hm.dev.llm.notify.enable needs homeserver, roomId, and tokenFile all set.";
+          assertion = !notifyCfg.enable || (notifyCfg.homeserver != null && notifyCfg.roomId != null);
+          message = "smind.hm.dev.llm.notify.enable needs homeserver and roomId set.";
+        }
+        {
+          assertion = !(notifyCfg.enable && notifyCfg.transport == "plaintext") || notifyCfg.tokenFile != null;
+          message = "smind.hm.dev.llm.notify plaintext transport needs tokenFile set.";
         }
       ];
     }
     (lib.mkIf active {
       home.packages = [ notifyScript ];
-      smind.hm.dev.llm.yolo.extraReadOnlyPaths = [ "${notifyCfg.tokenFile}" ];
+      smind.hm.dev.llm.yolo.extraReadOnlyPaths = lib.optional (notifyCfg.tokenFile != null) "${notifyCfg.tokenFile}";
+      smind.hm.dev.llm.yolo.extraReadWritePaths = lib.optional (notifyCfg.transport == "e2ee") "${config.home.homeDirectory}/.local/share/agent-notify-matrix";
     })
     (lib.mkIf (active && notifyCfg.claude.enable) {
       programs.claude-code.settings.hooks.UserPromptSubmit = [
