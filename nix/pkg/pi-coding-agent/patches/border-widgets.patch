@@ -12,7 +12,7 @@ index bd489450d..7c8357f17 100644
  ### setTitle
  
 diff --git a/packages/coding-agent/docs/tui.md b/packages/coding-agent/docs/tui.md
-index 4a2ff2c56..b3d571527 100644
+index 4a2ff2c56..b7529470b 100644
 --- a/packages/coding-agent/docs/tui.md
 +++ b/packages/coding-agent/docs/tui.md
 @@ -10,7 +10,7 @@ Start with `ctx.ui` methods from an [extension](extensions.md#interact-with-the-
@@ -24,6 +24,15 @@ index 4a2ff2c56..b3d571527 100644
  | Replace the header, footer, or editor | The corresponding `ctx.ui` component factory |
  | Temporary interactive screen or overlay | `ctx.ui.custom()` |
  | Custom rendering for a tool or session entry | An extension renderer |
+@@ -55,7 +55,7 @@ Forward keys your editor does not own to the base implementation, and restore th
+ 
+ ## Handle mouse input
+ 
+-Fullscreen mode routes normalized mouse events to components. A handler can mark an event handled, capture a drag sequence, request focus, or request a render.
++Fullscreen mode routes normalized mouse events to components. A handler can mark an event handled, capture a drag sequence, request focus, or request a render. Components shown in an editor border slot (`ctx.ui.setWidget` with a border placement) receive events on their own columns of the border line, with coordinates local to the visible content.
+ 
+ Unhandled wheel events scroll the nearest `ScrollView`. Unhandled primary-button drags remain available for transcript selection. OSC 8 links take precedence over enclosing click regions.
+ 
 @@ -119,7 +119,7 @@ The checked extension examples cover the main patterns:
  - [`qna.ts`](../examples/extensions/qna.ts) uses cancellable asynchronous UI.
  - [`modal-editor.ts`](../examples/extensions/modal-editor.ts) replaces the editor.
@@ -48,7 +57,7 @@ index 44bf5b604..4671e419a 100644
  	});
  }
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index 3e0ea47ba..cef5418f8 100644
+index 3e0ea47ba..ac3f7cf97 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
 @@ -118,8 +118,19 @@ export interface ExtensionUIDialogOptions {
@@ -78,7 +87,7 @@ index 3e0ea47ba..cef5418f8 100644
  	setHiddenThinkingLabel(label?: string): void;
  
 -	/** Set a widget to display above or below the editor. Accepts string array or component factory. */
-+	/** Set a widget above or below the editor, or on one of its border lines (see `WidgetPlacement`). Accepts string array or component factory. */
++	/** Set a widget above or below the editor, or on one of its border lines (see `WidgetPlacement`). Accepts string array or component factory. A component on a border line receives mouse events on its own columns of the line, with coordinates local to its content. */
  	setWidget(key: string, content: string[] | undefined, options?: ExtensionWidgetOptions): void;
  	setWidget(
  		key: string,
@@ -96,23 +105,25 @@ index 9e2d993e7..ad6ea91c5 100644
  	ExtensionInputComponent,
  	ExtensionSelectorComponent,
 diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
-index 9d345b4e9..559e7f381 100644
+index 9d345b4e9..efbf3b627 100644
 --- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 +++ b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
-@@ -1,4 +1,11 @@
+@@ -1,4 +1,13 @@
 -import { Editor, type EditorOptions, type EditorTheme, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 +import {
 +	Editor,
 +	type EditorOptions,
 +	type EditorTheme,
 +	type TUI,
++	type TuiMouseEvent,
++	type TuiMouseEventResult,
 +	truncateToWidth,
 +	visibleWidth,
 +} from "@earendil-works/pi-tui";
  import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
  import type { StatusIndicator } from "./status-indicator.ts";
  
-@@ -7,12 +14,131 @@ export type CustomEditorOptions = EditorOptions & {
+@@ -7,12 +16,175 @@ export type CustomEditorOptions = EditorOptions & {
  	embedWorkingStatus?: boolean;
  };
  
@@ -123,10 +134,44 @@ index 9d345b4e9..559e7f381 100644
 + * Content shown in one border slot. The editor renders one line per slot.
 + * `render` is the full form; `renderCompact` is an optional smaller form used
 + * when the full one does not fit the slot's width budget. Both may be styled.
++ * `handleMouse` receives events on the content's own columns of the border
++ * line, with coordinates local to the visible content.
 + */
 +export interface EditorBorderContent {
 +	render(width: number): string;
 +	renderCompact?(width: number): string;
++	handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
++}
++
++/** A rendered item's column span within its border line. */
++export interface BorderContentSpan {
++	start: number;
++	end: number;
++	content: EditorBorderContent;
++}
++
++/** One composed border line plus the column spans of its content, for mouse dispatch. */
++interface ComposedBorderLine {
++	line: string;
++	spans: BorderContentSpan[];
++}
++
++/** One item's rendered border text with its width. */
++interface BorderItemRender {
++	text: string;
++	width: number;
++	content: EditorBorderContent;
++}
++
++/** Column spans of rendered items starting at `start`, each followed by a one-column join. */
++function spansFrom(start: number, rendered: readonly BorderItemRender[]): BorderContentSpan[] {
++	const spans: BorderContentSpan[] = [];
++	let column = start;
++	for (const part of rendered) {
++		spans.push({ start: column, end: column + part.width, content: part.content });
++		column += part.width + 1;
++	}
++	return spans;
 +}
 +
 +/** Divide `budget` columns across items sized `widths`: equal shares, leftovers go left-first. */
@@ -152,13 +197,13 @@ index 9d345b4e9..559e7f381 100644
 +	budget: number,
 +	width: number,
 +	borderColor: (text: string) => string,
-+): string {
++): { text: string; items: BorderItemRender[] } {
 +	const full = items.map((item) => item.render(width));
 +	const shares = splitBudget(
 +		full.map((line) => visibleWidth(line)),
 +		Math.max(0, budget - (items.length - 1)),
 +	);
-+	const parts: string[] = [];
++	const rendered: BorderItemRender[] = [];
 +	for (let i = 0; i < items.length; i++) {
 +		const share = shares[i]!;
 +		let line = full[i]!;
@@ -166,9 +211,10 @@ index 9d345b4e9..559e7f381 100644
 +			line = items[i]!.renderCompact?.(share) ?? line;
 +		}
 +		line = truncateToWidth(line, share, "");
-+		if (visibleWidth(line) > 0) parts.push(line);
++		const itemWidth = visibleWidth(line);
++		if (itemWidth > 0) rendered.push({ text: line, width: itemWidth, content: items[i]! });
 +	}
-+	return parts.join(borderColor(" "));
++	return { text: rendered.map((part) => part.text).join(borderColor(" ")), items: rendered };
 +}
 +
 +/**
@@ -184,9 +230,9 @@ index 9d345b4e9..559e7f381 100644
 +	left: EditorBorderContent[],
 +	right: EditorBorderContent[],
 +	label: string | undefined,
-+): string | undefined {
-+	const naturalLeft = visibleWidth(renderBorderItems(left, width, width, borderColor));
-+	const naturalRight = visibleWidth(renderBorderItems(right, width, width, borderColor));
++): ComposedBorderLine | undefined {
++	const naturalLeft = visibleWidth(renderBorderItems(left, width, width, borderColor).text);
++	const naturalRight = visibleWidth(renderBorderItems(right, width, width, borderColor).text);
 +	if (naturalLeft === 0 && naturalRight === 0) return undefined;
 +
 +	const labelWidth = label === undefined ? 0 : visibleWidth(label);
@@ -208,8 +254,10 @@ index 9d345b4e9..559e7f381 100644
 +		rightBudget = shares[1]!;
 +	}
 +
-+	const leftText = renderBorderItems(left, leftBudget, width, borderColor);
-+	const rightText = renderBorderItems(right, rightBudget, width, borderColor);
++	const leftRendered = renderBorderItems(left, leftBudget, width, borderColor);
++	const rightRendered = renderBorderItems(right, rightBudget, width, borderColor);
++	const leftText = leftRendered.text;
++	const rightText = rightRendered.text;
 +	const leftWidth = visibleWidth(leftText);
 +	const rightWidth = visibleWidth(rightText);
 +	if (leftWidth === 0 && rightWidth === 0) return undefined;
@@ -231,7 +279,13 @@ index 9d345b4e9..559e7f381 100644
 +	parts.push(borderColor(middle));
 +	if (rightWidth > 0) parts.push(rightText, borderColor(" ──"));
 +	const line = parts.join("");
-+	return visibleWidth(line) === width ? line : undefined;
++	if (visibleWidth(line) !== width) return undefined;
++	// Left content starts after the "── " prefix; right content ends before " ──".
++	const spans = [
++		...(leftWidth > 0 ? spansFrom(3, leftRendered.items) : []),
++		...(rightWidth > 0 ? spansFrom(width - 3 - rightWidth, rightRendered.items) : []),
++	];
++	return { line, spans };
 +}
 +
  /**
@@ -241,10 +295,11 @@ index 9d345b4e9..559e7f381 100644
  	private keybindings: KeybindingsManager;
  	private workingStatusIndicator: StatusIndicator | undefined;
 +	private borderContent = new Map<string, { slot: EditorBorderSlot; content: EditorBorderContent }>();
++	private borderSpans: { top: BorderContentSpan[]; bottom: BorderContentSpan[] } = { top: [], bottom: [] };
  	public readonly embedWorkingStatus: boolean;
  	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
  
-@@ -33,49 +159,60 @@ export class CustomEditor extends Editor {
+@@ -33,49 +205,81 @@ export class CustomEditor extends Editor {
  		this.workingStatusIndicator = indicator;
  	}
  
@@ -276,10 +331,9 @@ index 9d345b4e9..559e7f381 100644
 -		const canFitOverflow = () =>
 -			overflowLabel !== undefined && overflowLabelWidth + 2 <= width && overflowStart - (3 + statusWidth + 1) >= 1;
 +	protected override renderTopBorder(width: number, hiddenLineCount: number): string {
-+		return (
-+			this.renderBorderWithContent(width, hiddenLineCount, "↑", "topLeft", "topRight") ??
-+			super.renderTopBorder(width, hiddenLineCount)
-+		);
++		const composed = this.renderBorderWithContent(width, hiddenLineCount, "↑", "topLeft", "topRight");
++		this.borderSpans.top = composed?.spans ?? [];
++		return composed?.line ?? super.renderTopBorder(width, hiddenLineCount);
 +	}
  
 -		if (overflowLabel && !canFitOverflow()) {
@@ -287,10 +341,9 @@ index 9d345b4e9..559e7f381 100644
 -			statusWidth = visibleWidth(status);
 -		}
 +	protected override renderBottomBorder(width: number, hiddenLineCount: number): string {
-+		return (
-+			this.renderBorderWithContent(width, hiddenLineCount, "↓", "bottomLeft", "bottomRight") ??
-+			super.renderBottomBorder(width, hiddenLineCount)
-+		);
++		const composed = this.renderBorderWithContent(width, hiddenLineCount, "↓", "bottomLeft", "bottomRight");
++		this.borderSpans.bottom = composed?.spans ?? [];
++		return composed?.line ?? super.renderBottomBorder(width, hiddenLineCount);
 +	}
  
 -		if (canFitOverflow()) {
@@ -302,13 +355,38 @@ index 9d345b4e9..559e7f381 100644
 -					` ${"─".repeat(overflowStart - leftBlockWidth)}${overflowLabel}${"─".repeat(width - overflowStart - overflowLabelWidth)}`,
 -				)
 -			);
++	/**
++	 * Route mouse events on a border line to the border content under the
++	 * pointer, with coordinates local to that content's visible columns.
++	 * Events elsewhere keep the base behavior (border clicks are swallowed).
++	 */
++	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
++		const edge = event.y === 0 ? "top" : event.y === this.renderedVisibleLineCount + 1 ? "bottom" : undefined;
++		if (edge !== undefined) {
++			for (const span of this.borderSpans[edge]) {
++				if (event.x < span.start || event.x >= span.end || !span.content.handleMouse) continue;
++				const result = span.content.handleMouse({
++					...event,
++					x: event.x - span.start,
++					y: 0,
++					width: span.end - span.start,
++					height: 1,
++				});
++				if (result !== undefined) return result;
++			}
+ 		}
++		return super.handleMouse(event);
++	}
+ 
+-		if (width >= statusWidth + 5) {
+-			return this.borderColor("── ") + status + this.borderColor(` ${"─".repeat(width - statusWidth - 4)}`);
 +	private renderBorderWithContent(
 +		width: number,
 +		hiddenLineCount: number,
 +		direction: "↑" | "↓",
 +		leftSlot: EditorBorderSlot,
 +		rightSlot: EditorBorderSlot,
-+	): string | undefined {
++	): ComposedBorderLine | undefined {
 +		if (width <= 0) return undefined;
 +		const left: EditorBorderContent[] = [];
 +		const right: EditorBorderContent[] = [];
@@ -320,13 +398,6 @@ index 9d345b4e9..559e7f381 100644
 +			});
  		}
 -
--		if (width >= statusWidth + 5) {
--			return this.borderColor("── ") + status + this.borderColor(` ${"─".repeat(width - statusWidth - 4)}`);
-+		for (const entry of this.borderContent.values()) {
-+			if (entry.slot === leftSlot) left.push(entry.content);
-+			else if (entry.slot === rightSlot) right.push(entry.content);
- 		}
--
 -		status = this.workingStatusIndicator.renderSpinnerInBorder(width);
 -		statusWidth = visibleWidth(status);
 -		const prefixWidth = Math.min(3, Math.max(0, width - statusWidth));
@@ -335,6 +406,10 @@ index 9d345b4e9..559e7f381 100644
 -			status +
 -			this.borderColor("─".repeat(Math.max(0, width - prefixWidth - statusWidth)))
 -		);
++		for (const entry of this.borderContent.values()) {
++			if (entry.slot === leftSlot) left.push(entry.content);
++			else if (entry.slot === rightSlot) right.push(entry.content);
++		}
 +		if (left.length === 0 && right.length === 0) return undefined;
 +		const label = hiddenLineCount > 0 ? ` ${direction} ${hiddenLineCount} more ` : undefined;
 +		return composeBorderLine(width, (text) => this.borderColor(text), left, right, label);
@@ -360,7 +435,7 @@ index 326adcc53..e029dc53e 100644
  export { DaxnutsComponent } from "./daxnuts.ts";
  export { type RenderDiffOptions, renderDiff } from "./diff.ts";
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 158f59e5f..116d61969 100644
+index 158f59e5f..a7295865a 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 @@ -89,6 +89,7 @@ import type {
@@ -463,7 +538,7 @@ index 158f59e5f..116d61969 100644
  
  		if (Array.isArray(content)) {
  			// Wrap string array in a Container with Text components
-@@ -2379,25 +2413,23 @@ export class InteractiveMode {
+@@ -2379,25 +2413,26 @@ export class InteractiveMode {
  				container.addChild(new ThemedText(() => theme.fg("muted", "... (widget truncated)"), 1, 0));
  			}
  			component = container;
@@ -472,7 +547,10 @@ index 158f59e5f..116d61969 100644
  		} else {
  			// Factory function - create component
  			component = content(this.ui, theme);
-+			borderContent = { render: (width) => (component.render(width)[0] ?? "").trimEnd() };
++			borderContent = {
++				render: (width) => (component.render(width)[0] ?? "").trimEnd(),
++				handleMouse: (event) => component.handleMouse?.(event),
++			};
  		}
  
 -		const targetMap = placement === "belowEditor" ? this.extensionWidgetsBelow : this.extensionWidgetsAbove;
@@ -484,19 +562,19 @@ index 158f59e5f..116d61969 100644
  	private clearExtensionWidgets(): void {
 -		for (const widget of this.extensionWidgetsAbove.values()) {
 -			widget.dispose?.();
+-		}
+-		for (const widget of this.extensionWidgetsBelow.values()) {
+-			widget.dispose?.();
 +		for (const widget of this.extensionWidgets.values()) {
 +			widget.component.dispose?.();
  		}
--		for (const widget of this.extensionWidgetsBelow.values()) {
--			widget.dispose?.();
--		}
 -		this.extensionWidgetsAbove.clear();
 -		this.extensionWidgetsBelow.clear();
 +		this.extensionWidgets.clear();
  		this.renderWidgets();
  	}
  
-@@ -2438,24 +2470,41 @@ export class InteractiveMode {
+@@ -2438,24 +2473,41 @@ export class InteractiveMode {
  	private static readonly MAX_WIDGET_LINES = 10;
  
  	/**
@@ -543,7 +621,7 @@ index 158f59e5f..116d61969 100644
  			if (spacerWhenEmpty) {
  				container.addChild(new Spacer(1));
  			}
-@@ -2465,7 +2514,7 @@ export class InteractiveMode {
+@@ -2465,7 +2517,7 @@ export class InteractiveMode {
  		if (leadingSpacer) {
  			container.addChild(new Spacer(1));
  		}
@@ -552,7 +630,7 @@ index 158f59e5f..116d61969 100644
  			container.addChild(component);
  		}
  	}
-@@ -2886,6 +2935,7 @@ export class InteractiveMode {
+@@ -2886,6 +2938,7 @@ export class InteractiveMode {
  				this.statusContainer.addChild(this.activeStatusIndicator);
  			}
  		}
@@ -581,11 +659,11 @@ index 7fc71516a..b1f0c3f17 100644
  	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string };
 diff --git a/packages/coding-agent/test/custom-editor-border-content.test.ts b/packages/coding-agent/test/custom-editor-border-content.test.ts
 new file mode 100644
-index 000000000..562a7a3e8
+index 000000000..66beec6dc
 --- /dev/null
 +++ b/packages/coding-agent/test/custom-editor-border-content.test.ts
-@@ -0,0 +1,126 @@
-+import { type TUI, visibleWidth } from "@earendil-works/pi-tui";
+@@ -0,0 +1,188 @@
++import { type TUI, type TuiMouseEvent, visibleWidth } from "@earendil-works/pi-tui";
 +import { describe, expect, it, vi } from "vitest";
 +import { KeybindingsManager } from "../src/core/keybindings.ts";
 +import {
@@ -605,6 +683,22 @@ index 000000000..562a7a3e8
 +/** Content with fixed full and compact forms. */
 +function fixedContent(full: string, compact?: string): EditorBorderContent {
 +	return { render: () => full, renderCompact: compact === undefined ? undefined : () => compact };
++}
++
++function click(x: number, y: number): TuiMouseEvent {
++	return {
++		type: "click",
++		button: "left",
++		x,
++		y,
++		screenX: x,
++		screenY: y,
++		width: 30,
++		height: 3,
++		shift: false,
++		alt: false,
++		ctrl: false,
++	};
 +}
 +
 +function topBorder(editor: CustomEditor, width: number): string {
@@ -711,12 +805,58 @@ index 000000000..562a7a3e8
 +		expect(topBorder(editor, 30)).toBe("─".repeat(30));
 +	});
 +});
++
++describe("CustomEditor border content mouse input", () => {
++	it("dispatches border clicks to the content under the pointer, with local coordinates", () => {
++		initTheme("dark");
++		const editor = createEditor();
++		const seen: Array<{ label: string; x: number; width: number }> = [];
++		const clickable = (label: string): EditorBorderContent => ({
++			render: () => label,
++			handleMouse: (event) => {
++				seen.push({ label, x: event.x, width: event.width });
++				return { handled: true };
++			},
++		});
++		editor.setBorderContent("topLeft", "tl", clickable("TL"));
++		editor.setBorderContent("topRight", "tr", clickable("TR"));
++		editor.render(30); // "── TL ───────────────── TR ──"
++
++		expect(editor.handleMouse(click(25, 0))).toEqual({ handled: true });
++		expect(editor.handleMouse(click(4, 0))).toEqual({ handled: true });
++		expect(seen).toEqual([
++			{ label: "TR", x: 0, width: 2 },
++			{ label: "TL", x: 1, width: 2 },
++		]);
++	});
++
++	it("dispatches bottom border clicks and leaves border fill clicks to the base behavior", () => {
++		initTheme("dark");
++		const editor = createEditor();
++		const seen: number[] = [];
++		editor.setBorderContent("bottomLeft", "bl", {
++			render: () => "BL",
++			handleMouse: (event) => {
++				seen.push(event.x);
++				return { handled: true };
++			},
++		});
++		editor.render(30); // rows: top border, one content row, bottom border
++
++		expect(editor.handleMouse(click(3, 2))).toEqual({ handled: true });
++		expect(seen).toEqual([0]);
++		// Fill clicks reach no content: the base swallows border clicks.
++		expect(editor.handleMouse(click(10, 2))).toEqual({ handled: true, focus: true });
++		expect(editor.handleMouse(click(1, 0))).toEqual({ handled: true, focus: true });
++		expect(seen).toEqual([0]);
++	});
++});
 diff --git a/packages/coding-agent/test/interactive-mode-widget-placement.test.ts b/packages/coding-agent/test/interactive-mode-widget-placement.test.ts
 new file mode 100644
-index 000000000..417cf991f
+index 000000000..a0ab94a0a
 --- /dev/null
 +++ b/packages/coding-agent/test/interactive-mode-widget-placement.test.ts
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,182 @@
 +import { Container } from "@earendil-works/pi-tui";
 +import { beforeAll, describe, expect, it } from "vitest";
 +import type { ExtensionWidgetOptions } from "../src/core/extensions/types.ts";
@@ -726,7 +866,15 @@ index 000000000..417cf991f
 +
 +type WidgetContent =
 +	| string[]
-+	| ((tui: never, theme: never) => { render(width: number): string[]; invalidate(): void; dispose?(): void });
++	| ((
++			tui: never,
++			theme: never,
++	  ) => {
++			render(width: number): string[];
++			invalidate(): void;
++			dispose?(): void;
++			handleMouse?(event: never): unknown;
++	  });
 +
 +type WidgetContext = {
 +	extensionWidgets: Map<
@@ -822,6 +970,29 @@ index 000000000..417cf991f
 +		expect(editor.slots.get("bottomLeft:factory")!.render(80)).toBe("  padded");
 +	});
 +
++	it("forwards border mouse events to the widget component", () => {
++		const editor = borderEditor();
++		const { context } = createContext(editor);
++		const seen: number[] = [];
++		widgetPrototype.setExtensionWidget.call(
++			context,
++			"factory",
++			() => ({
++				render: () => ["hit"],
++				invalidate: () => {},
++				handleMouse: (event: { x: number }) => {
++					seen.push(event.x);
++					return { handled: true };
++				},
++			}),
++			{ placement: "borderTopRight" },
++		);
++
++		const content = editor.slots.get("topRight:factory")!;
++		expect(content.handleMouse?.({ x: 7 } as never)).toEqual({ handled: true });
++		expect(seen).toEqual([7]);
++	});
++
 +	it("places above/below widgets in the widget containers", () => {
 +		const editor = borderEditor();
 +		const { context, above, below } = createContext(editor);
@@ -868,3 +1039,16 @@ index 000000000..417cf991f
 +		expect(context.extensionWidgets.size).toBe(1);
 +	});
 +});
+diff --git a/packages/tui/src/components/editor.ts b/packages/tui/src/components/editor.ts
+index c7fda44eb..31483fd40 100644
+--- a/packages/tui/src/components/editor.ts
++++ b/packages/tui/src/components/editor.ts
+@@ -309,7 +309,7 @@ export class Editor implements Component, Focusable {
+ 
+ 	// Store last render geometry for cursor navigation and mouse hit-testing.
+ 	private lastWidth: number = 80;
+-	private renderedVisibleLineCount = 1;
++	protected renderedVisibleLineCount = 1;
+ 	private renderedAutocompleteHeight = 0;
+ 
+ 	// Vertical scrolling support

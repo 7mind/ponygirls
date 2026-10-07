@@ -52,7 +52,7 @@ runs Pi against the copies in this checkout without deploying anything.
 
 | Extension | What it does |
 |---|---|
-| `ponygirls-model-picker` | Makes the footer useful: one status line with path, session, and native stats, plus a **model / thinking-effort indicator on the input border** (bottom right, e.g. `mimo-v2.6-pro ⌃⇧M • high ⌃⇧E`) and the `ctrl+shift+m` / `ctrl+shift+e` shortcuts that open the same menus (the border indicator is text, so the shortcuts are the way in). |
+| `ponygirls-model-picker` | Makes the footer useful: one status line with path, session, and native stats, plus a **clickable model / thinking-effort indicator on the input border** (bottom right, e.g. `mimo-v2.6-pro ⌃⇧M • high ⌃⇧E`) and the `ctrl+shift+m` / `ctrl+shift+e` shortcuts that open the same menus. |
 | `ponygirls-model-stats` | Measures every provider response (time to first token, total span, decode tok/s) and shows per-model distributions as `/perf` tables. |
 | `ponygirls-usage` | The `/usage` screen: period tabs (today / week / 30 days / all time) with a flat per-provider, per-model cost table, and a global input-size distribution view (chart or table). |
 | `ponygirls-codex-goals` | Codex-style **session goals** (`/goal`): a persistent objective with a token budget that the model is steered by — and unlike most goal systems, every goal instruction is a visible, persisted message in the session transcript, so nothing is said to the model off the record. |

@@ -6,10 +6,10 @@
  * • session] [native stats]. The stats row keeps its native formatting and
  * loses its right side: the model/effort indicator lives on the editor's
  * bottom-right border (a setWidget border widget) with its ⌃⇧M / ⌃⇧E hints.
- * The indicator is text — border widgets take no clicks — so the shortcuts
- * are the way in; they work in either TUI mode and open the picker menus.
- * The picker hint lines double as mouse buttons (mouse delivery is
- * fullscreen-only). Pressing a picker shortcut while that picker is open
+ * Clicking a segment opens its picker — border widgets receive clicks on
+ * their own columns — and the shortcuts work in either TUI mode. The picker
+ * hint lines double as mouse buttons (mouse delivery is fullscreen-only).
+ * Pressing a picker shortcut while that picker is open
  * closes it; the other shortcut switches pickers. Clicks on the
  * transcript or editor cannot close a picker: pi's extension API exposes no
  * mouse channel for clicks outside a component's own bounds.
@@ -339,9 +339,14 @@ class ExtendedFooter implements Component {
 	}
 }
 
-/** The model/effort indicator on the editor's bottom-right border. Text only: border widgets take no clicks. */
+/** The model/effort indicator on the editor's bottom-right border. Clicks open the pickers. */
 class ControlsBorder implements Component {
-	constructor(private readonly theme: Theme) {}
+	private hits: Hit[] = [];
+
+	constructor(
+		private readonly theme: Theme,
+		private readonly open: (kind: PickerKind) => void,
+	) {}
 
 	invalidate(): void {}
 
@@ -357,13 +362,41 @@ class ControlsBorder implements Component {
 				? `${pending.model.provider}/${pending.model.id}`
 				: undefined;
 		const queuedEffort = pending.effort && pending.effort !== thinking ? pending.effort : undefined;
-		const modelPart = queuedModel
-			? `${this.theme.fg("accent", model)} ${this.theme.fg("dim", "→")} ${this.theme.bg("toolPendingBg", queuedModel)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`
-			: `${this.theme.fg("accent", model)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`;
-		const effortPart = queuedEffort
-			? `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", "→")} ${this.theme.bg("toolPendingBg", queuedEffort)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`
-			: `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`;
-		return [`${modelPart} ${this.theme.fg("dim", "•")} ${effortPart}`];
+		const segments: Segment[] = [
+			queuedModel
+				? {
+						plain: `${model} → ${queuedModel} ${MODEL_SHORTCUT_GLYPH}`,
+						styled: `${this.theme.fg("accent", model)} ${this.theme.fg("dim", "→")} ${this.theme.bg("toolPendingBg", queuedModel)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`,
+						action: "model",
+					}
+				: {
+						plain: `${model} ${MODEL_SHORTCUT_GLYPH}`,
+						styled: `${this.theme.fg("accent", model)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`,
+						action: "model",
+					},
+			{ plain: " • ", styled: this.theme.fg("dim", " • ") },
+			queuedEffort
+				? {
+						plain: `${thinking} → ${queuedEffort} ${THINKING_SHORTCUT_GLYPH}`,
+						styled: `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", "→")} ${this.theme.bg("toolPendingBg", queuedEffort)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`,
+						action: "thinking",
+					}
+				: {
+						plain: `${thinking} ${THINKING_SHORTCUT_GLYPH}`,
+						styled: `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`,
+						action: "thinking",
+					},
+		];
+		this.hits = [];
+		return [segmentLine(this.hits, 0, 0, segments)];
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "click" || event.button !== "left") return undefined;
+		const hit = hitAt(this.hits, event.x, event.y);
+		if (!hit) return undefined;
+		this.open(hit.action as PickerKind);
+		return { handled: true };
 	}
 }
 
@@ -944,7 +977,7 @@ export default function (pi: ExtensionAPI): void {
 			CONTROLS_WIDGET_KEY,
 			(tui, theme) => {
 				requestRender = () => tui.requestRender();
-				return new ControlsBorder(theme);
+				return new ControlsBorder(theme, (kind) => open(pi, kind));
 			},
 			{ placement: "borderBottomRight" },
 		);

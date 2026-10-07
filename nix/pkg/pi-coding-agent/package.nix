@@ -48,9 +48,9 @@ buildNpmPackage (finalAttrs: {
   # Widgets could not be placed on the editor's border lines (where the working
   # indicator shows) without replacing the whole editor: earendil-works/pi#10602
   # (PR, open, not merged) adds setWidget border placements (borderTopLeft,
-  # borderTopRight, borderBottomLeft, borderBottomRight). This is PR #10602
-  # cherry-picked onto the pinned tag; drop when a released pi version includes
-  # it.
+  # borderTopRight, borderBottomLeft, borderBottomRight) with mouse dispatch to
+  # border content. This is PR #10602 cherry-picked onto the pinned tag; drop
+  # when a released pi version includes it.
   patches = [
     ./patches/oauth-refresh-on-401.patch
     ./patches/captured-terminal-output.patch
