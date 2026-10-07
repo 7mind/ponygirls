@@ -1,18 +1,17 @@
 /**
  * ponygirls-model-picker — fullscreen clicks and shortcuts for model and thinking level.
  *
- * The built-in footer text is not a click target. This wraps pi's native
- * footer and merges its pwd and stats rows into one status line: [path (branch)
- * • session] [native stats]. The stats row keeps its native formatting and
- * loses its right side: the model/effort indicator lives on the editor's
- * bottom-right border (a setWidget border widget) with its ⌃⇧M / ⌃⇧E hints.
- * Clicking a segment opens its picker — border widgets receive clicks on
- * their own columns — and the shortcuts work in either TUI mode. The picker
- * hint lines double as mouse buttons (mouse delivery is fullscreen-only).
- * Pressing a picker shortcut while that picker is open
- * closes it; the other shortcut switches pickers. Clicks on the
- * transcript or editor cannot close a picker: pi's extension API exposes no
- * mouse channel for clicks outside a component's own bounds.
+ * pi's footer runs compact (setFooterOptions): [path (branch) • session]
+ * [native stats] on one row, with the model suffix hidden — the model/effort
+ * indicator lives on the editor's bottom-right border (a setWidget border
+ * widget) with its ⌃⇧M / ⌃⇧E hints and is the model display. Clicking a
+ * segment opens its picker — border widgets receive clicks on their own
+ * columns — and the shortcuts work in either TUI mode. The picker hint lines
+ * double as mouse buttons (mouse delivery is fullscreen-only). Pressing a
+ * picker shortcut while that picker is open closes it; the other shortcut
+ * switches pickers. Clicks on the transcript or editor cannot close a
+ * picker: pi's extension API exposes no mouse channel for clicks outside a
+ * component's own bounds.
  *
  * Favourites and last-selection times persist in
  * $PI_CODING_AGENT_DIR/model-picker.json (default ~/.pi/agent/model-picker.json).
@@ -36,9 +35,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
-import { FooterComponent, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, SizeValue, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { Input, matchesKey, parseKey, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Input, matchesKey, parseKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
 	cycleFavouriteEntry,
@@ -169,68 +168,6 @@ function thinkingLevels(model: Model<any> | undefined): ModelThinkingLevel[] {
 	return model ? getSupportedThinkingLevels(model) : ["off"];
 }
 
-function shortCwd(cwd: string): string {
-	const home = process.env.HOME;
-	if (home && (cwd === home || cwd.startsWith(`${home}/`))) return `~${cwd.slice(home.length)}`;
-	return cwd;
-}
-
-type NativeSession = ConstructorParameters<typeof FooterComponent>[0];
-type NativeFooterData = ConstructorParameters<typeof FooterComponent>[1];
-
-interface FooterData {
-	getGitBranch(): string | null;
-	getExtensionStatuses(): ReadonlyMap<string, string>;
-	onBranchChange(cb: () => void): () => void;
-}
-
-/**
- * Live AgentSession stand-in: extensions get ctx, not the session. routedModel
- * and modelRuntime are stubbed — the routed display and the "(sub)" marker
- * (outside the hardcoded kimi-coding case) are not visible at the extension
- * boundary, with or without reuse.
- */
-function nativeSession(): NativeSession {
-	return {
-		sessionManager: {
-			getCwd: () => latestCtx!.cwd,
-			getSessionName: () => latestCtx!.sessionManager.getSessionName(),
-			getSessionId: () => latestCtx!.sessionManager.getSessionId(),
-			getLeafId: () => latestCtx!.sessionManager.getLeafId(),
-			getEntries: () => latestCtx!.sessionManager.getEntries(),
-			/** ReadonlySessionManager omits getEntryCount; FooterComponent keys its stats cache on it. */
-			getEntryCount: () => latestCtx!.sessionManager.getEntries().length,
-		},
-		getContextUsage: () => latestCtx!.getContextUsage(),
-		modelRuntime: { isUsingSubscription: () => false },
-		routedModel: undefined,
-		get model() {
-			return latestCtx!.model;
-		},
-		get state() {
-			return { model: latestCtx!.model, thinkingLevel: latestCtx!.thinkingLevel };
-		},
-	} as unknown as NativeSession;
-}
-
-/** FooterDataProvider stand-in: the "(provider)" prefix is suppressed because the border controls show the provider. */
-function nativeFooterData(footerData: FooterData): NativeFooterData {
-	return {
-		getGitBranch: () => footerData.getGitBranch(),
-		getExtensionStatuses: () => footerData.getExtensionStatuses(),
-		getAvailableProviderCount: () => 1,
-		onBranchChange: (callback: () => void) => footerData.onBranchChange(callback),
-	};
-}
-
-/** Mirror of FooterComponent's right side, whose provider prefix nativeFooterData suppresses. */
-function nativeRightSide(model: Model<any> | undefined, thinking: ModelThinkingLevel | undefined): string {
-	const id = model?.id || "no-model";
-	if (!model?.reasoning) return id;
-	const level = thinking || "off";
-	return level === "off" ? `${id} • thinking off` : `${id} • ${level}`;
-}
-
 
 class Outlined implements Component {
 	private bodyHeight = 0;
@@ -275,68 +212,6 @@ function popup(width: SizeValue, maxHeight: SizeValue) {
 		overlay: true as const,
 		overlayOptions: { anchor: "center" as const, width, maxHeight, margin: 1 },
 	};
-}
-
-class ExtendedFooter implements Component {
-	private readonly native: FooterComponent;
-
-	constructor(
-		tui: TUI,
-		private readonly theme: Theme,
-		private readonly footerData: FooterData,
-	) {
-		this.native = new FooterComponent(nativeSession(), nativeFooterData(footerData));
-		this.dispose = footerData.onBranchChange(() => tui.requestRender());
-	}
-
-	dispose: () => void;
-
-	invalidate(): void {
-		this.native.invalidate();
-	}
-
-	render(width: number): string[] {
-		const ctx = latestCtx;
-		if (!ctx) return [truncateToWidth(this.theme.fg("dim", "no session"), width)];
-
-		const branch = this.footerData.getGitBranch();
-		const sessionName = ctx.sessionManager.getSessionName();
-		const path = `${shortCwd(ctx.cwd)}${branch ? ` (${branch})` : ""}${sessionName ? ` • ${sessionName}` : ""}`;
-		// One status line: [path (branch) • session] [native stats]. The native
-		// stats row keeps its formatting and loses its right side — the model
-		// indicator lives on the editor border now. The path yields in tiers
-		// (full, half, dropped) before the swap gives up and the native rows
-		// pass through.
-		const natural = visibleWidth(this.theme.fg("dim", path));
-		for (const budget of [natural, Math.floor(natural / 2), 0]) {
-			const merged = this.mergeRow(width, budget, path, nativeRightSide(ctx.model, ctx.thinkingLevel));
-			if (merged) return merged;
-		}
-		return this.native.render(width);
-	}
-
-	private mergeRow(width: number, budget: number, path: string, nativeRight: string): string[] | undefined {
-		const left = budget <= 0 ? "" : truncateToWidth(this.theme.fg("dim", path), budget, this.theme.fg("dim", "..."));
-		const leftWidth = visibleWidth(left);
-		const gap = leftWidth > 0 ? 2 : 0;
-		const rowBudget = width - leftWidth - gap;
-		const nativeWidth = rowBudget + visibleWidth(nativeRight);
-		if (nativeWidth <= 0) return undefined;
-		const rows = this.native.render(nativeWidth);
-		const stats = rows[1] ?? "";
-		if (!stripTerminalSequences(stats).endsWith(nativeRight)) return undefined;
-		const cut = truncateToWidth(stats, visibleWidth(stats) - visibleWidth(nativeRight), "");
-		// The native row pads the stats to full width to right-align the model
-		// indicator; that padding would shunt merged content to the right. Strip
-		// it (ANSI-aware: the padding may sit inside a dim span) and re-pad after.
-		const cutPlain = stripTerminalSequences(cut);
-		const padCount = cutPlain.length - cutPlain.trimEnd().length;
-		const statsPart = padCount > 0 ? truncateToWidth(cut, visibleWidth(cut) - padCount, "") : cut;
-		const padWidth = width - (leftWidth + gap + visibleWidth(statsPart));
-		if (padWidth < 0) return undefined;
-		const row = left + " ".repeat(gap) + statsPart + " ".repeat(padWidth);
-		return [row, ...rows.slice(2)]; // native status rows pass through
-	}
 }
 
 /** The model/effort indicator on the editor's bottom-right border. Clicks open the pickers. */
@@ -972,7 +847,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		latestCtx = ctx;
 		if (ctx.mode !== "tui") return;
-		ctx.ui.setFooter((tui, theme, footerData) => new ExtendedFooter(tui, theme, footerData));
+		ctx.ui.setFooterOptions({ compact: true, showModelSuffix: false });
 		ctx.ui.setWidget(
 			CONTROLS_WIDGET_KEY,
 			(tui, theme) => {

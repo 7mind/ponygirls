@@ -38,7 +38,7 @@ convenience, not a requirement.
 
 | Package | What it is |
 |---|---|
-| `pi-coding-agent` | **Pi** — the terminal coding agent from [earendil-works/pi](https://github.com/earendil-works/pi), built from source at a pinned release, with its bundled provider/model registry. We carry a small set of patches on top of upstream (OAuth force-refresh on HTTP 401, extension console output no longer garbling the TUI, surfaced settings-write errors), each documented in `nix/pkg/pi-coding-agent/package.nix` with the upstream issue it tracks. |
+| `pi-coding-agent` | **Pi** — the terminal coding agent from [earendil-works/pi](https://github.com/earendil-works/pi), built from source at a pinned release, with its bundled provider/model registry. We carry a set of patches on top of upstream (OAuth force-refresh on HTTP 401, extension console output no longer garbling the TUI, surfaced settings-write errors, Retry-After retries, editor border widgets, footer options), each documented in `nix/pkg/pi-coding-agent/package.nix` with the upstream issue it tracks. |
 | `codex` | **OpenAI Codex CLI**, packaged from the official release binaries (including its code-mode host) so no Rust build is needed and alpha tags track closely. `nix/pkg/codex/update.sh` bumps it. |
 | `claude-code` | **Anthropic Claude Code**, packaged from the official per-platform native npm artefacts and made Nix-compatible (the Bun single-file executable is left byte-identical except for the dynamic-loader fixup). `update.sh` bumps it. |
 | `pi-search-hub` | A Pi package providing unified `web_search` / `web_read` over ~19 search and reader backends with automatic fallback. We install it as a local, manifest-corrected package at a pinned version (upstream packaging defects are documented in `nix/pkg/pi-search-hub/package.nix`). |
@@ -52,7 +52,7 @@ runs Pi against the copies in this checkout without deploying anything.
 
 | Extension | What it does |
 |---|---|
-| `ponygirls-model-picker` | Makes the footer useful: one status line with path, session, and native stats, plus a **clickable model / thinking-effort indicator on the input border** (bottom right, e.g. `mimo-v2.6-pro ⌃⇧M • high ⌃⇧E`) and the `ctrl+shift+m` / `ctrl+shift+e` shortcuts that open the same menus. |
+| `ponygirls-model-picker` | Compacts pi's footer into one line (path, session, native stats) and hides its model suffix (`setFooterOptions`), and keeps a **clickable model / thinking-effort indicator on the input border** (bottom right, e.g. `mimo-v2.6-pro ⌃⇧M • high ⌃⇧E`) with the `ctrl+shift+m` / `ctrl+shift+e` shortcuts that open the same menus. |
 | `ponygirls-model-stats` | Measures every provider response (time to first token, total span, decode tok/s) and shows per-model distributions as `/perf` tables. |
 | `ponygirls-usage` | The `/usage` screen: period tabs (today / week / 30 days / all time) with a flat per-provider, per-model cost table, and a global input-size distribution view (chart or table). |
 | `ponygirls-codex-goals` | Codex-style **session goals** (`/goal`): a persistent objective with a token budget that the model is steered by — and unlike most goal systems, every goal instruction is a visible, persisted message in the session transcript, so nothing is said to the model off the record. |

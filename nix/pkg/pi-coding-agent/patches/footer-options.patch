@@ -1,0 +1,310 @@
+diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
+index 59e1eb62e..793042489 100644
+--- a/packages/coding-agent/src/core/extensions/runner.ts
++++ b/packages/coding-agent/src/core/extensions/runner.ts
+@@ -333,6 +333,7 @@ const noOpUIContext: ExtensionUIContext = {
+ 	setHiddenThinkingLabel: () => {},
+ 	setWidget: () => {},
+ 	setFooter: () => {},
++	setFooterOptions: () => {},
+ 	setHeader: () => {},
+ 	setTitle: () => {},
+ 	custom: async () => undefined as never,
+diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
+index ac3f7cf97..97051ed0b 100644
+--- a/packages/coding-agent/src/core/extensions/types.ts
++++ b/packages/coding-agent/src/core/extensions/types.ts
+@@ -141,6 +141,14 @@ export interface ExtensionWidgetOptions {
+ /** Raw terminal input listener for extensions. */
+ export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
+ 
++/** Built-in footer display configuration. */
++export interface FooterOptions {
++	/** Render pwd and stats on a single row instead of two. */
++	compact?: boolean;
++	/** Show the model and thinking level on the right of the stats row. */
++	showModelSuffix?: boolean;
++}
++
+ /** Working indicator configuration for the interactive streaming loader. */
+ export interface WorkingIndicatorOptions {
+ 	/** Animation frames. Use an empty array to hide the indicator entirely. Custom frames are rendered verbatim. */
+@@ -203,6 +211,9 @@ export interface ExtensionUIContext {
+ 		options?: ExtensionWidgetOptions,
+ 	): void;
+ 
++	/** Configure the built-in footer (compact rows, model suffix). Omit the argument to restore the defaults. Has no effect while a custom footer is installed. */
++	setFooterOptions(options?: FooterOptions): void;
++
+ 	/** Set a custom footer component, or undefined to restore the built-in footer.
+ 	 *
+ 	 * The factory receives a FooterDataProvider for data not otherwise accessible:
+diff --git a/packages/coding-agent/src/modes/interactive/components/footer.ts b/packages/coding-agent/src/modes/interactive/components/footer.ts
+index 8bb7b353e..e3f790973 100644
+--- a/packages/coding-agent/src/modes/interactive/components/footer.ts
++++ b/packages/coding-agent/src/modes/interactive/components/footer.ts
+@@ -2,7 +2,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
+ import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+ import type { AgentSession } from "../../../core/agent-session.ts";
+ import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
+-import type { ContextUsage } from "../../../core/extensions/types.ts";
++import type { ContextUsage, FooterOptions } from "../../../core/extensions/types.ts";
+ import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+ import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
+ import { theme } from "../theme/theme.ts";
+@@ -61,6 +61,7 @@ interface SessionStats {
+  */
+ export class FooterComponent implements Component {
+ 	private autoCompactEnabled = true;
++	private options: FooterOptions = {};
+ 	private session: AgentSession;
+ 	private footerData: ReadonlyFooterDataProvider;
+ 	private sessionStats?: SessionStats;
+@@ -78,6 +79,11 @@ export class FooterComponent implements Component {
+ 		this.autoCompactEnabled = enabled;
+ 	}
+ 
++	/** Configure the built-in display; undefined restores the defaults. */
++	setFooterOptions(options?: FooterOptions): void {
++		this.options = options ?? {};
++	}
++
+ 	/**
+ 	 * No-op: git branch caching now handled by provider.
+ 	 * Kept for compatibility with existing call sites in interactive-mode.
+@@ -154,6 +160,40 @@ export class FooterComponent implements Component {
+ 		return this.sessionStats;
+ 	}
+ 
++	/**
++	 * The stats row: stats on the left, the model suffix right-aligned with at
++	 * least `minPadding` columns between them. The suffix yields first. Each
++	 * part is dimmed separately: the stats may contain color codes (for context
++	 * %) that end with a reset, which would clear an outer dim wrapper.
++	 */
++	private renderStatsRow(statsLeft: string, rightSide: string, minPadding: number, width: number): string {
++		let left = statsLeft;
++		let leftWidth = visibleWidth(left);
++		if (leftWidth > width) {
++			left = truncateToWidth(left, width, "...");
++			leftWidth = visibleWidth(left);
++		}
++		const rightWidth = visibleWidth(rightSide);
++		let statsLine: string;
++		if (leftWidth + minPadding + rightWidth <= width) {
++			// Both fit - add padding to right-align model
++			const padding = " ".repeat(width - leftWidth - rightWidth);
++			statsLine = left + padding + rightSide;
++		} else {
++			// Need to truncate right side
++			const availableForRight = width - leftWidth - minPadding;
++			if (availableForRight > 0) {
++				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
++				const padding = " ".repeat(Math.max(0, width - leftWidth - visibleWidth(truncatedRight)));
++				statsLine = left + padding + truncatedRight;
++			} else {
++				// Not enough space for right side at all
++				statsLine = left;
++			}
++		}
++		return theme.fg("dim", left) + theme.fg("dim", statsLine.slice(left.length));
++	}
++
+ 	render(width: number): string[] {
+ 		const state = this.session.state;
+ 		const { usageTotals, latestCacheHitRate, contextUsage } = this.getSessionStats();
+@@ -214,18 +254,12 @@ export class FooterComponent implements Component {
+ 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
+ 		}
+ 
+-		let statsLeft = statsParts.join(" ");
++		const statsLeft = statsParts.join(" ");
+ 
+ 		// Add model name on the right side, plus thinking level if model supports it
+ 		const modelName = state.model?.id || "no-model";
+ 
+-		let statsLeftWidth = visibleWidth(statsLeft);
+-
+-		// If statsLeft is too wide, truncate it
+-		if (statsLeftWidth > width) {
+-			statsLeft = truncateToWidth(statsLeft, width, "...");
+-			statsLeftWidth = visibleWidth(statsLeft);
+-		}
++		const statsLeftWidth = visibleWidth(statsLeft);
+ 
+ 		// Calculate available space for padding (minimum 2 spaces between stats and model)
+ 		const minPadding = 2;
+@@ -254,38 +288,23 @@ export class FooterComponent implements Component {
+ 			}
+ 		}
+ 
+-		const rightSideWidth = visibleWidth(rightSide);
+-		const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
+-
+-		let statsLine: string;
+-		if (totalNeeded <= width) {
+-			// Both fit - add padding to right-align model
+-			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
+-			statsLine = statsLeft + padding + rightSide;
++		const suffix = this.options.showModelSuffix === false ? "" : rightSide;
++
++		let lines: string[];
++		if (this.options.compact === true) {
++			// One row: the pwd yields to the stats and model (truncate with "...", then drop).
++			const statsNatural = statsLeftWidth + (suffix === "" ? 0 : minPadding + visibleWidth(suffix));
++			const pwdBudget = width - statsNatural - 2;
++			const pwdPart = pwdBudget > 0 ? truncateToWidth(theme.fg("dim", pwd), pwdBudget, theme.fg("dim", "...")) : "";
++			const pwdWidth = visibleWidth(pwdPart);
++			const statsWidth = Math.max(0, width - pwdWidth - (pwdWidth > 0 ? 2 : 0));
++			const statsLine = this.renderStatsRow(statsLeft, suffix, minPadding, statsWidth);
++			lines = [pwdWidth > 0 ? `${pwdPart}  ${statsLine}` : statsLine];
+ 		} else {
+-			// Need to truncate right side
+-			const availableForRight = width - statsLeftWidth - minPadding;
+-			if (availableForRight > 0) {
+-				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
+-				const truncatedRightWidth = visibleWidth(truncatedRight);
+-				const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
+-				statsLine = statsLeft + padding + truncatedRight;
+-			} else {
+-				// Not enough space for right side at all
+-				statsLine = statsLeft;
+-			}
++			const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
++			lines = [pwdLine, this.renderStatsRow(statsLeft, suffix, minPadding, width)];
+ 		}
+ 
+-		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
+-		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
+-		// before and after the colored section independently.
+-		const dimStatsLeft = theme.fg("dim", statsLeft);
+-		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
+-		const dimRemainder = theme.fg("dim", remainder);
+-
+-		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
+-
+ 		// Add extension statuses on a single line, sorted by key alphabetically
+ 		const extensionStatuses = this.footerData.getExtensionStatuses();
+ 		if (extensionStatuses.size > 0) {
+diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+index a7295865a..c1dc9f01a 100644
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -2449,6 +2449,7 @@ export class InteractiveMode {
+ 		this.ui.hideOverlay();
+ 		this.clearExtensionTerminalInputListeners();
+ 		this.setExtensionFooter(undefined);
++		this.footer.setFooterOptions(undefined);
+ 		this.setExtensionHeader(undefined);
+ 		this.clearExtensionWidgets();
+ 		this.footerDataProvider.clearExtensionStatuses();
+@@ -2653,6 +2654,10 @@ export class InteractiveMode {
+ 			setHiddenThinkingLabel: (label) => this.setHiddenThinkingLabel(label),
+ 			setWidget: (key, content, options) => this.setExtensionWidget(key, content, options),
+ 			setFooter: (factory) => this.setExtensionFooter(factory),
++			setFooterOptions: (options) => {
++				this.footer.setFooterOptions(options);
++				this.ui.requestRender();
++			},
+ 			setHeader: (factory) => this.setExtensionHeader(factory),
+ 			setTitle: (title) => this.ui.terminal.setTitle(title),
+ 			custom: (factory, options) => this.showExtensionCustom(factory, options),
+diff --git a/packages/coding-agent/src/modes/rpc/rpc-mode.ts b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
+index 1c0995d36..ab8c41722 100644
+--- a/packages/coding-agent/src/modes/rpc/rpc-mode.ts
++++ b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
+@@ -207,6 +207,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
+ 			// Component factories are not supported in RPC mode - would need TUI access
+ 		},
+ 
++		setFooterOptions(): void {
++			// Built-in footer configuration not supported in RPC mode
++		},
++
+ 		setFooter(_factory: unknown): void {
+ 			// Custom footer not supported in RPC mode - requires TUI access
+ 		},
+diff --git a/packages/coding-agent/test/footer-width.test.ts b/packages/coding-agent/test/footer-width.test.ts
+index 12c074d01..39f277c54 100644
+--- a/packages/coding-agent/test/footer-width.test.ts
++++ b/packages/coding-agent/test/footer-width.test.ts
+@@ -117,6 +117,66 @@ describe("formatCwdForFooter", () => {
+ 	});
+ });
+ 
++describe("FooterComponent options", () => {
++	beforeAll(() => {
++		initTheme(undefined, false);
++	});
++
++	const session = () =>
++		createSession({
++			sessionName: "session",
++			modelId: "mimo-v2.6-pro",
++			provider: "xiaomi-token-plan-ams",
++			reasoning: true,
++			thinkingLevel: "high",
++		});
++
++	it("keeps two rows with the model suffix by default", () => {
++		const footer = new FooterComponent(session(), createFooterData(1));
++		const lines = footer.render(80);
++		expect(lines).toHaveLength(2);
++		expect(stripAnsi(lines[1]!)).toContain("mimo-v2.6-pro • high");
++	});
++
++	it("compacts pwd and stats into one row", () => {
++		const footer = new FooterComponent(session(), createFooterData(1));
++		footer.setFooterOptions({ compact: true });
++		const lines = footer.render(80);
++		expect(lines).toHaveLength(1);
++		expect(visibleWidth(lines[0]!)).toBe(80);
++		const text = stripAnsi(lines[0]!);
++		expect(text).toContain("session");
++		expect(text).toContain("mimo-v2.6-pro • high");
++	});
++
++	it("hides the model suffix without touching the stats", () => {
++		const footer = new FooterComponent(session(), createFooterData(1));
++		footer.setFooterOptions({ showModelSuffix: false });
++		const lines = footer.render(80);
++		expect(lines).toHaveLength(2);
++		expect(stripAnsi(lines[1]!)).not.toContain("mimo-v2.6-pro");
++		expect(stripAnsi(lines[1]!)).toContain("(auto)");
++	});
++
++	it("restores the defaults when called without arguments", () => {
++		const footer = new FooterComponent(session(), createFooterData(1));
++		footer.setFooterOptions({ compact: true, showModelSuffix: false });
++		footer.setFooterOptions();
++		const lines = footer.render(80);
++		expect(lines).toHaveLength(2);
++		expect(stripAnsi(lines[1]!)).toContain("mimo-v2.6-pro");
++	});
++
++	it("drops the pwd rather than the stats when compact is tight", () => {
++		const footer = new FooterComponent(session(), createFooterData(1));
++		footer.setFooterOptions({ compact: true });
++		const lines = footer.render(30);
++		expect(lines).toHaveLength(1);
++		expect(visibleWidth(lines[0]!)).toBeLessThanOrEqual(30);
++		expect(stripAnsi(lines[0]!)).not.toContain("session");
++	});
++});
++
+ describe("FooterComponent width handling", () => {
+ 	beforeAll(() => {
+ 		initTheme(undefined, false);
+diff --git a/packages/coding-agent/test/suite/harness.ts b/packages/coding-agent/test/suite/harness.ts
+index 220a1558f..7e4ce3592 100644
+--- a/packages/coding-agent/test/suite/harness.ts
++++ b/packages/coding-agent/test/suite/harness.ts
+@@ -86,6 +86,7 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})
+ 		setHiddenThinkingLabel: () => {},
+ 		setWidget: () => {},
+ 		setFooter: () => {},
++		setFooterOptions: () => {},
+ 		setHeader: () => {},
+ 		setTitle: () => {},
+ 		custom: async <T>() => undefined as T,
