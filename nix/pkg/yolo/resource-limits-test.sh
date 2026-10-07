@@ -37,6 +37,15 @@ assert_eq() {
   fi
 }
 
+assert_contains() {
+  local desc="$1" haystack="$2" needle="$3"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [[ "$haystack" != *"$needle"* ]]; then
+    echo "FAIL: $desc -- expected output to contain [$needle]"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
 run_limits_yolo() {
   {
     cd "$PROJECT_DIR" &&
@@ -117,6 +126,62 @@ assert_eq "both limits disabled leaves the data segment untouched" \
   "$(mem_soft_of "$BASELINE")" "$(mem_soft_of "$OUT")"
 assert_eq "both limits disabled leaves the affinity untouched" \
   "$BASELINE_CPUS" "$(expand_cpu_list "$(cpus_of "$OUT")")"
+
+# Explicit values: SIZE is KiB or a K/M/G/T (1024-based) suffix.
+OUT="$(run_limits_yolo --mem-limit=100M)"
+assert_eq "--mem-limit=100M sets the data-segment limit" \
+  "102400" "$(mem_soft_of "$OUT")"
+assert_eq "--mem-limit=100M sets the hard limit too" \
+  "102400" "$(mem_hard_of "$OUT")"
+assert_eq "--mem-limit=100M keeps the default CPU pin" \
+  "$EXPECTED_CPUS" "$(expand_cpu_list "$(cpus_of "$OUT")")"
+
+OUT="$(run_limits_yolo --mem-limit=51200)"
+assert_eq "--mem-limit takes a bare KiB value" "51200" "$(mem_soft_of "$OUT")"
+
+OUT="$(run_limits_yolo --mem-limit=1G --disable=cpu-limit)"
+assert_eq "--mem-limit=1G is 1048576 KiB" "1048576" "$(mem_soft_of "$OUT")"
+
+OUT="$(run_limits_yolo --mem-limit=none)"
+assert_eq "--mem-limit=none leaves the data segment untouched" \
+  "$(mem_soft_of "$BASELINE")" "$(mem_soft_of "$OUT")"
+
+OUT="$(run_limits_yolo --cpu-limit=2 --disable=mem-limit)"
+assert_eq "--cpu-limit pins exactly N threads" \
+  "2" "$(wc -w <<< "$(expand_cpu_list "$(cpus_of "$OUT")")")"
+assert_eq "--cpu-limit pins the first N allowed CPUs" \
+  "$(printf '%s\n' "$BASELINE_CPUS" | cut -d' ' -f1-2)" "$(expand_cpu_list "$(cpus_of "$OUT")")"
+
+OUT="$(run_limits_yolo --cpu-limit=none)"
+assert_eq "--cpu-limit=none leaves the affinity untouched" \
+  "$BASELINE_CPUS" "$(expand_cpu_list "$(cpus_of "$OUT")")"
+assert_eq "--cpu-limit=none keeps the default memory cap" \
+  "$EXPECTED_MEM_KIB" "$(mem_soft_of "$OUT")"
+
+# --disable wins over a value flag for the same limit.
+OUT="$(run_limits_yolo --disable=mem-limit --mem-limit=100M)"
+assert_eq "--disable=mem-limit beats --mem-limit" \
+  "$(mem_soft_of "$BASELINE")" "$(mem_soft_of "$OUT")"
+
+# Invalid specs fail fast at argument parsing.
+OUT="$(run_limits_yolo --mem-limit=0)"
+STATUS=$?
+assert_eq "--mem-limit=0 is rejected" "1" "$STATUS"
+assert_contains "--mem-limit=0 points at 'none'" "$OUT" "use 'none'"
+
+OUT="$(run_limits_yolo --mem-limit=12X)"
+STATUS=$?
+assert_eq "--mem-limit rejects unknown units" "1" "$STATUS"
+assert_contains "--mem-limit=12X shows the expected form" "$OUT" "--mem-limit expects SIZE"
+
+OUT="$(run_limits_yolo --cpu-limit=zero)"
+STATUS=$?
+assert_eq "--cpu-limit rejects non-numbers" "1" "$STATUS"
+assert_contains "--cpu-limit=zero shows the expected form" "$OUT" "--cpu-limit expects a positive"
+
+OUT="$(run_limits_yolo --cpu-limit=0)"
+STATUS=$?
+assert_eq "--cpu-limit=0 is rejected" "1" "$STATUS"
 
 echo "resource-limits-test: $TESTS_RUN tests, $FAILURES failures"
 [[ $FAILURES -eq 0 ]] || exit 1

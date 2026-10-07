@@ -62,6 +62,12 @@ COPY_SESSIONS_SPEC=""
 # read-write, so running from the home directory would mount the entire home
 # (credentials, keys, history) into the sandbox. --unsafe-share-home overrides.
 UNSAFE_SHARE_HOME=0
+# Resource-limit overrides from the CLI (empty = built-in default):
+#   --mem-limit=SIZE  -> KiB, 'none' removes the limit
+#   --cpu-limit=N     -> hardware threads, 'none' removes the pin
+# Validated into MEM_LIMIT/CPU_LIMIT after argument parsing.
+MEM_LIMIT_SPEC=""
+CPU_LIMIT_SPEC=""
 # Feature suppression: --disable=TAG (repeatable, comma-separated) drops every
 # device bind (extraDevicePaths), prompt fragment (promptExtensions) and host
 # pre-start hook (hooks.pre-start.host) carrying TAG. Audio is tagged "audio"
@@ -123,6 +129,11 @@ Flags (must precede the subcommand):
       --rw PATH          Ad-hoc read-write bind of a host PATH (repeatable;
                          skipped if missing).
       --env KEY=VAL      Set an env var inside the sandbox (repeatable).
+      --mem-limit=SIZE   Memory limit for this launch: KiB, or with a K/M/G/T
+                         (1024-based) suffix, e.g. 8G. 'none' removes the
+                         limit (default: 1/8 of host RAM).
+      --cpu-limit=N      Pin this launch to N hardware threads. 'none' removes
+                         the pin (default: 1/4 of hardware threads).
       --unsafe-share-home  Allow running with $PWD == $HOME (binds all of $HOME
                          read-write; refused by default).
   -h, --help             Show this help and exit.
@@ -148,8 +159,9 @@ Subcommands:
 Resource limits (on by default, applied to the whole launch):
       Each launch is limited to 1/8 of host RAM (process data segment) and
       pinned to 1/4 of the host's hardware threads, so one runaway agent
-      cannot OOM or saturate the host. Remove with --disable=mem-limit and/or
-      --disable=cpu-limit (e.g. for heavy `cmd` work).
+      cannot OOM or saturate the host. Override per launch with
+      --mem-limit=SIZE and --cpu-limit=N ('none' removes that limit), or
+      drop them unconditionally with --disable=mem-limit,cpu-limit.
 
 The current working directory ($PWD) is always bound read-write. Extra binds
 and devices are also configured declaratively via the home-manager module
@@ -201,6 +213,18 @@ while [[ $# -gt 0 ]]; do
         echo "Error: $1 requires a path" >&2; exit 1
       fi
       ADHOC_BIND_ARGS+=(--rw "$2"); shift 2 ;;
+    --mem-limit=*) MEM_LIMIT_SPEC="${1#*=}"; shift ;;
+    --mem-limit)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: --mem-limit requires SIZE or 'none'" >&2; exit 1
+      fi
+      MEM_LIMIT_SPEC="$2"; shift 2 ;;
+    --cpu-limit=*) CPU_LIMIT_SPEC="${1#*=}"; shift ;;
+    --cpu-limit)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: --cpu-limit requires N or 'none'" >&2; exit 1
+      fi
+      CPU_LIMIT_SPEC="$2"; shift 2 ;;
     --unsafe-share-home) UNSAFE_SHARE_HOME=1; shift ;;
     --env) ENV_ARGS+=(--env "$2"); shift 2 ;;
     -h|--help) print_help; exit 0 ;;
@@ -253,6 +277,45 @@ if [[ -n "$PROFILE" ]] && ! valid_profile_name "$PROFILE"; then
   echo "Error: invalid profile name '$PROFILE' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')" >&2
   exit 1
 fi
+
+# Validate the resource-limit specs into MEM_LIMIT (KiB) / CPU_LIMIT (thread
+# count): SIZE is KiB or a K/M/G/T (1024-based) suffix, N is a positive
+# hardware-thread count, and 'none' removes that limit. Empty stays empty:
+# the built-in default (1/8 of host RAM, 1/4 of hardware threads) applies.
+MEM_LIMIT=""
+CPU_LIMIT=""
+
+parse_mem_limit() {
+  local _spec="$1" _n _mult=1
+  if [[ "$_spec" == "none" ]]; then MEM_LIMIT="none"; return; fi
+  if [[ "$_spec" =~ ^([0-9]+)([KkMmGgTt])?$ ]]; then
+    _n="${BASH_REMATCH[1]}"
+    if (( 10#$_n == 0 )); then
+      echo "Error: --mem-limit=0 would fail every allocation; use 'none' to remove the limit" >&2
+      exit 1
+    fi
+    case "${BASH_REMATCH[2]}" in
+      M|m) _mult=1024 ;;
+      G|g) _mult=$((1024 * 1024)) ;;
+      T|t) _mult=$((1024 * 1024 * 1024)) ;;
+    esac
+    MEM_LIMIT=$((10#$_n * _mult))
+    return
+  fi
+  echo "Error: --mem-limit expects SIZE (KiB, or a K/M/G/T suffix, e.g. 8G) or 'none' (got '$_spec')" >&2
+  exit 1
+}
+
+parse_cpu_limit() {
+  local _spec="$1"
+  if [[ "$_spec" == "none" ]]; then CPU_LIMIT="none"; return; fi
+  if [[ "$_spec" =~ ^[1-9][0-9]*$ ]]; then CPU_LIMIT="$_spec"; return; fi
+  echo "Error: --cpu-limit expects a positive hardware-thread count or 'none' (got '$_spec')" >&2
+  exit 1
+}
+
+[[ -n "$MEM_LIMIT_SPEC" ]] && parse_mem_limit "$MEM_LIMIT_SPEC"
+[[ -n "$CPU_LIMIT_SPEC" ]] && parse_cpu_limit "$CPU_LIMIT_SPEC"
 
 # Named profiles live as directories under this root (see profile_dir below).
 PROFILES_ROOT="${HOME}/.config/yolo"
@@ -454,21 +517,30 @@ fi
 # memory rlimit). If the current affinity mask already holds fewer CPUs than
 # the quota (a nested launch), the mask is left at the allowed list.
 #
-# `--disable=mem-limit` / `--disable=cpu-limit` drop the respective limit.
-if tag_active mem-limit on; then
-  _mem_total_kib="$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)"
-  if [[ ! "$_mem_total_kib" =~ ^[0-9]+$ ]]; then
-    echo "Error: cannot read MemTotal from /proc/meminfo" >&2
-    exit 1
+# `--mem-limit=SIZE` / `--cpu-limit=N` override the defaults for one launch
+# ('none' removes that limit); `--disable=mem-limit` / `--disable=cpu-limit`
+# drop the respective limit unconditionally.
+if tag_active mem-limit on && [[ "$MEM_LIMIT" != "none" ]]; then
+  _mem_limit_kib="$MEM_LIMIT"
+  if [[ -z "$_mem_limit_kib" ]]; then
+    _mem_total_kib="$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)"
+    if [[ ! "$_mem_total_kib" =~ ^[0-9]+$ ]]; then
+      echo "Error: cannot read MemTotal from /proc/meminfo" >&2
+      exit 1
+    fi
+    _mem_limit_kib="$((_mem_total_kib / 8))"
   fi
-  ulimit -d "$((_mem_total_kib / 8))" || {
+  ulimit -d "$_mem_limit_kib" || {
     echo "Error: cannot set the process data-segment limit" >&2
     exit 1
   }
 fi
-if tag_active cpu-limit on; then
-  _cpu_quota=$(( $(nproc --all) / 4 ))
-  (( _cpu_quota < 1 )) && _cpu_quota=1
+if tag_active cpu-limit on && [[ "$CPU_LIMIT" != "none" ]]; then
+  _cpu_quota="$CPU_LIMIT"
+  if [[ -z "$_cpu_quota" ]]; then
+    _cpu_quota=$(( $(nproc --all) / 4 ))
+    (( _cpu_quota < 1 )) && _cpu_quota=1
+  fi
   _cpus_allowed="$(awk '/^Cpus_allowed_list:/ { print $2 }' /proc/self/status)"
   _cpu_pick=()
   IFS=',' read -ra _cpu_ranges <<< "$_cpus_allowed"
@@ -487,6 +559,9 @@ if tag_active cpu-limit on; then
   if [[ ${#_cpu_pick[@]} -eq 0 ]]; then
     echo "Error: cannot parse Cpus_allowed_list from /proc/self/status" >&2
     exit 1
+  fi
+  if [[ ${#_cpu_pick[@]} -lt _cpu_quota ]]; then
+    echo "warning: CPU quota $_cpu_quota exceeds the ${#_cpu_pick[@]} allowed CPUs; pinning to all of them" >&2
   fi
   _cpu_csv="$(IFS=,; printf '%s' "${_cpu_pick[*]}")"
   "$YOLO_TASKSET" -pc "$_cpu_csv" $$ >/dev/null || {
