@@ -2020,7 +2020,11 @@ export class Supervisor implements GateHost {
       let line: string | null = null;
       if (r.kind === "task.terminal") {
         const path = this.agents.get(r.body["agentId"] as AgentId)?.record.path ?? String(r.body["agentId"]);
-        line = `${path} task ${String(r.body["taskRunId"])} ended ${String(r.body["outcome"])}`;
+        const detail = typeof r.body["detail"] === "string" ? r.body["detail"].trim() : "";
+        line = `${path} task ${String(r.body["taskRunId"])} ended ${String(r.body["outcome"])}${detail === "" ? "" : `: ${detail}`}`;
+      } else if (r.kind === "agent.quarantined" && typeof r.body["reason"] === "string") {
+        const path = this.agents.get(r.body["agentId"] as AgentId)?.record.path ?? String(r.body["agentId"]);
+        line = `${path} quarantined: ${r.body["reason"]}`;
       } else if (r.kind === "mailbox.accepted" && r.body["to"] === "governor" && typeof r.body["text"] === "string") {
         const from = this.agents.get(r.body["from"] as AgentId)?.record.path ?? String(r.body["from"]);
         line = `${r.body["requestReply"] === true ? `question ${String(r.body["messageId"])}` : "message"} from ${from} (${String(r.body["from"])}): ${(r.body["text"] as string).slice(0, 2000)}`;
@@ -2585,6 +2589,7 @@ export class Supervisor implements GateHost {
       if (rt.record.allocation.writableRoot || !ownershipOk) {
         rt.quarantined = detail;
         quarantined.push(rt.record.id);
+        this.publish("agent.quarantined", { agentId: rt.record.id, reason: detail });
       }
     }
     this.publish("generation.settled", { agentId: rt.record.id, taskRunId: lost.taskRunId, generation: lost.generation, outcome, cause: "PROCESS_LOST" });

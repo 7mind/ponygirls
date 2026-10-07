@@ -82,6 +82,12 @@ test("crash with unconfirmed writer effects quarantines the workspace", async ()
       // Replacement execution is prohibited on the quarantined workspace.
       await assert.rejects(() => sup2.dispatchPending("governor", res.agentId, res.taskRunId), /NOT_FOUND|RECOVERY_OWNER_UNCONFIRMED/);
       await assert.rejects(() => sup2.sendMessage("governor", res.agentId, "task", "again", {}, "req-9"), /RECOVERY_OWNER_UNCONFIRMED/);
+      // The quarantine itself is governor-visible: agent path plus reason.
+      const { lines } = sup2.noticesSince(0, 50);
+      const quar = lines.find((l) => l.includes("quarantined"));
+      assert.ok(quar, `expected a quarantine notice, got: ${JSON.stringify(lines)}`);
+      assert.ok(quar.includes("/root/w"), `expected the agent path in the notice, got: ${quar}`);
+      assert.ok(/unconfirmed|RECOVERY_OWNER_UNCONFIRMED/.test(quar), `expected the quarantine reason, got: ${quar}`);
     } finally {
       await sup2.shutdown();
     }

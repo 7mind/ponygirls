@@ -63,6 +63,34 @@ test("child settles to a terminal task outcome with result text", async () => {
   cleanup();
 });
 
+test("failed task terminal notices carry the failure reason", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "subagents-supfail-notice-"));
+  const sup = new Supervisor({
+    rootId: "root-1",
+    governor: testGovernor,
+    rootDir: dir,
+    store: new InMemoryRunStore("root-1"),
+    policy: defaultSupervisorPolicy(),
+    executors: bothExecutors(new DummyToolExecutor()),
+    workspace: new DummyWorkspaceManager(),
+    workerFactory: () => {
+      const f = new FakeWorker("hang");
+      f.launch = async () => { throw new Error("nope"); };
+      return f;
+    },
+  });
+  try {
+    await assert.rejects(() => sup.spawn("governor", { taskName: "x", message: "y", profile: "reader" }, "req-1"), /nope/);
+    const { lines } = sup.noticesSince(0, 20);
+    const terminal = lines.find((l) => l.includes("ended failed"));
+    assert.ok(terminal, `expected a failed terminal notice, got: ${JSON.stringify(lines)}`);
+    assert.ok(terminal.includes("nope"), `expected the failure reason in the notice, got: ${terminal}`);
+  } finally {
+    await sup.shutdown();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("startup failure keeps a terminal record, never a ghost identity", async () => {
   const dir = mkdtempSync(join(tmpdir(), "subagents-supfail-"));
   const sup = new Supervisor({

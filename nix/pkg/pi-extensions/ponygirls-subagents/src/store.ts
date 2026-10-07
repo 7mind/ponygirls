@@ -74,7 +74,8 @@ export type JournalKind =
   | "checkpoint.superseded"
   | "recovery.event"
   | "agent.closed"
-  | "agent.interrupted";
+  | "agent.interrupted"
+  | "agent.quarantined";
 
 export interface JournalRecord {
   seq: number;
