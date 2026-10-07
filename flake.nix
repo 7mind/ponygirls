@@ -289,13 +289,14 @@
               touch $out
             '';
           yolo-profile = pkgs.runCommand "yolo-profile-test" {
-            nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.python3 pkgs.sqlite ];
+            nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.python3 pkgs.sqlite pkgs.util-linux ];
           } ''
             cp -r ${./nix/pkg/yolo} yolo
             chmod -R u+w yolo
             cd yolo
             bash llm-sandbox-test.sh
             bash profile-test.sh
+            bash resource-limits-test.sh
             bash sandbox-entrypoint-test.sh
             touch $out
           '';

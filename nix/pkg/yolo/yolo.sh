@@ -6,6 +6,7 @@
 #   YOLO_SANDBOX_ENTRYPOINT     - path to the in-sandbox entrypoint (loads secrets + sandbox hooks, then exec)
 #   YOLO_NIX_LD                 - path to nix-ld binary (bound as /lib64/ld-linux-x86-64.so.2)
 #   YOLO_JQ                     - path to jq binary
+#   YOLO_TASKSET                - path to taskset binary (util-linux; CPU-affinity limit)
 #   YOLO_CUSTOM_PROMPT          - path to the shared prompt-composition library
 #   YOLO_SQLITE                 - path to sqlite3 (only needed by --copy-sessions codex:…)
 #
@@ -40,6 +41,7 @@
 : "${YOLO_NIX_LD:?must be set}"
 : "${YOLO_JQ:?must be set}"
 : "${YOLO_CUSTOM_PROMPT:?must be set}"
+: "${YOLO_TASKSET:?must be set}"
 
 # PROFILE selects an isolated config namespace. Empty means the default
 # profile: agents read their real home dirs (~/.claude, ~/.codex, ...).
@@ -106,7 +108,8 @@ Flags (must precede the subcommand):
                          its whole auth.json (every provider).
       --disable=TAG      Drop every device bind, prompt fragment and pre-start
                          hook carrying TAG (repeatable, comma-separated).
-                         Known tags: audio, codegraph, display, dyngpu, gpu, vm.
+                         Known tags: audio, codegraph, cpu-limit, display,
+                         dyngpu, gpu, mem-limit, vm.
       --enable=TAG       Turn on a feature that is off by default (repeatable,
                          comma-separated). Known tags: display (bind Wayland
                          and X11/XWayland), dyngpu (discover and bind Linux GPU
@@ -141,6 +144,12 @@ Subcommands:
   claude | codex | pi    Launch the named coding agent (bypass-approvals).
   shell                  Interactive shell inside the sandbox.
   cmd <program> [args…]  Run an arbitrary command inside the sandbox.
+
+Resource limits (on by default, applied to the whole launch):
+      Each launch is limited to 1/8 of host RAM (process data segment) and
+      pinned to 1/4 of the host's hardware threads, so one runaway agent
+      cannot OOM or saturate the host. Remove with --disable=mem-limit and/or
+      --disable=cpu-limit (e.g. for heavy `cmd` work).
 
 The current working directory ($PWD) is always bound read-write. Extra binds
 and devices are also configured declaratively via the home-manager module
@@ -426,6 +435,64 @@ if [[ "$_pwd_real" == "$_home_real" && $UNSAFE_SHARE_HOME -ne 1 ]]; then
   echo "       isolation. cd into a project subdirectory, or pass --unsafe-share-home" >&2
   echo "       to override." >&2
   exit 1
+fi
+
+# Host resource limits for one launch. A runaway agent must not OOM or
+# saturate the host: memory is capped at 1/8 of host RAM (RLIMIT_DATA, set
+# soft+hard so the sandboxed tree cannot raise it back) and the process tree
+# is pinned to 1/4 of the host's hardware threads (the first quarter of the
+# currently allowed CPU list). Both cover everything the invocation runs —
+# pre-start hooks, the clipboard broker, and the whole sandboxed tree —
+# because rlimits and the affinity mask are inherited across exec and into
+# bubblewrap's namespaces.
+#
+# RLIMIT_DATA (brk + private anonymous mmap) rather than RLIMIT_AS: address
+# space a runtime reserves but never touches (V8's heap cage) counts against
+# AS and would false-kill agents on small hosts; DATA tracks committed
+# private memory. The CPU pin is sched_setaffinity: a process can widen its
+# own mask again, so it is politeness rather than a hard boundary (unlike the
+# memory rlimit). If the current affinity mask already holds fewer CPUs than
+# the quota (a nested launch), the mask is left at the allowed list.
+#
+# `--disable=mem-limit` / `--disable=cpu-limit` drop the respective limit.
+if tag_active mem-limit on; then
+  _mem_total_kib="$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)"
+  if [[ ! "$_mem_total_kib" =~ ^[0-9]+$ ]]; then
+    echo "Error: cannot read MemTotal from /proc/meminfo" >&2
+    exit 1
+  fi
+  ulimit -d "$((_mem_total_kib / 8))" || {
+    echo "Error: cannot set the process data-segment limit" >&2
+    exit 1
+  }
+fi
+if tag_active cpu-limit on; then
+  _cpu_quota=$(( $(nproc --all) / 4 ))
+  (( _cpu_quota < 1 )) && _cpu_quota=1
+  _cpus_allowed="$(awk '/^Cpus_allowed_list:/ { print $2 }' /proc/self/status)"
+  _cpu_pick=()
+  IFS=',' read -ra _cpu_ranges <<< "$_cpus_allowed"
+  for _cpu_range in "${_cpu_ranges[@]}"; do
+    if [[ "$_cpu_range" == *-* ]]; then
+      _cpu_lo="${_cpu_range%-*}"
+      _cpu_hi="${_cpu_range#*-}"
+      for (( _cpu = _cpu_lo; _cpu <= _cpu_hi && ${#_cpu_pick[@]} < _cpu_quota; _cpu++ )); do
+        _cpu_pick+=("$_cpu")
+      done
+    else
+      _cpu_pick+=("$_cpu_range")
+    fi
+    (( ${#_cpu_pick[@]} >= _cpu_quota )) && break
+  done
+  if [[ ${#_cpu_pick[@]} -eq 0 ]]; then
+    echo "Error: cannot parse Cpus_allowed_list from /proc/self/status" >&2
+    exit 1
+  fi
+  _cpu_csv="$(IFS=,; printf '%s' "${_cpu_pick[*]}")"
+  "$YOLO_TASKSET" -pc "$_cpu_csv" $$ >/dev/null || {
+    echo "Error: cannot pin CPU affinity to $_cpu_csv" >&2
+    exit 1
+  }
 fi
 
 # Host-side backing directory for an agent within the active named profile.

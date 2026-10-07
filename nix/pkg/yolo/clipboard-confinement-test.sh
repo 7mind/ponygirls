@@ -510,6 +510,7 @@ run_yolo() {
       YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
       YOLO_NIX_LD="$LOADER_SOCKET" \
       YOLO_JQ="$(command -v jq)" \
+      YOLO_TASKSET="$(command -v taskset)" \
       YOLO_CUSTOM_PROMPT="$TARGET_DIR/custom-prompt.sh" \
       YOLO_PODMAN_SOCKET_PATH="$PODMAN_SOCKET" \
       YOLO_PODMAN_SOCKET_URI="unix://$PODMAN_SOCKET" \
@@ -775,6 +776,7 @@ if [[ $EXPECT_VULNERABLE -eq 0 ]]; then
         YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
         YOLO_NIX_LD="$LOADER_SOCKET" \
         YOLO_JQ="$(command -v jq)" \
+        YOLO_TASKSET="$(command -v taskset)" \
         YOLO_CUSTOM_PROMPT="$TARGET_DIR/custom-prompt.sh" \
         TMUX="$PROTECTED_SOCK,4242,0" \
         bash "$TARGET_DIR/yolo.sh" cmd true

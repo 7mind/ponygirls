@@ -207,6 +207,7 @@ run_yolo() { # $1 = bwrap flavor (bwrap-record|bwrap-sleep); rest = yolo args
       YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
       YOLO_NIX_LD="$(command -v true)" \
       YOLO_JQ="$BIN/jq" \
+      YOLO_TASKSET="$(command -v taskset)" \
       YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
       YOLO_CLIPBOARD_PROXY="${YOLO_PROXY_UNDER_TEST:-$PROXY}" \
       YOLO_TMUX="$(command -v true)" \
@@ -311,6 +312,7 @@ run_yolo_bg() {
     YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
     YOLO_NIX_LD="$(command -v true)" \
     YOLO_JQ="$BIN/jq" \
+    YOLO_TASKSET="$(command -v taskset)" \
     YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
     YOLO_CLIPBOARD_PROXY="${YOLO_PROXY_UNDER_TEST:-$PROXY}" \
     YOLO_TMUX="$(command -v true)" \

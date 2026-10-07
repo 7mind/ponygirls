@@ -82,6 +82,7 @@ run_profile_yolo() {
       YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
       YOLO_NIX_LD="$(command -v true)" \
       YOLO_JQ="$(command -v jq)" \
+      YOLO_TASKSET="$(command -v taskset)" \
       YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
       bash "$SCRIPT" "$@" --profile foo cmd true
   } 2>&1
@@ -206,6 +207,7 @@ run_yolo() {
       YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
       YOLO_NIX_LD="$(command -v true)" \
       YOLO_JQ="$(command -v jq)" \
+      YOLO_TASKSET="$(command -v taskset)" \
       YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
       bash "$SCRIPT" "$@"
   } 2>&1
@@ -483,6 +485,7 @@ printf '{"foo":"claude"}\n' > "$FOO_CLAUDE_CREDS"
     YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
     YOLO_NIX_LD="$(command -v true)" \
     YOLO_JQ="$(command -v jq)" \
+    YOLO_TASKSET="$(command -v taskset)" \
     YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
     bash "$SCRIPT" --profile foo --auth-override codex:work --auth-override claude:work cmd true
 )
@@ -527,7 +530,7 @@ STATUS=$?
 assert_eq "list profiles succeeds" "0" "$STATUS"
 assert_eq "list profiles prints each profile dir name, sorted" $'foo\nwork\nzeta' "$OUT"
 OUT="$(cd "$FAKE_HOME" && HOME="$FAKE_HOME" YOLO_LLM_SANDBOX=x YOLO_SANDBOX_ENTRYPOINT=x YOLO_NIX_LD=x \
-  YOLO_JQ=x YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" bash "$SCRIPT" --list-profiles 2>&1)"
+  YOLO_JQ=x YOLO_TASKSET=x YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" bash "$SCRIPT" --list-profiles 2>&1)"
 assert_eq "list profiles works from \$HOME" $'foo\nwork\nzeta' "$OUT"
 OUT="$(run_yolo --list-profiles claude)"
 STATUS=$?
