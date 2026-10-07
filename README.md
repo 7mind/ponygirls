@@ -52,13 +52,13 @@ runs Pi against the copies in this checkout without deploying anything.
 
 | Extension | What it does |
 |---|---|
-| `ponygirls-model-picker` | Makes the footer useful: one status line with path, session, native stats, and **clickable model / thinking-effort controls** (fullscreen), plus `ctrl+shift+m` / `ctrl+shift+e` shortcuts that open the same menus. |
+| `ponygirls-model-picker` | Makes the footer useful: one status line with path, session, and native stats, plus a **model / thinking-effort indicator on the input border** (bottom right, e.g. `mimo-v2.6-pro ⌃⇧M • high ⌃⇧E`) and the `ctrl+shift+m` / `ctrl+shift+e` shortcuts that open the same menus (the border indicator is text, so the shortcuts are the way in). |
 | `ponygirls-model-stats` | Measures every provider response (time to first token, total span, decode tok/s) and shows per-model distributions as `/perf` tables. |
 | `ponygirls-usage` | The `/usage` screen: period tabs (today / week / 30 days / all time) with a flat per-provider, per-model cost table, and a global input-size distribution view (chart or table). |
 | `ponygirls-codex-goals` | Codex-style **session goals** (`/goal`): a persistent objective with a token budget that the model is steered by — and unlike most goal systems, every goal instruction is a visible, persisted message in the session transcript, so nothing is said to the model off the record. |
 | `ponygirls-subagents` | **Supervisor/worker subagents** (`/agents`): durable asynchronous delegation to child agents running in separate processes, with an inspector screen showing the agent tree and live transcripts, attributed messaging, interruption/resumption, optional reviewer validation gates, per-child tool brokering (direct or in a bubblewrap sandbox), and Git worktree workspaces. |
 | `ponygirls-bg-tasks` | **Background shell tasks**: a `bg_task` tool for long-running commands, a `/bg` screen to read their terminal output, and completion notices that wake an idle session. |
-| `ponygirls-tokemon` | Provider quota info *inside* Pi: a `tokemon` tool for the model (how many credits are left before it plans a big refactor) and a `/tokemon` pane, plus a small quota widget in the status bar. Covers the providers the running Pi is configured for. |
+| `ponygirls-tokemon` | Provider quota info *inside* Pi: a `tokemon` tool for the model (how many credits are left before it plans a big refactor) and a `/tokemon` pane, plus a small quota widget on the input border (top right). Covers the providers the running Pi is configured for. |
 | `ponygirls-quirk-search-hub-backends` | Works around a pi-search-hub defect: the `web_search` tool advertises all ~19 backends regardless of configuration, so the model routinely picks unconfigured ones. This rewrites the tool definition to list only what is actually enabled. |
 | `ponygirls-quirk-kimi-401-retry` | Works around a Pi defect with Kimi coding OAuth: short-lived access tokens are not refreshed on an API-level 401, so a perfectly valid subscription dies mid-turn. This re-drives the turn after a bounded re-auth once Pi has settled. |
 

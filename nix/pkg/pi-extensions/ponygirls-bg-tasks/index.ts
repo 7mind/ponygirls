@@ -22,10 +22,10 @@ interface Bound {
   statusTimer: ReturnType<typeof setTimeout> | null;
 }
 
-/** Throttle for footer status refreshes on rapid task changes. */
+/** Throttle for border badge refreshes on rapid task changes. */
 const STATUS_THROTTLE_MS = 250;
 
-/** Newest-first walk over retained tasks, counting unfinished ones for the footer. */
+/** Newest-first walk over retained tasks, counting unfinished ones for the badge. */
 async function readStatusTasks(backend: TaskBackend): Promise<TaskRecord[]> {
   const seen: TaskRecord[] = [];
   let page = await backend.list(null, null, MAX_LIST_ITEMS);
@@ -37,6 +37,15 @@ async function readStatusTasks(backend: TaskBackend): Promise<TaskRecord[]> {
   return seen;
 }
 
+/** Publish (or clear) the bottom-left badge on the editor's border. */
+function publishBadge(ctx: ExtensionContext, line: string | null): void {
+  if (line === null) {
+    ctx.ui.setWidget(BG_STATUS_KEY, undefined);
+    return;
+  }
+  ctx.ui.setWidget(BG_STATUS_KEY, [ctx.ui.theme.bg("selectedBg", ` ${line} `)], { placement: "borderBottomLeft" });
+}
+
 async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<void> {
   if (!isCurrent()) return;
   try {
@@ -44,12 +53,12 @@ async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<vo
     if (!isCurrent()) return;
     const line = bgStatusLine(await readStatusTasks(backend));
     if (!isCurrent()) return;
-    entry.ctx.ui.setStatus(BG_STATUS_KEY, line ?? undefined);
+    publishBadge(entry.ctx, line);
   } catch {
     // No persistent session, missing executables, disposed activation, or a
     // lost supervisor: no indicator rather than a stale one.
     try {
-      if (isCurrent()) entry.ctx.ui.setStatus(BG_STATUS_KEY, undefined);
+      if (isCurrent()) publishBadge(entry.ctx, null);
     } catch {
       // Stale UI after session replacement/reload: nothing to do.
     }
@@ -135,7 +144,7 @@ export default function bgTasks(pi: ExtensionAPI): void {
     if (ending.statusTimer) clearTimeout(ending.statusTimer);
     ending.statusTimer = null;
     try {
-      ending.ctx.ui.setStatus(BG_STATUS_KEY, undefined);
+      publishBadge(ending.ctx, null);
     } catch {
       // Stale UI after replacement/reload: nothing to do.
     }

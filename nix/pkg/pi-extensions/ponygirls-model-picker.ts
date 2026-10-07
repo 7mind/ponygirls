@@ -3,15 +3,16 @@
  *
  * The built-in footer text is not a click target. This wraps pi's native
  * footer and merges its pwd and stats rows into one status line: [path (branch)
- * • session] [native stats] [model ⌃⇧M • effort ⌃⇧E]. The stats row keeps its
- * native formatting and loses only its right side, which the clickable
- * controls replace; they open the same menus as ctrl+shift+m and
- * ctrl+shift+e. Mouse delivery is fullscreen-only; the shortcuts work in
- * either TUI mode. The picker hint lines double as mouse buttons. Pressing a
- * picker shortcut while that picker is open closes it; the other shortcut
- * switches pickers. Clicking a status-bar segment toggles the same way. Clicks
- * on the transcript or editor cannot close a picker: pi's extension API
- * exposes no mouse channel for clicks outside a component's own bounds.
+ * • session] [native stats]. The stats row keeps its native formatting and
+ * loses its right side: the model/effort indicator lives on the editor's
+ * bottom-right border (a setWidget border widget) with its ⌃⇧M / ⌃⇧E hints.
+ * The indicator is text — border widgets take no clicks — so the shortcuts
+ * are the way in; they work in either TUI mode and open the picker menus.
+ * The picker hint lines double as mouse buttons (mouse delivery is
+ * fullscreen-only). Pressing a picker shortcut while that picker is open
+ * closes it; the other shortcut switches pickers. Clicks on the
+ * transcript or editor cannot close a picker: pi's extension API exposes no
+ * mouse channel for clicks outside a component's own bounds.
  *
  * Favourites and last-selection times persist in
  * $PI_CODING_AGENT_DIR/model-picker.json (default ~/.pi/agent/model-picker.json).
@@ -26,7 +27,8 @@
  * favourite applies its pinned effort (when still supported by the model);
  * a bare entry changes only the model. Choosing while a turn is running
  * queues the switch instead: it applies automatically at the next turn end,
- * and the footer marks queued dimensions with the pending background.
+ * and the border indicator marks queued dimensions with the pending
+ * background.
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -66,10 +68,12 @@ import {
 
 const MODEL_SHORTCUT = "ctrl+shift+m";
 const THINKING_SHORTCUT = "ctrl+shift+e";
+/** Widget key for the model/effort indicator on the editor's bottom-right border. */
+const CONTROLS_WIDGET_KEY = "model-picker-controls";
 /** Cycle the selected favourite's pinned effort through the model's native levels. */
 const EFFORT_CYCLE_SHORTCUT = "ctrl+e";
 const EFFORT_CYCLE_GLYPH = "⌃E";
-/** Keycap glyphs for the footer controls (⌃ ctrl, ⇧ shift). */
+/** Keycap glyphs for the controls (⌃ ctrl, ⇧ shift). */
 const MODEL_SHORTCUT_GLYPH = "⌃⇧M";
 const THINKING_SHORTCUT_GLYPH = "⌃⇧E";
 const STAR_WIDTH = 2;
@@ -83,10 +87,10 @@ type ModelTab = "favourites" | "all";
 
 /**
  * A model/effort switch chosen while a turn was running. Applied at the next
- * `turn_end`; the footer marks queued dimensions with a pending background.
- * Dimensions are independent: re-picking one replaces only that half, and
- * picking while idle applies immediately (a leftover queue is stale by
- * definition — its turn already ended — so it is dropped).
+ * `turn_end`; the border indicator marks queued dimensions with a pending
+ * background. Dimensions are independent: re-picking one replaces only that
+ * half, and picking while idle applies immediately (a leftover queue is stale
+ * by definition — its turn already ended — so it is dropped).
  */
 interface PendingSwitch {
 	model?: ModelRef;
@@ -101,7 +105,7 @@ function hasPending(): boolean {
 
 type PickerAction = "choose" | "favourite" | "cycle" | "switch" | "page-up" | "page-down" | "close";
 
-/** A styled footer fragment with its plain width and optional click action. */
+/** A styled fragment with its plain width and optional click action. */
 interface Segment {
 	plain: string;
 	styled: string;
@@ -209,25 +213,11 @@ function nativeSession(): NativeSession {
 	} as unknown as NativeSession;
 }
 
-/** Extension statuses rendered inline at the end of the first line's left part (after path + stats). */
-const LEFT_INLINE_STATUS_KEYS = ["bg", "goal"] as const;
-/** Extension statuses rendered on the right, before the model controls. */
-const RIGHT_INLINE_STATUS_KEYS = ["tokemon"] as const;
-/** All statuses the merged row owns (filtered out of the native status rows). */
-const MERGED_STATUS_KEYS = [...LEFT_INLINE_STATUS_KEYS, ...RIGHT_INLINE_STATUS_KEYS];
-
-/** FooterDataProvider stand-in: the "(provider)" prefix is suppressed because the swapped-in controls show the provider. */
+/** FooterDataProvider stand-in: the "(provider)" prefix is suppressed because the border controls show the provider. */
 function nativeFooterData(footerData: FooterData): NativeFooterData {
 	return {
 		getGitBranch: () => footerData.getGitBranch(),
-		// Merged keys render in the first row via mergeRow, not in the native rows.
-		getExtensionStatuses: () => {
-			const all = footerData.getExtensionStatuses();
-			if (!MERGED_STATUS_KEYS.some((key) => all.has(key))) return all;
-			const rest = new Map(all);
-			for (const key of MERGED_STATUS_KEYS) rest.delete(key);
-			return rest;
-		},
+		getExtensionStatuses: () => footerData.getExtensionStatuses(),
 		getAvailableProviderCount: () => 1,
 		onBranchChange: (callback: () => void) => footerData.onBranchChange(callback),
 	};
@@ -289,13 +279,11 @@ function popup(width: SizeValue, maxHeight: SizeValue) {
 
 class ExtendedFooter implements Component {
 	private readonly native: FooterComponent;
-	private hits: Hit[] = [];
 
 	constructor(
-		private readonly tui: TUI,
+		tui: TUI,
 		private readonly theme: Theme,
 		private readonly footerData: FooterData,
-		private readonly open: (kind: PickerKind) => void,
 	) {
 		this.native = new FooterComponent(nativeSession(), nativeFooterData(footerData));
 		this.dispose = footerData.onBranchChange(() => tui.requestRender());
@@ -309,126 +297,73 @@ class ExtendedFooter implements Component {
 
 	render(width: number): string[] {
 		const ctx = latestCtx;
-		this.hits = [];
 		if (!ctx) return [truncateToWidth(this.theme.fg("dim", "no session"), width)];
 
 		const branch = this.footerData.getGitBranch();
 		const sessionName = ctx.sessionManager.getSessionName();
 		const path = `${shortCwd(ctx.cwd)}${branch ? ` (${branch})` : ""}${sessionName ? ` • ${sessionName}` : ""}`;
-		const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "no-model";
-		const thinking = ctx.thinkingLevel || "off";
-		// A queued switch marks its dimension with the pending background until
-		// the turn ends. Queuing the current value is a no-op, so it shows plain.
-		const queuedModel = pending.model && `${pending.model.provider}/${pending.model.id}` !== model
-			? `${pending.model.provider}/${pending.model.id}`
-			: undefined;
-		const queuedEffort = pending.effort && pending.effort !== thinking ? pending.effort : undefined;
-		const controls: Segment[] = [
-			queuedModel
-				? {
-						plain: `${model} → ${queuedModel} ${MODEL_SHORTCUT_GLYPH}`,
-						styled: `${this.theme.fg("accent", model)} ${this.theme.fg("dim", "→")} ${this.theme.bg("toolPendingBg", queuedModel)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`,
-						action: "model",
-					}
-				: {
-						plain: `${model} ${MODEL_SHORTCUT_GLYPH}`,
-						styled: `${this.theme.fg("accent", model)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`,
-						action: "model",
-					},
-			{ plain: " • ", styled: this.theme.fg("dim", " • ") },
-			queuedEffort
-				? {
-						plain: `${thinking} → ${queuedEffort} ${THINKING_SHORTCUT_GLYPH}`,
-						styled: `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", "→")} ${this.theme.bg("toolPendingBg", queuedEffort)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`,
-						action: "thinking",
-					}
-				: {
-						plain: `${thinking} ${THINKING_SHORTCUT_GLYPH}`,
-						styled: `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`,
-						action: "thinking",
-					},
-		];
-		const controlsWidth = controls.reduce((total, segment) => total + visibleWidth(segment.plain), 0);
-
-		// One status line: [path (branch) • session] [native stats] [bg] [goal] [tokemon] [controls]. The
-		// native stats row keeps its formatting and loses only its right side, which
-		// the clickable controls replace. Active background tasks and the session
-		// goal render as badges directly behind the stats text, on the left
-		// (blue for tasks, magenta for the goal; the native row's right-align
-		// padding is re-laid after them);
-		// the tokemon quota line sits immediately before the controls; when it
-		// fits nowhere, the row without it is tried. The path yields in tiers
+		// One status line: [path (branch) • session] [native stats]. The native
+		// stats row keeps its formatting and loses its right side — the model
+		// indicator lives on the editor border now. The path yields in tiers
 		// (full, half, dropped) before the swap gives up and the native rows
 		// pass through.
 		const natural = visibleWidth(this.theme.fg("dim", path));
-		const statuses = this.footerData.getExtensionStatuses();
-		const quotaText = statuses.get("tokemon");
-		const quota: Segment | undefined = quotaText ? { plain: quotaText, styled: this.theme.fg("dim", quotaText) } : undefined;
-		const inlineItems: Segment[] = LEFT_INLINE_STATUS_KEYS.flatMap((key) => {
-			const text = statuses.get(key);
-			if (text === undefined) return [];
-			// Blue for background tasks, magenta for the goal (selectedBg and
-			// customMessageBg are the theme's blue and magenta in both themes).
-			const padded = ` ${text} `;
-			return [{ plain: padded, styled: this.theme.bg(key === "bg" ? "selectedBg" : "customMessageBg", padded) }];
-		});
-		const inline: Segment | undefined = inlineItems.length === 0 ? undefined : {
-			plain: inlineItems.map((item) => item.plain).join(" "),
-			styled: inlineItems.map((item) => item.styled).join(" "),
-		};
 		for (const budget of [natural, Math.floor(natural / 2), 0]) {
-			for (const q of quota === undefined ? [undefined] : [quota, undefined]) {
-				const merged = this.mergeRow(width, budget, path, controls, controlsWidth, nativeRightSide(ctx.model, ctx.thinkingLevel), inline, q);
-				if (merged) return merged;
-			}
+			const merged = this.mergeRow(width, budget, path, nativeRightSide(ctx.model, ctx.thinkingLevel));
+			if (merged) return merged;
 		}
 		return this.native.render(width);
 	}
 
-	private mergeRow(
-		width: number,
-		budget: number,
-		path: string,
-		controls: readonly Segment[],
-		controlsWidth: number,
-		nativeRight: string,
-		inline?: Segment,
-		quota?: Segment,
-	): string[] | undefined {
+	private mergeRow(width: number, budget: number, path: string, nativeRight: string): string[] | undefined {
 		const left = budget <= 0 ? "" : truncateToWidth(this.theme.fg("dim", path), budget, this.theme.fg("dim", "..."));
 		const leftWidth = visibleWidth(left);
 		const gap = leftWidth > 0 ? 2 : 0;
-		const inlineWidth = inline ? visibleWidth(inline.plain) : 0;
-		const inlineGap = inlineWidth > 0 ? 1 : 0;
-		const quotaWidth = quota ? visibleWidth(quota.plain) : 0;
-		const quotaGap = quotaWidth > 0 ? 1 : 0;
 		const rowBudget = width - leftWidth - gap;
-		const nativeWidth = rowBudget + visibleWidth(nativeRight) - controlsWidth;
-		if (rowBudget <= controlsWidth + inlineWidth + inlineGap + quotaWidth + quotaGap || nativeWidth <= 0) return undefined;
+		const nativeWidth = rowBudget + visibleWidth(nativeRight);
+		if (nativeWidth <= 0) return undefined;
 		const rows = this.native.render(nativeWidth);
 		const stats = rows[1] ?? "";
 		if (!stripTerminalSequences(stats).endsWith(nativeRight)) return undefined;
-		const cut = truncateToWidth(stats, visibleWidth(stats) - visibleWidth(nativeRight) - inlineWidth - inlineGap - quotaWidth - quotaGap, "");
+		const cut = truncateToWidth(stats, visibleWidth(stats) - visibleWidth(nativeRight), "");
 		// The native row pads the stats to full width to right-align the model
-		// controls; that padding would shunt the indicator to the right. Strip
-		// it (ANSI-aware: the padding may sit inside a dim span) so the badges
-		// sit directly behind the stats text, on the left, and re-pad after them.
+		// indicator; that padding would shunt merged content to the right. Strip
+		// it (ANSI-aware: the padding may sit inside a dim span) and re-pad after.
 		const cutPlain = stripTerminalSequences(cut);
 		const padCount = cutPlain.length - cutPlain.trimEnd().length;
 		const statsPart = padCount > 0 ? truncateToWidth(cut, visibleWidth(cut) - padCount, "") : cut;
-		const padWidth = width - (leftWidth + gap + visibleWidth(statsPart) + inlineWidth + inlineGap + quotaWidth + quotaGap + controlsWidth);
+		const padWidth = width - (leftWidth + gap + visibleWidth(statsPart));
 		if (padWidth < 0) return undefined;
-		const startColumn = leftWidth + gap + rowBudget - controlsWidth;
-		const row = left + " ".repeat(gap) + statsPart + (inline ? inline.styled + " ".repeat(inlineGap) : "") + " ".repeat(padWidth) + (quota ? quota.styled + " ".repeat(quotaGap) : "") + segmentLine(this.hits, 0, startColumn, controls);
+		const row = left + " ".repeat(gap) + statsPart + " ".repeat(padWidth);
 		return [row, ...rows.slice(2)]; // native status rows pass through
 	}
+}
 
-	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (event.type !== "click" || event.button !== "left") return undefined;
-		const hit = hitAt(this.hits, event.x, event.y);
-		if (!hit) return undefined;
-		this.open(hit.action as PickerKind);
-		return { handled: true };
+/** The model/effort indicator on the editor's bottom-right border. Text only: border widgets take no clicks. */
+class ControlsBorder implements Component {
+	constructor(private readonly theme: Theme) {}
+
+	invalidate(): void {}
+
+	render(_width: number): string[] {
+		const ctx = latestCtx;
+		if (!ctx) return [];
+		const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "no-model";
+		const thinking = ctx.thinkingLevel || "off";
+		// A queued switch marks its dimension with the pending background until
+		// the turn ends. Queuing the current value is a no-op, so it shows plain.
+		const queuedModel =
+			pending.model && `${pending.model.provider}/${pending.model.id}` !== model
+				? `${pending.model.provider}/${pending.model.id}`
+				: undefined;
+		const queuedEffort = pending.effort && pending.effort !== thinking ? pending.effort : undefined;
+		const modelPart = queuedModel
+			? `${this.theme.fg("accent", model)} ${this.theme.fg("dim", "→")} ${this.theme.bg("toolPendingBg", queuedModel)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`
+			: `${this.theme.fg("accent", model)} ${this.theme.fg("dim", MODEL_SHORTCUT_GLYPH)}`;
+		const effortPart = queuedEffort
+			? `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", "→")} ${this.theme.bg("toolPendingBg", queuedEffort)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`
+			: `${this.theme.fg("accent", thinking)} ${this.theme.fg("dim", THINKING_SHORTCUT_GLYPH)}`;
+		return [`${modelPart} ${this.theme.fg("dim", "•")} ${effortPart}`];
 	}
 }
 
@@ -1004,10 +939,15 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		latestCtx = ctx;
 		if (ctx.mode !== "tui") return;
-		ctx.ui.setFooter((tui, theme, footerData) => {
-			requestRender = () => tui.requestRender();
-			return new ExtendedFooter(tui, theme, footerData, (kind) => open(pi, kind));
-		});
+		ctx.ui.setFooter((tui, theme, footerData) => new ExtendedFooter(tui, theme, footerData));
+		ctx.ui.setWidget(
+			CONTROLS_WIDGET_KEY,
+			(tui, theme) => {
+				requestRender = () => tui.requestRender();
+				return new ControlsBorder(theme);
+			},
+			{ placement: "borderBottomRight" },
+		);
 	});
 	pi.on("model_select", remember);
 	pi.on("thinking_level_select", remember);

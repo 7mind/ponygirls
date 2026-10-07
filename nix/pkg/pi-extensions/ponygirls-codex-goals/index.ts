@@ -98,17 +98,25 @@ function safeNotify(ctx: { ui: { notify(m: string, t?: NotifyLevel): void } }, m
   }
 }
 
-/** Publish (or clear) the footer goal indicator from the persisted sidecar. */
+/** Publish (or clear) the bottom-left goal badge from the persisted sidecar. */
 function refreshGoalStatus(
   binding: { store: GoalStore },
-  ui: { setStatus(key: string, text: string | undefined): void },
+  ui: {
+    setWidget(key: string, content: string[] | undefined, options?: { placement: "borderBottomLeft" }): void;
+    theme: { bg(color: string, text: string): string };
+  },
 ): void {
   try {
     const loaded = binding.store.load();
-    ui.setStatus(GOAL_STATUS_KEY, (loaded.ok ? goalStatusLine(loaded.value.goal) : null) ?? undefined);
+    const line = loaded.ok ? goalStatusLine(loaded.value.goal) : null;
+    if (line === null) {
+      ui.setWidget(GOAL_STATUS_KEY, undefined);
+      return;
+    }
+    ui.setWidget(GOAL_STATUS_KEY, [ui.theme.bg("customMessageBg", ` ${line} `)], { placement: "borderBottomLeft" });
   } catch {
     try {
-      ui.setStatus(GOAL_STATUS_KEY, undefined);
+      ui.setWidget(GOAL_STATUS_KEY, undefined);
     } catch {
       // Stale runtime after session replacement/reload: nothing to do.
     }
@@ -1037,7 +1045,7 @@ export default function (pi: ExtensionAPI): void {
     if (!binding) return;
     binding.controller.invalidate("shutdown");
     try {
-      ctx.ui.setStatus(GOAL_STATUS_KEY, undefined);
+      ctx.ui.setWidget(GOAL_STATUS_KEY, undefined);
     } catch {
       // Stale runtime after replacement/reload: nothing to do.
     }

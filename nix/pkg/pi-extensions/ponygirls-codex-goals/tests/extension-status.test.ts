@@ -1,13 +1,13 @@
-/** Extension wiring: the footer goal indicator follows the persisted goal. */
+/** Extension wiring: the border goal badge follows the persisted goal. */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-type StatusEntry = [string, string | undefined];
+type StatusEntry = [string, string[] | undefined, ({ placement: "borderBottomLeft" } | undefined)?];
 
-test("footer goal status follows create, pause, resume, and complete", async (t) => {
+test("border goal badge follows create, pause, resume, and complete", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "goals-status-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const sessionFile = join(dir, "session.jsonl");
@@ -35,7 +35,8 @@ test("footer goal status follows create, pause, resume, and complete", async (t)
   };
   const ui = {
     notify: () => {},
-    setStatus: (key: string, text: string | undefined) => { statuses.push([key, text]); },
+    setWidget: (...args: StatusEntry) => { statuses.push(args); },
+    theme: { bg: (_color: string, text: string) => text },
     confirm: async () => true,
   };
   const startCtx = { sessionManager, ui, isIdle: () => true, hasPendingMessages: () => false, mode: "rpc", hasUI: false };
@@ -44,13 +45,13 @@ test("footer goal status follows create, pause, resume, and complete", async (t)
 
   const cmdCtx = { ...startCtx, abort: () => {} };
   await commands.get("goal")!.handler("status test objective" as never, cmdCtx as never);
-  assert.deepEqual(statuses.at(-1), ["goal", "goal active"]);
+  assert.deepEqual(statuses.at(-1), ["goal", [" goal active "], { placement: "borderBottomLeft" }]);
 
   await commands.get("goal")!.handler("pause" as never, cmdCtx as never);
-  assert.deepEqual(statuses.at(-1), ["goal", "goal paused"]);
+  assert.deepEqual(statuses.at(-1), ["goal", [" goal paused "], { placement: "borderBottomLeft" }]);
 
   await commands.get("goal")!.handler("resume" as never, cmdCtx as never);
-  assert.deepEqual(statuses.at(-1), ["goal", "goal active"]);
+  assert.deepEqual(statuses.at(-1), ["goal", [" goal active "], { placement: "borderBottomLeft" }]);
 
   const done = await tools.get("update_goal")!.execute("u1" as never, { status: "complete" } as never, undefined as never, undefined as never, { sessionManager, ui } as never);
   assert.match(done.content[0]!.text, /complete/);
