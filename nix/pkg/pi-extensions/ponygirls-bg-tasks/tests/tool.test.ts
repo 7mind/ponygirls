@@ -130,6 +130,27 @@ for (const [name, make] of Object.entries(setups)) {
     assert.deepEqual(seen, expected);
   });
 
+  test(`${name}: list defaults to the newest page and tolerates null-like cursors`, async (t) => {
+    const s = await make(t);
+    const id = (await call(s, { action: "spawn", label: "pager", command: "exit 0", cwd: "/", notify: false })).details.task.id;
+    await finished(s, id);
+    const bare = await call(s, { action: "list" });
+    assert.equal(bare.details.items[0].id, id);
+    const explicit = await call(s, { action: "list", cursor: null, limit: 10 });
+    const ids = (r: Result) => r.details.items.map((x: { id: string }) => x.id);
+    assert.deepEqual(ids(bare), ids(explicit));
+    for (const nullish of ["null", ""]) {
+      const r = await call(s, { action: "list", cursor: nullish, limit: 10 });
+      assert.deepEqual(ids(r), ids(explicit));
+    }
+  });
+
+  test(`${name}: malformed cursors name JSON null in the error`, async (t) => {
+    const s = await make(t);
+    await assert.rejects(call(s, { action: "list", cursor: "garbage", limit: 5 }),
+      (e: unknown) => e instanceof BgTaskError && e.code === "CURSOR_INVALID" && /JSON null/.test(e.message));
+  });
+
   test(`${name}: read output is sanitized and offsets are accurate`, async (t) => {
     const s = await make(t);
     const id = (await call(s, { action: "spawn", label: "ansi", command: "sleep 30", cwd: "/", notify: false })).details.task.id;

@@ -3,7 +3,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import type { TaskBackend } from "./backend.ts";
 import {
-  BgTaskError, BgTaskParamsSchema, BgTaskRequestSchema, LIST_LABEL_DISPLAY_CHARS, MAX_COMMAND_BYTES, MAX_TOOL_RESPONSE_BYTES, decodeCursor, encodeCursor,
+  BgTaskError, BgTaskParamsSchema, BgTaskRequestSchema, DEFAULT_LIST_LIMIT, LIST_LABEL_DISPLAY_CHARS, MAX_COMMAND_BYTES, MAX_TOOL_RESPONSE_BYTES, decodeCursor, encodeCursor,
   isFinalized, type BgTaskRequest, type ExitEvidence, type SessionId, type SignalName, type TaskId, type TaskRecord,
 } from "./protocol.ts";
 import { consumableLength, decodeAndSanitize, displayValue, leadingContinuationBytes, shorten } from "./terminal-text.ts";
@@ -143,8 +143,8 @@ export async function runBgTask(host: ToolHost, request: BgTaskRequest, signal: 
   const backend = await host.backend();
   switch (request.action) {
     case "list": {
-      const cursor = request.cursor === null ? null : decodeCursor(request.cursor, host.sessionId());
-      const page = await backend.list(cursor?.upper ?? null, cursor?.after ?? null, request.limit);
+      const cursor = decodeCursor(request.cursor ?? null, host.sessionId());
+      const page = await backend.list(cursor?.upper ?? null, cursor?.after ?? null, request.limit ?? DEFAULT_LIST_LIMIT);
       const render = (items: TaskRecord[], more: boolean): ToolOutput => {
         const last = items[items.length - 1];
         const nextCursor = more && last ? encodeCursor({ sessionId: host.sessionId(), upper: page.upper, after: last.seq }) : null;
@@ -223,7 +223,7 @@ const DESCRIPTION = [
   "Run and manage local background shell commands in this session. Each task gets its own PTY and process group;",
   "output is kept on disk until explicitly cleared. Pass `action` plus that action's fields:",
   "spawn {label, command, cwd (absolute), notify} returns immediately after launch;",
-  "list {cursor (null = newest page), limit} pages through all retained tasks;",
+  "list {cursor (default null = newest page), limit (default 50)} pages through all retained tasks;",
   "read {id, offset (byte offset or \"tail\"), limit} returns sanitized output and the next offset;",
   "signal {id, signal} sends one POSIX signal to the task's group; terminate {id} sends TERM, escalates to KILL, and reports the observed outcome;",
   "notify {id, enabled} changes the completion-notice policy; clear {id} deletes a finished task's record and log.",

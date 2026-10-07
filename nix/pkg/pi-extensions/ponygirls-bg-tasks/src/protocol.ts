@@ -16,6 +16,9 @@ export const OWNER_HANDOFF_WAIT_MS = 10000;
 export const RECEIPT_CHECK_INTERVAL_MS = 250;
 export const MAX_READ_BYTES = 32768;
 export const MAX_LIST_ITEMS = 50;
+
+/** Default list page size: the newest page, trimmed to the tool byte budget. */
+export const DEFAULT_LIST_LIMIT = MAX_LIST_ITEMS;
 export const MAX_TOOL_RESPONSE_BYTES = 32768;
 /** Supervisor teardown budget plus margin for its final commit and exit. */
 export const SUPERVISOR_EXIT_MARGIN_MS = 3000;
@@ -32,6 +35,9 @@ export const MAX_CWD_CHARS = 4096;
 export const LIST_LABEL_DISPLAY_CHARS = 80;
 export const COMPLETION_CUSTOM_TYPE = "bg-task-completion";
 export const COMPLETION_SCHEMA_VERSION = 1;
+
+/** Custom message type for status-backend outage/recovery follow-ups. */
+export const STATUS_CUSTOM_TYPE = "bg-task-status";
 export const SIDECAR_SUFFIX = ".bg-tasks";
 
 export const SIGNAL_NAMES = ["SIGINT", "SIGTERM", "SIGKILL", "SIGHUP", "SIGUSR1", "SIGUSR2", "SIGSTOP", "SIGCONT"] as const;
@@ -158,8 +164,8 @@ export const SpawnRequestSchema = Type.Object({
 }, { additionalProperties: false });
 export const ListRequestSchema = Type.Object({
   action: Type.Literal("list"),
-  cursor: Type.Union([Type.String(), Type.Null()], { description: "null for the first (newest) page, else nextCursor from the previous page" }),
-  limit: Type.Integer({ minimum: 1, maximum: MAX_LIST_ITEMS }),
+  cursor: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: "null (default) for the first (newest) page, else nextCursor from the previous page" })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_LIST_ITEMS, description: `page size, default ${DEFAULT_LIST_LIMIT}` })),
 }, { additionalProperties: false });
 export const ReadRequestSchema = Type.Object({
   action: Type.Literal("read"),
@@ -197,8 +203,8 @@ export const BgTaskParamsSchema = Type.Object({
   command: Type.Optional(Type.String({ minLength: 1, maxLength: MAX_COMMAND_BYTES, description: "spawn: shell command, run with bash --noprofile --norc -c in its own PTY and process group" })),
   cwd: Type.Optional(Type.String({ minLength: 1, maxLength: MAX_CWD_CHARS, description: "spawn: absolute working directory" })),
   notify: Type.Optional(Type.Boolean({ description: "spawn (required): true posts a completion notice and wakes you; false sends none" })),
-  cursor: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: "list: null for the newest page, else nextCursor from the previous page" })),
-  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_READ_BYTES, description: `list: page size 1..${MAX_LIST_ITEMS}; read: raw log bytes 1..${MAX_READ_BYTES}` })),
+  cursor: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: "list: null (default) for the newest page, else nextCursor from the previous page" })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_READ_BYTES, description: `list: page size 1..${MAX_LIST_ITEMS} (default ${DEFAULT_LIST_LIMIT}); read: raw log bytes 1..${MAX_READ_BYTES}` })),
   id: Type.Optional(Type.String({ minLength: 1, description: "read/signal/terminate/notify/clear: exact task ID" })),
   offset: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Literal("tail")], { description: "read: byte offset into the terminal log, or \"tail\"" })),
   signal: Type.Optional(Type.Enum(SIGNAL_NAMES, { description: "signal: POSIX signal for the task's process group" })),
@@ -216,14 +222,17 @@ export function encodeCursor(cursor: ListCursor): string {
 
 const CursorSchema = Type.Object({ v: Type.Literal(1), s: Type.String(), u: Type.Integer({ minimum: 0 }), a: Type.Integer({ minimum: 0 }) }, { additionalProperties: false });
 
-export function decodeCursor(raw: string, sessionId: SessionId): ListCursor {
+export function decodeCursor(raw: string | null, sessionId: SessionId): ListCursor | null {
+  // Models serialize null as text (the flat-primitive schema cannot stop them):
+  // no valid cursor equals these, so they all mean the first page.
+  if (raw === null || raw === "null" || raw === "" || raw === "undefined") return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
   } catch {
-    throw new BgTaskError("CURSOR_INVALID", "cursor is not a list cursor; pass null for the first page");
+    throw new BgTaskError("CURSOR_INVALID", "cursor is not a list cursor; pass JSON null (not the string \"null\") for the first page");
   }
-  if (!Value.Check(CursorSchema, parsed)) throw new BgTaskError("CURSOR_INVALID", "cursor is not a list cursor; pass null for the first page");
+  if (!Value.Check(CursorSchema, parsed)) throw new BgTaskError("CURSOR_INVALID", "cursor is not a list cursor; pass JSON null (not the string \"null\") for the first page");
   if (parsed.s !== sessionId) throw new BgTaskError("CURSOR_INVALID", "cursor belongs to another session");
   return { sessionId, upper: parsed.u, after: parsed.a };
 }
