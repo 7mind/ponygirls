@@ -3,6 +3,11 @@
 # extensions instead of their deployed copies, without a home-manager switch:
 # ./pi-test [pi arguments...]
 #
+# pi runs in a quick bubblewrap sandbox (yolo is the elaborate one): the
+# working directory and pi's agent dir (config, auth, sessions) are writable,
+# the checkout is readable, system and Nix paths are read-only, /tmp is
+# private, and the network is shared so pi can reach its providers.
+#
 # The extension list is the one nix/hm/pi.nix deploys. Everything else
 # matches the live ~/.pi/agent/settings.json: its packages, its other
 # configured extensions, and pi's built-in extensions minus the ones it
@@ -79,4 +84,25 @@ if [[ -z ${PI_BG_TASKS_PYTHON:-} || -z ${PI_BG_TASKS_SHELL:-} ]]; then
   [[ -n ${PI_BG_TASKS_PYTHON:-} && -n ${PI_BG_TASKS_SHELL:-} ]] || die "cannot build python3/bash for ponygirls-bg-tasks"
 fi
 
-exec "$pi_pkg/bin/pi" "${args[@]}" "$@"
+# Quick bubblewrap isolation: local dir and pi's config/auth in, the rest of
+# the machine out. bwrap applies mounts in argv order, so writable binds come
+# after the read-only system ones.
+command -v bwrap >/dev/null || die "bwrap (bubblewrap) is required"
+agent_dir=${PI_CODING_AGENT_DIR:-${HOME:?HOME must be set}/.pi/agent}
+[[ -d $agent_dir ]] || die "pi agent dir $agent_dir does not exist"
+bwrap_args=(
+  --unshare-all --share-net --die-with-parent
+  --dev /dev --proc /proc --tmpfs /tmp
+  --dir /var --symlink /run /var/run
+  --ro-bind /nix/store /nix/store
+)
+for path in /etc /bin /usr /run/current-system /run/wrappers /run/systemd/resolve /run/nscd; do
+  [[ -e $path ]] && bwrap_args+=(--ro-bind "$path" "$path")
+done
+for path in "$HOME/.gitconfig" "$HOME/.config/git"; do
+  [[ -e $path ]] && bwrap_args+=(--ro-bind "$path" "$path")
+done
+bwrap_args+=(--bind "$PWD" "$PWD" --bind "$agent_dir" "$agent_dir")
+[[ $root != "$PWD" ]] && bwrap_args+=(--bind "$root" "$root")
+
+exec bwrap "${bwrap_args[@]}" "$pi_pkg/bin/pi" "${args[@]}" "$@"
