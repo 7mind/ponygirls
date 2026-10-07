@@ -15,7 +15,12 @@ let
   piCfg = config.programs.pi;
   jsonFormat = pkgs.formats.json { };
 
-  # Retry/timeout policy tuned for the default Xiaomi AMS provider.
+  # Retry/timeout policy for transient provider failures (e.g. 503
+  # service_overloaded): agent-level turn re-drive with exponential backoff
+  # (baseDelayMs * 2^(n-1), capped by maxAgentDelayMs), plus provider-level
+  # in-request retries that honor server Retry-After hints (capped by
+  # maxRetryDelayMs; a larger server-requested delay throws and hands off to
+  # the agent-level policy).
   #
   # settings.json is a read-only store symlink: settings are fully
   # declarative. Runtime saves (/settings, Ctrl+T, ...) apply to the current
@@ -26,12 +31,15 @@ let
     httpIdleTimeoutMs = 60000;
     retry = {
       enabled = true;
-      maxRetries = 1;
-      baseDelayMs = 1000;
-      maxAgentDelayMs = 5000;
+      maxRetries = 4;
+      baseDelayMs = 2000;
+      maxAgentDelayMs = 60000;
       provider = {
         timeoutMs = 60000;
-        maxRetries = 0;
+        # Retry-After-aware in-request retries (408/409/429/5xx at the HTTP
+        # layer). Known tradeoff (settings.md): provider retries can delay
+        # pi's own quota/usage-limit handling, hence the small budget.
+        maxRetries = 2;
         maxRetryDelayMs = 10000;
       };
     };
