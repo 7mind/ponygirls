@@ -107,25 +107,38 @@ function failed(e: unknown): ToolText {
   return { content: [{ type: "text", text: code && !message.startsWith(code) ? `${code}: ${message}` : message }], details: {}, isError: true };
 }
 
-/** Publish (or clear) the bottom-left badge on the editor's border. */
-function publishBadge(ui: ExtensionContext["ui"] | null, line: string | null): void {
+/** Publish (or clear) the bottom-left badge; a click opens /agents. */
+function publishBadge(ui: ExtensionContext["ui"] | null, line: string | null, open: () => void): void {
   if (!ui) return;
   if (line === null) {
     ui.setWidget(STATUS_KEY, undefined);
     return;
   }
-  ui.setWidget(STATUS_KEY, [ui.theme.bg("toolSuccessBg", ` ${line} `)], { placement: "borderBottomLeft" });
+  const label = ui.theme.bg("toolSuccessBg", ` ${line} `);
+  ui.setWidget(
+    STATUS_KEY,
+    () => ({
+      render: () => [label],
+      invalidate: () => {},
+      handleMouse: (event) => {
+        if (event.type !== "click" || event.button !== "left") return undefined;
+        open();
+        return { handled: true };
+      },
+    }),
+    { placement: "borderBottomLeft" },
+  );
 }
 
 export default function (pi: ExtensionAPI): void {
   const bindings = new Map<string, SessionBinding>();
 
-  function refreshStatus(binding: SessionBinding): void {
+  function refreshStatus(binding: SessionBinding, ctx: ExtensionContext): void {
     if (binding.statusTimer) return;
     binding.statusTimer = setTimeout(() => {
       binding.statusTimer = null;
       const views = binding.supervisor.list("user");
-      publishBadge(binding.ui, views.length > 0 ? widgetLine(views) : null);
+      publishBadge(binding.ui, views.length > 0 ? widgetLine(views) : null, () => void openAgents("", ctx));
     }, STATUS_THROTTLE_MS);
   }
 
@@ -155,7 +168,7 @@ export default function (pi: ExtensionAPI): void {
       sdkRoot,
       deterministic: false,
       hostAgentDir: agentBaseDir(),
-      onChange: () => refreshStatus(binding),
+      onChange: () => refreshStatus(binding, ctx),
     });
     bindings.set(sessionId, binding);
     // Runs left unfinished by a previous process settle before any new
@@ -372,9 +385,7 @@ export default function (pi: ExtensionAPI): void {
     }),
   );
 
-  pi.registerCommand("agents", {
-    description: "Subagents: tree, details, transcripts with chat, and controls",
-    handler: async (_args, ctx) => {
+  const openAgents = async (_args: string, ctx: ExtensionContext): Promise<void> => {
       let binding: SessionBinding;
       try {
         binding = bindingFor(ctx);
@@ -512,7 +523,11 @@ export default function (pi: ExtensionAPI): void {
         }, SCREEN_POLL_MS);
         return Object.assign(screen, { dispose: () => { if (poll) clearInterval(poll); poll = null; } });
       }, { overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 } });
-    },
+  };
+
+  pi.registerCommand("agents", {
+    description: "Subagents: tree, details, transcripts with chat, and controls",
+    handler: openAgents,
   });
 
   /**
@@ -575,7 +590,7 @@ export default function (pi: ExtensionAPI): void {
     if (!binding) return;
     bindings.delete(sessionId);
     if (binding.statusTimer) clearTimeout(binding.statusTimer);
-    publishBadge(binding.ui, null);
+    publishBadge(binding.ui, null, () => {});
     // Switching sessions cancels and joins the live subtree, closes owned
     // tool jobs, and preserves durable state.
     await binding.supervisor.shutdown();

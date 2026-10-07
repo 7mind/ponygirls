@@ -94,8 +94,10 @@ manages context size.
 
 While an unfinished goal exists the editor's bottom-left border shows `goal
 <status>` (active, paused, blocked, budget_limited, usage_limited) as a
-magenta badge, next to the background-tasks badge when both are present;
-it clears when the goal completes or is cleared.
+magenta badge, next to the background-tasks and subagents badges when they
+are present; it clears when the goal completes or is cleared. Clicking the
+badge opens the `/goal` pane (status, objective, budget, and timing — the
+same pane `/goal` with no arguments opens).
 
 ## Persistence
 
