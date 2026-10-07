@@ -37,13 +37,27 @@ async function readStatusTasks(backend: TaskBackend): Promise<TaskRecord[]> {
   return seen;
 }
 
-/** Publish (or clear) the bottom-left badge on the editor's border. */
-function publishBadge(ctx: ExtensionContext, line: string | null): void {
+/** Publish (or clear) the bottom-left badge; a click opens the /bg inspector. */
+function publishBadge(entry: Bound, line: string | null): void {
+  const ui = entry.ctx.ui;
   if (line === null) {
-    ctx.ui.setWidget(BG_STATUS_KEY, undefined);
+    ui.setWidget(BG_STATUS_KEY, undefined);
     return;
   }
-  ctx.ui.setWidget(BG_STATUS_KEY, [ctx.ui.theme.bg("selectedBg", ` ${line} `)], { placement: "borderBottomLeft" });
+  const label = ui.theme.bg("selectedBg", ` ${line} `);
+  ui.setWidget(
+    BG_STATUS_KEY,
+    () => ({
+      render: () => [label],
+      invalidate: () => {},
+      handleMouse: (event) => {
+        if (event.type !== "click" || event.button !== "left") return undefined;
+        void openBgInspector(entry.ctx, entry);
+        return { handled: true };
+      },
+    }),
+    { placement: "borderBottomLeft" },
+  );
 }
 
 async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<void> {
@@ -53,12 +67,12 @@ async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<vo
     if (!isCurrent()) return;
     const line = bgStatusLine(await readStatusTasks(backend));
     if (!isCurrent()) return;
-    publishBadge(entry.ctx, line);
+    publishBadge(entry, line);
   } catch {
     // No persistent session, missing executables, disposed activation, or a
     // lost supervisor: no indicator rather than a stale one.
     try {
-      if (isCurrent()) publishBadge(entry.ctx, null);
+      if (isCurrent()) publishBadge(entry, null);
     } catch {
       // Stale UI after session replacement/reload: nothing to do.
     }
@@ -86,6 +100,41 @@ function themeStyle(theme: Theme): ViewerStyle {
 }
 
 const NO_RECEIPTS: ReceiptSource = { present: () => new Set() };
+
+/** Open the /bg inspector in the TUI (or dump a first page for RPC/print clients). */
+const openBgInspector = async (ctx: ExtensionContext, b: Bound): Promise<void> => {
+  if (ctx.mode !== "tui") {
+    // RPC/print clients get a plain first page; the terminal viewer needs the TUI.
+    const backend = await b.activation.backend();
+    const page = await backend.list(null, null, MAX_LIST_ITEMS);
+    const lines = page.items.map((t) => taskLine(t, b.dispatcher.localState(t), Date.now()));
+    ctx.ui.notify(lines.length ? lines.join("\n") : "No retained background tasks in this session.", "info");
+    return;
+  }
+  await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+    const entry = { view: null as unknown as BgInspector, close: () => done() };
+    entry.view = new BgInspector({
+      backend: () => b.activation.backend(),
+      noticeState: (task) => b.dispatcher.localState(task),
+      noticeForgotten: (task) => b.dispatcher.forget(task),
+      confirm: (title, message) => ctx.ui.confirm(title, message),
+      selectSignal: async () => {
+        const choice = await ctx.ui.select("Signal to send", [...SIGNAL_NAMES]);
+        return SIGNAL_NAMES.find((s) => s === choice) as SignalName | undefined;
+      },
+      requestRender: () => tui.requestRender(),
+      rows: () => tui.terminal.rows,
+      close: () => {
+        b.views.delete(entry);
+        done();
+      },
+      style: themeStyle(theme),
+      now: () => Date.now(),
+    });
+    b.views.add(entry);
+    return entry.view;
+  });
+};
 
 export default function bgTasks(pi: ExtensionAPI): void {
   const config = readRuntimeConfig(process.env);
@@ -144,7 +193,7 @@ export default function bgTasks(pi: ExtensionAPI): void {
     if (ending.statusTimer) clearTimeout(ending.statusTimer);
     ending.statusTimer = null;
     try {
-      publishBadge(ending.ctx, null);
+      publishBadge(ending, null);
     } catch {
       // Stale UI after replacement/reload: nothing to do.
     }
@@ -164,40 +213,7 @@ export default function bgTasks(pi: ExtensionAPI): void {
 
   pi.registerCommand("bg", {
     description: "Inspect background tasks: list, live/retained terminal output, terminate, signal, mute, clear",
-    handler: async (_args, ctx) => {
-      const b = current();
-      if (ctx.mode !== "tui") {
-        // RPC/print clients get a plain first page; the terminal viewer needs the TUI.
-        const backend = await b.activation.backend();
-        const page = await backend.list(null, null, MAX_LIST_ITEMS);
-        const lines = page.items.map((t) => taskLine(t, b.dispatcher.localState(t), Date.now()));
-        ctx.ui.notify(lines.length ? lines.join("\n") : "No retained background tasks in this session.", "info");
-        return;
-      }
-      await ctx.ui.custom<void>((tui, theme, _kb, done) => {
-        const entry = { view: null as unknown as BgInspector, close: () => done() };
-        entry.view = new BgInspector({
-          backend: () => b.activation.backend(),
-          noticeState: (task) => b.dispatcher.localState(task),
-          noticeForgotten: (task) => b.dispatcher.forget(task),
-          confirm: (title, message) => ctx.ui.confirm(title, message),
-          selectSignal: async () => {
-            const choice = await ctx.ui.select("Signal to send", [...SIGNAL_NAMES]);
-            return SIGNAL_NAMES.find((s) => s === choice) as SignalName | undefined;
-          },
-          requestRender: () => tui.requestRender(),
-          rows: () => tui.terminal.rows,
-          close: () => {
-            b.views.delete(entry);
-            done();
-          },
-          style: themeStyle(theme),
-          now: () => Date.now(),
-        });
-        b.views.add(entry);
-        return entry.view;
-      });
-    },
+    handler: (_args, ctx) => openBgInspector(ctx, current()),
   });
 
   pi.on("agent_start", (_event, ctx) => {

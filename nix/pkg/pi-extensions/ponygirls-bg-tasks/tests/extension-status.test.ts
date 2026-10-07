@@ -4,7 +4,13 @@ import test from "node:test";
 import { join } from "node:path";
 import { defer, eventually, tempDir } from "./fixtures.ts";
 
-type StatusEntry = [string, string[] | undefined, ({ placement: "borderBottomLeft" } | undefined)?];
+type BadgeFactory = () => { render(): string[]; handleMouse?: (event: unknown) => unknown };
+type StatusEntry = [string, BadgeFactory | undefined, ({ placement: "borderBottomLeft" } | undefined)?];
+
+/** The published badge's first rendered line. */
+function badgeLine(factory: unknown): string {
+  return (factory as BadgeFactory)().render()[0] ?? "";
+}
 
 test("border badge shows running tasks and clears when none remain", async (t) => {
   const dir = tempDir(t, "bg-status-");
@@ -46,7 +52,7 @@ test("border badge shows running tasks and clears when none remain", async (t) =
   const id = (spawned.details as { task: { id: string } }).task.id;
   assert.ok(id);
 
-  await eventually(async () => (statuses.some(([k, v]) => k === "bg" && Array.isArray(v) && v[0] === " bg 1 running ") ? true : null), "running status");
+  await eventually(async () => (statuses.some(([k, v]) => k === "bg" && v !== undefined && badgeLine(v) === " bg 1 running ") ? true : null), "running status");
   const mark = statuses.length;
 
   await tool.execute("terminate-1" as never, { action: "terminate", id } as never, undefined as never);

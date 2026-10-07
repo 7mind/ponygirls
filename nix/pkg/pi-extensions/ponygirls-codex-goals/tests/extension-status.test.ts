@@ -5,7 +5,22 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-type StatusEntry = [string, string[] | undefined, ({ placement: "borderBottomLeft" } | undefined)?];
+type BadgeFactory = () => { render(): string[]; handleMouse?: (event: unknown) => unknown };
+type StatusEntry = [string, BadgeFactory | undefined, ({ placement: "borderBottomLeft" } | undefined)?];
+
+/** The published badge's first rendered line. */
+function badgeLine(factory: unknown): string {
+  return (factory as BadgeFactory)().render()[0] ?? "";
+}
+
+/** Assert the last publish is a clickable bottom-left badge showing `line`. */
+function assertBadge(statuses: StatusEntry[], line: string): void {
+  const entry = statuses.at(-1)!;
+  assert.equal(entry[0], "goal");
+  assert.deepEqual(entry[2], { placement: "borderBottomLeft" });
+  assert.equal(badgeLine(entry[1]), line);
+  assert.equal(typeof (entry[1] as BadgeFactory)().handleMouse, "function");
+}
 
 test("border goal badge follows create, pause, resume, and complete", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "goals-status-"));
@@ -45,13 +60,13 @@ test("border goal badge follows create, pause, resume, and complete", async (t) 
 
   const cmdCtx = { ...startCtx, abort: () => {} };
   await commands.get("goal")!.handler("status test objective" as never, cmdCtx as never);
-  assert.deepEqual(statuses.at(-1), ["goal", [" goal active "], { placement: "borderBottomLeft" }]);
+  assertBadge(statuses, " goal active ");
 
   await commands.get("goal")!.handler("pause" as never, cmdCtx as never);
-  assert.deepEqual(statuses.at(-1), ["goal", [" goal paused "], { placement: "borderBottomLeft" }]);
+  assertBadge(statuses, " goal paused ");
 
   await commands.get("goal")!.handler("resume" as never, cmdCtx as never);
-  assert.deepEqual(statuses.at(-1), ["goal", [" goal active "], { placement: "borderBottomLeft" }]);
+  assertBadge(statuses, " goal active ");
 
   const done = await tools.get("update_goal")!.execute("u1" as never, { status: "complete" } as never, undefined as never, undefined as never, { sessionManager, ui } as never);
   assert.match(done.content[0]!.text, /complete/);

@@ -26,6 +26,7 @@ import {
   type SessionId,
 } from "./src/goal.ts";
 import { parseGoalCommand } from "./src/commands.ts";
+import { GoalPane } from "./src/pane.ts";
 import {
   CUSTOM_TYPE as GOAL_CUSTOM_TYPE,
   NOTICE_TYPE as GOAL_NOTICE_TYPE,
@@ -98,14 +99,11 @@ function safeNotify(ctx: { ui: { notify(m: string, t?: NotifyLevel): void } }, m
   }
 }
 
-/** Publish (or clear) the bottom-left goal badge from the persisted sidecar. */
-function refreshGoalStatus(
-  binding: { store: GoalStore },
-  ui: {
-    setWidget(key: string, content: string[] | undefined, options?: { placement: "borderBottomLeft" }): void;
-    theme: { bg(color: string, text: string): string };
-  },
-): void {
+/**
+ * Publish (or clear) the bottom-left goal badge from the persisted sidecar;
+ * a click opens the /goal pane.
+ */
+function refreshGoalStatus(binding: { store: GoalStore }, ui: ExtensionContext["ui"]): void {
   try {
     const loaded = binding.store.load();
     const line = loaded.ok ? goalStatusLine(loaded.value.goal) : null;
@@ -113,7 +111,20 @@ function refreshGoalStatus(
       ui.setWidget(GOAL_STATUS_KEY, undefined);
       return;
     }
-    ui.setWidget(GOAL_STATUS_KEY, [ui.theme.bg("customMessageBg", ` ${line} `)], { placement: "borderBottomLeft" });
+    const label = ui.theme.bg("customMessageBg", ` ${line} `);
+    ui.setWidget(
+      GOAL_STATUS_KEY,
+      () => ({
+        render: () => [label],
+        invalidate: () => {},
+        handleMouse: (event) => {
+          if (event.type !== "click" || event.button !== "left") return undefined;
+          void openGoalPane(ui, binding);
+          return { handled: true };
+        },
+      }),
+      { placement: "borderBottomLeft" },
+    );
   } catch {
     try {
       ui.setWidget(GOAL_STATUS_KEY, undefined);
@@ -121,6 +132,20 @@ function refreshGoalStatus(
       // Stale runtime after session replacement/reload: nothing to do.
     }
   }
+}
+
+/** The /goal pane (TUI): the persisted goal at a glance. */
+async function openGoalPane(ui: ExtensionContext["ui"], binding: { store: GoalStore }): Promise<void> {
+  await ui.custom<void>((_tui, theme, _kb, done) =>
+    new GoalPane(
+      theme,
+      () => {
+        const loaded = binding.store.load();
+        return loaded.ok ? loaded.value.goal : null;
+      },
+      () => done(),
+    ),
+  );
 }
 
 function safeSendUser(
@@ -556,11 +581,15 @@ export default function (pi: ExtensionAPI): void {
           return;
         }
         const envelope = loadEnvelope(binding);
-        ctx.ui.notify(formatStatus(envelope.goal, envelope.revision), "info");
         try {
           pi.appendEntry(GOAL_NOTICE_TYPE, { text: formatStatus(envelope.goal, envelope.revision), at: clk.nowIso() });
         } catch {
           // non-fatal
+        }
+        if (ctx.mode === "tui" && ctx.hasUI) {
+          await openGoalPane(ctx.ui, binding);
+        } else {
+          ctx.ui.notify(formatStatus(envelope.goal, envelope.revision), "info");
         }
         return;
       }

@@ -64,8 +64,9 @@ tasks only, with a confirmation naming the ID and bytes). Closing the viewer
 never affects a task. The detail view holds at most 128 KiB of a log.
 
 While any task is unfinished the editor's bottom-left border shows `bg N
-running` as a blue badge (next to the session goal badge when both are
-present); it clears when no running task remains.
+running` as a blue badge (next to the session goal and subagents badges
+when they are present); it clears when no running task remains. Clicking
+the badge opens the `/bg` inspector.
 
 ## Outcomes
 
