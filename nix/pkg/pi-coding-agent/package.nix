@@ -44,11 +44,19 @@ buildNpmPackage (finalAttrs: {
   # retry-after-ms delays — AssistantMessage.retryAfterMs raises the
   # per-attempt delay floor, clamped by maxAgentDelayMs.
   # Drop when a released pi version includes it.
+  #
+  # Widgets could not be placed on the editor's border lines (where the working
+  # indicator shows) without replacing the whole editor: earendil-works/pi#10602
+  # (PR, open, not merged) adds setWidget border placements (borderTopLeft,
+  # borderTopRight, borderBottomLeft, borderBottomRight). This is PR #10602
+  # cherry-picked onto the pinned tag; drop when a released pi version includes
+  # it.
   patches = [
     ./patches/oauth-refresh-on-401.patch
     ./patches/captured-terminal-output.patch
     ./patches/surface-settings-write-errors.patch
     ./patches/agent-retry-after-delays.patch
+    ./patches/border-widgets.patch
   ];
 
   npmDepsHash = "sha256-ndEvWdB6sa5nNNtabk2OMZKUFG9x3op185deZHxFnXk=";
