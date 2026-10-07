@@ -1,12 +1,12 @@
 /**
- * Footer status for background tasks: a compact indicator shown when any
- * task is unfinished. Published through ctx.ui.setStatus under BG_STATUS_KEY;
- * the model-picker footer renders it inline at the end of the first line's
- * left part, and the native footer shows it on the status line otherwise.
+ * Border badge for background tasks: a compact indicator shown when any
+ * task is unfinished. Published through ctx.ui.setWidget under BG_STATUS_KEY
+ * as a borderBottomLeft badge on the editor's border (styling is applied at
+ * publish time; a theme switch restyles at the next task change).
  */
 import { isFinalized, type TaskRecord } from "./protocol.ts";
 
-/** Footer status key; sorts early alongside "agents". */
+/** Border widget key for the bottom-left badge. */
 export const BG_STATUS_KEY = "bg";
 
 /** Unfinished tasks (state == "running", any phase). */
@@ -18,7 +18,7 @@ export function countRunning(tasks: readonly TaskRecord[]): number {
   return running;
 }
 
-/** Compact footer status, or null when nothing is active (status cleared). */
+/** Compact border badge text, or null when nothing is active (badge cleared). */
 export function bgStatusLine(tasks: readonly TaskRecord[]): string | null {
   const running = countRunning(tasks);
   if (running === 0) return null;

@@ -12,6 +12,7 @@ import { ENV_PROVIDER_KEYS } from "../src/discovery.ts";
 import { quotaWindow } from "../src/quota.ts";
 import { toolReport } from "../src/report.ts";
 import type { QueryResult } from "../src/service.ts";
+import { fixture } from "./scripted-http.ts";
 
 type Execute = (id: string, params: unknown, signal: undefined, onUpdate: undefined, ctx: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
 type Handler = (args: string, ctx: unknown) => Promise<void>;
@@ -109,7 +110,7 @@ test("/tokemon opens in place as a bottom panel, not a popup overlay", async () 
   }
 });
 
-test("turn_end publishes the quota line through setStatus", async () => {
+test("turn_end publishes the quota line as a border widget", async () => {
   const agentDir = mkdtempSync(join(tmpdir(), "tokemon-ext-"));
   const saved = new Map(ENV_PROVIDER_KEYS.map(([name]) => [name, process.env[name]]));
   for (const [name] of ENV_PROVIDER_KEYS) delete process.env[name];
@@ -117,7 +118,7 @@ test("turn_end publishes the quota line through setStatus", async () => {
     writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ xiaomi: { type: "api_key", key: "x" } }));
     process.env["PI_CODING_AGENT_DIR"] = agentDir;
     const handlers = new Map<string, (event: unknown, ctx: any) => unknown>();
-    const statuses: Array<unknown[]> = [];
+    const widgets: Array<unknown[]> = [];
     const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
     mod.default({
       registerTool: () => {},
@@ -129,14 +130,63 @@ test("turn_end publishes the quota line through setStatus", async () => {
       mode: "tui",
       model: { provider: "xiaomi" },
       modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "x" } }), getAvailable: () => [] },
-      ui: { setStatus: (...args: unknown[]) => { statuses.push(args); } },
+      ui: { setWidget: (...args: unknown[]) => { widgets.push(args); } },
     };
     await handlers.get("turn_end")!({}, tuiCtx);
     await new Promise((r) => setTimeout(r, 20));
-    // xiaomi has no quota endpoint, so the status clears instead of going stale.
-    assert.deepEqual(statuses, [["tokemon", undefined]]);
+    // xiaomi has no quota endpoint, so the widget clears instead of going stale.
+    assert.deepEqual(widgets, [["tokemon", undefined]]);
   } finally {
     for (const [name, value] of saved) if (value !== undefined) process.env[name] = value;
+    delete process.env["PI_CODING_AGENT_DIR"];
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("a quota line reaches the top-right border widget with its placement", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "tokemon-ext-"));
+  const saved = new Map(ENV_PROVIDER_KEYS.map(([name]) => [name, process.env[name]]));
+  for (const [name] of ENV_PROVIDER_KEYS) delete process.env[name];
+  const savedFetch = globalThis.fetch;
+  try {
+    // A zai env key yields one zai target, whose quota endpoint answers from
+    // the recorded fixture via the stubbed fetch.
+    process.env["ZAI_API_KEY"] = "z";
+    writeFileSync(join(agentDir, "auth.json"), JSON.stringify({}));
+    process.env["PI_CODING_AGENT_DIR"] = agentDir;
+    globalThis.fetch = (async () => ({
+      status: 200,
+      text: async () => JSON.stringify(fixture("zai_limits.json")),
+      headers: { get: () => null },
+    })) as unknown as typeof fetch;
+    const handlers = new Map<string, (event: unknown, ctx: any) => unknown>();
+    const widgets: Array<unknown[]> = [];
+    const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
+    mod.default({
+      registerTool: () => {},
+      registerCommand: () => {},
+      on: (event: string, handler: (event: unknown, ctx: any) => unknown) => { handlers.set(event, handler); },
+    });
+    const tuiCtx = {
+      mode: "tui",
+      model: { provider: "zai" },
+      modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "k" } }), getAvailable: () => [] },
+      ui: { setWidget: (...args: unknown[]) => { widgets.push(args); } },
+    };
+    await handlers.get("turn_end")!({}, tuiCtx);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(widgets.length, 1);
+    const [key, content, options] = widgets[0]!;
+    assert.equal(key, "tokemon");
+    assert.ok(Array.isArray(content) && content.length === 1);
+    assert.match(String((content as string[])[0]), /^zai \{/);
+    assert.deepEqual(options, { placement: "borderTopRight" });
+  } finally {
+    globalThis.fetch = savedFetch;
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     delete process.env["PI_CODING_AGENT_DIR"];
     rmSync(agentDir, { recursive: true, force: true });
   }

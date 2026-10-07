@@ -11,8 +11,9 @@
  *   Answers are cached for a minute.
  * - Command `/tokemon`: the same data as a bottom panel replacing the editor
  *   (like /usage and /perf), auto-refreshing.
- * - Quota widget: the current provider's quota windows as short bars below
- *   the editor, refreshed at each turn end and on model switches.
+ * - Quota widget: the current provider's quota windows as short bars on the
+ *   editor's top-right border, refreshed at each turn end and on model
+ *   switches.
  *
  * Wire-up: listed in nix/hm/pi.nix `programs.pi.settings.extensions`.
  */
@@ -34,7 +35,7 @@ import { TokemonView } from "./src/view.ts";
 
 /** How stale an answer to the agent tool may be. */
 const TOOL_MAX_AGE_MS = 60_000;
-/** Status key for the quota line our footer renders on the right. */
+/** Widget key for the quota line on the editor's top-right border. */
 const STATUS_KEY = "tokemon";
 /** The pane's auto-refresh interval (tokemon's default). */
 const PANE_REFRESH_MS = 300_000;
@@ -86,20 +87,28 @@ export default function (pi: ExtensionAPI): void {
   });
 
   /**
-   * Quota line for our status bar: the current provider's windows as short
-   * bars. Published through setStatus; the model-picker footer (which owns
-   * the bar) renders it on the right, before the model indicator.
+   * Quota line on the editor's top-right border: the current provider's
+   * windows as short bars. Published through setWidget as a one-line border
+   * widget; errors, rate limits, and providers without quota rows clear it
+   * instead of parking stale text there.
    */
   const refreshStatus = (ctx: ExtensionContext): void => {
     if (ctx.mode !== "tui") return;
     const provider = ctx.model?.provider;
     if (!provider) {
-      ctx.ui.setStatus(STATUS_KEY, undefined);
+      ctx.ui.setWidget(STATUS_KEY, undefined);
       return;
     }
     service.report(authOf(ctx), TOOL_MAX_AGE_MS).then(
-      (report) => ctx.ui.setStatus(STATUS_KEY, quotaLine(provider, report.results, new Date()) ?? undefined),
-      () => ctx.ui.setStatus(STATUS_KEY, undefined),
+      (report) => {
+        const line = quotaLine(provider, report.results, new Date());
+        if (line === null) {
+          ctx.ui.setWidget(STATUS_KEY, undefined);
+          return;
+        }
+        ctx.ui.setWidget(STATUS_KEY, [line], { placement: "borderTopRight" });
+      },
+      () => ctx.ui.setWidget(STATUS_KEY, undefined),
     );
   };
   pi.on("turn_end", (_event, ctx) => refreshStatus(ctx));

@@ -1,12 +1,12 @@
-/** Extension wiring: the footer status follows unfinished tasks. */
+/** Extension wiring: the border badge follows unfinished tasks. */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { join } from "node:path";
 import { defer, eventually, tempDir } from "./fixtures.ts";
 
-type StatusEntry = [string, string | undefined];
+type StatusEntry = [string, string[] | undefined, ({ placement: "borderBottomLeft" } | undefined)?];
 
-test("footer status shows running tasks and clears when none remain", async (t) => {
+test("border badge shows running tasks and clears when none remain", async (t) => {
   const dir = tempDir(t, "bg-status-");
   const sessionFile = join(dir, "session.jsonl");
   const statuses: StatusEntry[] = [];
@@ -28,7 +28,8 @@ test("footer status shows running tasks and clears when none remain", async (t) 
       getEntries: () => [],
     },
     ui: {
-      setStatus: (key: string, text: string | undefined) => { statuses.push([key, text]); },
+      setWidget: (...args: StatusEntry) => { statuses.push(args); },
+      theme: { bg: (_color: string, text: string) => text },
       notify: () => {},
     },
     hasUI: true,
@@ -45,7 +46,7 @@ test("footer status shows running tasks and clears when none remain", async (t) 
   const id = (spawned.details as { task: { id: string } }).task.id;
   assert.ok(id);
 
-  await eventually(async () => (statuses.some(([k, v]) => k === "bg" && v === "bg 1 running") ? true : null), "running status");
+  await eventually(async () => (statuses.some(([k, v]) => k === "bg" && Array.isArray(v) && v[0] === " bg 1 running ") ? true : null), "running status");
   const mark = statuses.length;
 
   await tool.execute("terminate-1" as never, { action: "terminate", id } as never, undefined as never);

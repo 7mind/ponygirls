@@ -1,10 +1,9 @@
 /**
- * ponygirls-tokemon — one-line quota summary for our status bar: the
- * current provider's limited windows with short bars. Published through
- * setStatus under the "tokemon" key; the model-picker footer (which owns
- * the bar) renders it on the right, before the model indicator, and hides
- * it from the native rows. Errors, rate limits, and providers without
- * quota rows clear the status instead of parking stale text there.
+ * ponygirls-tokemon — one-line quota summary for the editor's top-right
+ * border: the current provider's limited windows with short bars. Published
+ * through setWidget under the "tokemon" key (borderTopRight, one line).
+ * Errors, rate limits, and providers without quota rows clear the widget
+ * instead of parking stale text there.
  */
 
 import { formatUsedLimit, sortResults } from "./format.ts";
