@@ -43,6 +43,7 @@ convenience, not a requirement.
 | `claude-code` | **Anthropic Claude Code**, packaged from the official per-platform native npm artefacts and made Nix-compatible (the Bun single-file executable is left byte-identical except for the dynamic-loader fixup). `update.sh` bumps it. |
 | `pi-search-hub` | A Pi package providing unified `web_search` / `web_read` over ~19 search and reader backends with automatic fallback. We install it as a local, manifest-corrected package at a pinned version (upstream packaging defects are documented in `nix/pkg/pi-search-hub/package.nix`). |
 | `codegraph` | **CodeGraph** — a semantic code-intelligence MCP server (tree-sitter knowledge graph over your repositories) from [colbymchenry/codegraph](https://github.com/colbymchenry/codegraph). Upstream ships no Nix support, so this is a vendored build against this flake's nixpkgs. |
+| `tui-tmux` | Pinned tmux under a distinct name, requiring a private absolute `-S` socket and ignoring personal tmux configuration. Installed by Home Manager on the host and inside yolo; bypasses the clipboard-only `tmux` shim without exposing the host server. The shared `tui-testing` skill covers interactive Pi, Claude Code, Codex, and other TUIs. |
 
 ### Pi extensions (`nix/pkg/pi-extensions/`)
 
@@ -87,7 +88,7 @@ management match the Linux tool; the bubblewrap-only capabilities do not apply.
 
 | Package | What it is |
 |---|---|
-| `llm-skills` | The shared **skill set** — progressive-disclosure instruction documents (SKILL.md with metadata) every agent can be handed: baboon, constructive-test-taxonomy, dual-tests, environment, flake-upgrade, izumi, resilient-ws-ui, tass. Metadata is validated at build time. |
+| `llm-skills` | The shared **skill set** — progressive-disclosure instruction documents (SKILL.md with metadata) every agent can be handed: baboon, constructive-test-taxonomy, dual-tests, environment, flake-upgrade, izumi, resilient-ws-ui, tass, tui-testing. Metadata is validated at build time. |
 | `llm-contexts` | The shared **context fragments**: the general context every agent reads (CLAUDE.md / AGENTS.md memory) and Pi's repo-agnostic operating manual (appended into Pi's system prompt). |
 | `llm-context-with-env` | The general context combined with the sandbox-environment skill, for hosts running agents inside `yolo`. |
 
