@@ -190,9 +190,10 @@ export class InMemoryItemRepository implements SearchableRepository {
 
   private writeProjection(storeKey: string, stored: StoredItem): void {
     const doc = stored.document;
+    const tags = [...(doc.tags ?? [])];
     this.projections.set(storeKey, {
-      words: corpusWords(doc.title, doc.description, doc.fields),
-      segments: corpusSegmentStrings(doc.title, doc.description, doc.fields),
+      words: corpusWords(doc.title, doc.description, doc.fields, tags),
+      segments: corpusSegmentStrings(doc.title, doc.description, doc.fields, tags),
     });
   }
 
@@ -215,6 +216,7 @@ export class InMemoryItemRepository implements SearchableRepository {
       createdAt: record.current.metadata.createdAt,
       modifiedAt: record.current.metadata.modifiedAt,
       links: doc.links.map(([t, target]) => [t, target] as const),
+      tags: [...(doc.tags ?? [])],
       words: projection.words,
       segments: projection.segments,
     };
@@ -266,6 +268,7 @@ export class InMemoryItemRepository implements SearchableRepository {
         status: cur.document.status,
         importance: cur.document.importance,
         humanAttention: cur.document.humanAttention as HumanAttention,
+        tags: [...(cur.document.tags ?? [])],
         modifiedAt: cur.metadata.modifiedAt,
         modifiedBy: cur.metadata.modifiedBy,
       });
@@ -276,10 +279,17 @@ export class InMemoryItemRepository implements SearchableRepository {
     return { items: matched, next: { project: last.project, item: last.item } };
   }
 
-  async observedValues(field: "type" | "status" | "importance"): Promise<string[]> {
+  async observedValues(field: "type" | "status" | "importance" | "tags"): Promise<string[]> {
     const values = new Set<string>();
     for (const record of this.items.values()) {
-      values.add(record.current.document[field]);
+      if (field === "tags") {
+        for (const t of record.current.document.tags ?? []) {
+          values.add(t);
+          if (values.size >= 100) break;
+        }
+      } else {
+        values.add(record.current.document[field]);
+      }
       if (values.size >= 100) break;
     }
     return [...values].sort();

@@ -32,6 +32,7 @@ Names case-insensitive; ID/string values exact, case-sensitive.
 | `project:P` | item in project `P` (raw component) |
 | `id:"p:i"` | exact qualified key (quotes required — protects the colon) |
 | `type/status/importance/human-attention:V` | metadata equality; `human-attention` ∈ required/cleared |
+| `tag:V` / `tags:V` | exact case-sensitive tag membership (aliases; quote when `V` holds spaces/colons) |
 | `created-by/modified-by:U` | author user ID equality |
 | `created-at/modified-at OP "ts"` | `OP` ∈ `= != < <= > >=`; `ts` validated UTC/RFC3339 instant |
 | `archived:true\|false\|all` | archive selector (see §3) |
@@ -75,8 +76,9 @@ predicates — every authenticated user reads everything.
 - Normalize: NFKC + locale-independent lowercase. Words = Unicode
   letter/number runs + combining marks. Unquoted atom: all its words
   required. Quoted atom: contiguous word sequence required.
-- Corpus: title + description + all string leaves of `fields`, with segment
-  boundaries (phrase cannot span fields/array elements).
+- Corpus: title + description + tags (each tag its own segment) + all string
+  leaves of `fields`, with segment boundaries (phrase cannot span
+  tags/fields/array elements).
 - Index: GIN word array (candidates) + per-segment normalized streams
   (exact phrase check). No stemming/fuzzy/vector (decision: CQ-like).
 - Numbers/booleans are not text-searchable; use JSON predicates.
@@ -101,7 +103,8 @@ Examples:
 project:example-project type:todo importance:high human-attention:required
 (type:github-issue OR type:github-pr) field["/github/state"] = "open"
 type:skill-draft "repeated pattern" NOT importance:low
-project:example-project link:["motivated-by","shared-knowledge:fact-mcp-auth"]
+project:example-project tag:mcp link:["motivated-by","shared-knowledge:fact-mcp-auth"]
+tag:"machine learning" NOT tag:wip
 archived:all field["/observations/count"] >= 3
 NOT exists["/review"] modified-at >= "2026-10-01T00:00:00Z"
 ```

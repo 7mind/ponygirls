@@ -17,9 +17,15 @@ export function extractWords(text: string): string[] {
   return words;
 }
 
-/** Corpus segments of a document: title, description, then every string leaf
- *  of fields (depth-first). Segment boundaries stop phrase matching. */
-export function corpusSegments(title: string, description: string, fields: unknown): string[][] {
+/** Corpus segments of a document: title, description, tags, then every
+ *  string leaf of fields (depth-first). Segment boundaries stop phrase
+ *  matching (each tag is its own segment). */
+export function corpusSegments(
+  title: string,
+  description: string,
+  fields: unknown,
+  tags: readonly string[] = [],
+): string[][] {
   const segments: string[][] = [];
   const push = (text: string) => {
     const words = extractWords(text);
@@ -27,6 +33,7 @@ export function corpusSegments(title: string, description: string, fields: unkno
   };
   push(title);
   push(description);
+  for (const tag of tags) push(tag);
   const walk = (value: unknown): void => {
     if (typeof value === "string") {
       push(value);
@@ -47,12 +54,22 @@ export function corpusSegments(title: string, description: string, fields: unkno
 }
 
 /** Flattened normalized word multiset (GIN candidate array). */
-export function corpusWords(title: string, description: string, fields: unknown): string[] {
-  return corpusSegments(title, description, fields).flat();
+export function corpusWords(
+  title: string,
+  description: string,
+  fields: unknown,
+  tags: readonly string[] = [],
+): string[] {
+  return corpusSegments(title, description, fields, tags).flat();
 }
 
 /** Segments as joined strings (phrase checks + PG text[] storage — a nested
  *  array would be a multidimensional PG array with ragged dimensions). */
-export function corpusSegmentStrings(title: string, description: string, fields: unknown): string[] {
-  return corpusSegments(title, description, fields).map((words) => words.join(" "));
+export function corpusSegmentStrings(
+  title: string,
+  description: string,
+  fields: unknown,
+  tags: readonly string[] = [],
+): string[] {
+  return corpusSegments(title, description, fields, tags).map((words) => words.join(" "));
 }

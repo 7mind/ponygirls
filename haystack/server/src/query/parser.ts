@@ -172,6 +172,7 @@ class Parser {
     const span: Span = t.span;
     if (name === "link") return this.parseLink(t, headValue, span);
     if (name === "linked-to" || name === "linked-from") return this.parseLinked(t, name, headValue, span);
+    if (name === "tag" || name === "tags") return this.parseTag(t, span);
     const after = this.expectColon(t, span);
     if (after === null) return { kind: "text", words: ["\0invalid\0"], span };
     if (name === "project") return this.pred({ kind: "project", value: after.value, span }, span);
@@ -278,6 +279,29 @@ class Parser {
         : { kind: "linkedFrom", source: tok.value, span },
       span,
     );
+  }
+
+  private parseTag(head: Token, span: Span): AstNode {
+    const after = this.expectColon(head, span);
+    if (after === null) return { kind: "text", words: ["\0invalid\0"], span };
+    if (after.kind !== "word" && after.kind !== "quoted") {
+      this.fail("tag value must be a word or quoted string", after.span);
+      return { kind: "text", words: ["\0invalid\0"], span };
+    }
+    const value = after.value;
+    if (value.length === 0) {
+      this.fail("tag value must be nonempty", after.span);
+      return { kind: "text", words: ["\0invalid\0"], span };
+    }
+    if (value.length > 128) {
+      this.fail("tag value must be \u2264 128 chars", after.span);
+      return { kind: "text", words: ["\0invalid\0"], span };
+    }
+    if (value.includes("\0")) {
+      this.fail("tag value contains NUL", after.span);
+      return { kind: "text", words: ["\0invalid\0"], span };
+    }
+    return this.pred({ kind: "tag", value, span }, span);
   }
 
   private parseArchived(after: Token, span: Span): AstNode {

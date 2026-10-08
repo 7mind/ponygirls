@@ -23,7 +23,8 @@ export type Predicate =
   | { readonly kind: "exists"; readonly pointer: string; readonly span: Span }
   | { readonly kind: "link"; readonly linkType: string; readonly target: string; readonly span: Span }
   | { readonly kind: "linkedTo"; readonly target: string; readonly span: Span }
-  | { readonly kind: "linkedFrom"; readonly source: string; readonly span: Span };
+  | { readonly kind: "linkedFrom"; readonly source: string; readonly span: Span }
+  | { readonly kind: "tag"; readonly value: string; readonly span: Span };
 
 export type AstNode =
   | { readonly kind: "and"; readonly children: readonly AstNode[] }

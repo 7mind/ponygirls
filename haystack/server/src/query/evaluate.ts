@@ -26,6 +26,7 @@ export interface SearchCandidate {
   readonly modifiedAt: string;
   /** Outgoing links as [type, qualified-target] tuples. */
   readonly links: ReadonlyArray<readonly [string, string]>;
+  readonly tags: readonly string[];
   /** Precomputed normalized word multiset and joined per-segment strings. */
   readonly words: readonly string[];
   readonly segments: readonly string[];
@@ -86,6 +87,8 @@ function evaluatePred(pred: Predicate, c: SearchCandidate, incoming: IncomingLin
       const key = decodeKey(pred.source);
       return incoming(c.project, c.item).some((s) => s.project === key.project && s.item === key.item);
     }
+    case "tag":
+      return c.tags.includes(pred.value);
   }
 }
 

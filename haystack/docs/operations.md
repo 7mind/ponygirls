@@ -124,10 +124,10 @@ before treating any number as a delivery gate.
 
 ## Known bounds (disclosed, never silent)
 
-1 MiB documents, depth 64, 256 links, 256 KiB string leaves, number
-exponents ±999999, 100-item search pages, live (non-snapshot) keysets,
-4k-char/512-token/128-node/16-deep queries. Terminal replay outcomes are
-retained durably (no TTL) in v1.
+1 MiB documents, depth 64, 256 links, 64 tags (each ≤ 128 chars), 256 KiB
+string leaves, number exponents ±999999, 100-item search pages, live
+(non-snapshot) keysets, 4k-char/512-token/128-node/16-deep queries.
+Terminal replay outcomes are retained durably (no TTL) in v1.
 
 The browser live channel uses per-nonce heartbeat deadlines, overlapping
 replacement connections (maximum three), a 10-second connect timeout,

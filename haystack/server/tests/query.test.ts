@@ -65,6 +65,22 @@ describe("predicates", () => {
     ast('project:example-project link:["motivated-by","shared-knowledge:fact-mcp-auth"]');
     ast('archived:all field["/observations/count"] >= 3');
     ast('NOT exists["/review"] modified-at >= "2026-10-01T00:00:00Z"');
+    ast("project:example-project tag:mcp");
+    ast('tag:"machine learning" NOT tag:wip');
+  });
+  it("parses tag predicates with word and quoted values (tags: alias)", () => {
+    const single = ast("tag:mcp") as { kind: string; pred: { kind: string; value: string } };
+    assert.equal(single.pred.kind, "tag");
+    assert.equal(single.pred.value, "mcp");
+    const plural = ast("tags:mcp") as { kind: string; pred: { kind: string; value: string } };
+    assert.equal(plural.pred.kind, "tag");
+    assert.equal(plural.pred.value, "mcp");
+    const quoted = ast('tag:"Machine Learning"') as { kind: string; pred: { kind: string; value: string } };
+    assert.equal(quoted.pred.value, "Machine Learning");
+    const upper = ast("TAG:mcp") as { kind: string; pred: { kind: string; value: string } };
+    assert.equal(upper.pred.value, "mcp");
+    fails("tag:");
+    fails('tag:""');
   });
   it("field comparisons accept numbers, booleans, null, negatives", () => {
     const n = ast('field["/n"] >= -2.5e3') as { kind: string; pred: { kind: string; value: { text: string } } };

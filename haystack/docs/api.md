@@ -28,7 +28,7 @@ document, metadata). Archived items accessible. Unknown key → `not-found`.
 ```json
 {
   "key": "example-project:fact-mcp-auth",
-  "document_json": "{\"title\":\"…\",\"fields\":{…},\"links\":[…]}",
+  "document_json": "{\"title\":\"…\",\"fields\":{…},\"links\":[…],\"tags\":[\"mcp\"]}",
   "expected_revision": 0,
   "request_id": "0193e8d5-…"
 }
@@ -42,12 +42,13 @@ Returns `{ key, revision, metadata }`. Create/update/archive share this op.
 ### `search`
 
 ```json
-{ "query": "type:todo importance:high", "project": "example-project",
+{ "query": "type:todo importance:high tag:mcp", "project": "example-project",
   "limit": 20, "cursor": "…" }
 ```
 
-`project`/`cursor` optional. Returns `{ items: [summaries], cursor? }`.
-Empty/whitespace query browses. Scope intersects predicates.
+`project`/`cursor` optional. Returns `{ items: [summaries], cursor? }`
+(summaries carry `tags: string[]`). Empty/whitespace query browses. Scope
+intersects predicates.
 
 ## 3. Browser API (`/api/v1`, JSON bodies, versioned envelope)
 
@@ -62,8 +63,8 @@ Empty/whitespace query browses. Scope intersects predicates.
   no document bodies); `POST /history/get { key, revision }` → snapshot.
 - `POST /query/analyze { query }` → `{ ast?, diagnostics[] }` (bounded,
   same parser); `POST /complete { query, caret }` → bounded suggestions
-  (built-ins, vocabulary, observed values, IDs).
-- `GET /values/{type,status,importance}` → configured + conventional +
+  (built-ins, vocabulary, observed values incl. `tag:` values, IDs).
+- `GET /values/{type,status,importance,tags}` → configured + conventional +
   observed values (bounded, current items only).
 - All responses: `Cache-Control: no-store`. All errors: typed faults.
   Item bodies render client-side as untrusted data (escaped; CSP; no raw
