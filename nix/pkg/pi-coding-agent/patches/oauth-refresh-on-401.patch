@@ -1,5 +1,5 @@
 diff --git a/packages/ai/src/auth/resolve.ts b/packages/ai/src/auth/resolve.ts
-index 9f9117b9e..4559a05e0 100644
+index dfeb030..11dec8a 100644
 --- a/packages/ai/src/auth/resolve.ts
 +++ b/packages/ai/src/auth/resolve.ts
 @@ -19,6 +19,13 @@ import type {
@@ -24,10 +24,10 @@ index 9f9117b9e..4559a05e0 100644
  			);
  		}
  		if (stored.type === "api_key" && provider.auth.apiKey) {
-@@ -106,6 +114,10 @@ const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
+@@ -157,6 +165,10 @@ export async function refreshStoredOAuthCredential(
+ /**
   * OAuth resolution with double-checked locking: tokens with less than five
-  * minutes remaining lock, re-check expiry under the lock, refresh once
-  * globally, and persist the rotated credential before release.
+  * minutes remaining are refreshed through `refreshStoredOAuthCredential`.
 + *
 + * `forceOAuthRefresh` always enters the lock (used after a coding-API 401):
 + * if another process already rotated the access token on disk, that credential
@@ -35,7 +35,7 @@ index 9f9117b9e..4559a05e0 100644
   */
  async function resolveStoredOAuth(
  	credentials: CredentialStore,
-@@ -114,20 +126,27 @@ async function resolveStoredOAuth(
+@@ -165,14 +177,20 @@ async function resolveStoredOAuth(
  	stored: OAuthCredential,
  	signal: AbortSignal,
  	minOAuthValidityMs?: number,
@@ -47,30 +47,23 @@ index 9f9117b9e..4559a05e0 100644
  
 -	if (expiresSoon(credential)) {
 -		// Optimistic check said expired; the authoritative check runs under the lock.
+-		const post = await refreshStoredOAuthCredential(credentials, providerId, oauth, expiresSoon, signal);
++	// Forced refresh (after a coding-API 401): refresh unless the on-disk access
++	// token already differs from the one that failed (another process rotated it).
++	const needsRefresh = forceOAuthRefresh
++		? (current: OAuthCredential) => current.access !== stored.access
++		: expiresSoon;
 +	if (forceOAuthRefresh || expiresSoon(credential)) {
 +		// Optimistic check said expired (or caller forced); authoritative work runs under the lock.
- 		let post: Credential | undefined;
- 		try {
- 			post = await credentials.modify(
- 				providerId,
- 				async (current) => {
- 					if (current?.type !== "oauth") return undefined; // logged out meanwhile
--					if (!expiresSoon(current)) return undefined; // another process/request refreshed
-+					// Cross-process recovery: disk already has a newer access token.
-+					if (forceOAuthRefresh && current.access !== stored.access) {
-+						return undefined; // leave entry unchanged; modify returns on-disk current
-+					}
-+					if (!forceOAuthRefresh && !expiresSoon(current)) {
-+						return undefined; // another process/request refreshed
-+					}
- 					try {
- 						const refreshSignal = AbortSignal.any([
- 							signal,
++		const post = await refreshStoredOAuthCredential(credentials, providerId, oauth, needsRefresh, signal);
+ 		if (!post) return undefined; // logged out meanwhile
+ 		credential = post;
+ 		// The normal five-minute window triggers a refresh but does not impose a
 diff --git a/packages/ai/src/models.ts b/packages/ai/src/models.ts
-index d8693c978..82c3642eb 100644
+index fbcc522..ce309f1 100644
 --- a/packages/ai/src/models.ts
 +++ b/packages/ai/src/models.ts
-@@ -21,6 +21,7 @@ import type {
+@@ -26,6 +26,7 @@ import type {
  	ApiStreamOptions,
  	AssistantImages,
  	AssistantMessage,
@@ -78,7 +71,7 @@ index d8693c978..82c3642eb 100644
  	AssistantMessageEventStream,
  	ClassifierApi,
  	ClassifierContext,
-@@ -840,6 +841,7 @@ class ModelsImpl implements MutableModels {
+@@ -846,6 +847,7 @@ class ModelsImpl implements MutableModels {
  	>(
  		model: TModel,
  		options: TOptions | undefined,
@@ -86,7 +79,7 @@ index d8693c978..82c3642eb 100644
  	): Promise<{
  		requestModel: TModel;
  		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
-@@ -849,6 +851,7 @@ class ModelsImpl implements MutableModels {
+@@ -855,6 +857,7 @@ class ModelsImpl implements MutableModels {
  			apiKey: options?.apiKey,
  			env: options?.env,
  			signal: options?.signal,
@@ -94,7 +87,7 @@ index d8693c978..82c3642eb 100644
  		});
  		if (!resolution) {
  			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
-@@ -868,22 +871,55 @@ class ModelsImpl implements MutableModels {
+@@ -874,22 +877,55 @@ class ModelsImpl implements MutableModels {
  		return { requestModel, requestOptions };
  	}
  
@@ -158,7 +151,7 @@ index d8693c978..82c3642eb 100644
  	async complete<TApi extends Api>(
  		model: Model<TApi>,
  		context: Context,
-@@ -893,12 +929,7 @@ class ModelsImpl implements MutableModels {
+@@ -899,12 +935,7 @@ class ModelsImpl implements MutableModels {
  	}
  
  	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
@@ -172,7 +165,7 @@ index d8693c978..82c3642eb 100644
  	}
  
  	async completeSimple(
-@@ -982,6 +1013,53 @@ class ModelsImpl implements MutableModels {
+@@ -989,6 +1020,53 @@ class ModelsImpl implements MutableModels {
  	}
  }
  

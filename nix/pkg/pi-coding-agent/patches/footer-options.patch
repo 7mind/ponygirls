@@ -1,8 +1,8 @@
 diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
-index 59e1eb62e..793042489 100644
+index 11ffaca..c31de19 100644
 --- a/packages/coding-agent/src/core/extensions/runner.ts
 +++ b/packages/coding-agent/src/core/extensions/runner.ts
-@@ -333,6 +333,7 @@ const noOpUIContext: ExtensionUIContext = {
+@@ -334,6 +334,7 @@ const noOpUIContext: ExtensionUIContext = {
  	setHiddenThinkingLabel: () => {},
  	setWidget: () => {},
  	setFooter: () => {},
@@ -11,7 +11,7 @@ index 59e1eb62e..793042489 100644
  	setTitle: () => {},
  	custom: async () => undefined as never,
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index ac3f7cf97..97051ed0b 100644
+index 4929974..8a00c9a 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
 @@ -141,6 +141,14 @@ export interface ExtensionWidgetOptions {
@@ -40,7 +40,7 @@ index ac3f7cf97..97051ed0b 100644
  	 *
  	 * The factory receives a FooterDataProvider for data not otherwise accessible:
 diff --git a/packages/coding-agent/src/modes/interactive/components/footer.ts b/packages/coding-agent/src/modes/interactive/components/footer.ts
-index 8bb7b353e..e3f790973 100644
+index 8bb7b35..e3f7909 100644
 --- a/packages/coding-agent/src/modes/interactive/components/footer.ts
 +++ b/packages/coding-agent/src/modes/interactive/components/footer.ts
 @@ -2,7 +2,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
@@ -188,10 +188,10 @@ index 8bb7b353e..e3f790973 100644
  		const extensionStatuses = this.footerData.getExtensionStatuses();
  		if (extensionStatuses.size > 0) {
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index a7295865a..c1dc9f01a 100644
+index 36638e4..287d5e0 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-@@ -2449,6 +2449,7 @@ export class InteractiveMode {
+@@ -2504,6 +2504,7 @@ export class InteractiveMode {
  		this.ui.hideOverlay();
  		this.clearExtensionTerminalInputListeners();
  		this.setExtensionFooter(undefined);
@@ -199,7 +199,7 @@ index a7295865a..c1dc9f01a 100644
  		this.setExtensionHeader(undefined);
  		this.clearExtensionWidgets();
  		this.footerDataProvider.clearExtensionStatuses();
-@@ -2653,6 +2654,10 @@ export class InteractiveMode {
+@@ -2708,6 +2709,10 @@ export class InteractiveMode {
  			setHiddenThinkingLabel: (label) => this.setHiddenThinkingLabel(label),
  			setWidget: (key, content, options) => this.setExtensionWidget(key, content, options),
  			setFooter: (factory) => this.setExtensionFooter(factory),
@@ -211,7 +211,7 @@ index a7295865a..c1dc9f01a 100644
  			setTitle: (title) => this.ui.terminal.setTitle(title),
  			custom: (factory, options) => this.showExtensionCustom(factory, options),
 diff --git a/packages/coding-agent/src/modes/rpc/rpc-mode.ts b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
-index 1c0995d36..ab8c41722 100644
+index 1c0995d..ab8c417 100644
 --- a/packages/coding-agent/src/modes/rpc/rpc-mode.ts
 +++ b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
 @@ -207,6 +207,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
@@ -226,7 +226,7 @@ index 1c0995d36..ab8c41722 100644
  			// Custom footer not supported in RPC mode - requires TUI access
  		},
 diff --git a/packages/coding-agent/test/footer-width.test.ts b/packages/coding-agent/test/footer-width.test.ts
-index 12c074d01..39f277c54 100644
+index 12c074d..39f277c 100644
 --- a/packages/coding-agent/test/footer-width.test.ts
 +++ b/packages/coding-agent/test/footer-width.test.ts
 @@ -117,6 +117,66 @@ describe("formatCwdForFooter", () => {
@@ -297,7 +297,7 @@ index 12c074d01..39f277c54 100644
  	beforeAll(() => {
  		initTheme(undefined, false);
 diff --git a/packages/coding-agent/test/suite/harness.ts b/packages/coding-agent/test/suite/harness.ts
-index 220a1558f..7e4ce3592 100644
+index 220a155..7e4ce35 100644
 --- a/packages/coding-agent/test/suite/harness.ts
 +++ b/packages/coding-agent/test/suite/harness.ts
 @@ -86,6 +86,7 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})

@@ -1,5 +1,5 @@
 diff --git a/packages/coding-agent/docs/rpc-extension-ui.md b/packages/coding-agent/docs/rpc-extension-ui.md
-index bd489450d..7c8357f17 100644
+index bd48945..7c8357f 100644
 --- a/packages/coding-agent/docs/rpc-extension-ui.md
 +++ b/packages/coding-agent/docs/rpc-extension-ui.md
 @@ -141,7 +141,7 @@ Set or clear a widget (block of text lines) displayed above or below the editor.
@@ -12,7 +12,7 @@ index bd489450d..7c8357f17 100644
  ### setTitle
  
 diff --git a/packages/coding-agent/docs/tui.md b/packages/coding-agent/docs/tui.md
-index 4a2ff2c56..b7529470b 100644
+index 4a2ff2c..b752947 100644
 --- a/packages/coding-agent/docs/tui.md
 +++ b/packages/coding-agent/docs/tui.md
 @@ -10,7 +10,7 @@ Start with `ctx.ui` methods from an [extension](extensions.md#interact-with-the-
@@ -43,7 +43,7 @@ index 4a2ff2c56..b7529470b 100644
  
  The public exports are defined in [`packages/tui/src/index.ts`](https://github.com/earendil-works/pi/blob/main/packages/tui/src/index.ts). See [Extensions](extensions.md) for extension lifecycle, state, tools, events, and mode behavior.
 diff --git a/packages/coding-agent/examples/extensions/widget-placement.ts b/packages/coding-agent/examples/extensions/widget-placement.ts
-index 44bf5b604..4671e419a 100644
+index 44bf5b6..4671e41 100644
 --- a/packages/coding-agent/examples/extensions/widget-placement.ts
 +++ b/packages/coding-agent/examples/extensions/widget-placement.ts
 @@ -5,5 +5,9 @@ export default function widgetPlacementExtension(pi: ExtensionAPI) {
@@ -57,7 +57,7 @@ index 44bf5b604..4671e419a 100644
  	});
  }
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index 3e0ea47ba..ac3f7cf97 100644
+index 5d65cce..4929974 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
 @@ -118,8 +118,19 @@ export interface ExtensionUIDialogOptions {
@@ -92,10 +92,10 @@ index 3e0ea47ba..ac3f7cf97 100644
  	setWidget(
  		key: string,
 diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/index.ts
-index 9e2d993e7..ad6ea91c5 100644
+index 3a25f85..e3bd035 100644
 --- a/packages/coding-agent/src/index.ts
 +++ b/packages/coding-agent/src/index.ts
-@@ -439,6 +439,8 @@ export {
+@@ -441,6 +441,8 @@ export {
  	type CustomEditorOptions,
  	CustomMessageComponent,
  	DynamicBorder,
@@ -105,7 +105,7 @@ index 9e2d993e7..ad6ea91c5 100644
  	ExtensionInputComponent,
  	ExtensionSelectorComponent,
 diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
-index 9d345b4e9..efbf3b627 100644
+index 9d345b4..efbf3b6 100644
 --- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 +++ b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 @@ -1,4 +1,13 @@
@@ -417,7 +417,7 @@ index 9d345b4e9..efbf3b627 100644
  
  	/**
 diff --git a/packages/coding-agent/src/modes/interactive/components/index.ts b/packages/coding-agent/src/modes/interactive/components/index.ts
-index 326adcc53..e029dc53e 100644
+index c394653..a607805 100644
 --- a/packages/coding-agent/src/modes/interactive/components/index.ts
 +++ b/packages/coding-agent/src/modes/interactive/components/index.ts
 @@ -5,7 +5,12 @@ export { BashExecutionComponent } from "./bash-execution.ts";
@@ -432,13 +432,13 @@ index 326adcc53..e029dc53e 100644
 +	type EditorBorderSlot,
 +} from "./custom-editor.ts";
  export { CustomMessageComponent } from "./custom-message.ts";
- export { DaxnutsComponent } from "./daxnuts.ts";
  export { type RenderDiffOptions, renderDiff } from "./diff.ts";
+ export { DynamicBorder } from "./dynamic-border.ts";
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 158f59e5f..a7295865a 100644
+index f4f5c5c..36638e4 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-@@ -89,6 +89,7 @@ import type {
+@@ -90,6 +90,7 @@ import type {
  	MarkdownTransformer,
  	ProjectTrustContext,
  	UserBashEventResult,
@@ -446,7 +446,7 @@ index 158f59e5f..a7295865a 100644
  	WorkingIndicatorOptions,
  } from "../../core/extensions/index.ts";
  import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
-@@ -138,7 +139,7 @@ import { AssistantMessageComponent } from "./components/assistant-message.ts";
+@@ -140,7 +141,7 @@ import { AssistantMessageComponent } from "./components/assistant-message.ts";
  import { BashExecutionComponent } from "./components/bash-execution.ts";
  import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
  import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
@@ -454,8 +454,8 @@ index 158f59e5f..a7295865a 100644
 +import { CustomEditor, type EditorBorderContent, type EditorBorderSlot } from "./components/custom-editor.ts";
  import { CustomEntryComponent } from "./components/custom-entry.ts";
  import { CustomMessageComponent } from "./components/custom-message.ts";
- import { DaxnutsComponent } from "./components/daxnuts.ts";
-@@ -226,6 +227,44 @@ function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatus
+ import { DynamicBorder } from "./components/dynamic-border.ts";
+@@ -228,6 +229,44 @@ function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatus
  	);
  }
  
@@ -500,7 +500,7 @@ index 158f59e5f..a7295865a 100644
  function isExpandable(obj: unknown): obj is Expandable {
  	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
  }
-@@ -555,9 +594,8 @@ export class InteractiveMode {
+@@ -567,9 +606,8 @@ export class InteractiveMode {
  		unsubscribe: () => void;
  	}>();
  
@@ -512,7 +512,7 @@ index 158f59e5f..a7295865a 100644
  	private widgetContainerAbove!: Container;
  	private widgetContainerBelow!: Container;
  
-@@ -2353,14 +2391,9 @@ export class InteractiveMode {
+@@ -2408,14 +2446,9 @@ export class InteractiveMode {
  		options?: ExtensionWidgetOptions,
  	): void {
  		const placement = options?.placement ?? "aboveEditor";
@@ -530,7 +530,7 @@ index 158f59e5f..a7295865a 100644
  
  		if (content === undefined) {
  			this.renderWidgets();
-@@ -2368,6 +2401,7 @@ export class InteractiveMode {
+@@ -2423,6 +2456,7 @@ export class InteractiveMode {
  		}
  
  		let component: Component & { dispose?(): void };
@@ -538,7 +538,7 @@ index 158f59e5f..a7295865a 100644
  
  		if (Array.isArray(content)) {
  			// Wrap string array in a Container with Text components
-@@ -2379,25 +2413,26 @@ export class InteractiveMode {
+@@ -2434,25 +2468,26 @@ export class InteractiveMode {
  				container.addChild(new ThemedText(() => theme.fg("muted", "... (widget truncated)"), 1, 0));
  			}
  			component = container;
@@ -574,7 +574,7 @@ index 158f59e5f..a7295865a 100644
  		this.renderWidgets();
  	}
  
-@@ -2438,24 +2473,41 @@ export class InteractiveMode {
+@@ -2493,24 +2528,41 @@ export class InteractiveMode {
  	private static readonly MAX_WIDGET_LINES = 10;
  
  	/**
@@ -621,7 +621,7 @@ index 158f59e5f..a7295865a 100644
  			if (spacerWhenEmpty) {
  				container.addChild(new Spacer(1));
  			}
-@@ -2465,7 +2517,7 @@ export class InteractiveMode {
+@@ -2520,7 +2572,7 @@ export class InteractiveMode {
  		if (leadingSpacer) {
  			container.addChild(new Spacer(1));
  		}
@@ -630,7 +630,7 @@ index 158f59e5f..a7295865a 100644
  			container.addChild(component);
  		}
  	}
-@@ -2886,6 +2938,7 @@ export class InteractiveMode {
+@@ -2952,6 +3004,7 @@ export class InteractiveMode {
  				this.statusContainer.addChild(this.activeStatusIndicator);
  			}
  		}
@@ -639,7 +639,7 @@ index 158f59e5f..a7295865a 100644
  		this.ui.requestRender();
  	}
 diff --git a/packages/coding-agent/src/modes/rpc/rpc-types.ts b/packages/coding-agent/src/modes/rpc/rpc-types.ts
-index 7fc71516a..b1f0c3f17 100644
+index 7fc7151..b1f0c3f 100644
 --- a/packages/coding-agent/src/modes/rpc/rpc-types.ts
 +++ b/packages/coding-agent/src/modes/rpc/rpc-types.ts
 @@ -281,7 +281,13 @@ export type RpcExtensionUIRequest =
@@ -659,7 +659,7 @@ index 7fc71516a..b1f0c3f17 100644
  	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string };
 diff --git a/packages/coding-agent/test/custom-editor-border-content.test.ts b/packages/coding-agent/test/custom-editor-border-content.test.ts
 new file mode 100644
-index 000000000..66beec6dc
+index 0000000..66beec6
 --- /dev/null
 +++ b/packages/coding-agent/test/custom-editor-border-content.test.ts
 @@ -0,0 +1,188 @@
@@ -853,7 +853,7 @@ index 000000000..66beec6dc
 +});
 diff --git a/packages/coding-agent/test/interactive-mode-widget-placement.test.ts b/packages/coding-agent/test/interactive-mode-widget-placement.test.ts
 new file mode 100644
-index 000000000..a0ab94a0a
+index 0000000..a0ab94a
 --- /dev/null
 +++ b/packages/coding-agent/test/interactive-mode-widget-placement.test.ts
 @@ -0,0 +1,182 @@
@@ -1040,7 +1040,7 @@ index 000000000..a0ab94a0a
 +	});
 +});
 diff --git a/packages/tui/src/components/editor.ts b/packages/tui/src/components/editor.ts
-index c7fda44eb..31483fd40 100644
+index c7fda44..31483fd 100644
 --- a/packages/tui/src/components/editor.ts
 +++ b/packages/tui/src/components/editor.ts
 @@ -309,7 +309,7 @@ export class Editor implements Component, Focusable {

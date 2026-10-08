@@ -1,8 +1,8 @@
 diff --git a/packages/coding-agent/src/core/settings-manager.ts b/packages/coding-agent/src/core/settings-manager.ts
-index aa3eae323..81b0a2c2b 100644
+index 2dd248e..96aa4f2 100644
 --- a/packages/coding-agent/src/core/settings-manager.ts
 +++ b/packages/coding-agent/src/core/settings-manager.ts
-@@ -278,6 +278,8 @@ export interface SettingsError {
+@@ -303,6 +303,8 @@ export interface SettingsError {
  	error: Error;
  }
  
@@ -11,7 +11,7 @@ index aa3eae323..81b0a2c2b 100644
  type SettingsPaths = Partial<Record<SettingsScope, string>>;
  
  function toSettingsError(scope: SettingsScope, error: unknown, path?: string): SettingsError {
-@@ -388,6 +390,7 @@ export class SettingsManager {
+@@ -413,6 +415,7 @@ export class SettingsManager {
  	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
  	private writeQueue: Promise<void> = Promise.resolve();
  	private errors: SettingsError[];
@@ -19,7 +19,7 @@ index aa3eae323..81b0a2c2b 100644
  	private settingsPaths: SettingsPaths;
  
  	private constructor(
-@@ -688,7 +691,14 @@ export class SettingsManager {
+@@ -713,7 +716,14 @@ export class SettingsManager {
  				this.clearModifiedScope(scope);
  			})
  			.catch((error) => {
@@ -35,7 +35,7 @@ index aa3eae323..81b0a2c2b 100644
  			});
  	}
  
-@@ -776,6 +786,14 @@ export class SettingsManager {
+@@ -801,6 +811,14 @@ export class SettingsManager {
  		await this.writeQueue;
  	}
  
@@ -51,10 +51,10 @@ index aa3eae323..81b0a2c2b 100644
  		const drained = [...this.errors];
  		this.errors = [];
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 2d5344a90..59a1c6ee2 100644
+index 55ea404..f4f5c5c 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-@@ -502,6 +502,7 @@ export class InteractiveMode {
+@@ -524,6 +524,7 @@ export class InteractiveMode {
  
  	// Agent subscription unsubscribe function
  	private unsubscribe?: () => void;
@@ -62,7 +62,7 @@ index 2d5344a90..59a1c6ee2 100644
  	private signalCleanupHandlers: Array<() => void> = [];
  
  	// Track if editor is in bash mode (text starts with !)
-@@ -2034,6 +2035,12 @@ export class InteractiveMode {
+@@ -2092,6 +2093,12 @@ export class InteractiveMode {
  
  		this.unsubscribe?.();
  		this.unsubscribe = undefined;
@@ -72,10 +72,10 @@ index 2d5344a90..59a1c6ee2 100644
 +				`Failed to save ${scope} settings${path ? ` to ${path}` : ""}: ${error.message}. The change applies to this session only.`,
 +			);
 +		});
+ 		this.programStatus.reset();
  		this.applyRuntimeSettings();
  
- 		if (options.renderBeforeBind) {
-@@ -6945,6 +6952,7 @@ export class InteractiveMode {
+@@ -7100,6 +7107,7 @@ export class InteractiveMode {
  		if (this.unsubscribe) {
  			this.unsubscribe();
  		}
@@ -84,7 +84,7 @@ index 2d5344a90..59a1c6ee2 100644
  			this.stopInteractiveTui(fullscreenExitOutput);
  			this.isInitialized = false;
 diff --git a/packages/coding-agent/test/settings-manager.test.ts b/packages/coding-agent/test/settings-manager.test.ts
-index a407fe206..eb8807c2b 100644
+index ac7e74a..c9dd758 100644
 --- a/packages/coding-agent/test/settings-manager.test.ts
 +++ b/packages/coding-agent/test/settings-manager.test.ts
 @@ -3,7 +3,12 @@ import { homedir } from "os";
