@@ -51,6 +51,7 @@ let
     src = inputs.codegraph;
   };
 
+  tuiTmux = pkgs.callPackage ../pkg/tui-tmux/default.nix { };
   cfg = config.smind.hm.dev.llm;
 
   # SSH key for remote worker machines: made available read-only (folded into
@@ -121,6 +122,7 @@ let
     # codegraph rides along here so its CLI / `init -i` work inside the sandbox.
     sandboxPackages =
       cfg.yolo.packages
+      ++ [ tuiTmux ]
       ++ lib.optional codegraphSet cfg.yolo.codegraph
       ++ lib.optionals (cfg.yolo.vm.enable && isLinux) [
         pkgs.qemu_kvm
@@ -131,6 +133,8 @@ let
     sessionVariables = cfg.yolo.sessionVariables;
     # Secret-file-backed env vars composed + sourced inside the sandbox.
     secretSessionVariables = cfg.yolo.secretSessionVariables;
+    # Exact-byte-validated token files (fail-closed launches).
+    validatedSessionVariables = cfg.yolo.validatedSessionVariables;
     # Tagged, runtime-suppressible system-prompt additions (see promptExtensions).
     inherit promptJson;
     # Tagged pre-start hooks: host (before sandbox) + sandbox (inside, via the
@@ -391,6 +395,27 @@ in
       '';
     };
 
+    smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      example = lib.literalExpression ''
+        { HAYSTACK_TOKEN = "/run/secrets/haystack-agent-token"; }
+      '';
+      description = ''
+        Exact-byte-validated token files for the sandbox, as a map from the
+        environment-variable name to the host path of the secret FILE.
+
+        Unlike {option}`smind.hm.dev.llm.yolo.secretSessionVariables`
+        (warn-and-skip, `$(cat)` transport), each file must hold exactly a
+        43-char base64url token plus at most one final LF. yolo validates
+        the bytes before composition and FAILS the launch on any violation
+        (unreadable, wrong size, embedded newline, bad charset) — rejected
+        files never produce an environment assignment. The same validated
+        value is composed, never reread. Existing unrelated secrets keep
+        their generic transport semantics.
+      '';
+    };
+
     smind.hm.dev.llm.yolo.codegraph = lib.mkOption {
       type = lib.types.nullOr lib.types.package;
       default = codegraphPkg;
@@ -577,9 +602,10 @@ in
           extraReadOnlyPaths = cfg.yolo.extraReadOnlyPaths ++ lib.optional sshKeySet cfg.llmSshKeyPath;
           extraReadWritePaths = cfg.yolo.extraReadWritePaths;
           piSharedAssets = cfg.yolo.piSharedAssets;
-          sandboxPackages = cfg.yolo.packages ++ lib.optional codegraphSet cfg.yolo.codegraph;
+          sandboxPackages = cfg.yolo.packages ++ [ tuiTmux ] ++ lib.optional codegraphSet cfg.yolo.codegraph;
           sessionVariables = cfg.yolo.sessionVariables;
           secretSessionVariables = cfg.yolo.secretSessionVariables;
+          validatedSessionVariables = cfg.yolo.validatedSessionVariables;
           inherit promptJson prehooksJson sandboxHooksJson shellHooksJson cmdHooksJson;
         })
       ];
