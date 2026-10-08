@@ -77,6 +77,11 @@ function FieldContent({ value, highlighter }: { value: FieldValue; highlighter: 
   }
 }
 
+export function FieldPreview({ value }: { value: FieldValue }) {
+  const highlighter = useMemo(() => createLowlight({ ...common, nix, scala }), []);
+  return <div className="field-content"><FieldContent value={value} highlighter={highlighter} /></div>;
+}
+
 export function FieldsView({ fieldsJson }: { fieldsJson: string }) {
   const fields = useMemo(() => parseFields(fieldsJson), [fieldsJson]);
   const highlighter = useMemo(() => createLowlight({ ...common, nix, scala }), []);

@@ -23,9 +23,11 @@ follows the plan as written.
    surfacing instead of preflight behavior.
 4. **Lossless JSON (option i).** All JSON paths preserve large integers,
    decimals, Unicode, and null with no silent rounding (approved 2026-10-07).
-   Mechanism (spike-proven, S2): `lossless-json@4.3.1` as the single JSON
-   codec; arbitrary JSON crosses MCP/HTTP/PG as raw text, parsed exactly
-   once at the application layer.
+   Mechanism: a shared domain codec uses `lossless-json@4.3.1` validation
+   and serialization. Native JSON source-context revival materializes exact
+   `LosslessNumber` values while preserving prototype-named object keys.
+   Arbitrary JSON crosses MCP/HTTP/PG as raw text. The prototype-key
+   preservation regression was reproduced and corrected on 2026-10-08.
 5. **Stack.** TypeScript + official MCP SDK + React on current Node LTS
    (approved 2026-10-07).
 6. **MCP protocol pin.** SDK `1.32.1`, protocol `2025-11-25`, stateless

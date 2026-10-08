@@ -26,6 +26,16 @@ describe("lossless numbers", () => {
   it("sorts object keys, keeps array order", () => {
     assert.equal(canonicalizeRaw('{"b":1,"a":[3,2,1]}'), '{"a":[3,2,1],"b":1}');
   });
+  it("preserves prototype-named keys and their exact numbers", () => {
+    for (const value of ['null', '"literal"', '9007199254740993', '[0.123456789012345678901]', '{"n":1e1000}']) {
+      const raw = `{"__proto__":${value},"constructor":{"prototype":9007199254740993}}`;
+      const parsed = parseRaw(raw);
+      assert.ok(parsed !== null && typeof parsed === "object");
+      assert.equal(Object.hasOwn(parsed, "__proto__"), true, raw);
+      assert.equal(canonicalize(parsed), raw);
+    }
+    assert.equal(canonicalizeRaw('{"nested":{"\\u005f_proto__":9007199254740993}}'), '{"nested":{"__proto__":9007199254740993}}');
+  });
   it("rejects trailing commas, duplicate keys, garbage", () => {
     for (const bad of ['{"a":1,}', '{"a":1,"a":2}', '{"a":}', "nope", ""]) {
       assert.throws(() => parseRaw(bad), BadEnvelope, bad);

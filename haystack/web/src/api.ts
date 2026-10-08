@@ -34,20 +34,27 @@ export class ApiError extends Error {
   }
 }
 
-import { parse, stringify } from "lossless-json";
+import { stringify } from "lossless-json";
+import { parseRaw as parse } from "../../server/src/domain/json.ts";
 
-async function call<T>(path: string, body?: unknown): Promise<T> {
+async function request(path: string, init: RequestInit): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    res = await fetch(path, init);
   } catch {
     throw new NetworkError();
   }
   if (res.status === 401) throw new AuthError();
+  if (res.status === 502 || res.status === 503 || res.status === 504) throw new NetworkError();
+  return res;
+}
+
+async function call<T>(path: string, body?: unknown): Promise<T> {
+  const res = await request(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
   let parsed: unknown = null;
   try {
     parsed = await res.json();
@@ -62,13 +69,7 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(path);
-  } catch {
-    throw new NetworkError();
-  }
-  if (res.status === 401) throw new AuthError();
+  const res = await request(path, { method: "GET" });
   const parsed = (await res.json()) as T;
   if (!res.ok) {
     const fault = (parsed as unknown as { error?: ApiFault }).error ?? { code: "unavailable", message: "request failed" };
@@ -135,13 +136,13 @@ export interface RevisionMeta {
   tokenId: string;
 }
 
-/** Parse a served item WITHOUT JSON.parse: the document arrives as lossless
+/** Parse a served item with the shared exact JSON codec: it arrives as lossless
  *  canonical text and big integers must survive the browser too. fieldsJson
  *  stays canonical text end to end (displayed and re-sent verbatim). */
 function toItemFromText(text: string): Item {
   let raw: { key: string; revision: number; document: unknown; metadata: ItemMetadata };
   try {
-    raw = parse(text) as typeof raw;
+    raw = parse(text) as unknown as typeof raw;
   } catch {
     throw new ApiError(200, { code: "unavailable", message: "bad response" });
   }
@@ -212,17 +213,11 @@ export function uuidv7(): string {
 
 /** POST returning raw text (for lossless document bodies). */
 async function callText(path: string, body?: unknown): Promise<string> {
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    throw new NetworkError();
-  }
-  if (res.status === 401) throw new AuthError();
+  const res = await request(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
   const text = await res.text();
   if (!res.ok) {
     let fault: ApiFault = { code: "unavailable", message: "request failed" };

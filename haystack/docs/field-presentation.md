@@ -10,8 +10,31 @@ decimal text without conversion to JavaScript floating point. Booleans and
 null have distinct labels. Objects and arrays display indented JSON with
 syntax colours. A scalar or array at the root appears as one value. Empty
 objects have no fields. History and comparison views use the same renderer.
-The complete original JSON remains available under **Raw JSON**; the editor
-continues to edit the lossless JSON source.
+The complete original JSON remains available under **Raw JSON**.
+
+## Editing
+
+Records with recognized typed nodes open in **Typed content** mode. Each
+Markdown, code, or text node has a content textarea and an optional live
+preview using the same inert renderer as the detail view. Code nodes include
+a language selector; an existing unlisted language remains intact. Use
+**Raw JSON** to add fields, change node types, set an unlisted language, or
+edit ordinary fields and metadata. Root typed nodes are editable too.
+
+Switching modes preserves the draft. Typed edits retain unrelated properties
+and exact numeric tokens, including large integers and precise decimals.
+Raw JSON is validated on each change: an inline alert contains the parser's
+error and position, the textarea is marked invalid, and saving or retrying a
+conflicted save is disabled until the JSON is valid. Invalid text is retained
+so it can be corrected. Cancel discards the draft; save creates an attributed
+revision with the existing CAS checks.
+
+The browser and server share the domain JSON codec. Native JSON parsing
+preserves prototype-named keys such as `__proto__`, while source-context
+revival materializes every numeric token as a `LosslessNumber`. Runtimes
+must support `JSON.parse` reviver source context; missing support is an
+explicit error, never a conversion through rounded numbers. The pinned
+lossless-json validator and serializer remain in use.
 
 ## Typed nodes
 

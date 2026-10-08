@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Haystack quick UI test (no deployment): disposable PostgreSQL + server +
-# seeded demo data, all in a temp dir, all cleaned up on Ctrl-C.
+# seeded demo data in a temp dir, cleaned up on Ctrl-C. The per-port login
+# token persists under the repository's ignored debug directory.
 #
 # Usage: ./quick-ui.sh [port] [bind]
 #   ./quick-ui.sh                # local only (127.0.0.1)
@@ -70,7 +71,22 @@ if [[ "$BIND" != "127.0.0.1" && -n "$LANIP_EARLY" ]]; then
   EXTRA_ORIGIN=",\"http://$LANIP_EARLY:$PORT\""
   EXTRA_HOST=",\"$LANIP_EARLY\""
 fi
-TOKEN="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))")"
+TOKEN_FILE="$HAYSTACK_DIR/../debug/haystack-ui/$PORT/token.txt"
+umask 077
+mkdir -p -- "$(dirname -- "$TOKEN_FILE")"
+TOKEN="$(node --input-type=module - "$TOKEN_FILE" <<'JS'
+import { writeFile } from 'node:fs/promises';
+import { generateToken, readTokenFile } from './server/dist/auth/tokens.js';
+const path = process.argv[2];
+try {
+  await writeFile(path, generateToken() + '\n', { flag: 'wx', mode: 0o600 });
+} catch (error) {
+  if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') throw error;
+}
+process.stdout.write(await readTokenFile(path));
+JS
+)"
+chmod 600 -- "$TOKEN_FILE"
 printf '%s\n' "$TOKEN" > "$WORK/token.txt"
 DIGEST="$(printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1)"
 printf '%s\n' "$DIGEST" > "$WORK/token.sha"
@@ -119,8 +135,9 @@ if [[ "$BIND" != "127.0.0.1" && -n "$LANIP" ]]; then
   echo "  UI (other hosts): http://$LANIP:$PORT/#/browse"
 fi
 echo "  Token:   $TOKEN"
+echo "  Saved:   $TOKEN_FILE (retained across launches)"
 echo "  WARNING: no TLS; anyone on the network with the URL + token has full access. Throwaway testing only."
 echo "  Try:     search 'hello' · attention inbox · show-archived · edit demo:hello twice in two tabs (conflict)"
-echo "  Stop:    Ctrl-C (server, postgres, and $WORK are removed)"
+echo "  Stop:    Ctrl-C (server, postgres, and demo data are removed; login token is retained)"
 echo
 wait "$SRVPID"

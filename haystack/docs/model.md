@@ -56,9 +56,10 @@ Examples: `example-project:fact-mcp-auth`, `["a:b","i%d"]` → `a%3Ab:i%25d`.
   (full Unicode incl. astral, no lone surrogates), and null. Not preserved:
   whitespace, object key order, duplicate keys (rejected at parse).
   Unsupported values (undefined, NaN/Infinity, lone surrogates, NUL in
-  strings) are `invalid-document` faults. Single codec: `lossless-json`
+  strings) are `invalid-document` faults. The shared domain codec uses
+  lossless-json validation/serialization and native source-context revival
   (`LosslessNumber` for all JSON numbers); raw-text transport across
-  MCP/HTTP/PG, parsed exactly once at the application layer.
+  MCP/HTTP/PG. Prototype-named keys are ordinary own properties.
 - Bounds: document ≤ 1 MiB serialized; depth ≤ 64; links ≤ 256 tuples;
   string leaves ≤ 256 KiB; number exponents within ±999999 (rejected at
   parse, never rounded). Disclosed bounds, never silent truncation.

@@ -50,6 +50,12 @@ Normative freeze of plan §5 (minus dropped preflight — see decisions.md).
 - Same-origin validation on login and every cookie-authenticated mutation
   (CSRF). Logout expires the cookie (does not revoke the static token
   elsewhere). Tokens never in URLs, localStorage, logs, or tracing.
+- Backend restarts do not invalidate the cookie: sessions are checked
+  against the provisioned token digest on each request. A failed connection
+  or HTTP 502/503/504 preserves the cookie and reports service unavailability.
+  Only HTTP 401 or a WebSocket session rejection (4401) prompts sign-in.
+  After an outage, refresh or retry revalidates the existing cookie. Its
+  normal expiry and token revocation still apply.
 
 ## 4. Cache, referrer, logging privacy
 
