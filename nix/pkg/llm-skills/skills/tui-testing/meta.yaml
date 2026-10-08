@@ -1,0 +1,8 @@
+name: tui-testing
+description: >-
+  Drive and test interactive terminal applications as a user through a real
+  PTY and rendered screen. Use for complex TUIs including Pi, Claude Code,
+  Codex, editors, menus, overlays, streaming output, keyboard shortcuts,
+  bracketed paste, mouse events, and terminal resizing. Uses private tmux
+  servers via tui-tmux; does not substitute headless CLI or RPC tests for
+  user-interface verification.
