@@ -7,3 +7,5 @@ build/
 .mypy_cache/
 manure.db*
 data/
+# generated web-asset copy inside the package (R10; never hand-edit)
+manure/manure/web/
