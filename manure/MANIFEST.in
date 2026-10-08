@@ -1,0 +1,3 @@
+graft manure/web
+graft manure/manure/web
+global-exclude __pycache__ *.py[cod]
