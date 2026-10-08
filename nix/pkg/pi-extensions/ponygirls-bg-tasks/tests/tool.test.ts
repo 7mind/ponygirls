@@ -151,6 +151,25 @@ for (const [name, make] of Object.entries(setups)) {
       (e: unknown) => e instanceof BgTaskError && e.code === "CURSOR_INVALID" && /JSON null/.test(e.message));
   });
 
+  test(`${name}: polling a silent running task shows liveness in list and read`, async (t) => {
+    const s = await make(t);
+    const id = (await call(s, { action: "spawn", label: "quiet", command: "sleep 30", cwd: "/", notify: false })).details.task.id;
+    try {
+      const l = await call(s, { action: "list", cursor: null, limit: 10 });
+      const line = l.content[0]!.text.split("\n").find((x) => x.includes(id));
+      assert.match(line!, /root alive, observed .*Z/);
+      const r1 = await call(s, { action: "read", id, offset: "tail", limit: 100 });
+      assert.match(r1.content[0]!.text, /root alive, observed .*Z/);
+      assert.equal(r1.details.task.leaderAlive, true);
+      assert.ok(r1.details.task.observedAt);
+      assert.equal(typeof r1.details.task.durationMs, "number");
+      const r2 = await call(s, { action: "read", id, offset: "tail", limit: 100 });
+      assert.ok(r2.details.task.observedAt! >= r1.details.task.observedAt!);
+    } finally {
+      await call(s, { action: "terminate", id });
+    }
+  });
+
   test(`${name}: read output is sanitized and offsets are accurate`, async (t) => {
     const s = await make(t);
     const id = (await call(s, { action: "spawn", label: "ansi", command: "sleep 30", cwd: "/", notify: false })).details.task.id;
@@ -220,6 +239,37 @@ test("real: an oversized command fails the tool call instead of hanging", async 
     assert.rejects(call(s, { action: "spawn", label: "huge", command: huge, cwd: "/", notify: false }), (e: unknown) => e instanceof BgTaskError && e.code === "INVALID_REQUEST"),
     new Promise((_, reject) => setTimeout(() => reject(new Error("the oversized spawn hung")), 10000)),
   ]);
+});
+
+test("real: a fast command death and a runner launch failure read differently in list/read", async (t) => {
+  const s = await setups.real!(t);
+  const fast = await call(s, { action: "spawn", label: "fast", command: "exit 64", cwd: "/", notify: false });
+  await finished(s, fast.details.task.id);
+  let launchErr: unknown = null;
+  try {
+    await call(s, { action: "spawn", label: "bad", command: "true", cwd: "/definitely/missing/dir", notify: false });
+  } catch (e) {
+    launchErr = e;
+  }
+  assert.ok(launchErr instanceof BgTaskError && launchErr.code === "LAUNCH_FAILED");
+  const launchId = (launchErr as BgTaskError).task!.id;
+  const list = await call(s, { action: "list", cursor: null, limit: 10 });
+  const lines = list.content[0]!.text.split("\n");
+  const fastLine = lines.find((l) => l.includes(fast.details.task.id))!;
+  const launchLine = lines.find((l) => l.includes(launchId))!;
+  assert.match(fastLine, /exit 64 · exit_nonzero/);
+  assert.match(fastLine, / 0 B/);
+  assert.doesNotMatch(fastLine, /observed /);
+  assert.match(launchLine, /exit unknown · launch_failed: chdir failed/);
+  assert.doesNotMatch(launchLine, / 0 B/);
+  const fastRead = await call(s, { action: "read", id: fast.details.task.id, offset: "tail", limit: 4096 });
+  assert.match(fastRead.content[0]!.text, /exit 64 \(exit_nonzero\)/);
+  const launchRead = await call(s, { action: "read", id: launchId, offset: 0, limit: 4096 });
+  assert.match(launchRead.content[0]!.text, /launch failed.*never started/);
+  assert.match(launchRead.content[0]!.text, /launch_failed: chdir failed/);
+  assert.equal(typeof fastRead.details.task.durationMs, "number");
+  assert.equal(typeof launchRead.details.task.durationMs, "number");
+  assert.equal(typeof launchRead.details.task.reasonDetail, "string");
 });
 
 test("real: an oversized cwd fails the tool call instead of hanging", async (t) => {
