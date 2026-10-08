@@ -211,6 +211,12 @@
                 smind.services.haystack.publicUrl = "https://memory.example.net";
               };
               serverOnly = mkSystem { smind.services.haystack.users = fullUsers; };
+              externalEdge = mkSystem {
+                smind.services.haystack.users = fullUsers;
+                smind.services.haystack.clients = fullClients;
+                smind.services.haystack.publicUrl = "https://memory.example.net";
+                smind.services.haystack.proxy.enable = false;
+              };
               # Negative cases run our module under evalModules with stubbed
               # NixOS options: full nixosSystem carries unrelated assertions
               # that fail in minimal configs, and projecting one attr skips
@@ -255,6 +261,13 @@
                   tokenFile = "/run/secrets/x";
                 };
               };
+              firewallWithoutProxy = forceChecked {
+                smind.services.haystack.users = fullUsers;
+                smind.services.haystack.clients = fullClients;
+                smind.services.haystack.publicUrl = "https://memory.example.net";
+                smind.services.haystack.proxy.enable = false;
+                smind.services.haystack.proxy.openFirewall = true;
+              };
             in
             assert full.systemd.services.haystack.description != "";
             assert builtins.elem "multi-user.target" full.systemd.services.haystack.wantedBy;
@@ -265,6 +278,11 @@
             # Server-only host: we enable no proxy and open no firewall ports.
             assert !serverOnly.services.nginx.enable;
             assert serverOnly.networking.firewall.allowedTCPPorts == [ ];
+            # External edge (proxy.enable = false): no host virtual host and
+            # no firewall ports, but the service itself is unaffected.
+            assert !(externalEdge.services.nginx.virtualHosts ? "memory.example.net");
+            assert externalEdge.networking.firewall.allowedTCPPorts == [ ];
+            assert externalEdge.systemd.services.haystack.description != "";
             # Full host: proxy on, firewall still closed unless asked.
             assert full.services.nginx.virtualHosts ? "memory.example.net";
             assert full.services.nginx.virtualHosts."memory.example.net".root == "${full.smind.services.haystack.package}/lib/node_modules/haystack/web/dist";
@@ -275,6 +293,8 @@
             # Human credentials and unknown tokens are rejected as mappings.
             assert !humanMapping.success;
             assert !unknownToken.success;
+            # Firewall ports without a managed proxy are rejected.
+            assert !firewallWithoutProxy.success;
             pkgs.runCommandLocal "haystack-nixos-eval-test" { } "touch $out";
           haystack-hm-eval =
             let
