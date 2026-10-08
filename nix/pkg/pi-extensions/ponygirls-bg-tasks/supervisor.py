@@ -1089,7 +1089,25 @@ class Supervisor:
         rt = self.runtimes.get(record.id)
         if rt is not None:
             data["logBytes"] = rt.log_bytes
+            # Liveness evidence, not durable state: when this snapshot was taken
+            # and whether the supervised root process still exists. Polling
+            # list/read on a silent-but-running task shows `observedAt`
+            # advancing with `leaderAlive` true ("no new output yet"); a task
+            # whose root already exited but whose group is still draining shows
+            # `leaderAlive` false with phase closing/stopping.
+            data["observedAt"] = now_iso(self.clock)
+            data["leaderAlive"] = False if rt.sealed else self._leader_alive(rt)
         return data
+
+    @staticmethod
+    def _leader_alive(rt: TaskRuntime) -> bool:
+        # The leader is unreaped while unsealed, so its PID cannot have been
+        # reused: signal 0 confirms existence without side effects.
+        try:
+            os.kill(rt.pid, 0)
+            return True
+        except OSError:
+            return False
 
     # ---- operations --------------------------------------------------------
 
@@ -1138,9 +1156,9 @@ class Supervisor:
         try:
             pid, master = self._launch(command, cwd)
         except DomainError as e:
-            log.close()
+            log_bytes = self._record_launch_failure(log, task_id, e.message)
             failed = self._commit_or_mark(lambda: self.registry.finalize(
-                task_id, Outcome(STATE_FAILED, "launch_failed", e.message), None, 0, NOTICE_INLINE))
+                task_id, Outcome(STATE_FAILED, "launch_failed", e.message), None, log_bytes, NOTICE_INLINE))
             raise DomainError("LAUNCH_FAILED", e.message, failed)
         rt = TaskRuntime(task_id=task_id, pid=pid, pgid=pid, master_fd=master, log=log, log_bytes=0,
                          last_sync=self.clock.monotonic())
@@ -1162,6 +1180,26 @@ class Supervisor:
             raise
         self.writer.hint(False)
         return {"task": self._record_json(record)}
+
+    def _record_launch_failure(self, log: LogHandle, task_id: str, detail: str) -> int:
+        """Leave runner-level evidence in the task log: the command never ran,
+        so without this line a spawn failure is 0 silent bytes, indistinguishable
+        from a fast command death, in both list and read. Best effort; the
+        launch_failed outcome stands even if the log write itself fails."""
+        line = f"bg-tasks: launch failed: {detail}; the command never started\n".encode()
+        try:
+            log.write(line)
+            log.sync()
+            return len(line)
+        except OSError as e:
+            self.storage_failed = f"log write failed: {e}"
+            print(f"bg-tasks supervisor: log write failed for {task_id}: {e}", file=sys.stderr)
+            return 0
+        finally:
+            try:
+                log.close()
+            except OSError:
+                pass
 
     def _commit_or_mark(self, fn: Callable[[], TaskRecord]) -> Optional[TaskRecord]:
         try:

@@ -26,12 +26,19 @@ export interface TaskSummary {
   phase: TaskRecord["phase"];
   exit: ExitEvidence | null;
   reason: TaskRecord["reason"];
+  reasonDetail: TaskRecord["reasonDetail"];
   notify: boolean;
   notice: string | null;
   logBytes: number;
   startedAt: string | null;
   endedAt: string | null;
   cleanupUnconfirmed: boolean;
+  /** Milliseconds from first start (or admission) to end (or now); null when timestamps do not parse. */
+  durationMs: number | null;
+  /** Supervisor snapshot time; set only on unfinished-task snapshots. */
+  observedAt: string | null;
+  /** Whether the supervised root process still exists at observedAt; null when unknown. */
+  leaderAlive: boolean | null;
 }
 
 export type BgTaskDetails =
@@ -62,11 +69,12 @@ export function noticeLabel(task: TaskRecord, local: string | null): string {
   return task.event.status === "received" ? "notice delivered" : task.event.status === "inline" ? "reported inline" : "notice pending";
 }
 
-export function summarize(task: TaskRecord, notice: string | null): TaskSummary {
+export function summarize(task: TaskRecord, notice: string | null, now: number = Date.now()): TaskSummary {
   return {
     id: task.id, seq: task.seq, label: shorten(task.label, LIST_LABEL_DISPLAY_CHARS), state: task.state, phase: task.phase,
-    exit: task.exit, reason: task.reason, notify: task.notify, notice, logBytes: task.logBytes, startedAt: task.startedAt,
-    endedAt: task.endedAt, cleanupUnconfirmed: task.cleanupUnconfirmed,
+    exit: task.exit, reason: task.reason, reasonDetail: task.reasonDetail, notify: task.notify, notice, logBytes: task.logBytes,
+    startedAt: task.startedAt, endedAt: task.endedAt, cleanupUnconfirmed: task.cleanupUnconfirmed,
+    durationMs: durationMs(task, now), observedAt: task.observedAt ?? null, leaderAlive: task.leaderAlive ?? null,
   };
 }
 
@@ -79,11 +87,34 @@ export function elapsed(task: Pick<TaskRecord, "startedAt" | "createdAt" | "ende
   return `${Math.floor(secs / 3600)}h${Math.floor((secs % 3600) / 60)}m`;
 }
 
+export function durationMs(task: Pick<TaskRecord, "startedAt" | "createdAt" | "endedAt">, now: number): number | null {
+  const start = Date.parse(task.startedAt ?? task.createdAt);
+  const end = task.endedAt ? Date.parse(task.endedAt) : now;
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return Math.max(0, Math.round(end - start));
+}
+
+/** Exit/reason evidence for unhealthy finalized tasks; healthy completions keep the historic bare rendering. */
+export function outcomeLabel(task: Pick<TaskRecord, "exit" | "reason" | "reasonDetail">): string | null {
+  if (!task.reason || task.reason === "exit") return null;
+  const detail = task.reasonDetail ? `: ${task.reasonDetail}` : "";
+  return `${formatExit(task.exit)} (${task.reason}${detail})`;
+}
+
+/** Liveness evidence for unfinished tasks; null for finalized records and pre-liveness snapshots. */
+export function livenessLabel(task: Pick<TaskRecord, "state" | "observedAt" | "leaderAlive">): string | null {
+  if (task.state !== "running" || !task.observedAt) return null;
+  const alive = task.leaderAlive == null ? "liveness unknown" : task.leaderAlive ? "root alive" : "root exited";
+  return `${alive}, observed ${task.observedAt}`;
+}
+
 export function taskLine(task: TaskRecord, local: string | null, now: number): string {
   const parts = [`${task.id} [${stateLabel(task)}] ${displayValue(shorten(task.label, LIST_LABEL_DISPLAY_CHARS))}`, elapsed(task, now)];
   if (task.exit || isFinalized(task)) parts.push(formatExit(task.exit));
-  if (task.reason) parts.push(task.reason);
+  if (task.reason) parts.push(task.reasonDetail ? `${task.reason}: ${task.reasonDetail}` : task.reason);
   parts.push(noticeLabel(task, local), `${task.logBytes} B`);
+  const live = livenessLabel(task);
+  if (live) parts.push(live);
   return parts.join(" · ");
 }
 
@@ -170,7 +201,9 @@ export async function runBgTask(host: ToolHost, request: BgTaskRequest, signal: 
         if (n === 0 && slice.length > 0 && take === bytes.length) n = slice.length;
         const next = start + n;
         const eof = finalized && next >= window.size;
-        const header = `${window.task.id} [${stateLabel(window.task)}] bytes ${start}–${next} of ${window.size}${eof ? " (end of log)" : `; next offset ${next}`}`;
+        const outcome = outcomeLabel(window.task);
+        const live = livenessLabel(window.task);
+        const header = `${window.task.id} [${stateLabel(window.task)}] bytes ${start}–${next} of ${window.size}${eof ? " (end of log)" : `; next offset ${next}`}${outcome ? ` · ${outcome}` : ""}${live ? ` · ${live}` : ""}`;
         return {
           text: `${header}\n${decodeAndSanitize(slice.subarray(0, n))}`,
           details: { action: "read", task: summarize(window.task, host.noticeState(window.task)), offset: start, nextOffset: next, size: window.size, eof },

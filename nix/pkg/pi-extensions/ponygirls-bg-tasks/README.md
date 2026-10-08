@@ -154,6 +154,15 @@ remove them.
 - A launch whose child is SIGKILLed after the 3 s start timeout is reaped with
   a blocking wait; a child stuck in uninterruptible sleep before `exec` would
   stall the supervisor loop until it leaves that state.
+- A launch failure leaves runner-level evidence in the task log
+  (`bg-tasks: launch failed: <detail>; the command never started`) and in the
+  reason detail, so `list`/`read` distinguish a spawn failure from a fast
+  command death (exit evidence plus an empty log) without guessing.
+- Snapshots of unfinished tasks carry liveness evidence (`observedAt`,
+  `leaderAlive`): polling `list`/`read` on a silent-but-running task shows the
+  observation time advancing with the root alive ("no new output yet"); a
+  task whose root already exited but whose group still drains reports the root
+  exited with phase `closing`/`stopping`.
 - An unexpected supervisor exception fails the request with
   `SUPERVISOR_FAULT` and starts a graceful teardown of the session's tasks.
   Any failure to create a task's log (including descriptor exhaustion) marks

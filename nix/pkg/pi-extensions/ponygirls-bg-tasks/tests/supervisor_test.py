@@ -247,6 +247,14 @@ class ExecutionTest(SupervisorTestBase):
         self.assertEqual((task["state"], task["reason"], task["event"]["status"]), ("failed", "launch_failed", "inline"))
         self.assertIn("chdir", task["reasonDetail"])
         self.assertEqual(c.get(task["id"])["state"], "failed")
+        # Runner-level evidence lands in the task log itself, so read (not just
+        # the spawn error) distinguishes a spawn failure from a fast command
+        # death: the command never started, and the log says so.
+        log = c.read_all(task["id"])
+        self.assertIn(b"bg-tasks: launch failed: chdir failed", log)
+        self.assertIn(b"the command never started", log)
+        self.assertEqual(task["logBytes"], len(log))
+        self.assertGreater(len(log), 0)
 
     def test_invalid_requests_are_rejected_before_admission(self):
         c = self.client()
@@ -582,6 +590,45 @@ class LifetimeTest(SupervisorTestBase):
 
 
 class ProtocolSurfaceTest(SupervisorTestBase):
+    def test_running_snapshots_carry_liveness_evidence(self):
+        c = self.client()
+        t = c.spawn("sleep 30")
+        try:
+            seen = c.get(t["id"])
+            self.assertEqual(seen["leaderAlive"], True)
+            self.assertTrue(seen["observedAt"].endswith("Z"), seen["observedAt"])
+            # A second poll re-observes: the snapshot time never goes backwards
+            # while the supervisor still owns the task, even with zero output.
+            again = c.get(t["id"])
+            self.assertGreaterEqual(again["observedAt"], seen["observedAt"])
+            listed = c.call("list", {"upper": None, "after": None, "limit": 10})["items"]
+            self.assertEqual([(i["id"], i["leaderAlive"]) for i in listed], [(t["id"], True)])
+            self.assertTrue(all("observedAt" in i for i in listed))
+        finally:
+            done = c.call("terminate", {"id": t["id"]})["task"]
+        # Finalized records carry the outcome, not liveness: no stale evidence.
+        self.assertNotIn("observedAt", done)
+        self.assertNotIn("leaderAlive", done)
+        self.assertNotIn("observedAt", c.get(t["id"]))
+
+    def test_sealed_but_draining_task_reports_root_exited(self):
+        c = self.client()
+        # A lingering group member keeps the task in closing long after the
+        # root is reaped, so the liveness snapshot is stable, not a transient.
+        # trap '' HUP: without it the kernel's hangup to the foreground group
+        # kills the member the instant the session-leader root exits.
+        t = c.spawn("trap '' HUP; sleep 30 & exit 0")
+        try:
+            closing = wait_until(lambda: (lambda x: x if x["phase"] == "closing" else None)(c.get(t["id"])),
+                                 30, 0.05, "root exit with a lingering group member")
+            # The leader is reaped (its PID must never be probed again) while the
+            # group still drains: alive would be a lie, exited points at the group.
+            self.assertEqual(closing["leaderAlive"], False)
+            self.assertTrue(closing["observedAt"].endswith("Z"))
+        finally:
+            done = c.call("terminate", {"id": t["id"]})["task"]
+        self.assertEqual((done["state"], done["reason"]), ("failed", "terminated"))
+
     def test_read_windows_tail_and_offsets(self):
         c = self.client()
         t = c.spawn("head -c 100000 /dev/zero | tr '\\0' x; printf END")

@@ -87,6 +87,24 @@ for (const [name, make] of Object.entries(factories)) {
     await rejectsWith(b.spawn({ label: "x", command: "true", cwd: "relative", notify: true }), "INVALID_REQUEST");
     await rejectsWith(b.get("bgt-unknown" as TaskId), "NOT_FOUND");
   });
+
+  test(`${name}: running snapshots carry liveness evidence; finalized ones omit it`, async (t) => {
+    const b = await make(t);
+    const running = await b.spawn({ label: "quiet", command: "sleep 30", cwd: "/", notify: false });
+    try {
+      assert.equal(running.leaderAlive, true);
+      assert.ok(running.observedAt?.endsWith("Z"));
+      const w = await b.read(running.id, "tail", 100);
+      assert.equal(w.task.leaderAlive, true);
+      assert.ok(w.task.observedAt);
+      assert.ok((await b.list(null, null, 10)).items.find((x) => x.id === running.id)?.leaderAlive);
+    } finally {
+      await b.terminate(running.id);
+    }
+    const done = await b.get(running.id);
+    assert.equal(done.observedAt ?? null, null, "finalized records carry the outcome, not liveness");
+    assert.equal(done.leaderAlive ?? null, null);
+  });
 }
 
 test("real: another session's task IDs are not visible", async (t) => {
@@ -110,13 +128,22 @@ test("real: parallel spawn and terminate calls lose no registry mutations", asyn
 
 test("real: a supervisor-reported launch failure carries the retained task", async (t) => {
   const { backend } = await startRealBackend(t, "launch");
-  await assert.rejects(backend.spawn({ label: "bad", command: "true", cwd: "/definitely/missing/dir", notify: true }), (e: unknown) => {
-    assert.ok(e instanceof BgTaskError);
-    assert.equal(e.code, "LAUNCH_FAILED");
-    assert.equal(e.task?.state, "failed");
-    assert.equal(e.task?.reason, "launch_failed");
-    return true;
-  });
+  let caught: unknown = null;
+  try {
+    await backend.spawn({ label: "bad", command: "true", cwd: "/definitely/missing/dir", notify: true });
+  } catch (e) {
+    caught = e;
+  }
+  assert.ok(caught instanceof BgTaskError);
+  assert.equal(caught.code, "LAUNCH_FAILED");
+  assert.equal(caught.task?.state, "failed");
+  assert.equal(caught.task?.reason, "launch_failed");
+  // Runner-level evidence is retained in the task log itself, so a later list/read
+  // distinguishes the spawn failure from a fast command death without guessing.
+  const w = await backend.read(caught.task!.id, 0, 4096);
+  assert.match(new TextDecoder().decode(w.bytes), /launch failed.*never started/);
+  assert.equal(caught.task!.logBytes, w.size);
+  assert.ok(w.size > 0);
 });
 
 test("real: a second activation of a busy session is refused with SESSION_BUSY", async (t) => {

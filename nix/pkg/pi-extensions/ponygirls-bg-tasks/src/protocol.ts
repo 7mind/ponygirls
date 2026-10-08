@@ -113,6 +113,9 @@ export const TaskRecordSchema = Type.Object({
   interruptedActivation: Nullable(Type.String()),
   clearing: Type.Boolean(),
   cleanupUnconfirmed: Type.Boolean(),
+  /** Liveness evidence on unfinished-task snapshots; never persisted, absent for finalized records. */
+  observedAt: Type.Optional(Nullable(Type.String())),
+  leaderAlive: Type.Optional(Nullable(Type.Boolean())),
 }, { additionalProperties: false });
 export type TaskRecord = Static<typeof TaskRecordSchema> & { id: TaskId; sessionId: SessionId };
 
