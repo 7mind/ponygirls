@@ -210,10 +210,11 @@ in
           operations). A UUIDv7 third group starts with `7` (e.g.
           `0193e8d5-6f5c-7a1b-8c2d-…`); `crypto.randomUUID()` makes v4
           (third group `4xxx`) and is rejected with `bad-envelope`. Mint v7
-          with, e.g. `python3 -c 'import time,os;ms=int(time.time()*1000);`
-          `r=os.urandom(10);b=ms.to_bytes(6,"big")+r;a=bytearray(b);`
-          `a[6]=a[6]&0x0f|0x70;a[8]=a[8]&0x3f|0x80;h=a.hex();print(f"{h[:8]}-"`
-          `"{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}")'`. Tool faults
+          with `python3 -c 'import time,os,uuid;print(uuid.UUID(int=(int(time.time()*1000)<<80)|int.from_bytes(os.urandom(10),"big"),version=7))'`.
+          Minimal valid `document_json` (a *string* holding this object):
+          `{"title":"t","description":"d","fields":{},"type":"fact","status":"actual","importance":"low","human-attention":"cleared","links":[]}`
+          (`human-attention` is only `required`|`cleared`; `status:archived` hides from search).
+          Tool faults
           return a stable `code` plus a detail `message` — read it (e.g.
           `error bad-envelope: request_id must be a UUIDv7` tells you the
           id version was wrong). Never retry an uncertain write with a

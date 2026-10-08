@@ -43,11 +43,20 @@ Create/update/archive share this op.
 `request_id` must match
 `xxxxxxxx-xxxx-7xxx-8/9/a/bxx-xxxxxxxxxxxx` (third group starts with `7`).
 UUIDv4 (`crypto.randomUUID`, third group `4xxx`) is rejected with
-`bad-envelope`. Mint a fresh v7 per operation, e.g.:
+`bad-envelope`. Mint a fresh v7 per operation:
 
 ```bash
-python3 -c 'import time,os;ms=int(time.time()*1000);r=os.urandom(10);b=ms.to_bytes(6,"big")+r;a=bytearray(b);a[6]=a[6]&0x0f|0x70;a[8]=a[8]&0x3f|0x80;h=a.hex();print(f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}")'
+python3 -c 'import time,os,uuid;print(uuid.UUID(int=(int(time.time()*1000)<<80)|int.from_bytes(os.urandom(10),"big"),version=7))'
 ```
+
+Minimal valid `document_json` (a *string* holding this object):
+
+```json
+{"title":"t","description":"d","fields":{},"type":"fact","status":"actual","importance":"low","human-attention":"cleared","links":[]}
+```
+
+`human-attention` is only `required`|`cleared`; `status:archived` hides
+from browse/search defaults.
 
 MCP tool faults return `{ code, message }` plus `error <code>: <message>`
 text — read the message; `bad-envelope` alone never tells you which field
