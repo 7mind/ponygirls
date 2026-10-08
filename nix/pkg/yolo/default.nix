@@ -16,6 +16,7 @@
   shellHooksJson ? "[]",
   cmdHooksJson ? "[]",
   secretSessionVariables ? { },
+  validatedSessionVariables ? { },
   sandboxPackages ? [ ],
   sessionVariables ? { },
 }:
@@ -88,6 +89,14 @@ let
   secretVarsExports = lib.optionalString (secretSessionVariables != { }) ''
     export YOLO_SECRET_VARS=${lib.escapeShellArg (lib.concatStringsSep "\n" secretVarLines)}
   '';
+  # Exact-byte-validated token files (e.g. HAYSTACK_TOKEN): NAME=/path per
+  # line. yolo.sh validates the exact bytes before composition and fails the
+  # launch on any violation — unlike the generic warn-and-skip loader above,
+  # whose `$(cat)` transport cannot enforce the token-file contract.
+  validatedVarLines = lib.mapAttrsToList (name: path: "${name}=${path}") validatedSessionVariables;
+  validatedVarsExports = lib.optionalString (validatedSessionVariables != { }) ''
+    export YOLO_VALIDATED_VARS=${lib.escapeShellArg (lib.concatStringsSep "\n" validatedVarLines)}
+  '';
   # Extra packages exposed only inside the sandbox: collect them into one
   # buildEnv and hand yolo.sh its bin dir (already reachable via the ro-bound
   # /nix/store) to prepend onto the sandboxed command's PATH. Built lazily —
@@ -156,6 +165,7 @@ pkgs.writeShellScriptBin "yolo" ''
   ${extraDevExports}
   ${piSharedAssetsExports}
   ${secretVarsExports}
+  ${validatedVarsExports}
   ${sandboxBinExports}
   ${sessionVarsExports}
   ${promptJsonExports}

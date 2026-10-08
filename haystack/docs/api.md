@@ -1,0 +1,70 @@
+# Haystack — API schemas (frozen, Step 0)
+
+MCP and browser transports call the same application service; one rulebook.
+All JSON parsed with the lossless codec (`model.md` §2). Raw-text fields
+(`document_json`, query bodies) are parsed exactly once server-side.
+
+## 1. Faults (typed, stable codes)
+
+`invalid-id | invalid-document | invalid-query | invalid-cursor |
+not-found | conflict | replay-conflict | unauthorized | forbidden |
+ambiguous-credentials | rate-limited | bad-envelope | too-large |
+unavailable`. Faults carry a stable code, a short message, and (for
+`invalid-query`) UTF-16 spans. No credential/secret material in faults.
+
+## 2. MCP tools
+
+### `get`
+
+```json
+{ "key": "example-project:fact-mcp-auth", "revision": 1 }
+```
+
+`revision` optional (default: current). Returns full item (key, revision,
+document, metadata). Archived items accessible. Unknown key → `not-found`.
+
+### `put`
+
+```json
+{
+  "key": "example-project:fact-mcp-auth",
+  "document_json": "{\"title\":\"…\",\"fields\":{…},\"links\":[…]}",
+  "expected_revision": 0,
+  "request_id": "0193e8d5-…"
+}
+```
+
+`document_json` is a JSON **string** (raw text — never a nested object —
+so the SDK's `JSON.parse` cannot round numbers before the application
+codec sees them). `expected_revision` and `request_id` (UUIDv7) required.
+Returns `{ key, revision, metadata }`. Create/update/archive share this op.
+
+### `search`
+
+```json
+{ "query": "type:todo importance:high", "project": "example-project",
+  "limit": 20, "cursor": "…" }
+```
+
+`project`/`cursor` optional. Returns `{ items: [summaries], cursor? }`.
+Empty/whitespace query browses. Scope intersects predicates.
+
+## 3. Browser API (`/api/v1`, JSON bodies, versioned envelope)
+
+- `POST /login { token }` → sets cookie; `{ user }` (no secret echo).
+- `POST /logout` → expires cookie.
+- `GET /whoami` (cookie or bearer) → `{ userId, type, tokenId,
+  activityProjectId }`.
+- `POST /get { key, revision? }`, `POST /put { key, document_json,
+  expected_revision, request_id }`, `POST /search { query, project?,
+  limit?, cursor? }` — same semantics as MCP.
+- `POST /history { key }` → revision list (numbers, authors, times —
+  no document bodies); `POST /history/get { key, revision }` → snapshot.
+- `POST /query/analyze { query }` → `{ ast?, diagnostics[] }` (bounded,
+  same parser); `POST /complete { query, caret }` → bounded suggestions
+  (built-ins, vocabulary, observed values, IDs).
+- `GET /values/{type,status,importance}` → configured + conventional +
+  observed values (bounded, current items only).
+- All responses: `Cache-Control: no-store`. All errors: typed faults.
+  Item bodies render client-side as untrusted data (escaped; CSP; no raw
+  HTML, no auto-executed instructions/skills, no unsafe schemes).

@@ -60,6 +60,9 @@
         devLlmModuleBoundaryCheck =
           assert builtins.functionArgs (import ./nix/hm/dev-llm.nix) == { inputs = false; };
           pkgs.runCommandLocal "dev-llm-module-boundary-test" { } "touch $out";
+        devLlmHaystackAggregationCheck =
+          assert builtins.elem ./nix/hm/haystack.nix (import ./nix/hm/dev-llm.nix { inputs = { }; }).imports;
+          pkgs.runCommandLocal "dev-llm-haystack-aggregation-test" { } "touch $out";
         defaultModels = (nixpkgs.lib.evalModules {
           specialArgs = { inherit pkgs; };
           modules = [
@@ -155,6 +158,8 @@
           codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix { src = inputs.codegraph; };
           crawl4ai-mcp = pkgs.callPackage ./nix/pkg/crawl4ai/mcp.nix { };
           tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
+          tui-tmux = pkgs.callPackage ./nix/pkg/tui-tmux/default.nix { };
+          haystack = pkgs.callPackage ./nix/pkg/haystack/package.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           crawl4ai = pkgs.callPackage ./nix/pkg/crawl4ai/package.nix { src = inputs.crawl4ai; };
           reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
@@ -168,9 +173,266 @@
         checks = {
           default-models = defaultModelsCheck;
           notify-module = pkgs.callPackage ./nix/tests/notify-module.nix { };
+          tui-terminal = self.packages.${system}.tui-tmux.tests.terminal;
+          tui-hm-eval = import ./nix/hm/tui-tools-test.nix { inherit pkgs inputs; };
+          haystack = self.packages.${system}.haystack;
+          haystack-nixos-eval =
+            let
+              mkSystem = extra: (nixpkgs.lib.nixosSystem {
+                inherit system;
+                modules = [
+                  self.nixosModules.haystack
+                  ({ lib, ... }: lib.recursiveUpdate
+                    {
+                      system.stateVersion = "26.11";
+                      smind.services.haystack.enable = true;
+                    }
+                    extra)
+                ];
+              }).config;
+              fullUsers = {
+                operator = {
+                  type = "human";
+                  tokens.browser.tokenHashFile = "/run/secrets/human-sha";
+                };
+                w-agent = {
+                  type = "agent";
+                  tokens.default.tokenHashFile = "/run/secrets/agent-sha";
+                };
+              };
+              fullClients = {
+                alice.userId = "w-agent";
+                alice.tokenId = "default";
+                alice.tokenFile = "/run/secrets/agent-token";
+              };
+              full = mkSystem {
+                smind.services.haystack.users = fullUsers;
+                smind.services.haystack.clients = fullClients;
+                smind.services.haystack.publicUrl = "https://memory.example.net";
+              };
+              serverOnly = mkSystem { smind.services.haystack.users = fullUsers; };
+              # Negative cases run our module under evalModules with stubbed
+              # NixOS options: full nixosSystem carries unrelated assertions
+              # that fail in minimal configs, and projecting one attr skips
+              # assertion checks entirely. Our messages are pure strings, so
+              # forcing the filtered list is safe here.
+              forceChecked = extra: builtins.tryEval (
+                let
+                  sys = nixpkgs.lib.evalModules {
+                    specialArgs = { pkgs = import nixpkgs { inherit system; }; };
+                    modules = [
+                      self.nixosModules.haystack
+                      ({ lib, ... }: {
+                        options.services.postgresql = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                        options.systemd.services = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                        options.services.nginx = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                        options.networking.firewall = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                      })
+                      ({ lib, ... }: lib.recursiveUpdate
+                        { smind.services.haystack.enable = true; }
+                        extra)
+                    ];
+                  };
+                  ours = builtins.filter
+                    (a: nixpkgs.lib.hasPrefix "smind.services.haystack" a.message)
+                    sys.config.assertions;
+                in
+                builtins.deepSeq (map (a: a.assertion) ours) true
+              );
+              humanMapping = forceChecked {
+                smind.services.haystack.users = fullUsers;
+                smind.services.haystack.clients.alice = {
+                  userId = "operator";
+                  tokenId = "browser";
+                  tokenFile = "/run/secrets/x";
+                };
+              };
+              unknownToken = forceChecked {
+                smind.services.haystack.users = fullUsers;
+                smind.services.haystack.clients.alice = {
+                  userId = "w-agent";
+                  tokenId = "nope";
+                  tokenFile = "/run/secrets/x";
+                };
+              };
+            in
+            assert full.systemd.services.haystack.description != "";
+            assert builtins.elem "multi-user.target" full.systemd.services.haystack.wantedBy;
+            # Digest credentials load via LoadCredential, never store material.
+            assert builtins.elem "haystack-hash-w-agent-default:/run/secrets/agent-sha"
+              full.systemd.services.haystack.serviceConfig.LoadCredential;
+            assert (builtins.elemAt full.services.postgresql.ensureUsers 0).name == "haystack";
+            # Server-only host: we enable no proxy and open no firewall ports.
+            assert !serverOnly.services.nginx.enable;
+            assert serverOnly.networking.firewall.allowedTCPPorts == [ ];
+            # Full host: proxy on, firewall still closed unless asked.
+            assert full.services.nginx.virtualHosts ? "memory.example.net";
+            assert full.networking.firewall.allowedTCPPorts == [ ];
+            # Human credentials and unknown tokens are rejected as mappings.
+            assert !humanMapping.success;
+            assert !unknownToken.success;
+            pkgs.runCommandLocal "haystack-nixos-eval-test" { } "touch $out";
+          haystack-hm-eval =
+            let
+              evalHaystackHm = sys: tokenFile: osConfig: (nixpkgs.lib.evalModules {
+                specialArgs = { pkgs = import nixpkgs { system = sys; }; inherit osConfig; };
+                modules = [
+                  self.homeManagerModules.haystack
+                  ({ lib, ... }: {
+                    options.assertions = lib.mkOption {
+                      type = lib.types.listOf lib.types.attrs;
+                      default = [ ];
+                    };
+                    # Minimal stand-ins for the real HM options this client
+                    # module contributes to (programs.mcp/codex, yolo vars,
+                    # home.packages, home.username).
+                    options.programs.mcp.servers = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                    options.programs.codex.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                    options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = false; };
+                    options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                    options.smind.hm.dev.llm.assetBundles = lib.mkOption { type = lib.types.listOf lib.types.anything; default = [ ]; };
+                    options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
+                    options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
+                  })
+                  ({ ... }: {
+                    config.smind.hm.dev.llm.haystack = {
+                      enable = true;
+                      url = "http://127.0.0.1:47328";
+                      inherit tokenFile;
+                      userId = "workstation-agent";
+                      tokenId = "default";
+                      activityProjectId = "agent-activity";
+                    };
+                    # A pre-existing unrelated server must survive composition.
+                    config.programs.mcp.servers.codegraph = { command = "/bin/false"; };
+                  })
+                ];
+              });
+              linuxMod = evalHaystackHm "x86_64-linux" "/run/secrets/haystack-token" null;
+              darwinMod = evalHaystackHm "aarch64-darwin" "/run/secrets/haystack-token" null;
+              linuxCfg = linuxMod.config.smind.hm.dev.llm.haystack;
+              darwinCfg = darwinMod.config.smind.hm.dev.llm.haystack;
+              # NixOS-mapped account: no explicit url/tokenFile; resolved
+              # from osConfig service + clients mapping.
+              mappedMod = (nixpkgs.lib.evalModules {
+                specialArgs = {
+                  pkgs = import nixpkgs { system = "x86_64-linux"; };
+                  osConfig = {
+                    smind.services.haystack = {
+                      enable = true;
+                      port = 47328;
+                      activityProjectId = "agent-activity";
+                      clients.alice = {
+                        userId = "w-agent";
+                        tokenId = "default";
+                        tokenFile = "/run/secrets/agent-token";
+                      };
+                    };
+                  };
+                };
+                modules = [
+                  self.homeManagerModules.haystack
+                  ({ lib, ... }: {
+                    options.assertions = lib.mkOption { type = lib.types.listOf lib.types.attrs; default = [ ]; };
+                    options.programs.mcp.servers = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                    options.programs.codex.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                    options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = true; };
+                    options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                    options.smind.hm.dev.llm.assetBundles = lib.mkOption { type = lib.types.listOf lib.types.anything; default = [ ]; };
+                    options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
+                    options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
+                  })
+                  # No explicit enable: auto-enable must resolve it.
+                  ({ ... }: { })
+                ];
+              });
+              mappedCfg = mappedMod.config.smind.hm.dev.llm.haystack;
+            in
+            assert linuxCfg.url == "http://127.0.0.1:47328";
+            assert darwinCfg.url == "http://127.0.0.1:47328";
+            # One logical entry; literal placeholder (no secret) for Claude/Pi.
+            assert linuxMod.config.programs.mcp.servers.haystack.url == "http://127.0.0.1:47328/mcp";
+            assert linuxMod.config.programs.mcp.servers.haystack.headers.Authorization == "Bearer \${HAYSTACK_TOKEN}";
+            # Narrow native Codex override.
+            assert linuxMod.config.programs.codex.settings.mcp_servers.haystack.bearer_token_env_var == "HAYSTACK_TOKEN";
+            # Exact-byte-validated transport wiring.
+            assert linuxMod.config.smind.hm.dev.llm.yolo.validatedSessionVariables.HAYSTACK_TOKEN == "/run/secrets/haystack-token";
+            # The module's own assertions hold for these configurations.
+            assert nixpkgs.lib.all (a: a.assertion) linuxMod.config.assertions;
+            assert nixpkgs.lib.all (a: a.assertion) darwinMod.config.assertions;
+            assert nixpkgs.lib.all (a: a.assertion) mappedMod.config.assertions;
+            # Unrelated servers survive composition.
+            assert linuxMod.config.programs.mcp.servers.codegraph.command == "/bin/false";
+            # Shared policy reaches the bundle with the resolved namespace.
+            assert nixpkgs.lib.any
+              (b: builtins.match ".*agent-activity.*" (builtins.concatStringsSep "\n" (b.context or [ ])) != null)
+              linuxMod.config.smind.hm.dev.llm.assetBundles;
+            assert nixpkgs.lib.any
+              (b: builtins.match ".*human-attention:required.*" (builtins.concatStringsSep "\n" (b.context or [ ])) != null)
+              linuxMod.config.smind.hm.dev.llm.assetBundles;
+            # Mapped account resolves everything from osConfig.
+            assert mappedCfg.enable == true;
+            assert mappedMod.config.programs.mcp.servers.haystack.url == "http://127.0.0.1:47328/mcp";
+            assert mappedMod.config.smind.hm.dev.llm.yolo.validatedSessionVariables.HAYSTACK_TOKEN == "/run/secrets/agent-token";
+            pkgs.runCommandLocal "haystack-hm-eval-test" { } "touch $out";
+          # haystack-run wrapper: exact-byte accept/reject behavior.
+          haystack-run-check =
+            let
+              evalWithToken = tokenFile: (nixpkgs.lib.evalModules {
+                specialArgs = { pkgs = import nixpkgs { system = "x86_64-linux"; }; osConfig = null; };
+                modules = [
+                  self.homeManagerModules.haystack
+                  ({ lib, ... }: {
+                    options.assertions = lib.mkOption { type = lib.types.listOf lib.types.attrs; default = [ ]; };
+                    options.programs.mcp.servers = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                    options.programs.codex.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                    options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = false; };
+                    options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                    options.smind.hm.dev.llm.assetBundles = lib.mkOption { type = lib.types.listOf lib.types.anything; default = [ ]; };
+                    options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
+                    options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
+                  })
+                  ({ ... }: {
+                    config.smind.hm.dev.llm.haystack = {
+                      enable = true;
+                      url = "http://127.0.0.1:47328";
+                      inherit tokenFile;
+                      userId = "workstation-agent";
+                      tokenId = "default";
+                      activityProjectId = "agent-activity";
+                    };
+                  })
+                ];
+              });
+              good43 = nixpkgs.lib.concatStringsSep "" (builtins.genList (_: "A") 43);
+              tok43 = pkgs.writeText "haystack-good-token" good43;
+              tok44 = pkgs.writeText "haystack-good-token-lf" (good43 + "\n");
+              tokBad = pkgs.writeText "haystack-bad-token" "short";
+              runFor = file: builtins.head (builtins.filter
+                (p: (p.pname or p.name) == "haystack-run")
+                (evalWithToken file).config.home.packages);
+              goodRun = runFor tok43;
+              lfRun = runFor tok44;
+              badRun = runFor tokBad;
+              missingRun = runFor "/run/does-not-exist";
+            in
+            pkgs.runCommandLocal "haystack-run-test"
+              { nativeBuildInputs = [ pkgs.coreutils pkgs.ripgrep ]; }
+              ''
+                ${goodRun}/bin/haystack-run true
+                ${goodRun}/bin/haystack-run sh -c 'test "$HAYSTACK_TOKEN" = "${good43}"'
+                ${lfRun}/bin/haystack-run sh -c 'test "$HAYSTACK_TOKEN" = "${good43}"'
+                ! ${badRun}/bin/haystack-run true
+                ! ${missingRun}/bin/haystack-run true
+                # The wrapper embeds the token FILE path, never its content.
+                ${goodRun}/bin/haystack-run sh -c 'echo "$HAYSTACK_TOKEN"' | grep -q "${good43}"
+                ! rg -q "${good43}" ${goodRun}
+                touch $out
+              '';
           subagents-policy-shape = subagentsPolicyShapeCheck;
           tokemon = self.packages.${system}.tokemon;
           dev-llm-module-boundary = devLlmModuleBoundaryCheck;
+          dev-llm-haystack-aggregation = devLlmHaystackAggregationCheck;
           ponygirls-quirk-kimi-401-retry = pkgs.runCommand "ponygirls-quirk-kimi-401-retry-test" {
             nativeBuildInputs = [ pkgs.bun ];
           } ''
@@ -360,6 +622,8 @@
         };
       })) // {
         homeManagerModules.dev-llm = import ./nix/hm/dev-llm.nix { inherit inputs; };
+        homeManagerModules.haystack = import ./nix/hm/haystack.nix;
+        nixosModules.haystack = import ./nix/nixos/haystack.nix;
         nixosModules.podman = import ./nix/nixos/podman.nix;
         nixosModules.crawl4ai = import ./nix/nixos/crawl4ai.nix;
         nixosModules.crawl4ai-isolation = import ./nix/nixos/crawl4ai-isolation.nix;

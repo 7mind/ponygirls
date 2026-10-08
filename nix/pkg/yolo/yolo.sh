@@ -894,6 +894,56 @@ if [[ -n "${YOLO_SECRET_VARS:-}" ]]; then
     SECRET_TMPFILE=""
   fi
 fi
+# Exact-byte-validated token files (YOLO_VALIDATED_VARS, one NAME=/path per
+# line, e.g. HAYSTACK_TOKEN). Unlike the generic loader above, this validates
+# the exact file bytes BEFORE composition and fails the launch explicitly on
+# any violation: 43 base64url chars with at most one final LF. The same
+# validated value is composed (never reread), so validation and injection
+# cannot diverge. Rejected files never produce an environment assignment,
+# and failures propagate (no export-status masking).
+if [[ -n "${YOLO_VALIDATED_VARS:-}" ]]; then
+  : "${_have_secret:=0}"
+  [[ -z "$SECRET_TMPFILE" ]] && SECRET_TMPFILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/yolo-secrets.XXXXXX")"
+  while IFS= read -r _line; do
+    [[ -z "$_line" ]] && continue
+    _name="${_line%%=*}"
+    _path="${_line#*=}"
+    _fail=""
+    if [[ ! -r "$_path" ]]; then
+      _fail="not readable"
+    else
+      _size="$(stat -c %s -- "$_path")"
+      if [[ "$_size" != 43 && "$_size" != 44 ]]; then
+        _fail="wrong size ${_size} (want 43, or 44 with one final LF)"
+      else
+        _content="$(cat -- "$_path"; printf x)"
+        _content="${_content%x}"
+        if [[ "$_size" == 44 && "${_content: -1}" != $'\n' ]]; then
+          _fail="44 bytes without a final LF"
+        else
+          _token="${_content%$'\n'}"
+          if [[ "$_token" == *$'\n'* || "$_token" == *$'\r'* ]]; then
+            _fail="embedded newline"
+          elif [[ ! "$_token" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+            _fail="not 43 base64url chars"
+          else
+            printf '%s=%s\n' "$_name" "$_token" >> "$SECRET_TMPFILE"
+            _have_secret=1
+          fi
+        fi
+      fi
+    fi
+    if [[ -n "$_fail" ]]; then
+      echo "error: validated secret for $_name at $_path rejected: $_fail" >&2
+      rm -f "$SECRET_TMPFILE"
+      exit 3
+    fi
+  done <<< "$YOLO_VALIDATED_VARS"
+  if [[ $_have_secret -eq 1 && ${#SECRET_FILE_ARGS[@]} -eq 0 ]]; then
+    SECRET_FILE_ARGS+=(--ro-bind "$SECRET_TMPFILE,$SANDBOX_SECRETS_PATH")
+    SECRET_FILE_ARGS+=(--env "YOLO_SECRETS_FILE=$SANDBOX_SECRETS_PATH")
+  fi
+fi
 
 # Sandbox pre-start hooks (smind.hm.dev.llm.yolo.hooks.pre-start.sandbox ->
 # YOLO_SANDBOX_HOOKS_JSON), agent subcommands only. Drop --disable'd tags on the

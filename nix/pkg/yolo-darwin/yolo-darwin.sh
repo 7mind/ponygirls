@@ -820,6 +820,54 @@ yolo_exec_agent() {
       secret_tmpfile=""
     fi
   fi
+  # Exact-byte-validated token files (YOLO_VALIDATED_VARS, one NAME=/path per
+  # line, e.g. HAYSTACK_TOKEN). Same contract as the Linux launcher: validate
+  # the exact bytes before composition, fail the launch explicitly (exit 3)
+  # on any violation, compose the same validated value (never reread).
+  if [[ -n "${YOLO_VALIDATED_VARS:-}" ]]; then
+    if [[ -z "$secret_tmpfile" ]]; then
+      secret_tmpfile="$(mktemp "${TMPDIR:-/tmp}/yolo-darwin-secrets.XXXXXX")"
+      chmod 600 "$secret_tmpfile"
+      CLEANUP_FILES+=("$secret_tmpfile")
+    fi
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      name="${line%%=*}"
+      path="${line#*=}"
+      fail=""
+      if [[ ! -r "$path" ]]; then
+        fail="not readable"
+      else
+        size="$(stat -f %z -- "$path" 2>/dev/null || stat -c %s -- "$path")"
+        if [[ "$size" != 43 && "$size" != 44 ]]; then
+          fail="wrong size ${size} (want 43, or 44 with one final LF)"
+        else
+          content="$(cat -- "$path"; printf x)"
+          content="${content%x}"
+          if [[ "$size" == 44 && "${content: -1}" != $'\n' ]]; then
+            fail="44 bytes without a final LF"
+          else
+            token="${content%$'\n'}"
+            if [[ "$token" == *$'\n'* || "$token" == *$'\r'* ]]; then
+              fail="embedded newline"
+            elif [[ ! "$token" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+              fail="not 43 base64url chars"
+            else
+              printf '%s=%s\n' "$name" "$token" >> "$secret_tmpfile"
+              have_secret=1
+            fi
+          fi
+        fi
+      fi
+      if [[ -n "$fail" ]]; then
+        echo "error: validated secret for $name at $path rejected: $fail" >&2
+        exit 3
+      fi
+    done <<< "$YOLO_VALIDATED_VARS"
+    if [[ $have_secret -eq 1 && ${#entrypoint_env[@]} -eq 0 ]]; then
+      entrypoint_env+=("YOLO_SECRETS_FILE=$secret_tmpfile")
+    fi
+  fi
 
   local selected_sandbox_hooks_json=""
   case "$subcmd" in

@@ -18,6 +18,7 @@
 , shellHooksJson ? "[]"
 , cmdHooksJson ? "[]"
 , secretSessionVariables ? { }
+, validatedSessionVariables ? { }
 , sandboxPackages ? [ ]
 , sessionVariables ? { }
 ,
@@ -48,6 +49,10 @@ let
   secretVarLines = lib.mapAttrsToList (name: path: "${name}=${path}") secretSessionVariables;
   secretVarsExports = lib.optionalString (secretSessionVariables != { }) ''
     export YOLO_SECRET_VARS=${lib.escapeShellArg (joinLines secretVarLines)}
+  '';
+  validatedVarLines = lib.mapAttrsToList (name: path: "${name}=${path}") validatedSessionVariables;
+  validatedVarsExports = lib.optionalString (validatedSessionVariables != { }) ''
+    export YOLO_VALIDATED_VARS=${lib.escapeShellArg (joinLines validatedVarLines)}
   '';
   sandboxEnv = buildEnv {
     name = "yolo-darwin-sandbox-packages";
@@ -89,6 +94,7 @@ let
     ${extraRwExports}
     ${piSharedAssetsExports}
     ${secretVarsExports}
+    ${validatedVarsExports}
     ${sandboxBinExports}
     ${sessionVarsExports}
     ${promptJsonExports}
