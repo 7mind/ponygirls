@@ -30,7 +30,12 @@ sha256sum agent.token | cut -d' ' -f1 > agent.sha   # digest file
 
 The NixOS nginx proxy serves the public UI shell and assets directly from
 the Haystack package. `/api/` and `/mcp` go to the backend, including
-WebSocket upgrades. A stopped backend or gateway timeout produces a typed
+WebSocket upgrades. With `proxy.enable = false` (external edge: TLS
+terminates elsewhere and forwards Host-intact), the edge must reproduce
+this contract itself — UI shell from the package's `web/dist` with
+`Cache-Control: no-cache`, `/api/` and `/mcp` proxied with upgrades,
+caching and buffering off, and the same typed 503 (no cookie changes) on
+backend outage; `publicUrl` still drives the server allowlists. A stopped backend or gateway timeout produces a typed
 HTTP 503 response with `Cache-Control: no-store` and no cookie changes;
 application authentication failures remain 401. The frontend reports
 service unavailability without discarding the persistent session cookie.
