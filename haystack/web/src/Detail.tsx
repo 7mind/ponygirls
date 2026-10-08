@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, AuthError, NetworkError, buildDocumentJson, uuidv7, type Item, type RevisionMeta, type Summary } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, ApiError, AuthError, NetworkError, buildDocumentJson, uuidv7, summaryKey, type Item, type RevisionMeta, type Summary } from "./api";
+import { useLiveUpdates } from "./Live";
+import { Icon } from "./Icon";
+import { FieldsView } from "./FieldsView";
 
 interface Conflict {
   currentRevision: number;
@@ -24,6 +27,9 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [status, setStatus] = useState("");
   const [targetStatus, setTargetStatus] = useState("");
+  const [remoteUpdate, setRemoteUpdate] = useState(false);
+  const editRevision = useRef<number | null>(null);
+  const live = useLiveUpdates();
 
   const load = useCallback(async (keepStatus = false) => {
     if (!keepStatus) setStatus("Loading…");
@@ -63,6 +69,15 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
     void load();
   }, [itemKey, load]);
 
+  useEffect(() => {
+    if (live.version === 0) return;
+    if (editing) {
+      if (live.key === null || (live.key === itemKey && item !== null && live.revision !== null && live.revision > item.revision)) setRemoteUpdate(true);
+      return;
+    }
+    void load(true);
+  }, [live.version, load]);
+
   function startEdit() {
     if (item === null) return;
     setDraft({
@@ -76,6 +91,8 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
       linksText: item.document.links.map(([t, target]) => `${t} ${target}`).join("\n"),
     });
     setConflict(null);
+    editRevision.current = item.revision;
+    setRemoteUpdate(false);
     setEditing(true);
   }
 
@@ -119,9 +136,11 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
       return;
     }
     try {
-      const out = await api.put(item.key, documentJson, item.revision, uuidv7());
+      if (editRevision.current === null) throw new Error("Missing edit revision");
+      const out = await api.put(item.key, documentJson, editRevision.current, uuidv7());
       setConflict(null);
       setEditing(false);
+      setRemoteUpdate(false);
       setStatus(`Saved as revision ${out.revision}.`);
       await load(true);
     } catch (err) {
@@ -188,6 +207,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
       const out = await api.put(item.key, documentJson, revision, uuidv7());
       setConflict(null);
       setEditing(false);
+      setRemoteUpdate(false);
       setStatus(`Saved as revision ${out.revision}.`);
       await load(true);
     } catch (err) {
@@ -252,17 +272,19 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
   }
 
   return (
-    <section aria-label="Item">
-      <button type="button" onClick={onBack}>Back</button>
-      <h2>{item.key}</h2>
-      <p>
+    <section className="detail-view" aria-label="Item">
+      <button className="back-button quiet" type="button" onClick={onBack}><Icon name="arrow" />Back</button>
+      <div className="page-heading"><div><p className="eyebrow">{item.key}</p><h1>{item.document.title}</h1>
+      <p className="record-provenance">
         Revision {item.revision} · {item.metadata.modifiedBy} {item.metadata.modifiedAt}
         {item.document.status === "archived" && " · archived"}
       </p>
+      </div><span className="heading-symbol"><Icon name={item.document.type === "skill-draft" ? "spark" : item.document.type.startsWith("github-") ? "branch" : "stack"} /></span></div>
       {item.document.type === "skill-draft" && (
         <p role="note">Skill draft awaiting human review — not installed, not active.</p>
       )}
       {status !== "" && <p role="status">{status}</p>}
+      {editing && remoteUpdate && <p className="notice" role="status">This record may have changed elsewhere. Your draft is preserved; saving will check its original revision.</p>}
       {conflict !== null && (
         <div role="alert">
           <p>
@@ -278,18 +300,17 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
         </div>
       )}
       {!editing ? (
-        <div>
-          <h3>{item.document.title}</h3>
-          <p>{item.document.description}</p>
-          <dl>
+        <div className="record-content">
+          <p className="record-description">{item.document.description}</p>
+          <dl className="metadata-grid">
             <dt>Type</dt><dd>{item.document.type}</dd>
             <dt>Status</dt><dd>{item.document.status}</dd>
             <dt>Importance</dt><dd>{item.document.importance}</dd>
             <dt>Attention</dt><dd>{item.document.humanAttention}</dd>
           </dl>
-          <h3>Fields (JSON)</h3>
-          <pre>{item.document.fieldsJson}</pre>
-          <h3>Outgoing links</h3>
+          <div className="detail-panel"><h3>Fields</h3>
+          <FieldsView fieldsJson={item.document.fieldsJson} />
+          </div><div className="relationship-columns"><div className="detail-panel"><h3>Outgoing links</h3>
           {item.document.links.length === 0 ? (
             <p>None.</p>
           ) : (
@@ -301,7 +322,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
               ))}
             </ul>
           )}
-          <h3>Incoming links</h3>
+          </div><div className="detail-panel"><h3>Incoming links</h3>
           {incomingNote !== "" ? (
             <p>{incomingNote}</p>
           ) : incoming.length === 0 ? (
@@ -309,17 +330,19 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
           ) : (
             <ul>
               {incoming.map((s) => (
-                <li key={`${s.project}:${s.item}`}>{s.project}:{s.item} — {s.title}</li>
+                <li key={summaryKey(s)}><a href={`#/item/${encodeURIComponent(summaryKey(s))}`}>{s.project}:{s.item} — {s.title}</a></li>
               ))}
             </ul>
           )}
-          <button type="button" onClick={startEdit}>Edit</button>
+          </div></div><div className="record-actions"><button className="primary" type="button" onClick={startEdit}>Edit</button>
           {item.document.humanAttention === "required" && (
             <button type="button" onClick={() => void clearAttention()}>Clear attention</button>
           )}
+          </div>
         </div>
       ) : (
         <form
+          className="editor-panel"
           onSubmit={(e) => {
             e.preventDefault();
             void save();
@@ -355,11 +378,11 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
           <datalist id="haystack-importances">
             <option value="high" /><option value="low" />
           </datalist>
-          <button type="submit">Save as new revision</button>
+          <button className="primary" type="submit">Save as new revision</button>
           <button type="button" onClick={() => setEditing(false)}>Cancel</button>
         </form>
       )}
-      <h3>History</h3>
+      <div className="detail-panel history-panel"><h3>Revision history</h3>
       {history.length === 0 ? (
         <p>No history loaded.</p>
       ) : (
@@ -373,10 +396,11 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
           ))}
         </ul>
       )}
+      </div>
       {snapshot !== null && (
         <div>
           <h4>Snapshot r{snapshot.revision}</h4>
-          <pre>{snapshot.document.fieldsJson}</pre>
+          <FieldsView fieldsJson={snapshot.document.fieldsJson} />
           <label>
             Compare with revision
             <select value={targetStatus} onChange={(e) => setTargetStatus(e.target.value)}>
@@ -390,8 +414,8 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
           {compareWith !== null && (
             <div>
               <h4>r{snapshot.revision} vs r{compareWith.revision}</h4>
-              <pre aria-label="Snapshot A">{snapshot.document.fieldsJson}</pre>
-              <pre aria-label="Snapshot B">{compareWith.document.fieldsJson}</pre>
+              <section aria-label="Snapshot A"><FieldsView fieldsJson={snapshot.document.fieldsJson} /></section>
+              <section aria-label="Snapshot B"><FieldsView fieldsJson={compareWith.document.fieldsJson} /></section>
             </div>
           )}
         </div>
@@ -435,5 +459,5 @@ function LinkTarget({ target }: { target: string }) {
       live = false;
     };
   }, [target]);
-  return <span>{label ?? target}</span>;
+  return <a href={`#/item/${encodeURIComponent(target)}`}>{label ?? target}</a>;
 }

@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, AuthError, NetworkError, type Summary } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, ApiError, AuthError, NetworkError, summaryKey, type Summary } from "./api";
+import { useLiveUpdates } from "./Live";
+import { Icon } from "./Icon";
+import { QueryInput } from "./QueryInput";
 
 export type ArchiveMode = "hide" | "show" | "only";
 
@@ -18,8 +21,9 @@ export function composedQuery(state: BrowseState): string {
   return q === "" ? "archived:true" : `archived:true (${q})`;
 }
 
-export function Browse({ initial, onOpen, onAuthLost }: {
+export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   initial: BrowseState;
+  inbox: boolean;
   onOpen: (key: string) => void;
   onAuthLost: () => void;
 }) {
@@ -31,22 +35,29 @@ export function Browse({ initial, onOpen, onAuthLost }: {
   // Cursors that produced each visited page; trail[0] is the first page.
   const [trail, setTrail] = useState<Array<string | undefined>>([undefined]);
   const [diagnostics, setDiagnostics] = useState<Array<{ message: string; start: number; end: number }>>([]);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [status, setStatus] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const sequence = useRef(0);
+  const applied = useRef(initial);
+  const live = useLiveUpdates();
 
-  const run = useCallback(async (cursorValue?: string) => {
+  const run = useCallback(async (state: BrowseState, cursorValue: string | undefined) => {
+    const request = ++sequence.current;
+    setBusy(true);
     setStatus("Searching…");
     setDiagnostics([]);
     try {
-      const page = await api.search(composedQuery({ query, project, archive }), {
-        project: project.trim() === "" ? undefined : project.trim(),
+      const page = await api.search(composedQuery(state), {
+        project: state.project.trim() === "" ? undefined : state.project.trim(),
         limit: 20,
         cursor: cursorValue,
       });
+      if (request !== sequence.current) return;
       setItems(page.items);
       setCursor(page.cursor);
       setStatus(page.items.length === 0 ? "No matching items." : "");
     } catch (err) {
+      if (request !== sequence.current) return;
       if (err instanceof AuthError) {
         onAuthLost();
         return;
@@ -62,50 +73,59 @@ export function Browse({ initial, onOpen, onAuthLost }: {
         return;
       }
       setStatus(`Search failed: ${err instanceof Error ? err.message : "unknown"}`);
+    } finally {
+      if (request === sequence.current) setBusy(false);
     }
-  }, [query, project, archive, onAuthLost]);
-
-  // Persist UI state in the fragment (never sent to the server).
-  useEffect(() => {
-    const params = new URLSearchParams();
-    if (query !== "") params.set("q", query);
-    if (project !== "") params.set("project", project);
-    if (archive !== "hide") params.set("archive", archive);
-    location.hash = `#/browse${params.size > 0 ? `?${params.toString()}` : ""}`;
-  }, [query, project, archive]);
+  }, [onAuthLost]);
 
   useEffect(() => {
-    void run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const state = { query: initial.query, project: initial.project, archive: initial.archive };
+    // A submitted route can arrive after the user starts a newer draft.
+    const submitted = state.query === applied.current.query && state.project === applied.current.project && state.archive === applied.current.archive;
+    if (!submitted) { setQuery(state.query); setProject(state.project); setArchive(state.archive); }
+    applied.current = state; setTrail([undefined]);
+    void run(state, undefined);
+  }, [initial.query, initial.project, initial.archive, run]);
 
-  async function onComplete() {
-    try {
-      const out = await api.complete(query, query.length);
-      setSuggestions(out.suggestions.slice(0, 20));
-    } catch {
-      setSuggestions([]);
+  useEffect(() => {
+    if (live.version === 0) return;
+    setTrail([undefined]);
+    void run(applied.current, undefined);
+  }, [live.version, run]);
+  useEffect(() => () => { sequence.current++; }, []);
+
+  function submit() {
+    const state = { query, project, archive };
+    applied.current = state;
+    if (!inbox) {
+      const params = new URLSearchParams();
+      if (query !== "") params.set("q", query);
+      if (project !== "") params.set("project", project);
+      if (archive !== "hide") params.set("archive", archive);
+      const hash = `#/browse${params.size > 0 ? `?${params.toString()}` : ""}`;
+      if (location.hash !== hash) { location.hash = hash; return; }
     }
+    setTrail([undefined]); void run(state, undefined);
   }
 
   return (
-    <section aria-label="Browse">
+    <section className="browse-view" aria-label="Browse" aria-busy={busy}>
+      <div className="page-heading"><div>
+        <h1>{inbox ? "Attention inbox" : initial.query === "type:skill-draft" ? "Skill candidates" : initial.archive === "only" ? "Archive" : initial.query.includes("github-") ? "Upstream activity" : "Records"}</h1>
+        <p>{inbox ? "Records requiring review." : "Search by text, metadata, or project."}</p></div></div>
       <form
+        className="search-panel"
         onSubmit={(e) => {
           e.preventDefault();
-          setTrail([undefined]);
-          void run();
+          submit();
         }}
       >
-        <label>
-          Query
-          <input value={query} onChange={(e) => setQuery(e.target.value)} autoComplete="off" />
-        </label>
+        <QueryInput value={query} onChange={setQuery} onAuthLost={onAuthLost} />
         <label>
           Project scope
-          <input value={project} onChange={(e) => setProject(e.target.value)} autoComplete="off" />
+          <input placeholder="All projects" value={project} onChange={(e) => setProject(e.target.value)} autoComplete="off" />
         </label>
-        <fieldset>
+        <fieldset className="archive-control">
           <legend>Archived</legend>
           <label>
             <input type="radio" name="archive" checked={archive === "hide"} onChange={() => setArchive("hide")} />
@@ -120,22 +140,8 @@ export function Browse({ initial, onOpen, onAuthLost }: {
             Only archived
           </label>
         </fieldset>
-        <button type="submit">Search</button>
-        <button type="button" onClick={() => void onComplete()}>
-          Suggest
-        </button>
+        <div className="search-actions"><button className="primary" type="submit">Search</button></div>
       </form>
-      {suggestions.length > 0 && (
-        <ul aria-label="Suggestions">
-          {suggestions.map((s) => (
-            <li key={s}>
-              <button type="button" onClick={() => setQuery(s)}>
-                {s}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
       {diagnostics.length > 0 && (
         <ul aria-label="Search errors">
           {diagnostics.map((d, i) => (
@@ -145,16 +151,17 @@ export function Browse({ initial, onOpen, onAuthLost }: {
           ))}
         </ul>
       )}
-      {status !== "" && <p role="status">{status}</p>}
+      <div className="results-heading"><h2>{inbox ? "Waiting for review" : "Records"} <span className="count-badge">{items.length}{cursor !== undefined && "+"}</span></h2><span>Page {trail.length} · ordered by record key</span></div>
+      {status !== "" && <p role="status" className="notice">{status}</p>}
+      {items.length === 0 && !busy && diagnostics.length === 0 && <div className="empty-state"><Icon name={inbox ? "inbox" : "search"} /><h3>{inbox ? "No records requiring review" : "No records found"}</h3><p>{inbox ? "Records requiring attention appear here." : "Try a different query or include archived records."}</p></div>}
       {items.length > 0 && (
-        <table>
+        <div className="records-panel"><table>
           <thead>
             <tr>
-              <th scope="col">Key</th>
-              <th scope="col">Title</th>
+              <th scope="col">Record</th>
               <th scope="col">Type</th>
               <th scope="col">Status</th>
-              <th scope="col">Importance</th>
+              <th scope="col">Priority</th>
               <th scope="col">Attention</th>
               <th scope="col">Modified</th>
               <th scope="col">Rev</th>
@@ -162,34 +169,34 @@ export function Browse({ initial, onOpen, onAuthLost }: {
           </thead>
           <tbody>
             {items.map((item) => (
-              <tr key={`${item.project}:${item.item}`}>
+              <tr key={summaryKey(item)}>
                 <td>
-                  <button type="button" onClick={() => onOpen(`${item.project}:${item.item}`)}>
-                    {item.project}:{item.item}
+                  <button className="record-open" type="button" aria-label={summaryKey(item)} onClick={() => onOpen(summaryKey(item))}>
+                    <span className={`record-icon type-${item.type}`}><Icon name={item.type === "skill-draft" ? "spark" : item.type.startsWith("github-") ? "branch" : "stack"} /></span>
+                    <span><strong>{item.title}</strong><small>{item.project}:{item.item}</small></span>
                   </button>
                 </td>
-                <td>{item.title}</td>
-                <td>{item.type}</td>
-                <td>{item.status}</td>
-                <td>{item.importance}</td>
-                <td>{item.humanAttention}</td>
-                <td>
-                  {item.modifiedBy} {item.modifiedAt}
+                <td data-label="Type"><span className="type-badge">{item.type}</span></td>
+                <td data-label="Status"><span className={`status-badge ${item.status === "archived" ? "archived" : ""}`}>{item.status}</span></td>
+                <td data-label="Priority"><span className={`priority ${item.importance === "high" ? "high" : ""}`}>{item.importance}</span></td>
+                <td data-label="Attention"><span className={`attention-badge ${item.humanAttention === "required" ? "required" : ""}`}>{item.humanAttention === "required" ? "Needs review" : "Reviewed"}</span></td>
+                <td data-label="Modified" className="modified-cell">
+                  <span>{item.modifiedBy}</span><time dateTime={item.modifiedAt} title={item.modifiedAt}>{new Date(item.modifiedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>
                 </td>
-                <td>{item.revision}</td>
+                <td data-label="Revision">{item.revision}</td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
-      <div>
+      <div className="pagination">
         <button
           type="button"
           disabled={trail.length <= 1}
           onClick={() => {
             const next = trail.slice(0, -1);
             setTrail(next);
-            void run(next[next.length - 1]);
+            void run(applied.current, next[next.length - 1]);
           }}
         >
           Back
@@ -200,7 +207,7 @@ export function Browse({ initial, onOpen, onAuthLost }: {
           onClick={() => {
             if (cursor !== undefined) {
               setTrail((t) => [...t, cursor]);
-              void run(cursor);
+              void run(applied.current, cursor);
             }
           }}
         >

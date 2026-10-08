@@ -123,6 +123,11 @@ export interface Summary {
   modifiedBy: string;
 }
 
+export function summaryKey(summary: Pick<Summary, "project" | "item">): string {
+  const encode = (value: string) => encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${encode(summary.project)}:${encode(summary.item)}`;
+}
+
 export interface RevisionMeta {
   revision: number;
   modifiedAt: string;
@@ -193,6 +198,12 @@ export function buildDocumentJson(parts: {
 export function uuidv7(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
+  const timestampBytes = 6;
+  let timestamp = BigInt(Date.now());
+  for (let i = timestampBytes - 1; i >= 0; i--) {
+    bytes[i] = Number(timestamp & 0xffn);
+    timestamp >>= 8n;
+  }
   bytes[6] = (bytes[6]! & 0x0f) | 0x70;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");

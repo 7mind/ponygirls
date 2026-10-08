@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, AuthError, NetworkError } from "./api";
+import { Icon } from "./Icon";
 
 export function Login({ onLogin }: { onLogin: () => void }) {
   const [token, setToken] = useState("");
@@ -24,9 +25,10 @@ export function Login({ onLogin }: { onLogin: () => void }) {
   }
 
   return (
-    <main>
-      <h1>haystack</h1>
-      <p>Sign in with a provisioned token. It is stored in a persistent HttpOnly cookie on this browser only.</p>
+    <main className="auth-screen">
+      <div className="auth-card"><span className="brand-mark"><Icon name="stack" /></span>
+      <h1>Sign in to Haystack</h1>
+      <p>Records, upstream activity, and skill candidates.</p>
       <form onSubmit={submit}>
         <label>
           Token
@@ -38,13 +40,15 @@ export function Login({ onLogin }: { onLogin: () => void }) {
             aria-label="Token"
           />
         </label>
-        <button type="submit" disabled={busy || token.length === 0}>
-          Sign in
+        <button className="primary" type="submit" disabled={busy || token.length === 0}>
+          {busy ? "Signing in…" : "Sign in"}
         </button>
       </form>
       {error !== null && (
         <p role="alert">{error}</p>
       )}
+      <small className="auth-note">Use your provisioned token. Your session stays in an HttpOnly browser cookie.</small>
+      </div>
     </main>
   );
 }

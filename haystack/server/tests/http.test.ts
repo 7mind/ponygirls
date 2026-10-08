@@ -10,6 +10,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { Pool } from "pg";
+import { LiveUpdates } from "../src/http/live.js";
 import { createApp, type LogEvent } from "../src/http/server.js";
 import { migrate } from "../src/storage/migrate.js";
 import { PgItemRepository } from "../src/storage/postgres.js";
@@ -87,13 +88,16 @@ async function startApp(overrides?: Partial<HaystackConfig>, reuse?: Secrets): P
     ...overrides,
   });
   const repo = new PgItemRepository(HTTP_CONN);
+  const updates = new LiveUpdates(() => auth);
   const app = createApp({
+    updates,
     getAuth: () => auth,
     repo,
     clock: new ManualClock(),
     logger: (e) => logs.push(e),
   });
   const server = http.createServer(app);
+  updates.attach(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as AddressInfo).port;
   return {

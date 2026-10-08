@@ -19,6 +19,8 @@ import type { ResolvedAuth } from "../auth/config.js";
 import { TokenFault, TOKEN_RE } from "../auth/tokens.js";
 import { mountMcp } from "../mcp/adapter.js";
 import { cookieName, parseSessionCookie, serializeSessionCookie } from "./cookies.js";
+import { LiveUpdates } from "./live.js";
+import { PublishingRepository } from "../storage/publishing.js";
 
 export interface LogEvent {
   readonly requestId: string;
@@ -40,6 +42,7 @@ export interface AppDeps {
    *  here would leak a pool per request and exhaust PostgreSQL. */
   repo: SearchableRepository;
   clock: Clock;
+  updates: LiveUpdates;
   logger?: Logger;
 }
 
@@ -111,8 +114,9 @@ export function createApp(deps: AppDeps): express.Express {
     };
   };
 
-  const items = new ItemService(deps.repo, deps.clock);
-  const search = new SearchService(deps.repo);
+  const repo = new PublishingRepository(deps.repo, deps.updates);
+  const items = new ItemService(repo, deps.clock);
+  const search = new SearchService(repo);
 
   // Login uses the submitted token, never an existing cookie.
   app.post("/api/v1/login", (req: Request, res: Response) => {
@@ -129,12 +133,14 @@ export function createApp(deps: AppDeps): express.Express {
     if (!principal) {
       return fault(res, req, "login", requestId, started, new TokenFault(), log, undefined);
     }
+    deps.updates.endSession(req.headers.cookie);
     res.set("Set-Cookie", serializeSessionCookie(token, deps.getAuth().config.cookieSecure));
     log({ requestId, route: "login", status: 200, result: "ok", userId: principal.userId, tokenId: principal.tokenId, durationMs: Date.now() - started });
     res.json({ user: { id: principal.userId, type: principal.type } });
   });
 
-  app.post("/api/v1/logout", withAuth("logout", true, async (_req, res) => {
+  app.post("/api/v1/logout", withAuth("logout", true, async (req, res) => {
+    deps.updates.endSession(req.headers.cookie);
     res.set("Set-Cookie", serializeSessionCookie(null, deps.getAuth().config.cookieSecure));
     res.json({ ok: true });
   }));
@@ -261,7 +267,7 @@ export function createApp(deps: AppDeps): express.Express {
     fault(res, req, "unknown", randomUUID(), Date.now(), unavailable(), log, undefined);
   });
 
-  mountMcp(app, { getAuth: deps.getAuth, repo: deps.repo, clock: deps.clock, logger: log });
+  mountMcp(app, { getAuth: deps.getAuth, repo, clock: deps.clock, logger: log });
 
   return app;
 }

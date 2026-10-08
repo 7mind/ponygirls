@@ -1,0 +1,54 @@
+import { isLosslessNumber, parse, stringify, type LosslessNumber } from "lossless-json";
+
+type JsonValue = string | boolean | null | LosslessNumber | JsonValue[] | JsonObject;
+interface JsonObject { [key: string]: JsonValue }
+export type TypedContent = { kind: "md" | "text"; content: string } | { kind: "code"; content: string; language: string };
+export type FieldValue = TypedContent | { kind: "string" | "number"; text: string } |
+  { kind: "boolean"; value: boolean } | { kind: "null" } |
+  { kind: "json"; jsonType: "object" | "array"; text: string; notice: string | null };
+export interface FieldEntry { name: string | null; value: FieldValue }
+
+function isObject(value: JsonValue): value is JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !isLosslessNumber(value);
+}
+
+function typedContent(value: JsonObject): TypedContent | null {
+  if (typeof value.content !== "string") return null;
+  const keys = Object.keys(value);
+  if (keys.length === 2 && (value.type === "md" || value.type === "text")) {
+    return { kind: value.type, content: value.content };
+  }
+  if (keys.length === 3 && value.type === "code" && typeof value.language === "string" && value.language.trim() !== "") {
+    return { kind: "code", content: value.content, language: value.language };
+  }
+  return null;
+}
+
+function displayValue(value: JsonValue): FieldValue {
+  if (value === null) return { kind: "null" };
+  if (typeof value === "string") return { kind: "string", text: value };
+  if (typeof value === "boolean") return { kind: "boolean", value };
+  if (isLosslessNumber(value)) return { kind: "number", text: value.toString() };
+  let notice: string | null = null;
+  if (isObject(value)) {
+    const typed = typedContent(value);
+    if (typed !== null) return typed;
+    if (value.type === "md" || value.type === "code" || value.type === "text" ||
+        (typeof value.type === "string" && Object.hasOwn(value, "content"))) {
+      notice = "Unsupported typed node or additional metadata; displaying the complete JSON value.";
+    }
+  }
+  const text = stringify(value, null, 2);
+  if (text === undefined) throw new Error("JSON field serialization returned no value");
+  return { kind: "json", jsonType: Array.isArray(value) ? "array" : "object", text, notice };
+}
+
+export function parseFields(raw: string): FieldEntry[] {
+  const value = parse(raw) as JsonValue;
+  if (isObject(value)) {
+    const typed = typedContent(value);
+    if (typed !== null) return [{ name: null, value: typed }];
+    return Object.entries(value).map(([name, field]) => ({ name, value: displayValue(field) }));
+  }
+  return [{ name: null, value: displayValue(value) }];
+}

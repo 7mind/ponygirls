@@ -140,6 +140,7 @@ export class PgItemRepository implements SearchableRepository {
 
   async commit(put: ValidatedPut): Promise<CommitSuccess> {
     const client = await this.pool.connect();
+    let releaseError: Error | undefined;
     try {
       await client.query("BEGIN");
       // Pre-lock replay check (fast path for plain retries).
@@ -233,8 +234,15 @@ export class PgItemRepository implements SearchableRepository {
         modifiedBy: put.principal.userId,
       };
       return await this.finishCommit(client, put, { kind: "committed", revision, metadata });
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        releaseError = rollbackError instanceof Error ? rollbackError : new Error("rollback failed");
+      }
+      throw err;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
   }
 
@@ -525,4 +533,3 @@ function replayResult(outcome: StoredOutcome, replayed: boolean): CommitSuccess 
 function validatedDocument(text: string): ItemDocument {
   return parseRaw(text) as unknown as ItemDocument;
 }
-

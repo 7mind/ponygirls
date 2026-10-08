@@ -68,3 +68,27 @@ Empty/whitespace query browses. Scope intersects predicates.
 - All responses: `Cache-Control: no-store`. All errors: typed faults.
   Item bodies render client-side as untrusted data (escaped; CSP; no raw
   HTML, no auto-executed instructions/skills, no unsafe schemes).
+
+## Browser live updates
+
+`GET /api/v1/live` upgrades to WebSocket on the same origin. Authentication
+uses the HttpOnly session cookie; bearer headers and token query parameters
+are rejected. The configured Host and Origin allowlists apply to upgrades.
+Sessions are revalidated on messages, broadcasts, and server heartbeats.
+Login changes and logout close the previous cookie's connections with 4401;
+revocation uses the same permanent close code.
+
+Client heartbeat: `{"type":"ping","nonce":"…","clientTs":123}`. The server
+echoes the nonce and client timestamp in a `pong`, adding `serverTs`.
+Committed HTTP and MCP writes push `{"type":"changed","key":"p:i","revision":2}`.
+Replays and rejected writes produce no change notification. Documents stay
+on the lossless HTTP API; notifications invalidate views rather than carry
+document bodies. Reconnecting and recovering a stale connection refetch
+current views, including history and relationships. Unsaved editors keep
+their original CAS revision and draft; remote updates never overwrite them.
+
+The channel is an ephemeral notification feed for one server process.
+Direct SQL writes and writes through another process do not publish here.
+Missed notifications are recovered by refetch on reconnection, not replayed.
+Mutations remain explicit HTTP requests and are never automatically retried
+over a replacement connection.

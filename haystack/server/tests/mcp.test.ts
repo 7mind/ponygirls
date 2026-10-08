@@ -12,6 +12,7 @@ import type { AddressInfo } from "node:net";
 import { Pool } from "pg";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { LiveUpdates } from "../src/http/live.js";
 import { createApp, type LogEvent } from "../src/http/server.js";
 import { migrate } from "../src/storage/migrate.js";
 import { PgItemRepository } from "../src/storage/postgres.js";
@@ -40,13 +41,16 @@ async function startMcpApp(): Promise<{ url: string; token: string; logs: LogEve
   });
   const logs: LogEvent[] = [];
   const repo = new PgItemRepository(MCP_CONN);
+  const updates = new LiveUpdates(() => auth);
   const app = createApp({
+    updates,
     getAuth: () => auth,
     repo,
     clock: new ManualClock(),
     logger: (e) => logs.push(e),
   });
   const server = http.createServer(app);
+  updates.attach(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
   return { url, token, logs, close: () => new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve()))), closeRepo: () => repo.close() };

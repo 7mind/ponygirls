@@ -80,9 +80,13 @@ ID derive the same key.)
 
 Same namespace + deterministic keys: `skill-draft-<name>` under
 `activityProjectId`; cross-project links for originating context. Store
-`fields.skill` (name, triggers, full proposed SKILL.md) and
+`fields.skill` as `{"type":"md","content":"<complete proposed SKILL.md>"}`,
+including frontmatter. Keep `fields.skill_name` and `fields.triggers` as
+siblings of that typed node, together with
 `fields.rationale` (motivation, evidence incl. observed-vs-hypothetical
 recurrence, alternatives, limits, benefit, overlap analysis).
+See [field presentation](field-presentation.md) for typed snippets and
+rendering rules.
 Same-key CAS converges; semantic overlap across names is best-effort:
 search the shared namespace first, link/reconcile on discovery, preserve
 human edits/cleared attention, pick a distinct key on unrelated name

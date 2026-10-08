@@ -75,6 +75,25 @@ if (!CONN) {
     });
     beforeEach(wipe);
 
+    // Regression: an unexpected SQL error must not poison a pooled session.
+    it("rolls back failed commits before returning the connection", async () => {
+      const single = new PgItemRepository(CONN, 1);
+      await pool!.query(`CREATE FUNCTION reject_test_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'injected revision failure'; END $$`);
+      await pool!.query(`CREATE TRIGGER reject_test_revision BEFORE INSERT ON item_revisions
+        FOR EACH ROW WHEN (NEW.item_id = 'failed') EXECUTE FUNCTION reject_test_revision()`);
+      try {
+        await assert.rejects(single.commit(validatedPut("p", "failed", 0, DOC())), /injected revision failure/);
+        const out = await single.commit(validatedPut("p", "healthy", 0, DOC()));
+        assert.equal(out.revision, 1);
+        assert.equal(await single.getCurrent("p", "failed"), null);
+      } finally {
+        await single.close();
+        await pool!.query("DROP TRIGGER IF EXISTS reject_test_revision ON item_revisions");
+        await pool!.query("DROP FUNCTION reject_test_revision()");
+      }
+    });
+
     it("racing creates elect exactly one winner with complete projections", async () => {
       const attempts = await Promise.allSettled(
         Array.from({ length: 10 }, () => repo.commit(validatedPut("p", "race", 0, DOC()))),

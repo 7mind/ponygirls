@@ -14,7 +14,7 @@ buildNpmPackage (finalAttrs: {
       base != "node_modules" && base != "dist";
   };
 
-  npmDepsHash = "sha256-tKOmzZPpSCLSqg561033hO9+6VtRh+M3qxmSm8zbMFg=";
+  npmDepsHash = "sha256-WlhsXvvdzXnucSg0stQCCbL3u4ZqBauo3h4LMMBjPKE=";
 
   nativeBuildInputs = [ makeBinaryWrapper ];
 

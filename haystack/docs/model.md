@@ -62,6 +62,8 @@ Examples: `example-project:fact-mcp-auth`, `["a:b","i%d"]` → `a%3Ab:i%25d`.
 - Bounds: document ≤ 1 MiB serialized; depth ≤ 64; links ≤ 256 tuples;
   string leaves ≤ 256 KiB; number exponents within ±999999 (rejected at
   parse, never rounded). Disclosed bounds, never silent truncation.
+  The [typed-field presentation convention](field-presentation.md) formats
+  Markdown and code inside ordinary JSON; it does not narrow this domain.
 - Links: `[link_type, QualifiedItemId]` tuples; `link_type` nonempty ≤ 128
   chars. Cross-project, self, cyclic, repeated, and dangling targets all
   permitted. No target FK, no existence checks, no inverses. Order and

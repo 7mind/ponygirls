@@ -12,6 +12,7 @@ import { loadAuth, type HaystackConfig } from "./auth/config.js";
 import { PgItemRepository } from "./storage/postgres.js";
 import { migrate } from "./storage/migrate.js";
 import { SystemClock } from "./application/clock.js";
+import { LiveUpdates } from "./http/live.js";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -57,20 +58,23 @@ async function main(): Promise<void> {
   }
   await pool.end();
   const repo = new PgItemRepository(databaseUrl, Number(process.env.HAYSTACK_POOL_MAX ?? "8"));
-  const app = createApp({ getAuth: () => auth, repo, clock: new SystemClock() });
+  const updates = new LiveUpdates(() => auth);
+  const app = createApp({ getAuth: () => auth, repo, clock: new SystemClock(), updates });
   // Bundled UI (content-hashed assets; the shell carries no item data).
   app.use(express.static(uiDir, { index: "index.html", maxAge: 0 }));
   const listenAddr = process.env.HAYSTACK_LISTEN ?? "127.0.0.1";
   const port = Number(process.env.HAYSTACK_PORT ?? "47328");
   const server = http.createServer(app);
+  updates.attach(server);
   await new Promise<void>((resolve) => server.listen(port, listenAddr, resolve));
   console.log(`haystack listening on ${listenAddr}:${port}`);
 
   // Graceful drain: stop accepting, finish in-flight, then close the pool.
   const shutdown = (signal: string) => {
     console.log(`haystack: ${signal}, draining`);
+    updates.close();
     server.close(() => {
-      void repo.close().then(() => pool.end().then(() => process.exit(0)));
+      void repo.close().then(() => process.exit(0));
     });
     setTimeout(() => process.exit(1), 15000).unref();
   };
