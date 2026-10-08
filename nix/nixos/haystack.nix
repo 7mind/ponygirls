@@ -68,7 +68,7 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       example = "https://memory.example.net";
-      description = "Public base URL (drives allowedOrigins/Hosts and the proxy). Null disables the proxy.";
+      description = "Public base URL (drives allowedOrigins/Hosts and, unless proxy.enable is false, the host-local nginx virtual host). Null disables both.";
     };
     publicUrlHost = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
@@ -147,6 +147,17 @@ in
       retentionDays = lib.mkOption { type = lib.types.ints.positive; default = 14; description = "Retain backups this long."; };
     };
     proxy = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Manage the host-local nginx virtual host (UI shell + /api/ + /mcp
+          policy). Disable when TLS terminates on an external edge that
+          forwards Host-intact and serves the UI shell from this package's
+          web dist itself; publicUrl still drives the server's Host/Origin
+          allowlists in that case.
+        '';
+      };
       acmeHost = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Use this ACME host's certificate (null: plain HTTP proxy, loopback development only)."; };
       openFirewall = lib.mkOption { type = lib.types.bool; default = false; description = "Open firewall for HTTP/HTTPS (never by default)."; };
     };
@@ -195,6 +206,10 @@ in
         {
           assertion = cfg.publicUrl == null || cfg.publicUrlHost != null;
           message = "smind.services.haystack: publicUrl requires a derivable publicUrlHost.";
+        }
+        {
+          assertion = cfg.proxy.enable || !cfg.proxy.openFirewall;
+          message = "smind.services.haystack: proxy.openFirewall without proxy.enable opens ports for no virtual host.";
         }
       ];
 
@@ -283,7 +298,7 @@ in
         startAt = cfg.backup.schedule;
       };
 
-      services.nginx = lib.mkIf (cfg.publicUrl != null) {
+      services.nginx = lib.mkIf (cfg.publicUrl != null && cfg.proxy.enable) {
         enable = true;
         recommendedProxySettings = true;
         virtualHosts.${cfg.publicUrlHost} = {
