@@ -499,7 +499,12 @@ class LifetimeTest(SupervisorTestBase):
     def test_killed_supervisor_is_recovered_as_dead_without_signalling_saved_identifiers(self):
         c = self.instrumented()
         # Closing the PTY master hangs the terminal up, so only a HUP-immune task outlives its supervisor.
-        t = c.spawn("trap '' HUP; exec sleep 300")
+        # Spawn returns after the shell execs, but the trap runs later: kill only after
+        # "ready" proves HUP is already ignored. Otherwise the hangup may land in the
+        # shell-startup window and kill the task, failing either census below depending
+        # on when the pending HUP is delivered under load.
+        t = c.spawn("trap '' HUP; echo ready; exec sleep 300")
+        wait_until(lambda: b"ready" in c.read_all(t["id"]), 30, 0.05, "trap installed before the kill")
         os.kill(c.first["pid"], signal.SIGKILL)
         c.proc.wait()
         pgid = t["pgid"]
