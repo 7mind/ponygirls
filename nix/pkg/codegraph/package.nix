@@ -38,7 +38,7 @@ buildNpmPackage {
 
   # The nixpkgs npm hook resolves workspace executables from the root, selecting
   # Vite 5 instead of the UI workspace's declared Vite 7. Re-checked on main
-  # 3d86bcc0 (2026-10-02): without this rewrite, `vite build` fails with
+  # b635dd46 (2026-10-07): without this rewrite, `vite build` fails with
   # vite-plugin-svelte "Cannot read properties of undefined (reading 'config')".
   postPatch = ''
     substituteInPlace package.json \
