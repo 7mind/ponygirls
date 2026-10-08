@@ -411,8 +411,9 @@ export class PgItemRepository implements SearchableRepository {
    *  dummy uses (query/text.ts) — both legs agree by construction. */
   private async writeProjection(client: PoolClient, put: ValidatedPut): Promise<void> {
     const doc = put.document;
-    const words = corpusWords(doc.title, doc.description, doc.fields);
-    const segments = corpusSegmentStrings(doc.title, doc.description, doc.fields);
+    const tags = [...(doc.tags ?? [])];
+    const words = corpusWords(doc.title, doc.description, doc.fields, tags);
+    const segments = corpusSegmentStrings(doc.title, doc.description, doc.fields, tags);
     await client.query(
       `INSERT INTO item_search (project_id, item_id, words, segments)
        VALUES ($1, $2, $3::text[], $4::text[])
@@ -442,6 +443,7 @@ export class PgItemRepository implements SearchableRepository {
         i.document ->> 'title' AS title, i.document ->> 'type' AS type,
         i.document ->> 'status' AS status, i.document ->> 'importance' AS importance,
         i.document ->> 'human-attention' AS human_attention,
+        COALESCE(i.document -> 'tags', '[]'::jsonb) AS tags,
         i.modified_at, i.modified_by
        FROM items i LEFT JOIN item_search s
          ON s.project_id = i.project_id AND s.item_id = i.item_id
@@ -459,6 +461,7 @@ export class PgItemRepository implements SearchableRepository {
       status: row.status as string,
       importance: row.importance as string,
       humanAttention: row.human_attention as HumanAttention,
+      tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
       modifiedAt: iso(row.modified_at),
       modifiedBy: row.modified_by as string,
     }));
@@ -469,7 +472,15 @@ export class PgItemRepository implements SearchableRepository {
     return { items, next: { project: last.project, item: last.item } };
   }
 
-  async observedValues(field: "type" | "status" | "importance"): Promise<string[]> {
+  async observedValues(field: "type" | "status" | "importance" | "tags"): Promise<string[]> {
+    if (field === "tags") {
+      const res = await this.pool.query(
+        `SELECT DISTINCT t AS value FROM items i,
+         LATERAL jsonb_array_elements_text(COALESCE(i.document -> 'tags', '[]'::jsonb)) AS t
+         ORDER BY value LIMIT 100`,
+      );
+      return res.rows.map((row) => row.value as string);
+    }
     if (field !== "type" && field !== "status" && field !== "importance") {
       throw new Error(`not an observable field: ${field}`);
     }
@@ -529,7 +540,13 @@ function replayResult(outcome: StoredOutcome, replayed: boolean): CommitSuccess 
 
 // Stored documents were validated at write; re-parse losslessly so numbers
 // never pass through JSON.parse (node-pg parses jsonb with JSON.parse,
-// which is why reads use the document_text column).
+// which is why reads use the document_text column). Pre-tags rows omit
+// `tags` (and possibly `links`): normalize to [] so readers see one shape.
 function validatedDocument(text: string): ItemDocument {
-  return parseRaw(text) as unknown as ItemDocument;
+  const doc = parseRaw(text) as unknown as ItemDocument & { tags?: unknown; links?: unknown };
+  return {
+    ...doc,
+    links: Array.isArray(doc.links) ? (doc.links as ItemDocument["links"]) : [],
+    tags: Array.isArray(doc.tags) ? (doc.tags as string[]) : [],
+  };
 }

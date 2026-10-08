@@ -19,6 +19,6 @@ export class PublishingRepository implements SearchableRepository {
   listRevisions(project: string, item: string) { return this.inner.listRevisions(project, item); }
   recordTerminal(record: Parameters<ItemRepository["recordTerminal"]>[0]) { return this.inner.recordTerminal(record); }
   search(request: SearchRequest) { return this.inner.search(request); }
-  observedValues(field: "type" | "status" | "importance") { return this.inner.observedValues(field); }
+  observedValues(field: "type" | "status" | "importance" | "tags") { return this.inner.observedValues(field); }
   suggestIds(fragment: string, limit: number) { return this.inner.suggestIds(fragment, limit); }
 }

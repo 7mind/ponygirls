@@ -37,7 +37,8 @@ Examples: `example-project:fact-mcp-auth`, `["a:b","i%d"]` → `a%3Ab:i%25d`.
     "fields": { "arbitrary": ["lossless", "JSON", 9007199254740993, null] },
     "type": "skill-draft", "status": "actual",
     "importance": "high", "human-attention": "required",
-    "links": [["motivated-by", "shared-knowledge:fact-mcp-auth"]]
+    "links": [["motivated-by", "shared-knowledge:fact-mcp-auth"]],
+    "tags": ["mcp", "auth"]
   },
   "metadata": {
     "created-at": "2026-10-07T18:00:00Z", "created-by": "workstation-agent",
@@ -61,8 +62,8 @@ Examples: `example-project:fact-mcp-auth`, `["a:b","i%d"]` → `a%3Ab:i%25d`.
   (`LosslessNumber` for all JSON numbers); raw-text transport across
   MCP/HTTP/PG. Prototype-named keys are ordinary own properties.
 - Bounds: document ≤ 1 MiB serialized; depth ≤ 64; links ≤ 256 tuples;
-  string leaves ≤ 256 KiB; number exponents within ±999999 (rejected at
-  parse, never rounded). Disclosed bounds, never silent truncation.
+  tags ≤ 64 entries; string leaves ≤ 256 KiB; number exponents within ±999999
+  (rejected at parse, never rounded). Disclosed bounds, never silent truncation.
   The [typed-field presentation convention](field-presentation.md) formats
   Markdown and code inside ordinary JSON; it does not narrow this domain.
 - Links: `[link_type, QualifiedItemId]` tuples; `link_type` nonempty ≤ 128
@@ -70,6 +71,11 @@ Examples: `example-project:fact-mcp-auth`, `["a:b","i%d"]` → `a%3Ab:i%25d`.
   permitted. No target FK, no existence checks, no inverses. Order and
   repetition preserved. History snapshots keep old tuples; resolution always
   targets current documents unless an exact revision is requested.
+- Tags: optional string array (absent ≡ `[]`), each entry nonempty ≤ 128
+  chars, no NUL, no leading/trailing whitespace. Order and repetition
+  preserved (set semantics at query time). Tags are exact case-sensitive
+  labels for `tag:` search and are also indexed as text (each tag is its own
+  segment). History snapshots keep old tag sets; restore = new revision.
 - Metadata vocabularies extensible: `type`, `status`, `importance` accept any
   nonempty ≤ 128-char string; conventional values (`todo`, `fact`,
   `github-issue`, `github-pr`, `skill-draft`, `actual`, `high`, `low`) are

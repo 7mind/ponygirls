@@ -36,3 +36,10 @@ follows the plan as written.
 7. **Model-backed trials.** Allowed: Pi on glm/kimi/xiaomi/muse within
    existing allowances; Claude/Codex on sonnet / sol 6.1 at low effort
    (approved 2026-10-07). Live GitHub artifacts are never test data.
+8. **Tags (2026-10-08).** Documents carry an optional `tags` string array
+   (≤64 entries of ≤128 chars, no NUL, no leading/trailing whitespace;
+   absent ≡ `[]`) with exact case-sensitive `tag:`/`tags:` search, text
+   indexing (each tag its own segment), completion + `GET /values/tags`,
+   and a GIN index on `COALESCE(document->'tags','[]')` (migration
+   `0003-tags`). Summaries carry `tags`. Backwards compatible: old rows
+   without `tags` read as `[]` and match `NOT tag:x`.

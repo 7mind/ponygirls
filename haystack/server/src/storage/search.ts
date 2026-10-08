@@ -13,6 +13,7 @@ export interface SearchSummary {
   readonly status: string;
   readonly importance: string;
   readonly humanAttention: HumanAttention;
+  readonly tags: readonly string[];
   readonly modifiedAt: string;
   readonly modifiedBy: string;
 }
@@ -33,10 +34,12 @@ export interface SearchPage {
   readonly next?: { readonly project: string; readonly item: string };
 }
 
+export type ObservableField = "type" | "status" | "importance" | "tags";
+
 export interface SearchableRepository extends ItemRepository {
   search(request: SearchRequest): Promise<SearchPage>;
   /** Bounded observed values for completion (current items only). */
-  observedValues(field: "type" | "status" | "importance"): Promise<string[]>;
+  observedValues(field: ObservableField): Promise<string[]>;
   /** Bounded qualified-id suggestions for a raw fragment. */
   suggestIds(fragment: string, limit: number): Promise<string[]>;
 }

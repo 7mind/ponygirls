@@ -22,6 +22,7 @@ export interface ItemDocument {
   readonly importance: string;
   readonly humanAttention: HumanAttention;
   readonly links: readonly LinkTuple[];
+  readonly tags: readonly string[];
 }
 
 export interface ItemMetadata {
@@ -56,6 +57,8 @@ export const LINKS_MAX = 256;
 export const LINK_TYPE_MAX = 128;
 export const META_VALUE_MAX = 128;
 export const STRING_LEAF_MAX = 256 * 1024;
+export const TAG_VALUE_MAX = 128;
+export const TAGS_MAX = 64;
 
 export class InvalidDocument extends Error {
   readonly code = "invalid-document";
@@ -81,6 +84,7 @@ export function validateDocument(value: JsonValue): ItemDocument {
     "importance",
     "human-attention",
     "links",
+    "tags",
   ]);
   for (const key of Object.keys(obj)) {
     if (!allowed.has(key)) throw new InvalidDocument(`unknown document field: ${key}`);
@@ -97,6 +101,7 @@ export function validateDocument(value: JsonValue): ItemDocument {
     throw new InvalidDocument('document["human-attention"] must be "required" or "cleared"');
   }
   const links = validateLinks(obj["links"]);
+  const tags = validateTags(obj["tags"]);
   return {
     title,
     description,
@@ -106,6 +111,7 @@ export function validateDocument(value: JsonValue): ItemDocument {
     importance,
     humanAttention: attention,
     links,
+    tags,
   };
 }
 
@@ -116,6 +122,20 @@ function requiredString(value: JsonValue | undefined, name: string, max: number)
   if (value.length > max) throw new InvalidDocument(`document.${name} exceeds ${max} chars`);
   if (value.includes("\0")) throw new InvalidDocument(`document.${name} contains NUL`);
   return value;
+}
+
+function validateTags(value: JsonValue | undefined): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new InvalidDocument("document.tags must be an array");
+  if (value.length > TAGS_MAX) throw new InvalidDocument(`more than ${TAGS_MAX} tags`);
+  return value.map((entry, i) => {
+    if (typeof entry !== "string" || entry.length === 0 || entry.length > TAG_VALUE_MAX) {
+      throw new InvalidDocument(`document.tags[${i}] must be a nonempty string \u2264 ${TAG_VALUE_MAX}`);
+    }
+    if (entry.includes("\0")) throw new InvalidDocument(`document.tags[${i}] contains NUL`);
+    if (entry !== entry.trim()) throw new InvalidDocument(`document.tags[${i}] has leading/trailing whitespace`);
+    return entry;
+  });
 }
 
 function validateLinks(value: JsonValue | undefined): LinkTuple[] {

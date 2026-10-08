@@ -20,6 +20,7 @@ function routeFromHash(): Route {
       query: query.get("q") ?? "",
       project: query.get("project") ?? "",
       archive: archive === "show" || archive === "only" ? archive : "hide",
+      tag: query.get("tag") ?? "",
     },
   };
 }
@@ -138,7 +139,7 @@ export function App() {
       {route.name === "inbox" && (
         <Browse
           key="inbox"
-          initial={{ query: "human-attention:required", project: "", archive: "hide" }}
+          initial={{ query: "human-attention:required", project: "", archive: "hide", tag: "" }}
           inbox={true}
           onOpen={(key) => { location.hash = `#/item/${encodeURIComponent(key)}`; }}
           onAuthLost={handleAuthLost}

@@ -70,6 +70,42 @@ export function defineServiceSuite(
       assert.equal(second.revision, first.revision);
       assert.equal(second.replayed, true);
     });
+
+    it("round-trips tags and rejects malformed tag sets", async () => {
+      const service = makeService(new ManualClock());
+      const raw = JSON.stringify({
+        title: "t",
+        description: "d",
+        fields: {},
+        type: "fact",
+        status: "actual",
+        importance: "low",
+        "human-attention": "cleared",
+        links: [],
+        tags: ["mcp", "Machine Learning"],
+      });
+      await service.put(put("p:tagged", raw, 0), ALICE);
+      const got = await service.get("p:tagged");
+      assert.deepEqual([...got.document.tags], ["mcp", "Machine Learning"]);
+      // Missing tags default to [].
+      await service.put(put("p:untagged", DOC(), 0), ALICE);
+      assert.deepEqual([...(await service.get("p:untagged")).document.tags], []);
+      // Malformed: empty, whitespace-padded, too long, non-array.
+      for (const tags of [[""], [[" x"]], [["x "]], ["x".repeat(129)], "mcp", [42]]) {
+        const bad = JSON.stringify({
+          title: "t",
+          description: "d",
+          fields: {},
+          type: "fact",
+          status: "actual",
+          importance: "low",
+          "human-attention": "cleared",
+          links: [],
+          tags,
+        });
+        await assert.rejects(service.put(put(`p:bad-${Math.random()}`, bad, 0), ALICE));
+      }
+    });
   });
 }
 

@@ -245,11 +245,11 @@ export function createApp(deps: AppDeps): express.Express {
   app.get("/api/v1/values/:field", withAuth("values", false, async (req, res, authed) => {
     void authed;
     const field = req.params.field;
-    if (field !== "type" && field !== "status" && field !== "importance") {
+    if (field !== "type" && field !== "status" && field !== "importance" && field !== "tags") {
       res.status(404).json({ error: { code: "not-found", message: "unknown value set" } });
       return;
     }
-    res.json({ values: await deps.repo.observedValues(field) });
+    res.json({ values: await deps.repo.observedValues(field as "type" | "status" | "importance" | "tags") });
   }));
 
   // Body-parser and unexpected errors → typed faults, never stack traces.

@@ -10,15 +10,24 @@ export interface BrowseState {
   query: string;
   project: string;
   archive: ArchiveMode;
+  tag: string;
 }
 
-/** Compose the archive control with the query AST (never a contradictory
+function tagPredicate(tag: string): string {
+  const t = tag.trim();
+  if (/^[A-Za-z0-9._~\-]+$/.test(t)) return `tag:${t}`;
+  return `tag:${JSON.stringify(t)}`;
+}
+
+/** Compose tag + archive controls with the query AST (never a contradictory
  *  appended filter): an explicit selector anywhere disables the default. */
 export function composedQuery(state: BrowseState): string {
   const q = state.query.trim();
-  if (state.archive === "hide") return q;
-  if (state.archive === "show") return q === "" ? "archived:all" : `archived:all (${q})`;
-  return q === "" ? "archived:true" : `archived:true (${q})`;
+  const tag = (state.tag ?? "").trim();
+  const base = tag === "" ? q : q === "" ? tagPredicate(tag) : `(${q}) ${tagPredicate(tag)}`;
+  if (state.archive === "hide") return base;
+  if (state.archive === "show") return base === "" ? "archived:all" : `archived:all (${base})`;
+  return base === "" ? "archived:true" : `archived:true (${base})`;
 }
 
 export function Browse({ initial, inbox, onOpen, onAuthLost }: {
@@ -30,6 +39,7 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   const [query, setQuery] = useState(initial.query);
   const [project, setProject] = useState(initial.project);
   const [archive, setArchive] = useState<ArchiveMode>(initial.archive);
+  const [tag, setTag] = useState(initial.tag ?? "");
   const [items, setItems] = useState<Summary[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   // Cursors that produced each visited page; trail[0] is the first page.
@@ -79,10 +89,10 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   }, [onAuthLost]);
 
   useEffect(() => {
-    const state = { query: initial.query, project: initial.project, archive: initial.archive };
+    const state = { query: initial.query, project: initial.project, archive: initial.archive, tag: initial.tag ?? "" };
     // A submitted route can arrive after the user starts a newer draft.
-    const submitted = state.query === applied.current.query && state.project === applied.current.project && state.archive === applied.current.archive;
-    if (!submitted) { setQuery(state.query); setProject(state.project); setArchive(state.archive); }
+    const submitted = state.query === applied.current.query && state.project === applied.current.project && state.archive === applied.current.archive && state.tag === (applied.current.tag ?? "");
+    if (!submitted) { setQuery(state.query); setProject(state.project); setArchive(state.archive); setTag(state.tag); }
     applied.current = state; setTrail([undefined]);
     void run(state, undefined);
   }, [initial.query, initial.project, initial.archive, run]);
@@ -95,13 +105,14 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   useEffect(() => () => { sequence.current++; }, []);
 
   function submit() {
-    const state = { query, project, archive };
+    const state = { query, project, archive, tag };
     applied.current = state;
     if (!inbox) {
       const params = new URLSearchParams();
       if (query !== "") params.set("q", query);
       if (project !== "") params.set("project", project);
       if (archive !== "hide") params.set("archive", archive);
+      if (tag.trim() !== "") params.set("tag", tag.trim());
       const hash = `#/browse${params.size > 0 ? `?${params.toString()}` : ""}`;
       if (location.hash !== hash) { location.hash = hash; return; }
     }
@@ -112,7 +123,7 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
     <section className="browse-view" aria-label="Browse" aria-busy={busy}>
       <div className="page-heading"><div>
         <h1>{inbox ? "Attention inbox" : initial.query === "type:skill-draft" ? "Skill candidates" : initial.archive === "only" ? "Archive" : initial.query.includes("github-") ? "Upstream activity" : "Records"}</h1>
-        <p>{inbox ? "Records requiring review." : "Search by text, metadata, or project."}</p></div></div>
+        <p>{inbox ? "Records requiring review." : "Search by text, metadata, tags, or project."}</p></div></div>
       <form
         className="search-panel"
         onSubmit={(e) => {
@@ -124,6 +135,10 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
         <label>
           Project scope
           <input placeholder="All projects" value={project} onChange={(e) => setProject(e.target.value)} autoComplete="off" />
+        </label>
+        <label>
+          Tag filter
+          <input placeholder="tag name (exact)" value={tag} onChange={(e) => setTag(e.target.value)} autoComplete="off" />
         </label>
         <fieldset className="archive-control">
           <legend>Archived</legend>
@@ -163,6 +178,7 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
               <th scope="col">Status</th>
               <th scope="col">Priority</th>
               <th scope="col">Attention</th>
+              <th scope="col">Tags</th>
               <th scope="col">Modified</th>
               <th scope="col">Rev</th>
             </tr>
@@ -180,6 +196,7 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
                 <td data-label="Status"><span className={`status-badge ${item.status === "archived" ? "archived" : ""}`}>{item.status}</span></td>
                 <td data-label="Priority"><span className={`priority ${item.importance === "high" ? "high" : ""}`}>{item.importance}</span></td>
                 <td data-label="Attention"><span className={`attention-badge ${item.humanAttention === "required" ? "required" : ""}`}>{item.humanAttention === "required" ? "Needs review" : "Reviewed"}</span></td>
+                <td data-label="Tags">{(item.tags ?? []).length === 0 ? <span className="empty-tags">—</span> : (item.tags ?? []).join(", ")}</td>
                 <td data-label="Modified" className="modified-cell">
                   <span>{item.modifiedBy}</span><time dateTime={item.modifiedAt} title={item.modifiedAt}>{new Date(item.modifiedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>
                 </td>

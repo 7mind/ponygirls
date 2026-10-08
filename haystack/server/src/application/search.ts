@@ -28,6 +28,12 @@ export interface SearchResult {
   cursor?: string;
 }
 
+/** Quote a tag value for completion output when it is not a bare word. */
+function quoteTagValue(value: string): string {
+  if (/^[A-Za-z0-9._~\-]+$/.test(value)) return value;
+  return JSON.stringify(value);
+}
+
 export class InvalidCursor extends Error {
   readonly code = "invalid-cursor";
   constructor(message = "malformed or mismatched cursor") {
@@ -116,6 +122,8 @@ const BUILTINS = [
   "created-at",
   "modified-at",
   "archived:",
+  "tag:",
+  "tags:",
   "link:",
   "linked-to:",
   "linked-from:",
@@ -158,7 +166,7 @@ export class SearchService {
     }
   }
 
-  /** Bounded completion: built-ins, observed values, id suggestions. */
+  /** Bounded completion: built-ins, observed values, tag values, id suggestions. */
   async complete(fragment: string, limit = 20): Promise<string[]> {
     const out: string[] = [];
     const push = (s: string) => {
@@ -169,6 +177,14 @@ export class SearchService {
     if (/^(type|status|importance):/i.test(fragment)) {
       const field = fragment.split(":")[0]!.toLowerCase() as "type" | "status" | "importance";
       for (const v of await this.repo.observedValues(field)) push(`${field}:${v}`);
+    }
+    if (/^tags?:/i.test(fragment)) {
+      const prefix = fragment.split(":")[0]!;
+      const partial = fragment.slice(prefix.length + 1).toLowerCase();
+      for (const v of await this.repo.observedValues("tags")) {
+        if (!v.toLowerCase().startsWith(partial)) continue;
+        push(`${prefix}:${quoteTagValue(v)}`);
+      }
     }
     if (fragment.length >= 2) {
       for (const id of await this.repo.suggestIds(fragment, limit)) push(`id:"${id}"`);

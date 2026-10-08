@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, AuthError, NetworkError, buildDocumentJson, uuidv7, summaryKey, type Item, type RevisionMeta, type Summary } from "./api";
+import { api, ApiError, AuthError, NetworkError, buildDocumentJson, parseTagsInput, uuidv7, summaryKey, type Item, type RevisionMeta, type Summary } from "./api";
 import { useLiveUpdates } from "./Live";
 import { Icon } from "./Icon";
 import { FieldsView } from "./FieldsView";
@@ -20,7 +20,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
 }) {
   const [item, setItem] = useState<Item | null>(null);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState({ title: "", description: "", type: "", status: "", importance: "", attention: "cleared", fieldsJson: "", linksText: "" });
+  const [draft, setDraft] = useState({ title: "", description: "", type: "", status: "", importance: "", attention: "cleared", fieldsJson: "", linksText: "", tagsText: "" });
   const fieldsInspection = useMemo(() => inspectFields(draft.fieldsJson), [draft.fieldsJson]);
   const [incoming, setIncoming] = useState<Summary[]>([]);
   const [incomingNote, setIncomingNote] = useState("");
@@ -92,6 +92,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
       attention: item.document.humanAttention,
       fieldsJson: item.document.fieldsJson,
       linksText: item.document.links.map(([t, target]) => `${t} ${target}`).join("\n"),
+      tagsText: item.document.tags.join(", "),
     });
     setConflict(null);
     editRevision.current = item.revision;
@@ -133,6 +134,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
         importance: draft.importance,
         attention: draft.attention,
         links,
+        tags: parseTagsInput(draft.tagsText),
       });
     } catch {
       setStatus("fields is not valid JSON.");
@@ -201,6 +203,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
         importance: draft.importance,
         attention: draft.attention,
         links,
+        tags: parseTagsInput(draft.tagsText),
       });
     } catch {
       setStatus("fields is not valid JSON.");
@@ -233,6 +236,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
       importance: item.document.importance,
       attention: "cleared",
       links: item.document.links,
+      tags: item.document.tags,
     });
     try {
       await api.put(item.key, documentJson, item.revision, uuidv7());
@@ -256,6 +260,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
         importance: snap.document.importance,
         attention: snap.document.humanAttention,
         links: snap.document.links,
+        tags: snap.document.tags,
       });
       const out = await api.put(item.key, documentJson, item.revision, uuidv7());
       setStatus(`Restored revision ${revision} as new revision ${out.revision}.`);
@@ -310,6 +315,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
             <dt>Status</dt><dd>{item.document.status}</dd>
             <dt>Importance</dt><dd>{item.document.importance}</dd>
             <dt>Attention</dt><dd>{item.document.humanAttention}</dd>
+            <dt>Tags</dt><dd>{item.document.tags.length === 0 ? "None." : item.document.tags.join(", ")}</dd>
           </dl>
           <div className="detail-panel"><h3>Fields</h3>
           <FieldsView fieldsJson={item.document.fieldsJson} />
@@ -364,6 +370,10 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
             </select>
           </label>
           <FieldsEditor raw={draft.fieldsJson} inspection={fieldsInspection} onChange={(fieldsJson) => setDraft({ ...draft, fieldsJson })} />
+          <label>
+            Tags (comma-separated)
+            <input value={draft.tagsText} onChange={(e) => setDraft({ ...draft, tagsText: e.target.value })} placeholder="mcp, urgent" autoComplete="off" />
+          </label>
           <label>
             Links (one per line: “type project:item”)
             <textarea value={draft.linksText} onChange={(e) => setDraft({ ...draft, linksText: e.target.value })} rows={4} cols={60} aria-label="Links" />

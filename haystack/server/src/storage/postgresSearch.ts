@@ -121,6 +121,12 @@ function compilePred(pred: Predicate, ctx: Ctx): string {
         `AND l.target_item_id = i.item_id AND l.source_project_id = ${a} AND l.source_item_id = ${b}))`
       );
     }
+    case "tag": {
+      const p = ctx.push(pred.value);
+      // Missing tags (NULL) must be FALSE so NOT tag:x includes untagged
+      // items (three-valued logic would otherwise exclude them).
+      return `(COALESCE((i.document -> 'tags'), '[]'::jsonb) ? ${p})`;
+    }
   }
 }
 

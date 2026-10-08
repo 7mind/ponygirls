@@ -109,6 +109,7 @@ export interface DocumentBody {
   importance: string;
   humanAttention: "required" | "cleared";
   links: Array<[string, string]>;
+  tags: string[];
 }
 
 export interface Summary {
@@ -120,6 +121,7 @@ export interface Summary {
   status: string;
   importance: string;
   humanAttention: string;
+  tags?: string[];
   modifiedAt: string;
   modifiedBy: string;
 }
@@ -160,6 +162,9 @@ function toItemFromText(text: string): Item {
       importance: String(doc["importance"] ?? ""),
       humanAttention: doc["human-attention"] === "required" ? "required" : "cleared",
       links: Array.isArray(doc["links"]) ? (doc["links"] as Array<[string, string]>) : [],
+      tags: Array.isArray(doc["tags"])
+        ? (doc["tags"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [],
     },
     metadata: raw.metadata,
   };
@@ -177,6 +182,7 @@ export function buildDocumentJson(parts: {
   importance: string;
   attention: string;
   links: Array<[string, string]>;
+  tags?: string[];
 }): string {
   try {
     parse(parts.fieldsRaw);
@@ -191,8 +197,17 @@ export function buildDocumentJson(parts: {
     `"status":${JSON.stringify(parts.status)},` +
     `"importance":${JSON.stringify(parts.importance)},` +
     `"human-attention":${JSON.stringify(parts.attention)},` +
-    `"links":${JSON.stringify(parts.links)}}`
+    `"links":${JSON.stringify(parts.links)},` +
+    `"tags":${JSON.stringify(parts.tags ?? [])}}`
   );
+}
+
+/** Parse a comma-separated tags input into a clean string array. */
+export function parseTagsInput(text: string): string[] {
+  return text
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
 }
 
 /** Client-generated UUIDv7 request ids (time-ordered, random). */

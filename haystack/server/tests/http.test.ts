@@ -361,6 +361,8 @@ if (!CONN) {
       assert.ok(done.suggestions.includes("type:"));
       const values = (await (await api.get("/api/v1/values/type", h)).json()) as { values: string[] };
       assert.ok(values.values.includes("fact"));
+      const tags = (await (await api.get("/api/v1/values/tags", h)).json()) as { values: string[] };
+      assert.ok(Array.isArray(tags.values));
       assert.equal(await (await api.get("/api/v1/values/bogus", h)).status, 404);
     });
 

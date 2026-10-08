@@ -42,19 +42,25 @@ async function fixture(ctx: SearchContext): Promise<void> {
       "human-attention": "required",
       fields: { count: 5, tags: ["repeated", "pattern"], gh: { state: "open" } },
       links: [["motivated-by", "projB:fact1"]],
+      tags: ["mcp", "urgent"],
     }),
   );
   await put("projA:note2", doc({ title: "Unrelated todo", type: "todo", fields: { count: 2 } }));
-  await put("projA:old1", doc({ title: "Archived memory", status: "archived" }));
+  await put("projA:old1", doc({ title: "Archived memory", status: "archived", tags: ["mcp"] }));
   await put(
     "projB:fact1",
-    doc({ title: "fact mcp auth", fields: { observations: { count: 3 } }, links: [["see-also", "projA:note1"]] }),
+    doc({
+      title: "fact mcp auth",
+      fields: { observations: { count: 3 } },
+      links: [["see-also", "projA:note1"]],
+      tags: ["mcp"],
+    }),
   );
   // NOTE: big-int fixture is raw JSON text — a JS number literal would round
   // before serialization and test the wrong value on both legs.
   await put(
     "projB:uni",
-    '{"title":"caf\u00e9 notes","description":"d","fields":{"n":9007199254740993},"type":"fact","status":"actual","importance":"low","human-attention":"cleared","links":[]}',
+    '{"title":"caf\u00e9 notes","description":"d","fields":{"n":9007199254740993},"type":"fact","status":"actual","importance":"low","human-attention":"cleared","links":[],"tags":["Machine Learning"]}',
   );
   await put("projA:self", doc({ title: "self reference", links: [["rel", "projA:self"]] }));
   await put("projA:dangle", doc({ title: "dangling pointer", links: [["rel", "ghost:nowhere"]] }));
@@ -188,6 +194,47 @@ export function defineSearchSuite(
       assert.deepEqual(keys((await ctx.search.search({ query: 'linked-to:"ghost:nowhere"', limit: 100 })).items), [
         "projA:dangle",
       ]);
+    });
+
+    it("matches exact tags case-sensitively with tag:/tags: aliases", async () => {
+      assert.deepEqual(keys((await ctx.search.search({ query: "tag:mcp", limit: 100 })).items), [
+        "projA:note1",
+        "projB:fact1",
+      ]);
+      assert.deepEqual(keys((await ctx.search.search({ query: "tags:mcp", limit: 100 })).items), [
+        "projA:note1",
+        "projB:fact1",
+      ]);
+      // Predicate name is case-insensitive; value is exact case-sensitive.
+      assert.deepEqual(keys((await ctx.search.search({ query: "TAG:mcp", limit: 100 })).items), [
+        "projA:note1",
+        "projB:fact1",
+      ]);
+      assert.deepEqual(keys((await ctx.search.search({ query: "TAG:MCP", limit: 100 })).items), []);
+      assert.deepEqual(keys((await ctx.search.search({ query: 'tag:"Machine Learning"', limit: 100 })).items), [
+        "projB:uni",
+      ]);
+      assert.deepEqual(
+        keys((await ctx.search.search({ query: "tag:mcp tag:urgent", limit: 100 })).items),
+        ["projA:note1"],
+      );
+      // Archived items stay hidden unless explicitly selected.
+      assert.deepEqual(keys((await ctx.search.search({ query: "tag:mcp", limit: 100 })).items).includes("projA:old1"), false);
+      assert.deepEqual(
+        keys((await ctx.search.search({ query: "archived:all tag:mcp", limit: 100 })).items).sort(),
+        ["projA:note1", "projA:old1", "projB:fact1"].sort(),
+      );
+      // NOT includes untagged items (missing tags are FALSE, not NULL).
+      const notMcp = keys((await ctx.search.search({ query: "NOT tag:mcp", limit: 100 })).items);
+      assert.ok(notMcp.includes("projA:note2"));
+      assert.ok(!notMcp.includes("projA:note1"));
+      assert.ok(!notMcp.includes("projB:fact1"));
+      // Tags are text-indexed as their own segments.
+      assert.deepEqual(keys((await ctx.search.search({ query: "urgent", limit: 100 })).items), ["projA:note1"]);
+      assert.deepEqual(keys((await ctx.search.search({ query: "machine", limit: 100 })).items), ["projB:uni"]);
+      // Malformed tag values are diagnostics, never text fallback.
+      await assert.rejects(ctx.search.search({ query: "tag:", limit: 100 }), InvalidQuery);
+      await assert.rejects(ctx.search.search({ query: 'tag:""', limit: 100 }), InvalidQuery);
     });
 
     it("intersects explicit scope with predicates; targets ignore scope", async () => {
@@ -335,6 +382,18 @@ export function defineSearchSuite(
       const analysis = ctx.search.analyze("bogus:1");
       assert.ok(analysis.diagnostics.length > 0);
       assert.deepEqual(ctx.search.analyze("type:todo").diagnostics, []);
+    });
+
+    it("completes tag built-ins and observed tag values", async () => {
+      const builtins = await ctx.search.complete("ta");
+      assert.ok(builtins.includes("tag:"));
+      assert.ok(builtins.includes("tags:"));
+      const tags = await ctx.search.complete("tag:m");
+      assert.ok(tags.includes("tag:mcp"), JSON.stringify(tags));
+      const quoted = await ctx.search.complete("tag:");
+      assert.ok(quoted.some((s) => s.includes("Machine Learning")), JSON.stringify(quoted));
+      assert.deepEqual(ctx.search.analyze("tag:mcp").diagnostics, []);
+      assert.ok(ctx.search.analyze("tag:").diagnostics.length > 0);
     });
   });
 }
