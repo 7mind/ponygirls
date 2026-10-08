@@ -194,6 +194,32 @@ in
           may be absent: launches are not gated on the service, so if MCP
           calls fail, say so plainly and do not hallucinate recorded writes.
 
+          Tool mechanics (read before the first write). The Haystack MCP
+          server exposes exactly three TOOLS (`get`, `put`, `search`) and
+          zero RESOURCES: `list_mcp_resources` correctly returns nothing
+          for it — that is not a failure. In Pi the server is deferred, so
+          discover the tools with `tool_search` (e.g. "haystack put get
+          search") before calling them. `put` takes all four arguments:
+          `key` ("project:item"), `document_json` (the document as a JSON
+          *string* — stringify first, never pass a nested object — holding
+          title, description, fields, type, status, importance,
+          human-attention, links, tags), `expected_revision` (0 creates
+          only; n > 0 replaces revision n exactly; on `conflict` re-read
+          with `get` and make a deliberate edit), and `request_id` (a
+          FRESH UUIDv7 per operation, never reused across different
+          operations). A UUIDv7 third group starts with `7` (e.g.
+          `0193e8d5-6f5c-7a1b-8c2d-…`); `crypto.randomUUID()` makes v4
+          (third group `4xxx`) and is rejected with `bad-envelope`. Mint v7
+          with, e.g. `python3 -c 'import time,os;ms=int(time.time()*1000);`
+          `r=os.urandom(10);b=ms.to_bytes(6,"big")+r;a=bytearray(b);`
+          `a[6]=a[6]&0x0f|0x70;a[8]=a[8]&0x3f|0x80;h=a.hex();print(f"{h[:8]}-"`
+          `"{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}")'`. Tool faults
+          return a stable `code` plus a detail `message` — read it (e.g.
+          `error bad-envelope: request_id must be a UUIDv7` tells you the
+          id version was wrong). Never retry an uncertain write with a
+          fresh id: re-read, or replay the original `request_id` (which
+          returns the original outcome with `replayed:true`).
+
           Authoritative activity namespace: `${activityProjectId}`. GitHub
           accounting and reusable skill drafts live there under deterministic
           keys; use cross-project links for originating project context,

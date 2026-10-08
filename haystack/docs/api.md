@@ -36,8 +36,22 @@ document, metadata). Archived items accessible. Unknown key → `not-found`.
 
 `document_json` is a JSON **string** (raw text — never a nested object —
 so the SDK's `JSON.parse` cannot round numbers before the application
-codec sees them). `expected_revision` and `request_id` (UUIDv7) required.
-Returns `{ key, revision, metadata }`. Create/update/archive share this op.
+codec sees them). Stringify the document client-side first. `expected_revision`
+and `request_id` (UUIDv7) required. Returns `{ key, revision, metadata }`.
+Create/update/archive share this op.
+
+`request_id` must match
+`xxxxxxxx-xxxx-7xxx-8/9/a/bxx-xxxxxxxxxxxx` (third group starts with `7`).
+UUIDv4 (`crypto.randomUUID`, third group `4xxx`) is rejected with
+`bad-envelope`. Mint a fresh v7 per operation, e.g.:
+
+```bash
+python3 -c 'import time,os;ms=int(time.time()*1000);r=os.urandom(10);b=ms.to_bytes(6,"big")+r;a=bytearray(b);a[6]=a[6]&0x0f|0x70;a[8]=a[8]&0x3f|0x80;h=a.hex();print(f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}")'
+```
+
+MCP tool faults return `{ code, message }` plus `error <code>: <message>`
+text — read the message; `bad-envelope` alone never tells you which field
+was wrong. (The browser HTTP API keeps the generic public message.)
 
 ### `search`
 
