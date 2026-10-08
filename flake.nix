@@ -275,6 +275,9 @@
             assert builtins.elem "haystack-hash-w-agent-default:/run/secrets/agent-sha"
               full.systemd.services.haystack.serviceConfig.LoadCredential;
             assert (builtins.elemAt full.services.postgresql.ensureUsers 0).name == "haystack";
+            # Setup waits for the database to exist (fresh clusters race without this).
+            assert builtins.elem "postgresql-setup.service" full.systemd.services.haystack-setup.after;
+            assert builtins.elem "postgresql-setup.service" full.systemd.services.haystack-setup.requires;
             # Server-only host: we enable no proxy and open no firewall ports.
             assert !serverOnly.services.nginx.enable;
             assert serverOnly.networking.firewall.allowedTCPPorts == [ ];

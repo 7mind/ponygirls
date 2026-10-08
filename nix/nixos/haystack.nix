@@ -224,8 +224,8 @@ in
         description = "Haystack database setup (tuning, readiness)";
         wantedBy = [ "multi-user.target" ];
         before = [ "haystack.service" ];
-        after = [ "postgresql.service" ];
-        requires = [ "postgresql.service" ];
+        after = [ "postgresql.service" "postgresql-setup.service" ];
+        requires = [ "postgresql.service" "postgresql-setup.service" ];
         path = [ config.services.postgresql.package ];
         script =
           let
