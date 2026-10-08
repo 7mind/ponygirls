@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, AuthError, NetworkError, buildDocumentJson, uuidv7, summaryKey, type Item, type RevisionMeta, type Summary } from "./api";
 import { useLiveUpdates } from "./Live";
 import { Icon } from "./Icon";
 import { FieldsView } from "./FieldsView";
+import { FieldsEditor } from "./FieldsEditor";
+import { inspectFields } from "./fields";
 
 interface Conflict {
   currentRevision: number;
@@ -19,6 +21,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
   const [item, setItem] = useState<Item | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ title: "", description: "", type: "", status: "", importance: "", attention: "cleared", fieldsJson: "", linksText: "" });
+  const fieldsInspection = useMemo(() => inspectFields(draft.fieldsJson), [draft.fieldsJson]);
   const [incoming, setIncoming] = useState<Summary[]>([]);
   const [incomingNote, setIncomingNote] = useState("");
   const [history, setHistory] = useState<RevisionMeta[]>([]);
@@ -291,7 +294,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
             Conflict: revision {conflict.currentRevision} by {conflict.currentModifiedBy} at {conflict.currentModifiedAt} —
             “{conflict.currentTitle}”. Your draft text is preserved.
           </p>
-          <button type="button" onClick={() => void retryOnLatest()}>
+          <button type="button" disabled={fieldsInspection.error !== null} onClick={() => void retryOnLatest()}>
             Save my draft on top of revision {conflict.currentRevision}
           </button>
           <button type="button" onClick={() => { setConflict(null); setEditing(false); void load(); }}>
@@ -360,10 +363,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
               <option value="cleared">cleared</option>
             </select>
           </label>
-          <label>
-            Fields (raw JSON — numbers and Unicode preserved exactly)
-            <textarea value={draft.fieldsJson} onChange={(e) => setDraft({ ...draft, fieldsJson: e.target.value })} rows={10} cols={60} aria-label="Fields JSON" />
-          </label>
+          <FieldsEditor raw={draft.fieldsJson} inspection={fieldsInspection} onChange={(fieldsJson) => setDraft({ ...draft, fieldsJson })} />
           <label>
             Links (one per line: “type project:item”)
             <textarea value={draft.linksText} onChange={(e) => setDraft({ ...draft, linksText: e.target.value })} rows={4} cols={60} aria-label="Links" />
@@ -378,7 +378,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
           <datalist id="haystack-importances">
             <option value="high" /><option value="low" />
           </datalist>
-          <button className="primary" type="submit">Save as new revision</button>
+          <button className="primary" type="submit" disabled={fieldsInspection.error !== null}>Save as new revision</button>
           <button type="button" onClick={() => setEditing(false)}>Cancel</button>
         </form>
       )}

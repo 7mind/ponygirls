@@ -267,7 +267,10 @@
             assert serverOnly.networking.firewall.allowedTCPPorts == [ ];
             # Full host: proxy on, firewall still closed unless asked.
             assert full.services.nginx.virtualHosts ? "memory.example.net";
-            assert full.services.nginx.virtualHosts."memory.example.net".locations."/".proxyWebsockets;
+            assert full.services.nginx.virtualHosts."memory.example.net".root == "${full.smind.services.haystack.package}/lib/node_modules/haystack/web/dist";
+            assert full.services.nginx.virtualHosts."memory.example.net".locations."/".proxyPass == null;
+            assert full.services.nginx.virtualHosts."memory.example.net".locations."/api/".proxyWebsockets;
+            assert full.services.nginx.virtualHosts."memory.example.net".locations."/mcp".proxyWebsockets;
             assert full.networking.firewall.allowedTCPPorts == [ ];
             # Human credentials and unknown tokens are rejected as mappings.
             assert !humanMapping.success;

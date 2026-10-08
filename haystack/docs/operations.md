@@ -26,6 +26,44 @@ sha256sum agent.token | cut -d' ' -f1 > agent.sha   # digest file
   Committed operations are unaffected; in-flight requests finish with the
   identity they started with. Cookie sessions revalidate on every request.
 
+## Backend outages and browser sessions
+
+The NixOS nginx proxy serves the public UI shell and assets directly from
+the Haystack package. `/api/` and `/mcp` go to the backend, including
+WebSocket upgrades. A stopped backend or gateway timeout produces a typed
+HTTP 503 response with `Cache-Control: no-store` and no cookie changes;
+application authentication failures remain 401. The frontend reports
+service unavailability without discarding the persistent session cookie.
+Restarting the backend with the same token configuration restores access
+on refresh or retry, within the cookie's normal lifetime.
+
+The standalone preview serves its own assets. If that whole process is
+stopped, the browser cannot load the page until it restarts. `quick-ui.sh`
+retains its per-port login token in `debug/haystack-ui/<port>/token.txt`
+under the repository root, so its cookie survives launcher restarts too.
+The token file is private and ignored by git; demo data is still recreated
+on each launch. Delete that token file to deliberately reset preview login.
+To keep a session from an older disposable launcher, save its printed token
+to this file before stopping that launcher; otherwise the first launch of
+the updated script requires a new login.
+The independent outage screen requires the nginx proxy.
+
+The browser restart regression runs a real backend process and nginx over
+HTTPS with a disposable certificate, using the module's location policy.
+After building both workspaces, run from `haystack/` with PostgreSQL,
+Chromium, nginx, Nix, OpenSSL, and PostgreSQL tools available:
+
+```sh
+HAYSTACK_TEST_PG=postgresql://postgres@127.0.0.1:5432/haystack_test \
+HAYSTACK_CHROMIUM=/path/to/chromium HAYSTACK_NGINX=/path/to/nginx \
+npm run test:browser -w web
+```
+
+This uses dedicated `haystack_browser` and `haystack_restart` databases,
+recreated by the test. The launcher regression also runs its own disposable
+PostgreSQL instance on a separate port. Missing runtime inputs produce
+explicit skip markers.
+
 ## Backup and restore
 
 Automated `pg_dump -Fc` runs on `backup.schedule` into `backup.directory`
@@ -54,6 +92,12 @@ a namespace change needs a reviewed migration, never a fresh database.
 - Schema changes ship as ordered `migrations/*.sql` with ledger +
   advisory lock; a failed migration fails startup without partial apply.
   Never auto-upgrade the PostgreSQL major version; never recreate data.
+- The 2026-10-08 JSON codec correction preserves `__proto__` fields that
+  the previous parser/canonicalizer discarded. Previously discarded values
+  cannot be reconstructed from stored revisions. Replaying an old request
+  containing such a field may now conflict because its exact canonical
+  document differs; use a fresh request ID and the current revision to
+  explicitly write the intended value.
 - Upgrade procedure: backup → deploy new package → restart (migrations
   run before listen) → verify `/api/v1/health` + `whoami` + a replayed
   write → keep the old package generation until verified.

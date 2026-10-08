@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, AuthError, type Principal } from "./api";
+import { api, AuthError, NetworkError, type Principal } from "./api";
 import { Login } from "./Login";
 import { Browse, type BrowseState } from "./Browse";
 import { Detail } from "./Detail";
@@ -59,8 +59,11 @@ export function App() {
   async function logout() {
     try {
       await api.logout();
-    } catch {
-      // Cookie may already be dead; continue to the login screen anyway.
+    } catch (error) {
+      if (!(error instanceof AuthError)) {
+        setNotice(error instanceof NetworkError ? "Server unreachable — Sign out did not complete. Your session is unchanged." : "Sign out did not complete.");
+        return;
+      }
     }
     setPrincipal(null);
     setBoot("login");

@@ -29,6 +29,17 @@ let
   });
 
   dbUrl = "postgresql://${cfg.database.user}@/${cfg.database.name}?host=${cfg.database.socketDir}";
+  backendLocation = {
+    proxyPass = "http://${cfg.listenAddress}:${toString cfg.port}";
+    proxyWebsockets = true;
+    extraConfig = ''
+      proxy_cache off;
+      proxy_buffering off;
+      client_max_body_size 2m;
+      proxy_intercept_errors on;
+      error_page 502 504 =503 @haystack_unavailable;
+    '';
+  };
 in
 {
   options.smind.services.haystack = {
@@ -278,17 +289,23 @@ in
         virtualHosts.${cfg.publicUrlHost} = {
           forceSSL = cfg.proxy.acmeHost != null;
           useACMEHost = cfg.proxy.acmeHost;
+          root = "${cfg.package}/lib/node_modules/haystack/web/dist";
           locations."/" = {
-            proxyPass = "http://${cfg.listenAddress}:${toString cfg.port}";
-            proxyWebsockets = true;
+            tryFiles = "$uri $uri/ =404";
             extraConfig = ''
-              # Authenticated content must never be cached: belt (backend
-              # no-store) and suspenders (proxy cache bypass).
-              proxy_cache off;
-              proxy_buffering off;
-              client_max_body_size 2m;
+              add_header Cache-Control "no-cache";
+              add_header Referrer-Policy "no-referrer" always;
+              add_header X-Content-Type-Options "nosniff" always;
             '';
           };
+          locations."/api/" = backendLocation;
+          locations."/mcp" = backendLocation;
+          locations."@haystack_unavailable".extraConfig = ''
+            default_type application/json;
+            add_header Cache-Control "no-store" always;
+            add_header Referrer-Policy "no-referrer" always;
+            return 503 '{"error":{"code":"unavailable","message":"service unavailable"}}';
+          '';
         };
       };
       networking.firewall.allowedTCPPorts = lib.mkIf (cfg.publicUrl != null && cfg.proxy.openFirewall) (

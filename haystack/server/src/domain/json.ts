@@ -1,6 +1,7 @@
 // Haystack domain: the single lossless JSON codec (decisions.md #4).
 // Every JSON number is a LosslessNumber; plain JS numbers never represent
-// stored data. Raw text crosses transports; parsed exactly once here.
+// stored data. Raw text crosses transports; numeric source tokens are
+// materialized into LosslessNumber instances here.
 import {
   parse as llParse,
   stringify as llStringify,
@@ -27,12 +28,25 @@ export class BadEnvelope extends Error {
   }
 }
 
+interface JsonSourceContext { source?: string }
+type SourceReviver = (key: string, value: unknown, context: JsonSourceContext) => unknown;
+
 /** Parse raw JSON text. Rejects syntax errors, trailing commas,
  *  duplicate keys, and anything outside the JSON domain. */
 export function parseRaw(text: string): JsonValue {
   let value: JsonValue;
   try {
-    value = llParse(text) as JsonValue;
+    // Retain the codec's duplicate-key validation, but materialize objects
+    // with native JSON semantics: lossless-json assigns __proto__ as a setter.
+    llParse(text);
+    const parseWithSource = JSON.parse as (raw: string, reviver: SourceReviver) => JsonValue;
+    value = parseWithSource(text, (_key, parsed, context) => {
+      if (typeof parsed !== "number") return parsed;
+      if (context === undefined || typeof context.source !== "string") {
+        throw new Error("This runtime must support JSON.parse source context for exact numbers");
+      }
+      return new LosslessNumber(context.source);
+    });
   } catch (err) {
     throw new BadEnvelope(`unparseable JSON: ${(err as Error).message}`);
   }
@@ -67,7 +81,7 @@ function canonicalValue(value: JsonValue): JsonValue {
   if (Array.isArray(value)) return value.map(canonicalValue);
   if (value !== null && typeof value === "object") {
     if (isLosslessNumber(value)) return value;
-    const out: { [key: string]: JsonValue } = {};
+    const out: { [key: string]: JsonValue } = Object.create(null);
     for (const key of Object.keys(value).sort()) out[key] = canonicalValue(value[key]!);
     return out;
   }

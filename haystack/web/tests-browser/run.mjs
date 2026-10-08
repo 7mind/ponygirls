@@ -204,6 +204,61 @@ await check("login flow + persisted session", async () => {
 });
 
 // Search, diagnostics, archive control.
+await check("gateway outages are connection failures and preserve the session across refreshes", async () => {
+  const ctx = await browser.newContext();
+  try {
+    const page = await ctx.newPage();
+    await page.goto(`${base}/#/browse`);
+    await page.getByLabel("Token").fill(humanToken);
+    for (const status of [502, 503, 504]) {
+      await page.route("**/api/v1/login", (route) => route.fulfill({ status, contentType: "text/html", body: "Service unavailable" }));
+      await page.getByRole("button", { name: "Sign in", exact: true }).click();
+      await page.getByRole("alert").waitFor();
+      assert.match(await page.getByRole("alert").textContent(), /Server unreachable/, `HTTP ${status} must be a connection failure`);
+      assert.equal(await page.getByLabel("Token").inputValue(), humanToken);
+      await page.unroute("**/api/v1/login");
+    }
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+    const session = (await ctx.cookies(base)).find((cookie) => cookie.name === "haystack-dev");
+    assert.ok(session);
+    for (const status of [502, 503, 504]) {
+      await page.route("**/api/**", (route) => route.fulfill({ status, contentType: "text/html", body: "Service unavailable" }));
+      await page.getByRole("button", { name: "Search", exact: true }).click();
+      await page.getByText(/Server unreachable/).waitFor({ timeout: 3000 });
+      await page.reload();
+      await page.getByRole("alert").filter({ hasText: "Server unreachable" }).waitFor();
+      assert.equal(await page.getByLabel("Token").count(), 0);
+      assert.ok((await ctx.cookies(base)).find((cookie) => cookie.name === session.name).value === session.value, "outage must preserve the session token");
+      await page.unroute("**/api/**");
+      await page.reload();
+      await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+    }
+  } finally { await ctx.close(); }
+});
+
+await check("invalid field JSON reports an inline error before saving", async () => {
+  const ctx = await browser.newContext();
+  try {
+    const page = await ctx.newPage();
+    await login(page, humanToken);
+    await page.getByRole("button", { name: "ui:note", exact: true }).click();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    let writes = 0;
+    page.on("request", (request) => { if (request.url().endsWith("/api/v1/put")) writes++; });
+    const fields = page.getByLabel("Fields JSON", { exact: true });
+    await fields.fill('{"n":');
+    await page.getByRole("alert").filter({ hasText: "Invalid JSON" }).waitFor({ timeout: 3000 });
+    assert.equal(await fields.getAttribute("aria-invalid"), "true");
+    assert.equal(await page.getByRole("button", { name: "Save as new revision", exact: true }).isDisabled(), true);
+    assert.equal(writes, 0);
+    await fields.fill('{"n":9007199254740993}');
+    assert.equal(await page.getByRole("alert").filter({ hasText: "Invalid JSON" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Save as new revision", exact: true }).isEnabled(), true);
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  } finally { await ctx.close(); }
+});
+
 // Regression: fragment persistence must not remount a focused query editor.
 await check("query typing retains focus", async () => {
   const ctx = await browser.newContext();
@@ -408,6 +463,7 @@ await check("semantic fields preserve scalar types and exact nested numbers thro
     assert.match(await raw.textContent(), /0\.12345678901234567890123456789/);
     await page.getByText("Raw JSON", { exact: true }).click();
     await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await page.getByRole("button", { name: "Raw JSON", exact: true }).click();
     assert.match(await page.getByLabel("Fields JSON").inputValue(), /9007199254740993/);
     assert.match(await page.getByLabel("Fields JSON").inputValue(), /"type":"md"/);
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -415,6 +471,90 @@ await check("semantic fields preserve scalar types and exact nested numbers thro
     await page.getByRole("heading", { name: "Snapshot r1", exact: true }).waitFor();
     const counts = page.getByRole("region", { name: "Field: count", exact: true }).locator(".field-number");
     assert.deepEqual(await counts.allTextContents(), ["9007199254740993", "9007199254740993"]);
+  } finally { await ctx.close(); }
+});
+
+await check("typed field editors preview content, preserve data, and save attributed revisions", async () => {
+  await seed.put({ key: "ui:editor", documentJson: docOf({ title: "Typed editor" }).replace('"fields":{}',
+    '"fields":{"count":9007199254740993,"decimal":0.12345678901234567890123456789,' +
+    '"skill":{"type":"md","content":"# Original"},"snippet":{"type":"code","language":"nix","content":"{ enabled = true; }"},' +
+    '"literal":{"type":"text","content":"old"},"__proto__":{"type":"text","content":"Prototype field"},' +
+    '"nested":{"__proto__":9007199254740993},"extended":{"type":"md","content":"# untouched","filename":"SKILL.md"}}'),
+    expectedRevision: 0, requestId: rid() }, agent);
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  try {
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await login(page, humanToken);
+    await page.getByRole("button", { name: "ui:editor", exact: true }).click();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    const markdown = '# Edited skill\n\nUse **exact bytes**.\n\n```typescript\nconst n: number = 7;\n```';
+    await page.getByLabel("Content: skill", { exact: true }).fill(markdown);
+    const preview = page.getByRole("region", { name: "Preview: skill", exact: true });
+    await preview.getByRole("heading", { name: "Edited skill", exact: true }).waitFor();
+    assert.equal(await preview.locator("strong").textContent(), "exact bytes");
+    assert.ok(await preview.locator(".hljs-keyword").count() > 0);
+    await page.getByLabel("Language: snippet", { exact: true }).selectOption("typescript");
+    await page.getByLabel("Content: snippet", { exact: true }).fill('const text: string = "🐎";');
+    assert.equal(await page.getByRole("region", { name: "Preview: snippet", exact: true }).locator("code").getAttribute("data-language"), "typescript");
+    await page.getByLabel("Content: literal", { exact: true }).fill("**literal**\nsecond line");
+    await page.getByLabel("Content: __proto__", { exact: true }).fill("Prototype field edited");
+    assert.equal(await page.getByRole("region", { name: "Preview: literal", exact: true }).locator("pre").textContent(), "**literal**\nsecond line");
+    assert.equal(await page.getByRole("region", { name: "Preview: literal", exact: true }).locator("strong").count(), 0);
+    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "typed-editor-light.png"), fullPage: true });
+    await page.emulateMedia({ colorScheme: "dark" });
+    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "typed-editor-dark.png"), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "typed editor overflows on mobile");
+    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "typed-editor-mobile.png"), fullPage: true });
+    await page.getByRole("checkbox", { name: "Preview", exact: true }).uncheck();
+    assert.equal(await page.getByRole("region", { name: "Preview: skill", exact: true }).count(), 0);
+    await page.getByRole("button", { name: "Raw JSON", exact: true }).click();
+    const fields = page.getByLabel("Fields JSON", { exact: true });
+    const raw = await fields.inputValue();
+    assert.match(raw, /9007199254740993/);
+    assert.match(raw, /0\.12345678901234567890123456789/);
+    assert.match(raw, /"filename": "SKILL.md"/);
+    await fields.fill(raw.slice(0, -1));
+    await page.getByRole("alert").filter({ hasText: "Invalid JSON" }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Typed content", exact: true }).isDisabled(), true);
+    await fields.fill(raw);
+    await page.getByRole("button", { name: "Typed content", exact: true }).click();
+    assert.equal(await page.getByLabel("Content: skill", { exact: true }).inputValue(), markdown);
+    const write = page.waitForResponse((response) => response.url().endsWith("/api/v1/put"));
+    await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
+    assert.equal((await write).status(), 200);
+    await page.getByText(/Saved as revision 2/).waitFor();
+    const result = await ctx.request.post(`${base}/api/v1/get`, { data: { key: "ui:editor" } });
+    const text = await result.text();
+    assert.match(text, /9007199254740993/);
+    assert.match(text, /0\.12345678901234567890123456789/);
+    const doc = JSON.parse(text);
+    assert.equal(doc.metadata.modifiedBy, "op");
+    assert.deepEqual(doc.document.fields.skill, { type: "md", content: markdown });
+    assert.deepEqual(doc.document.fields.snippet, { type: "code", language: "typescript", content: 'const text: string = "🐎";' });
+    assert.deepEqual(doc.document.fields.extended, { type: "md", content: "# untouched", filename: "SKILL.md" });
+    assert.deepEqual(doc.document.fields.__proto__, { type: "text", content: "Prototype field edited" });
+    assert.equal(Object.hasOwn(doc.document.fields.nested, "__proto__"), true);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+await check("root typed content can be edited and cancelled without writing", async () => {
+  const ctx = await browser.newContext();
+  try {
+    const page = await ctx.newPage();
+    await login(page, humanToken);
+    await page.getByRole("button", { name: "ui:root-markdown", exact: true }).click();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await page.getByLabel("Content: Value", { exact: true }).fill("# Draft root");
+    await page.getByRole("region", { name: "Preview: Value", exact: true }).getByRole("heading", { name: "Draft root", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.getByRole("heading", { name: "Root content", exact: true }).waitFor();
+    await page.reload();
+    await page.getByRole("heading", { name: "Root content", exact: true }).waitFor();
+    assert.equal(await page.getByRole("heading", { name: "Draft root", exact: true }).count(), 0);
   } finally { await ctx.close(); }
 });
 
@@ -561,6 +701,27 @@ await check("attention inbox", async () => {
   await page.getByRole("button", { name: "Attention inbox" }).click();
   await page.getByText("No matching items.").waitFor();
   await ctx.close();
+});
+
+await check("an unavailable logout does not pretend the session was cleared", async () => {
+  const ctx = await browser.newContext();
+  try {
+    const page = await ctx.newPage();
+    await login(page, humanToken);
+    const session = (await ctx.cookies(base)).find((cookie) => cookie.name === "haystack-dev");
+    await page.route("**/api/v1/logout", (route) => route.fulfill({ status: 503, contentType: "text/html", body: "Service unavailable" }));
+    const response = page.waitForResponse((value) => value.url().endsWith("/api/v1/logout"));
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await response;
+    assert.equal(await page.getByLabel("Token").count(), 0, "failed logout must retain signed-in identity");
+    await page.getByRole("status").filter({ hasText: "Sign out did not complete" }).waitFor({ timeout: 3000 });
+    assert.ok((await ctx.cookies(base)).find((cookie) => cookie.name === session.name).value === session.value, "failed logout must preserve the session token");
+    await page.unroute("**/api/v1/logout");
+    await page.reload();
+    await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
+  } finally { await ctx.close(); }
 });
 
 // Inaccessible API is a network failure, not an auth failure. The UI shell
