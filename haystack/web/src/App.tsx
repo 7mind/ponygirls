@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, AuthError, NetworkError, type Principal } from "./api";
+import { api, AuthError, type Principal } from "./api";
 import { Login } from "./Login";
 import { Browse, type BrowseState } from "./Browse";
 import { Detail } from "./Detail";
+import { LiveProvider } from "./Live";
+import { Icon, type IconName } from "./Icon";
 
 type Route = { name: "browse"; state: BrowseState } | { name: "item"; key: string } | { name: "inbox" };
 
@@ -71,10 +73,10 @@ export function App() {
     setBoot("login");
   }, []);
 
-  if (boot === "loading") return <p role="status">Loading…</p>;
+  if (boot === "loading") return <main className="auth-screen"><p role="status">Loading…</p></main>;
   if (boot === "unreachable") {
     return (
-      <main>
+      <main className="auth-screen">
         <h1>haystack</h1>
         <p role="alert">Server unreachable — the service may be down. This is a connection failure, not an authentication failure.</p>
         <button type="button" onClick={() => void refresh()}>Retry</button>
@@ -89,37 +91,59 @@ export function App() {
     location.hash = "#/browse";
   };
 
+  const nav: Array<{ label: string; icon: IconName; hash: string }> = [
+    { label: "Browse", icon: "grid", hash: "#/browse" },
+    { label: "Attention inbox", icon: "inbox", hash: "#/inbox" },
+    { label: "Upstream activity", icon: "branch", hash: "#/browse?q=type%3Agithub-issue%20OR%20type%3Agithub-pr" },
+    { label: "Skill candidates", icon: "spark", hash: "#/browse?q=type%3Askill-draft" },
+    { label: "Archive", icon: "archive", hash: "#/browse?archive=only" },
+  ];
+
   return (
-    <div>
-      <header>
-        <h1>haystack</h1>
-        <p>
-          Signed in as {principal.userId} ({principal.type}) ·{" "}
-          <button type="button" onClick={goBrowse}>Browse</button>{" "}
-          <button type="button" onClick={() => { location.hash = "#/inbox"; }}>Attention inbox</button>{" "}
-          <button type="button" onClick={() => void logout()}>Sign out</button>
-        </p>
-        {notice !== "" && <p role="status">{notice}</p>}
-      </header>
+    <LiveProvider key={`${principal.userId}:${principal.tokenId}`} onAuthLost={handleAuthLost}>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <a className="brand" href="#/browse"><span className="brand-mark"><Icon name="stack" /></span><span>haystack</span></a>
+        <div className="workspace-label">WORKSPACE</div>
+        <nav aria-label="Workspace">{nav.map((entry) => {
+          const active = route.name === "inbox" ? entry.hash === "#/inbox" : route.name === "browse" &&
+            (route.state.archive === "only" ? entry.label === "Archive" : route.state.query === "type:skill-draft" ? entry.label === "Skill candidates" :
+              route.state.query === "type:github-issue OR type:github-pr" ? entry.label === "Upstream activity" : entry.label === "Browse");
+          return <button key={entry.label} type="button" className={`nav-entry ${active ? "selected" : ""}`} aria-current={active ? "page" : undefined}
+            onClick={() => { location.hash = entry.hash; }}><Icon name={entry.icon} />{entry.label}</button>;
+        })}</nav>
+        <div className="activity-namespace"><small>Activity namespace</small><strong>{principal.activityProjectId}</strong></div>
+        <div className="identity"><span className="avatar">{principal.userId.slice(0, 1).toUpperCase()}</span><div><strong>{principal.userId}</strong><small>{principal.type} account</small></div>
+          <button type="button" className="icon-button" aria-label="Sign out" title="Sign out" onClick={() => void logout()}><Icon name="logout" /></button></div>
+      </aside>
+      <main className="workspace-main">
+      <header className="topbar"><span>Workspace <span className="breadcrumb-separator">/</span> {route.name === "item" ? "Record" : route.name === "inbox" ? "Attention inbox" : "Records"}</span></header>
+      <div className="workspace-content">
+      {notice !== "" && <p role="status" className="notice">{notice}</p>}
       {route.name === "browse" && (
         <Browse
-          key={`${route.state.query}|${route.state.project}|${route.state.archive}`}
+          key="browse"
           initial={route.state}
+          inbox={false}
           onOpen={(key) => { location.hash = `#/item/${encodeURIComponent(key)}`; }}
           onAuthLost={handleAuthLost}
         />
       )}
       {route.name === "item" && (
-        <Detail itemKey={route.key} onBack={goBrowse} onAuthLost={handleAuthLost} />
+        <Detail key={route.key} itemKey={route.key} onBack={goBrowse} onAuthLost={handleAuthLost} />
       )}
       {route.name === "inbox" && (
         <Browse
           key="inbox"
           initial={{ query: "human-attention:required", project: "", archive: "hide" }}
+          inbox={true}
           onOpen={(key) => { location.hash = `#/item/${encodeURIComponent(key)}`; }}
           onAuthLost={handleAuthLost}
         />
       )}
+      </div>
+      </main>
     </div>
+    </LiveProvider>
   );
 }

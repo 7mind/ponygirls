@@ -267,6 +267,7 @@
             assert serverOnly.networking.firewall.allowedTCPPorts == [ ];
             # Full host: proxy on, firewall still closed unless asked.
             assert full.services.nginx.virtualHosts ? "memory.example.net";
+            assert full.services.nginx.virtualHosts."memory.example.net".locations."/".proxyWebsockets;
             assert full.networking.firewall.allowedTCPPorts == [ ];
             # Human credentials and unknown tokens are rejected as mappings.
             assert !humanMapping.success;
@@ -310,6 +311,9 @@
               });
               linuxMod = evalHaystackHm "x86_64-linux" "/run/secrets/haystack-token" null;
               darwinMod = evalHaystackHm "aarch64-darwin" "/run/secrets/haystack-token" null;
+              disabledMod = linuxMod.extendModules {
+                modules = [ { smind.hm.dev.llm.haystack.enable = nixpkgs.lib.mkForce false; } ];
+              };
               linuxCfg = linuxMod.config.smind.hm.dev.llm.haystack;
               darwinCfg = darwinMod.config.smind.hm.dev.llm.haystack;
               # NixOS-mapped account: no explicit url/tokenFile; resolved
@@ -370,6 +374,15 @@
             assert nixpkgs.lib.any
               (b: builtins.match ".*human-attention:required.*" (builtins.concatStringsSep "\n" (b.context or [ ])) != null)
               linuxMod.config.smind.hm.dev.llm.assetBundles;
+            assert nixpkgs.lib.all (module:
+              let policy = builtins.concatStringsSep "\n" (nixpkgs.lib.concatMap (b: b.context or [ ]) module.config.smind.hm.dev.llm.assetBundles);
+              in nixpkgs.lib.all (text: nixpkgs.lib.hasInfix text policy) [
+                "gh api user" "using subagents" "Save useful candidates to Haystack"
+                "verify the persisted revision with get"
+                "Typed field nodes" "fields.skill_name" "Markdown code fences"
+              ]) [ linuxMod darwinMod mappedMod ];
+            assert disabledMod.config.smind.hm.dev.llm.assetBundles == [ ];
+            assert !(disabledMod.config.programs.mcp.servers ? haystack);
             # Mapped account resolves everything from osConfig.
             assert mappedCfg.enable == true;
             assert mappedMod.config.programs.mcp.servers.haystack.url == "http://127.0.0.1:47328/mcp";

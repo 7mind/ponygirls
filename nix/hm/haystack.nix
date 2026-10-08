@@ -199,6 +199,18 @@ in
           keys; use cross-project links for originating project context,
           never a second accounting copy.
 
+          Use Haystack to account for upstream bug reports and pull requests
+          created with the GitHub account authenticated for this session.
+          Verify the active account with `gh api user` (or the trusted GitHub
+          API viewer) and retain its login and opaque identity in the record;
+          do not infer authorship from git author configuration. Account for
+          artifacts created during this work and relevant existing artifacts
+          you encounter from that account. Verify their author before marking
+          them agent-filed; distinguish discovered/referenced artifacts.
+          A matching account alone does not establish agent provenance:
+          mark agent-filed only when the filing action was observed or
+          retained evidence establishes that an agent filed it.
+
           After successfully filing a GitHub issue or pull request, record
           its canonical URL and sanitized summary in haystack with
           `human-attention:required`. Resolve identity through GitHub
@@ -229,12 +241,48 @@ in
           in it. Existing privacy and verified-defect reporting rules apply
           to memory content as well.
 
+          Typed field nodes (UI presentation convention, ordinary JSON):
+          use `{"type":"md","content":"..."}` for Markdown documents,
+          `{"type":"code","language":"nix","content":"..."}` for code
+          snippets, and `{"type":"text","content":"..."}` for literal
+          preformatted text. Put these nodes directly under `fields`, e.g.
+          `fields.skill` or `fields.snippet`. Typed nodes have exactly these
+          keys; keep names, triggers, rationale, filenames, provenance, and
+          other metadata in sibling fields so no information is hidden by
+          presentation. Plain strings are literal text, numbers stay JSON
+          numbers, and ordinary objects/arrays are pretty-printed JSON.
+          Never infer a type from a string's contents or coerce numbers to
+          strings for display. Use lowercase language identifiers such as
+          `bash`, `nix`, `scala`, `typescript`, `python`, `json`, or `yaml`.
+          Markdown code fences should include the language. Rendering does
+          not execute code or HTML; unsupported nodes remain visible as
+          JSON and unsupported code languages remain literal text.
+
+          Always attempt to generalize useful patterns from completed work
+          into skill candidates using subagents. Delegate a focused analysis
+          of the evidence, reusable procedure, triggers, boundaries, and
+          counterexamples; ask the subagent to check installed skills and
+          Haystack drafts for overlap. Review its candidate against the
+          observed evidence before saving. Do not manufacture a candidate
+          when there is no useful reusable pattern. If subagents are
+          unavailable, report that limitation and perform the analysis
+          directly; do not claim delegated review occurred.
+
           Skill candidates: first search installed skills and existing
           drafts for overlap. Store the complete draft as a `skill-draft`
           with `human-attention:required` under
           `${activityProjectId}:skill-draft-<name>`, with rationale,
           triggers, evidence (observed recurrence vs hypothesis), benefit,
-          boundaries, and overlap analysis. Overlap detection is best
+          boundaries, overlap analysis, and the subagent's analysis and
+          review provenance. Save useful candidates to Haystack before
+          completing the task. Put the complete proposed SKILL.md, including
+          frontmatter, in `fields.skill` as `{"type":"md","content":"..."}`;
+          keep the skill name and triggers in sibling `fields.skill_name`
+          and `fields.triggers`. Preserve the file's content exactly inside
+          the JSON string; use Markdown fences for examples within the file.
+          Then verify the persisted revision with get;
+          if recording fails, report it and retain a sanitized retry draft.
+          Overlap detection is best
           effort, including across names; reconcile by linking, preserving
           human edits and cleared attention. A colliding name on an
           unrelated draft gets a distinct key, never an overwrite. Drafts

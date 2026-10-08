@@ -80,6 +80,27 @@ exponents ±999999, 100-item search pages, live (non-snapshot) keysets,
 4k-char/512-token/128-node/16-deep queries. Terminal replay outcomes are
 retained durably (no TTL) in v1.
 
+The browser live channel uses per-nonce heartbeat deadlines, overlapping
+replacement connections (maximum three), a 10-second connect timeout,
+15-second stale grace, and jittered exponential backoff capped at 30 seconds.
+After 12 failed attempts, or a permanent protocol/session close, automatic
+reconnection stops and the connection panel offers **Try again**. Reconnects
+defer while hidden; lifecycle events and time jumps proactively recheck or
+replace connections. The server sends correlated protocol pings every 30
+seconds and defers stale-peer termination until after I/O handling.
+
+The header indicator reports heartbeat-verified state and deadline budgets;
+its panel shows the active connection, RTT windows, missed heartbeat ratio,
+retry state, last close, and a bounded event log. The tab title mirrors its
+state. Browser timers remain on the main thread: hidden-tab throttling can
+delay heartbeat handling; visibility/resume and time-jump detection recover
+on return. No uninterrupted background-delivery guarantee is made.
+
+The NixOS reverse proxy enables WebSocket upgrades. An external proxy must
+also forward upgrades for `/api/v1/live`; otherwise the panel reports failed
+connection attempts and eventually stops. Ordinary API reads and writes
+still report their own outcomes independently of live-channel health.
+
 ## Incident recovery
 
 - Wrong-identity writes: tokens are the identity; find the token ID in

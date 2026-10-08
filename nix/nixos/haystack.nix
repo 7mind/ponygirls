@@ -280,6 +280,7 @@ in
           useACMEHost = cfg.proxy.acmeHost;
           locations."/" = {
             proxyPass = "http://${cfg.listenAddress}:${toString cfg.port}";
+            proxyWebsockets = true;
             extraConfig = ''
               # Authenticated content must never be cached: belt (backend
               # no-store) and suspenders (proxy cache bypass).

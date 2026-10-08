@@ -45,9 +45,11 @@ cd "$HAYSTACK_DIR"
 # Rebuild when outputs are missing OR any source is newer (a stale dist is
 # worse than a slow start: the old stub would boot without migrating).
 if [[ ! -f server/dist/index.js || ! -f web/dist/index.html ]] || \
-   [[ -n "$(find server/src web/src -name '*.ts' -newer server/dist/index.js 2>/dev/null | head -1)" ]]; then
+   [[ -n "$(find server/src web/src server/tsconfig.json web/tsconfig.json web/vite.config.ts \
+       web/index.html package.json package-lock.json server/package.json web/package.json \
+       -type f \( -newer server/dist/index.js -o -newer web/dist/index.html \) -print -quit)" ]]; then
   echo "quick-ui: building…" >&2
-  npm install --no-audit --no-fund >&2
+  npm ci --no-audit --no-fund >&2
   npm run build >&2
 fi
 
