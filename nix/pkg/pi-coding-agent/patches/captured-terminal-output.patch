@@ -1,8 +1,8 @@
 diff --git a/packages/coding-agent/src/config.ts b/packages/coding-agent/src/config.ts
-index 360c609e8..fa2ed4440 100644
+index 61dd63f..e60904e 100644
 --- a/packages/coding-agent/src/config.ts
 +++ b/packages/coding-agent/src/config.ts
-@@ -605,3 +605,8 @@ export function getSessionsDir(): string {
+@@ -654,3 +654,8 @@ export function getSessionsDir(): string {
  export function getDebugLogPath(): string {
  	return join(getAgentDir(), `${APP_NAME}-debug.log`);
  }
@@ -12,7 +12,7 @@ index 360c609e8..fa2ed4440 100644
 +	return join(getAgentDir(), `${APP_NAME}-captured-output.log`);
 +}
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index b7eb92054..2d5344a90 100644
+index 287d5e0..7e3a46a 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 @@ -20,6 +20,7 @@ import {
@@ -23,15 +23,15 @@ index b7eb92054..2d5344a90 100644
  	EditorComponent,
  	Keybinding,
  	KeyId,
-@@ -58,6 +59,7 @@ import {
- 	CONFIG_DIR_NAME,
+@@ -61,6 +62,7 @@ import {
+ 	detectInstallChange,
  	getAgentDir,
  	getAuthPath,
 +	getCapturedOutputLogPath,
  	getDebugLogPath,
  	getDocsPath,
  	VERSION,
-@@ -469,6 +471,11 @@ export class InteractiveMode {
+@@ -537,6 +539,11 @@ export class InteractiveMode {
  	private lastStatusSpacer: Spacer | undefined = undefined;
  	private lastStatusText: ThemedText | undefined = undefined;
  	private lastStatusMessage = "";
@@ -43,7 +43,7 @@ index b7eb92054..2d5344a90 100644
  	private managedToolStatusStarted = false;
  
  	// Streaming message tracking
-@@ -591,6 +598,7 @@ export class InteractiveMode {
+@@ -666,6 +673,7 @@ export class InteractiveMode {
  			onRightClickPaste: this.onRightClickPaste,
  			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
  			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
@@ -51,7 +51,7 @@ index b7eb92054..2d5344a90 100644
  		});
  		this.ui = createInteractiveTuiReference(() => this.renderer);
  		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-@@ -3736,6 +3744,48 @@ export class InteractiveMode {
+@@ -3908,6 +3916,48 @@ export class InteractiveMode {
  		this.ui.requestRender();
  	}
  
@@ -101,7 +101,7 @@ index b7eb92054..2d5344a90 100644
  		const renderer = this.session.extensionRunner.getEntryRenderer(entry.customType);
  		if (!renderer) {
 diff --git a/packages/coding-agent/src/modes/interactive/tui-renderer.ts b/packages/coding-agent/src/modes/interactive/tui-renderer.ts
-index 6487c1c6f..a868f4e89 100644
+index 6487c1c..a868f4e 100644
 --- a/packages/coding-agent/src/modes/interactive/tui-renderer.ts
 +++ b/packages/coding-agent/src/modes/interactive/tui-renderer.ts
 @@ -1,4 +1,4 @@
@@ -129,9 +129,10 @@ index 6487c1c6f..a868f4e89 100644
  		const styleSearchMatch = (text: string) => theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
  		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
 diff --git a/packages/tui/src/index.ts b/packages/tui/src/index.ts
+index a7aa621..6f50cf3 100644
 --- a/packages/tui/src/index.ts
 +++ b/packages/tui/src/index.ts
-@@ -108,7 +108,13 @@
+@@ -116,7 +116,13 @@ export { formatProgramStatus, type ProgramStatus } from "./program-status.ts";
  // Input buffering for batch splitting
  export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
  // Terminal interface and implementations
@@ -147,9 +148,10 @@ diff --git a/packages/tui/src/index.ts b/packages/tui/src/index.ts
  export {
  	parseTerminalColorSchemeReport,
 diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
+index b846869..77a024c 100644
 --- a/packages/tui/src/terminal.ts
 +++ b/packages/tui/src/terminal.ts
-@@ -134,8 +134,30 @@
+@@ -147,8 +147,30 @@ export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
  /**
   * Real terminal using process.stdin/stdout
   */
@@ -180,7 +182,7 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  	private inputHandler?: (data: string) => void;
  	private resizeHandler?: () => void;
  	private _kittyProtocolActive = false;
-@@ -163,6 +185,10 @@
+@@ -182,6 +204,10 @@ export class ProcessTerminal implements Terminal {
  		return env;
  	})();
  
@@ -191,7 +193,7 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  	get kittyProtocolActive(): boolean {
  		return this._kittyProtocolActive;
  	}
-@@ -172,6 +198,7 @@
+@@ -191,6 +217,7 @@ export class ProcessTerminal implements Terminal {
  	}
  
  	start(onInput: (data: string) => void, onResize: () => void): void {
@@ -199,7 +201,7 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  		this.inputHandler = onInput;
  		this.resizeHandler = onResize;
  
-@@ -184,7 +211,7 @@
+@@ -203,7 +230,7 @@ export class ProcessTerminal implements Terminal {
  		process.stdin.resume();
  
  		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
@@ -208,16 +210,16 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  
  		// Set up resize handler immediately
  		process.stdout.on("resize", this.resizeHandler);
-@@ -261,7 +288,7 @@
- 		this.keyboardProtocolPushed = true;
- 		this.pendingKeyboardProtocolDeviceAttributes += 1;
- 		this.clearKeyboardProtocolNegotiationBuffer();
--		process.stdout.write(KITTY_KEYBOARD_PROTOCOL_QUERY);
-+		this.writeRaw(KITTY_KEYBOARD_PROTOCOL_QUERY);
+@@ -295,7 +322,7 @@ export class ProcessTerminal implements Terminal {
+ 		this.programStatusSupported = programStatusOverride === "1";
+ 		this.programStatusQueryPending = programStatusOverride !== "1" && programStatusOverride !== "0";
+ 		const programStatusQuery = this.programStatusQueryPending ? PROGRAM_STATUS_QUERY : "";
+-		process.stdout.write(`${KITTY_KEYBOARD_PROTOCOL_QUERY}${programStatusQuery}${DEVICE_ATTRIBUTES_QUERY}`);
++		this.writeRaw(`${KITTY_KEYBOARD_PROTOCOL_QUERY}${programStatusQuery}${DEVICE_ATTRIBUTES_QUERY}`);
+ 		this.writeProgramStatus();
  	}
  
- 	private handleKeyboardProtocolNegotiationSequence(
-@@ -363,13 +390,13 @@
+@@ -401,13 +428,13 @@ export class ProcessTerminal implements Terminal {
  
  	private enableModifyOtherKeys(): void {
  		if (this._kittyProtocolActive || this._modifyOtherKeysActive) return;
@@ -233,7 +235,7 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  		this._modifyOtherKeysActive = false;
  	}
  
-@@ -394,7 +421,7 @@
+@@ -432,7 +459,7 @@ export class ProcessTerminal implements Terminal {
  		if (shouldDisableKittyProtocol) {
  			// Disable Kitty keyboard protocol first so any late key releases
  			// do not generate new Kitty escape sequences.
@@ -242,13 +244,20 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  			this.keyboardProtocolPushed = false;
  			this._kittyProtocolActive = false;
  			setKittyProtocolActive(false);
-@@ -428,18 +455,18 @@
+@@ -466,24 +493,24 @@ export class ProcessTerminal implements Terminal {
  
  	stop(): void {
  		if (this.clearProgressInterval()) {
 -			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 +			this.writeRaw(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
  		}
+ 		// Remove the status while stopped, for example after exit or while suspended. start() reports it again.
+ 		if (this.programStatusSupported && this.programStatus) {
+-			process.stdout.write(formatProgramStatus({ state: "clear" }));
++			this.writeRaw(formatProgramStatus({ state: "clear" }));
+ 		}
+ 		this.programStatusSupported = false;
+ 		this.programStatusQueryPending = false;
  
  		// Disable bracketed paste mode
 -		process.stdout.write("\x1b[?2004l");
@@ -264,7 +273,7 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  			this.keyboardProtocolPushed = false;
  			this._kittyProtocolActive = false;
  			setKittyProtocolActive(false);
-@@ -472,10 +499,72 @@
+@@ -516,10 +543,72 @@ export class ProcessTerminal implements Terminal {
  		if (process.stdin.setRawMode) {
  			process.stdin.setRawMode(this.wasRaw);
  		}
@@ -338,7 +347,7 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  		if (this.writeLogPath) {
  			try {
  				fs.appendFileSync(this.writeLogPath, data, { encoding: "utf8" });
-@@ -496,52 +585,52 @@
+@@ -540,63 +629,63 @@ export class ProcessTerminal implements Terminal {
  	moveBy(lines: number): void {
  		if (lines > 0) {
  			// Move down
@@ -381,6 +390,19 @@ diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
  		// OSC 0;title BEL - set terminal window title
 -		process.stdout.write(`\x1b]0;${title}\x07`);
 +		this.writeRaw(`\x1b]0;${title}\x07`);
+ 	}
+ 
+ 	setProgramStatus(status: ProgramStatus): void {
+ 		this.programStatus = status.state === "clear" ? undefined : status;
+-		if (this.programStatusSupported) process.stdout.write(formatProgramStatus(status));
++		if (this.programStatusSupported) this.writeRaw(formatProgramStatus(status));
+ 	}
+ 
+ 	private writeProgramStatus(): void {
+ 		if (this.programStatusSupported && this.programStatus) {
+-			process.stdout.write(formatProgramStatus(this.programStatus));
++			this.writeRaw(formatProgramStatus(this.programStatus));
+ 		}
  	}
  
  	setProgress(active: boolean): void {
