@@ -27,15 +27,34 @@ export interface McpDeps {
 
 const BEARER_RE = /^Bearer (\S+)$/;
 
+const UUIDV7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const RequestIdSchema = z
+  .string()
+  .uuid()
+  .refine((v) => UUIDV7_RE.test(v), {
+    message:
+      "request_id must be a UUIDv7 (third group starts with '7', e.g. 0193e8d5-6f5c-7a1b-8c2d-000000000001). " +
+      "crypto.randomUUID() makes v4 (third group 4xxx) and is rejected with bad-envelope. " +
+      "Generate a fresh v7 per operation.",
+  })
+  .describe("fresh client-generated UUIDv7 per operation (third group starts with '7')");
+
 const INSTRUCTIONS = [
   "Haystack structured memory: get/put/search over project:item documents.",
+  "This server exposes exactly three TOOLS (get, put, search) and zero RESOURCES: listing resources",
+  "correctly returns nothing. Discover the tools through tool listing/search, not resource listing.",
   "Browse and search hide status:archived items by default; exact get and",
   "history still serve them. Use archived:all or status:archived to include them.",
   "Writes are whole-document CAS: expected_revision 0 creates, n replaces",
-  "revision n exactly. Always send a client-generated UUIDv7 request_id;",
+  "revision n exactly. document_json is a JSON STRING (stringify the document first;",
+  "never pass a nested object) so numbers survive losslessly.",
+  "Always send a fresh client-generated UUIDv7 request_id per operation;",
   "retrying the same request_id returns the original outcome, reusing it",
   "with different content fails. Never retry with a fresh id after an",
   "uncertain outcome — read or replay the original id instead.",
+  "crypto.randomUUID() is UUIDv4 and is REJECTED (bad-envelope): a v7 third group starts with '7'.",
+  "Tool faults return a stable code plus a detail message (e.g. 'error bad-envelope: request_id must be a UUIDv7').",
   "Documents carry tags (string array, exact case-sensitive match).",
   "Query examples: 'project:p type:todo importance:high', 'tag:mcp',",
   "'field[\"/github/state\"] = \"open\"', 'link:[\"rel\",\"p:item\"]'.",
@@ -117,14 +136,17 @@ export function mountMcp(app: Express, deps: McpDeps): void {
       "put",
       {
         description:
-          "Create or replace a whole document with CAS. expected_revision 0 creates only; n replaces revision n. " +
-          "request_id (UUIDv7) makes retries safe: same id returns the original outcome. " +
-          "document_json is raw JSON text so numbers survive losslessly.",
+          "Create or replace a whole document with CAS. expected_revision 0 creates only; n replaces revision n exactly. " +
+          "request_id must be a FRESH UUIDv7 per operation (third group starts with '7', e.g. 0193e8d5-6f5c-7a1b-8c2d-000000000001); " +
+          "v4 ids (crypto.randomUUID, third group 4xxx) are rejected with bad-envelope. " +
+          "Same request_id retries the same operation (replayed:true); same id with different content fails with replay-conflict. " +
+          "document_json is a JSON STRING of the document (stringify first, never a nested object): " +
+          "a string holding {title, description, fields, type, status, importance, human-attention, links, tags}.",
         inputSchema: {
           key: KeySchema,
-          document_json: z.string().min(1).max(1024 * 1024 + 1024),
-          expected_revision: z.number().int().min(0),
-          request_id: z.string().uuid(),
+          document_json: z.string().min(1).max(1024 * 1024 + 1024).describe("JSON-stringified document (a string, never an object)"),
+          expected_revision: z.number().int().min(0).describe("0 creates only; n replaces revision n exactly"),
+          request_id: RequestIdSchema,
         },
         // Not read-only; idempotent only when the caller retains request_id
         // (a fresh id after an uncertain outcome creates a new revision).
@@ -246,12 +268,16 @@ function toolFault(
   log: Logger,
   route: string,
   requestId: string,
-): { content: Array<{ type: "text"; text: string }>; structuredContent: { code: string }; isError: true } {
+): { content: Array<{ type: "text"; text: string }>; structuredContent: { code: string; message: string }; isError: true } {
   const code = (err as { code?: string })?.code ?? "unavailable";
+  // Fault messages carry no secrets by contract; surfacing them turns opaque
+  // `error bad-envelope` into actionable `error bad-envelope: request_id must be a UUIDv7`.
+  const rawMessage = (err as { message?: unknown })?.message;
+  const message = typeof rawMessage === "string" && rawMessage.length > 0 ? rawMessage.slice(0, 500) : code;
   log({ requestId, route, status: 200, result: `fault:${code}`, userId: principal.userId, tokenId: principal.tokenId });
   return {
-    content: [{ type: "text", text: `error ${code}` }],
-    structuredContent: { code },
+    content: [{ type: "text", text: `error ${code}: ${message}` }],
+    structuredContent: { code, message },
     isError: true,
   };
 }
