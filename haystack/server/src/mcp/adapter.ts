@@ -137,11 +137,12 @@ export function mountMcp(app: Express, deps: McpDeps): void {
       {
         description:
           "Create or replace a whole document with CAS. expected_revision 0 creates only; n replaces revision n exactly. " +
-          "request_id must be a FRESH UUIDv7 per operation (third group starts with '7', e.g. 0193e8d5-6f5c-7a1b-8c2d-000000000001); " +
-          "v4 ids (crypto.randomUUID, third group 4xxx) are rejected with bad-envelope. " +
-          "Same request_id retries the same operation (replayed:true); same id with different content fails with replay-conflict. " +
-          "document_json is a JSON STRING of the document (stringify first, never a nested object): " +
-          "a string holding {title, description, fields, type, status, importance, human-attention, links, tags}.",
+          "request_id must be a FRESH UUIDv7 per operation (third group starts with '7'); " +
+          "v4 ids (crypto.randomUUID) are rejected with bad-envelope. " +
+          "Same request_id replays the same operation; same id with different content fails. " +
+          "document_json is a JSON STRING (stringify first, never an object). Minimal valid document: " +
+          "'{\"title\":\"t\",\"description\":\"d\",\"fields\":{},\"type\":\"fact\",\"status\":\"actual\",\"importance\":\"low\",\"human-attention\":\"cleared\",\"links\":[]}' " +
+          "(human-attention is only required|cleared; status archived hides from search).",
         inputSchema: {
           key: KeySchema,
           document_json: z.string().min(1).max(1024 * 1024 + 1024).describe("JSON-stringified document (a string, never an object)"),
