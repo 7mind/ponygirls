@@ -408,6 +408,62 @@ assert_after "declarative --rw follows the profile pi binds" "$OUT" \
   "$DECL_RW" "$FAKE_HOME/.pi/agent/mcp.json,$FAKE_HOME/.pi/agent/mcp.json"
 assert_after "CLI --ro follows the declarative extras" "$OUT" "$CLI_RO" "$DECL_RW"
 
+# --bind / --ro-bind SRC,DST remap a host path onto a different sandbox path.
+# They join the ad-hoc list in command-line order, after every other bind.
+REMAP_RW="$WORKDIR/remap-rw"
+REMAP_RO="$WORKDIR/remap-ro"
+mkdir -p "$REMAP_RW" "$REMAP_RO"
+# SRC is canonicalized, so compare against the canonical spelling.
+REMAP_RW="$(realpath -- "$REMAP_RW")"
+REMAP_RO="$(realpath -- "$REMAP_RO")"
+OUT="$(YOLO_EXTRA_RW_PATHS="$DECL_RW" run_yolo --profile foo --ro "$CLI_RO" \
+  --bind "$REMAP_RW,$FAKE_HOME/.config/tether" \
+  --ro-bind "$REMAP_RO,$FAKE_HOME/.claude/remapped" cmd true)"
+STATUS=$?
+assert_eq "remap launch succeeds" "0" "$STATUS"
+assert_contains "--bind is forwarded as a read-write remap" "$OUT" \
+  $'--bind\n'"$REMAP_RW,$FAKE_HOME/.config/tether"
+assert_contains "--ro-bind is forwarded as a read-only remap" "$OUT" \
+  $'--ro-bind\n'"$REMAP_RO,$FAKE_HOME/.claude/remapped"
+assert_after "--bind follows the CLI --ro that preceded it" "$OUT" \
+  "$REMAP_RW,$FAKE_HOME/.config/tether" "$CLI_RO"
+assert_after "--bind follows the declarative extras" "$OUT" \
+  "$REMAP_RW,$FAKE_HOME/.config/tether" "$DECL_RW"
+assert_after "--ro-bind follows the profile claude home bind" "$OUT" \
+  "$REMAP_RO,$FAKE_HOME/.claude/remapped" "$FAKE_HOME/.config/yolo/foo/claude/home,$FAKE_HOME/.claude"
+assert_after "--ro-bind follows the --bind that preceded it" "$OUT" \
+  "$REMAP_RO,$FAKE_HOME/.claude/remapped" "$REMAP_RW,$FAKE_HOME/.config/tether"
+
+# A relative SRC (run_yolo launches from $PROJECT_DIR) is canonicalized on the host.
+OUT="$(run_yolo --bind "../remap-rw/../remap-rw,/opt/x" cmd true)"
+assert_contains "--bind canonicalizes a relative source" "$OUT" \
+  $'--bind\n'"$REMAP_RW,/opt/x"
+
+# Unlike --ro/--rw, an explicit remap never disappears silently.
+for _bad in "$WORKDIR/missing,/opt/x" "$REMAP_RW" "$REMAP_RW,relative/dst" \
+    "$REMAP_RW,~/.config/tether" ",/opt/x"; do
+  for _flag in --bind --ro-bind; do
+    OUT="$(run_yolo "$_flag" "$_bad" cmd true)"
+    STATUS=$?
+    assert_eq "$_flag $_bad is refused" "1" "$STATUS"
+    assert_not_contains "$_flag $_bad never reaches the sandbox" "$OUT" "SMIND_SANDBOXED=1"
+  done
+done
+OUT="$(run_yolo --bind "$WORKDIR/missing,/opt/x" cmd true)"
+assert_contains "missing remap source is reported" "$OUT" "source '$WORKDIR/missing' does not exist on the host"
+OUT="$(run_yolo --bind "$REMAP_RW,~/.config/tether" cmd true)"
+assert_contains "non-absolute remap destination is reported" "$OUT" "must be an absolute sandbox path"
+# A comma-free SRC whose canonical path has a comma cannot be forwarded intact.
+mkdir -p "$WORKDIR/a,b"
+ln -s "$WORKDIR/a,b" "$WORKDIR/comma-link"
+OUT="$(run_yolo --bind "$WORKDIR/comma-link,/opt/x" cmd true)"
+STATUS=$?
+assert_eq "remap source canonicalizing to a comma path is refused" "1" "$STATUS"
+assert_contains "comma in the canonical remap source is reported" "$OUT" "contains a comma"
+OUT="$(run_yolo --help)"
+assert_contains "usage documents --bind" "$OUT" "--bind SRC,DST"
+assert_contains "usage documents --ro-bind" "$OUT" "--ro-bind SRC,DST"
+
 # --auth-override AGENT:PROFILE binds the other profile's credentials file
 # read-write over the launched profile's, leaving its sessions/state in place.
 WORK_CODEX_AUTH="$FAKE_HOME/.config/yolo/work/codex/home/auth.json"
