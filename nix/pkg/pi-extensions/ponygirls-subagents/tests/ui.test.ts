@@ -26,7 +26,7 @@ function view(overrides: Partial<AgentView> = {}): AgentView {
     currentTaskRunId: null,
     generation: 1,
     taskOutcome: null,
-    usage: { inputTokens: 1, outputTokens: 2, cost: null, unknown: false },
+    usage: { inputTokens: 1, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost: null, unknown: false },
     lastActivityAt: "2026-10-05T00:00:00.000Z",
     managedGateFor: null,
     gateTaskRunId: null,

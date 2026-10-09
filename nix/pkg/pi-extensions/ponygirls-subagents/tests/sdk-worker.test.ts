@@ -388,6 +388,23 @@ test("real worker: a provider error settles the generation as failed, never succ
   }
 });
 
+test("real worker: cache and reasoning tokens are reported apart from the input total", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; usage-breakdown check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-usage-"));
+  const { handle, events } = await deterministicWorker(dir, [{ text: "done" }], async () => ({ content: "", isError: false }));
+  try {
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    // One scripted request: 10 uncached + 3 cache-read + 2 cache-write input tokens; 5 output tokens, 1 of them reasoning.
+    assert.deepEqual(settled.detail["usage"], { input: 15, output: 5, cacheRead: 3, cacheWrite: 2, reasoning: 1, cost: 0, unknown: false });
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("real worker: an interrupt mid-tool settles once, as interrupted", async () => {
   if (!SDK_ROOT) {
     console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; interrupt check skipped, not passed");

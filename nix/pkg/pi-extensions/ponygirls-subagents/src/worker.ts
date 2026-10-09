@@ -55,7 +55,8 @@ interface GenerationState {
   lastText: string;
   stopReason: string | null;
   errorMessage: string | null;
-  usage: { input: number; output: number; cost: number | null; unknown: boolean };
+  /** `input` includes the cache tokens; `reasoning` is part of `output`, null until a provider reports it. */
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean };
   /** When in-flight text was last forwarded. */
   previewAt: number;
 }
@@ -151,7 +152,7 @@ const state: {
 };
 
 function freshGeneration(taskRunId: string | null, generation: number | null): GenerationState {
-  return { taskRunId, generation, interruptRequested: false, settled: false, lastText: "", stopReason: null, errorMessage: null, usage: { input: 0, output: 0, cost: null, unknown: false }, previewAt: 0 };
+  return { taskRunId, generation, interruptRequested: false, settled: false, lastText: "", stopReason: null, errorMessage: null, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, cost: null, unknown: false }, previewAt: 0 };
 }
 
 function send(envelope: Partial<IpcEnvelope> & { operation: string }): void {
@@ -409,7 +410,7 @@ function onSessionEvent(event: { type: string } & Record<string, unknown>): void
       const message = event["message"] as {
         role?: string;
         content?: Array<{ type: string; text?: string }>;
-        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } };
+        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; cost?: { total?: number } };
         stopReason?: string;
         errorMessage?: string;
       } | undefined;
@@ -417,8 +418,14 @@ function onSessionEvent(event: { type: string } & Record<string, unknown>): void
       // Per-request deltas summed here; missing provider accounting is
       // reported as unknown, never as zero.
       if (message.usage) {
-        gen.usage.input += (message.usage.input ?? 0) + (message.usage.cacheRead ?? 0) + (message.usage.cacheWrite ?? 0);
+        const cacheRead = message.usage.cacheRead ?? 0;
+        const cacheWrite = message.usage.cacheWrite ?? 0;
+        gen.usage.input += (message.usage.input ?? 0) + cacheRead + cacheWrite;
         gen.usage.output += message.usage.output ?? 0;
+        gen.usage.cacheRead += cacheRead;
+        gen.usage.cacheWrite += cacheWrite;
+        // Providers without a reasoning breakdown leave it undefined: not zero.
+        if (typeof message.usage.reasoning === "number") gen.usage.reasoning = (gen.usage.reasoning ?? 0) + message.usage.reasoning;
         if (typeof message.usage.cost?.total === "number") gen.usage.cost = (gen.usage.cost ?? 0) + message.usage.cost.total;
       } else {
         gen.usage.unknown = true;
