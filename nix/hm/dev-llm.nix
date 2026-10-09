@@ -34,5 +34,9 @@
     # It self-enables only when fully resolvable (NixOS mapping or explicit
     # standalone options); otherwise it contributes nothing.
     ./haystack.nix
+    # manure hosting client: same aggregation, no extra toggle.
+    # It self-enables only when fully resolvable (url + tokenFile);
+    # otherwise it contributes nothing.
+    ./manure.nix
   ];
 }

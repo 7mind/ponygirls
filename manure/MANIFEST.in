@@ -1,3 +1,4 @@
+# Sources (UI-owned) + Nix-staged package copy (CONTRACT.md §11); staging performs the copy.
 graft manure/web
-graft manure/manure/web
+graft web
 global-exclude __pycache__ *.py[cod]

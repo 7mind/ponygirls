@@ -63,6 +63,9 @@
         devLlmHaystackAggregationCheck =
           assert builtins.elem ./nix/hm/haystack.nix (import ./nix/hm/dev-llm.nix { inputs = { }; }).imports;
           pkgs.runCommandLocal "dev-llm-haystack-aggregation-test" { } "touch $out";
+        devLlmManureAggregationCheck =
+          assert builtins.elem ./nix/hm/manure.nix (import ./nix/hm/dev-llm.nix { inputs = { }; }).imports;
+          pkgs.runCommandLocal "dev-llm-manure-aggregation-test" { } "touch $out";
         defaultModels = (nixpkgs.lib.evalModules {
           specialArgs = { inherit pkgs; };
           modules = [
@@ -160,6 +163,7 @@
           tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
           tui-tmux = pkgs.callPackage ./nix/pkg/tui-tmux/default.nix { };
           haystack = pkgs.callPackage ./nix/pkg/haystack/package.nix { };
+          manure = pkgs.callPackage ./nix/pkg/manure/package.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           crawl4ai = pkgs.callPackage ./nix/pkg/crawl4ai/package.nix { src = inputs.crawl4ai; };
           reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
@@ -176,6 +180,25 @@
           tui-terminal = self.packages.${system}.tui-tmux.tests.terminal;
           tui-hm-eval = import ./nix/hm/tui-tools-test.nix { inherit pkgs inputs; };
           haystack = self.packages.${system}.haystack;
+          manure = self.packages.${system}.manure;
+          manure-nixos-eval = import ./nix/tests/manure-nixos-eval.nix {
+            inherit pkgs nixpkgs;
+            manureModule = self.nixosModules.manure;
+          };
+          manure-hm-eval = import ./nix/tests/manure-hm-eval.nix {
+            inherit pkgs nixpkgs inputs;
+            manureModule = self.homeManagerModules.manure;
+            yoloHmModule = import ./nix/hm/yolo.nix { inherit inputs; };
+            podmanHmModule = import ./nix/hm/podman.nix;
+          };
+          manure-client = import ./nix/tests/manure-client.nix {
+            inherit pkgs;
+            manurePackage = self.packages.${system}.manure;
+          };
+          manure-unittests = import ./nix/tests/manure-unittests.nix {
+            inherit pkgs;
+            manurePackage = self.packages.${system}.manure;
+          };
           haystack-nixos-eval =
             let
               mkSystem = extra: (nixpkgs.lib.nixosSystem {
@@ -472,6 +495,7 @@
           tokemon = self.packages.${system}.tokemon;
           dev-llm-module-boundary = devLlmModuleBoundaryCheck;
           dev-llm-haystack-aggregation = devLlmHaystackAggregationCheck;
+          dev-llm-manure-aggregation = devLlmManureAggregationCheck;
           ponygirls-quirk-kimi-401-retry = pkgs.runCommand "ponygirls-quirk-kimi-401-retry-test" {
             nativeBuildInputs = [ pkgs.bun ];
           } ''
@@ -604,6 +628,25 @@
           '';
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           podman-module = podmanModuleCheck;
+          manure-browser = import ./nix/tests/manure-browser.nix {
+            inherit pkgs;
+            manurePackage = self.packages.${system}.manure;
+          };
+          manure-vm = import ./nix/tests/manure-vm.nix {
+            inherit pkgs nixpkgs;
+            manureModule = self.nixosModules.manure;
+            manureHmModule = self.homeManagerModules.manure;
+            yoloHmModule = import ./nix/hm/yolo.nix { inherit inputs; };
+            toolsHmModule = import ./nix/hm/tools.nix { inherit inputs; };
+          };
+          # Pre-exec launch validator fixtures (host-only: python3 +
+          # qemu-img, no guest, no QEMU launch, no KVM needed).
+          manure-vm-audit-test = pkgs.runCommandLocal "manure-vm-audit-test" {
+            nativeBuildInputs = [ pkgs.python3 pkgs.qemu ];
+          } ''
+            ${pkgs.python3}/bin/python ${./nix/tests/manure-vm-audit.py} selftest
+            touch $out
+          '';
           crawl4ai-module =
             let
               crawl4aiConfig = (nixpkgs.lib.nixosSystem {
@@ -662,7 +705,9 @@
       })) // {
         homeManagerModules.dev-llm = import ./nix/hm/dev-llm.nix { inherit inputs; };
         homeManagerModules.haystack = import ./nix/hm/haystack.nix;
+        homeManagerModules.manure = import ./nix/hm/manure.nix;
         nixosModules.haystack = import ./nix/nixos/haystack.nix;
+        nixosModules.manure = import ./nix/nixos/manure.nix;
         nixosModules.podman = import ./nix/nixos/podman.nix;
         nixosModules.crawl4ai = import ./nix/nixos/crawl4ai.nix;
         nixosModules.crawl4ai-isolation = import ./nix/nixos/crawl4ai-isolation.nix;

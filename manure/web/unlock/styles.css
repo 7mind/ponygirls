@@ -1,0 +1,11 @@
+/* manure unlock shell: minimal styling, no remote assets. */
+body {
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  margin: 0 auto;
+  max-width: 36rem;
+  padding: 2rem 1rem;
+}
+form { display: grid; gap: 0.5rem; }
+input, button { font: inherit; }
+.error { color: #b00020; font-weight: bold; }
