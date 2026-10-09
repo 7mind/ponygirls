@@ -44,6 +44,7 @@ import type {
   TaskOutcome,
   TaskPhase,
   TaskRunId,
+  UsageTotals,
   WaitCondition,
   WaitMessage,
   WaitResult,
@@ -109,7 +110,7 @@ export interface AgentView {
   currentTaskRunId: TaskRunId | null;
   generation: number;
   taskOutcome: string | null;
-  usage: { inputTokens: number; outputTokens: number; cost: number | null; unknown: boolean };
+  usage: UsageTotals;
   lastActivityAt: string;
   /** For a gate reviewer: the gated task run it reviews. Null for every other agent. */
   managedGateFor: TaskRunId | null;
@@ -190,7 +191,7 @@ interface AgentRuntime {
   lastResult: { taskRunId: TaskRunId; outcome: string; text: string; detail: string } | null;
   /** Deliverable text of the latest settled generation (the gate's candidate answer). */
   lastText: { taskRunId: TaskRunId; text: string } | null;
-  usage: { inputTokens: number; outputTokens: number; cost: number | null; unknown: boolean };
+  usage: UsageTotals;
   lastPreview: string;
   /** Assistant text still being generated (cleared when the message completes). */
   streaming: string | null;
@@ -312,7 +313,7 @@ function newRuntime(record: AgentRecord): AgentRuntime {
     activeRun: null,
     lastResult: null,
     lastText: null,
-    usage: { inputTokens: 0, outputTokens: 0, cost: null, unknown: false },
+    usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost: null, unknown: false },
     lastPreview: "",
     streaming: null,
     quarantined: null,
@@ -368,7 +369,7 @@ export class Supervisor implements GateHost {
   private suspended = false;
   private gate: GateController;
   private chain: Promise<void> = Promise.resolve();
-  private cumulativeUsage = { inputTokens: 0, outputTokens: 0, cost: 0 as number | null, unknown: false };
+  private cumulativeUsage: UsageTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost: 0, unknown: false };
   private opts: SupervisorOptions;
   private questionTtlMs: number;
   private now: () => string;
@@ -625,7 +626,8 @@ export class Supervisor implements GateHost {
         }
         case "usage.reported": {
           const rt = this.agents.get(b["agentId"] as string);
-          this.accountUsage(rt ?? null, b as { input?: number; output?: number; cost?: number | null; unknown?: boolean });
+          // Records written before the cache and reasoning counters lack them: zero and null.
+          this.accountUsage(rt ?? null, b as UsageDetail);
           break;
         }
         case "agent.closed": {
@@ -1604,18 +1606,24 @@ export class Supervisor implements GateHost {
     }
   }
 
-  private accountUsage(rt: AgentRuntime | null, usage: UsageDetail): { input: number; output: number; cost: number | null; unknown: boolean } {
+  private accountUsage(rt: AgentRuntime | null, usage: UsageDetail): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean } {
     const input = usage.input ?? 0;
     const output = usage.output ?? 0;
+    const cacheRead = usage.cacheRead ?? 0;
+    const cacheWrite = usage.cacheWrite ?? 0;
+    const reasoning = typeof usage.reasoning === "number" ? usage.reasoning : null;
     const cost = typeof usage.cost === "number" ? usage.cost : null;
     const unknown = usage.unknown === true;
     for (const target of rt ? [rt.usage, this.cumulativeUsage] : [this.cumulativeUsage]) {
       target.inputTokens += input;
       target.outputTokens += output;
+      target.cacheReadTokens += cacheRead;
+      target.cacheWriteTokens += cacheWrite;
+      if (reasoning !== null) target.reasoningTokens = (target.reasoningTokens ?? 0) + reasoning;
       if (cost !== null) target.cost = (target.cost ?? 0) + cost;
       if (unknown) target.unknown = true;
     }
-    return { input, output, cost, unknown };
+    return { input, output, cacheRead, cacheWrite, reasoning, cost, unknown };
   }
 
   /**
@@ -2583,7 +2591,7 @@ export class Supervisor implements GateHost {
     rt.record.observed = "lost";
     // Usage not durably reported before the loss is unknown, never zero.
     this.accountUsage(rt, { unknown: true });
-    this.publish("usage.reported", { agentId: rt.record.id, taskRunId: lost.taskRunId, generation: lost.generation, input: 0, output: 0, cost: null, unknown: true });
+    this.publish("usage.reported", { agentId: rt.record.id, taskRunId: lost.taskRunId, generation: lost.generation, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, cost: null, unknown: true });
     const ownershipOk = ownership === "dead";
     let outcome = "interrupted";
     let detail = "PROCESS_LOST: owned-job termination confirmed; effects accounted";
@@ -3106,7 +3114,7 @@ export class Supervisor implements GateHost {
   }
 
   /** GateHost: usage snapshot for budget admission. */
-  rootUsage(): { inputTokens: number; outputTokens: number; cost: number | null; unknown: boolean } {
+  rootUsage(): UsageTotals {
     return { ...this.cumulativeUsage };
   }
 }
@@ -3124,9 +3132,13 @@ function boundedText(text: string): string {
   return text.length <= TOOL_RESULT_MAX ? text : `${text.slice(0, TOOL_RESULT_MAX)}\n[output truncated: ${text.length - TOOL_RESULT_MAX} more characters]`;
 }
 
+/** Usage as a worker reports it, or as the journal recorded it; `input` includes the cache tokens. */
 interface UsageDetail {
   input?: number;
   output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number | null;
   cost?: number | null;
   unknown?: boolean;
 }
