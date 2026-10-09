@@ -400,6 +400,66 @@ def _check_guardlib_py(root: Path) -> str | None:
         )
         if err:
             return err
+        # Token-mount attribution: writable token + writable cache outside
+        # any mount must REFUSE (write succeeds -> mount not enforcing);
+        # missing token / unwritable cache fail naming their cause; a real
+        # read-only remount-bind (unprivileged userns) must ACCEPT via EROFS.
+        import os as _os
+
+        tok = tmp / "token.raw"
+        tok.write_text("A" * 43)
+        tok.chmod(0o600)
+        cdir = tmp / "cache"
+        cdir.mkdir()
+        err = fatal(
+            "token-write-succeeds",
+            lambda: gates.check_token_mount_ro(str(tok), str(cdir)),
+        )
+        if err:
+            return err
+        err = fatal(
+            "token-unreadable",
+            lambda: gates.check_token_mount_ro(str(tmp / "nope.raw"), str(cdir)),
+        )
+        if err:
+            return err
+        rocache = tmp / "rocache"
+        rocache.mkdir()
+        rocache.chmod(0o555)
+        err = fatal(
+            "token-cache-unwritable",
+            lambda: gates.check_token_mount_ro(str(tok), str(rocache)),
+        )
+        if err:
+            return err
+        import subprocess as _sp
+        import sys as _sys
+
+        mnt = tmp / "romnt"
+        mnt.mkdir()
+        (mnt / "token.raw").write_text("A" * 43)
+        (mnt / "token.raw").chmod(0o600)
+        DQ = chr(34)
+        # Double quotes for python-level paths: they sit inside the
+        # sh-level single-quoted -c program (no nesting breakage).
+        child_prog = (
+            "import sys; sys.path.insert(0, " + DQ + str(mod_path.parent) + DQ + "); "
+            "from manure_guardlib import check_token_mount_ro; "
+            "check_token_mount_ro(" + DQ + str(mnt / 'token.raw') + DQ + ", " + DQ + str(cdir) + DQ + ")"
+        )
+        try:
+            r = _sp.run(
+                ["unshare", "-rm", "sh", "-c",
+                 f"mount --bind {mnt} {mnt} && mount -o remount,ro,bind {mnt} && "
+                 f"{_sys.executable} -c '{child_prog}'"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except FileNotFoundError:
+            return "token-erofs: unshare absent (no fallback accepted)"
+        if r.returncode != 0:
+            return f"token-erofs: refused but must pass ({r.stderr[-300:]!r})"
     return None
 
 
@@ -764,6 +824,10 @@ def _check_controller_full(root: Path) -> str | None:
             "readlink -f",
             "--after-cursor",
             "--equal-a",
+            "check_token_mount_ro",
+            "0600",
+            "TOKEN-MOUNT-ATTRIBUTION-OK",
+            "TOKEN-WRITE-DENIED-OK",
             "manure-hm-cache",
             "manure-hm-fetch",
         ],

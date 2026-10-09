@@ -52,10 +52,14 @@ let
     # bind) live OUTSIDE /etc as regular files: bwrap refuses symlink
     # destinations (all of /etc on NixOS). Pure reads (guardlib, probe,
     # installed-shells via PYTHONPATH, digest, cert) stay in /etc.
+    # The token is owner-writable 0600 BY DESIGN: the same-file writable
+    # control (O_WRONLY open+close, bytes unchanged) must succeed outside
+    # the sandbox so the in-sandbox denial attributes solely to the
+    # contributed RO mount (errno retained there), never to file mode.
     system.activationScripts.manureTestHarness.text = ''
       mkdir -p /srv/manure-test
       printf '%s' '${testToken}' > /srv/manure-test/token.raw
-      chmod 400 /srv/manure-test/token.raw
+      chmod 600 /srv/manure-test/token.raw
       cat > /srv/manure-test/hm-guard.sh <<'GUARDEOF'
 ${hmGuard.command}
 GUARDEOF
@@ -477,12 +481,16 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     # binds and session env come from the evaluated composition.
     edge.succeed("yolo --disable=codegraph --ro-bind /tmp/hm-big.bin,/tmp/hm-big.bin --bind /srv/manure-hm-fetch,/srv/manure-hm-fetch pi -- manure whoami --json > /srv/manure-hm-fetch/whoami.json")
     edge.succeed("grep -q w-agent /srv/manure-hm-fetch/whoami.json")
-    # Contributed-RO denial: the token reads (whoami above used it), a write
-    # through the adapter's RO bind must fail, and the RW cache bind must
-    # accept writes (contrast control proving the denial comes from the
-    # mount, not the environment).
-    edge.succeed("yolo --disable=codegraph --ro-bind /tmp/hm-big.bin,/tmp/hm-big.bin --bind /srv/manure-hm-fetch,/srv/manure-hm-fetch pi -- sh -c 'cat \"$MANURE_TOKEN_FILE\" > /dev/null && echo TOKEN-READ-OK; if echo x >> \"$MANURE_TOKEN_FILE\" 2>/dev/null; then echo TOKEN-WRITE-SUCCEEDED; exit 1; fi; echo TOKEN-WRITE-DENIED-OK; echo probe > \"$MANURE_CACHE_DIR/write-probe\" && rm \"$MANURE_CACHE_DIR/write-probe\" && echo CACHE-WRITE-OK' > /srv/manure-hm-fetch/token-denial.log 2>&1")
-    edge.succeed("grep -q 'TOKEN-READ-OK' /srv/manure-hm-fetch/token-denial.log && grep -q 'TOKEN-WRITE-DENIED-OK' /srv/manure-hm-fetch/token-denial.log && grep -q 'CACHE-WRITE-OK' /srv/manure-hm-fetch/token-denial.log")
+    # Token-mount attribution precondition: owner-writable 0600 canonical
+    # regular token outside /etc, provably writable outside the sandbox
+    # (O_WRONLY open+close, bytes unchanged) so the in-sandbox denial can
+    # only come from the contributed RO mount (errno retained there).
+    edge.succeed("test $(stat -c %a /srv/manure-test/token.raw) -eq 600")
+    edge.succeed("sha256sum /srv/manure-test/token.raw | cut -d' ' -f1 > /tmp/token-pre")
+    edge.succeed("python3 -c \"import os; fd=os.open('/srv/manure-test/token.raw',os.O_WRONLY); os.close(fd)\"")
+    edge.succeed("test \"$(sha256sum /srv/manure-test/token.raw | cut -d' ' -f1)\" = \"$(cat /tmp/token-pre)\"")
+    edge.succeed("yolo --disable=codegraph --ro-bind /tmp/hm-big.bin,/tmp/hm-big.bin --bind /srv/manure-hm-fetch,/srv/manure-hm-fetch --env \"PYTHONPATH=/etc/manure-test\" pi -- python3 -c \"from manure_guardlib import check_token_mount_ro; import os; check_token_mount_ro(os.environ['MANURE_TOKEN_FILE'], os.environ['MANURE_CACHE_DIR']); print('TOKEN-MOUNT-ATTRIBUTION-OK')\" > /srv/manure-hm-fetch/token-denial.log 2>&1")
+    edge.succeed("grep -q 'TOKEN-MOUNT-ATTRIBUTION-OK' /srv/manure-hm-fetch/token-denial.log && grep -q 'TOKEN-WRITE-DENIED-OK errno=30 (EROFS)' /srv/manure-hm-fetch/token-denial.log")
     edge.succeed("yolo --disable=codegraph --ro-bind /tmp/hm-big.bin,/tmp/hm-big.bin --bind /srv/manure-hm-fetch,/srv/manure-hm-fetch pi -- sh -c 'manure upload /tmp/hm-big.bin --access internal --json > /srv/manure-hm-fetch/up1.json 2> /srv/manure-hm-fetch/up1.err & echo $! > /tmp/cli.pid; for i in $(seq 1 300); do if ls $MANURE_CACHE_DIR/uploads/ 2>/dev/null | grep -q json; then break; fi; sleep 0.02; done; ls $MANURE_CACHE_DIR/uploads/ 2>/dev/null | grep -q json || exit 31; AID1=$(ls $MANURE_CACHE_DIR/uploads/ | grep json | head -1 | cut -d. -f1); echo $AID1 > /srv/manure-hm-fetch/aid1; TOKEN=$(cat $MANURE_TOKEN_FILE); for i in $(seq 1 300); do RB=$(curl -sk $MANURE_URL/api/v1/artifacts/$AID1/upload-status -H \"Authorization: Bearer $TOKEN\" | jq -r .files[0].received_bytes); if test $RB -gt 0 2>/dev/null; then break; fi; sleep 0.02; done; test $RB -gt 0 || exit 32; for i in $(seq 1 300); do NRKILL=$(curl -sk $MANURE_URL/api/v1/artifacts/$AID1/upload-status -H \"Authorization: Bearer $TOKEN\" | jq -r \".files[0].received_ranges | length\"); if test $NRKILL -gt 0 2>/dev/null; then break; fi; sleep 0.02; done; test $NRKILL -gt 0 || exit 33; kill -9 $(cat /tmp/cli.pid); wait $(cat /tmp/cli.pid); echo killed-exit:$? > /srv/manure-hm-fetch/kill-code; TOT=$(curl -sk $MANURE_URL/api/v1/artifacts/$AID1/upload-status -H \"Authorization: Bearer $TOKEN\" | jq -r .files[0].size); NR=$(curl -sk $MANURE_URL/api/v1/artifacts/$AID1/upload-status -H \"Authorization: Bearer $TOKEN\" | jq -r \".files[0].received_ranges | length\"); echo $RB > /srv/manure-hm-fetch/rb; echo $TOT > /srv/manure-hm-fetch/tot; echo $NR > /srv/manure-hm-fetch/nr; echo ---UP1-ERR-BEGIN---; cat /srv/manure-hm-fetch/up1.err 2>/dev/null; echo ---UP1-ERR-END---; ls $MANURE_CACHE_DIR/uploads/ 2>/dev/null | grep -q json'")
     edge.succeed("grep -q 'killed-exit:137' /srv/manure-hm-fetch/kill-code")
     # Retain the pre-resume receipts (the reuse baseline) before resuming.
