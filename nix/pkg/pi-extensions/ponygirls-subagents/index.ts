@@ -22,7 +22,7 @@ import { themeStyle } from "./src/display.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CUSTOM_NOTICE = "pi-subagents-notice";
@@ -72,6 +72,16 @@ function loadPolicy(): SupervisorPolicy {
   // assigned (availability/credentials still fail naturally at launch).
   // Absent (or any other shape) keeps the default: explicit model overrides
   // are denied, children inherit their owner's model.
+  // Prepared workspaces are denied unless a root is listed; a malformed
+  // list is an error rather than an empty (or partly applied) one.
+  if (raw.workspaceRoots !== undefined) {
+    const roots: unknown = raw.workspaceRoots;
+    if (!Array.isArray(roots) || !roots.every((r): r is string => typeof r === "string" && isAbsolute(r))) {
+      throw new Error(`POLICY_DENIED: ${path}: workspaceRoots must be a list of absolute paths`);
+    }
+    policy.workspaceRoots = [...roots];
+  }
+  if (typeof raw.workspaceOwnerCheckoutAllowed === "boolean") policy.workspaceOwnerCheckoutAllowed = raw.workspaceOwnerCheckoutAllowed;
   if (raw.allowedModels === null) policy.allowedModels = null;
   else if (Array.isArray(raw.allowedModels)) {
     policy.allowedModels = raw.allowedModels.filter((m) => typeof m?.provider === "string" && typeof m?.id === "string");
@@ -196,15 +206,18 @@ export default function (pi: ExtensionAPI): void {
       name: "spawn_agent",
       label: "Spawn subagent",
       description:
-        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. Optional gate enables reviewer validation, with deterministic checks for writers.",
+        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). workspace_path instead puts the child in a git work tree you prepared and keep (policy workspaceRoots must contain it). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. Optional gate enables reviewer validation, with deterministic checks for writers.",
       parameters: spawnParameters<TSchema>(Type, {
         model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String(), thinkingLevel: Type.Optional(Type.String()) })),
         gate: Type.Optional(gateParameters<TSchema>(Type)),
+        workspace_path: Type.Optional(Type.String({
+          description: "Absolute path of a git work tree you prepared for this child (its top-level directory, with a commit), used instead of a worktree made for it; isolation worktree only, without base_commit. Accepted only inside a policy workspaceRoots entry. It stays yours: nothing creates, resets, or removes it",
+        })),
       }),
       executionMode: "sequential",
       async execute(toolCallId, params, _signal, _onUpdate, ctx) {
         try {
-          const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; base_commit?: string; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput };
+          const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; base_commit?: string; workspace_path?: string; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput };
           return ok(await governing(ctx).supervisor.spawn(caller, {
             taskName: p.task_name,
             message: p.message,
@@ -212,6 +225,7 @@ export default function (pi: ExtensionAPI): void {
             isolation: p.isolation,
             repoId: p.repo_id ?? null,
             baseCommit: p.base_commit ?? null,
+            workspacePath: p.workspace_path ?? null,
             skills: parseSelection(params as Record<string, unknown>, "skills"),
             contextFiles: parseSelection(params as Record<string, unknown>, "context_files"),
             model: p.model ?? null,
