@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>manure — unlock artifact</title>
+<!--
+  External assets only (no inline script/style): the server serves these
+  trusted sibling files from unlock_shell_dir while locked, so absolute
+  same-origin paths work from both / and /__manure/password.
+  No secrets, no item data, nothing to cache.
+-->
+<link rel="stylesheet" href="/styles.css">
+<script src="/unlock.js" defer></script>
+</head>
+<body>
+<main>
+<h1>Protected artifact</h1>
+<p>This artifact requires its external password. The password is sent
+only to this artifact's own origin, in the request body — never in
+the URL.</p>
+<form id="unlock-form" method="post" action="/__manure/unlock"
+enctype="application/x-www-form-urlencoded">
+<label for="password-input">External password</label>
+<input type="password" id="password-input" name="password"
+required autocomplete="current-password"
+spellcheck="false" autocapitalize="off">
+<button type="submit">Unlock</button>
+</form>
+<p id="unlock-error" class="error" role="alert" hidden></p>
+</main>
+<noscript><p>JavaScript is off; the form above still works with a plain
+form post.</p></noscript>
+</body>
+</html>

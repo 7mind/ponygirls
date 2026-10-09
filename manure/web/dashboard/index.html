@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>manure — artifact dashboard</title>
+<link rel="stylesheet" href="./styles.css">
+<script src="./app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<header>
+<h1>manure</h1>
+<p class="subtitle">artifact dashboard</p>
+<div id="whoami" class="whoami" hidden>
+<span id="whoami-text"></span>
+<button type="button" id="logout-button">Log out</button>
+</div>
+</header>
+<main id="main">
+<section id="login-section" aria-labelledby="login-heading" hidden>
+<h2 id="login-heading">Log in</h2>
+<p>Paste an API token to open a dashboard session. The token is sent
+once in the login request body and is never stored in the browser
+(not in storage, not in URLs).</p>
+<form id="login-form" method="post" action="/api/v1/login">
+<label for="token-input">API token</label>
+<input type="password" id="token-input" name="token"
+required spellcheck="false" autocapitalize="off" autocomplete="current-password">
+<button type="submit">Log in</button>
+</form>
+<p id="login-error" class="error" role="alert" hidden></p>
+</section>
+<section id="dashboard-section" aria-labelledby="artifacts-heading" hidden>
+<h2 id="artifacts-heading">Artifacts</h2>
+<div class="controls">
+<label for="filter-text">Filter</label>
+<input type="search" id="filter-text" placeholder="name or id substring"
+autocomplete="off">
+<label for="filter-visibility">Access</label>
+<select id="filter-visibility">
+<option value="">all</option>
+<option value="internal">internal</option>
+<option value="external">external</option>
+<option value="public">public</option>
+</select>
+<label for="filter-state">State</label>
+<select id="filter-state">
+<option value="">all</option>
+<option value="ready">ready</option>
+<option value="uploading">uploading</option>
+<option value="publishing">publishing</option>
+</select>
+<label for="include-expired">
+<input type="checkbox" id="include-expired"> include expired
+</label>
+<button type="button" id="refresh-button">Refresh</button>
+</div>
+<p id="list-status" role="status"></p>
+<ul id="artifact-list" class="artifacts"></ul>
+<div class="pager">
+<button type="button" id="prev-button" disabled>Previous</button>
+<button type="button" id="next-button" disabled>Next</button>
+</div>
+</section>
+<section id="detail-section" aria-labelledby="detail-heading" hidden>
+<h2 id="detail-heading">Artifact detail</h2>
+<dl id="detail-list"></dl>
+<div class="detail-actions">
+<button type="button" id="open-button">Open</button>
+<button type="button" id="rotate-button" hidden>Rotate external password</button>
+<button type="button" id="delete-button">Delete</button>
+<button type="button" id="detail-back-button">Back to list</button>
+</div>
+<div id="rotate-output" hidden>
+<p><strong>New external password (shown once):</strong></p>
+<p><code id="rotate-password"></code></p>
+<button type="button" id="rotate-dismiss-button">Dismiss</button>
+</div>
+<p id="detail-status" role="status"></p>
+</section>
+</main>
+<footer>
+<p>Uploads are handled by the <code>manure</code> CLI; this dashboard
+lists, opens, rotates, and deletes artifacts.</p>
+</footer>
+<noscript><p>This dashboard requires JavaScript; the API remains usable
+without it.</p></noscript>
+</body>
+</html>

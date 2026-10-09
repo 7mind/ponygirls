@@ -22,14 +22,51 @@ global mutable state.
   minimal proxy options (R8); CLI resume/cache frozen (R9); single
   web-asset resolution rule frozen (R10); M1 sunset at first
   implementation commit; fixture exposes effective origin for port 0.
+- Review round 1 dispositions (contract stays `0.2.0`; documents the
+  already-implemented wire, no new protocol): web-asset staging made
+  an explicit Nix-owned pre-build step, wheel/sdist guarantees
+  conditional on it (R1, §11/M2); client ownership paths corrected to
+  `manure/manure/cli.py` + `manure/manure/mcp.py` (R2, §1); init/PATCH
+  request objects, unknown-field rejection (for server-side
+  validation), and management success statuses/envelopes documented
+  to the implemented shapes — init key `files`, flat JSON login
+  identity, form-login/logout 303s, PATCH keeps
+  name/visibility/expires_in_s, delete `{ok:true}`, rotate
+  `{external_password}` only, publish `{artifact_id,state,
+  content_url}`, manifests `{artifact_id,state,files}` (R3 correction,
+  §§7.1–7.2); MCP initialize shape + per-tool inputSchemas frozen
+  against spec `2025-11-25` (R4, §10); dashboard CSP wildcard carries
+  the effective non-default content port (R5, §5.5);
+  `/__manure/grant` exempted to API Origin + grant-invalid/expired
+  aligned to 403 (R6, §§7.3–7.4/9); server-side no-follow containment
+  added (R7, §6.6); decoded-segment `/` explicitly rejected (A1,
+  §7.3).
+- Security clarification (no version change; reproduced Chromium 154
+  constraint): trusted HTML ONLY (dashboard shell plus
+  server-generated unlock/password form HTML) is served
+  `Referrer-Policy: strict-origin` (origin-only, no
+  path/query, no HTTPS-downgrade leak) because `no-referrer` on a
+  navigational form POST yields `Origin: null`, which exact-Origin
+  checks always reject; API JSON/dynamic responses and uploaded
+  untrusted bytes retain `no-referrer`;
+  the no-URL-secrets invariant (§7.5) is unchanged; B2/B3b assert the
+  served policy and a non-`null` form-POST Origin.
 - Dashboard/API origin (production): `https://artifacts.7mind.io`.
 - Content origin (default): `https://<artifact-id>.artifacts.7mind.io`.
   A separate registrable content suffix/domain is configurable and
   strongly recommended (see §5.6).
 - Auth codec follows haystack (`haystack/docs/auth.md`, `server/src/auth/`):
-  32 random bytes → 43-char canonical unpadded base64url; files hold the
-  43 chars plus at most one final LF; SHA-256 hex digests server-side;
-  constant-time compare; generation never via argv/logs.
+  32 random bytes → 43-char canonical unpadded base64url. Canonical
+  means exactly: 43 ASCII chars from the URL-safe base64 alphabet that
+  url-base64-decode to 32 bytes and re-encode to the identical 43 chars
+  (non-canonical forms are rejected, never normalized). Direct values
+  (env, `Authorization: Bearer`, login bodies, cookies) are matched
+  exactly: no terminator, no surrounding trim. Plaintext token files
+  hold the 43 chars plus at most one final LF (CR, NUL, non-ASCII,
+  multiline, extra LF, or surrounding whitespace → rejected). SHA-256
+  hex digests live server-side (digest files: 64 lowercase hex plus at
+  most one final LF); constant-time compare; generation never via
+  argv/logs.
 - Browser cookie rules cite
   <https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/Cookies>
   (`__Host-` + `Secure` + `Path=/`, no `Domain`, `HttpOnly`).
@@ -59,7 +96,7 @@ Ownership (files; no agent touches another owner's paths except review):
 |---|---|
 | Contract (this task) | `manure/CONTRACT.md`, `manure/pyproject.toml`, `manure/MANIFEST.in`, `manure/README.md`, `manure/.gitignore`, `manure/manure/__init__.py`, `manure/tests/test_contract_*.py` (sunsets, §13 M1) |
 | Server agent | `manure/manure/server.py`, `manure/manure/domain.py`, `manure/manure/storage.py`, `manure/manure/auth.py`, `manure/tests/test_server_*.py`, `manure/tests/test_storage_*.py` |
-| Client agent | `manure/manure/client.py`, `manure/cli.py`, `manure/mcp.py`, `manure/tests/test_client_*.py`, `manure/tests/test_cli_*.py`, `manure/tests/test_mcp_*.py`, `manure/skill/SKILL.md` |
+| Client agent | `manure/manure/client.py`, `manure/manure/cli.py`, `manure/manure/mcp.py`, `manure/tests/test_client_*.py`, `manure/tests/test_cli_*.py`, `manure/tests/test_mcp_*.py`, `manure/skill/SKILL.md` |
 | UI/security agent | `manure/web/*` sources (dashboard shell + unlock shell), `manure/tests/test_browser_*.py` (+ `manure/tests/browser_fixtures.py` helper only) |
 | Nix agent | `nix/nixos/manure.nix`, `nix/hm/manure.nix`, `nix/pkg/manure/package.nix` (owns the web-tree copy/install mapping, §11), root `flake.nix`/`flake.lock` edits |
 
@@ -80,6 +117,9 @@ flake edits.
 - `requires-python >= 3.12`. Zero runtime dependencies
   (`pyproject.toml` `[project] dependencies = []`). Test-only browser
   driver and MCP SDK interop check are NOT runtime dependencies (§11).
+  Service/storage supported runtime is Linux: the exclusive `data_dir`
+  claim requires Linux abstract Unix sockets and fails closed elsewhere
+  (`unavailable`); CLI/MCP client portability beyond Linux is unverified.
 - Modules (frozen import paths; signatures below are minimal, agents may
   add private helpers but not change these):
   - `manure.server`: `create_server(config: ServerConfig) -> RunningServer`,
@@ -160,7 +200,9 @@ configured-but-missing dir → startup failure. `null` semantics above.
   `~/.cache/manure`; no ambiguity error, first-set wins).
 - Tests: `MANURE_PLAYWRIGHT_CORE_PATH` (absolute dir of `playwright-core`
   package), `MANURE_CHROMIUM_BIN` (optional override; default PATH/Nix
-  chromium). No other envs. No `MANURE_ALLOW_INSECURE`: http URLs are
+  chromium), `MANURE_MCP_SDK_PATH` (absolute dir of the official
+  `@modelcontextprotocol/sdk` package), `MANURE_OPENSSL_BIN` (optional
+  override; default PATH/Nix openssl). No other envs. No `MANURE_ALLOW_INSECURE`: http URLs are
   accepted by the client only for loopback hosts (`127.0.0.1`, `::1`,
   `localhost`, `*.localhost`), else rejected before network.
 
@@ -290,20 +332,36 @@ performance hint, NOT the boundary (§0).
 - `Cross-Origin-Opener-Policy: same-origin` (defense-in-depth)
 - `Cross-Origin-Resource-Policy: same-origin`
 - `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`
+  for API JSON/dynamic/error responses; `Referrer-Policy:
+  strict-origin` ONLY for trusted HTML documents (the dashboard shell
+  page; server-generated unlock/password forms are covered by the
+  content-origin exception below). `strict-origin` is origin-only
+  (no path/query, no HTTPS→HTTP downgrade leak) and REQUIRED on those
+  pages so Chromium sends a real `Origin` on navigational form POSTs —
+  `no-referrer` there yields `Origin: null`, which §5.7 always
+  rejects — while secrets never appear in URLs per §7.5, so the
+  origin-only referrer exposes nothing)
 - Dynamic/API/errors: `Cache-Control: no-store`. Static hashed assets
   only may be immutable-cached; shell carries no item/token data.
 - Dashboard shell CSP, delivered via response HEADER computed from
   config (static files stay static):
   `default-src 'self'; base-uri 'none'; frame-ancestors 'none';
-  form-action 'self' <scheme>://*.<content_suffix>; object-src 'none'`
-  where `<scheme>` matches `api_origin` (`https` prod, `http` loopback).
-  The wildcard entry exists exactly to permit the grant-handoff form
-  POST to per-artifact hosts; tests assert it contains the configured
-  suffix and nothing broader.
+  form-action 'self' <scheme>://*.<content_suffix><port>; object-src 'none'`
+  where `<scheme>` matches `api_origin` (`https` prod, `http` loopback)
+  and `<port>` is empty for the scheme default (production `https`/443)
+  but MUST carry the effective content port otherwise — including local
+  `47329` and the port-0 bound port (via `effective_api_origin`, §11) —
+  or the handoff POST is CSP-blocked. The wildcard entry exists exactly
+  to permit the grant-handoff form POST to per-artifact hosts; tests
+  assert it contains the configured suffix and nothing broader.
 - Content responses (untrusted bytes, per-artifact origin):
   `Cross-Origin-Opener-Policy: same-origin`,
   `Cross-Origin-Resource-Policy: same-origin`,
-  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`
+  (uploaded bytes stay origin-hiding; EXCEPTION: server-generated
+  auth forms — the built-in `null`-fallback unlock form — are served
+  `Referrer-Policy: strict-origin` for the same Chromium form-POST
+  reason as above),
   `Content-Security-Policy: frame-ancestors 'none'; base-uri 'none';
   form-action 'self'` (uploaded JS may run under its own origin, but it
   cannot frame anything or submit off-origin; no `sandbox` directive so
@@ -341,7 +399,10 @@ performance hint, NOT the boundary (§0).
   content `/__manure/*` POSTs) require `Origin` exactly equal to the
   owning origin (`api_origin` for dashboard mutations and
   `/__manure/grant`; own content origin for `/__manure/unlock|logout`).
-  Missing/mismatched → `forbidden` (CSRF). `POST /api/v1/login` always
+  Missing/mismatched → `forbidden` (CSRF); `Origin: null` is never an
+  exact match and is always rejected (the §5.5 `strict-origin` serving
+  rule exists so first-party auth forms never emit it).
+  `POST /api/v1/login` always
   requires exact `api_origin` (§4). Bearer-authed non-login API calls
   allow absent `Origin` but reject a mismatched one.
 - TLS: `loopback_dev=false` requires `api_origin` starting `https:` and
@@ -366,8 +427,7 @@ performance hint, NOT the boundary (§0).
   unauthenticated throttling (login, unlock) keys on the socket peer IP
   only — never on spoofable headers. Authenticated throttling keys on
   the principal.
-- The edge MUST forward Host intact (`proxy_set_header Host $host` or
-  equivalent) and MUST NOT add `Access-Control-Allow-Origin`. These are
+- The edge MUST forward the original Host intact, including any explicit port (`proxy_set_header Host $http_host`, or an identity-preserving map of it — never normalized `$host`, which drops the port; `or equivalent` means port-preserving only) and MUST NOT add `Access-Control-Allow-Origin`. These are
   asserted by N2 with hostile-header cases: spoofed `X-Forwarded-Proto`
   from an untrusted peer still yields `tls-required`; spoofed
   `X-Forwarded-Host` never routes.
@@ -457,7 +517,9 @@ Publish POST is idempotent: `ready` → 200 same `content_url`;
 Partial trees are NEVER served: content/API byte routes require
 `ready` + `live/<id>` present.
 
-- TTL: `expires_at` set at init (`expires_in_s`) and patchable
+### 6.4 TTL
+
+`expires_at` set at init (`expires_in_s`) and patchable
   (shorten/extend/clear within `max_ttl_s`; PATCH `expires_in_s: null`
   clears). Expiry is authorization-immediate: after `expires_at` every
   read/grant/unlock fails (`expired`: 410 for authenticated API reads,
@@ -468,7 +530,9 @@ Partial trees are NEVER served: content/API byte routes require
   grants. `last_activity_at` advances ONLY on: init, successful chunk
   PUT commit, completed publish request, PATCH. Reads/status never
   advance it.
-- Incomplete-session ownership (explicit decision): the creating
+### 6.5 Incomplete-session ownership (explicit decision)
+
+The creating
   `user_id` owns mutation of an `uploading`/`publishing` artifact
   (chunk PUTs, publish, PATCH while not `ready`). Other user_ids get
   `session-not-owned` (403). Rationale: prevents concurrent
@@ -478,6 +542,21 @@ Partial trees are NEVER served: content/API byte routes require
   authenticated user, consistent with "every user sees/deletes all
   artifacts" and letting anyone GC a stuck session. Rotation is
   explicitly NOT ownership-gated (§4).
+
+### 6.6 Server-side containment (no-follow, normative)
+
+Client-side symlink rules (§§8–9) are not the boundary. The server
+MUST NOT create or follow symlinks anywhere under `data_dir`: chunk
+writes, publish rename (§6.3), content/API byte serving (§7), startup
+reconciliation (§§6.2–6.3), sweeps, deletes, and grant/cookie handling
+resolve every payload path strictly inside `staging/<id>/tree` or
+`live/<id>` and refuse any path with a symlink component or resolving
+outside its artifact tree (writes: 400 `invalid-path`; reads: 404
+`not-found`; recovery: treated as MISSING). Metadata (`manure.db`,
+`staging/*.json` sidecars, receipt rows) is never addressable through
+a served path (§6.1). Cleanup removes without traversing: unlink
+files/symlinks themselves, never follow them. (Documentation
+requirement; no runtime is implemented by this task.)
 
 ## 7. REST API v1 (API origin prefix `/api/v1` + content-host controls)
 
@@ -513,28 +592,54 @@ invalid → 400 `bad-envelope`; `next_cursor: null` ⇔ exhausted.
 `expires_in_s`: int|null; present ⇒ `60 <= v <= max_ttl_s`, else 400
 `invalid-ttl`; PATCH `null` clears (any authed user when ready, owner
 when uploading).
+`POST .../artifacts:init` request (JSON object; unknown top-level
+fields → 400 `bad-envelope`):
+`{"name"*: str (1..256 chars), "kind"*: "file"|"dir",
+"visibility"*: "internal"|"external"|"public",
+"expires_in_s"?: int|null (omitted ≡ null ≡ no expiry),
+"files"*: [entries]}` (the artifact manifest). Each entry: `{"path"*: str (path rules
+§5.3), "kind"*: "file"|"dir"}`; `kind: file` entries additionally
+require `"size"*: int (`0 <= size <= max_file_bytes`) and
+`"sha256"*: str (64 lowercase hex)`; `kind: dir` entries carry ONLY
+`path`+`kind` (extra `size`/`sha256` → 400 `invalid-path`). Entry
+topology validated per §6 (`invalid-manifest`/`invalid-path`).
+`PATCH .../artifacts/<id>` request (JSON object): permitted fields
+ONLY `{"name"?: str (1..256), "visibility"?:
+"internal"|"external"|"public", "expires_in_s"?: int|null}`;
+omitted fields are left unchanged, `expires_in_s: null` clears the
+expiry. `kind`, `manifest`, `artifact_id`, or any other field present
+→ 400 `bad-envelope` (manifests are immutable, §8).
 
 ### 7.2 API routes (summary of §0-table with state/permission rules)
 
-- `POST /api/v1/login` — body `{token}`; exact-Origin required (§4).
-- `POST /api/v1/logout`, `GET /api/v1/whoami`, `GET /api/v1/health`
-  (`{ok:true, version}`; unauthenticated).
+- `POST /api/v1/login` — body `{token}` (JSON) or `token=...`
+  (urlencoded form); exact-Origin required (§4). JSON success → 200
+  flat `{user_id, type, token_id}` + session cookie; form success →
+  303 to `/` + session cookie.
+- `POST /api/v1/logout` — JSON → 200 `{"ok":true}` + cleared cookie;
+  urlencoded form → 303 to `/` + cleared cookie;
+  `GET /api/v1/whoami` → 200 `{user_id, type, token_id}`;
+  `GET /api/v1/health` → 200 `{ok:true, version}` (unauthenticated).
 - `GET /api/v1/artifacts?...` — any authed user; expired hidden unless
   `include_expired=true` (then shown with state, still unservable).
+  Success → 200 paginated envelope (§7.1).
 - `POST /api/v1/artifacts:init` — any authed user (within session caps);
-  manifest validated (§6); returns `{artifact_id, chunk_bytes,
-  content_url}` + `external_password` exactly once iff external.
+  request per §7.1, manifest validated (§6). Success → 200
+  `{artifact_id, chunk_bytes, content_url}` + `external_password`
+  exactly once iff external.
 - `GET /api/v1/artifacts/<id>` — any authed user (`ready` or
-  `uploading`); expired → 410.
-- `PATCH /api/v1/artifacts/<id>` — owner-only while not `ready`, any
-  authed user once `ready`. Switching TO external generates and returns
+  `uploading`); expired → 410. Success → 200 `ArtifactSummary` (§7.1).
+- `PATCH /api/v1/artifacts/<id>` — request per §7.1; owner-only while
+  not `ready`, any authed user once `ready`. Success → 200
+  `ArtifactSummary`. Switching TO external generates and returns
   `{external_password}` once (a generation event under §7.5);
   switching AWAY clears the hash and kills grants.
 - `DELETE /api/v1/artifacts/<id>` — any authed user, any state (aborts
-  uploads, frees reservation, kills grants).
+  uploads, frees reservation, kills grants). Success → 200 `{"ok":true}`.
 - `POST /api/v1/artifacts/<id>/external-password:rotate` — any authed
-  user, any state; artifact must be external else `invalid-visibility`;
-  returns `{external_password}` once; kills old password + grants.
+  user, any state; artifact must be external else `invalid-visibility`.
+  Success → 200 `{external_password}` (once);
+  kills old password + grants.
 - `GET /api/v1/artifacts/<id>/files` — manifest+hashes; internal: any
   authed; public: anon ok; external: authed ONLY (anonymous uses content
   `/__manure/manifest`). While `uploading`, hashes visible but byte
@@ -547,6 +652,7 @@ when uploading).
   (`invalid-range` / `chunk-conflict`).
 - `POST /api/v1/artifacts/<id>/publish` — owner-only; see §6.3
   idempotency. All-hashes-verified else 409 `hash-mismatch`.
+  Success → 200 `{artifact_id, state, content_url}`.
 - `GET /api/v1/artifacts/<id>/files/<p>/content` — internal: any
   authed; public: anon ok; external: authed ONLY; `uploading` bytes →
   409 `incomplete-upload` (never partial bytes). Served `attachment`.
@@ -561,8 +667,10 @@ when uploading).
 Path handling (frozen): split the RAW path on `/` (percent-encoded
 `%2F` never becomes a separator), single-pass percent-decode each
 segment (UTF-8 strict; `+` stays literal `+`), then apply manifest
-validation (§5.3): empty segments (except one trailing slash), `.`,
-`..`, NUL, invalid UTF-8, reserved top segment → 400 `invalid-path`
+validation (§5.3): a `/` inside a decoded segment (reachable only via
+percent-encoding such as `%2F`, since the split precedes decoding),
+empty segments (except one trailing slash), `.`, `..`, NUL, invalid
+UTF-8, reserved top segment → 400 `invalid-path`
 (directory traversal incl. encoded `..` rejected here). File lookup
 uses the decoded path against the manifest (exact match).
 
@@ -585,8 +693,9 @@ uses the decoded path against the manifest (exact match).
   Rate-limited (§3). No URL secrets anywhere.
 - `POST /__manure/grant` — body `{"grant":"..."}` (JSON) or
   `grant=...` (urlencoded, the dashboard handoff form). Exact
-  `Origin == api_origin` required. Single-use: unknown/expired/used →
-  403 `grant-invalid`/`grant-expired`. Success: urlencoded → `303` to
+  `Origin == api_origin` required (exempt from the §9 target-Origin
+  rule; unlock/logout use their own content origin). Single-use:
+  unknown/expired/used → 403 `grant-invalid`/`grant-expired`. Success: urlencoded → `303` to
   `/` + grant cookie; JSON → `200 {"ok":true}` + cookie. 303 (never
   302: 303 deterministically converts to GET).
 - `POST /__manure/logout` — own-Origin; clears grant cookie
@@ -599,12 +708,14 @@ uses the decoded path against the manifest (exact match).
   (same `<p>` decoding). Public anon ok.
 - Unknown `/__manure/*`, all `/api/*` → 404 `not-found` JSON.
 
+### 7.4 Error codes (stable codes)
+
 Error codes (stable; HTTP in parentheses): `bad-envelope` (400),
 `invalid-path` (400), `invalid-manifest` (400), `invalid-range`
 (400), `invalid-ttl` (400), `invalid-visibility` (400), `bad-host`
 (400), `ambiguous-credentials` (400), `unauthorized` (401),
-`password-required`/`password-invalid` (401), `grant-required`/
-`grant-invalid`/`grant-expired` (401), `session-not-owned` (403),
+`password-required`/`password-invalid` (401), `grant-required` (401),
+`grant-invalid`/`grant-expired` (403), `session-not-owned` (403),
 `forbidden` = CSRF/origin (403), `tls-required` (403),
 `not-found` (404), `dashboard-disabled` (404), `chunk-conflict`
 (409), `state-conflict` (409), `hash-mismatch` (409),
@@ -628,7 +739,7 @@ content `/__manure/manifest`) and server-side. Retry-after-loss =
 
 Manifests are IMMUTABLE after init (quota reservation soundness, §6).
 
-1. `init` with full manifest (including empty-dir entries, §6). Server
+1. `init` with full manifest (`files` array, §7.1; including empty-dir entries, §6). Server
    returns `artifact_id`, authoritative `chunk_bytes`, `content_url`
    (+ one-time `external_password` iff external).
 2. Client splits each file on deterministic `chunk_bytes` boundaries
@@ -686,16 +797,23 @@ registered token needed; no secrets in URLs.
 
 Env precedence: for each SECRET pair (`MANURE_URL`/`MANURE_URL_FILE`,
 `MANURE_TOKEN`/`MANURE_TOKEN_FILE`,
-`MANURE_EXTERNAL_PASSWORD`/`MANURE_EXTERNAL_PASSWORD_FILE`): strip one
-trailing LF then surrounding whitespace; empty = unset; both non-empty
-→ stderr `ambiguous-credentials` + exit 2, no network. Token files use
-the haystack exact-byte rule. URL files hold one URL (http only for
-loopback hosts, else reject).
+`MANURE_EXTERNAL_PASSWORD`/`MANURE_EXTERNAL_PASSWORD_FILE`): both
+direct and file non-empty → stderr `ambiguous-credentials` + exit 2,
+no network. Direct values are used exactly as given (no terminator
+stripping, no surrounding trim); empty = unset. Token/password files
+(`MANURE_TOKEN_FILE`, `MANURE_EXTERNAL_PASSWORD_FILE`) follow the §0
+codec: at most one final LF is accepted and removed, and the remainder
+MUST be the exact 43-char canonical form (CR, NUL, non-ASCII,
+multiline, extra LF, or surrounding whitespace → rejected: stderr +
+exit 2, no network). URL files hold one URL: strip one trailing LF
+then surrounding whitespace; empty = unset (http only for loopback
+hosts, else reject).
 Credential isolation (normative for `ManureClient`/CLI/MCP): bearer and
 dashboard-session values are sent ONLY to the configured API origin;
 grant cookies ONLY to their exact content host (jar keyed by exact
 host, never parent/sibling); machine clients send `Origin: <target
-content origin>` on content POSTs and no `Origin` on content GETs;
+content origin>` on content POSTs — EXCEPT `/__manure/grant`, which
+sends `Origin: <api_origin>` (§7.3) — and no `Origin` on content GETs;
 redirects are followed at most 3× same-origin-with-credentials, and
 credentials are ALWAYS dropped on cross-origin redirect. `fetch` of
 public artifacts works without any token; other authed commands fail
@@ -720,13 +838,22 @@ go to stderr (stdout-purity test).
   domain faults; malformed frames → JSON-RPC errors (`-32700`,
   `-32600`, `-32601`, `-32602`, `-32603`). No server→client
   notifications; no roots/sampling; no progress tokens.
-- Tools (frozen names; input schemas are strict objects, required marked
-  `*`): `whoami {}`; `list_artifacts {limit?, cursor?,
-  include_expired?}`; `get_artifact {artifact_id*}`; `get_manifest
-  {artifact_id*}`; `upload_artifact {local_path*, access*,
-  expires_in_s?, name?}`; `fetch_artifact {artifact_id*, dest_dir*,
-  password?}`; `delete_artifact {artifact_id*}`;
-  `rotate_external_password {artifact_id*}`. `annotations`:
+- Normative reference: the Model Context Protocol specification,
+  protocol version `2025-11-25` (JSON-RPC 2.0 over stdio as framed
+  above). `initialize` request: `{protocolVersion, capabilities,
+  clientInfo}`; result: `{protocolVersion: "2025-11-25",
+  capabilities: {tools: {}}, serverInfo: {name: "manure", version:
+  <__version__>}}` (negotiation per the version rule above).
+- Tools (frozen names; every `inputSchema` is a JSON Schema object with
+  `"type": "object"` and `"additionalProperties": false`):
+  `whoami` `{}` (no properties); `list_artifacts` `{limit?: integer,
+  cursor?: string, include_expired?: boolean}`; `get_artifact` /
+  `get_manifest` `{artifact_id*: string}`; `upload_artifact`
+  `{local_path*: string, access*: "internal"|"external"|"public",
+  expires_in_s?: integer|null, name?: string}`; `fetch_artifact`
+  `{artifact_id*: string, dest_dir*: string, password?:
+  string|null}`; `delete_artifact` / `rotate_external_password`
+  `{artifact_id*: string}`. `annotations`:
   read-only+idempotent for whoami/list/get/manifest; open-world
   (destructive/hint) for upload/fetch/delete/rotate. Uploads/fetches
   chunk-resume like the CLI (MCP wraps the same client code, no
@@ -768,24 +895,33 @@ go to stderr (stdout-purity test).
   be an absolute directory containing `playwright-core`'s `package.json`
   (dev-only; e.g. the repo's `haystack/node_modules/playwright-core`
   or the Nix-provided driver). Chromium via `MANURE_CHROMIUM_BIN` else
-  PATH/Nix chromium. Tests `SkipTest` cleanly when either is absent;
-  the Nix check provides both. No global installs, no private network:
+  PATH/Nix chromium; TLS fixture via `MANURE_OPENSSL_BIN` else PATH/Nix
+  openssl. Targeted dev runs `SkipTest` cleanly when driver/browser/node
+  are absent; full/release acceptance requires them (missing or skipped
+  mandatory case fails, never green). The Nix check provides all. No global installs, no private network:
   local runs use `artifacts.localhost`-style suffixes with Chromium
   `--host-resolver-rules="MAP *.artifacts.localhost 127.0.0.1"`. The
   suite runs the handoff/unlock/isolation cases against BOTH the
   default sibling suffix and a separate content domain.
-- MCP interop: F10 includes one exchange driven by the installed
-  `@modelcontextprotocol/sdk` client when present (`SkipTest` when
-  absent; Nix provides it); the stdlib-only requirement applies to the
+- MCP interop: F10 includes the mandatory real-service SDK lifecycle
+  driven by the official `@modelcontextprotocol/sdk` client (1.32.1 verified;
+  fails without `MANURE_MCP_SDK_PATH` or node, never skips; Nix provides it;
+  complementary FakeHTTP unit coverage in `test_mcp_protocol` never
+  substitutes); the stdlib-only requirement applies to the
   shipped server, not the check.
-- Offline: the full non-browser suite runs with stdlib only, no
-  network, no playwright, no SDK.
+- Offline: targeted non-browser suites run with stdlib only, no
+  network, no playwright, no SDK. Full/release acceptance requires the
+  live dependencies on Linux (official SDK + Node, Chromium + Playwright
+  + openssl TLS, actual NixOS/HM runtimes); ordinary targeted server
+  tests staying stdlib-only does not count as acceptance.
 - Web assets, single resolution rule: sources live at
-  `manure/web/{dashboard,unlock}/` (UI-owned). Every packaged install
-  (Nix package AND wheel/sdist) copies that tree into the Python
-  package as `manure/manure/web/` (generated, gitignored, never
-  hand-edited; Nix-owned copy rule; pyproject package-data rule,
-  contract-owned, ships it). At runtime the server resolves each shell
+  `manure/web/{dashboard,unlock}/` (UI-owned). A Nix-owned pre-build
+  staging step copies that tree into the Python package as
+  `manure/manure/web/` (generated, gitignored, never hand-edited).
+  `pyproject.toml` `package-data` ships only files already staged at
+  build time and performs no copy; wheel/sdist asset guarantees hold
+  only when the staging step ran (unstaged builds fall back to `null`
+  semantics per shell, §3.1). At runtime the server resolves each shell
   dir as: explicit config value → package path
   `manure/manure/web/<name>` → repo fallback `manure/web/<name>`
   (source-checkout fixture) → `null` semantics (§3.1). M2 asserts the
@@ -830,13 +966,13 @@ release. M1 MUST NOT survive past the skeleton stage.
 | F8b | exact schemas: summary/`files`/`upload-status`/PUT-ack examples validate; Range 206/416; `hash-mismatch` on bad publish; uploading byte reads 409; PATCH/rotate permission matrix (§7.2) | S | protocol unittest |
 | F9 | CLI env precedence: direct+file → exit 2 `ambiguous-credentials` no-network; exact-byte token files | C | unittest |
 | F9b | bounds: oversized JSON body 413; concurrent inits overcommit → quota-respecting subset only; session caps 429 `session-limit`; login throttle 429; idle sessions swept; activity definition | S | unittest |
-| F10 | MCP: initialize negotiation (supported + offered-downgrade), `tools/list` (8 tools+schemas), `tools/call` round-trip, JSON-RPC error shapes, stdout-purity, SDK-client interop exchange (skip w/o SDK) | C | unittest + SDK |
+| F10 | MCP: initialize negotiation (supported + offered-downgrade), `tools/list` (8 tools+schemas), `tools/call` round-trip, JSON-RPC error shapes, stdout-purity, official-SDK-client lifecycle against the real service (1.32.1 verified; fail without SDK/node, never skip) | C | unittest + SDK (official `@modelcontextprotocol/sdk` + Node; `MANURE_MCP_SDK_PATH` required) |
 | F10b | token-free external `fetch` (password→manifest→ranged files→verify incl. empty dirs); credential isolation: no bearer/session to content hosts, jar exact-host, cross-origin redirect drops credentials (canary asserts) | C | unittest |
 | F9c | CLI resume: proc1 dies mid-upload → `upload --resume`/auto-resume completes; changed source → `source-changed`; cache holds no secrets/passwords; resumed external prints null+note | C | two-process unittest |
 | B1 | dashboard login sets `__Host-`/`-dev` session, NO `Domain` attr; CSRF without `Origin` rejected; login REQUIRES exact Origin | U | browser + HTTP |
-| B2 | internal view: dashboard form-POST handoff (urlencoded→303) sets `Lax` grant cookie; uploaded JS cannot read dashboard token (assert via page JS); Sustained on sibling suffix AND separate domain | U | browser ×2 suffixes |
+| B2 | internal view: dashboard form-POST handoff (urlencoded→303) sets `Lax` grant cookie; dashboard shell served `Referrer-Policy: strict-origin` so the handoff POST carries a real (non-`null`) `Origin`; uploaded JS cannot read dashboard token (assert via page JS); Sustained on sibling suffix AND separate domain | U | browser ×2 suffixes |
 | B3 | external unlock: password POST (no URL secret), wrong password 401 + rate-limit, grant revocable via rotate | U | browser |
-| B3b | built-in unlock form (`unlock_shell_dir=null`) completes the same flow | U | browser |
+| B3b | built-in unlock form (`unlock_shell_dir=null`) completes the same flow; form served `Referrer-Policy: strict-origin` with a real (non-`null`) `Origin` on POST | U | browser |
 | B4 | content isolation: artifact A JS cannot read artifact B (SOP); `/api/*` on content host 404s; framing blocked (`frame-ancestors 'none'`) | U | browser |
 | B5 | API byte downloads are `attachment`, never execute under API origin | U | browser |
 | B6 | reserved `__manure/*` + `api/*` never servable as user content | S/U | unittest + browser |
@@ -846,7 +982,7 @@ release. M1 MUST NOT survive past the skeleton stage.
 | N2 | production edge: spoofed `X-Forwarded-Proto` from untrusted peer → `tls-required`; `X-Forwarded-Host` never routes; Host-intact proxy serves login+handoff end-to-end | N | `nix flake check` + browser |
 | N3 | HM `cacheDir` reaches CLI default; `--cache-dir`/env precedence | N/C | eval + unittest |
 | M1 | H, SUNSET: `pyproject.toml` parses stdlib-only, version triple-agrees, entrypoints frozen, no impl modules, no root/nix changes. MUST be deleted at first implementation commit; never a release gate. | H | `test_contract_*` |
-| M2 | packaged service (Nix or wheel/sdist install) starts on default asset resolution and serves dashboard + unlock shells 200 | N/S | install + HTTP |
+| M2 | packaged service from staged assets (Nix, or wheel/sdist built after the §11 staging step) starts on default asset resolution and serves dashboard + unlock shells 200 | N/S | install + HTTP |
 
 ## 14. Versioning
 

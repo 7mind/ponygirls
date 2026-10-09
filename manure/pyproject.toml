@@ -20,5 +20,6 @@ manure-mcp = "manure.mcp:main"
 where = ["."]
 include = ["manure*"]
 
+# Ships ONLY files staged by the Nix-owned pre-build step (CONTRACT.md §11); no copy here.
 [tool.setuptools.package-data]
 manure = ["web/**/*"]

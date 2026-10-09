@@ -1,0 +1,9 @@
+{
+  "name": "manure-mcp-sdk-vendor",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1"
+  }
+}
