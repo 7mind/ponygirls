@@ -10,8 +10,10 @@ import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileRunStore } from "../src/store.ts";
+import type { Supervisor } from "../src/supervisor.ts";
 import { GitWorkspaceManager } from "../src/workspace.ts";
 import { approve, blocked, gateSpec, mkSup, revise, terminals, tick } from "./ctl-worker.ts";
+import { until } from "./fake-worker.ts";
 
 function running(sup: ReturnType<typeof mkSup>["sup"]): string[] {
   return sup.list("governor").filter((v) => v.observed === "running" || v.observed === "starting").map((v) => v.path);
@@ -34,6 +36,80 @@ async function noUnhandled<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 // -- gates ---------------------------------------------------------------------
+
+// regression: newer task must not start before old gated candidate capture; obsolete repair must not retarget newer phase.
+// BA @regression(lifecycle): deterministic CtlWorker, real Supervisor ordering.
+// Minimal read-only glassbox (justified): repair-phase direct writes publish no
+// task.phase event, so the journal cannot prove actual phase invariance. Narrow
+// structural read, no `any`, no new public API.
+function actualState(sup: Supervisor, agentId: string): { taskPhase: string; currentTaskRunId: string | null } {
+  const agents = (sup as unknown as { agents: Map<string, { record: { taskPhase: string; currentTaskRunId: string | null } }> }).agents;
+  const rt = agents.get(agentId);
+  if (!rt) throw new Error(`agent missing: ${agentId}`);
+  return { taskPhase: rt.record.taskPhase, currentTaskRunId: rt.record.currentTaskRunId };
+}
+
+test("queued newer/third wait across gated capture/review; legit repair+approve passes then N/third dispatch (no stranding claim)", async () => {
+  const { sup, byAgent } = mkSup({});
+  const g = await sup.spawn("governor", { taskName: "g", message: "old", profile: "reader", gate: gateSpec(3) }, "rg");
+  const main = byAgent(g.agentId)[0]!;
+  const newer = await sup.sendMessage("governor", g.agentId, "task", "newer work", {}, "req-newer");
+  const third = await sup.sendMessage("governor", g.agentId, "task", "third work", {}, "req-third");
+  assert.ok(newer.taskRunId && third.taskRunId);
+  main.settle("succeeded", "old done");
+  // Positive: old candidate captured.
+  await until(() => sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.some((x) => x.kind === "gate.candidate" && (x.body as Record<string, unknown>)["taskRunId"] === g.taskRunId), 8000, "old candidate");
+  const recs1 = sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records;
+  const candSeq = recs1.find((x) => x.kind === "gate.candidate" && (x.body as Record<string, unknown>)["taskRunId"] === g.taskRunId)?.seq;
+  // N absent across capture/review: no generation.started for N, current still OLD.
+  assert.equal(recs1.some((x) => x.kind === "generation.started" && (x.body as Record<string, unknown>)["taskRunId"] === newer.taskRunId), false, "N must be absent at capture");
+  assert.equal(sup.list("governor").find((v) => v.id === g.agentId)?.currentTaskRunId, g.taskRunId, "current must still be OLD at capture");
+  // Review running: N still absent, current still OLD.
+  await until(() => (sup.gateController.inspect(g.taskRunId)?.review?.status ?? "") === "running", 8000, "review running");
+  const recs2 = sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records;
+  assert.equal(recs2.some((x) => x.kind === "generation.started" && (x.body as Record<string, unknown>)["taskRunId"] === newer.taskRunId), false, "N must be absent during review");
+  assert.equal(sup.list("governor").find((v) => v.id === g.agentId)?.currentTaskRunId, g.taskRunId, "current must still be OLD during review");
+  const reviewerId = sup.gateController.inspect(g.taskRunId)!.reviewerId!;
+  // Real revise path → legit repair.
+  await byAgent(reviewerId)[0]!.decide(revise("candidate-1"));
+  await until(() => (sup.gateController.inspect(g.taskRunId)?.repairReserved ?? false) === true, 8000, "repair reserved");
+  // Repair generation dispatched for OLD (same task run, newer generation).
+  await until(() => sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.some((x) => x.kind === "generation.started" && (x.body as Record<string, unknown>)["taskRunId"] === g.taskRunId && Number((x.body as Record<string, unknown>)["generation"]) > 1), 8000, "repair gen started");
+  main.settle("succeeded", "repaired work");
+  await until(() => sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.some((x) => x.kind === "gate.candidate" && (x.body as Record<string, unknown>)["taskRunId"] === g.taskRunId && (x.body as { candidate?: { candidateId?: string } }).candidate?.candidateId === "candidate-2"), 8000, "round-2 candidate");
+  // Round-2 review runs on the same reviewer identity (new execution): approve → passed.
+  await until(() => byAgent(reviewerId).length > 1, 8000, "reviewer round-2");
+  await byAgent(reviewerId)[1]!.decide(approve("candidate-2"));
+  await until(() => terminals(sup, g.taskRunId).length > 0, 8000, "old terminal");
+  assert.deepEqual(terminals(sup, g.taskRunId), ["passed"]);
+  // Retry SAME frozen-candidate semantics unchanged: candidate-2 still names the old run's content.
+  assert.equal(sup.gateController.inspect(g.taskRunId)?.candidate?.candidateId, "candidate-2");
+  // N then THIRD dispatch/settle in order (positive waits, no time guesses).
+  await until(() => sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.some((x) => x.kind === "generation.started" && (x.body as Record<string, unknown>)["taskRunId"] === newer.taskRunId), 8000, "N started post-pass");
+  const candSeq2 = candSeq ?? 0;
+  const nSeq = sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.find((x) => x.kind === "generation.started" && (x.body as Record<string, unknown>)["taskRunId"] === newer.taskRunId)?.seq ?? 0;
+  assert.ok(nSeq > candSeq2, "N must start after candidate capture");
+  const oldTerminalSeq = sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.find((x) => x.kind === "task.terminal" && (x.body as Record<string, unknown>)["taskRunId"] === g.taskRunId)?.seq ?? 0;
+  assert.ok(oldTerminalSeq > 0, "OLD task.terminal must exist");
+  assert.ok(nSeq > oldTerminalSeq, "N must start after OLD task.terminal (not just candidate)");
+  main.settle("succeeded", "newer done");
+  await until(() => terminals(sup, newer.taskRunId!).length > 0, 8000, "N terminal");
+  await until(() => sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.some((x) => x.kind === "generation.started" && (x.body as Record<string, unknown>)["taskRunId"] === third.taskRunId), 8000, "third started");
+  main.settle("succeeded", "third done");
+  await until(() => terminals(sup, third.taskRunId!).length > 0, 8000, "third terminal");
+  assert.deepEqual(terminals(sup, third.taskRunId), ["succeeded"]);
+  // Supplemental only (not the lifecycle proof): direct stale GateHost call preserves ACTUAL phase/currentTask.
+  // (The real Gate.applyDecision stale path is evidenced by baseline debug runs; post-H1 it is unreachable
+  // without terminal, so the tracked proof is the full legit drain above plus this invariance.)
+  const actualBefore = actualState(sup, g.agentId);
+  await assert.rejects(async () => sup.startRepairExecution(g.agentId, g.taskRunId, "stale criticism"), /STALE_GENERATION/);
+  const actualAfter = actualState(sup, g.agentId);
+  assert.deepEqual(actualAfter, actualBefore, "stale repair must not mutate actual phase/currentTask");
+  const phasesBefore = sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.filter((x) => x.kind === "task.phase").map((x) => `${x.seq}:${String((x.body as Record<string, unknown>)["taskRunId"]).slice(0, 8)}:${(x.body as Record<string, unknown>)["phase"]}`);
+  const phasesAfter = sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.filter((x) => x.kind === "task.phase").map((x) => `${x.seq}:${String((x.body as Record<string, unknown>)["taskRunId"]).slice(0, 8)}:${(x.body as Record<string, unknown>)["phase"]}`);
+  assert.deepEqual(phasesAfter, phasesBefore, "stale repair must append no task.phase");
+  await sup.shutdown();
+});
 
 test("retry_review and bypass runs publish their own outcomes; results keep the deliverable", async () => {
   const { sup, byAgent } = mkSup({ policy: (p) => { p.gateBypassAllowed = true; } });

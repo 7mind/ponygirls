@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import {
   generateToken,
   hashToken,
+  isCanonicalToken,
   matchDigest,
   readDigestFile,
   readTokenFile,
@@ -65,6 +66,77 @@ describe("token codec", () => {
     await assert.rejects(readDigestFile(path.join(dir, "upper")), TokenFault);
     await writeFile(path.join(dir, "short"), "abc");
     await assert.rejects(readDigestFile(path.join(dir, "short")), TokenFault);
+    // C2: raw high-bit alias 0xE6->'f' rejected; two-LF rejected; exact + one LF accepted.
+    const { writeFile: _wfb } = await import("node:fs/promises");
+    const alias = Buffer.from("f".repeat(64), "ascii");
+    alias[0] = 0xe6;
+    await _wfb(path.join(dir, "alias"), alias);
+    await assert.rejects(readDigestFile(path.join(dir, "alias")), TokenFault);
+    await _wfb(path.join(dir, "alias-lf"), Buffer.concat([alias, Buffer.from("\n")]));
+    await assert.rejects(readDigestFile(path.join(dir, "alias-lf")), TokenFault);
+    await _wfb(path.join(dir, "two-lf"), "a".repeat(64) + "\n\n");
+    await assert.rejects(readDigestFile(path.join(dir, "two-lf")), TokenFault);
+  });
+  // regression: issue7 — non-canonical base64url must be rejected on every boundary.
+  it("rejects non-canonical pad-bit aliases on file, hash, and auth boundaries", async () => {
+    const malformed = "A".repeat(42) + "B";
+    // Proves non-canonical: decodes to 32 bytes whose re-encode differs.
+    const decoded = Buffer.from(malformed, "base64url");
+    assert.equal(decoded.length, 32);
+    assert.equal(decoded.toString("base64url"), "A".repeat(43));
+    assert.equal(isCanonicalToken(malformed), false);
+    assert.equal(isCanonicalToken("A".repeat(43)), true);
+    assert.equal(isCanonicalToken(generateToken()), true);
+    assert.throws(() => hashToken(malformed), TokenFault);
+    // No credential bytes in the fault.
+    try {
+      hashToken(malformed);
+      assert.fail("expected TokenFault");
+    } catch (e) {
+      assert.ok(e instanceof TokenFault);
+      assert.ok(!(e as Error).message.includes(malformed));
+    }
+    const dir = await mkdtemp(path.join(os.tmpdir(), "haystack-noncanon-"));
+    await writeFile(path.join(dir, "bad"), malformed + "\n");
+    await assert.rejects(readTokenFile(path.join(dir, "bad")), TokenFault);
+    await writeFile(path.join(dir, "bad-nolf"), malformed);
+    await assert.rejects(readTokenFile(path.join(dir, "bad-nolf")), TokenFault);
+    // Direct credential with terminator is rejected (no terminator on the wire).
+    assert.throws(() => hashToken(malformed + "\n"), TokenFault);
+  });
+  // regression: Node ascii decoding strips high bits, so raw bytes need byte-level checks.
+  it("rejects raw-byte aliases, controls, and terminal-LF direct presentations", async () => {
+    const { writeFile: writeRaw } = await import("node:fs/promises");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "haystack-raw-"));
+    const good = generateToken();
+    // Canonical positive: exact bytes and one final LF only.
+    await writeRaw(path.join(dir, "exact"), good);
+    assert.equal(await readTokenFile(path.join(dir, "exact")), good);
+    await writeRaw(path.join(dir, "lf"), good + "\n");
+    assert.equal(await readTokenFile(path.join(dir, "lf")), good);
+    // High-bit alias: first byte 0xC1 decodes via ascii to 'A' but must be rejected.
+    const alias = Buffer.from(good, "ascii");
+    alias[0] = 0xc1;
+    await writeRaw(path.join(dir, "alias"), alias);
+    await assert.rejects(readTokenFile(path.join(dir, "alias")), TokenFault);
+    // High-bit trailing byte.
+    const alias2 = Buffer.from(good, "ascii");
+    alias2[42] = 0x80;
+    await writeRaw(path.join(dir, "alias2"), alias2);
+    await assert.rejects(readTokenFile(path.join(dir, "alias2")), TokenFault);
+    // Control byte (0x01) and DEL (0x7f) rejected without leaking bytes.
+    const ctrl = Buffer.from(good, "ascii");
+    ctrl[5] = 0x01;
+    await writeRaw(path.join(dir, "ctrl"), ctrl);
+    await assert.rejects(readTokenFile(path.join(dir, "ctrl")), TokenFault);
+    const del = Buffer.from(good, "ascii");
+    del[5] = 0x7f;
+    await writeRaw(path.join(dir, "del"), del);
+    await assert.rejects(readTokenFile(path.join(dir, "del")), TokenFault);
+    // Direct presentations with LF/space rejected.
+    assert.throws(() => hashToken(good + "\n"), TokenFault);
+    assert.throws(() => hashToken(good + " "), TokenFault);
+    assert.equal(isCanonicalToken(good + "\n"), false);
   });
 });
 
@@ -146,5 +218,30 @@ describe("static config", () => {
       }),
       /assigned twice/,
     );
+  });
+  // regression: bad presentations return null (401), never throw (500).
+  it("returns null for non-canonical and malformed presentations", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "haystack-authnull-"));
+    const good = generateToken();
+    const digest = createHash("sha256").update(good, "ascii").digest("hex");
+    const file = path.join(dir, "good.sha");
+    await writeFile(file, digest + "\n");
+    const auth = await loadAuth({
+      activityProjectId: "a",
+      users: [{ id: "alice", type: "human", displayName: "alice", tokens: [{ id: "t", hashFile: file }] }],
+      cookieSecure: false,
+      allowedHosts: [],
+      allowedOrigins: [],
+    });
+    // Positive still authenticates.
+    assert.ok(auth.authenticate(good));
+    // Non-canonical alias, short, terminator, empty, and high-bit alias all null.
+    assert.equal(auth.authenticate("A".repeat(42) + "B"), null);
+    assert.equal(auth.authenticate("short"), null);
+    assert.equal(auth.authenticate(good + "\n"), null);
+    assert.equal(auth.authenticate(""), null);
+    assert.equal(auth.authenticate("A".repeat(43).slice(0, 42) + "\u00c1"), null);
+    // Unknown canonical token also null (not throw).
+    assert.equal(auth.authenticate(generateToken()), null);
   });
 });
