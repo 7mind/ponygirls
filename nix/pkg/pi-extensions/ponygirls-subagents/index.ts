@@ -11,7 +11,7 @@ import { Type, type TSchema } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { FileRunStore } from "./src/store.ts";
-import { Supervisor, type CallerId } from "./src/supervisor.ts";
+import { Supervisor, TOOL_RESULT_MAX, type CallerId } from "./src/supervisor.ts";
 import type { GateSpecInput } from "./src/gate.ts";
 import { instructionsFromPromptOptions, parseSelection } from "./src/instructions.ts";
 import { defaultSupervisorPolicy, type SupervisorPolicy } from "./src/policy.ts";
@@ -33,7 +33,6 @@ const SCREEN_POLL_MS = 500;
 const NOTICE_BATCH = 20;
 const NOTICE_TEXT_MAX = 48_000;
 const STATUS_THROTTLE_MS = 250;
-const TOOL_RESULT_MAX = 24_000;
 const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "src", "worker.ts");
 
 function agentBaseDir(): string {
@@ -217,7 +216,7 @@ export default function (pi: ExtensionAPI): void {
       executionMode: "sequential",
       async execute(toolCallId, params, _signal, _onUpdate, ctx) {
         try {
-          const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; base_commit?: string; workspace_path?: string; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput };
+          const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; base_commit?: string; workspace_path?: string; result_limit?: number; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput };
           return ok(await governing(ctx).supervisor.spawn(caller, {
             taskName: p.task_name,
             message: p.message,
@@ -226,6 +225,7 @@ export default function (pi: ExtensionAPI): void {
             repoId: p.repo_id ?? null,
             baseCommit: p.base_commit ?? null,
             workspacePath: p.workspace_path ?? null,
+            resultLimit: p.result_limit ?? null,
             skills: parseSelection(params as Record<string, unknown>, "skills"),
             contextFiles: parseSelection(params as Record<string, unknown>, "context_files"),
             model: p.model ?? null,
@@ -282,11 +282,14 @@ export default function (pi: ExtensionAPI): void {
     defineTool({
       name: "read_agent",
       label: "Read subagent",
-      description: "Read a subagent's status, a task result (deliverable text plus outcome detail; latest run unless task_run_id names an earlier one), or a bounded page of its events after a cursor.",
+      description: "Read a subagent's status, a task result (deliverable text plus outcome detail; latest run unless task_run_id names an earlier one), or a bounded page of its events after a cursor. A result reply holds one page of the retained text from offset: totalLength is the retained length, nextOffset continues it (null at the end), and truncated says the agent wrote more than its result_limit kept.",
       parameters: readParameters<TSchema>(Type),
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
         try {
-          const p = params as { target: string; view: "status" | "result" | "events"; task_run_id?: string; cursor?: number; limit?: number };
+          const p = params as { target: string; view: "status" | "result" | "events"; task_run_id?: string; cursor?: number; limit?: number; offset?: number; length?: number };
+          if (p.view === "result") {
+            return ok(governing(ctx).supervisor.readResult(caller, p.target, p.task_run_id ?? null, { offset: p.offset ?? 0, length: p.length ?? null }, p.cursor ?? 0));
+          }
           return ok(governing(ctx).supervisor.read(caller, p.target, p.view, p.cursor ?? 0, p.limit ?? 20, p.task_run_id ?? null));
         } catch (e) {
           return failed(e);

@@ -120,6 +120,43 @@ dirty/untracked files and explicit promised outputs (content and mode);
 exceeding the file cap fails closed instead of silently partial.
 - Git required for writer worktrees.
 
+## Results
+
+A task run's result is the final assistant text of its last generation.
+
+- **Retention.** By default the first 8,000 characters are kept. `spawn_agent`
+  takes `result_limit` (characters, an integer from 8,000 to 524,288) to
+  keep more for every task run of that agent; a value outside that range is
+  refused with `INVALID`, never clamped. The maximum is four times a
+  128 KiB structured report and bounds one retained result to 1.5 MiB of
+  UTF-8. Gate reviewers and gate candidates use the first 8,000 characters
+  whatever the limit.
+- **Reading.** `read_agent view=result` returns one page of the retained
+  text: `offset` (characters, default 0) and optional `length` select it;
+  the reply states `totalLength` (retained characters), `offset`,
+  `nextOffset` (`null` at the end), `truncated`, and `resultLimit`. A reply
+  never exceeds one tool result (24,000 characters of JSON): a page is cut
+  to fit and `nextOffset` continues it, so reading until `nextOffset` is
+  `null` yields the whole retained text. An `offset` beyond `totalLength`
+  is `INVALID`. Offsets count UTF-16 code units, as JavaScript strings do.
+- **Truncation is stated.** `truncated` is `true` when the agent wrote more
+  than was retained (its text exceeded `resultLimit`, or a large text could
+  not be handed over; the latter also leaves a `recovery.event` with phase
+  `result_handoff_failed`). For results journaled before lengths were
+  recorded it is `true` when the retained text fills the limit.
+- **Storage and recovery.** The journal's `generation.settled` record keeps
+  the first 8,000 characters (`text`) and the written length (`textLength`).
+  A longer retained text is a side file,
+  `results/<agentId>/result-<taskRunId>-<generation>.txt` in the root store,
+  referenced from that record as `result` (`file`, `bytes`, `sha256`). The
+  worker hands such a text over as a synchronized file in the agent's
+  session directory, checked against its digest, because one IPC payload
+  is capped at 256 KiB. After a restart the reference is replayed and the
+  file is validated on every read; a missing or altered file fails that
+  read with `RECOVERY_CORRUPT` instead of returning the shorter journaled
+  text. Journals without these fields replay with the 8,000-character
+  limit. Result files are kept until the root store is removed.
+
 ## Root lifetime and storage
 
 One supervisor per governing pi session. Durable state lives in
@@ -228,7 +265,7 @@ counts.
 - **No manual approvals.** Every child tool call is decided by grants
   alone: a granted call runs, anything else fails with `POLICY_DENIED`.
   There is no `ask` setting or approval mechanism.
-- **No diff view.** `read_agent` returns status, results, and events; a
+- **No diff view.** `read_agent` returns status, paged results, and events; a
   worktree writer's changes are inspected with `git -C <workdir> diff`.
 - **Transcripts show what the session file holds.** Text being generated
   streams into the view; thinking and tool calls appear when their message

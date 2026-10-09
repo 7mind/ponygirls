@@ -113,6 +113,8 @@ export interface AgentRecord {
   instructionHash: string;
   policyRevision: number;
   model: ResolvedModel | null;
+  /** Characters of a task run's final text retained as its result (RESULT_TEXT_MAX unless raised at spawn). */
+  resultLimit: number;
   currentTaskRunId: TaskRunId | null;
   executionGeneration: number;
   pendingTaskIds: TaskRunId[];

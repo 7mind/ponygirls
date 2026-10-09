@@ -21,6 +21,15 @@ export const CHILD_CONTROL_TOOLS = ["send_message", "wait_agent", "list_agents",
 /** Control tools a child holds only when it may delegate. */
 export const DELEGATION_TOOLS = ["spawn_agent", "interrupt_agent", "close_agent"] as const;
 
+/** Characters of a settled generation's final text kept as its result unless the agent was spawned with a larger result_limit. */
+export const RESULT_TEXT_MAX = 8000;
+/**
+ * Largest result_limit (characters): four times a 128 KiB structured report,
+ * and at most 1.5 MiB of UTF-8 per retained result (kept in a store side
+ * file, never in a journal record or an IPC payload).
+ */
+export const RESULT_TEXT_HARD_MAX = 512 * 1024;
+
 export const BASH_DEFAULT_TIMEOUT_MS = 120_000;
 /** read: at most this many lines and bytes per call (pi's own limits), continued with offset. */
 const READ_DEFAULT_LINES = 2000;
@@ -158,7 +167,7 @@ export function childToolSpec<S>(T: TypeBuilder<S>, name: string): ToolSpec<S> {
     case "list_agents":
       return { description: "List the agents visible to you (your parent and your subtree).", parameters: T.Object({}) };
     case "read_agent":
-      return { description: "Read status, the latest result, or bounded events of a visible agent.", parameters: readParameters(T) };
+      return { description: "Read status, a result (one page of its retained text from offset; totalLength, nextOffset, and truncated say what is left or was cut), or bounded events of a visible agent.", parameters: readParameters(T) };
     case "spawn_agent":
       return {
         description: "Delegate a task to a new child agent in your subtree. Returns immediately with its id and task-run id; use wait_agent to join it. You must wait for (or close) your children before finishing. A child is never less isolated than you; it can receive only skills and context files you have.",
@@ -184,6 +193,7 @@ export function spawnParameters<S>(T: TypeBuilder<S>, extra: Record<string, S>):
     })),
     repo_id: T.Optional(T.String({ description: "Registered repository id (sandbox only; required for sandboxed writers)" })),
     base_commit: T.Optional(T.String({ description: "Commit a worktree/sandbox writer starts from (default HEAD; required when the checkout is dirty)" })),
+    result_limit: T.Optional(T.Integer({ description: `Characters of the child's final text kept as each task run's result (default ${RESULT_TEXT_MAX}, at most ${RESULT_TEXT_HARD_MAX}; outside that range is refused); read a long result page by page with read_agent offset` })),
     skills: T.Optional(T.Array(T.String(), { description: "Names of your skills to pass to the child (omitted: none)" })),
     all_skills: T.Optional(T.Boolean({ description: "Pass every skill you have (instead of listing skills)" })),
     context_files: T.Optional(T.Array(T.String(), { description: "Paths of your context files (AGENTS.md and the like, as shown in your project context) to pass to the child (omitted: none)" })),
@@ -222,6 +232,8 @@ export function readParameters<S>(T: TypeBuilder<S>): S {
     target: T.String(),
     view: T.Union([T.Literal("status"), T.Literal("result"), T.Literal("events")]),
     task_run_id: T.Optional(T.String({ description: "result view: a specific earlier task run (default: the latest)" })),
+    offset: T.Optional(T.Integer({ minimum: 0, description: "result view: character offset into the retained text (default 0); continue with the reply's nextOffset until it is null" })),
+    length: T.Optional(T.Integer({ minimum: 1, description: "result view: at most this many characters in this reply (default: as many as fit one reply)" })),
     cursor: T.Optional(T.Integer({ minimum: 0 })),
     limit: T.Optional(T.Integer({ minimum: 1, maximum: 100 })),
   });

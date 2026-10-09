@@ -72,6 +72,20 @@ for (const [name, factory] of [["file", fileFactory()], ["memory", memFactory()]
     store.close();
   });
 
+  test(`[${name}] a saved result text loads back by its reference, per task run and generation`, () => {
+    const { store } = factory();
+    const text = "résultat — 結果\n".repeat(4000);
+    const ref = store.saveResult("a", "t-1", 1, text);
+    const other = store.saveResult("a", "t-1", 2, "second generation");
+    assert.equal(ref.bytes, Buffer.byteLength(text, "utf8"));
+    assert.equal(store.loadResult("a", ref), text);
+    assert.equal(store.loadResult("a", other), "second generation");
+    assert.throws(() => store.loadResult("a", { ...ref, sha256: other.sha256 }), /RECOVERY_CORRUPT/);
+    assert.throws(() => store.loadResult("a", { ...ref, file: "result-missing.txt" }), /RECOVERY_CORRUPT/);
+    assert.equal(store.durableSeq(), 0, "result texts are kept beside the journal, not in it");
+    store.close();
+  });
+
   test(`[${name}] checkpoint validation rejects tampered bytes`, () => {
     const { store } = factory();
     const b = new TextEncoder().encode("good-bytes");
@@ -220,6 +234,20 @@ test("[file] a published checkpoint whose files are gone or damaged fails loadin
   assert.throws(() => new FileRunStore(dir, "root-j").loadCheckpoint("a"), /RECOVERY_CORRUPT/);
   rmSync(join(dir, "checkpoints", "a"), { recursive: true, force: true });
   assert.throws(() => new FileRunStore(dir, "root-j").loadCheckpoint("a"), /RECOVERY_CORRUPT/);
+});
+
+test("[file] a result text whose file is gone or damaged fails loading; a reopened store still loads an intact one", () => {
+  const dir = mkdtempSync(join(tmpdir(), "subagents-resmissing-"));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = new FileRunStore(dir, "root-j");
+  const kept = store.saveResult("a", "t-1", 1, "kept text");
+  const lost = store.saveResult("a", "t-2", 1, "lost text");
+  assert.equal(new FileRunStore(dir, "root-j").loadResult("a", kept), "kept text");
+  writeFileSync(join(dir, "results", "a", lost.file), "damaged");
+  assert.throws(() => store.loadResult("a", lost), /RECOVERY_CORRUPT/);
+  rmSync(join(dir, "results", "a", lost.file));
+  assert.throws(() => store.loadResult("a", lost), /RECOVERY_CORRUPT/);
+  assert.equal(store.loadResult("a", kept), "kept text");
 });
 
 test("root lock: a crashed owner's lock is reacquired; a live owner's is refused", async () => {

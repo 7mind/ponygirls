@@ -328,7 +328,7 @@ function assistantWithTools(calls: Array<{ id: string; name: string; args: Recor
   };
 }
 
-async function deterministicWorker(dir: string, script: Array<Record<string, unknown>>, onTool: (tool: string) => Promise<{ content: string; isError: boolean }>): Promise<{ handle: WorkerHandle; events: WorkerEvent[] }> {
+async function deterministicWorker(dir: string, script: Array<Record<string, unknown>>, onTool: (tool: string) => Promise<{ content: string; isError: boolean }>, init: Record<string, unknown> = {}): Promise<{ handle: WorkerHandle; events: WorkerEvent[] }> {
   const { bindChannel } = await import("../src/protocol.ts");
   const events: WorkerEvent[] = [];
   const handle = new WorkerHandle({
@@ -339,7 +339,7 @@ async function deterministicWorker(dir: string, script: Array<Record<string, unk
     deterministic: true,
     agentDir: join(dir, "worker-home"),
     sessionsDir: join(dir, "sessions"),
-    script: script as Array<{ text?: string; tool?: string; args?: Record<string, unknown> }>,
+    script: script as Array<{ text?: string; repeat?: number; tool?: string; args?: Record<string, unknown> }>,
   }, bindChannel("epoch-x", "agent-x", "instance-x"));
   handle.setEventHandler((e) => events.push(e));
   handle.setToolRequestHandler(async (payload) => onTool(payload.tool));
@@ -356,6 +356,7 @@ async function deterministicWorker(dir: string, script: Array<Record<string, unk
     readRoots: [dir],
     writable: false,
     tools: ["read"],
+    ...init,
   }, { taskRunId: "task-1", generation: 1, timeoutMs: 60_000 })) as { ok?: boolean };
   assert.equal(ack.ok, true);
   return { handle, events };
@@ -399,6 +400,51 @@ test("real worker: cache and reasoning tokens are reported apart from the input 
     const settled = await untilEvent(events, (e) => e.kind === "settled");
     // One scripted request: 10 uncached + 3 cache-read + 2 cache-write input tokens; 5 output tokens, 1 of them reasoning.
     assert.deepEqual(settled.detail["usage"], { input: 15, output: 5, cacheRead: 3, cacheWrite: 2, reasoning: 1, cost: 0, unknown: false });
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: without a result limit the final text is cut at the default bound and its full length reported", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; default result bound check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-resdef-"));
+  const { handle, events } = await deterministicWorker(dir, [{ text: "0123456789", repeat: 900 }], async () => ({ content: "", isError: false }));
+  try {
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    assert.equal(String(settled.detail["lastAssistantText"]).length, 8000);
+    assert.equal(settled.detail["textLength"], 9000);
+    assert.equal(settled.detail["resultFile"], null);
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: a final text larger than the IPC payload cap is handed over as a synchronized file", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; result file handoff check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-resfile-"));
+  // 400,000 characters (over the 256 KiB payload cap), of which 300,000 are retained.
+  const { handle, events } = await deterministicWorker(dir, [{ text: "0123456789", repeat: 40_000 }], async () => ({ content: "", isError: false }), { resultLimit: 300_000 });
+  try {
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    assert.equal(settled.detail["status"], "succeeded");
+    assert.equal(String(settled.detail["lastAssistantText"]).length, 8000);
+    assert.equal(settled.detail["textLength"], 400_000);
+    const file = settled.detail["resultFile"] as { path: string; byteCount: number; sha256: string };
+    assert.ok(file.path.startsWith(join(dir, "sessions", "agent-x")), `result file ${file.path} lies outside the agent's session directory`);
+    const { readFileSync } = await import("node:fs");
+    const { createHash } = await import("node:crypto");
+    const bytes = readFileSync(file.path);
+    assert.equal(bytes.toString("utf8"), "0123456789".repeat(30_000));
+    assert.equal(bytes.length, file.byteCount);
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), file.sha256);
   } finally {
     handle.kill();
     rmSync(dir, { recursive: true, force: true });
