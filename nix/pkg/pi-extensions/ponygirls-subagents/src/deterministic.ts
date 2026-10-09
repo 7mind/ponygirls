@@ -36,9 +36,10 @@ function usage(): Record<string, unknown> {
   return {
     input: 10,
     output: 5,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 15,
+    cacheRead: 3,
+    cacheWrite: 2,
+    reasoning: 1,
+    totalTokens: 20,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
 }

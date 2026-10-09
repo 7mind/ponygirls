@@ -214,7 +214,7 @@ test("a reviewer stopped after its decision keeps the usage it reported", async 
   await byAgent(reviewerId)[0]!.decide(approve("candidate-1"));
   await tick();
   const usage = sup.list("governor").find((v) => v.id === reviewerId)!.usage;
-  assert.deepEqual(usage, { inputTokens: 3, outputTokens: 2, cost: 0.01, unknown: false });
+  assert.deepEqual(usage, { inputTokens: 3, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost: 0.01, unknown: false });
 });
 
 test("an invalid decision ends the review: the reviewer stops and the detail names the defect once", async () => {

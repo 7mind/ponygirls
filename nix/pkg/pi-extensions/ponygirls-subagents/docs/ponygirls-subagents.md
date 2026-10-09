@@ -86,6 +86,28 @@ the turn boundary while the root runs, queued for the next user turn while
 it is idle (no idle-root inference). The footer status shows the tree
 counts.
 
+## Usage accounting
+
+`usage` in `list_agents` / `read_agent` (per agent) carries `inputTokens`,
+`outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `reasoningTokens`,
+`cost`, and `unknown`; the root keeps the same totals over all agents.
+
+- `inputTokens` is the whole prompt as pi reports it per request: uncached
+  input plus cache-read plus cache-write tokens. `cacheReadTokens` and
+  `cacheWriteTokens` are its two cached parts, so uncached input is
+  `inputTokens - cacheReadTokens - cacheWriteTokens`.
+- `reasoningTokens` is the part of `outputTokens` spent on reasoning (pi's
+  `Usage.reasoning`), summed over the requests whose provider reported that
+  breakdown. It is `null` while no request has reported one, never zero.
+- `cost` is `null` until a provider reports one. A generation whose usage
+  never arrived (worker lost, run closed mid-flight) sets `unknown`; the
+  counters then hold what was reported, not the whole spend.
+- The journal records each generation as `usage.reported` with `input`,
+  `output`, `cacheRead`, `cacheWrite`, `reasoning`, `cost`, `unknown`.
+  Records written before the cache and reasoning counters existed replay
+  with zero cache tokens and no reasoning breakdown; they do not set
+  `unknown`.
+
 ## Recovery diagnostics
 
 - Attaching a session whose journal holds unfinished runs runs recovery

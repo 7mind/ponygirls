@@ -43,7 +43,7 @@ export interface ToolRequest {
   args: Record<string, unknown>;
   toolCallId: string;
   /** The generation's provider usage up to this call (worker-reported). */
-  usage: { input: number; output: number; cost: number | null; unknown: boolean } | null;
+  usage: { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number | null; cost: number | null; unknown: boolean } | null;
 }
 
 export type ToolRequestHandler = (payload: ToolRequest, envelope: IpcEnvelope) => Promise<{ content: string; isError: boolean }>;
