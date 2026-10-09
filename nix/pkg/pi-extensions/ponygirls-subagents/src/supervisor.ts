@@ -1523,6 +1523,12 @@ export class Supervisor implements GateHost {
     this.publish("usage.reported", { agentId: record.id, taskRunId: run.taskRunId, generation: run.generation, ...accounted });
     record.observed = "settled";
     record.outcome = outcome;
+    // Guard admission: lock queued tasks before releasing capacity so a newer
+    // task cannot start before the old gated candidate is captured. The
+    // continuation re-asserts this phase (or overwrites it on interrupt/fail).
+    if (rt.gateTaskRunId === run.taskRunId && outcome === "succeeded" && !this.terminalRuns.has(run.taskRunId)) {
+      record.taskPhase = "candidate_recording";
+    }
     rt.activeRun = null;
     rt.lastText = { taskRunId: run.taskRunId, text: text.slice(0, RESULT_TEXT_MAX) };
     rt.usageSnapshot = null;
@@ -2692,11 +2698,14 @@ export class Supervisor implements GateHost {
     return this.now();
   }
 
-  setTaskPhase(agentId: AgentId, phase: TaskPhase): void {
+  setTaskPhase(agentId: AgentId, expectedTaskRunId: TaskRunId, phase: TaskPhase): void {
     const rt = this.agents.get(agentId);
     if (!rt) return;
+    // Ownership fence: a stale gate path must not retarget a newer taskphase.
+    // Valid STALE guard is preserved (throw, never silent retarget).
+    if (rt.record.currentTaskRunId !== expectedTaskRunId) throw err("STALE_GENERATION", "phase targets a superseded task run");
     rt.record.taskPhase = phase;
-    this.publish("task.phase", { agentId, taskRunId: rt.record.currentTaskRunId, phase });
+    this.publish("task.phase", { agentId, taskRunId: expectedTaskRunId, phase });
   }
 
   settleGatedTask(agentId: AgentId, taskRunId: TaskRunId, outcome: string, detail: string): void {
@@ -2949,26 +2958,33 @@ export class Supervisor implements GateHost {
   }
 
   workspaceMatches(agentId: AgentId, candidate: CandidateRecord): boolean {
-    const current = this.fingerprintWorkspace(agentId, []);
     const a = candidate.fingerprint;
+    // Re-fingerprint with the candidate's promised set so promised content/mode drift is detected.
+    const promisedPaths = a.textOnly ? [] : a.files.filter((f) => f.kind === "promised" || f.kind === "missing-promised").map((f) => f.path);
+    const current = this.fingerprintWorkspace(agentId, promisedPaths);
     if (a.textOnly !== current.textOnly) return false;
     if (a.textOnly) return a.textHash === current.textHash;
     if (a.baseCommit !== current.baseCommit) return false;
-    const promised = new Set(a.files.filter((f) => f.kind === "promised" || f.kind === "missing-promised").map((f) => f.path));
-    const recorded = a.files.filter((f) => !promised.has(f.path));
-    if (recorded.length !== current.files.length) return false;
-    const prev = new Map(recorded.map((f) => [f.path, f.hash]));
-    return current.files.every((f) => prev.get(f.path) === f.hash);
+    if (a.files.length !== current.files.length) return false;
+    const prev = new Map(a.files.map((f) => [f.path, `${f.mode}\0${f.hash}`]));
+    return current.files.every((f) => prev.get(f.path) === `${f.mode}\0${f.hash}`);
   }
 
-  async runCheck(agentId: AgentId, check: NormalizedGateCheck): Promise<{ exitCode: number | null; output: string }> {
+  async runCheck(agentId: AgentId, expectedTaskRunId: TaskRunId, check: NormalizedGateCheck): Promise<{ exitCode: number | null; output: string }> {
     const rt = this.agents.get(agentId);
     if (!rt) throw err("NOT_FOUND", `agent ${agentId} unknown`);
     const writable = rt.record.allocation.writableRoot;
     if (!writable) throw err("INVALID", "checks require a writer workspace");
+    // Admission fence (before intent): expected run must still be current and nonterminal.
+    // Already-dispatched checks keep their OLD binding (no logical cancellation of effects
+    // without executor abort proof); NEW obsolete checks are prohibited here.
+    // Valid STALE guard is preserved (throw, caught per-check as evidence, never silent execution on N).
+    if (rt.record.currentTaskRunId !== expectedTaskRunId) throw err("STALE_GENERATION", "check targets a superseded task run");
+    if (this.terminalRuns.has(expectedTaskRunId)) throw err("STALE_GENERATION", "check targets a terminal task run");
+    if (this.gate.inspect(expectedTaskRunId)?.terminal) throw err("STALE_GENERATION", "check targets a terminal gated run");
     const result = await this.broker.runControllerCheck({
       agentId,
-      taskRunId: rt.record.currentTaskRunId,
+      taskRunId: expectedTaskRunId,
       generation: rt.record.executionGeneration,
       sandbox: this.sandboxOf(rt.record, [writable]),
       command: check.command,

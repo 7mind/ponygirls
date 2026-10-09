@@ -130,11 +130,13 @@ export interface GateHost {
   startRepairExecution(mainAgentId: AgentId, taskRunId: TaskRunId, criticism: string): void;
   cancelReviewer(reviewerId: AgentId): Promise<void>;
   fingerprintWorkspace(agentId: AgentId, promisedOutputs: string[]): WorkspaceFingerprint;
-  runCheck(agentId: AgentId, check: NormalizedGateCheck): Promise<{ exitCode: number | null; output: string }>;
+  /** Check execution carries the EXPECTED task run: admission verifies identity/nonterminal before intent/execution. */
+  runCheck(agentId: AgentId, expectedTaskRunId: TaskRunId, check: NormalizedGateCheck): Promise<{ exitCode: number | null; output: string }>;
   settleGatedTask(agentId: AgentId, taskRunId: TaskRunId, outcome: string, detail: string): void;
   /** A linked retry/bypass run becomes the agent's current task run. */
   beginLinkedRun(agentId: AgentId, taskRunId: TaskRunId): void;
-  setTaskPhase(agentId: AgentId, phase: TaskPhase): void;
+  /** Phase mutation carries the EXPECTED task run: mismatched current task rejects (STALE) instead of retargeting. */
+  setTaskPhase(agentId: AgentId, expectedTaskRunId: TaskRunId, phase: TaskPhase): void;
   workspaceMatches(agentId: AgentId, candidate: CandidateRecord): boolean;
   quiescent(agentId: AgentId): boolean;
   nowIso(): string;
@@ -406,7 +408,7 @@ export class GateController {
         this.terminate(task, "review_limit_reached", `round ${round} exceeds maxRounds ${task.spec.maxRounds}`);
         return;
       }
-      this.host.setTaskPhase(agentId, "review_queued");
+      this.host.setTaskPhase(agentId, taskRunId, "review_queued");
     } catch (e) {
       this.terminate(task, "gate_error", `candidate recording failed: ${(e as Error).message}`);
       return;
@@ -420,8 +422,10 @@ export class GateController {
       if (task.terminal) return;
       const evidence: Array<{ id: string; exitCode: number | null; output: string }> = [];
       for (const check of task.spec.checks) {
+        // Revalidate termination between awaits so an obsolete check never executes on (or phases) a newer run.
+        if (task.terminal) return;
         try {
-          const res = await this.host.runCheck(task.agentId, check);
+          const res = await this.host.runCheck(task.agentId, task.taskRunId, check);
           evidence.push({ id: check.id, exitCode: res.exitCode, output: res.output.slice(0, 4000) });
         } catch (e) {
           evidence.push({ id: check.id, exitCode: null, output: `check failed to run: ${(e as Error).message}` });
@@ -442,7 +446,7 @@ export class GateController {
       if (task.terminal) return;
       if (!task.reviewerId) throw err("NOT_FOUND", "no managed reviewer identity linked to this gated task");
       task.review = { reviewId: `review-${task.roundsAdmitted}`, status: "running", candidateId: task.candidate!.candidateId, decisionUsed: false };
-      this.host.setTaskPhase(task.agentId, "reviewing");
+      this.host.setTaskPhase(task.agentId, task.taskRunId, "reviewing");
       const prompt = this.buildReviewPrompt(task, evidence, evidence.some((e) => e.exitCode !== 0));
       this.host.startReviewerExecution(task.reviewerId, { taskRunId: task.taskRunId, reviewId: task.review.reviewId, candidateId: task.candidate!.candidateId, prompt });
     } catch (e) {
@@ -595,7 +599,9 @@ export class GateController {
       blockers: decision.blockers.length,
       criticism: criticism.slice(0, 8000),
     });
-    this.host.setTaskPhase(task.agentId, "repair_queued");
+    // Phase ownership stays in the supervisor: startRepairExecution verifies
+    // task identity (STALE_GENERATION) before mutating phase, so an obsolete
+    // repair never retargets a newer taskphase. Do not set phase here.
     // The reservation holds until the repaired candidate is admitted, so a
     // cap decrease that would orphan a queued or running repair is rejected
     // with RESERVED_ROUND_CONFLICT.
@@ -603,9 +609,14 @@ export class GateController {
   }
 
   private async verifyRequiredEvidence(task: GateTaskState): Promise<{ ok: true } | { ok: false; message: string }> {
+    // Approval-time rechecks carry the same binding policy as admission checks.
+    // Reachability note: post-H1, a newer run cannot start during live review,
+    // so rechecks normally still target the reviewed run; terminal/interrupt
+    // between awaits aborts via the per-iteration check below.
     for (const check of task.spec.checks) {
+      if (task.terminal) return { ok: false, message: "task terminated during approval recheck" };
       try {
-        const res = await this.host.runCheck(task.agentId, check);
+        const res = await this.host.runCheck(task.agentId, task.taskRunId, check);
         if (res.exitCode !== 0) {
           return { ok: false, message: `required check ${check.id} failed (exit ${res.exitCode})` };
         }
@@ -709,7 +720,7 @@ export class GateController {
     if (!task.reviewerId) throw err("NOT_FOUND", "no managed reviewer identity linked to this gated task");
     task.review.status = "running";
     task.review.decisionUsed = false;
-    this.host.setTaskPhase(task.agentId, "reviewing");
+    this.host.setTaskPhase(task.agentId, taskRunId, "reviewing");
     this.host.startReviewerExecution(task.reviewerId, { taskRunId, reviewId: task.review.reviewId, candidateId: task.candidate.candidateId, prompt: this.buildReviewPrompt(task, [], false) });
   }
 
@@ -765,7 +776,7 @@ export class GateController {
     task.roundsAdmitted = 1;
     this.host.runStore.append("gate.round_admitted", { agentId: prior.agentId, taskRunId, round: 1, candidateId: task.candidate.candidateId, retryOf: priorTaskRunId });
     this.host.runStore.append("gate.candidate", { agentId: prior.agentId, taskRunId, candidate: task.candidate, resultText: prior.lastResponse.slice(0, 8000) });
-    this.host.setTaskPhase(prior.agentId, "review_queued");
+    this.host.setTaskPhase(prior.agentId, taskRunId, "review_queued");
     void this.runChecksAndReview(task);
     return taskRunId;
   }

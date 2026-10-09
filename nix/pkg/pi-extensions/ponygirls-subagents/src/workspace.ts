@@ -153,11 +153,16 @@ export class GitWorkspaceManager implements WorkspaceManager {
   }
 
   diff(allocation: WorktreeAllocation, maxBytes: number): WorkspaceDiff {
+    if (!existsSync(allocation.worktreePath)) throw err("NOT_FOUND", `workspace missing: ${allocation.worktreePath}`);
+    const committed = committedDelta(allocation.worktreePath, allocation.gitDir, allocation.baseCommit);
     const st = this.workspaceStatus(allocation);
-    const d = worktreeGit(allocation.worktreePath, allocation.gitDir, ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--", "."]);
+    const changed = new Set<string>([...committed.keys(), ...st.changedFiles]);
+    const changedFiles = [...changed].sort();
+    // Base-to-tree diff exposes committed + dirty tracked deltas; untracked files have no diff text.
+    const d = worktreeGit(allocation.worktreePath, allocation.gitDir, ["diff", "--no-ext-diff", "--no-textconv", allocation.baseCommit, "--", "."]);
     if (!d.ok) throw err("WORKSPACE_UNAVAILABLE", d.message);
     const diff = d.out.length > maxBytes ? `${d.out.slice(0, maxBytes)}\n…[truncated]` : d.out;
-    return { baseCommit: allocation.baseCommit, changedFiles: st.changedFiles, diff, truncated: d.out.length > maxBytes };
+    return { baseCommit: allocation.baseCommit, changedFiles, diff, truncated: d.out.length > maxBytes };
   }
 }
 
@@ -169,6 +174,41 @@ function parsePorcelainZ(out: string): Array<{ code: string; path: string }> {
     entries.push({ code: raw.slice(0, 2), path: raw.slice(3) });
   }
   return entries;
+}
+
+/** Symlink identity: opaque SHA256 over the raw readlink bytes (one identity
+ *  domain). A conditional text/hex split aliases raw bytes against a UTF8 target
+ *  whose literal name is that hex, so all targets hash opaquely: `link:<sha256hex>`.
+ *  No target text is recorded. Retains nofollow readlink + full lstat mode. */
+function symlinkHash(full: string): string {
+  const raw = readlinkSync(full, { encoding: "buffer" }) as Buffer;
+  return `link:${createHash("sha256").update(raw).digest("hex")}`;
+}
+
+/** lstat-based existence (no-follow): dangling symlinks exist. */
+function existsNoFollow(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Committed delta base..HEAD as path -> status letter (A/M/D/T). Empty when base is null or HEAD equals base. */
+function committedDelta(worktreePath: string, gitDir: string, baseCommit: string | null): Map<string, string> {
+  const out = new Map<string, string>();
+  if (baseCommit === null) return out;
+  const d = worktreeGit(worktreePath, gitDir, ["diff", "--name-status", "-z", "--no-renames", baseCommit, "HEAD", "--"]);
+  if (!d.ok) throw err("WORKSPACE_UNAVAILABLE", d.message);
+  const parts = d.out.split("\0");
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const status = (parts[i] ?? "").trim();
+    const fp = parts[i + 1] ?? "";
+    if (!status || !fp) continue;
+    out.set(fp, status);
+  }
+  return out;
 }
 
 /** Hand-written dummy sharing the WorkspaceManager contract. */
@@ -217,9 +257,13 @@ export class DummyWorkspaceManager implements WorkspaceManager {
 
 /**
  * Metadata-only candidate fingerprint: path, change kind, mode, content hash
- * for the review scope (tracked changes, untracked files, deletions,
- * symlink targets, promised git-ignored outputs). No per-round file-content
- * archive: unchanged tracked content is identified by the fixed Git base.
+ * for the review scope (allocation base..HEAD committed adds/edits/deletes,
+ * dirty tracked changes, untracked files, deletions, symlink targets
+ * (link + symlink permission bits), promised git-ignored outputs,
+ * full permission modes for regular/special files). No per-round file-content archive:
+ * unchanged tracked content is identified by the fixed Git base plus the
+ * exact resulting content hashes of changed files. Never silently partial:
+ * exceeding maxFiles fails closed instead of truncating the candidate.
  */
 export interface FingerprintFile {
   path: string;
@@ -236,24 +280,73 @@ export function fingerprintWorktree(
 ): { baseCommit: string | null; textOnly: false; textHash: null; files: FingerprintFile[] } {
   const status = worktreeGit(worktree.worktreePath, worktree.gitDir, ["status", "--porcelain=v1", "-z", "-uall", "--no-renames"]);
   if (!status.ok) throw err("WORKSPACE_UNAVAILABLE", status.message);
+  const committed = committedDelta(worktree.worktreePath, worktree.gitDir, baseCommit);
   const files: FingerprintFile[] = [];
-  for (const entry of parsePorcelainZ(status.out)) {
-    if (files.length >= maxFiles) break;
-    const kind = entry.code.includes("D") ? "deleted" : entry.code === "??" ? "untracked" : "modified";
-    files.push(kind === "deleted" ? { path: entry.path, kind, mode: "gone", hash: "deleted" } : describeEntry(worktree.worktreePath, entry.path, kind));
-  }
+  const seen = new Set<string>();
+  const pushFile = (f: FingerprintFile): void => {
+    if (seen.has(f.path)) return;
+    if (files.length >= maxFiles) throw err("PAYLOAD_TOO_LARGE", `candidate exceeds ${maxFiles} files; refusing silently partial fingerprint`);
+    seen.add(f.path);
+    files.push(f);
+  };
+  // Inventory reconciliation: a path appears exactly once. Current physical
+  // content (untracked or promised, including git-ignored replacements) wins
+  // over staged/committed delete descriptors; genuine absence stays deletion.
+  const promisedSet = new Set<string>();
   for (const promised of promisedOutputs) {
     const full = resolve(worktree.worktreePath, promised);
     const rel = relative(worktree.worktreePath, full);
     if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
       throw err("INVALID", `promised output ${promised} lies outside the worktree`);
     }
-    if (files.some((f) => f.path === promised)) continue;
-    if (!existsSync(full)) {
-      files.push({ path: promised, kind: "missing-promised", mode: "gone", hash: "missing" });
+    promisedSet.add(promised);
+  }
+  const statusByPath = new Map<string, string[]>();
+  for (const entry of parsePorcelainZ(status.out)) {
+    const list = statusByPath.get(entry.path);
+    if (list) list.push(entry.code);
+    else statusByPath.set(entry.path, [entry.code]);
+  }
+  for (const [sp, codes] of statusByPath) {
+    if (existsNoFollow(join(worktree.worktreePath, sp))) {
+      const kind = codes.some((c) => c === "??") ? "untracked" : "modified";
+      pushFile(describeEntry(worktree.worktreePath, sp, kind));
+    } else {
+      pushFile({ path: sp, kind: "deleted", mode: "gone", hash: "deleted" });
+    }
+  }
+  // Committed delta base..HEAD: status-described paths already win. Promised
+  // paths defer to the promised pass so ignored replacements keep kind promised.
+  for (const [cp, st] of committed) {
+    if (seen.has(cp) || promisedSet.has(cp)) continue;
+    if (st === "D") {
+      pushFile({ path: cp, kind: "committed-delete", mode: "gone", hash: "deleted" });
       continue;
     }
-    files.push(describeEntry(worktree.worktreePath, promised, "promised"));
+    const kind = st === "A" ? "committed-add" : "committed-edit";
+    if (!existsNoFollow(join(worktree.worktreePath, cp))) {
+      pushFile({ path: cp, kind: "committed-delete", mode: "gone", hash: "deleted" });
+      continue;
+    }
+    pushFile(describeEntry(worktree.worktreePath, cp, kind));
+  }
+  for (const promised of promisedOutputs) {
+    const full = resolve(worktree.worktreePath, promised);
+    if (!existsNoFollow(full)) {
+      if (seen.has(promised)) continue;
+      pushFile({ path: promised, kind: "missing-promised", mode: "gone", hash: "missing" });
+      continue;
+    }
+    const idx = files.findIndex((f) => f.path === promised);
+    if (idx >= 0) {
+      // Physical promised file wins over a recorded deletion marker.
+      if (files[idx]!.mode === "gone") {
+        const described = describeEntry(worktree.worktreePath, promised, "promised");
+        files[idx] = described;
+      }
+      continue;
+    }
+    pushFile(describeEntry(worktree.worktreePath, promised, "promised"));
   }
   files.sort((a, b) => (a.path < b.path ? -1 : 1));
   return { baseCommit, textOnly: false as const, textHash: null, files };
@@ -271,17 +364,17 @@ function describeEntry(worktreePath: string, rel: string, kind: string): Fingerp
   const full = join(worktreePath, rel);
   try {
     const st = lstatSync(full);
-    if (st.isSymbolicLink()) return { path: rel, kind, mode: "symlink", hash: `link:${readlinkSync(full)}` };
+    if (st.isSymbolicLink()) return { path: rel, kind, mode: `symlink:${(st.mode & 0o7777).toString(8).padStart(4, "0")}`, hash: symlinkHash(full) };
     if (st.isDirectory()) return { path: rel, kind: "dir", mode: "dir", hash: "dir" };
-    if (!st.isFile()) return { path: rel, kind, mode: "special", hash: `special:${st.mode & 0o170000}` };
+    if (!st.isFile()) return { path: rel, kind, mode: `special:${(st.mode & 0o170000).toString(8)}:${(st.mode & 0o7777).toString(8).padStart(4, "0")}`, hash: `special:${(st.mode & 0o170000).toString(8)}:${(st.mode & 0o7777).toString(8).padStart(4, "0")}` };
     const fd = openSync(full, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const opened = fstatSync(fd);
-      if (!opened.isFile()) return { path: rel, kind, mode: "special", hash: `special:${opened.mode & 0o170000}` };
+      if (!opened.isFile()) return { path: rel, kind, mode: `special:${(opened.mode & 0o170000).toString(8)}:${(opened.mode & 0o7777).toString(8).padStart(4, "0")}`, hash: `special:${(opened.mode & 0o170000).toString(8)}:${(opened.mode & 0o7777).toString(8).padStart(4, "0")}` };
       const hash = createHash("sha256");
       const chunk = Buffer.alloc(HASH_CHUNK_BYTES);
       for (let n = readSync(fd, chunk); n > 0; n = readSync(fd, chunk)) hash.update(chunk.subarray(0, n));
-      return { path: rel, kind, mode: (opened.mode & 0o111) !== 0 ? "executable" : "file", hash: hash.digest("hex") };
+      return { path: rel, kind, mode: `file:${(opened.mode & 0o7777).toString(8).padStart(4, "0")}`, hash: hash.digest("hex") };
     } finally {
       closeSync(fd);
     }

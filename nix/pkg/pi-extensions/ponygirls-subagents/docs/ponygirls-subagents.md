@@ -61,6 +61,9 @@ directory (credentials) are hidden even where a read root contains them.
 Host git never follows a worktree's `.git` file: it targets the git dir
 recorded at creation, with hooks, fsmonitor, and external diff/textconv
 disabled, and candidate fingerprints are computed without a shell.
+A worktree candidate covers the allocation base..HEAD committed delta plus
+dirty/untracked files and explicit promised outputs (content and mode);
+exceeding the file cap fails closed instead of silently partial.
 - Git required for writer worktrees.
 
 ## Root lifetime and storage

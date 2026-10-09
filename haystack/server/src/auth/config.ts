@@ -1,7 +1,7 @@
 // Haystack auth: static user/token configuration. The operator owns user
 // and token lifecycle; this loader validates everything and fails closed.
 // Removing a token/user plus restart/reload revokes it everywhere.
-import { hashToken, matchDigest, readDigestFile, TOKEN_RE } from "./tokens.js";
+import { hashToken, isCanonicalToken, matchDigest, readDigestFile } from "./tokens.js";
 import type { Principal, UserType } from "../domain/document.js";
 
 export interface TokenConfig {
@@ -71,8 +71,15 @@ export async function loadAuth(config: HaystackConfig): Promise<ResolvedAuth> {
     config,
     activityProjectId: config.activityProjectId,
     authenticate(token: string): Principal | null {
-      if (!TOKEN_RE.test(token)) return null;
-      const matched = matchDigest(hashToken(token), digests);
+      // Bad presentations return null (401), never throw (500).
+      if (!isCanonicalToken(token)) return null;
+      let hashed: string;
+      try {
+        hashed = hashToken(token);
+      } catch {
+        return null;
+      }
+      const matched = matchDigest(hashed, digests);
       return matched === null ? null : (digestToPrincipal.get(matched) ?? null);
     },
   };
