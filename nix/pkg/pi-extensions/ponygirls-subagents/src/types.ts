@@ -30,7 +30,8 @@ export type AgentProfile = "reader" | "writer";
 /**
  * How far an agent's tool jobs are separated from the host, least first:
  * - none: host execution in the owner's working directory (writers edit it live);
- * - worktree: host execution; a writer edits its own git worktree;
+ * - worktree: host execution; a writer edits its own git worktree (made by
+ *   the extension, or prepared by the caller and assigned at spawn);
  * - sandbox: bubblewrap view of a registered repository; a writer edits its own worktree.
  */
 export type Isolation = "none" | "worktree" | "sandbox";
@@ -145,6 +146,12 @@ export interface WorkspaceAllocation {
   repoId: string | null;
   /** Private scratch directory for sandboxed tool jobs. */
   tmpDir: string;
+  /**
+   * True when the caller prepared this workspace (spawn_agent
+   * workspace_path) and owns it: the extension never creates, resets,
+   * removes, or releases it.
+   */
+  external: boolean;
 }
 
 export interface GitTree {

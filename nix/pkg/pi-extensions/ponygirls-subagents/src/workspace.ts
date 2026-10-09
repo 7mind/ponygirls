@@ -6,7 +6,9 @@
  * recorded commit in a separate worktree; allocation grants confer no write
  * access to the original checkout, the parent worktree, or a sibling
  * worktree. A writer with isolation "none" edits its owner's working
- * directory in place; only its git metadata is described here.
+ * directory in place; only its git metadata is described here. The same
+ * holds for a workspace its caller prepared and assigned at spawn: it is
+ * described, never allocated or released.
  *
  * Startup failure rolls back only artifacts created by that startup; it
  * never falls back to editing the parent directory. No merges, commits,
@@ -15,7 +17,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readlinkSync, rmSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { err } from "./errors.ts";
 
@@ -39,6 +41,16 @@ export interface CheckoutInfo {
   workTree: string;
   gitDir: string;
   head: string;
+}
+
+/** The resolved path of an existing directory (symlinks followed), or null. */
+export function realDirectory(path: string): string | null {
+  try {
+    const real = realpathSync(path);
+    return statSync(real).isDirectory() ? real : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface WorkspaceDiff {

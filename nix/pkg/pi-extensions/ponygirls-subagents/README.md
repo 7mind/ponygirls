@@ -57,7 +57,7 @@ stricter.
 
 | `isolation` | Tool jobs | Workspace | Policy file |
 |---|---|---|---|
-| `worktree` (default) | host, as the user, with pi's environment and network | a writer gets its own Git worktree of the owner's checkout (same project-relative directory, committed base); readers read in place | not needed |
+| `worktree` (default) | host, as the user, with pi's environment and network | a writer gets its own Git worktree of the owner's checkout (same project-relative directory, committed base); readers read in place; or the Git work tree named by `workspace_path` | not needed (`workspace_path`: `workspaceRoots`) |
 | `none` | host | the owner's working directory; writers edit it in place | not needed |
 | `sandbox` | bubblewrap view, no network | a registered repository (`repo_id`); writers get their own worktree | required |
 
@@ -75,6 +75,25 @@ yourself (`git -C <workdir> diff`). A dirty checkout needs `base_commit`
 "none"`. Under host isolation, `reader` is a tool list, not a boundary: its
 `read` reaches anything the user can. Two `none` writers in one directory
 are not locked against each other.
+
+### A workspace you prepared
+
+A governing session that makes its own worktree per child, and commits and
+removes it itself, hands it over with `workspace_path`:
+
+```text
+spawn_agent(task_name="impl", profile="writer", workspace_path="/home/user/worktrees/impl-1", message="...")
+```
+
+It is refused (`POLICY_DENIED`) unless `workspaceRoots` in the policy file
+lists a directory containing it, compared after resolving symlinks. It
+must be the top-level directory of a Git work tree with a commit, apart
+from the governing checkout (unless `workspaceOwnerCheckoutAllowed`) and
+the supervisor's own storage. It works with `isolation: "worktree"` only
+(not `none`, not `sandbox`), without `base_commit`, and only from the
+governing session. The extension never creates, resets, or removes that
+directory; if you remove it, the agent's later tasks fail with
+`WORKSPACE_UNAVAILABLE`.
 
 ## Skills and context files
 
@@ -112,7 +131,9 @@ invalid file is an error, not a fallback to defaults):
   ],
   "allowedModels": [{ "provider": "zai", "id": "glm-5.3" }],
   "gateBypassAllowed": false,
-  "gateMaxRoundsCeiling": 3
+  "gateMaxRoundsCeiling": 3,
+  "workspaceRoots": ["/home/user/worktrees"],
+  "workspaceOwnerCheckoutAllowed": false
 }
 ```
 
@@ -121,6 +142,9 @@ A sandboxed writer without a registered repository is denied
 `maxDepth` 1 (default) disables nesting; with `nesting: true` and
 `maxDepth: 2`, children receive `spawn_agent`/`interrupt_agent`/
 `close_agent` and may delegate within their own authority.
+`workspaceRoots` (absolute paths; default none) are the only places a
+`workspace_path` is accepted; a list that is not absolute paths is an
+error.
 
 Children inherit the governing session's current model and thinking level;
 `model` on `spawn_agent` overrides it only with an `allowedModels` entry
@@ -133,7 +157,8 @@ half-clobbered:
 conflict), `...AllowedModels`, `...MaxDepth` (1–2), `...Nesting` (needs
 depth 2), `...Repos` (`repoId`, `checkoutPath`, optional `readRoots`,
 `allowWriters`), `...GateBypassAllowed`, `...GateMaxRoundsCeiling`
-(`null` for unlimited).
+(`null` for unlimited), `...WorkspaceRoots`,
+`...WorkspaceOwnerCheckoutAllowed`.
 
 Provider credentials stay in `~/.pi/agent/auth.json` (declarative custom
 models in `models.json`). Workers open that store live through
