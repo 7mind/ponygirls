@@ -13,6 +13,7 @@
 
 import { err, type ErrorCode } from "./errors.ts";
 import { parseInstructionSet } from "./instructions.ts";
+import { RESULT_TEXT_HARD_MAX, RESULT_TEXT_MAX } from "./tools.ts";
 import { PROTOCOL_VERSION, type InstructionSet } from "./types.ts";
 
 export const MAX_PAYLOAD_BYTES = 256 * 1024;
@@ -206,6 +207,8 @@ export interface InitializePayload {
   writable: boolean;
   /** Exact tool allowlist the worker registers (the supervisor re-checks every call). */
   tools: string[];
+  /** Characters of final text the worker hands over per generation; omitted: RESULT_TEXT_MAX. */
+  resultLimit?: number;
   /**
    * Native-session restore: the supervisor wrote validated checkpoint bytes
    * to sessionFile before launch (single owner: no worker was running).
@@ -241,6 +244,10 @@ export function validateInitializePayload(raw: unknown): { ok: true; value: Init
   }
   if (!Number.isInteger(p["executionGeneration"])) {
     return { ok: false, error: err("INVALID", "initialize.executionGeneration required") };
+  }
+  const resultLimit = p["resultLimit"];
+  if (resultLimit !== undefined && (!Number.isInteger(resultLimit) || (resultLimit as number) < RESULT_TEXT_MAX || (resultLimit as number) > RESULT_TEXT_HARD_MAX)) {
+    return { ok: false, error: err("INVALID", `initialize.resultLimit must be an integer from ${RESULT_TEXT_MAX} to ${RESULT_TEXT_HARD_MAX}`) };
   }
   try {
     parseInstructionSet(p["instructions"]);

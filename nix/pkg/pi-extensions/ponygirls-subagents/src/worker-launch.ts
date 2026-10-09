@@ -33,7 +33,7 @@ export interface WorkerLaunchOptions {
   sessionsDir: string;
   /** Host agent dir for the approved credential store (live reference). */
   hostAgentDir?: string;
-  script?: Array<{ text?: string; tool?: string; args?: Record<string, unknown> }>;
+  script?: Array<{ text?: string; repeat?: number; tool?: string; args?: Record<string, unknown> }>;
   extraEnv?: Record<string, string>;
 }
 

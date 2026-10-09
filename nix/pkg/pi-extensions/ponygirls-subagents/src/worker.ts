@@ -23,11 +23,11 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { InitializePayload, IpcEnvelope, WorkerEvent } from "./protocol.ts";
 import { bindChannel, taskHeader, validateEnvelope, validateInitializePayload } from "./protocol.ts";
-import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, childToolSpec, type TypeBuilder } from "./tools.ts";
+import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, RESULT_TEXT_MAX, childToolSpec, type TypeBuilder } from "./tools.ts";
 import { MAX_PAYLOAD_BYTES } from "./protocol.ts";
 import { PROTOCOL_VERSION, type InstructionSet } from "./types.ts";
 import type { ChannelBinding } from "./protocol.ts";
@@ -39,7 +39,6 @@ const CHECKPOINT_MAX_BYTES = 16 * 1024 * 1024;
 const PREVIEW_MAX = 2000;
 /** In-flight assistant text is forwarded at most this often (the transcript view shows it live). */
 const STREAM_PREVIEW_INTERVAL_MS = 300;
-const RESULT_TEXT_MAX = 8000;
 
 interface PendingToolCall {
   resolve: (result: { content: string; isError: boolean }) => void;
@@ -142,6 +141,10 @@ const state: {
   seq: number;
   pendingTools: Map<string, PendingToolCall>;
   gen: GenerationState;
+  /** Characters of a generation's final text handed to the supervisor. */
+  resultLimit: number;
+  /** This agent's directory under the supervisor's sessions root. */
+  sessionDir: string | null;
 } = {
   binding: null,
   session: null,
@@ -149,6 +152,8 @@ const state: {
   seq: 0,
   pendingTools: new Map(),
   gen: freshGeneration(null, null),
+  resultLimit: RESULT_TEXT_MAX,
+  sessionDir: null,
 };
 
 function freshGeneration(taskRunId: string | null, generation: number | null): GenerationState {
@@ -198,10 +203,48 @@ function settleGeneration(failure: string | null): void {
         ? "failed"
         : "succeeded";
   const error = failure ?? (status === "failed" ? gen.errorMessage ?? "provider error" : null);
+  // Text beyond the inline bound travels as a file; `textLength` lets the
+  // supervisor state any cut (at the limit, or after a failed handoff).
+  const retained = gen.lastText.slice(0, state.resultLimit);
+  let resultFile: ResultFile | null = null;
+  let resultFileError: string | null = null;
+  if (retained.length > RESULT_TEXT_MAX) {
+    try {
+      resultFile = writeResultFile(gen, retained);
+    } catch (e) {
+      resultFileError = (e as Error).message;
+    }
+  }
   emitWorkerEvent({
     kind: "settled",
-    detail: { status, error, lastAssistantText: gen.lastText.slice(0, RESULT_TEXT_MAX), usage: { ...gen.usage } },
+    detail: { status, error, lastAssistantText: retained.slice(0, RESULT_TEXT_MAX), textLength: gen.lastText.length, resultFile, resultFileError, usage: { ...gen.usage } },
   });
+}
+
+interface ResultFile {
+  path: string;
+  byteCount: number;
+  sha256: string;
+}
+
+/**
+ * The retained final text as a synchronized file in this agent's session
+ * directory: it never crosses the IPC channel (its payload cap is far
+ * smaller); the supervisor reads the file and checks the digest.
+ */
+function writeResultFile(gen: GenerationState, text: string): ResultFile {
+  if (state.sessionDir === null) throw new Error("no session directory for the result file");
+  mkdirSync(state.sessionDir, { recursive: true });
+  const path = join(state.sessionDir, `result-${gen.taskRunId}-${gen.generation}.txt`);
+  const bytes = Buffer.from(text, "utf8");
+  writeFileSync(path, bytes);
+  const fd = openSync(path, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  return { path, byteCount: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
 }
 
 function sdkRoot(): string | null {
@@ -232,11 +275,12 @@ async function loadCompat(): Promise<{ EventStream: new (isTerminal: (e: { type:
 function parseScriptSteps(): Array<{ kind: "text"; text: string } | { kind: "tool"; name: string; args: Record<string, unknown> } | { kind: "error"; message: string }> {
   const raw = process.env["PI_SUBAGENTS_SCRIPT"];
   if (!raw) return [{ kind: "text", text: "worker result" }];
-  const steps = JSON.parse(raw) as Array<{ text?: string; tool?: string; args?: Record<string, unknown>; error?: string }>;
+  const steps = JSON.parse(raw) as Array<{ text?: string; repeat?: number; tool?: string; args?: Record<string, unknown>; error?: string }>;
   return steps.map((step) => {
     if (step.tool) return { kind: "tool" as const, name: step.tool, args: step.args ?? {} };
     if (step.error) return { kind: "error" as const, message: step.error };
-    return { kind: "text" as const, text: step.text ?? "worker result" };
+    // `repeat` scripts a text larger than an environment variable can carry.
+    return { kind: "text" as const, text: (step.text ?? "worker result").repeat(step.repeat ?? 1) };
   });
 }
 
@@ -310,12 +354,14 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
   }
   const init: InitializePayload = checked.value;
   state.gen = freshGeneration(init.taskRunId, init.executionGeneration);
+  state.resultLimit = init.resultLimit ?? RESULT_TEXT_MAX;
   let session: WorkerSession;
   try {
     const sdk = await loadSdk();
     const agentDir = process.env["PI_SUBAGENTS_AGENT_DIR"];
     if (!agentDir) throw new Error("PI_SUBAGENTS_AGENT_DIR is not set");
     mkdirSync(agentDir, { recursive: true });
+    state.sessionDir = join(process.env["PI_SUBAGENTS_SESSIONS_DIR"] ?? join(agentDir, "sessions"), state.binding!.agentId);
     const settingsManager = sdk.SettingsManager.create(init.workdir, agentDir);
     // Parked/idle workers must not create ungoverned paid background requests.
     settingsManager.setCacheWarmingMode("off");
@@ -355,10 +401,8 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
         }
       }
     } else {
-      const sessionsRoot = process.env["PI_SUBAGENTS_SESSIONS_DIR"] ?? join(agentDir, "sessions");
-      const dir = join(sessionsRoot, state.binding!.agentId);
-      mkdirSync(dir, { recursive: true });
-      sessionManager = sdk.SessionManager.create(init.workdir, dir);
+      mkdirSync(state.sessionDir, { recursive: true });
+      sessionManager = sdk.SessionManager.create(init.workdir, state.sessionDir);
     }
     ({ session } = (await sdk.createAgentSession({
       cwd: init.workdir,

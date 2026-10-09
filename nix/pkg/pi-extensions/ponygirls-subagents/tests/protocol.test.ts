@@ -111,5 +111,10 @@ test("initialize payload requires task text, profile, model, run ids, instructio
   assert.equal(validateInitializePayload({ ...good, tools: undefined }).ok, false);
   assert.equal(validateInitializePayload({ ...good, instructions: undefined }).ok, false);
   assert.equal(validateInitializePayload({ ...good, instructions: { contextFiles: [{ path: "/p/AGENTS.md" }], skills: [] } }).ok, false);
+  // An omitted result limit is the default bound; a given one must lie within the allowed range.
+  assert.equal(validateInitializePayload({ ...good, resultLimit: 100_000 }).ok, true);
+  assert.equal(validateInitializePayload({ ...good, resultLimit: 10_000_000 }).ok, false);
+  assert.equal(validateInitializePayload({ ...good, resultLimit: 100 }).ok, false);
+  assert.equal(validateInitializePayload({ ...good, resultLimit: "many" }).ok, false);
   assert.equal(PROTOCOL_VERSION, 1);
 });

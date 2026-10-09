@@ -228,6 +228,18 @@ its text is in `messages` (and `openQuestion` in `list_agents`). Answer with
 `send_message(target="<child>", mode="note", reply_to="<messageId>", message=...)`
 and wait again.
 
+A result is the child's final text, the first 8,000 characters by default.
+`result_limit` on `spawn_agent` keeps up to 524,288 characters per task run
+(a larger value is refused), and `read_agent view=result` pages through
+them: each reply states `totalLength`, `offset`, `nextOffset`, and
+`truncated`.
+
+```text
+spawn_agent(task_name="audit", profile="reader", result_limit=200000, message="Report every finding as JSON.")
+read_agent(target="<id>", view="result")                    # reply: nextOffset=<n>
+read_agent(target="<id>", view="result", offset=<n>)        # repeat until nextOffset is null
+```
+
 ## Gated example
 
 ```text

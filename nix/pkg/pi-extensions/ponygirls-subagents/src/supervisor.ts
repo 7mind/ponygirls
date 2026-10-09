@@ -13,7 +13,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { ToolBroker, type BrokerCaller, type CallerSandbox, type ToolExecutors } from "./broker.ts";
@@ -25,8 +25,8 @@ import { authorizeWorkspace, intersectGrants, pathWithin, rootGrants, type Regis
 import { killAndConfirm, readProcessIdentity, verifyOwnership, type OwnershipVerdict, type ProcessIdentity } from "./process-identity.ts";
 import { AdmissionScheduler, PathRegistry, type LeaseTicket } from "./scheduler.ts";
 import { BwrapToolExecutor, HostToolExecutor, sandboxRuntimePath } from "./sandbox.ts";
-import { InMemoryRunStore, RootLock, checkpointSha256, fsyncDir, fsyncFile, type JournalKind, type JournalRecord, type RunStore } from "./store.ts";
-import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, FILE_TOOLS, GATE_DECISION_TOOL, SHELL_TOOL, WRITE_TOOLS } from "./tools.ts";
+import { InMemoryRunStore, RootLock, checkpointSha256, fsyncDir, fsyncFile, type JournalKind, type JournalRecord, type ResultRef, type RunStore } from "./store.ts";
+import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, FILE_TOOLS, GATE_DECISION_TOOL, RESULT_TEXT_HARD_MAX, RESULT_TEXT_MAX, SHELL_TOOL, WRITE_TOOLS } from "./tools.ts";
 import type {
   AgentId,
   AgentRecord,
@@ -70,6 +70,8 @@ export interface SpawnParams {
    * instead of a worktree the extension makes. Governing session only.
    */
   workspacePath?: string | null;
+  /** Characters of final text retained per task run; omitted or null: RESULT_TEXT_MAX. At most RESULT_TEXT_HARD_MAX. */
+  resultLimit?: number | null;
   /** Owner skills / context files the child receives; omitted or null: none. */
   skills?: ResourceSelection | null;
   contextFiles?: ResourceSelection | null;
@@ -155,10 +157,51 @@ export interface TranscriptSource {
 
 export interface ReadResult {
   status: AgentView;
-  result: { taskRunId: string; outcome: string | null; text: string; detail: string } | null;
+  result: {
+    taskRunId: string;
+    outcome: string | null;
+    /** One page of the retained text, starting at `offset`. */
+    text: string;
+    detail: string;
+    /** Characters of final text retained for this task run. */
+    totalLength: number;
+    offset: number;
+    /** Where the next page starts; null when this page ends the retained text. */
+    nextOffset: number | null;
+    /** True when the retained text is shorter than what the agent wrote (cut at `resultLimit`, or not handed over whole). */
+    truncated: boolean;
+    /** The agent's retention limit in characters. */
+    resultLimit: number;
+  } | null;
   events: JournalEventView[];
   cursor: number;
 }
+
+/** Which part of a result's retained text to return (characters); a null length means as much as fits one reply. */
+export interface ResultPage {
+  offset: number;
+  length: number | null;
+}
+
+/**
+ * A settled generation's final text as retained: the inline prefix (at most
+ * RESULT_TEXT_MAX characters, journaled), and the store reference of the
+ * whole retained text when that is longer.
+ */
+interface RetainedText {
+  text: string;
+  stored: ResultRef | null;
+  /** Characters the agent wrote before any cut; null in journals that predate the count. */
+  fullLength: number | null;
+}
+
+/** A final text as a worker handed it over, with its length before any cut. */
+interface FinalText {
+  text: string;
+  fullLength: number;
+}
+
+const NO_FINAL_TEXT: FinalText = { text: "", fullLength: 0 };
 
 /** Minimal worker port (real WorkerHandle or test fake). */
 export interface WorkerPort {
@@ -194,9 +237,9 @@ interface AgentRuntime {
   queue: QueuedTask[];
   activeRun: ActiveRun | null;
   /** Latest terminal result (deliverable text kept apart from outcome detail). */
-  lastResult: { taskRunId: TaskRunId; outcome: string; text: string; detail: string } | null;
-  /** Deliverable text of the latest settled generation (the gate's candidate answer). */
-  lastText: { taskRunId: TaskRunId; text: string } | null;
+  lastResult: ({ taskRunId: TaskRunId; outcome: string; detail: string } & RetainedText) | null;
+  /** Deliverable text of the latest settled generation (its inline prefix is the gate's candidate answer). */
+  lastText: ({ taskRunId: TaskRunId } & RetainedText) | null;
   usage: UsageTotals;
   lastPreview: string;
   /** Assistant text still being generated (cleared when the message completes). */
@@ -305,7 +348,6 @@ const WAIT_EVENT_LIMIT = 50;
 const WAIT_MESSAGE_LIMIT = 20;
 const MESSAGE_TEXT_MAX = 65_536;
 const PREVIEW_MAX = 2000;
-const RESULT_TEXT_MAX = 8000;
 const QUESTION_TTL_MS = 15 * 60_000;
 const INTERRUPT_TIMEOUT_MS = 15_000;
 const CLOSE_JOIN_TIMEOUT_MS = 15_000;
@@ -468,6 +510,8 @@ export class Supervisor implements GateHost {
             instructionHash: instructionHash(b["instructions"] as InstructionSet),
             policyRevision: this.policy.revision,
             model: (b["model"] as ResolvedModel | null) ?? null,
+            // Journals written before result limits existed retain the default.
+            resultLimit: typeof b["resultLimit"] === "number" ? b["resultLimit"] : RESULT_TEXT_MAX,
             currentTaskRunId: (b["taskRunId"] as string) ?? null,
             executionGeneration: b["managedGate"] === true ? 0 : 1,
             pendingTaskIds: [],
@@ -540,7 +584,7 @@ export class Supervisor implements GateHost {
             rt.record.observed = "settled";
             rt.record.outcome = (b["outcome"] as AgentRecord["outcome"]) ?? "failed";
             rt.record.lastEventSeq = r.seq;
-            if (typeof b["text"] === "string") rt.lastText = { taskRunId: b["taskRunId"] as string, text: b["text"] as string };
+            if (typeof b["text"] === "string") rt.lastText = { taskRunId: b["taskRunId"] as string, ...retainedFromRecord(b) };
           }
           settledGen.add(`${b["agentId"] as string}:${b["generation"] as number}`);
           settledRuns.set(b["taskRunId"] as string, { agentId: b["agentId"] as string, outcome: (b["outcome"] as string) ?? "failed", error: (b["error"] as string) ?? "" });
@@ -559,8 +603,10 @@ export class Supervisor implements GateHost {
               rt.record.taskOutcome = outcome;
               rt.record.observed = "settled";
             }
-            const text = rt.lastText?.taskRunId === taskRunId ? rt.lastText.text : ((b["preview"] as string) ?? "");
-            rt.lastResult = { taskRunId, outcome, text, detail: (b["detail"] as string) ?? "" };
+            const retained: RetainedText = rt.lastText?.taskRunId === taskRunId
+              ? { text: rt.lastText.text, stored: rt.lastText.stored, fullLength: rt.lastText.fullLength }
+              : { text: (b["preview"] as string) ?? "", stored: null, fullLength: null };
+            rt.lastResult = { taskRunId, outcome, detail: (b["detail"] as string) ?? "", ...retained };
           }
           break;
         }
@@ -584,7 +630,7 @@ export class Supervisor implements GateHost {
           const rt = this.agents.get(b["agentId"] as string);
           if (rt && b["linked"] === true) {
             // A linked retry/bypass run became the agent's current gated run.
-            if (rt.lastText) rt.lastText = { taskRunId: b["taskRunId"] as string, text: rt.lastText.text };
+            if (rt.lastText) rt.lastText = { ...rt.lastText, taskRunId: b["taskRunId"] as string };
             rt.gateTaskRunId = b["taskRunId"] as string;
             rt.record.currentTaskRunId = b["taskRunId"] as string;
             rt.record.taskOutcome = null;
@@ -688,7 +734,11 @@ export class Supervisor implements GateHost {
             draft.candidates.push(candidate);
             draft.lastResponse = (b["resultText"] as string) ?? draft.lastResponse;
             const rt = this.agents.get(draft.agentId);
-            if (rt) rt.lastText = { taskRunId: b["taskRunId"] as string, text: draft.lastResponse };
+            if (rt) {
+              // The candidate is this run's settled generation: what was retained of it stays.
+              const settled = rt.lastText?.taskRunId === b["taskRunId"] ? rt.lastText : null;
+              rt.lastText = { taskRunId: b["taskRunId"] as string, text: draft.lastResponse, stored: settled?.stored ?? null, fullLength: settled?.fullLength ?? null };
+            }
           }
           break;
         }
@@ -1001,6 +1051,10 @@ export class Supervisor implements GateHost {
         if (isolation !== "worktree") throw err("INVALID", "workspace_path needs isolation worktree: the prepared directory is the child's worktree, not the owner's directory or a sandbox view");
         if (params.baseCommit) throw err("INVALID", "base_commit applies to worktrees the extension creates, not to workspace_path");
       }
+      const resultLimit = params.resultLimit ?? RESULT_TEXT_MAX;
+      if (!Number.isInteger(resultLimit) || resultLimit < RESULT_TEXT_MAX || resultLimit > RESULT_TEXT_HARD_MAX) {
+        throw err("INVALID", `result_limit must be an integer from ${RESULT_TEXT_MAX} to ${RESULT_TEXT_HARD_MAX} characters`);
+      }
       const governor = parentRt ? null : this.opts.governor();
       const granted = intersectGrants(this.policy, ownerGrants, {
         profile: params.profile,
@@ -1077,6 +1131,7 @@ export class Supervisor implements GateHost {
         instructionHash: instructionHash(instructions),
         policyRevision: this.policy.revision,
         model,
+        resultLimit,
         currentTaskRunId: taskRunId,
         executionGeneration: 1,
         pendingTaskIds: [],
@@ -1109,6 +1164,7 @@ export class Supervisor implements GateHost {
         allocation,
         instructions,
         model,
+        resultLimit,
         gated: gateSpec !== null,
       });
       this.store.recordCommand(requestId, spawnedRecord);
@@ -1357,6 +1413,7 @@ export class Supervisor implements GateHost {
       readRoots: rt.record.allocation.readRoots,
       writable: rt.record.profile === "writer",
       tools: this.childTools(rt),
+      resultLimit: rt.record.resultLimit,
       restore: rt.pendingRestore,
     };
   }
@@ -1440,7 +1497,7 @@ export class Supervisor implements GateHost {
         break;
       case "settled":
         rt.streaming = null;
-        this.finalizeGeneration(rt, String(event.detail["status"] ?? "failed"), String(event.detail["lastAssistantText"] ?? ""), String(event.detail["error"] ?? ""), event.detail["usage"] as UsageDetail | undefined);
+        this.finalizeGeneration(rt, String(event.detail["status"] ?? "failed"), this.finalText(rt, event.detail), String(event.detail["error"] ?? ""), event.detail["usage"] as UsageDetail | undefined);
         break;
       default:
         break;
@@ -1467,7 +1524,7 @@ export class Supervisor implements GateHost {
       // keep the outcome uncertain rather than inventing success or failure.
       const cancelled = await this.broker.cancelJobs(rt.record.id);
       // Known usage up to the last tool call, plus an unknown remainder.
-      this.finalizeGeneration(rt, cancelled.length > 0 ? "uncertain" : "failed", "", why, { ...(rt.usageSnapshot ?? {}), unknown: true });
+      this.finalizeGeneration(rt, cancelled.length > 0 ? "uncertain" : "failed", NO_FINAL_TEXT, why, { ...(rt.usageSnapshot ?? {}), unknown: true });
     }
     rt.record.detail = why;
     this.releaseResident(rt);
@@ -1525,6 +1582,9 @@ export class Supervisor implements GateHost {
       case "list_agents":
         return this.list(caller);
       case "read_agent":
+        if (args["view"] === "result") {
+          return this.readResult(caller, str("target"), typeof args["task_run_id"] === "string" ? args["task_run_id"] : null, { offset: typeof args["offset"] === "number" ? args["offset"] : 0, length: typeof args["length"] === "number" ? args["length"] : null }, typeof args["cursor"] === "number" ? args["cursor"] : 0);
+        }
         return this.read(caller, str("target"), str("view") as "status" | "result" | "events", typeof args["cursor"] === "number" ? args["cursor"] : 0, typeof args["limit"] === "number" ? args["limit"] : 20, typeof args["task_run_id"] === "string" ? args["task_run_id"] : null);
       case "wait_agent":
         return this.childWait(rt, args);
@@ -1538,6 +1598,7 @@ export class Supervisor implements GateHost {
           isolation: args["isolation"] === undefined ? undefined : str("isolation") as Isolation,
           repoId: typeof args["repo_id"] === "string" ? args["repo_id"] : null,
           baseCommit: typeof args["base_commit"] === "string" ? args["base_commit"] : null,
+          resultLimit: typeof args["result_limit"] === "number" ? args["result_limit"] : null,
           skills: parseSelection(args, "skills"),
           contextFiles: parseSelection(args, "context_files"),
         }, requestId);
@@ -1582,10 +1643,48 @@ export class Supervisor implements GateHost {
 
   // -- generation finalization ---------------------------------------------------
 
-  private finalizeGeneration(rt: AgentRuntime, status: string, text: string, error: string, usage: UsageDetail | undefined): void {
+  /**
+   * The settled generation's final text as the worker handed it over:
+   * inline, or (beyond the inline bound) a synchronized file in the root
+   * store that must match the worker's digest. A handoff that fails keeps
+   * the inline prefix; the shortfall against `fullLength` is reported as
+   * truncation by every read.
+   */
+  private finalText(rt: AgentRuntime, detail: Record<string, unknown>): FinalText {
+    const inline = String(detail["lastAssistantText"] ?? "");
+    const fullLength = typeof detail["textLength"] === "number" ? detail["textLength"] : inline.length;
+    const file = detail["resultFile"] as { path?: unknown; byteCount?: unknown; sha256?: unknown } | null | undefined;
+    try {
+      if (!file) {
+        if (typeof detail["resultFileError"] === "string") throw new Error(detail["resultFileError"]);
+        return { text: inline, fullLength };
+      }
+      if (typeof file.path !== "string" || typeof file.byteCount !== "number" || typeof file.sha256 !== "string") throw new Error("malformed result file reference");
+      const sessionsDir = join(this.rootDir, "sessions");
+      if (relative(sessionsDir, resolve(file.path)).startsWith("..")) throw new Error(`result file ${file.path} lies outside the root store`);
+      const bytes = readFileSync(file.path);
+      if (bytes.length !== file.byteCount || checkpointSha256(bytes) !== file.sha256) throw new Error("result file does not match the worker's digest");
+      // The store keeps the durable copy; the handoff file has served.
+      rmSync(file.path, { force: true });
+      return { text: bytes.toString("utf8"), fullLength };
+    } catch (e) {
+      this.publish("recovery.event", { agentId: rt.record.id, phase: "result_handoff_failed", reason: (e as Error).message.slice(0, 200) });
+      return { text: inline, fullLength };
+    }
+  }
+
+  /** Keep a final text up to the agent's result limit: inline up to RESULT_TEXT_MAX, the whole retained text in the store beyond that. */
+  private retainText(rt: AgentRuntime, run: ActiveRun, final: FinalText): RetainedText {
+    const kept = final.text.slice(0, rt.record.resultLimit);
+    const stored = kept.length > RESULT_TEXT_MAX ? this.store.saveResult(rt.record.id, run.taskRunId, run.generation, kept) : null;
+    return { text: kept.slice(0, RESULT_TEXT_MAX), stored, fullLength: final.fullLength };
+  }
+
+  private finalizeGeneration(rt: AgentRuntime, status: string, final: FinalText, error: string, usage: UsageDetail | undefined): void {
     const record = rt.record;
     const run = rt.activeRun;
     if (!run) return; // Duplicate terminal outcome: ignore (exactly-once).
+    const retained = this.retainText(rt, run, final);
     const outcome: TaskOutcome = run.interruptRequested && status !== "uncertain"
       ? "interrupted"
       : status === "succeeded" || status === "interrupted" || status === "uncertain" ? status : "failed";
@@ -1600,7 +1699,7 @@ export class Supervisor implements GateHost {
       record.taskPhase = "candidate_recording";
     }
     rt.activeRun = null;
-    rt.lastText = { taskRunId: run.taskRunId, text: text.slice(0, RESULT_TEXT_MAX) };
+    rt.lastText = { taskRunId: run.taskRunId, ...retained };
     rt.usageSnapshot = null;
     this.publish("generation.settled", {
       agentId: record.id,
@@ -1608,7 +1707,9 @@ export class Supervisor implements GateHost {
       generation: run.generation,
       outcome,
       error: error ? error.slice(0, PREVIEW_MAX) : undefined,
-      text: text.slice(0, RESULT_TEXT_MAX),
+      text: retained.text,
+      textLength: retained.fullLength,
+      result: retained.stored ?? undefined,
     });
     // Never hold a main runnable lease while waiting for review.
     this.releaseRunnable(rt);
@@ -1631,7 +1732,7 @@ export class Supervisor implements GateHost {
       // A gated task does not settle on a candidate's SDK settlement.
       if (rt.gateTaskRunId === run.taskRunId && final === "succeeded" && !this.terminalRuns.has(run.taskRunId)) {
         record.taskPhase = "candidate_recording";
-        this.gate.candidateSettled(record.id, run.taskRunId, run.generation, text);
+        this.gate.candidateSettled(record.id, run.taskRunId, run.generation, retained.text);
         return;
       }
       if (rt.gateTaskRunId === run.taskRunId) this.gate.cancelTask(run.taskRunId, final);
@@ -1738,14 +1839,17 @@ export class Supervisor implements GateHost {
   settleTaskTerminal(rt: AgentRuntime, taskRunId: TaskRunId, outcome: string, detail: string): void {
     if (this.terminalRuns.has(taskRunId)) return;
     this.terminalRuns.set(taskRunId, { agentId: rt.record.id, outcome });
-    const text = rt.lastText?.taskRunId === taskRunId ? rt.lastText.text : "";
+    const retained: RetainedText = rt.lastText?.taskRunId === taskRunId
+      ? { text: rt.lastText.text, stored: rt.lastText.stored, fullLength: rt.lastText.fullLength }
+      : { text: "", stored: null, fullLength: 0 };
+    const text = retained.text;
     if (taskRunId === rt.record.currentTaskRunId) {
       rt.record.taskPhase = "terminal";
       rt.record.taskOutcome = outcome;
       if (!rt.activeRun) rt.record.observed = "settled";
     }
     rt.queue = rt.queue.filter((q) => q.id !== taskRunId);
-    rt.lastResult = { taskRunId, outcome, text, detail };
+    rt.lastResult = { taskRunId, outcome, detail, ...retained };
     this.publish("task.terminal", { agentId: rt.record.id, taskRunId, outcome, preview: text.slice(0, PREVIEW_MAX), detail: detail.slice(0, PREVIEW_MAX) });
     this.pumpQueue(rt);
     this.resumeOwnerAfterDescendant(rt);
@@ -1826,7 +1930,7 @@ export class Supervisor implements GateHost {
       this.detached(() => {
         if (rt.activeRun !== run) return;
         if (rt.record.observed === "starting") rt.record.observed = "running";
-        this.finalizeGeneration(rt, "failed", "", failure, { unknown: false });
+        this.finalizeGeneration(rt, "failed", NO_FINAL_TEXT, failure, { unknown: false });
       });
     })();
   }
@@ -2065,18 +2169,7 @@ export class Supervisor implements GateHost {
     if (!rt) throw err("NOT_FOUND", `agent ${target} unknown`);
     if (!this.visibleTo(caller, rt.record)) throw err("FORBIDDEN", "agent not visible to caller");
     if (view === "status") return { status: this.viewOf(rt), result: null, events: [], cursor };
-    if (view === "result" && taskRunId !== null && taskRunId !== rt.lastResult?.taskRunId) {
-      return { status: this.viewOf(rt), result: this.resultFromJournal(target, taskRunId), events: [], cursor };
-    }
-    if (view === "result") {
-      const last = rt.lastResult;
-      return {
-        status: this.viewOf(rt),
-        result: last ? { taskRunId: last.taskRunId, outcome: last.outcome, text: last.text.slice(0, RESULT_TEXT_MAX), detail: last.detail } : null,
-        events: [],
-        cursor,
-      };
-    }
+    if (view === "result") return this.readResult(caller, target, taskRunId, { offset: 0, length: RESULT_TEXT_MAX }, cursor);
     if (view !== "events") throw err("INVALID", "view must be status, result, or events");
     const bounded = Math.min(Math.max(1, limit), 100);
     const { records } = this.store.readSince(cursor, Number.MAX_SAFE_INTEGER);
@@ -2122,17 +2215,53 @@ export class Supervisor implements GateHost {
     return { lines, cursor: last };
   }
 
+  /**
+   * One page of a task run's retained final text (the latest run, or the
+   * one `taskRunId` names). The reply always fits one tool result: the page
+   * is as long as asked for, or as fits, and `nextOffset` continues it.
+   * `cursor` is echoed, as read() does.
+   */
+  readResult(caller: CallerId, target: AgentId, taskRunId: TaskRunId | null, page: ResultPage, cursor: number): ReadResult {
+    const rt = this.agents.get(target);
+    if (!rt) throw err("NOT_FOUND", `agent ${target} unknown`);
+    if (!this.visibleTo(caller, rt.record)) throw err("FORBIDDEN", "agent not visible to caller");
+    const status = this.viewOf(rt);
+    const run = taskRunId !== null && taskRunId !== rt.lastResult?.taskRunId ? this.resultFromJournal(target, taskRunId) : rt.lastResult;
+    if (!run) return { status, result: null, events: [], cursor };
+    const whole = run.stored ? this.store.loadResult(target, run.stored) : run.text;
+    const total = whole.length;
+    if (!Number.isInteger(page.offset) || page.offset < 0 || page.offset > total) throw err("INVALID", `offset must be an integer from 0 to ${total} (the retained length)`);
+    if (page.length !== null && (!Number.isInteger(page.length) || page.length < 1)) throw err("INVALID", "length must be a positive integer");
+    const resultLimit = rt.record.resultLimit;
+    const truncated = run.fullLength !== null ? run.fullLength > total : total >= resultLimit;
+    const reply = (text: string, nextOffset: number | null): ReadResult => ({
+      status,
+      result: { taskRunId: run.taskRunId, outcome: run.outcome, text, detail: run.detail, totalLength: total, offset: page.offset, nextOffset, truncated, resultLimit },
+      events: [],
+      cursor,
+    });
+    // Everything but the text is measured first (with the widest next offset); the text gets the rest of one tool result.
+    const room = TOOL_RESULT_MAX - Math.max(JSON.stringify(reply("", total)).length, JSON.stringify(reply("", null)).length);
+    let size = Math.min(total - page.offset, page.length ?? total);
+    for (let escaped = escapedLength(whole.slice(page.offset, page.offset + size)); size > 0 && escaped > room; escaped = escapedLength(whole.slice(page.offset, page.offset + size))) {
+      size = Math.min(size - 1, Math.floor((size * room) / escaped));
+    }
+    if (size <= 0 && page.offset < total) throw err("PAYLOAD_TOO_LARGE", "agent status and outcome detail leave no room for result text in one reply");
+    const end = page.offset + Math.max(size, 0);
+    return reply(whole.slice(page.offset, end), end < total ? end : null);
+  }
+
   /** An earlier run's result: its terminal record plus its last generation's text. */
-  private resultFromJournal(agentId: AgentId, taskRunId: TaskRunId): ReadResult["result"] {
-    let text = "";
+  private resultFromJournal(agentId: AgentId, taskRunId: TaskRunId): { taskRunId: TaskRunId; outcome: string | null; detail: string } & RetainedText {
+    let retained: RetainedText | null = null;
     let terminal: Record<string, unknown> | null = null;
     for (const r of this.store.readSince(0, Number.MAX_SAFE_INTEGER).records) {
       if (r.body["agentId"] !== agentId || r.body["taskRunId"] !== taskRunId) continue;
-      if (r.kind === "generation.settled" && typeof r.body["text"] === "string") text = r.body["text"] as string;
+      if (r.kind === "generation.settled" && typeof r.body["text"] === "string") retained = retainedFromRecord(r.body);
       if (r.kind === "task.terminal") terminal = r.body;
     }
-    if (!terminal && !text) throw err("NOT_FOUND", `no result for task run ${taskRunId} of ${agentId}`);
-    return { taskRunId, outcome: (terminal?.["outcome"] as string | undefined) ?? null, text: text.slice(0, RESULT_TEXT_MAX), detail: (terminal?.["detail"] as string | undefined) ?? "" };
+    if (!terminal && !retained?.text) throw err("NOT_FOUND", `no result for task run ${taskRunId} of ${agentId}`);
+    return { taskRunId, outcome: (terminal?.["outcome"] as string | undefined) ?? null, detail: (terminal?.["detail"] as string | undefined) ?? "", ...(retained ?? { text: "", stored: null, fullLength: null }) };
   }
 
   /**
@@ -2798,7 +2927,7 @@ export class Supervisor implements GateHost {
   beginLinkedRun(agentId: AgentId, taskRunId: TaskRunId): void {
     const rt = this.agents.get(agentId);
     if (!rt) return;
-    if (rt.lastText) rt.lastText = { taskRunId, text: rt.lastText.text };
+    if (rt.lastText) rt.lastText = { ...rt.lastText, taskRunId };
     rt.gateTaskRunId = taskRunId;
     rt.record.currentTaskRunId = taskRunId;
     rt.record.taskPhase = "working";
@@ -2839,6 +2968,7 @@ export class Supervisor implements GateHost {
       instructionHash: instructionHash(EMPTY_INSTRUCTIONS),
       policyRevision: this.policy.revision,
       model: { provider: spec.model.provider, id: spec.model.id, thinkingLevel: spec.thinkingLevel },
+      resultLimit: RESULT_TEXT_MAX,
       currentTaskRunId: taskRunId,
       executionGeneration: 0,
       pendingTaskIds: [],
@@ -3198,9 +3328,23 @@ function assertGateFits(spec: NormalizedGateSpec, writer: boolean): void {
 }
 
 /** Tool results returned to a child are bounded; a cut is always marked. */
-const TOOL_RESULT_MAX = 24_000;
+export const TOOL_RESULT_MAX = 24_000;
 function boundedText(text: string): string {
   return text.length <= TOOL_RESULT_MAX ? text : `${text.slice(0, TOOL_RESULT_MAX)}\n[output truncated: ${text.length - TOOL_RESULT_MAX} more characters]`;
+}
+
+/** Length of a string inside a JSON document, without its quotes. */
+function escapedLength(text: string): number {
+  return JSON.stringify(text).length - 2;
+}
+
+/** The retained text a generation.settled record describes (older records carry the inline text only). */
+function retainedFromRecord(body: Record<string, unknown>): RetainedText {
+  return {
+    text: (body["text"] as string | undefined) ?? "",
+    stored: (body["result"] as ResultRef | undefined) ?? null,
+    fullLength: typeof body["textLength"] === "number" ? body["textLength"] : null,
+  };
 }
 
 /** Usage as a worker reports it, or as the journal recorded it; `input` includes the cache tokens. */
