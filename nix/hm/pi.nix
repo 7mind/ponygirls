@@ -688,6 +688,8 @@ in
             "${../pkg/pi-extensions/ponygirls-quirk-kimi-401-retry.ts}"
             # /fast on|off|status: persistent OpenAI priority processing, without changing reasoning.
             "${../pkg/pi-extensions/ponygirls-openai-fast.ts}"
+            # Visible scope clarification after Codex's cyber-risk flag, capped at two continuations.
+            "${../pkg/pi-extensions/ponygirls-codex-risk-retry.ts}"
             # Footer model/thinking clicks (fullscreen) plus ctrl+shift+m / ctrl+shift+e.
             "${../pkg/pi-extensions}/ponygirls-model-picker.ts"
             # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
