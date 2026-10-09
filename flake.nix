@@ -525,6 +525,22 @@
             node --test ponygirls-openai-fast.test.mjs
             touch $out
           '';
+          ponygirls-codex-risk-retry = pkgs.runCommand "ponygirls-codex-risk-retry-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
+            PI_RETRY_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_RETRY_GOALS_EXTENSION = "${./nix/pkg/pi-extensions/ponygirls-codex-goals}";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            cp ${./nix/pkg/pi-extensions/ponygirls-codex-risk-retry.ts} ponygirls-codex-risk-retry.ts
+            cp ${./nix/pkg/pi-extensions/ponygirls-codex-risk-retry.test.mjs} ponygirls-codex-risk-retry.test.mjs
+            mkdir -p node_modules/@earendil-works
+            ln -s "$PI_RETRY_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_RETRY_SDK_ROOT/node_modules/@types" node_modules/@types
+            tsc --strict --noEmit --skipLibCheck --target esnext --module esnext --moduleResolution bundler --allowImportingTsExtensions ponygirls-codex-risk-retry.ts
+            node --test ponygirls-codex-risk-retry.test.mjs
+            touch $out
+          '';
           ponygirls-model-stats = pkgs.runCommand "ponygirls-model-stats-test" {
             nativeBuildInputs = [ pkgs.nodejs ];
           } ''
