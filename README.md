@@ -126,6 +126,9 @@ The main knobs (all under `smind.hm.dev.llm`):
 - **`crawl4ai`** — register the Crawl4AI MCP endpoint with Claude Code, Codex,
   and Pi via the shared `programs.mcp` registry, without writing the API token
   into the Nix store.
+- **`notify.*`** — Matrix notifications for long background turns in Codex,
+  Claude Code, and Pi. Completion alerts require at least 60 seconds and an
+  unfocused terminal by default; headless runs count as background.
 - **`yolo.*`** — sandbox policy: extra read-only / read-write paths, device
   binds (e.g. GPU render nodes), prompt fragments and pre-start hooks keyed by
   suppression tags, session and secret variables (secrets are composed into a
@@ -142,6 +145,40 @@ module; ponygirls does not import CQ code or take a CQ flake argument.)
 
 Users with the harness enabled are enrolled in the container socket's access
 group automatically.
+
+### Matrix notifications
+
+```nix
+smind.hm.dev.llm.notify = {
+  enable = true;
+  homeserver = "https://matrix.org";
+  roomId = "!notifications:matrix.org";
+  tokenFile = "/run/agenix/matrix-notify";
+  minTurnSeconds = 60;
+  onlyWhenUnfocused = true;
+};
+```
+
+The token is read at runtime and exposed read-only inside yolo only when
+notifications are configured and enabled. Each client can be disabled through
+`notify.codex.enable`, `notify.claude.enable`, or `notify.pi.enable`.
+
+Interactive clients use terminal focus reports. Terminal multiplexers must
+forward those reports; tmux requires `set -g focus-events on`. Unknown focus
+suppresses alerts with a diagnostic. Set `onlyWhenUnfocused = false` for alerts
+based on duration alone, without the terminal wrapper. Claude permission
+requests obey the focus condition but do not wait for the duration threshold.
+
+After activation, review and trust Codex's new `UserPromptSubmit` hook through
+`/hooks`; Codex skips new or changed user hooks until they are trusted. See the
+[Codex hook trust documentation](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks).
+
+HTTPS protects notification messages in transit to the homeserver. These are
+ordinary `m.room.message` events, without Matrix end-to-end encryption, so
+homeservers can read their contents. Element's unencrypted-message indicator
+describes this lack of end-to-end encryption.
+Notifications include only the event, agent, and shortened session identifier.
+Repository names, agent responses, and other free-form hook text are omitted.
 
 ### NixOS modules
 
