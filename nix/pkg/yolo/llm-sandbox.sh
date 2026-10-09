@@ -23,6 +23,12 @@ Options:
   --env VAR=VALUE     Set environment variable inside sandbox
   --help           Show this help
 
+Environment:
+  LLM_SANDBOX_NET_HELPER  Give the sandbox a network namespace of its own
+                          instead of the host's, and run this program with the
+                          sandbox's PID before COMMAND starts; it connects that
+                          namespace (e.g. with pasta) and exits 0 once it has.
+
 Example:
   llm-sandbox --rw "\$PWD" --env FOO=bar -- myapp --flag
 EOF
@@ -358,5 +364,56 @@ fi
 BWRAP_ARGS+=(--setenv SMIND_EXCHANGE_DIR "$USER_EXCHANGE")
 
 PS4='+ ${EPOCHREALTIME} '
+if [[ -z "${LLM_SANDBOX_NET_HELPER:-}" ]]; then
+  set -x
+  exec bwrap "${BWRAP_ARGS[@]}" "$@"
+fi
+
+# A network namespace of its own: bwrap reports the sandbox's PID on --info-fd
+# and holds COMMAND on --block-fd until the helper has connected the namespace,
+# so COMMAND never runs unconnected. --unshare-net overrides the --share-net
+# above. The subshell keeps stdin and restores SIGINT/SIGQUIT, which an
+# asynchronous command would otherwise lose and ignore (SIGINT/SIGQUIT stay
+# ignored if this script was started with them ignored).
+_net_fifos="$(mktemp -d)"
+mkfifo "$_net_fifos/info" "$_net_fifos/block"
 set -x
-exec bwrap "${BWRAP_ARGS[@]}" "$@"
+(
+  trap - INT QUIT
+  exec bwrap "${BWRAP_ARGS[@]}" --unshare-net --info-fd 3 --block-fd 4 "$@" \
+    3>"$_net_fifos/info" 4<"$_net_fifos/block"
+) <&0 &
+{ set +x; } 2>/dev/null
+_bwrap_pid=$!
+exec 5<"$_net_fifos/info" 6>"$_net_fifos/block"
+rm -r -- "$_net_fifos"
+_sandbox_pid=""
+# fd 5 stays open until this script exits: bwrap goes on writing the info
+# after the child-pid, and a write into a fifo nobody reads kills it with
+# SIGPIPE before it lets the sandbox start.
+while IFS= read -r _info_line <&5; do
+  if [[ "$_info_line" =~ \"child-pid\":\ *([0-9]+) ]]; then
+    _sandbox_pid="${BASH_REMATCH[1]}"
+    break
+  fi
+done
+if [[ -z "$_sandbox_pid" ]]; then
+  # bwrap exited before it started the sandbox, and said why.
+  wait "$_bwrap_pid" || exit
+  exit 1
+fi
+# A held sandbox does not die with bwrap, and an EOF on --block-fd releases
+# it: whatever ends this script before the release kills it instead.
+_sandbox_released=0
+trap '(( _sandbox_released )) || kill -KILL "$_sandbox_pid" 2>/dev/null || true' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if ! "$LLM_SANDBOX_NET_HELPER" "$_sandbox_pid"; then
+  echo "llm-sandbox: $LLM_SANDBOX_NET_HELPER did not connect the sandbox's network" >&2
+  exit 1
+fi
+printf x >&6
+_sandbox_released=1
+exec 6>&-
+wait "$_bwrap_pid"
