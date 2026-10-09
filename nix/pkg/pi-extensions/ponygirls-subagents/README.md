@@ -192,6 +192,12 @@ wait_agent(targets=[{agentId:"<id>", taskRunId:"<run>"}], condition="all_settled
 read_agent(target="<id>", view="result")
 ```
 
+`usage` in `list_agents` and `read_agent` reports `inputTokens` (the whole
+prompt, cached parts included) with `cacheReadTokens` and `cacheWriteTokens`
+as its cached parts, `outputTokens` with `reasoningTokens` as its reasoning
+part (`null` when the provider reports no breakdown), `cost`, and `unknown`
+(some usage never arrived; never read as zero).
+
 A child's question ends a settlement wait with `reason: "needs_response"`;
 its text is in `messages` (and `openQuestion` in `list_agents`). Answer with
 `send_message(target="<child>", mode="note", reply_to="<messageId>", message=...)`

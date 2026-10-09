@@ -76,6 +76,24 @@ export type Residency = "loaded" | "unloaded";
 /** Message delivery mode. */
 export type MessageMode = "note" | "steer" | "task";
 
+/**
+ * Provider usage summed over reported generations. `inputTokens` is the
+ * whole prompt: uncached, cache-read, and cache-write tokens together; the
+ * two cache counters are its parts. `reasoningTokens` is the part of
+ * `outputTokens` spent on reasoning, summed over the requests whose provider
+ * reported that breakdown (null: none did). `cost` is null until a provider
+ * reports one. Unknown usage is flagged, never treated as zero.
+ */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number | null;
+  cost: number | null;
+  unknown: boolean;
+}
+
 export interface AgentRecord {
   id: AgentId;
   /** Canonical task path, e.g. "/root/builder". Immutable; never reused. */
