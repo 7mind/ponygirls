@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { authorizeTool, defaultSupervisorPolicy, intersectGrants, rootGrants } from "../src/policy.ts";
+import { authorizeTool, authorizeWorkspace, defaultSupervisorPolicy, intersectGrants, pathWithin, rootGrants } from "../src/policy.ts";
 
 function policy() {
   const p = defaultSupervisorPolicy();
@@ -112,4 +112,20 @@ test("a host-isolated child keeps its owner's repository grants for sandboxed de
   assert.deepEqual(reader.grants.repos, [{ repoId: "r1", read: true, write: false }]);
   assert.ok(intersectGrants(p, reader.grants, { profile: "reader", isolation: "sandbox", repoId: "r1", shell: false, network: false, model: null, depth: 2 }).ok);
   assert.equal(intersectGrants(p, reader.grants, { profile: "writer", isolation: "sandbox", repoId: "r1", shell: true, network: false, model: null, depth: 2 }).ok, false);
+});
+
+test("a prepared workspace is denied by default and allowed only inside a listed root", () => {
+  assert.deepEqual(defaultSupervisorPolicy().workspaceRoots, []);
+  assert.equal(defaultSupervisorPolicy().workspaceOwnerCheckoutAllowed, false);
+  const none = authorizeWorkspace([], "/work/trees/a");
+  assert.ok(!none.ok && none.error.code === "POLICY_DENIED");
+  assert.equal(authorizeWorkspace(["/work/trees"], "/work/trees/a").ok, true);
+  assert.equal(authorizeWorkspace(["/elsewhere", "/work/trees"], "/work/trees/a/b").ok, true);
+  assert.equal(authorizeWorkspace(["/work/trees"], "/work/trees").ok, true);
+  const sibling = authorizeWorkspace(["/work/trees"], "/work/trees-other/a");
+  assert.ok(!sibling.ok && sibling.error.code === "POLICY_DENIED");
+  const parent = authorizeWorkspace(["/work/trees"], "/work");
+  assert.ok(!parent.ok && parent.error.code === "POLICY_DENIED");
+  assert.equal(pathWithin("/a/b", "/"), true);
+  assert.equal(pathWithin("/a/bc", "/a/b"), false);
 });

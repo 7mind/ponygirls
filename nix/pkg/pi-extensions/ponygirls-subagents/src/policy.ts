@@ -19,6 +19,9 @@
  * decreases down the tree. Registered repositories, read roots, and
  * tool-job network denial bound sandboxed agents only; host-isolated
  * agents ("none", "worktree") run with the user's own authority.
+ *
+ * A workspace directory the caller prepares is the one path a spawn may
+ * name; it is accepted only inside a root this policy lists.
  */
 
 import { err } from "./errors.ts";
@@ -46,6 +49,10 @@ export interface SupervisorPolicy {
   gateMaxRoundsCeiling: number | null;
   /** Tool-job network default (deny unless an explicit grant allows). */
   toolNetwork: boolean;
+  /** Directories a caller-prepared workspace must lie inside (absolute paths). Empty: none is accepted. */
+  workspaceRoots: string[];
+  /** Whether the governing session's own checkout may be assigned as a prepared workspace. */
+  workspaceOwnerCheckoutAllowed: boolean;
 }
 
 export interface RegisteredRepo {
@@ -78,6 +85,8 @@ export function defaultSupervisorPolicy(): SupervisorPolicy {
     gateBypassAllowed: false,
     gateMaxRoundsCeiling: 3,
     toolNetwork: false,
+    workspaceRoots: [],
+    workspaceOwnerCheckoutAllowed: false,
   };
 }
 
@@ -186,6 +195,24 @@ export function rootGrants(policy: SupervisorPolicy): GrantSet {
     maxDepth: policy.maxDepth,
     isolation: "none",
   };
+}
+
+/** Whether `path` is `root` or lies beneath it (lexical: both are resolved paths). */
+export function pathWithin(path: string, root: string): boolean {
+  return path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`);
+}
+
+/**
+ * A caller-prepared workspace is denied unless it lies inside an allowed
+ * root. Both sides are resolved by the caller (symlinks followed), so a
+ * link cannot place a workspace outside the roots it appears under.
+ */
+export function authorizeWorkspace(
+  allowedRoots: string[],
+  workspace: string,
+): { ok: true } | { ok: false; error: ReturnType<typeof err> } {
+  if (allowedRoots.some((root) => pathWithin(workspace, root))) return { ok: true };
+  return { ok: false, error: err("POLICY_DENIED", `workspace ${workspace} lies outside the policy's workspaceRoots`) };
 }
 
 /** Validate a proxy tool name against caller authority (post-transform). */
