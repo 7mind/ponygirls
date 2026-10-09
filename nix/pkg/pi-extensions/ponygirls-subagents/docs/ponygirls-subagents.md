@@ -40,6 +40,60 @@ isolated than its owner (`none` < `worktree` < `sandbox`). Omitted, it is
 - **`sandbox`:** the bubblewrap view below over a registered repository
   (`repo_id`); a writer gets its own worktree.
 
+### A workspace the caller prepared (`workspace_path`)
+
+A governing session that prepares its own git work tree per child (and
+later commits and removes it itself) passes it as `spawn_agent`'s
+`workspace_path`. The child then runs there under `worktree` isolation,
+with host tool jobs, exactly as it would in a worktree the extension made:
+that directory is its working directory and, for a writer, the tree
+`write`/`edit`/`bash` are meant for. As everywhere under host isolation,
+this is not a filesystem boundary.
+
+- **Denied by default.** It is accepted only when the policy's
+  `workspaceRoots` lists a directory that contains it; otherwise the spawn
+  fails with `POLICY_DENIED`. Both the path and the roots are compared after
+  resolving symlinks, so a link under a root does not admit a directory
+  outside it. A root that does not exist admits nothing.
+- **What is verified at spawn** (before any capacity is charged):
+  the path is absolute (`INVALID`); it resolves to an existing directory
+  (`WORKSPACE_UNAVAILABLE`); the resolved path lies inside a listed root,
+  does not overlap the supervisor's root store or the host agent directory,
+  and is not the governing session's own checkout (a directory containing
+  its working directory) unless `workspaceOwnerCheckoutAllowed` is `true`
+  (`POLICY_DENIED`); it is the top-level directory of a git work tree that
+  has a commit — a main checkout or a linked worktree, not a subdirectory
+  of one and not a bare repository (`WORKSPACE_UNAVAILABLE`). Nothing else
+  is checked: the tree may be dirty, on any branch or detached, and of any
+  repository.
+- **Combinations.** Only with `isolation: "worktree"` (the default) and
+  without `base_commit`; `none` and `sandbox` are refused with `INVALID`.
+  A sandboxed view is built from a registered repository, and its authority
+  is that registration, not a path. Only the governing session may pass
+  it: a child's `spawn_agent` does not offer the parameter (`FORBIDDEN`).
+- **Ownership stays with the caller.** The extension never creates,
+  resets, cleans, removes, or prunes the directory or its git registration,
+  on any path: startup failure, settlement, interrupt, close, shutdown, or
+  recovery. Of its own accord it runs only read-only git commands there
+  (`rev-parse` at spawn; `status` and `diff` for a gate fingerprint, with
+  optional locks off). Two children given
+  the same directory are not locked against each other. A nested writer
+  spawned by such a child still gets a worktree the extension makes from
+  that repository (under the root store), which registers a worktree in the
+  caller's repository.
+- **Gates.** The git dir and `HEAD` found at spawn are recorded with the
+  agent; a gated writer's candidate is the tree's changes relative to that
+  commit (committed, dirty, and untracked, uncommitted edits already there
+  included), fingerprinted through the recorded git dir even if the child
+  rewrites the tree's `.git` file.
+- **Recovery.** The resolved path is journaled with the agent. Replay never
+  touches the directory. If its owner removed it meanwhile, a lost run
+  settles by the usual rules with `workspace <path> no longer exists` in
+  its detail, and any later task for that agent fails with
+  `WORKSPACE_UNAVAILABLE` instead of starting a worker. Loading a worker
+  into the directory again also re-checks `workspaceRoots`, so a root
+  dropped from the policy fails the task with `POLICY_DENIED`.
+
 Under host isolation the `reader` profile is a tool list, not a boundary,
 and gate checks can modify sources. Host jobs run as their own process
 group, which is killed when the job ends, times out, or is cancelled; a pi

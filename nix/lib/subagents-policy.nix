@@ -3,7 +3,8 @@
 # nix/hm/pi.nix renders the result with pkgs.formats.json; the
 # `subagents-policy-shape` flake check asserts it stays complete against
 # every field the extension's loadPolicy reads (maxDepth, nesting, repos,
-# allowedModels, gateBypassAllowed, gateMaxRoundsCeiling), so a managed file
+# allowedModels, gateBypassAllowed, gateMaxRoundsCeiling, workspaceRoots,
+# workspaceOwnerCheckoutAllowed), so a managed file
 # can never half-clobber a hand-maintained partial one. Defaults here mirror
 # the extension's deny-by-default policy.
 { allowAllModels
@@ -13,6 +14,8 @@
 , repos
 , gateBypassAllowed
 , gateMaxRoundsCeiling
+, workspaceRoots
+, workspaceOwnerCheckoutAllowed
 }:
 {
   maxDepth = maxDepth;
@@ -35,4 +38,6 @@
       map (m: { provider = m.provider; id = m.id; }) allowedModels;
   gateBypassAllowed = gateBypassAllowed;
   gateMaxRoundsCeiling = gateMaxRoundsCeiling;
+  workspaceRoots = workspaceRoots;
+  workspaceOwnerCheckoutAllowed = workspaceOwnerCheckoutAllowed;
 }

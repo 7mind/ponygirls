@@ -131,3 +131,38 @@ test("the governing model is told about gate checks and promised outputs", async
     rmSync(agentDir, { recursive: true, force: true });
   }
 });
+
+test("the policy file's workspaceRoots gate spawn_agent workspace_path; a malformed list is an error", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-ext-"));
+  try {
+    const { tools, schemas, ctx } = await loadExtension(agentDir);
+    assert.ok(schemas.get("spawn_agent")!.properties!["workspace_path"], "spawn_agent lacks workspace_path");
+    const spawn = async (id: string): Promise<string> =>
+      (await tools.get("spawn_agent")!(id, { task_name: id, message: "m", profile: "writer", workspace_path: join(agentDir, "elsewhere") }, undefined, undefined, ctx)).content[0]!.text;
+    // No policy file: denied by default.
+    assert.match(await spawn("a"), /POLICY_DENIED: workspace_path is not permitted/);
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+  const listed = mkdtempSync(join(tmpdir(), "subagents-ext-"));
+  try {
+    mkdirSync(join(listed, "elsewhere"));
+    writeFileSync(join(listed, "subagents-policy.json"), JSON.stringify({ workspaceRoots: [join(listed, "trees")] }));
+    const { tools, ctx } = await loadExtension(listed);
+    const res = await tools.get("spawn_agent")!("b", { task_name: "b", message: "m", profile: "writer", workspace_path: join(listed, "elsewhere") }, undefined, undefined, ctx);
+    // The listed root is in force: the refusal is about this path, not about an empty list.
+    assert.match(res.content[0]!.text, /POLICY_DENIED: workspace .* lies outside the policy's workspaceRoots/);
+  } finally {
+    rmSync(listed, { recursive: true, force: true });
+  }
+  const malformed = mkdtempSync(join(tmpdir(), "subagents-ext-"));
+  try {
+    writeFileSync(join(malformed, "subagents-policy.json"), JSON.stringify({ workspaceRoots: ["relative/root"] }));
+    const { tools, ctx } = await loadExtension(malformed);
+    const res = await tools.get("list_agents")!("c", {}, undefined, undefined, ctx);
+    assert.equal(res.isError, true);
+    assert.match(res.content[0]!.text, /POLICY_DENIED: .*workspaceRoots must be a list of absolute paths/);
+  } finally {
+    rmSync(malformed, { recursive: true, force: true });
+  }
+});

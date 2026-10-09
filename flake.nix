@@ -113,6 +113,8 @@
               ];
               gateBypassAllowed = true;
               gateMaxRoundsCeiling = null;
+              workspaceRoots = [ "/home/user/worktrees" ];
+              workspaceOwnerCheckoutAllowed = true;
             };
             open = mkPolicy {
               allowAllModels = true;
@@ -122,9 +124,11 @@
               repos = [ ];
               gateBypassAllowed = false;
               gateMaxRoundsCeiling = 3;
+              workspaceRoots = [ ];
+              workspaceOwnerCheckoutAllowed = false;
             };
           in
-          assert builtins.attrNames listed == [ "allowedModels" "gateBypassAllowed" "gateMaxRoundsCeiling" "maxDepth" "nesting" "repos" ];
+          assert builtins.attrNames listed == [ "allowedModels" "gateBypassAllowed" "gateMaxRoundsCeiling" "maxDepth" "nesting" "repos" "workspaceOwnerCheckoutAllowed" "workspaceRoots" ];
           assert listed == {
             maxDepth = 2;
             nesting = true;
@@ -135,6 +139,8 @@
             allowedModels = [ { provider = "meta"; id = "muse-spark-1.3"; } ];
             gateBypassAllowed = true;
             gateMaxRoundsCeiling = null;
+            workspaceRoots = [ "/home/user/worktrees" ];
+            workspaceOwnerCheckoutAllowed = true;
           };
           assert open == {
             maxDepth = 1;
@@ -143,6 +149,8 @@
             allowedModels = null;
             gateBypassAllowed = false;
             gateMaxRoundsCeiling = 3;
+            workspaceRoots = [ ];
+            workspaceOwnerCheckoutAllowed = false;
           };
           pkgs.runCommandLocal "subagents-policy-shape-test" { } "touch $out";
       in
