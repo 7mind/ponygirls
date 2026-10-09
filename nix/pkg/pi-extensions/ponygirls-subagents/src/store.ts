@@ -19,6 +19,9 @@
  *   identity; conflicting reuse fails.
  * - Bounded checkpoint retention: latest committed + prior-during-replacement
  *   only; raw read/diff IPC payloads are never journaled (digests/previews).
+ * - Result texts beyond the inline bound are side files, one per task run
+ *   and generation; the journal record carries only their checksummed
+ *   reference, and a file that fails it fails loading (RECOVERY_CORRUPT).
  *
  * Dual-test contract: FileRunStore and InMemoryRunStore share RunStore.
  */
@@ -104,6 +107,14 @@ export interface CheckpointRef {
   superseded: boolean;
 }
 
+/** A result text kept beside the journal, as its journal record references it. */
+export interface ResultRef {
+  file: string;
+  bytes: number;
+  /** Content hash of the UTF-8 bytes. */
+  sha256: string;
+}
+
 export interface RunStore {
   readonly rootId: string;
   append(kind: JournalKind, body: Record<string, unknown>): JournalRecord;
@@ -114,6 +125,10 @@ export interface RunStore {
   saveCheckpoint(ref: CheckpointRef, bytes: Uint8Array): void;
   loadCheckpoint(agentId: string): { ref: CheckpointRef; bytes: Uint8Array } | null;
   supersedeCheckpoint(agentId: string): void;
+  /** Keep a generation's result text durably beside the journal; the caller journals the returned reference. */
+  saveResult(agentId: string, taskRunId: string, generation: number, text: string): ResultRef;
+  /** The text a reference names; a missing or altered text fails (RECOVERY_CORRUPT). */
+  loadResult(agentId: string, ref: ResultRef): string;
   /** Highest committed seq. */
   durableSeq(): number;
   close(): void;
@@ -301,6 +316,7 @@ function ownerAlive(owner: LockOwner): boolean {
 const JOURNAL_FILE = "journal.log";
 const MANIFEST_FILE = "MANIFEST.json";
 const CHECKPOINT_PREFIX = "gen-";
+const RESULT_PREFIX = "result-";
 
 export class FileRunStore implements RunStore {
   readonly rootId: string;
@@ -308,6 +324,7 @@ export class FileRunStore implements RunStore {
   private journalPath: string;
   private manifestPath: string;
   private checkpointDir: string;
+  private resultDir: string;
   private seq = 0;
   /** Byte length of the committed journal prefix (the manifest boundary). */
   private committedBytes = 0;
@@ -326,8 +343,10 @@ export class FileRunStore implements RunStore {
     this.journalPath = join(rootDir, JOURNAL_FILE);
     this.manifestPath = join(rootDir, MANIFEST_FILE);
     this.checkpointDir = join(rootDir, "checkpoints");
-    if (!existsSync(this.checkpointDir)) {
+    this.resultDir = join(rootDir, "results");
+    if (!existsSync(this.checkpointDir) || !existsSync(this.resultDir)) {
       mkdirSync(this.checkpointDir, { recursive: true });
+      mkdirSync(this.resultDir, { recursive: true });
       fsyncDir(rootDir);
     }
     this.open();
@@ -424,6 +443,35 @@ export class FileRunStore implements RunStore {
     const published = this.latestPublished(agentId);
     if (!published) return;
     this.retirePredecessors(agentId, (published.body as { file: string }).file);
+  }
+
+  saveResult(agentId: string, taskRunId: string, generation: number, text: string): ResultRef {
+    const bytes = Buffer.from(text, "utf8");
+    const file = `${RESULT_PREFIX}${taskRunId}-${generation}.txt`;
+    try {
+      const agentDir = join(this.resultDir, agentId);
+      if (!existsSync(agentDir)) {
+        mkdirSync(agentDir, { recursive: true });
+        fsyncDir(this.resultDir);
+      }
+      writeDurably(join(agentDir, file), bytes);
+    } catch (e) {
+      throw err("STORE_FAILED", `result text ${agentId}/${file} not saved: ${(e as Error).message}`);
+    }
+    return { file, bytes: bytes.length, sha256: sha256Hex(bytes) };
+  }
+
+  loadResult(agentId: string, ref: ResultRef): string {
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(join(this.resultDir, agentId, ref.file));
+    } catch (e) {
+      throw err("RECOVERY_CORRUPT", `result text ${agentId}/${ref.file} unreadable: ${(e as Error).message}`);
+    }
+    if (bytes.length !== ref.bytes || sha256Hex(bytes) !== ref.sha256) {
+      throw err("RECOVERY_CORRUPT", `result text ${agentId}/${ref.file} failed validation`);
+    }
+    return bytes.toString("utf8");
   }
 
   durableSeq(): number {
@@ -534,6 +582,7 @@ export class InMemoryRunStore implements RunStore {
   private records: JournalRecord[] = [];
   private commands = new Map<string, JournalRecord>();
   private checkpoints = new Map<string, { ref: CheckpointRef; bytes: Uint8Array }[]>();
+  private results = new Map<string, Buffer>();
   private seq = 0;
 
   constructor(rootId: string) {
@@ -589,6 +638,21 @@ export class InMemoryRunStore implements RunStore {
   supersedeCheckpoint(agentId: string): void {
     const list = this.checkpoints.get(agentId) ?? [];
     while (list.length > 1) list.shift();
+  }
+
+  saveResult(agentId: string, taskRunId: string, generation: number, text: string): ResultRef {
+    const bytes = Buffer.from(text, "utf8");
+    const file = `${RESULT_PREFIX}${taskRunId}-${generation}.txt`;
+    this.results.set(`${agentId}/${file}`, bytes);
+    return { file, bytes: bytes.length, sha256: sha256Hex(bytes) };
+  }
+
+  loadResult(agentId: string, ref: ResultRef): string {
+    const bytes = this.results.get(`${agentId}/${ref.file}`);
+    if (!bytes || bytes.length !== ref.bytes || sha256Hex(bytes) !== ref.sha256) {
+      throw err("RECOVERY_CORRUPT", `result text ${agentId}/${ref.file} failed validation`);
+    }
+    return bytes.toString("utf8");
   }
 
   durableSeq(): number {
