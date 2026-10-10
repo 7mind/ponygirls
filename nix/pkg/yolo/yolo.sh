@@ -112,8 +112,10 @@ Flags (must precede the subcommand):
                          of named profile PROFILE while keeping the launched
                          profile's sessions and state (repeatable, one per
                          agent). The credentials file is shared live, so token
-                         refreshes are visible to PROFILE too. For pi this is
-                         its whole auth.json (every provider).
+                         refreshes are visible to PROFILE too, as long as
+                         every claude using PROFILE's credentials runs under
+                         yolo. For pi this is its whole auth.json (every
+                         provider).
       --disable=TAG      Drop every device bind, prompt fragment and pre-start
                          hook carrying TAG (repeatable, comma-separated).
                          Known tags: audio, codegraph, cpu-limit, display,
@@ -621,8 +623,12 @@ profile_dir() { printf '%s/%s/%s' "${PROFILES_ROOT}" "${PROFILE}" "$1"; }
 # ~/.pi in the sandbox; <profile>/<agent>/home on the host). Every agent
 # rewrites it in place when the target is a mount point (codex and pi always
 # truncate+write; claude falls back from rename to in-place on EBUSY), so a file
-# bind stays live. pi's auth.json holds all of its providers at once, and its
-# proper-lockfile lock (auth.json.lock, a sibling dir) stays per profile.
+# bind stays live. Where the file is not a mount point, claude renames a new
+# file over it, which detaches every file bind of the old one; so a named
+# profile's own claude sessions bind it too (add_claude_binds), and only a
+# claude run outside yolo on the profile directory can still detach them.
+# pi's auth.json holds all of its providers at once, and its proper-lockfile
+# lock (auth.json.lock, a sibling dir) stays per profile.
 agent_credentials_file() {
   case "$1" in
     claude) printf '.credentials.json' ;;
@@ -1224,6 +1230,15 @@ add_claude_binds() {
       --ro-bind "${HOME}/.claude/settings.json,${HOME}/.claude/settings.json"
       --ro-bind "${HOME}/.claude/CLAUDE.md,${HOME}/.claude/CLAUDE.md"
     )
+    # The credentials file as a mount point of its own, so a token refresh here
+    # rewrites it in place and reaches every --auth-override sandbox that bound
+    # it (see agent_credentials_file). An --auth-override for claude binds the
+    # other profile's file at this path instead; a profile that has not logged
+    # in yet has no file, and claude creates one.
+    local creds; creds="$(agent_credentials_file claude)"
+    if [[ -f "$A/home/$creds" && "$_auth_agents_seen" != *" claude "* ]]; then
+      EXTRA_ARGS+=(--bind "$A/home/$creds,${HOME}/.claude/$creds")
+    fi
   else
     EXTRA_ARGS+=(
       --rw "${HOME}/.claude"
