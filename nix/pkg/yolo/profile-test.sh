@@ -555,6 +555,26 @@ assert_eq "auth override leaves the launched profile's own credentials untouched
 assert_eq "auth override leaves the source credentials untouched" \
   '{"work":"codex"}' "$(cat "$WORK_CODEX_AUTH")"
 
+# A named profile's own claude sessions bind its credentials file on its own,
+# over the home bind. claude renames a new file over its credentials when it
+# can; a mount point refuses that (EBUSY) and claude rewrites it in place, so
+# a refresh made in the profile's own session reaches the inode that every
+# running --auth-override sandbox borrowing these credentials has bound.
+OUT="$(run_yolo --profile work cmd true)"
+assert_contains "a profile's own claude session binds its credentials file read-write" "$OUT" \
+  $'--bind\n'"$WORK_CLAUDE_CREDS,$FAKE_HOME/.claude/.credentials.json"
+assert_after "the profile's credentials bind follows its claude home bind" "$OUT" \
+  "$WORK_CLAUDE_CREDS,$FAKE_HOME/.claude/.credentials.json" "$FAKE_HOME/.config/yolo/work/claude/home,$FAKE_HOME/.claude"
+OUT="$(run_yolo --profile foo --auth-override claude:work cmd true)"
+assert_not_contains "a claude auth override binds the source credentials instead of the profile's own" "$OUT" \
+  "$FOO_CLAUDE_CREDS,$FAKE_HOME/.claude/.credentials.json"
+OUT="$(run_yolo --profile fresh cmd true)"
+STATUS=$?
+assert_eq "a profile without claude credentials launches" "0" "$STATUS"
+assert_not_contains "a profile without claude credentials binds none (claude creates the file)" "$OUT" \
+  "/.claude/.credentials.json"
+rm -rf "$FAKE_HOME/.config/yolo/fresh"
+
 # Claude treats the sandboxed workspace as trusted (no trust dialog) whenever
 # CLAUDE_CODE_SANDBOXED is set; yolo sets it for every subcommand.
 for _subcmd in claude codex pi "cmd true"; do
