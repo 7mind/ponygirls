@@ -220,6 +220,24 @@ class CommandLineTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("--setup requires e2ee transport", result.stderr)
 
+    def test_garbage_payload_says_what_was_expected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self.write_config(Path(directory))
+            result = self.run_cli(config, ["pi", "--attention", "abc"])
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("must be a JSON object with a session identifier", result.stderr)
+            self.assertIn("'abc'", result.stderr)
+
+    def test_missing_payload_says_what_was_expected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self.write_config(Path(directory))
+            command = [sys.executable, str(Path(__file__).with_name("notify.py")), str(config),
+                       "pi", "--attention"]
+            with open(os.devnull) as void:
+                result = subprocess.run(command, stdin=void, text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("must be a JSON object with a session identifier", result.stderr)
+
     def test_manual_attention_ping_without_turn(self):
         with adapters(True) as (_store, sender, messages), tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
