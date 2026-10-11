@@ -162,15 +162,24 @@ def make_sender(configuration: dict[str, object]):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("config", type=Path)
-    parser.add_argument("harness", choices=("claude", "codex", "pi"))
+    parser = argparse.ArgumentParser(
+        description="Send coding-agent turn notifications to Matrix.",
+        epilog="Provision once per host: agent-notify-matrix CONFIG --setup. "
+               "Manual test ping: write the word unfocused to /tmp/focus, then run "
+               "PONYGIRLS_NOTIFY_FOCUS_FILE=/tmp/focus agent-notify-matrix CONFIG "
+               "pi --attention PAYLOAD, where PAYLOAD is hook JSON with a session_id.",
+    )
+    parser.add_argument("config", type=Path, help="JSON file with homeserver, roomId, and transport settings")
+    parser.add_argument("harness", nargs="?", choices=("claude", "codex", "pi"),
+                        help="Agent harness name. Required except with --setup.")
     actions = parser.add_mutually_exclusive_group()
-    actions.add_argument("--start", action="store_true")
-    actions.add_argument("--attention", action="store_true")
-    actions.add_argument("--setup", action="store_true")
-    parser.add_argument("payload", nargs="?")
+    actions.add_argument("--start", action="store_true", help="Record a turn start for completion throttling")
+    actions.add_argument("--attention", action="store_true", help="Notify immediately that input is needed")
+    actions.add_argument("--setup", action="store_true", help="Provision this host for e2ee transport")
+    parser.add_argument("payload", nargs="?", help="Hook JSON payload, or read from stdin when absent")
     arguments = parser.parse_args()
+    if arguments.harness is None and not arguments.setup:
+        parser.error("harness is required without --setup")
     configuration = json.loads(arguments.config.read_text())
     if arguments.setup:
         if configuration.get("transport", "plaintext") != "e2ee":

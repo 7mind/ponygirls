@@ -210,6 +210,63 @@ class NotificationTests(unittest.TestCase):
             parse_turn("codex", "{}")
 
 
+class CommandLineTests(unittest.TestCase):
+    def run_cli(self, config, arguments, payload=None, focus=None):
+        environment = dict(os.environ)
+        if focus is not None:
+            target = Path(tempfile.mkdtemp()) / "focus"
+            target.write_text(focus.value)
+            environment["PONYGIRLS_NOTIFY_FOCUS_FILE"] = str(target)
+        command = [sys.executable, str(Path(__file__).with_name("notify.py")), str(config)] + arguments
+        return subprocess.run(command, input=payload, text=True, capture_output=True,
+                              env=environment, timeout=30)
+
+    def write_config(self, root, extra=None):
+        config = root / "config.json"
+        body = {
+            "homeserver": "https://matrix.test",
+            "roomId": "!room:test",
+            "tokenFile": "/tmp/test-token",
+            "minTurnSeconds": 0,
+            "onlyWhenUnfocused": False,
+        }
+        if extra:
+            body.update(extra)
+        config.write_text(json.dumps(body))
+        return config
+
+    def test_help_lists_setup_and_manual_test(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self.write_config(Path(directory))
+            result = self.run_cli(config, ["--help"])
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("--setup", result.stdout)
+            self.assertIn("--attention", result.stdout)
+
+    def test_setup_does_not_need_harness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self.write_config(Path(directory))
+            result = self.run_cli(config, ["--setup"])
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("--setup requires e2ee transport", result.stderr)
+
+    def test_manual_attention_ping_without_turn(self):
+        with adapters(True) as (_store, sender, messages), tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.json"
+            config.write_text(json.dumps({
+                "homeserver": sender.homeserver,
+                "roomId": "!room:test",
+                "tokenFile": str(sender.token_file),
+                "minTurnSeconds": 0,
+                "onlyWhenUnfocused": True,
+            }))
+            payload = json.dumps({"session_id": "manual"})
+            result = self.run_cli(config, ["pi", "--attention", payload], focus=Focus.UNFOCUSED)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(messages, ["agent: input needed [pi] manual"])
+
+
 class E2EESelectionTests(unittest.TestCase):
     def base_config(self):
         return {
