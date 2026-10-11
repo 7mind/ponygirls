@@ -125,7 +125,10 @@ def text_field(payload: dict[str, object], names: tuple[str, ...]) -> str:
 
 
 def parse_turn(harness: str, payload: str) -> Turn:
-    data = json.loads(payload)
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        raise ValueError(f"notification payload must be a JSON object with a session identifier, got: {payload[:80]!r}")
     if not isinstance(data, dict):
         raise ValueError("notification payload must be a JSON object")
     session = text_field(data, ("session_id", "sessionId", "thread_id", "thread-id"))
@@ -177,6 +180,8 @@ def main() -> None:
     store = FileTurnStore(cache / "ponygirls-notify" / "turns")
     sender = make_sender(configuration)
     notifier = Notifier(store, sender, time.monotonic, configuration["minTurnSeconds"])
+    if arguments.payload is None and sys.stdin.isatty():
+        raise ValueError("no payload given and stdin is a terminal; pass hook JSON as the payload argument")
     payload = arguments.payload if arguments.payload is not None else sys.stdin.read()
     turn = parse_turn(arguments.harness, payload)
     action = "start" if arguments.start else "attention" if arguments.attention else "complete"
