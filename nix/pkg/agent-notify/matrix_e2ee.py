@@ -60,6 +60,9 @@ class NioMatrixSender:
             if client.should_upload_keys:
                 await client.keys_upload()
             await client.close()
+            print(f"provisioned {resp.user_id} device {resp.device_id}")
+            print(f"key store: {store}")
+            print("verify this device in Element, then send a test ping")
             return resp
 
         return asyncio.run(run())
