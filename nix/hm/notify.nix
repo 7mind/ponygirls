@@ -11,7 +11,7 @@ let
   runtime = ../pkg/agent-notify;
   e2eEnv = pkgs.python3.withPackages (ps: [ ps.matrix-nio ps.vodozemac ps.cachetools ps.atomicwrites ps.peewee ]);
   settings = pkgs.writeText "agent-notify-matrix.json" (builtins.toJSON {
-    inherit (notifyCfg) homeserver roomId tokenFile minTurnSeconds onlyWhenUnfocused;
+    inherit (notifyCfg) homeserver roomId tokenFile minTurnSeconds;
     inherit (notifyCfg) transport sender passwordFile;
   });
   notifyScript = pkgs.writeShellScriptBin "agent-notify-matrix" ''
@@ -22,22 +22,6 @@ let
   notifyExtension = pkgs.writeText "ponygirls-agent-notify-matrix.ts" (
     lib.replaceStrings [ "@notifyCommand@" ] [ notifyCommand ] (builtins.readFile (runtime + "/pi.ts"))
   );
-  wrapHarness = harness: binary: package:
-    if cfg.enable && active && notifyCfg.${harness}.enable && notifyCfg.onlyWhenUnfocused && package != null then
-      pkgs.symlinkJoin ({
-        name = "${package.name}-notify-focus";
-        paths = [ package ];
-        nativeBuildInputs = [ pkgs.makeWrapper ];
-        postBuild = ''
-          rm $out/bin/${binary}
-          makeWrapper ${pkgs.python3}/bin/python3 $out/bin/${binary} \
-            --add-flags ${runtime}/terminal.py \
-            --add-flags ${package}/bin/${binary}
-        '';
-        meta = package.meta;
-        passthru = package.passthru or { };
-      } // lib.optionalAttrs (package ? version) { inherit (package) version; })
-    else package;
 in
 {
   options.smind.hm.dev.llm.notify = {
@@ -82,11 +66,6 @@ in
       default = 60;
       description = "Minimum turn duration in seconds before sending a completion notification.";
     };
-    onlyWhenUnfocused = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Send notifications only when the terminal reports loss of focus or the client runs without a terminal. Unknown focus suppresses delivery with a diagnostic. Interactive clients run in a PTY to track terminal focus events.";
-    };
     claude.enable = lib.mkEnableOption "Matrix agent notifications for Claude Code" // {
       default = notifyCfg.enable;
     };
@@ -96,12 +75,6 @@ in
     pi.enable = lib.mkEnableOption "Matrix agent notifications for Pi" // {
       default = notifyCfg.enable;
     };
-  };
-
-  options.programs = {
-    claude-code.package = lib.mkOption { apply = wrapHarness "claude" "claude"; };
-    codex.package = lib.mkOption { apply = wrapHarness "codex" "codex"; };
-    pi.package = lib.mkOption { apply = wrapHarness "pi" "pi"; };
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
