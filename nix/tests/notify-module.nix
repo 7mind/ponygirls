@@ -30,6 +30,14 @@ let
             type = lib.types.listOf lib.types.str;
             default = [ ];
           };
+          smind.hm.dev.llm.yolo.extraReadWritePaths = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+          };
+          home.homeDirectory = lib.mkOption {
+            type = lib.types.str;
+            default = "/home/test";
+          };
           assertions = lib.mkOption {
             type = lib.types.listOf lib.types.attrs;
             default = [ ];
@@ -57,7 +65,7 @@ let
   disabled = evaluate { notify.enable = false; };
   noToken = evaluate { notify.tokenFile = null; };
   noHarness = evaluate { enable = false; };
-  durationOnly = evaluate { notify.onlyWhenUnfocused = false; };
+  e2ee = evaluate { notify.transport = "e2ee"; };
 in
 assert lib.all (assertion: assertion.assertion) enabled.assertions;
 assert builtins.elem tokenFile enabled.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
@@ -75,10 +83,10 @@ assert enabled.programs.claude-code.settings.hooks.Notification == [ {
     command = "${builtins.head enabled.home.packages}/bin/agent-notify-matrix claude --attention";
   } ];
 } ];
-assert lib.all (name: enabled.programs.${name}.package.name != harness.name) [ "claude-code" "codex" "pi" ];
-assert lib.all (name: enabled.programs.${name}.package.version == harness.version) [ "claude-code" "codex" "pi" ];
+assert lib.all (name: enabled.programs.${name}.package.name == harness.name) [ "claude-code" "codex" "pi" ];
 assert lib.all (name: disabled.programs.${name}.package.name == harness.name) [ "claude-code" "codex" "pi" ];
-assert lib.all (name: durationOnly.programs.${name}.package.name == harness.name) [ "claude-code" "codex" "pi" ];
+assert builtins.elem "/home/test/.local/share/agent-notify-matrix" e2ee.smind.hm.dev.llm.yolo.extraReadWritePaths;
+assert builtins.elem existingPath e2ee.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
 pkgs.runCommandLocal "notify-module-test" {
   nativeBuildInputs = [ pkgs.python3 pkgs.nodejs pkgs.bash ];
   NOTIFY_PI_EXTENSION = builtins.head enabled.programs.pi.settings.extensions;

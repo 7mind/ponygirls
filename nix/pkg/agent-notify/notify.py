@@ -8,7 +8,6 @@ import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -17,12 +16,6 @@ REQUEST_TIMEOUT_SECONDS = 10
 UUID_TEXT_LENGTH = 36
 UUID_PREVIEW_LENGTH = 8
 SESSION_PREVIEW_LENGTH = 64
-
-
-class Focus(Enum):
-    UNKNOWN = "unknown"
-    FOCUSED = "focused"
-    UNFOCUSED = "unfocused"
 
 
 @dataclass(frozen=True)
@@ -92,14 +85,13 @@ class MatrixSender:
 
 class Notifier:
     def __init__(self, store: TurnStore, sender: Sender, now: Callable[[], float],
-                 minimum_seconds: int, only_when_unfocused: bool):
+                 minimum_seconds: int):
         self.store = store
         self.sender = sender
         self.now = now
         self.minimum_seconds = minimum_seconds
-        self.only_when_unfocused = only_when_unfocused
 
-    def handle(self, action: str, turn: Turn, focus: Focus) -> bool:
+    def handle(self, action: str, turn: Turn) -> bool:
         if action == "start":
             self.store.begin(turn.key(), self.now())
             return False
@@ -115,10 +107,6 @@ class Notifier:
                 return False
         elif action != "attention":
             raise ValueError(f"unsupported notification action: {action}")
-        if self.only_when_unfocused and focus != Focus.UNFOCUSED:
-            if focus == Focus.UNKNOWN:
-                print("agent-notify-matrix: terminal focus unknown; notification suppressed", file=sys.stderr)
-            return False
         label = "turn complete" if action == "complete" else "input needed"
         session = turn.session[:UUID_PREVIEW_LENGTH] if len(turn.session) == UUID_TEXT_LENGTH else turn.session[:SESSION_PREVIEW_LENGTH]
         body = f"agent: {label} [{turn.harness}] {session}"
@@ -165,8 +153,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Send coding-agent turn notifications to Matrix.",
         epilog="Provision once per host: agent-notify-matrix CONFIG --setup. "
-               "Manual test ping: write the word unfocused to /tmp/focus, then run "
-               "PONYGIRLS_NOTIFY_FOCUS_FILE=/tmp/focus agent-notify-matrix CONFIG "
+               "Manual test ping: agent-notify-matrix CONFIG "
                "pi --attention PAYLOAD, where PAYLOAD is hook JSON with a session_id.",
     )
     parser.add_argument("config", type=Path, help="JSON file with homeserver, roomId, and transport settings")
@@ -189,13 +176,11 @@ def main() -> None:
     cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path(os.environ["HOME"]) / ".cache")))
     store = FileTurnStore(cache / "ponygirls-notify" / "turns")
     sender = make_sender(configuration)
-    notifier = Notifier(store, sender, time.monotonic, configuration["minTurnSeconds"], configuration["onlyWhenUnfocused"])
+    notifier = Notifier(store, sender, time.monotonic, configuration["minTurnSeconds"])
     payload = arguments.payload if arguments.payload is not None else sys.stdin.read()
     turn = parse_turn(arguments.harness, payload)
-    focus_path = os.environ.get("PONYGIRLS_NOTIFY_FOCUS_FILE")
-    focus = Focus(Path(focus_path).read_text()) if focus_path is not None else Focus.UNKNOWN
     action = "start" if arguments.start else "attention" if arguments.attention else "complete"
-    notifier.handle(action, turn, focus)
+    notifier.handle(action, turn)
 
 
 if __name__ == "__main__":
