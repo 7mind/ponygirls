@@ -13,6 +13,7 @@ let
   settings = pkgs.writeText "agent-notify-matrix.json" (builtins.toJSON {
     inherit (notifyCfg) homeserver roomId tokenFile minTurnSeconds;
     inherit (notifyCfg) transport sender passwordFile;
+    inherit (notifyCfg) includeMessageBody includeWorkdir includeHostname;
   });
   notifyScript = pkgs.writeShellScriptBin "agent-notify-matrix" ''
     export PYTHONPATH="${e2eEnv}/${pkgs.python3.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
@@ -66,6 +67,21 @@ in
       default = 60;
       description = "Minimum turn duration in seconds before sending a completion notification.";
     };
+    includeMessageBody = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Append the triggering message text, truncated to 200 characters, to notifications. Requires e2ee transport: message content never travels unencrypted.";
+    };
+    includeWorkdir = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Append the agent working directory to notifications.";
+    };
+    includeHostname = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Append the notifying machine hostname to notifications. The name is read at runtime, so roaming hosts report correctly.";
+    };
     claude.enable = lib.mkEnableOption "Matrix agent notifications for Claude Code" // {
       default = notifyCfg.enable;
     };
@@ -87,6 +103,10 @@ in
         {
           assertion = !(notifyCfg.enable && notifyCfg.transport == "plaintext") || notifyCfg.tokenFile != null;
           message = "smind.hm.dev.llm.notify plaintext transport needs tokenFile set.";
+        }
+        {
+          assertion = !(notifyCfg.enable && notifyCfg.includeMessageBody) || notifyCfg.transport == "e2ee";
+          message = "smind.hm.dev.llm.notify includeMessageBody needs transport = \"e2ee\".";
         }
       ];
     }

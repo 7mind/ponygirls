@@ -66,6 +66,8 @@ let
   noToken = evaluate { notify.tokenFile = null; };
   noHarness = evaluate { enable = false; };
   e2ee = evaluate { notify.transport = "e2ee"; };
+  bodyOnPlaintext = evaluate { notify.includeMessageBody = true; };
+  bodyOnE2EE = evaluate { notify.transport = "e2ee"; notify.includeMessageBody = true; };
 in
 assert lib.all (assertion: assertion.assertion) enabled.assertions;
 assert builtins.elem tokenFile enabled.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
@@ -87,6 +89,8 @@ assert lib.all (name: enabled.programs.${name}.package.name == harness.name) [ "
 assert lib.all (name: disabled.programs.${name}.package.name == harness.name) [ "claude-code" "codex" "pi" ];
 assert builtins.elem "/home/test/.local/share/agent-notify-matrix" e2ee.smind.hm.dev.llm.yolo.extraReadWritePaths;
 assert builtins.elem existingPath e2ee.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
+assert !(lib.all (assertion: assertion.assertion) bodyOnPlaintext.assertions);
+assert lib.all (assertion: assertion.assertion) bodyOnE2EE.assertions;
 pkgs.runCommandLocal "notify-module-test" {
   nativeBuildInputs = [ pkgs.python3 pkgs.nodejs pkgs.bash ];
   NOTIFY_PI_EXTENSION = builtins.head enabled.programs.pi.settings.extensions;
