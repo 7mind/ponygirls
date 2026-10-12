@@ -254,6 +254,40 @@ class CommandLineTests(unittest.TestCase):
             self.assertEqual(messages, ["agent: input needed [pi] manual"])
 
 
+class MessageDetailTests(unittest.TestCase):
+    def notify(self, payload, **flags):
+        arguments = {"show_message": False, "show_workdir": False, "show_hostname": False}
+        arguments.update(flags)
+        messages = []
+        notifier = Notifier(MemoryTurnStore(), MemorySender(messages), Clock().now, 0, **arguments)
+        turn = parse_turn("pi", json.dumps(payload))
+        with mock.patch("notify.socket.gethostname", return_value="testhost"):
+            self.assertTrue(notifier.handle("attention", turn))
+        return messages
+
+    def test_detail_flags_default_off(self):
+        payload = {"session_id": "s", "cwd": "/srv/api", "message": "do it"}
+        self.assertEqual(self.notify(payload), ["agent: input needed [pi] s"])
+
+    def test_all_detail_flags_on(self):
+        payload = {"session_id": "s", "cwd": "/srv/api", "message": "do it"}
+        self.assertEqual(
+            self.notify(payload, show_message=True, show_workdir=True, show_hostname=True),
+            ["agent: input needed [pi] s @ /srv/api on testhost: do it"],
+        )
+
+    def test_message_truncates_at_200_characters(self):
+        payload = {"session_id": "s", "message": "x" * 500}
+        self.assertEqual(self.notify(payload, show_message=True), [f"agent: input needed [pi] s: {'x' * 200}"])
+
+    def test_empty_fields_omit_their_segments(self):
+        payload = {"session_id": "s"}
+        self.assertEqual(
+            self.notify(payload, show_message=True, show_workdir=True, show_hostname=True),
+            ["agent: input needed [pi] s on testhost"],
+        )
+
+
 class E2EESelectionTests(unittest.TestCase):
     def base_config(self):
         return {

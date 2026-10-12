@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import socket
 import sys
 import tempfile
 import time
@@ -23,6 +24,8 @@ class Turn:
     harness: str
     session: str
     turn: str
+    message: str = ""
+    workdir: str = ""
 
     def key(self) -> str:
         identity = json.dumps([self.harness, self.session, self.turn])
@@ -85,11 +88,15 @@ class MatrixSender:
 
 class Notifier:
     def __init__(self, store: TurnStore, sender: Sender, now: Callable[[], float],
-                 minimum_seconds: int):
+                 minimum_seconds: int, show_message: bool = False,
+                 show_workdir: bool = False, show_hostname: bool = False):
         self.store = store
         self.sender = sender
         self.now = now
         self.minimum_seconds = minimum_seconds
+        self.show_message = show_message
+        self.show_workdir = show_workdir
+        self.show_hostname = show_hostname
 
     def handle(self, action: str, turn: Turn) -> bool:
         if action == "start":
@@ -110,6 +117,12 @@ class Notifier:
         label = "turn complete" if action == "complete" else "input needed"
         session = turn.session[:UUID_PREVIEW_LENGTH] if len(turn.session) == UUID_TEXT_LENGTH else turn.session[:SESSION_PREVIEW_LENGTH]
         body = f"agent: {label} [{turn.harness}] {session}"
+        if self.show_workdir and turn.workdir:
+            body = f"{body} @ {turn.workdir}"
+        if self.show_hostname:
+            body = f"{body} on {socket.gethostname()}"
+        if self.show_message and turn.message:
+            body = f"{body}: {turn.message[:200]}"
         self.sender.send(body)
         return True
 
@@ -134,7 +147,13 @@ def parse_turn(harness: str, payload: str) -> Turn:
     session = text_field(data, ("session_id", "sessionId", "thread_id", "thread-id"))
     if not session:
         raise ValueError("notification payload has no session identifier")
-    return Turn(harness, session, text_field(data, ("turn_id", "turn-id")))
+    return Turn(
+        harness,
+        session,
+        text_field(data, ("turn_id", "turn-id")),
+        text_field(data, ("message", "title", "last-assistant-message")),
+        text_field(data, ("cwd",)),
+    )
 
 
 def make_sender(configuration: dict[str, object]):
@@ -179,7 +198,12 @@ def main() -> None:
     cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path(os.environ["HOME"]) / ".cache")))
     store = FileTurnStore(cache / "ponygirls-notify" / "turns")
     sender = make_sender(configuration)
-    notifier = Notifier(store, sender, time.monotonic, configuration["minTurnSeconds"])
+    notifier = Notifier(
+        store, sender, time.monotonic, configuration["minTurnSeconds"],
+        show_message=configuration.get("includeMessageBody", False),
+        show_workdir=configuration.get("includeWorkdir", False),
+        show_hostname=configuration.get("includeHostname", False),
+    )
     if arguments.payload is None and sys.stdin.isatty():
         raise ValueError("no payload given and stdin is a terminal; pass hook JSON as the payload argument")
     payload = arguments.payload if arguments.payload is not None else sys.stdin.read()
