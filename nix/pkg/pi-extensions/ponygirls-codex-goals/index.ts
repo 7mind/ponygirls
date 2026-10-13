@@ -1118,7 +1118,11 @@ export default function (pi: ExtensionAPI): void {
       });
   });
 
-  pi.on("before_agent_start", async (_event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
+    // Pi 1.2 also emits this hook for idle triggerTurn custom messages. Our
+    // dispatched instruction already supplies the goal context; injecting a
+    // second copy would be stale after message_start confirms its delivery.
+    if (event.messageType === "custom" && event.message.customType === GOAL_CUSTOM_TYPE) return undefined;
     let binding: SessionBinding | null;
     try {
       binding = bindingFor(ctx);

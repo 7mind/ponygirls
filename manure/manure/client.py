@@ -2939,6 +2939,7 @@ class ManureClient:
             raise InvalidPath("symlink in dest path")
         backup_rel: str | None = None
         backup_rec: tuple[int, int] | None = None
+        backup_fd: int | None = None
         try:
             try:
                 sfd = os.open(staging.name, os.O_RDONLY | os.O_NOFOLLOW,
@@ -2971,11 +2972,29 @@ class ManureClient:
                 if (sst.st_dev, sst.st_ino) != (pst2.st_dev, pst2.st_ino):
                     raise InvalidPath("staging changed")
                 try:
-                    dst = os.stat(final.name, dir_fd=parent_fd, follow_symlinks=False)
+                    # Establish identity from a retained descriptor before
+                    # linking or renaming. Pinning only after link would leave
+                    # an inode-reuse window during backup acquisition.
+                    # Linux O_PATH pins identity without requiring read
+                    # access. Platforms without O_PATH need read permission;
+                    # NONBLOCK prevents a swapped FIFO from hanging fallback.
+                    pin_flags = (os.O_PATH if hasattr(os, "O_PATH")
+                                 else os.O_RDONLY | os.O_NONBLOCK)
+                    try:
+                        backup_fd = os.open(
+                            final.name, pin_flags | os.O_NOFOLLOW,
+                            dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        raise
+                    except OSError:
+                        raise InvalidPath("cannot preserve destination")
+                    dst = os.fstat(backup_fd)
                     if stat.S_ISLNK(dst.st_mode):
                         raise InvalidPath(f"refusing to overwrite symlink: {final}")
                     if stat.S_ISDIR(dst.st_mode):
                         raise InvalidPath(f"path is a directory: {final}")
+                    if not stat.S_ISREG(dst.st_mode):
+                        raise InvalidPath(f"destination not regular: {final}")
                     # Preserve the previous destination inside the owned
                     # namespace before the destructive rename. Allocation is
                     # atomic-no-replace over disambiguated names (B3): link(2)
@@ -3056,10 +3075,9 @@ class ManureClient:
                     pass
             if backup_rel is not None and backup_rec is not None:
                 # B3: inode-owned cleanup — unlink solely the backup we
-                # allocated (dev/ino must still match the preserved
-                # destination). A foreign or swapped entry (even at the same
-                # same-PID name) is never unlinked; its exact bytes are
-                # preserved.
+                # allocated (dev/ino must still match the pinned preserved
+                # destination). The retained fd prevents inode-number ABA;
+                # this identity check is not an atomic stat/unlink operation.
                 try:
                     bst_cleanup = os.stat(backup_rel, dir_fd=staging_dir_fd,
                                           follow_symlinks=False)
@@ -3108,6 +3126,11 @@ class ManureClient:
             except OSError:
                 pass
         finally:
+            if backup_fd is not None:
+                try:
+                    os.close(backup_fd)
+                except OSError:
+                    pass
             try:
                 os.close(parent_fd)
             except OSError:

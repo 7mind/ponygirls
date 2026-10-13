@@ -712,6 +712,13 @@ class LimitsCase(unittest.TestCase):
         http = _Http(self.server.bound_port, self.server.effective_api_origin)
         resp = _init(http, self.tok1)
         aid = resp["artifact_id"]
+        # Reading init does not mean its worker has released admission.
+        # Synchronize at the public tests-only count boundary so the stalled
+        # request is not itself rejected with 503.
+        deadline = time.monotonic() + 10
+        while self.server.active_count_for_test() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.server.active_count_for_test(), 0)
         # occupy the single slot with a stalled chunk body
         sock = self._stall_chunk(http, aid)
         time.sleep(0.7)  # let the worker block on body read holding the slot

@@ -234,19 +234,23 @@ test("a notification that never starts a run surfaces DELIVERY_UNCONFIRMED; inde
     return isNotice(r) ? text("ack") : text(`reply ${r.index}`);
   }, { ui });
   const session = f.rt.session;
-  const original = session._runAgentPrompt.bind(session);
+  // Inject failure at the public message submission port, not Pi's private
+  // run machinery (Pi 1.2 removed _runAgentPrompt). Preserve the asynchronous
+  // rejection that the extension runtime catches before any run can start.
+  const original = session.sendCustomMessage.bind(session);
   let failures = 0;
-  session._runAgentPrompt = async (messages) => {
-    if (failures === 0 && !Array.isArray(messages) && messages.customType === TYPE) {
+  session.sendCustomMessage = async (message, options) => {
+    if (failures === 0 && message.customType === TYPE && options?.triggerTurn) {
       failures++;
       throw new Error("injected asynchronous no-start failure");
     }
-    return original(messages);
+    return original(message, options);
   };
   await session.prompt("go");
   const [first, second] = taskIdsFromResults(session);
   await taskFinished(session, first);
   await waitFor(() => ui.notifications.some((n) => /DELIVERY_UNCONFIRMED/.test(n.message)), { message: "unconfirmed surfaced", timeoutMs: 8000 });
+  assert.equal(failures, 1, "one asynchronous submission failure was injected");
   assert.equal(customEntries(session, TYPE).length, 0);
   assert.equal(registry(session)[first].event.status, "pending", "retained, not claimed received");
   await quiet();

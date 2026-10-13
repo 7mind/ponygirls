@@ -861,6 +861,46 @@ class TestB3NamespaceOwnership(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in ns.iterdir()),
                              sorted([foreign_name]))
 
+    def test_replace_unreadable_regular_destination(self):
+        # Linux pins without read access; other platforms need read access
+        # and must fail closed if it is denied. Probe actual permissions so
+        # privileged runs exercise the success branch without skipped tests.
+        # Different sizes avoid the separate existing-content hash read.
+        from manure.client import InvalidPath, ManureClient
+        old = b"OLD-BYTES-LONGER"
+        new = b"NEW-BYTES"
+        files = [{"path": "a", "kind": "file", "size": len(new),
+                  "sha256": hashlib.sha256(new).hexdigest()}]
+        for mode in (0o000, 0o200):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as td:
+                dest = Path(td) / "out"
+                dest.mkdir()
+                final = dest / "a"
+                final.write_bytes(old)
+                final.chmod(mode)
+                try:
+                    final.read_bytes()
+                except PermissionError:
+                    readable = False
+                else:
+                    readable = True
+                c = ManureClient("http://127.0.0.1:8000", token=VALID_TOKEN,
+                                 cache_dir=os.path.join(td, "c"),
+                                 transport=Dummy(self._fetch_fn(files, {"a": new})))
+                try:
+                    if hasattr(os, "O_PATH") or readable:
+                        c.fetch_to_dest(ART_ID, str(dest))
+                        self.assertEqual(final.read_bytes(), new)
+                    else:
+                        with self.assertRaises(InvalidPath):
+                            c.fetch_to_dest(ART_ID, str(dest))
+                        final.chmod(0o600)
+                        self.assertEqual(final.read_bytes(), old)
+                    self.assertFalse(list(dest.rglob(".manure-backup-*")))
+                finally:
+                    if final.exists():
+                        final.chmod(0o600)
+
     def test_backup_cleanup_never_unlinks_foreign_inode(self):
         # B3: inode-owned cleanup — a foreign file swapped in at the owned
         # backup name between preserve-link and cleanup must be preserved

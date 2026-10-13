@@ -58,6 +58,7 @@
 "use strict";
 
 import fs from "node:fs";
+import { captureNetwork } from "./network-capture.mjs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -236,36 +237,6 @@ async function main() {
       ignoreHTTPSErrors: !!scenario.ignoreHTTPSErrors });
     const ctx = { context, pages: [], current: 0, dialogs: [],
                   errors: [], requests: [], console: [], responses: [] };
-    const redact = (headers) => {
-      const safe = {};
-      for (const [k, v] of Object.entries(headers || {})) {
-        const lk = k.toLowerCase();
-        if (lk === "cookie") {
-          safe[k] = String(v).split(/;\s*/).filter(Boolean)
-            .map((pair) => pair.split("=", 1)[0]).sort().join(";");
-        } else if (lk === "set-cookie") {
-          const names = [];
-          const re = /(?:^|,)\s*([^=;,\s]+)=/g;
-          let m;
-          while ((m = re.exec(String(v))) !== null) names.push(m[1]);
-          safe[k] = names.join(";");
-        } else {
-          safe[k] = v;
-        }
-      }
-      return safe;
-    };
-    const cookieNamesOf = (headers) => {
-      const out = [];
-      for (const [k, v] of Object.entries(headers || {})) {
-        if (k.toLowerCase() === "cookie") {
-          for (const pair of String(v).split(/;\s*/).filter(Boolean)) {
-            out.push(pair.split("=", 1)[0]);
-          }
-        }
-      }
-      return out.sort();
-    };
     const hookPage = async (p) => {
       if (p.__manureHooked) return;
       p.__manureHooked = true;
@@ -275,112 +246,7 @@ async function main() {
       try {
         const cdp = await ctx.context.newCDPSession(p);
         await cdp.send("Network.enable");
-        ctx.netById = ctx.netById || {};
-        ctx.respById = ctx.respById || {};
-        const lowKey = (headers, name) => {
-          for (const [k, v] of Object.entries(headers || {})) {
-            if (k.toLowerCase() === name) return v;
-          }
-          return undefined;
-        };
-        cdp.on("Network.requestWillBeSent", (ev) => {
-          try {
-            const req = ev.request || {};
-            const entry = {
-              url: req.url || "", method: req.method || "",
-              origin: lowKey(req.headers, "origin") || null,
-              cookieNames: cookieNamesOf(req.headers),
-              headers: redact(req.headers),
-            };
-            ctx.requests.push(entry);
-            if (ev.requestId) ctx.netById[ev.requestId] = entry;
-          } catch (e) { /* diagnostics only */ }
-        });
-        // Associated cookies and the finally-sent headers (Cookie,
-        // Origin, Referer) arrive here, not in requestWillBeSent.
-        // Only unblocked cookies (empty blockedReasons) were actually
-        // dispatched: blocked ones (SameSite, etc.) must never be reported
-        // as sent, otherwise a withheld-cookie 401 would masquerade as an
-        // authenticated 403 proof.
-        cdp.on("Network.requestWillBeSentExtraInfo", (ev) => {
-          try {
-            const entry = ev.requestId ? ctx.netById[ev.requestId] : null;
-            if (!entry) return;
-            const cookies = ev.associatedCookies || [];
-            const sent = cookies.filter((c) => !c.blockedReasons || c.blockedReasons.length === 0);
-            if (cookies.length) {
-              entry.cookieNames = sent.map((c) => c.cookie ? c.cookie.name : "?").sort();
-              entry.blockedCookieNames = cookies.filter((c) => c.blockedReasons && c.blockedReasons.length)
-                .map((c) => c.cookie ? c.cookie.name : "?").sort();
-            }
-            const headers = ev.headers || {};
-            const origin = lowKey(headers, "origin");
-            if (origin !== undefined) entry.origin = origin;
-            entry.headers = redact(Object.assign({}, entry.headers, headers));
-          } catch (e) { /* diagnostics only */ }
-        });
-        cdp.on("Network.responseReceived", (ev) => {
-          try {
-            const res = ev.response || {};
-            const names = [];
-            const raw = res.headers ? (res.headers["set-cookie"] || res.headers["Set-Cookie"] || "") : "";
-            if (raw) {
-              const re = /(?:^|,)\s*([^=;,\s]+)=/g;
-              let m;
-              while ((m = re.exec(String(raw))) !== null) names.push(m[1]);
-            }
-            const entry = { url: res.url || "", status: res.status || 0,
-                                 setCookieNames: names };
-            ctx.responses.push(entry);
-            if (ev.requestId) ctx.respById[ev.requestId] = entry;
-          } catch (e) { /* diagnostics only */ }
-        });
-        // CORS-blocked responses never trigger responseReceived: the
-        // status arrives here instead (per CDP docs). Without this, simple
-        // wrong-Origin POSTs (login/logout/grants) show a dispatched request
-        // but no server 403, and the proof is incomplete.
-        cdp.on("Network.responseReceivedExtraInfo", (ev) => {
-          try {
-            const status = ev.statusCode || 0;
-            if (!status) return;
-            const headers = ev.headers || {};
-            const names = [];
-            for (const [k, v] of Object.entries(headers)) {
-              if (k.toLowerCase() === "set-cookie") {
-                const re = /(?:^|,)\s*([^=;,\s]+)=/g;
-                let m;
-                while ((m = re.exec(String(v))) !== null) names.push(m[1]);
-              }
-            }
-            const existing = ev.requestId ? ctx.respById[ev.requestId] : null;
-            if (existing) {
-              if (!existing.status) existing.status = status;
-              if (names.length && !existing.setCookieNames.length) {
-                existing.setCookieNames = names;
-              }
-              return;
-            }
-            const reqEntry = ev.requestId ? ctx.netById[ev.requestId] : null;
-            const url = reqEntry ? reqEntry.url : "";
-            if (!url && !status) return;
-            const entry = { url, status, setCookieNames: names, viaExtraInfo: true };
-            ctx.responses.push(entry);
-            if (ev.requestId) ctx.respById[ev.requestId] = entry;
-          } catch (e) { /* diagnostics only */ }
-        });
-        cdp.on("Network.loadingFailed", (ev) => {
-          try {
-            // Diagnostics only: a CORS/preflight block with no server status
-            // must never masquerade as a 403 proof. Record the failure so
-            // tests can distinguish never-dispatched from dispatched-403.
-            const reqEntry = ev.requestId ? ctx.netById[ev.requestId] : null;
-            if (!reqEntry) return;
-            reqEntry.loadFailed = {
-              errorText: ev.errorText || "",
-              blockedReason: ev.blockedReason || "",
-            };
-          } catch (e) { /* diagnostics only */ }
-        });
+        captureNetwork(cdp, ctx);
       } catch (e) {
         ctx.console.push(`warning: cdp-attach-failed ${String(e).slice(0, 120)}`);
       }
