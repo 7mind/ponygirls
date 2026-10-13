@@ -54,6 +54,7 @@ runs Pi against the copies in this checkout without deploying anything.
 | Extension | What it does |
 |---|---|
 | `ponygirls-model-picker` | Compacts pi's footer into one line (path, session, native stats) and hides its model suffix (`setFooterOptions`), and keeps a **clickable model / thinking-effort indicator on the input border** (bottom right, e.g. `mimo-v2.6-pro ⌃⇧M • high ⌃⇧E`) with the `ctrl+shift+m` / `ctrl+shift+e` shortcuts that open the same menus. |
+| `ponygirls-openai-fast` | `/fast on\|off\|status` requests OpenAI priority processing (`openai` and `openai-codex`) without changing the model or reasoning effort. Defaults to **on**; the preference persists in Pi's agent directory as `openai-fast.json`. Status distinguishes the requested tier from the provider-reported tier; priority is not guaranteed and may cost more. |
 | `ponygirls-model-stats` | Measures every provider response (time to first token, total span, decode tok/s) and shows per-model distributions as `/perf` tables. |
 | `ponygirls-usage` | The `/usage` screen: period tabs (today / week / 30 days / all time) with a flat per-provider, per-model cost table, and a global input-size distribution view (chart or table). |
 | `ponygirls-codex-goals` | Codex-style **session goals** (`/goal`): a persistent objective with a token budget that the model is steered by — and unlike most goal systems, every goal instruction is a visible, persisted message in the session transcript, so nothing is said to the model off the record. |

@@ -686,6 +686,8 @@ in
             # the extension header and the upstream bug-report draft.
             "${../pkg/pi-extensions/ponygirls-quirk-search-hub-backends.ts}"
             "${../pkg/pi-extensions/ponygirls-quirk-kimi-401-retry.ts}"
+            # /fast on|off|status: persistent OpenAI priority processing, without changing reasoning.
+            "${../pkg/pi-extensions/ponygirls-openai-fast.ts}"
             # Footer model/thinking clicks (fullscreen) plus ctrl+shift+m / ctrl+shift+e.
             "${../pkg/pi-extensions}/ponygirls-model-picker.ts"
             # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
