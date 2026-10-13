@@ -512,6 +512,18 @@
             bun test ponygirls-quirk-kimi-401-retry.test.ts
             touch $out
           '';
+          ponygirls-openai-fast = pkgs.runCommand "ponygirls-openai-fast-test" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+            PI_PACKAGE_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            cp -r ${./nix/pkg/pi-extensions} pi-extensions
+            chmod -R u+w pi-extensions
+            cd pi-extensions
+            node --test ponygirls-openai-fast.test.mjs
+            touch $out
+          '';
           ponygirls-model-stats = pkgs.runCommand "ponygirls-model-stats-test" {
             nativeBuildInputs = [ pkgs.nodejs ];
           } ''
