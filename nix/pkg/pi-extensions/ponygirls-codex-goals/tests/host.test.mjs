@@ -73,6 +73,9 @@ test("host: slash kickoff and three executions keep full instructions and answer
   assert.equal(f.envelope().goal.tokensUsed, 12);
   const entries = f.manager.getEntries();
   const instructions = entries.filter((e) => e.type === "custom_message" && e.customType === "codex-goal-context");
+  // Behavioral-Active Blackbox-Group; regression: Pi 1.2 invokes
+  // before_agent_start for dispatched custom turns too. Each execution must
+  // carry exactly one instruction, never a second stale hook-injected copy.
   assert.equal(instructions.length, 3);
   initTheme("dark");
   for (const e of instructions) {

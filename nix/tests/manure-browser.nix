@@ -176,6 +176,10 @@ pkgs.runCommand "manure-browser-test"
   test -x "$MANURE_CHROMIUM_BIN" \
     || { echo "manure-browser: FAIL — chromium missing"; exit 1; }
   echo "manure-browser: driver=$MANURE_PLAYWRIGHT_CORE_PATH chromium=$MANURE_CHROMIUM_BIN"
+  # Deterministic CDP event-order regressions use the same capture helper
+  # as the real Chromium driver below. Missing tests or failures are fatal.
+  require_file_present "${src}/tests/browser/network-capture.test.mjs" "manure-browser/capture-tests" || exit 1
+  node --test "${src}/tests/browser/network-capture.test.mjs"
   # Phase 2 — M2: installed defaults serve both shells (no checkout fallback).
   PYTHONPATH="$hookPath:${manurePackage}/${python.sitePackages}" \
     ${python}/bin/python "${m2probe}" "${manurePackage}"
