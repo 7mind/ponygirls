@@ -42,7 +42,6 @@ in
         project_doc_fallback_filenames = [ "CLAUDE.md" ];
         features.apps = false;
         features.multi_agent = true;
-        features.fast_mode = false;
         features.steer = true;
         # 0.147+ tool/code-mode path spawns the sibling host binary; without
         # this flag Codex fail-closes code mode even when the binary exists.
