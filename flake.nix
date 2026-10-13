@@ -647,6 +647,10 @@
             bash sandbox-entrypoint-test.sh
             touch $out
           '';
+          yolo-forge-tokens-eval = import ./nix/tests/yolo-forge-tokens-eval.nix {
+            inherit pkgs nixpkgs;
+            yoloHmModule = import ./nix/hm/yolo.nix { inherit inputs; };
+          };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           podman-module = podmanModuleCheck;
           manure-browser = import ./nix/tests/manure-browser.nix {
