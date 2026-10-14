@@ -30,6 +30,7 @@
     (import ./yolo.nix { inherit inputs; })
     ./podman.nix
     ./crawl4ai.nix
+    ./atlassian.nix
     # Haystack memory client (Step 9): same aggregation, no extra toggle.
     # It self-enables only when fully resolvable (NixOS mapping or explicit
     # standalone options); otherwise it contributes nothing.
