@@ -185,6 +185,7 @@
         checks = {
           default-models = defaultModelsCheck;
           notify-module = pkgs.callPackage ./nix/tests/notify-module.nix { };
+          atlassian-hm-eval = import ./nix/tests/atlassian-hm-eval.nix { inherit pkgs nixpkgs inputs; };
           tui-terminal = self.packages.${system}.tui-tmux.tests.terminal;
           tui-hm-eval = import ./nix/hm/tui-tools-test.nix { inherit pkgs inputs; };
           haystack = self.packages.${system}.haystack;
