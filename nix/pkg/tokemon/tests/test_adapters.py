@@ -111,9 +111,10 @@ class ClaudeAdapterTests(unittest.TestCase):
         )
         self.assertEqual(snapshot.windows[0].resets_at.tzinfo, timezone.utc)
 
-    def test_missing_limits_raises(self):
+    def test_missing_modern_and_legacy_limits_raises(self):
         usage = fixture("claude_oauth_usage.json")
-        del usage["limits"]
+        for key in ("limits", "five_hour", "seven_day"):
+            del usage[key]
         with self.assertRaises(QuotaFetchError):
             self._fetch(usage, fixture("claude_oauth_profile.json"))
 

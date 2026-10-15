@@ -1,0 +1,14 @@
+{
+  "plan_type": "enterprise",
+  "spend_control": {
+    "reached": false,
+    "individual_limit": {
+      "limit": "25000",
+      "used": "8000",
+      "remaining": "17000",
+      "used_percent": 32,
+      "remaining_percent": 68,
+      "reset_at": 1778137680
+    }
+  }
+}

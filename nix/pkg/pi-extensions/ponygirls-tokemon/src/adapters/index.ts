@@ -1,9 +1,9 @@
 /**
- * Adapter registry: pi provider id -> quota adapter. Claude (anthropic) is
- * tokemon-only and not part of this extension.
+ * Adapter registry: pi provider id -> quota adapter.
  */
 
 import { NoQuotaEndpoint, type QuotaAdapter } from "../quota.ts";
+import { ClaudeQuota } from "./claude.ts";
 import { CodexQuota } from "./codex.ts";
 import { CopilotQuota } from "./copilot.ts";
 import { KimiQuota } from "./kimi.ts";
@@ -17,6 +17,7 @@ import { ZaiQuota } from "./zai.ts";
 const NO_QUOTA = new NoQuotaEndpoint();
 
 const ADAPTERS = new Map<string, QuotaAdapter>([
+  ["anthropic", new ClaudeQuota()],
   ["github-copilot", new CopilotQuota()],
   ["kimi-coding", new KimiQuota()],
   ["meta", new MetaQuota()],

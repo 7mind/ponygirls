@@ -5,6 +5,8 @@
  * tokemon's adapters/codex.py for the field inventory (`rate_limit`,
  * `code_review_rate_limit`, `additional_rate_limits`, `credits`, spend
  * control, `rate_limit_reset_credits`, and the `chatpass` quota).
+ * Monthly credits use the public schema from openai/codex#24812;
+ * they have not been verified against a live enterprise account.
  */
 
 import { bearer, getJson, type Http } from "../http.ts";
@@ -62,6 +64,20 @@ export class CodexQuota implements QuotaAdapter {
         const limitName = details["limit_name"];
         const name = typeof limitName === "string" && limitName ? limitName : "additional";
         windows.push(...statusWindows(name, name, details["rate_limit"]));
+      }
+    }
+
+    const spendControl = payload["spend_control"];
+    const individual = isObject(spendControl) ? spendControl["individual_limit"] : null;
+    if (isObject(individual)) {
+      const usedValue = optionalNumber(individual["used"]);
+      const limitValue = optionalNumber(individual["limit"]);
+      const used = usedValue !== null && usedValue >= 0 ? usedValue : null;
+      const limit = limitValue !== null && limitValue >= 0 ? limitValue : null;
+      if (used !== null && (individual["limit"] == null || limit !== null)) {
+        const reset = epochSeconds(individual["reset_at"]);
+        const resetsAt = reset !== null && Number.isFinite(reset.getTime()) ? reset : null;
+        windows.push({ name: "monthly credits", used, limit, unit: "credits", resetsAt, unlimited: false, exhausted: isObject(spendControl) && spendControl["reached"] === true ? true : null });
       }
     }
 

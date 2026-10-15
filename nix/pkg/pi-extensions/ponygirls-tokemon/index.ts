@@ -1,6 +1,6 @@
 /**
- * ponygirls-tokemon — provider quotas inside pi (tokemon without Claude,
- * Codex, or yolo profiles).
+ * ponygirls-tokemon — provider quotas inside pi (without external Claude,
+ * Codex, or yolo profile discovery).
  *
  * - Tool `tokemon`: every provider this pi is configured for (auth.json
  *   logins and keys, API-key environment variables, models.json providers)
