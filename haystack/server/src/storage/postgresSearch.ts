@@ -7,6 +7,7 @@
 // Indices are sequential from the caller's `next` start.
 import type { AstNode, CompareOp, JsonLiteral, Predicate } from "../query/ast.js";
 import { splitPointer } from "../query/pointer.js";
+import type { SearchSort, SearchSortField, SearchPosition } from "./search.js";
 import { decodeKey } from "../domain/qid.js";
 
 export interface CompiledWhere {
@@ -166,4 +167,49 @@ function compileField(pointer: string, op: CompareOp, literal: JsonLiteral, ctx:
   if (op === "=") return `(${exists} AND ${value} = 'null'::jsonb)`;
   if (op === "!=") return `(${exists} AND ${value} <> 'null'::jsonb)`;
   return "(FALSE)";
+}
+
+interface CompiledSort {
+  readonly orderBy: string;
+  readonly afterSql: string | null;
+  readonly params: unknown[];
+}
+
+function sortExpression(field: SearchSortField): { expression: string; cast: string } {
+  switch (field) {
+    case "key":
+    case "project": return { expression: 'i.project_id COLLATE "C"', cast: '::text COLLATE "C"' };
+    case "title":
+    case "type":
+    case "status":
+    case "importance":
+    case "human-attention": return { expression: `(i.document ->> '${field}') COLLATE "C"`, cast: '::text COLLATE "C"' };
+    case "modified-at": return { expression: "i.modified_at", cast: "::timestamptz" };
+    case "revision": return { expression: "i.revision", cast: "::bigint" };
+    default: throw new Error("unsupported search sort field");
+  }
+}
+
+/** Whitelisted expressions/directions only; all cursor values remain data. */
+export function compileSort(sort: SearchSort, after: SearchPosition | undefined, next: number): CompiledSort {
+  const ctx = new Ctx(next);
+  const { expression, cast } = sortExpression(sort.field);
+  const direction = sort.direction === "asc" ? "ASC" : "DESC";
+  const comparison = sort.direction === "asc" ? ">" : "<";
+  const keyDirection = sort.field === "key" ? direction : "ASC";
+  const keyOrder = `i.project_id COLLATE "C" ${keyDirection}, i.item_id COLLATE "C" ${keyDirection}`;
+  const orderBy = sort.field === "key" ? keyOrder : `${expression} ${direction}, ${keyOrder}`;
+  let afterSql: string | null = null;
+  if (after !== undefined) {
+    const project = ctx.push(after.project);
+    const item = ctx.push(after.item);
+    const key = `(i.project_id COLLATE "C", i.item_id COLLATE "C")`;
+    const boundary = `(${project}::text COLLATE "C", ${item}::text COLLATE "C")`;
+    if (sort.field === "key") afterSql = `(${key} ${comparison} ${boundary})`;
+    else {
+      const value = ctx.push(after.value) + cast;
+      afterSql = `((${expression} ${comparison} ${value}) OR (${expression} = ${value} AND ${key} > ${boundary}))`;
+    }
+  }
+  return { orderBy, afterSql, params: ctx.params };
 }

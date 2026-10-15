@@ -1,6 +1,6 @@
-// Haystack controlled browser tests (Step 7 gate). Real Chromium (nixpkgs,
-// HAYSTACK_CHROMIUM) against the real app + PG (HAYSTACK_TEST_PG) + built UI.
-// Skipped with an explicit marker when either is unset — never a silent pass.
+// Controlled browser tests: real Chromium (HAYSTACK_CHROMIUM) or explicit
+// Firefox (HAYSTACK_FIREFOX), real app + PG (HAYSTACK_TEST_PG), and built UI.
+// Skipped explicitly when the database or browser is unset — never a silent pass.
 //
 // Run after `npm run build` (UI) and server `tsc -p tsconfig.tests.json`:
 //   HAYSTACK_TEST_PG=... HAYSTACK_CHROMIUM=/nix/store/.../bin/chromium \
@@ -14,17 +14,19 @@ import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import express from "express";
-import { chromium } from "playwright-core";
+import { chromium, firefox } from "playwright-core";
+import { checkBrowse } from "./browse.mjs";
 
 const CONN = process.env.HAYSTACK_TEST_PG;
 const CHROMIUM = process.env.HAYSTACK_CHROMIUM;
+const FIREFOX = process.env.HAYSTACK_FIREFOX;
 const ARTIFACTS = process.env.HAYSTACK_UI_ARTIFACTS;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, "..");
 const serverRoot = path.resolve(here, "..", "..", "server");
 
-if (!CONN || !CHROMIUM) {
-  console.log("# SKIP browser leg: set HAYSTACK_TEST_PG and HAYSTACK_CHROMIUM");
+if (!CONN || (!CHROMIUM && !FIREFOX)) {
+  console.log("# SKIP browser leg: set HAYSTACK_TEST_PG and HAYSTACK_CHROMIUM (or HAYSTACK_FIREFOX)");
   process.exit(0);
 }
 
@@ -65,6 +67,11 @@ let auth = await loadAuth({
 // Parent app: real API + static UI (mirrors the production single-origin layout).
 // createApp already prefixes its routes with /api — mount at root.
 const parent = express();
+let searchInterceptor = null;
+parent.post("/api/v1/search", express.json(), (req, res, next) => {
+  if (searchInterceptor === null) return next();
+  Promise.resolve(searchInterceptor(req.body, res, next)).catch(next);
+});
 const sharedRepo = new PgItemRepository(BCONN);
 const updates = new LiveUpdates(() => auth);
 parent.use(createApp({ updates, getAuth: () => auth, repo: sharedRepo, clock: new ManualClock() }));
@@ -123,10 +130,14 @@ await seed.put({ key: "ui:semantic", documentJson: docOf({ title: "Semantic fiel
 await seed.put({ key: "ui:root-array", documentJson: docOf({ title: "Root array", fields: ["literal", true, null] }), expectedRevision: 0, requestId: rid() }, agent);
 await seed.put({ key: "ui:root-markdown", documentJson: docOf({ title: "Root Markdown", fields: { type: "md", content: "# Root content\n\nA paragraph." } }), expectedRevision: 0, requestId: rid() }, agent);
 
-const browser = await chromium.launch({ executablePath: CHROMIUM, args: ["--no-sandbox", "--no-proxy-server", "--host-resolver-rules=MAP haystack.test 127.0.0.1"] });
+console.log(`# Browser: ${FIREFOX ? "Firefox" : "Chromium"}`);
+const browser = FIREFOX
+  ? await firefox.launch({ executablePath: FIREFOX, firefoxUserPrefs: { "network.dns.localDomains": "haystack.test" } })
+  : await chromium.launch({ executablePath: CHROMIUM, args: ["--no-sandbox", "--no-proxy-server", "--host-resolver-rules=MAP haystack.test 127.0.0.1"] });
 if (ARTIFACTS) await mkdir(ARTIFACTS, { recursive: true });
 const results = [];
 const check = async (name, fn) => {
+  if (process.env.HAYSTACK_BROWSER_CHECK && !name.startsWith(process.env.HAYSTACK_BROWSER_CHECK)) return;
   try {
     await fn();
     results.push(`ok - ${name}`);
@@ -839,6 +850,10 @@ await check("navigation suspension and resume restore live updates", async () =>
     await page.getByText(/Page navigation/).waitFor();
     await page.getByText(/Checking connection after resume/).first().waitFor();
   } finally { await ctx.close(); }
+});
+
+await checkBrowse({ browser, base, login, humanToken, check, seed, agent, docOf, rid, artifacts: ARTIFACTS,
+  interceptSearch: (handler) => { searchInterceptor = handler; },
 });
 
 for (const line of results) console.log(line);

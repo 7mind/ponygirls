@@ -5,10 +5,12 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { ItemService } from "../../src/application/service.js";
-import { SearchService, InvalidCursor } from "../../src/application/search.js";
+import { SearchService, InvalidCursor, type SearchInput } from "../../src/application/search.js";
 import { ManualClock } from "../../src/application/clock.js";
+import { BadEnvelope } from "../../src/domain/json.js";
+import { encodeKey } from "../../src/domain/qid.js";
 import { InvalidQuery } from "../../src/query/ast.js";
-import type { SearchableRepository } from "../../src/storage/search.js";
+import type { SearchSort, SearchSortField } from "../../src/storage/search.js";
 import { freshRequestId, ALICE } from "./repository.js";
 
 export interface SearchContext {
@@ -311,6 +313,144 @@ export function defineSearchSuite(
         "projB:uni",
       ]);
       assert.equal(new Set(seen).size, seen.length);
+    });
+
+    // Specified: order the complete eligible set, not each loaded page.
+    describe("full-result sorting", () => {
+      type SortField = SearchSortField;
+      type Sort = SearchSort;
+      const ordered = (items: Array<{ project: string; item: string }>) => items.map((item) => `${item.project}:${item.item}`);
+      const a = "sortA:a", b = "sortA:b", c = "sortA:\uE000", d = "sortA:😀", e = "sortB:a", f = "sortB:b";
+      const groups: Record<SortField, string[][]> = {
+        key: [[a], [b], [c], [d], [e], [f]],
+        title: [[b], [a, c, f], [d], [e]],
+        project: [[a, b, c, d], [e, f]],
+        type: [[b, c, f], [d, e], [a]],
+        status: [[a, c, e], [f], [b, d]],
+        importance: [[e], [c], [b, f], [d], [a]],
+        "human-attention": [[b, d, f], [a, c, e]],
+        "modified-at": [[a, d, f], [c], [b, e]],
+        revision: [[a, f], [b, e], [d], [c]],
+      };
+      const search = (input: SearchInput) => ctx.search.search(input);
+      const put = (key: string, overrides: Record<string, unknown>, revision: number) => {
+        const colon = key.indexOf(":");
+        return ctx.items.put({
+          key: encodeKey({ project: key.slice(0, colon), item: key.slice(colon + 1) }),
+          documentJson: doc({ tags: ["sorting"], ...overrides }),
+          expectedRevision: revision,
+          requestId: freshRequestId(),
+        }, ALICE);
+      };
+      beforeEach(async () => {
+        const rows = [
+          { key: a, title: "same", type: "zeta", status: "actual", importance: "urgent", attention: "required", revision: 1, seconds: 1 },
+          { key: b, title: "Z", type: "alpha", status: "waiting", importance: "low", attention: "cleared", revision: 2, seconds: 3 },
+          { key: c, title: "same", type: "alpha", status: "actual", importance: "high", attention: "required", revision: 10, seconds: 2 },
+          { key: d, title: "\uE000", type: "beta", status: "waiting", importance: "medium", attention: "cleared", revision: 3, seconds: 1 },
+          { key: e, title: "😀", type: "beta", status: "actual", importance: "critical", attention: "required", revision: 2, seconds: 3 },
+          { key: f, title: "same", type: "alpha", status: "archived", importance: "low", attention: "cleared", revision: 1, seconds: 1 },
+        ];
+        for (const row of rows) {
+          ctx.clock.set(`2026-10-07T19:00:0${row.seconds}.000Z`);
+          for (let revision = 0; revision < row.revision; revision++) {
+            await put(row.key, { title: row.title, type: row.type, status: row.status, importance: row.importance, "human-attention": row.attention }, revision);
+          }
+        }
+      });
+      for (const field of Object.keys(groups) as SortField[]) {
+        for (const direction of ["asc", "desc"] as const) {
+          it(`globally sorts ${field} ${direction}, including ties across pages`, async () => {
+            const expectedGroups = direction === "asc" ? groups[field] : [...groups[field]].reverse();
+            const expected = expectedGroups.flat();
+            const seen: string[] = [];
+            let cursor: string | undefined;
+            for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
+              const page = await search({ query: "archived:all tag:sorting", limit: 2, cursor, sort: { field, direction } });
+              seen.push(...ordered(page.items));
+              cursor = page.cursor;
+              if (cursor === undefined) break;
+            }
+            assert.equal(cursor, undefined);
+            assert.deepEqual(seen, expected);
+            assert.equal(new Set(seen).size, seen.length);
+          });
+        }
+      }
+      it("intersects project, archive, and text filters before sorting", async () => {
+        for (const direction of ["asc", "desc"] as const) {
+          const page = await search({ query: "tag:sorting same", project: "sortA", limit: 1, sort: { field: "title", direction } });
+          assert.deepEqual(ordered(page.items), [a]);
+          assert.ok(page.cursor);
+          const next = await search({ query: "tag:sorting same", project: "sortA", limit: 1, cursor: page.cursor, sort: { field: "title", direction } });
+          assert.deepEqual(ordered(next.items), [c]);
+          assert.equal(next.cursor, undefined);
+        }
+        assert.deepEqual(ordered((await search({ query: "tag:sorting same", sort: { field: "key", direction: "desc" } })).items), [c, a]);
+        assert.deepEqual(ordered((await search({ query: "archived:all tag:sorting same", sort: { field: "key", direction: "desc" } })).items), [f, c, a]);
+      });
+      it("binds cursors to query, scope, limit, sort field, and direction", async () => {
+        const input = { query: "archived:all tag:sorting", limit: 1, sort: { field: "title", direction: "asc" } as Sort };
+        const { cursor } = await search(input);
+        assert.ok(cursor);
+        for (const changed of [
+          { ...input, query: "tag:sorting" }, { ...input, project: "sortA" }, { ...input, limit: 2 },
+          { ...input, sort: { field: "importance", direction: "asc" } as Sort },
+          { ...input, sort: { field: "title", direction: "desc" } as Sort },
+          { query: input.query, limit: 1 },
+        ]) await assert.rejects(search({ ...changed, cursor }), InvalidCursor);
+        const defaultPage = await search({ query: input.query, limit: 1 });
+        assert.ok(defaultPage.cursor);
+        assert.deepEqual(ordered((await search({ query: input.query, limit: 1, cursor: defaultPage.cursor, sort: { field: "key", direction: "asc" } })).items), [b]);
+      });
+      it("keeps the saved boundary when a row moves or leaves the live result", async () => {
+        const input = { query: "tag:sorting same", limit: 1, sort: { field: "title", direction: "asc" } as Sort };
+        const first = await search(input);
+        assert.deepEqual(ordered(first.items), [a]);
+        assert.ok(first.cursor);
+        await put(a, { title: "same z" }, 1);
+        const second = await search({ ...input, cursor: first.cursor });
+        assert.deepEqual(ordered(second.items), [c]);
+        assert.ok(second.cursor);
+        const third = await search({ ...input, cursor: second.cursor });
+        assert.deepEqual(ordered(third.items), [a]); // live views can repeat a moved row
+        assert.equal(third.cursor, undefined);
+        await put(a, { title: "same z", status: "archived" }, 2);
+        assert.deepEqual(ordered((await search({ ...input, cursor: first.cursor })).items), [c]);
+      });
+      it("rejects invalid untrusted sort inputs rather than defaulting", async () => {
+        for (const sort of [null, "title", [], {}, { field: "title" }, { direction: "asc" },
+          { field: "title", direction: "ASC" }, { field: "title; DROP TABLE items; --", direction: "asc" },
+          { field: "constructor", direction: "asc" }, { field: "title", direction: "asc", extra: true }]) {
+          await assert.rejects(ctx.search.search(Object.assign({ query: "" }, { sort }) as unknown as SearchInput), BadEnvelope);
+        }
+      });
+      it("rejects malformed cursor encodings, positions, and sort values", async () => {
+        for (const field of ["key", "title", "revision", "modified-at"] as const) {
+          const input = { query: "archived:all tag:sorting", limit: 1, sort: { field, direction: "asc" } as Sort };
+          const page = await search(input);
+          assert.ok(page.cursor);
+          for (const cursor of [null, 42, {}, page.cursor + "=", page.cursor + "\n", "a".repeat(20_000)]) {
+            await assert.rejects(ctx.search.search(Object.assign({}, input, { cursor }) as unknown as SearchInput), InvalidCursor);
+          }
+          const parsed = JSON.parse(Buffer.from(page.cursor, "base64url").toString()) as { last: Record<string, unknown> };
+          if (field === "modified-at") {
+            for (const value of ["0000-01-01T00:00:00.000Z", "-000001-01-01T00:00:00.000Z", "+010000-01-01T00:00:00.000Z"]) {
+              const cursor = Buffer.from(JSON.stringify({ ...parsed, last: { ...parsed.last, value } })).toString("base64url");
+              await assert.rejects(search({ ...input, cursor }), InvalidCursor);
+            }
+          }
+          for (const last of [null, [], { ...parsed.last, project: "" }, { ...parsed.last, item: "\0" },
+            { ...parsed.last, project: "a".repeat(257) }, { ...parsed.last, item: "\uD800" },
+            { ...parsed.last, value: null }, { ...parsed.last, value: {} },
+            { ...parsed.last, value: field === "revision" ? "1" : 1 },
+            { ...parsed.last, value: field === "modified-at" ? "2026-02-30T00:00:00.000Z" : -1 },
+          ]) {
+            const cursor = Buffer.from(JSON.stringify({ ...parsed, last })).toString("base64url");
+            await assert.rejects(search({ ...input, cursor }), InvalidCursor);
+          }
+        }
+      });
     });
 
     it("rejects malformed and foreign cursors", async () => {

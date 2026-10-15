@@ -1,8 +1,11 @@
 // Haystack application: search entry — parse, archive transform, keyset
-// cursors bound to (query, scope, limit). Paging is a live view.
+// cursors bound to (query, scope, limit, sort). Paging is a live view.
 import { createHash } from "node:crypto";
+import { BadEnvelope } from "../domain/json.js";
+import { encodeComponent } from "../domain/qid.js";
+import { TITLE_MAX, META_VALUE_MAX } from "../domain/document.js";
 import { lex } from "../query/lexer.js";
-import { parse } from "../query/parser.js";
+import { parse, isUtcInstant } from "../query/parser.js";
 import {
   InvalidQuery,
   type AstNode,
@@ -11,6 +14,11 @@ import {
 import {
   SEARCH_LIMIT_DEFAULT,
   SEARCH_LIMIT_MAX,
+  SEARCH_SORT_FIELDS,
+  SEARCH_SORT_DEFAULT,
+  searchPosition,
+  type SearchSort,
+  type SearchPosition,
   type SearchableRepository,
   type SearchPage,
   type SearchSummary,
@@ -21,6 +29,7 @@ export interface SearchInput {
   project?: string;
   limit?: number;
   cursor?: string;
+  sort?: SearchSort;
 }
 
 export interface SearchResult {
@@ -80,34 +89,80 @@ export function applyArchiveDefault(ast: AstNode | null): AstNode {
   return { kind: "and", children: [ast, notArchived] };
 }
 
-function fingerprint(query: string, scope: string | undefined, limit: number): string {
-  return createHash("sha256").update(`haystack-search-v1\0${query}\0${scope ?? ""}\0${limit}`, "utf-8").digest("hex");
+/** Validate transport input before any sort field reaches a repository. */
+export function parseSearchSort(value: unknown): SearchSort {
+  if (value === undefined) return SEARCH_SORT_DEFAULT;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new BadEnvelope("sort must be an object");
+  }
+  const sort = value as Record<string, unknown>;
+  if (Object.keys(sort).length !== 2 || !Object.hasOwn(sort, "field") || !Object.hasOwn(sort, "direction") ||
+      !SEARCH_SORT_FIELDS.some((field) => field === sort.field) || (sort.direction !== "asc" && sort.direction !== "desc")) {
+    throw new BadEnvelope("invalid sort field or direction");
+  }
+  return { field: sort.field as SearchSort["field"], direction: sort.direction };
 }
 
-export function encodeCursor(fp: string, last: { project: string; item: string }): string {
-  return Buffer.from(JSON.stringify({ v: 1, fp, last }), "utf-8").toString("base64url");
+function fingerprint(query: string, scope: string | undefined, limit: number, sort: SearchSort): string {
+  return createHash("sha256").update(JSON.stringify(["haystack-search-v2", query, scope ?? null, limit, sort.field, sort.direction]), "utf-8").digest("hex");
 }
 
-export function decodeCursor(cursor: string, fp: string): { project: string; item: string } {
+const CURSOR_VERSION = 2;
+export const SEARCH_CURSOR_MAX_CHARS = 16 * 1024;
+
+export function encodeCursor(fp: string, last: SearchPosition): string {
+  return Buffer.from(JSON.stringify({ v: CURSOR_VERSION, fp, last }), "utf-8").toString("base64url");
+}
+
+function cursorText(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= max && !value.includes("\0") && !/\p{Surrogate}/u.test(value);
+}
+
+export function decodeCursor(cursor: unknown, fp: string, sort: SearchSort): SearchPosition {
+  if (typeof cursor !== "string" || cursor.length === 0 || cursor.length > SEARCH_CURSOR_MAX_CHARS || !/^[A-Za-z0-9_-]+$/.test(cursor)) {
+    throw new InvalidCursor();
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf-8"));
+    const bytes = Buffer.from(cursor, "base64url");
+    const text = bytes.toString("utf8");
+    if (bytes.toString("base64url") !== cursor || !bytes.equals(Buffer.from(text, "utf8"))) throw new InvalidCursor();
+    parsed = JSON.parse(text);
   } catch {
     throw new InvalidCursor();
   }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    (parsed as { v?: unknown }).v !== 1 ||
-    (parsed as { fp?: unknown }).fp !== fp
-  ) {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new InvalidCursor();
+  const envelope = parsed as Record<string, unknown>;
+  if (Object.keys(envelope).length !== 3 || envelope.v !== CURSOR_VERSION || envelope.fp !== fp ||
+      typeof envelope.last !== "object" || envelope.last === null || Array.isArray(envelope.last)) throw new InvalidCursor();
+  const last = envelope.last as Record<string, unknown>;
+  if (Object.keys(last).length !== 3 || typeof last.project !== "string" || typeof last.item !== "string" ||
+      /\p{Surrogate}/u.test(last.project) || /\p{Surrogate}/u.test(last.item)) throw new InvalidCursor();
+  try {
+    encodeComponent(last.project);
+    encodeComponent(last.item);
+  } catch {
     throw new InvalidCursor();
   }
-  const last = (parsed as { last?: unknown }).last as { project?: unknown; item?: unknown } | undefined;
-  if (typeof last?.project !== "string" || typeof last?.item !== "string" || !last.project || !last.item) {
-    throw new InvalidCursor();
+  const value = last.value;
+  switch (sort.field) {
+    case "revision":
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) throw new InvalidCursor();
+      break;
+    case "modified-at":
+      if (typeof value !== "string" || !isUtcInstant(value) || value.startsWith("0000-") || new Date(value).toISOString() !== value) throw new InvalidCursor();
+      break;
+    case "key":
+    case "project":
+      if (value !== last.project) throw new InvalidCursor();
+      break;
+    case "human-attention":
+      if (value !== "required" && value !== "cleared") throw new InvalidCursor();
+      break;
+    default:
+      if (!cursorText(value, sort.field === "title" ? TITLE_MAX : META_VALUE_MAX)) throw new InvalidCursor();
   }
-  return { project: last.project, item: last.item };
+  return { project: last.project, item: last.item, value: value as string | number };
 }
 
 const BUILTINS = [
@@ -138,20 +193,23 @@ export class SearchService {
   constructor(private readonly repo: SearchableRepository) {}
 
   async search(input: SearchInput): Promise<SearchResult> {
-    const limit = input.limit ?? SEARCH_LIMIT_DEFAULT;
+    if (typeof input.query !== "string") throw new BadEnvelope("query must be a string");
+    if (input.project !== undefined && typeof input.project !== "string") throw new BadEnvelope("project must be a string");
+    const sort = parseSearchSort(input.sort);
+    const limit = input.limit === undefined ? SEARCH_LIMIT_DEFAULT : input.limit;
     if (!Number.isInteger(limit) || limit < 1 || limit > SEARCH_LIMIT_MAX) {
       throw new InvalidQuery([{ message: `limit must be 1–${SEARCH_LIMIT_MAX}`, span: { start: 0, end: 0 } }]);
     }
     const ast = applyArchiveDefault(parseQuery(input.query));
-    const fp = fingerprint(input.query, input.project, limit);
-    const after = input.cursor === undefined ? undefined : decodeCursor(input.cursor, fp);
-    const page: SearchPage = await this.repo.search({ ast, scope: input.project, limit: limit + 1, after });
+    const fp = fingerprint(input.query, input.project, limit, sort);
+    const after = input.cursor === undefined ? undefined : decodeCursor(input.cursor, fp, sort);
+    const page: SearchPage = await this.repo.search({ ast, scope: input.project, limit: limit + 1, sort, after });
     const items = page.items.slice(0, limit);
     const hasMore = page.items.length > limit;
-    const last = hasMore ? items[items.length - 1]! : page.next;
+    const last = hasMore ? searchPosition(items[items.length - 1]!, sort) : undefined;
     return {
       items,
-      cursor: last === undefined ? undefined : encodeCursor(fp, { project: last.project, item: last.item }),
+      cursor: last === undefined ? undefined : encodeCursor(fp, last),
     };
   }
 

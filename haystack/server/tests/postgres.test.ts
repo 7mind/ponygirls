@@ -75,6 +75,26 @@ if (!CONN) {
     });
     beforeEach(wipe);
 
+    it("continues a sorted cursor after its boundary row is deleted", async () => {
+      const clock = new ManualClock();
+      const items = new ItemService(repo, clock);
+      const search = new SearchService(repo);
+      for (const [key, title] of [["p:c", "Alpha"], ["p:a", "Middle"], ["p:b", "Zulu"]]) {
+        await items.put({ key, documentJson: DOC(title), expectedRevision: 0, requestId: freshRequestId() }, ALICE);
+      }
+      const input = { query: "", limit: 1, sort: { field: "title", direction: "asc" } as const };
+      const first = await search.search(input);
+      assert.deepEqual(first.items.map((item) => item.item), ["c"]);
+      assert.ok(first.cursor);
+      await pool!.query("DELETE FROM items WHERE project_id = 'p' AND item_id = 'c'");
+      const next = await search.search({ ...input, cursor: first.cursor });
+      assert.deepEqual(next.items.map((item) => item.item), ["a"]);
+      assert.ok(next.cursor);
+      const last = await search.search({ ...input, cursor: next.cursor });
+      assert.deepEqual(last.items.map((item) => item.item), ["b"]);
+      assert.equal(last.cursor, undefined);
+    });
+
     // Regression: an unexpected SQL error must not poison a pooled session.
     it("rolls back failed commits before returning the connection", async () => {
       const single = new PgItemRepository(CONN, 1);

@@ -85,6 +85,12 @@ export interface Principal {
   activityProjectId: string;
 }
 
+export type SearchSortField = "key" | "title" | "project" | "type" | "status" | "importance" | "human-attention" | "modified-at" | "revision";
+export interface SearchSort {
+  readonly field: SearchSortField;
+  readonly direction: "asc" | "desc";
+}
+
 export interface ItemMetadata {
   createdAt: string;
   createdBy: string;
@@ -258,7 +264,7 @@ export const api = {
       expected_revision: expectedRevision,
       request_id: requestId,
     }),
-  search: (query: string, opts?: { project?: string; limit?: number; cursor?: string }) =>
+  search: (query: string, opts?: { project?: string; limit?: number; cursor?: string; sort?: SearchSort }) =>
     call<{ items: Summary[]; cursor?: string }>("/api/v1/search", { query, ...opts }),
   history: (key: string) => call<{ revisions: RevisionMeta[] }>("/api/v1/history", { key }),
   historyGet: async (key: string, revision: number) =>
