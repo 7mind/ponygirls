@@ -283,6 +283,8 @@ let
   piSubagentsPolicyJson = jsonFormat.generate "pi-subagents-policy.json" (import ../lib/subagents-policy.nix {
     allowAllModels = cfg.pi.subagentsAllowAllModels;
     allowedModels = cfg.pi.subagentsAllowedModels;
+    allowedTools = cfg.pi.subagentsAllowedTools;
+    worktreeRoot = cfg.pi.subagentsWorktreeRoot;
     maxDepth = cfg.pi.subagentsMaxDepth;
     nesting = cfg.pi.subagentsNesting;
     repos = cfg.pi.subagentsRepos;
@@ -298,6 +300,8 @@ let
   subagentsPolicyManaged =
     cfg.pi.subagentsAllowAllModels
     || cfg.pi.subagentsAllowedModels != [ ]
+    || cfg.pi.subagentsAllowedTools != [ ]
+    || cfg.pi.subagentsWorktreeRoot != null
     || cfg.pi.subagentsMaxDepth != 1
     || cfg.pi.subagentsNesting
     || cfg.pi.subagentsRepos != [ ]
@@ -459,6 +463,51 @@ in
       '';
     };
 
+    smind.hm.dev.llm.pi.subagentsAllowedTools = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "mcp__codegraph__codegraph_explore" ];
+      description = ''
+        Generic tools Pi subagents may call besides the fixed reader/writer
+        proxy set, written as `allowedTools` into `subagents-policy.json`.
+        Each entry is an exact tool name or full-name pattern with `*`
+        wildcard matching (e.g. `mcp__codegraph__*`); the runtime feature
+        implements the glob. Empty (the default) grants no generic tools.
+        When a `codegraph` server exists in
+        {option}`programs.mcp.servers`, the default is
+        `[ "mcp__codegraph__codegraph_explore" ]` (least privilege); set
+        `[ ]` explicitly to disable it, or a wildcard such as
+        `[ "mcp__codegraph__*" ]` to widen it.
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsWorktreeRoot = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/srv/nvme/subagents-worktrees";
+      description = ''
+        Pooled writer-worktree root, written as `worktreeRoot` into
+        `subagents-policy.json`. Null (the default) keeps the exact existing
+        layout `<agentBaseDir>/subagents/<sessionId>/worktrees`. A set
+        absolute path allocates writer worktrees (host `worktree` and
+        `sandbox` writers alike, via the shared allocator) under
+        `<root>/<sessionId>/worktrees/...` for cross-session separation;
+        session, log, IPC, and tmp dirs stay under the session root, saved
+        allocations keep their recorded absolute paths (no migration, prune,
+        or deletion), and an invalid or unwritable destination fails visibly
+        (never a silent home fallback).
+
+        A literal absolute string (never a store path: do not use
+        `types.path` here). The directory must already exist and be writable.
+        When pi runs inside the yolo sandbox, it must additionally be listed
+        in {option}`smind.hm.dev.llm.yolo.extraReadWritePaths` — that option
+        silently skips missing paths, so an unlisted or missing root is not
+        persistently visible there. This module never auto-binds the root
+        (that would broaden sandbox authority); wire the binding explicitly.
+        Setting this manages `subagents-policy.json` declaratively.
+      '';
+    };
+
     smind.hm.dev.llm.pi.subagentsMaxDepth = lib.mkOption {
       type = lib.types.enum [ 1 2 ];
       default = 1;
@@ -577,7 +626,20 @@ in
     }) inferenceProviderPackages;
   };
 
-  config = lib.mkIf cfg.enable (lib.mkMerge [
+  config = lib.mkMerge [
+    # Least-privilege generic-tool default: grant codegraph explore only when
+    # a `codegraph` MCP server is configured. Reads only
+    # `programs.mcp.servers` (never yolo/codegraph-bootstrap state) and sets
+    # only this option via mkDefault, so explicit `[]` disables it, an
+    # explicit wildcard widens it, and no unrelated option is enabled.
+    {
+      smind.hm.dev.llm.pi.subagentsAllowedTools = lib.mkDefault (
+        if config.programs.mcp.servers ? codegraph
+        then [ "mcp__codegraph__codegraph_explore" ]
+        else [ ]
+      );
+    }
+    (lib.mkIf cfg.enable (lib.mkMerge [
     {
       programs.pi = sharedAgentWiring // {
         # Vendored Pi (see pkg/pi-coding-agent/package.nix), wrapped to put the
@@ -746,10 +808,15 @@ in
     })
     {
       # The extension silently drops nesting below depth 2; fail fast instead.
+      # A pooled worktree root must be an absolute path (never a store path).
       assertions = [
         {
           assertion = !(cfg.pi.subagentsNesting && cfg.pi.subagentsMaxDepth < 2);
           message = "smind.hm.dev.llm.pi.subagentsNesting needs smind.hm.dev.llm.pi.subagentsMaxDepth = 2.";
+        }
+        {
+          assertion = cfg.pi.subagentsWorktreeRoot == null || (cfg.pi.subagentsWorktreeRoot != "" && lib.hasPrefix "/" cfg.pi.subagentsWorktreeRoot);
+          message = "smind.hm.dev.llm.pi.subagentsWorktreeRoot must be null or an absolute path.";
         }
       ];
     }
@@ -766,5 +833,6 @@ in
         else
           { text = piCfg.appendSystemPrompt; };
     })
-  ]);
+    ]))
+  ];
 }

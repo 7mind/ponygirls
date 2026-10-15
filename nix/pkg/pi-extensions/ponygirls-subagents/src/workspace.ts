@@ -17,7 +17,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { err } from "./errors.ts";
 
@@ -34,6 +34,11 @@ export interface WorktreeAllocation {
   baseCommit: string;
   /** True when the base checkout had uncommitted changes at allocation. */
   baseDirty: boolean;
+  /**
+   * Canonical pool namespace, set by the supervisor wrapper only (never
+   * the backends): present for pooled allocations, absent otherwise.
+   */
+  poolRoot?: string | null;
 }
 
 /** A git checkout as found from a working directory. */
@@ -75,6 +80,27 @@ const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 /** No hooks, fsmonitor commands, or untracked caches when the host runs git. */
 const GIT_HARDENING = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false"];
+
+/**
+ * Repo IDs that keep their verbatim physical leaf name: single path
+ * components that cannot traverse (no slashes, NUL, or bare dot names).
+ * Logical repo IDs stay unrestricted plain strings everywhere else
+ * (policy, registration, grants); only the on-disk leaf is encoded.
+ */
+const SAFE_LEAF_ID = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,64}$/;
+
+/**
+ * A physically single, traversal-free worktree leaf component for a repo
+ * ID inside the exact session destination. Safe IDs keep the historical
+ * `wt-<repoId>-<commit>-<unique>` name; anything else (slashes, dots,
+ * length) gets an opaque `wt-h-<sha256>-<commit>-<unique>` name keyed by
+ * the full logical ID. Deterministic in repoId+commit+unique.
+ */
+export function encodeWorktreeLeaf(repoId: string, commitShort: string, unique: string | number): string {
+  if (SAFE_LEAF_ID.test(repoId)) return `wt-${repoId}-${commitShort}-${unique}`;
+  const digest = createHash("sha256").update(repoId, "utf8").digest("hex").slice(0, 32);
+  return `wt-h-${digest}-${commitShort}-${unique}`;
+}
 
 /** Host environment without inherited GIT_* overrides. */
 function gitEnv(): Record<string, string> {
@@ -126,7 +152,7 @@ export class GitWorkspaceManager implements WorkspaceManager {
     const status = git(checkoutPath, ["status", "--porcelain"]);
     const baseDirty = status.ok && status.out.length > 0;
     mkdirSync(destDir, { recursive: true });
-    const worktreePath = join(destDir, `wt-${repoId}-${resolved.slice(0, 12)}-${Date.now()}`);
+    const worktreePath = join(destDir, encodeWorktreeLeaf(repoId, resolved.slice(0, 12), Date.now()));
     const add = git(checkoutPath, ["worktree", "add", "--detach", worktreePath, resolved]);
     if (!add.ok) {
       // Roll back only artifacts created by this startup.
@@ -230,6 +256,14 @@ export class DummyWorkspaceManager implements WorkspaceManager {
   failAllocate = false;
   /** What describeCheckout reports for every directory. */
   checkout: CheckoutInfo | null = null;
+  /**
+   * Optional real git repo backing writer allocations with genuine
+   * worktrees (retained rows prove through real backlinks and birth).
+   * Unset keeps plain directories with mirrored backlink files: fast and
+   * unprovable by design (retained rows using it fail closed on reopen).
+   * Test-only opt-in; production paths always use the git backend.
+   */
+  gitRepoDir: string | null = null;
   private seq = 0;
 
   describeCheckout(_dir: string): CheckoutInfo | null {
@@ -238,15 +272,46 @@ export class DummyWorkspaceManager implements WorkspaceManager {
 
   allocateWriter(repoId: string, checkoutPath: string, baseCommit: string, destDir: string): WorktreeAllocation {
     if (this.failAllocate) throw err("WORKSPACE_UNAVAILABLE", "dummy allocation failure");
+    // Same physical naming contract as the git backend (single safe leaf),
+    // so derivation and retention behave identically on both. The dummy
+    // also mirrors git's administration backlink layout (worktree .git
+    // file <-> admin gitdir file, canonical target) so backlink-proven
+    // retention behaves identically too.
+    const leaf = encodeWorktreeLeaf(repoId, String(baseCommit).slice(0, 12), this.seq++);
+    const worktreePath = join(destDir, leaf);
+    if (this.gitRepoDir !== null) {
+      // Real backing: a genuine worktree in the given repo, so retained
+      // rows carry provable identity (backlink + birth). Unpinned ("HEAD")
+      // bases stay unpinned, exactly as the git backend records them.
+      mkdirSync(destDir, { recursive: true });
+      const add = spawnSync("git", ["-C", this.gitRepoDir, "worktree", "add", "--detach", worktreePath, baseCommit], { encoding: "utf8" });
+      if (add.status !== 0) throw err("WORKSPACE_UNAVAILABLE", `dummy real-backing worktree add failed: ${add.stderr}`);
+      const dotGit = readFileSync(join(worktreePath, ".git"), "utf8");
+      const pointer = /^gitdir: (.+)$/m.exec(dotGit);
+      if (pointer === null) throw err("WORKSPACE_UNAVAILABLE", "dummy real-backing worktree has no gitdir pointer");
+      const allocation: WorktreeAllocation = {
+        repoId,
+        checkoutPath,
+        worktreePath,
+        gitDir: pointer[1].trim(),
+        baseCommit,
+        baseDirty: false,
+      };
+      this.allocations.push(allocation);
+      return allocation;
+    }
     const allocation: WorktreeAllocation = {
       repoId,
       checkoutPath,
-      worktreePath: join(destDir, `dummy-${repoId}-${this.seq}`),
-      gitDir: join(destDir, `dummy-${repoId}-${this.seq++}.git`),
+      worktreePath: join(destDir, leaf),
+      gitDir: join(destDir, `${leaf}.git`),
       baseCommit,
       baseDirty: false,
     };
     mkdirSync(allocation.worktreePath, { recursive: true });
+    mkdirSync(allocation.gitDir, { recursive: true });
+    writeFileSync(join(allocation.worktreePath, ".git"), `gitdir: ${allocation.gitDir}\n`);
+    writeFileSync(join(allocation.gitDir, "gitdir"), `${realpathSync(allocation.worktreePath)}/.git\n`);
     this.allocations.push(allocation);
     return allocation;
   }

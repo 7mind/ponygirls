@@ -105,6 +105,8 @@
             listed = mkPolicy {
               allowAllModels = false;
               allowedModels = [ { provider = "meta"; id = "muse-spark-1.3"; } ];
+              allowedTools = [ "mcp__codegraph__codegraph_explore" ];
+              worktreeRoot = "/srv/nvme/subagents-worktrees";
               maxDepth = 2;
               nesting = true;
               repos = [
@@ -119,6 +121,8 @@
             open = mkPolicy {
               allowAllModels = true;
               allowedModels = [ { provider = "zai"; id = "glm-5.3"; } ];
+              allowedTools = [ ];
+              worktreeRoot = null;
               maxDepth = 1;
               nesting = false;
               repos = [ ];
@@ -127,8 +131,84 @@
               workspaceRoots = [ ];
               workspaceOwnerCheckoutAllowed = false;
             };
+            # HM-level wiring for subagentsAllowedTools: least-privilege
+            # codegraph default only when a `codegraph` MCP server is
+            # configured (never from yolo/codegraph-bootstrap state). Minimal
+            # evalModules with narrow leaf stubs only — never a full machine
+            # config — so the conditional default cannot enable unrelated
+            # options or recurse into the HM config.
+            evalAllowedTools = mcpServers: piExtra: (nixpkgs.lib.evalModules {
+              specialArgs = { pkgs = import nixpkgs { inherit system; }; };
+              modules = [
+                ./nix/hm/pi.nix
+                ({ lib, ... }: {
+                  options.assertions = lib.mkOption { type = lib.types.listOf lib.types.attrs; default = [ ]; };
+                  options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
+                  options.home.file = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                  options.home.sessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                  options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
+                  options.home.homeDirectory = lib.mkOption { type = lib.types.str; default = "/home/alice"; };
+                  options.programs.mcp.servers = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                  options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = false; };
+                  options.smind.hm.dev.llm.merged.skills = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                  options.smind.hm.dev.llm.merged.commands = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                  options.smind.hm.dev.llm.merged.memoryText = lib.mkOption { type = lib.types.str; default = ""; };
+                  options.smind.hm.dev.llm.models.pi.provider = lib.mkOption { type = lib.types.str; default = "x"; };
+                  options.smind.hm.dev.llm.models.pi.model = lib.mkOption { type = lib.types.str; default = "x"; };
+                  options.smind.hm.dev.llm.models.pi.thinkingLevel = lib.mkOption { type = lib.types.str; default = "x"; };
+                  options.smind.hm.dev.llm.fullscreenTui.enable = lib.mkOption { type = lib.types.bool; default = false; };
+                })
+                ({ ... }: {
+                  config.smind.hm.dev.llm.enable = true;
+                  config.programs.mcp.servers = mcpServers;
+                  config.smind.hm.dev.llm.pi = piExtra;
+                })
+              ];
+            }).config.smind.hm.dev.llm.pi.subagentsAllowedTools;
+            absentDefault = evalAllowedTools { } { };
+            presentDefault = evalAllowedTools { codegraph = { command = "/bin/false"; }; } { };
+            disabledOverride = evalAllowedTools { codegraph = { command = "/bin/false"; }; } { subagentsAllowedTools = [ ]; };
+            wildcardOverride = evalAllowedTools { codegraph = { command = "/bin/false"; }; } { subagentsAllowedTools = [ "mcp__codegraph__*" ]; };
+            # HM-level wiring for subagentsWorktreeRoot: null by default,
+            # absolute paths pass through as literal strings, and relative or
+            # empty values trip the absolute-path assertion. Same narrow leaf
+            # stubs as above; the standalone pi module never references yolo
+            # options (only documents the explicit extraReadWritePaths binding).
+            evalWorktree = piExtra: (nixpkgs.lib.evalModules {
+              specialArgs = { pkgs = import nixpkgs { inherit system; }; };
+              modules = [
+                ./nix/hm/pi.nix
+                ({ lib, ... }: {
+                  options.assertions = lib.mkOption { type = lib.types.listOf lib.types.attrs; default = [ ]; };
+                  options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
+                  options.home.file = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                  options.home.sessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                  options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
+                  options.home.homeDirectory = lib.mkOption { type = lib.types.str; default = "/home/alice"; };
+                  options.programs.mcp.servers = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                  options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = false; };
+                  options.smind.hm.dev.llm.merged.skills = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                  options.smind.hm.dev.llm.merged.commands = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                  options.smind.hm.dev.llm.merged.memoryText = lib.mkOption { type = lib.types.str; default = ""; };
+                  options.smind.hm.dev.llm.models.pi.provider = lib.mkOption { type = lib.types.str; default = "x"; };
+                  options.smind.hm.dev.llm.models.pi.model = lib.mkOption { type = lib.types.str; default = "x"; };
+                  options.smind.hm.dev.llm.models.pi.thinkingLevel = lib.mkOption { type = lib.types.str; default = "x"; };
+                  options.smind.hm.dev.llm.fullscreenTui.enable = lib.mkOption { type = lib.types.bool; default = false; };
+                })
+                ({ ... }: {
+                  config.smind.hm.dev.llm.enable = true;
+                  config.smind.hm.dev.llm.pi = piExtra;
+                })
+              ];
+            }).config;
+            worktreeDefault = (evalWorktree { }).smind.hm.dev.llm.pi.subagentsWorktreeRoot;
+            worktreeCustom = (evalWorktree { subagentsWorktreeRoot = "/srv/nvme/subagents-worktrees"; }).smind.hm.dev.llm.pi.subagentsWorktreeRoot;
+            worktreeManagedDefault = (evalWorktree { }).home.file ? "/home/alice/.pi/agent/subagents-policy.json";
+            worktreeManagedCustom = (evalWorktree { subagentsWorktreeRoot = "/srv/nvme/subagents-worktrees"; }).home.file ? "/home/alice/.pi/agent/subagents-policy.json";
+            worktreeInvalidAssertions = (evalWorktree { subagentsWorktreeRoot = "relative/path"; }).assertions;
+            worktreeEmptyAssertions = (evalWorktree { subagentsWorktreeRoot = ""; }).assertions;
           in
-          assert builtins.attrNames listed == [ "allowedModels" "gateBypassAllowed" "gateMaxRoundsCeiling" "maxDepth" "nesting" "repos" "workspaceOwnerCheckoutAllowed" "workspaceRoots" ];
+          assert builtins.attrNames listed == [ "allowedModels" "allowedTools" "gateBypassAllowed" "gateMaxRoundsCeiling" "maxDepth" "nesting" "repos" "workspaceOwnerCheckoutAllowed" "workspaceRoots" "worktreeRoot" ];
           assert listed == {
             maxDepth = 2;
             nesting = true;
@@ -137,6 +217,8 @@
               { repoId = "other"; checkoutPath = "/o"; readRoots = [ "/o" "/o/lib" ]; allowWriters = false; }
             ];
             allowedModels = [ { provider = "meta"; id = "muse-spark-1.3"; } ];
+            allowedTools = [ "mcp__codegraph__codegraph_explore" ];
+            worktreeRoot = "/srv/nvme/subagents-worktrees";
             gateBypassAllowed = true;
             gateMaxRoundsCeiling = null;
             workspaceRoots = [ "/home/user/worktrees" ];
@@ -147,11 +229,23 @@
             nesting = false;
             repos = [ ];
             allowedModels = null;
+            allowedTools = [ ];
+            worktreeRoot = null;
             gateBypassAllowed = false;
             gateMaxRoundsCeiling = 3;
             workspaceRoots = [ ];
             workspaceOwnerCheckoutAllowed = false;
           };
+          assert absentDefault == [ ];
+          assert presentDefault == [ "mcp__codegraph__codegraph_explore" ];
+          assert disabledOverride == [ ];
+          assert wildcardOverride == [ "mcp__codegraph__*" ];
+          assert worktreeDefault == null;
+          assert worktreeCustom == "/srv/nvme/subagents-worktrees";
+          assert worktreeManagedDefault == false;
+          assert worktreeManagedCustom == true;
+          assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeInvalidAssertions;
+          assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeEmptyAssertions;
           pkgs.runCommandLocal "subagents-policy-shape-test" { } "touch $out";
       in
       {

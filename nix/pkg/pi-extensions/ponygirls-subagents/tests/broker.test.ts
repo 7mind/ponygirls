@@ -11,7 +11,7 @@ function caller(overrides: Partial<BrokerCaller> = {}): BrokerCaller {
     agentId: "agent-1",
     taskRunId: "task-1",
     generation: 1,
-    grants: { tools: ["read", "grep", "find", "ls", "write", "edit", "bash"], repos: [], shell: true, network: false, nesting: false, maxDepth: 1, isolation: "none" },
+    grants: { tools: ["read", "grep", "find", "ls", "write", "edit", "bash"], externalTools: [], repos: [], shell: true, network: false, nesting: false, maxDepth: 1, isolation: "none" },
     workdir: "/tmp",
     writableRoot: null,
     sandbox: null,
@@ -26,7 +26,7 @@ function mkBroker(exec: ToolExecutor, store: RunStore = new InMemoryRunStore("r"
 test("denied tool never reaches the executor", async () => {
   const exec = new DummyToolExecutor();
   const broker = mkBroker(exec);
-  const reader = caller({ grants: { tools: ["read"], repos: [], shell: false, network: false, nesting: false, maxDepth: 1, isolation: "none" } });
+  const reader = caller({ grants: { tools: ["read"], externalTools: [], repos: [], shell: false, network: false, nesting: false, maxDepth: 1, isolation: "none" } });
   await assert.rejects(() => broker.execute(reader, { tool: "bash", args: { command: "id" } }), /POLICY_DENIED/);
   assert.equal(exec.specs.length, 0);
 });

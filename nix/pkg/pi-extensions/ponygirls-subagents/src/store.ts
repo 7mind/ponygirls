@@ -64,6 +64,7 @@ export type JournalKind =
   | "tool.intent"
   | "tool.outcome"
   | "usage.reported"
+  | "usage_late.pending"
   | "policy.changed"
   | "gate.registered"
   | "gate.round_admitted"
@@ -78,7 +79,8 @@ export type JournalKind =
   | "recovery.event"
   | "agent.closed"
   | "agent.interrupted"
-  | "agent.quarantined";
+  | "agent.quarantined"
+  | "agent.grants";
 
 export interface JournalRecord {
   seq: number;
@@ -333,6 +335,13 @@ export class FileRunStore implements RunStore {
   private commands = new Map<string, JournalRecord>();
   /** Set when a durability barrier failed; the store refuses further writes. */
   private failure: string | null = null;
+  /**
+   * Set by close(): ownership transferred or disposed. Late writer paths
+   * holding this object must fail closed instead of appending behind a new
+   * owner (stale seq + manifest rewind = corruption on reopen). Reads stay
+   * available for diagnosis.
+   */
+  private closed = false;
 
   constructor(rootDir: string, rootId: string) {
     this.dir = rootDir;
@@ -353,6 +362,7 @@ export class FileRunStore implements RunStore {
   }
 
   append(kind: JournalKind, body: Record<string, unknown>): JournalRecord {
+    if (this.closed) throw err("STORE_FAILED", "journal is closed: ownership transferred or disposed");
     if (this.failure !== null) throw err("STORE_FAILED", `journal unavailable after a failed durability barrier: ${this.failure}`);
     const record: JournalRecord = { seq: this.seq + 1, kind, at: new Date().toISOString(), body };
     const framed = frame(record);
@@ -478,7 +488,9 @@ export class FileRunStore implements RunStore {
     return this.seq;
   }
 
-  close(): void {}
+  close(): void {
+    this.closed = true;
+  }
 
   private latestPublished(agentId: string): JournalRecord | null {
     for (let i = this.records.length - 1; i >= 0; i--) {
@@ -590,6 +602,9 @@ export class InMemoryRunStore implements RunStore {
   }
 
   append(kind: JournalKind, body: Record<string, unknown>): JournalRecord {
+    // No closed-guard here (unlike FileRunStore): this store has no manifest
+    // or cross-instance seq hazard — state lives in this object, so sharing
+    // it across supervisor instances stays consistent. close() is nominal.
     const record: JournalRecord = { seq: ++this.seq, kind, at: new Date().toISOString(), body };
     this.records.push(record);
     return record;

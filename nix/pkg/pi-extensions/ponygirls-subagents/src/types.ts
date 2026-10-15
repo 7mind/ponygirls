@@ -140,6 +140,12 @@ export interface RepoGrant {
 
 export interface GrantSet {
   tools: string[];
+  /**
+   * Concrete governing-session external tool names (MCP etc) this agent may
+   * call through the supervisor. Empty by default; sandbox always empty.
+   * Reserved built-in/control names are never present here.
+   */
+  externalTools: string[];
   repos: RepoGrant[];
   shell: boolean;
   network: boolean;
@@ -164,6 +170,14 @@ export interface WorkspaceAllocation {
   /** Git tree the gate fingerprints a candidate over; null for readers and non-git directories. */
   git: GitTree | null;
   repoId: string | null;
+  /**
+   * Configured pool namespace this workspace was allocated under, if any.
+   * Recorded at allocation time so retained workspaces keep their exact
+   * exclusion across reconfigures without path-shape guessing. Absent on
+   * records written before the field existed (derived then) and on
+   * default-layout workspaces (the store hide covers them).
+   */
+  poolRoot?: string | null;
   /** Private scratch directory for sandboxed tool jobs. */
   tmpDir: string;
   /**

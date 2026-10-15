@@ -34,7 +34,10 @@ export type SupervisorOperation =
 export type WorkerOperation =
   | "ready"
   | "event"
-  | "tool.execute";
+  | "tool.execute"
+  | "tool.prepare"
+  | "tool.ticket-release"
+  | "provider.admission";
 
 const SUPERVISOR_OPS: ReadonlySet<string> = new Set<SupervisorOperation>([
   "initialize",
@@ -49,6 +52,9 @@ const WORKER_OPS: ReadonlySet<string> = new Set<WorkerOperation>([
   "ready",
   "event",
   "tool.execute",
+  "tool.prepare",
+  "tool.ticket-release",
+  "provider.admission",
 ]);
 
 export interface IpcEnvelope {
@@ -142,7 +148,10 @@ export function validateEnvelope(
   }
   const allowed = direction === "to-worker" ? SUPERVISOR_OPS : WORKER_OPS;
   const operation = e["operation"];
-  const isToolAnswer = direction === "to-worker" && e["type"] === "response" && operation === "tool.execute";
+  // Supervisor answers to worker RPCs (tool execute/prepare, provider
+  // admission) travel as responses; ticket-release is one-way and needs no
+  // answer.
+  const isToolAnswer = direction === "to-worker" && e["type"] === "response" && (operation === "tool.execute" || operation === "tool.prepare" || operation === "provider.admission");
   if (typeof operation !== "string" || (!allowed.has(operation) && !isToolAnswer)) {
     return { ok: false, code: "UNKNOWN_OPERATION", message: `unknown operation ${String(e["operation"])}` };
   }
@@ -191,6 +200,39 @@ export function taskHeader(agentId: string, taskRunId: string): string {
 /** Matches taskHeader() at the start of a prompt. */
 export const TASK_HEADER_PATTERN = /^\[subagent \S+ task \S+\]\n/;
 
+/** Preserved external tool definition (actual parent schema/description). */
+export interface ExternalToolDefinition {
+  name: string;
+  description: string;
+  parameters: unknown;
+  /** Serializable parent output schema (structured results); absent when none. */
+  outputSchema?: unknown;
+}
+
+/**
+ * Narrow worker -> supervisor provider-admission query (one NEW provider
+ * request). Public, channel-owned, fenced by envelope ids; carries the
+ * operative selected original model identity and SDK request reason. Never
+ * a generic capability: the supervisor answers allow/deny only.
+ */
+export interface ProviderAdmissionPayload {
+  /** SDK request reason (user/continuation/retry/direct). */
+  reason: string;
+  /** Operative selected original physical model identity. */
+  provider: string;
+  modelId: string;
+  thinkingLevel: string;
+}
+
+/** Supervisor answer to a `provider.admission` request. */
+export interface ProviderAdmissionResponse {
+  ok: boolean;
+  /** Visible denial code on ok:false (hold/fence errors). */
+  code?: string;
+  /** Visible denial message on ok:false. */
+  error?: string;
+}
+
 /** Initialize payload (supervisor -> worker). */
 export interface InitializePayload {
   /** First task to prompt, or null to load the session without inference. */
@@ -209,6 +251,8 @@ export interface InitializePayload {
   tools: string[];
   /** Characters of final text the worker hands over per generation; omitted: RESULT_TEXT_MAX. */
   resultLimit?: number;
+  /** Preserved schemas for external proxies (subset of tools; empty when none). */
+  externalTools?: ExternalToolDefinition[];
   /**
    * Native-session restore: the supervisor wrote validated checkpoint bytes
    * to sessionFile before launch (single owner: no worker was running).
@@ -231,6 +275,46 @@ export function validateInitializePayload(raw: unknown): { ok: true; value: Init
   }
   if (!Array.isArray(p["tools"]) || !(p["tools"] as unknown[]).every(isNonEmptyString)) {
     return { ok: false, error: err("INVALID", "initialize.tools must be an array of tool names") };
+  }
+  if (p["externalTools"] !== undefined && p["externalTools"] !== null) {
+    if (!Array.isArray(p["externalTools"])) {
+      return { ok: false, error: err("INVALID", "initialize.externalTools must be an array") };
+    }
+    const seen = new Set<string>();
+    for (const entry of p["externalTools"] as unknown[]) {
+      if (typeof entry !== "object" || entry === null) {
+        return { ok: false, error: err("INVALID", "initialize.externalTools entries must be objects") };
+      }
+      const rec = entry as Record<string, unknown>;
+      if (!isNonEmptyString(rec["name"]) || typeof rec["description"] !== "string" || typeof rec["parameters"] !== "object" || rec["parameters"] === null) {
+        return { ok: false, error: err("INVALID", "initialize.externalTools entries need name/description/parameters") };
+      }
+      if (rec["outputSchema"] !== undefined && (typeof rec["outputSchema"] !== "object" || rec["outputSchema"] === null)) {
+        return { ok: false, error: err("INVALID", "initialize.externalTools outputSchema must be an object when present") };
+      }
+      try {
+        if (rec["outputSchema"] !== undefined && Buffer.byteLength(JSON.stringify(rec["outputSchema"]), "utf8") > 32 * 1024) {
+          return { ok: false, error: err("PAYLOAD_TOO_LARGE", `external tool ${rec["name"] as string} outputSchema exceeds 32KiB`) };
+        }
+      } catch {
+        return { ok: false, error: err("INVALID", `external tool ${rec["name"] as string} outputSchema not serializable`) };
+      }
+      const name = rec["name"] as string;
+      if (seen.has(name)) {
+        return { ok: false, error: err("INVALID", `duplicate external tool ${name}`) };
+      }
+      seen.add(name);
+      if (!(p["tools"] as string[]).includes(name)) {
+        return { ok: false, error: err("INVALID", `external tool ${name} missing from initialize.tools`) };
+      }
+      try {
+        if (Buffer.byteLength(JSON.stringify(rec["parameters"]), "utf8") > 64 * 1024) {
+          return { ok: false, error: err("PAYLOAD_TOO_LARGE", `external tool ${name} schema exceeds 64KiB`) };
+        }
+      } catch {
+        return { ok: false, error: err("INVALID", `external tool ${name} schema not serializable`) };
+      }
+    }
   }
   if (p["profile"] !== "reader" && p["profile"] !== "writer") {
     return { ok: false, error: err("INVALID", "initialize.profile must be reader/writer") };
@@ -263,7 +347,8 @@ export type WorkerEventKind =
   | "settled"
   | "tool_start"
   | "tool_end"
-  | "preview";
+  | "preview"
+  | "usage_late";
 
 export interface WorkerEvent {
   kind: WorkerEventKind;

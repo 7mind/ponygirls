@@ -57,7 +57,7 @@ export class FakeWorker implements WorkerPort {
   /** When true, task/repair delivers answer with an application rejection. */
   rejectDeliverTask = false;
   private onExit: ((info: { code: number | null; signal: string | null }) => void) | null = null;
-  private answerTool: ((payload: ToolRequest) => Promise<{ content: string; isError: boolean }>) | null = null;
+  private answerTool: ((payload: ToolRequest, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => Promise<{ content: string; isError: boolean }>) | null = null;
   private taskRunId: string | null = null;
   private generation: number | null = null;
   private settledFor = new Set<string>();
@@ -100,7 +100,7 @@ export class FakeWorker implements WorkerPort {
     this.emit = h;
   }
 
-  setToolRequestHandler(h: (payload: ToolRequest) => Promise<{ content: string; isError: boolean }>): void {
+  setToolRequestHandler(h: (payload: ToolRequest, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => Promise<{ content: string; isError: boolean }>): void {
     this.answerTool = h;
   }
 

@@ -2,12 +2,18 @@
 
 ## Supported versions and platforms
 
-- pi **1.0.0** (`@earendil-works/*` namespace). The worker imports the
+- pi **1.1.0** (`@earendil-works/*` namespace). The worker imports the
   **built** package tree (`dist/index.js`, `pi-ai/dist/compat.js`,
   `typebox`) from `PI_SUBAGENTS_SDK_ROOT`, which the home-manager pi wrapper
   sets to the exact pi derivation it runs. Unset, spawning fails with an
   explicit error. Other pi versions are untested and unsupported; SDK drift
   surfaces as worker startup errors, never as silent behavior change.
+  External delegation additionally pins the five-argument tool-runtime
+  adapter (`tool-definition-wrapper.js`): public `AgentTool.execute` has four
+  arguments, but the runtime forwards a fifth `ExtensionToolContext`. The
+  narrow adapter (`src/governing-runtime.ts`) names that contract without
+  private session access; if the runtime signature drifts, external dispatch
+  fails visibly rather than bypassing grants.
 - Node **24.x** (type-stripped `.ts` worker fork; `node --test` suites).
 - OS: **Linux x86_64**. `sandbox` isolation additionally needs bubblewrap
   (`bwrap`) with user-namespace support: the backend probes it before
@@ -161,7 +167,29 @@ A task run's result is the final assistant text of its last generation.
 
 One supervisor per governing pi session. Durable state lives in
 `~/.pi/agent/subagents/<sessionId>/` (journal, manifest, checkpoints,
-worktrees, worker scratch) — outside all child tool views. The root lock
+worktrees, worker scratch) — outside all child tool views. Setting
+`worktreeRoot` in `subagents-policy.json` (null default) relocates only
+writer worktrees under `<root>/<sessionId>/worktrees/...`; journal,
+manifest, checkpoints, sessions, and tmp stay home, and recorded
+allocations keep their absolute paths. The pooled directory must exist (and,
+under yolo, be an explicit `extraReadWritePaths` binding); unwritable
+destinations fail visibly. New allocations land in a single traversal-free
+leaf inside the exact session destination (verbatim for ordinary repo IDs,
+hashed otherwise). Sandbox tool views hide the pooled root except
+the child's own writable worktree (sibling/other-session content stays
+masked even under a covering read root), including pools retained from
+saved allocations after the option changes — from the recorded
+allocation-time namespace, else the exact default, else the namespace
+anchored on the recorded repo ID, never marker counting; anything else
+fails visibly. An unprovable retained namespace (missing leaf,
+missing/emptied/rewritten backlink) fails closed session-wide with
+WORKSPACE_UNAVAILABLE — blocking fresh sandbox filesystem operations,
+checks, and reviewer file tools in that session until the namespace
+re-proves (alias/backlink restored). Closing the stale retained agent
+does not clear the hold: closed records are retained and still examined.
+Recorded paths are never migrated or dropped. Canonical symlink targets are
+masked alongside the configured path, and recorded paths are never
+rewritten, migrated, or deleted. The root lock
 (`root.lock/`) records its owner's pid, boot id, and process start time; a
 live owner keeps it, and a crashed owner's lock is retired atomically by
 exactly one successor. Switching sessions or shutting down pi cancels owned
@@ -265,6 +293,21 @@ counts.
 - **No manual approvals.** Every child tool call is decided by grants
   alone: a granted call runs, anything else fails with `POLICY_DENIED`.
   There is no `ask` setting or approval mechanism.
+- **Delegated external tools skip parent hooks by design.** Governing
+  `tool_call`/`tool_result` extension hooks (permission prompts, logging),
+  transcript `tool_execution_*` events, `nestedCalls` summaries, and image
+  normalization are NOT replayed for delegated external calls. Authority is
+  the root+owner `allowedTools` intersection plus the supervisor journal;
+  billed usage is accounted exactly once there, not in the parent
+  transcript. Do not claim hook/event equivalence.
+- **External delegation is host-only and least-privilege.** Only
+  `none`/`worktree` children receive approved concrete external names;
+  `sandbox` and gate reviewers never do, and reserved names are never
+  delegable. The default `allowedTools` is empty; Home Manager grants
+  `mcp__codegraph__codegraph_explore` by default only when the `codegraph`
+  MCP server is configured. Arbitrary whitelisted tools are not magically
+  read-only: reader/writer profiles do not bound external effects, only
+  naming (the whitelist bounds *which* tools, not JS isolation).
 - **No diff view.** `read_agent` returns status, paged results, and events; a
   worktree writer's changes are inspected with `git -C <workdir> diff`.
 - **Transcripts show what the session file holds.** Text being generated
