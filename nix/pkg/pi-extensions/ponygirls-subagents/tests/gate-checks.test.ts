@@ -129,6 +129,22 @@ test("interrupted admission checks keep OLD intent and admit no obsolete check2 
   try {
     const repo = gitCheckout(dir);
     const { sup, byAgent, executors } = mkSup({ dir: join(dir, "root"), workspace: new GitWorkspaceManager(), governor: () => ({ ...testGovernor(), cwd: repo }) });
+    // Observe the ACTUAL old check continuation through the PUBLIC runCheck
+    // seam (production API unchanged): settlement proves the released backend
+    // result was consumed by the gate path, independently of any second
+    // journal outcome (exactly-ONE-per-op forbids one).
+    const origRunCheck = sup.runCheck.bind(sup);
+    let checkSettled = false;
+    let checkExit: number | null = null;
+    sup.runCheck = (async (...args: Parameters<typeof sup.runCheck>) => {
+      try {
+        const res = await origRunCheck(...args);
+        checkExit = res.exitCode;
+        return res;
+      } finally {
+        checkSettled = true;
+      }
+    }) as typeof sup.runCheck;
     let releaseCheck1!: () => void;
     const held = new Promise<void>((res) => { releaseCheck1 = res; });
     let admissions = 0;
@@ -150,19 +166,27 @@ test("interrupted admission checks keep OLD intent and admit no obsolete check2 
     // C6: snapshot NEW's ACTUAL record state before releasing the old held check.
     const actualBeforeAdm = actualState(sup, g.agentId);
     assert.equal(actualBeforeAdm.currentTaskRunId, newer.taskRunId, "current must be N once started");
-    releaseCheck1();
-    // Join the OLD continuation AFTER release: check1's completion outcome for its OWN
-    // operationId (status ok, not the interrupt-time cancelled outcome). Pre-release this
-    // predicate is false (cancel outcome is status cancelled, or absent); it turns true
-    // only when the released exec actually completes. No time guesses.
+    // Held-before-release false predicate: the OLD continuation is still
+    // pending while the backend stays held (no completion observed yet).
+    assert.equal(checkSettled, false, "old check continuation must still be pending while held");
     const op1 = String((sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.find((x) => x.kind === "tool.intent" && (x.body as Record<string, unknown>)["tool"] === "gate-check")?.body as Record<string, unknown>)["operationId"]);
-    await until(() => sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.some((x) => x.kind === "tool.outcome" && (x.body as Record<string, unknown>)["operationId"] === op1 && (x.body as Record<string, unknown>)["status"] !== "cancelled"), 8000, "check1 completion outcome");
+    releaseCheck1();
+    // Join the ACTUAL OLD continuation AFTER release via the public runCheck
+    // seam: settles only when the released backend result was consumed.
+    // Never a second ordinary journal outcome (exactly-ONE-per-op).
+    await until(() => checkSettled, 8000, "old check continuation settled after release");
+    assert.equal(checkExit, -1, "released-then-cancelled check returns cancel-marked, never clean success");
     // Drain: OLD gate terminal (interrupted) observed; the joined completion above proves the
     // assertions below run AFTER release processing, not in the pre-release race window.
     await until(() => (sup.gateController.inspect(g.taskRunId)?.terminal ?? null) !== null, 8000, "OLD gate terminal");
     const recs = sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records;
     const intents = recs.filter((r) => r.kind === "tool.intent" && (r.body as Record<string, unknown>)["tool"] === "gate-check");
     assert.equal(intents.length, 1, `no obsolete check2 intent, got ${intents.length}`);
+    // Exactly-ONE-per-op: the held op journals exactly one outcome, the
+    // interrupt-time cancelled one — never a second ordinary outcome.
+    const op1Outcomes = recs.filter((r) => r.kind === "tool.outcome" && (r.body as Record<string, unknown>)["operationId"] === op1);
+    assert.equal(op1Outcomes.length, 1, `exactly one outcome for the held check, got ${JSON.stringify(op1Outcomes.map((r) => r.body))}`);
+    assert.equal(String((op1Outcomes[0]!.body as Record<string, unknown>)["status"]), "cancelled", "the single outcome is cancelled, never ordinary");
     assert.equal(String((intents[0]!.body as Record<string, unknown>)["taskRunId"]), g.taskRunId, "check1 intent stays OLD");
     assert.equal(executors.host.specs.length, 1, "no obsolete check2 execution");
     // C6: 4-field actual-state invariance (journal absence alone cannot prove it:
@@ -191,6 +215,20 @@ test("interrupted approval recheck keeps OLD binding and does not pass", async (
   try {
     const repo = gitCheckout(dir);
     const { sup, byAgent, executors } = mkSup({ dir: join(dir, "root"), workspace: new GitWorkspaceManager(), governor: () => ({ ...testGovernor(), cwd: repo }) });
+    // Same PUBLIC runCheck seam as the admission test: count settlements to
+    // observe the held recheck's ACTUAL continuation (production unchanged).
+    const origRunCheck = sup.runCheck.bind(sup);
+    let runCheckSettled = 0;
+    const runCheckExits: Array<number | null> = [];
+    sup.runCheck = (async (...args: Parameters<typeof sup.runCheck>) => {
+      try {
+        const res = await origRunCheck(...args);
+        runCheckExits.push(res.exitCode);
+        return res;
+      } finally {
+        runCheckSettled++;
+      }
+    }) as typeof sup.runCheck;
     executors.host.handler = async () => ({ exitCode: 0, signal: null, stdout: "ok", stderr: "", truncated: false, timedOut: false });
     const g = await sup.spawn("governor", { taskName: "g", message: "old", profile: "writer", isolation: "worktree",
       gate: { ...gateSpec(), checks: [{ id: "check1", command: "echo check1" }, { id: "check2", command: "echo check2" }] } }, "rg-cka");
@@ -220,14 +258,27 @@ test("interrupted approval recheck keeps OLD binding and does not pass", async (
     // C6: snapshot NEW's ACTUAL record state before releasing the held recheck.
     const actualBeforeAppr = actualState(sup, g.agentId);
     assert.equal(actualBeforeAppr.currentTaskRunId, newer.taskRunId, "current must be N once started");
+    // Held-before-release false predicate: both initial checks settled, the
+    // held recheck (3rd runCheck) still pending. (The decide tool call is
+    // already accepted:true here — that only acknowledges the verdict, it
+    // does NOT join the held recheck — so the wrapper count, not decideP,
+    // is the genuine predicate.)
+    assert.equal(runCheckSettled, 2, "initial checks settled, held recheck still pending before release");
     releaseRecheck();
-    await decideP;
-    // Join recheck COMPLETION (status ok for its own operationId), not ANY outcome (cancel outcomes pre-exist).
-    await until(() => sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records.some((x) => x.kind === "tool.outcome" && (x.body as Record<string, unknown>)["operationId"] === recheckOp && (x.body as Record<string, unknown>)["status"] !== "cancelled"), 8000, "recheck completion");
-    await until(() => (sup.gateController.inspect(g.taskRunId)?.terminal ?? null) !== null, 8000, "OLD gate terminal");
+    // Genuine after-release completion join via the public runCheck seam:
+    // the 3rd settlement proves the released recheck was consumed. Never a
+    // second ordinary journal outcome (exactly-ONE-per-op).
+    await until(() => runCheckSettled === 3, 8000, "held recheck continuation settled after release");
+    assert.equal(runCheckExits[2], -1, "released-then-cancelled recheck returns cancel-marked, never clean success");
+    await decideP;    await until(() => (sup.gateController.inspect(g.taskRunId)?.terminal ?? null) !== null, 8000, "OLD gate terminal");
     const recs = sup.runStore.readSince(0, Number.MAX_SAFE_INTEGER).records;
     const intents = recs.filter((r) => r.kind === "tool.intent" && (r.body as Record<string, unknown>)["tool"] === "gate-check");
     assert.equal(intents.length, 3, `initial 2 + recheck1 only, got ${intents.length}`);
+    // Exactly-ONE-per-op for the held recheck: one cancelled outcome, never
+    // a second ordinary one.
+    const recheckOutcomes = recs.filter((r) => r.kind === "tool.outcome" && (r.body as Record<string, unknown>)["operationId"] === recheckOp);
+    assert.equal(recheckOutcomes.length, 1, `exactly one outcome for the held recheck, got ${JSON.stringify(recheckOutcomes.map((r) => r.body))}`);
+    assert.equal(String((recheckOutcomes[0]!.body as Record<string, unknown>)["status"]), "cancelled", "the single recheck outcome is cancelled, never ordinary");
     assert.ok(intents.every((r) => String((r.body as Record<string, unknown>)["taskRunId"]) === g.taskRunId), "all intents stay OLD");
     assert.equal(executors.host.specs.length, 3, "no obsolete recheck2 execution");
     // C6: 4-field actual-state invariance.

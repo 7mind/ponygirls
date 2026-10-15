@@ -118,3 +118,28 @@ test("initialize payload requires task text, profile, model, run ids, instructio
   assert.equal(validateInitializePayload({ ...good, resultLimit: "many" }).ok, false);
   assert.equal(PROTOCOL_VERSION, 1);
 });
+
+test("initialize.externalTools carries outputSchema (valid/invalid/oversize rejected visibly)", async () => {
+  const { validateInitializePayload } = await import("../src/protocol.ts");
+  const base = {
+    taskText: "hi",
+    profile: "reader",
+    instructionHash: "",
+    instructions: { contextFiles: [], skills: [] },
+    model: { provider: "p", id: "m", thinkingLevel: "off" },
+    taskRunId: "t",
+    executionGeneration: 1,
+    workdir: "/tmp",
+    readRoots: [],
+    writable: false,
+    tools: ["mcp__a__b"],
+  };
+  const good = validateInitializePayload({ ...base, externalTools: [{ name: "mcp__a__b", description: "d", parameters: { type: "object" }, outputSchema: { type: "object" } }] });
+  assert.ok(good.ok);
+  const badShape = validateInitializePayload({ ...base, externalTools: [{ name: "mcp__a__b", description: "d", parameters: { type: "object" }, outputSchema: "nope" }] });
+  assert.equal(badShape.ok, false);
+  const missing = validateInitializePayload({ ...base, tools: ["mcp__a__b", "mcp__a__c"], externalTools: [{ name: "mcp__a__c", description: "d", parameters: { type: "object" } }] });
+  assert.ok(missing.ok);
+  const notInTools = validateInitializePayload({ ...base, externalTools: [{ name: "mcp__a__zzz", description: "d", parameters: { type: "object" } }] });
+  assert.equal(notInTools.ok, false);
+});

@@ -60,6 +60,9 @@ test("M1: real worker process runs a native session (handshake, proxy tool, agen
     toolRequests.push({ tool: payload.tool, args: payload.args });
     return { content: "hello sandbox", isError: false };
   });
+  // Direct harness (no Supervisor): no recovery holds exist, so admission is
+  // vacuously allowed. Required since workers deny visibly without a handler.
+  handle.setProviderAdmissionRequestHandler(async () => ({ ok: true }));
   try {
     await handle.launch();
     const ack = (await handle.request("initialize", {
@@ -119,7 +122,7 @@ test("M1: mixed wait+bash tool batch executes sequentially at the real SDK (no l
     console.log("NOT-EXECUTED: SDK dist unavailable; sequential-batch check skipped, not passed");
     return;
   }
-  const { registerDeterministicProvider, SIM_PROVIDER, SIM_MODEL } = await import("../src/deterministic.ts");
+  const { registerDeterministicProvider, SIM_PROVIDER, SIM_MODEL, testInvocationScope } = await import("../src/deterministic.ts");
   const dir = mkdtempSync(join(tmpdir(), "subagents-seq-"));
   const { mkdirSync } = await import("node:fs");
   const agentHome = join(dir, "agent-home");
@@ -135,7 +138,7 @@ test("M1: mixed wait+bash tool batch executes sequentially at the real SDK (no l
   const modelRuntime = await sdk.ModelRuntime.create({ authPath: join(agentHome, "auth.json"), modelsPath: null });
   registerDeterministicProvider(modelRuntime, compat.EventStream, [
     { kind: "batch", calls: [{ name: "wait_tool", args: {} }, { name: "bash_tool", args: {} }] },
-  ]);
+  ], { createInvocationScope: testInvocationScope });
   try {
     const settingsManager = (sdk.SettingsManager as unknown as { create: (cwd: string, agentDir: string) => { setCacheWarmingMode: (m: string) => void } }).create(dir, join(dir, "agent-home"));
     settingsManager.setCacheWarmingMode("off");
@@ -328,7 +331,7 @@ function assistantWithTools(calls: Array<{ id: string; name: string; args: Recor
   };
 }
 
-async function deterministicWorker(dir: string, script: Array<Record<string, unknown>>, onTool: (tool: string) => Promise<{ content: string; isError: boolean }>, init: Record<string, unknown> = {}): Promise<{ handle: WorkerHandle; events: WorkerEvent[] }> {
+async function deterministicWorker(dir: string, script: Array<Record<string, unknown>>, onTool: (tool: string) => Promise<{ content: string; isError: boolean }>, init: Record<string, unknown> = {}, extraEnv: Record<string, string> = {}): Promise<{ handle: WorkerHandle; events: WorkerEvent[] }> {
   const { bindChannel } = await import("../src/protocol.ts");
   const events: WorkerEvent[] = [];
   const handle = new WorkerHandle({
@@ -339,10 +342,14 @@ async function deterministicWorker(dir: string, script: Array<Record<string, unk
     deterministic: true,
     agentDir: join(dir, "worker-home"),
     sessionsDir: join(dir, "sessions"),
-    script: script as Array<{ text?: string; repeat?: number; tool?: string; args?: Record<string, unknown> }>,
+    script: script as Array<{ text?: string; repeat?: number; tool?: string; args?: Record<string, unknown>; usage?: unknown }>,
+    ...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
   }, bindChannel("epoch-x", "agent-x", "instance-x"));
   handle.setEventHandler((e) => events.push(e));
   handle.setToolRequestHandler(async (payload) => onTool(payload.tool));
+  // Direct harness (no Supervisor): no recovery holds exist, so admission is
+  // vacuously allowed. Required since workers deny visibly without a handler.
+  handle.setProviderAdmissionRequestHandler(async () => ({ ok: true }));
   await handle.launch();
   const ack = (await handle.request("initialize", {
     taskText: "go",
@@ -395,7 +402,11 @@ test("real worker: cache and reasoning tokens are reported apart from the input 
     return;
   }
   const dir = mkdtempSync(join(tmpdir(), "subagents-usage-"));
-  const { handle, events } = await deterministicWorker(dir, [{ text: "done" }], async () => ({ content: "", isError: false }));
+  // Explicit scripted breakdown (not the ambient script default): one
+  // scripted request carries 10 uncached + 3 cache-read + 2 cache-write
+  // input tokens, 5 output tokens with 1 reasoning, and zero cost.
+  const script = [{ text: "done", usage: { input: 10, output: 5, cacheRead: 3, cacheWrite: 2, reasoning: 1, costTotal: 0 } }];
+  const { handle, events } = await deterministicWorker(dir, script, async () => ({ content: "", isError: false }));
   try {
     const settled = await untilEvent(events, (e) => e.kind === "settled");
     // One scripted request: 10 uncached + 3 cache-read + 2 cache-write input tokens; 5 output tokens, 1 of them reasoning.
@@ -575,6 +586,192 @@ test("real worker: a checkpoint of a session larger than the IPC payload cap suc
     assert.equal(cp.ok, true);
     // Base64 of this session alone would exceed the 256 KiB IPC payload cap.
     assert.ok((cp.byteCount ?? 0) * 4 / 3 > 256 * 1024, `byteCount ${cp.byteCount}`);
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: facade-local end wins public completion while genuine ORIGINAL usage accounts", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; facade-local-end accounting check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-facade-local-"));
+  // Genuine provider outcome: nonzero breakdown the ledger must bill.
+  const script = [{ text: "genuine-provider-text", usage: { input: 11, output: 6, cacheRead: 7, cacheWrite: 8, costTotal: 9 } }];
+  // Consumer-side local completion with a HUGE foreign breakdown: public
+  // completion takes it (first-terminal-wins) but accounting must never
+  // bill a single token of it.
+  const localMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: "facade-local-text" }],
+    api: "openai-responses",
+    provider: "test",
+    model: "deterministic",
+    usage: { input: 1000, output: 1000, cacheRead: 1000, cacheWrite: 1000, totalTokens: 4000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason: "stop",
+    timestamp: 1,
+  };
+  const { handle, events } = await deterministicWorker(dir, script, async () => ({ content: "", isError: false }), {}, {
+    PI_SUBAGENTS_FACADE_LOCAL_END: JSON.stringify(localMessage),
+  });
+  try {
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    assert.equal(settled.detail["status"], "succeeded", "local completion still settles the turn");
+    assert.deepEqual(
+      settled.detail["usage"],
+      { input: 26, output: 6, cacheRead: 7, cacheWrite: 8, reasoning: null, cost: 9, unknown: false },
+      "ledger bills exactly the genuine ORIGINAL breakdown (11+7+8 input), never the local 1000s",
+    );
+    assert.equal(settled.detail["lastAssistantText"], "facade-local-text", "public completion is the local message");
+    // Joined, not receipted: the genuine outcome arrived before publication
+    // (microtask timing), so no late receipt exists for it.
+    assert.equal(events.filter((e) => e.kind === "usage_late").length, 0, "no late receipt when the ORIGINAL joined pre-settlement");
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: malformed facade-local-end configuration fails visibly", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; facade-local-end negative check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-facade-local-neg-"));
+  const { handle, events } = await deterministicWorker(dir, [{ text: "done" }], async () => ({ content: "", isError: false }), {}, {
+    PI_SUBAGENTS_FACADE_LOCAL_END: "not-json{{{",
+  });
+  try {
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    assert.equal(settled.detail["status"], "failed", "misconfigured seam fails the turn, never silently ignored");
+    assert.match(String(settled.detail["error"] ?? ""), /PI_SUBAGENTS_FACADE_LOCAL_END/, "failure names the seam");
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: ORIGINAL held past public completion still accounts exactly once (late receipt)", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; late-ORIGINAL accounting check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-late-original-"));
+  // Genuine provider outcome HELD 2500ms past public completion (turn
+  // latency post-boot is an order of magnitude smaller): it must still
+  // reach the ledger exactly once under its captured identity, not retire
+  // silently into the settled generation object.
+  const script = [{ text: "genuine-provider-text", usage: { input: 11, output: 6, cacheRead: 7, cacheWrite: 8, costTotal: 9 }, delayMs: 2500 }];
+  const localMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: "facade-local-text" }],
+    api: "openai-responses",
+    provider: "test",
+    model: "deterministic",
+    usage: { input: 1000, output: 1000, cacheRead: 1000, cacheWrite: 1000, totalTokens: 4000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason: "stop",
+    timestamp: 1,
+  };
+  const { handle, events } = await deterministicWorker(dir, script, async () => ({ content: "", isError: false }), {}, {
+    PI_SUBAGENTS_FACADE_LOCAL_END: JSON.stringify(localMessage),
+  });
+  try {
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    assert.equal(settled.detail["status"], "succeeded", "local completion still settles the turn");
+    assert.equal(settled.detail["lastAssistantText"], "facade-local-text", "public completion is the local message");
+    // The genuine outcome arrives strictly after publication: zeros with
+    // unknown (incomplete accounting at settle time, never fabricated).
+    assert.deepEqual(
+      settled.detail["usage"],
+      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, cost: null, unknown: true },
+      "settled snapshot carries no genuine usage (it arrives late)",
+    );
+    // Exactly-once late receipt under the captured identity.
+    const late = await untilEvent(events, (e) => e.kind === "usage_late", 15000);
+    assert.deepEqual(
+      late.detail["usage"],
+      { input: 26, output: 6, cacheRead: 7, cacheWrite: 8, reasoning: null, cost: 9, unknown: false },
+      "late receipt bills exactly the genuine ORIGINAL breakdown, never the local 1000s",
+    );
+    assert.equal(late.detail["taskRunId"], "task-1", "late receipt carries the captured task identity");
+    assert.equal(late.detail["generation"], 1, "late receipt carries the captured generation");
+    // No second settled and no second late receipt: the arrival was joined
+    // exactly once, not duplicated into another publication.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(events.filter((e) => e.kind === "settled").length, 1, "exactly one settled publication");
+    assert.equal(events.filter((e) => e.kind === "usage_late").length, 1, "exactly one late receipt");
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: throwing iterator access retains the valid ORIGINAL Usage (adapter failure)", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; iterator-access-throw accounting check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-iterator-access-"));
+  const { handle, events } = await deterministicWorker(dir, [{ text: "unused" }], async () => ({ content: "", isError: false }), {}, {
+    PI_SUBAGENTS_ORIGINAL_ITERATOR_ACCESS_THROW: "once",
+  });
+  try {
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    assert.equal(settled.detail["status"], "failed", "adapter failure fails the turn visibly");
+    // The valid ORIGINAL breakdown (11+7+8 input) is retained across the
+    // settled snapshot and at most one late receipt combined — never
+    // dropped for lack of a facade — with unknown marking the abnormal
+    // completion. Timing-robust: whichever publication carried it counts.
+    const settledUsage = settled.detail["usage"] as Record<string, unknown>;
+    assert.equal(settledUsage["unknown"], true, "abnormal completion marked unknown");
+    const late = events.filter((e) => e.kind === "usage_late");
+    assert.ok(late.length <= 1, "at most one late receipt");
+    const total = (key: string): number =>
+      Number(settledUsage[key] ?? 0) + late.reduce((a, e) => a + Number((e.detail["usage"] as Record<string, unknown>)[key] ?? 0), 0);
+    assert.equal(total("input"), 26, "genuine input retained exactly once across publications");
+    assert.equal(total("output"), 6, "genuine output retained exactly once");
+    assert.equal(total("cacheRead"), 7, "genuine cacheRead retained exactly once");
+    assert.equal(total("cacheWrite"), 8, "genuine cacheWrite retained exactly once");
+    assert.equal(events.filter((e) => e.kind === "settled").length, 1, "exactly one settled publication");
+  } finally {
+    handle.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("real worker: ORIGINAL end(message) completes the Agent loop with identical message and Usage", async () => {
+  if (!SDK_ROOT) {
+    console.log("NOT-EXECUTED: PI_SUBAGENTS_SDK_ROOT unset; ORIGINAL end(message) Agent-loop check skipped, not passed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-original-end-"));
+  // Genuine provider end(message) with no terminal event: the real SDK
+  // Agent loop must complete publicly with the identical text and full
+  // Usage (never withhold a clean ORIGINAL end as an EOF failure).
+  const endMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: "original-end-text" }],
+    api: "openai-responses",
+    provider: "test",
+    model: "deterministic",
+    usage: { input: 13, output: 14, cacheRead: 15, cacheWrite: 16, totalTokens: 58, cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 } },
+    stopReason: "stop",
+    timestamp: 1,
+  };
+  const { handle, events } = await deterministicWorker(dir, [{ text: "unused" }], async () => ({ content: "", isError: false }), {}, {
+    PI_SUBAGENTS_ORIGINAL_END_WITH_RESULT: JSON.stringify(endMessage),
+  });
+  try {
+    const settled = await untilEvent(events, (e) => e.kind === "settled");
+    assert.equal(settled.detail["status"], "succeeded", "clean ORIGINAL end settles the turn");
+    assert.equal(settled.detail["lastAssistantText"], "original-end-text", "Agent loop completed with the ORIGINAL text");
+    assert.deepEqual(
+      settled.detail["usage"],
+      { input: 44, output: 14, cacheRead: 15, cacheWrite: 16, reasoning: null, cost: 10, unknown: false },
+      "Agent loop accounted the full ORIGINAL Usage (13+15+16 input)",
+    );
   } finally {
     handle.kill();
     rmSync(dir, { recursive: true, force: true });

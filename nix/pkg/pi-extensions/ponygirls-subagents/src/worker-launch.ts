@@ -15,7 +15,7 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { err } from "./errors.ts";
-import { bindChannel, validateEnvelope, type ChannelBinding, type IpcEnvelope, type WorkerEvent } from "./protocol.ts";
+import { bindChannel, validateEnvelope, type ChannelBinding, type IpcEnvelope, type ProviderAdmissionPayload, type ProviderAdmissionResponse, type WorkerEvent } from "./protocol.ts";
 import { PROTOCOL_VERSION } from "./types.ts";
 
 export const HANDSHAKE_TIMEOUT_MS = 30_000;
@@ -42,11 +42,52 @@ export interface ToolRequest {
   tool: string;
   args: Record<string, unknown>;
   toolCallId: string;
+  /** Prepared-ticket id minted by tool.prepare (absent for legacy direct calls). */
+  ticket?: string;
   /** The generation's provider usage up to this call (worker-reported). */
   usage: { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number | null; cost: number | null; unknown: boolean } | null;
 }
 
-export type ToolRequestHandler = (payload: ToolRequest, envelope: IpcEnvelope) => Promise<{ content: string; isError: boolean }>;
+/**
+ * Supervisor answer to a worker `tool.execute` request.
+ *
+ * `content` is a legacy text string for native broker tools, or a content
+ * block array (text/image/...) for external governing-runtime tools
+ * (preserved schemas/results, bounded to IPC limits). Never a generic
+ * untyped catchall: external blocks carry the parent tool's actual content.
+ */
+export interface ToolResponse {
+  content: string | Array<Record<string, unknown>>;
+  isError: boolean;
+  details?: unknown;
+  structuredContent?: unknown;
+  usage?: unknown;
+}
+
+export type ToolRequestHandler = (payload: ToolRequest, envelope: IpcEnvelope) => Promise<ToolResponse>;
+
+/** Worker -> supervisor preparation-only request (no execution). */
+export interface ToolPrepareRequest {
+  tool: string;
+  args: Record<string, unknown>;
+  toolCallId: string;
+}
+
+/** Supervisor answer: prepared args bound to a single-use ticket, or an error. */
+export interface ToolPrepareResponse {
+  ok: boolean;
+  ticket?: string;
+  preparedArgs?: Record<string, unknown>;
+  error?: string;
+}
+
+export type ToolPrepareHandler = (payload: ToolPrepareRequest, envelope: IpcEnvelope) => Promise<ToolPrepareResponse>;
+
+/** Worker -> supervisor notice releasing unconsumed prepared tickets. */
+export type ToolTicketReleaseHandler = (payload: { tickets: string[] }, envelope: IpcEnvelope) => void;
+
+/** Worker -> supervisor narrow provider-admission query (one NEW provider request). */
+export type ProviderAdmissionHandler = (payload: ProviderAdmissionPayload, envelope: IpcEnvelope) => Promise<ProviderAdmissionResponse>;
 
 export type WorkerExitHandler = (info: { code: number | null; signal: string | null }) => void;
 
@@ -57,6 +98,9 @@ export class WorkerHandle {
   private pending = new Map<string, { resolve: (p: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private onEvent: WorkerEventHandler | null = null;
   private onToolRequest: ToolRequestHandler | null = null;
+  private onPrepareRequest: ToolPrepareHandler | null = null;
+  private onTicketRelease: ToolTicketReleaseHandler | null = null;
+  private onProviderAdmissionRequest: ProviderAdmissionHandler | null = null;
   private onExit: WorkerExitHandler | null = null;
   private stdoutTail = Buffer.alloc(0);
   private stderrTail = Buffer.alloc(0);
@@ -96,6 +140,18 @@ export class WorkerHandle {
 
   setToolRequestHandler(handler: ToolRequestHandler): void {
     this.onToolRequest = handler;
+  }
+
+  setPrepareRequestHandler(handler: ToolPrepareHandler): void {
+    this.onPrepareRequest = handler;
+  }
+
+  setTicketReleaseHandler(handler: ToolTicketReleaseHandler): void {
+    this.onTicketRelease = handler;
+  }
+
+  setProviderAdmissionRequestHandler(handler: ProviderAdmissionHandler): void {
+    this.onProviderAdmissionRequest = handler;
   }
 
   /** Called once if the process exits without being disposed by the supervisor. */
@@ -237,7 +293,7 @@ export class WorkerHandle {
       // A request is answered even when rejected, so its caller never waits
       // for a timer; anything else malformed is dropped.
       const r = raw as Record<string, unknown> | null;
-      if (r?.["type"] === "request" && r["operation"] === "tool.execute" && typeof r["requestId"] === "string") {
+      if (r?.["type"] === "request" && (r["operation"] === "tool.execute" || r["operation"] === "tool.prepare" || r["operation"] === "provider.admission") && typeof r["requestId"] === "string") {
         const hint = checked.code === "PAYLOAD_TOO_LARGE" ? "; split the content into smaller pieces" : "";
         this.send({
           protocolVersion: PROTOCOL_VERSION,
@@ -247,10 +303,14 @@ export class WorkerHandle {
           requestId: r["requestId"],
           seq: null,
           type: "response",
-          operation: "tool.execute",
+          operation: r["operation"] as string,
           taskRunId: null,
           executionGeneration: null,
-          payload: { ok: false, content: `${checked.code}: ${checked.message}${hint}` },
+          payload: r["operation"] === "tool.prepare"
+            ? { ok: false, error: `${checked.code}: ${checked.message}${hint}` }
+            : r["operation"] === "provider.admission"
+              ? { ok: false, code: checked.code, error: `${checked.code}: ${checked.message}${hint}` }
+              : { ok: false, content: `${checked.code}: ${checked.message}${hint}` },
         });
       }
       return;
@@ -283,7 +343,7 @@ export class WorkerHandle {
       return;
     }
     if (env.operation === "tool.execute") {
-      const payload = env.payload as { tool?: string; args?: Record<string, unknown>; toolCallId?: string; usage?: ToolRequest["usage"] };
+      const payload = env.payload as { tool?: string; args?: Record<string, unknown>; toolCallId?: string; ticket?: string; usage?: ToolRequest["usage"] };
       if (typeof payload?.["tool"] !== "string" || !this.onToolRequest) {
         this.respondTool(env, { content: "INVALID: malformed tool request", isError: true });
         return;
@@ -293,16 +353,117 @@ export class WorkerHandle {
           tool: payload["tool"] as string,
           args: (payload["args"] as Record<string, unknown>) ?? {},
           toolCallId: typeof payload["toolCallId"] === "string" ? (payload["toolCallId"] as string) : "",
+          ticket: typeof payload["ticket"] === "string" ? (payload["ticket"] as string) : undefined,
           usage: payload["usage"] ?? null,
         }, env);
         this.respondTool(env, result);
       } catch (e) {
         this.respondTool(env, { content: `INVALID: ${(e as Error).message}`, isError: true });
       }
+      return;
+    }
+    if (env.operation === "tool.prepare") {
+      const payload = env.payload as { tool?: string; args?: Record<string, unknown>; toolCallId?: string };
+      // Explicit UNSUPPORTED (not a denial): the peer predates tool.prepare.
+      // Workers downgrade to the legacy unticketed path on exactly this
+      // signal; every other ok:false is a hard denial that never downgrades.
+      if (!this.onPrepareRequest) {
+        this.respondPrepare(env, { ok: false, error: "UNSUPPORTED: tool.prepare not implemented by peer" });
+        return;
+      }
+      if (typeof payload?.["tool"] !== "string") {
+        this.respondPrepare(env, { ok: false, error: "INVALID: malformed prepare request" });
+        return;
+      }
+      try {
+        this.respondPrepare(env, await this.onPrepareRequest({
+          tool: payload["tool"] as string,
+          args: (payload["args"] as Record<string, unknown>) ?? {},
+          toolCallId: typeof payload["toolCallId"] === "string" ? (payload["toolCallId"] as string) : "",
+        }, env));
+      } catch (e) {
+        this.respondPrepare(env, { ok: false, error: `INVALID: ${(e as Error).message}` });
+      }
+      return;
+    }
+    if (env.operation === "tool.ticket-release") {
+      // One-way notice: unconsumed prepared tickets the worker dropped after
+      // local validation/hook blocks, aborts, or settlement. No answer.
+      const payload = env.payload as { tickets?: unknown };
+      if (Array.isArray(payload?.["tickets"]) && this.onTicketRelease) {
+        try {
+          this.onTicketRelease({ tickets: (payload["tickets"] as unknown[]).filter((x): x is string => typeof x === "string") }, env);
+        } catch {
+          // best effort; tickets also expire with their task/generation scope
+        }
+      }
+      return;
+    }
+    if (env.operation === "provider.admission") {
+      // Narrow per-request admission query: available during hold so it can
+      // return a denial (model inference itself is never exempt control).
+      const payload = env.payload as { reason?: unknown; provider?: unknown; modelId?: unknown; thinkingLevel?: unknown };
+      if (!this.onProviderAdmissionRequest) {
+        this.respondAdmission(env, { ok: false, code: "UNSUPPORTED", error: "UNSUPPORTED: provider.admission not implemented by peer" });
+        return;
+      }
+      if (typeof payload?.["reason"] !== "string" || typeof payload?.["provider"] !== "string" || typeof payload?.["modelId"] !== "string" || typeof payload?.["thinkingLevel"] !== "string") {
+        this.respondAdmission(env, { ok: false, code: "INVALID", error: "INVALID: malformed provider admission request" });
+        return;
+      }
+      if (typeof env.taskRunId !== "string" || env.taskRunId.length === 0 || typeof env.executionGeneration !== "number" || !Number.isInteger(env.executionGeneration) || env.executionGeneration < 0) {
+        this.respondAdmission(env, { ok: false, code: "INVALID", error: "INVALID: provider admission requires a nonempty taskRunId and nonneg integer executionGeneration" });
+        return;
+      }
+      try {
+        this.respondAdmission(env, await this.onProviderAdmissionRequest({
+          reason: payload["reason"] as string,
+          provider: payload["provider"] as string,
+          modelId: payload["modelId"] as string,
+          thinkingLevel: payload["thinkingLevel"] as string,
+        }, env));
+      } catch (e) {
+        this.respondAdmission(env, { ok: false, code: "INVALID", error: `INVALID: ${(e as Error).message}` });
+      }
+      return;
     }
   }
 
-  private respondTool(env: IpcEnvelope, result: { content: string; isError: boolean }): void {
+  private respondPrepare(env: IpcEnvelope, result: ToolPrepareResponse): void {
+    const response: IpcEnvelope = {
+      protocolVersion: PROTOCOL_VERSION,
+      rootEpoch: this.binding.rootEpoch,
+      agentId: this.binding.agentId,
+      workerInstanceId: this.workerInstanceId,
+      requestId: env.requestId,
+      seq: null,
+      type: "response",
+      operation: "tool.prepare",
+      taskRunId: env.taskRunId,
+      executionGeneration: env.executionGeneration,
+      payload: { ok: result.ok, ...(result.ticket !== undefined ? { ticket: result.ticket } : {}), ...(result.preparedArgs !== undefined ? { preparedArgs: result.preparedArgs } : {}), ...(result.error !== undefined ? { error: result.error } : {}) },
+    };
+    this.send(response);
+  }
+
+  private respondAdmission(env: IpcEnvelope, result: ProviderAdmissionResponse): void {
+    const response: IpcEnvelope = {
+      protocolVersion: PROTOCOL_VERSION,
+      rootEpoch: this.binding.rootEpoch,
+      agentId: this.binding.agentId,
+      workerInstanceId: this.workerInstanceId,
+      requestId: env.requestId,
+      seq: null,
+      type: "response",
+      operation: "provider.admission",
+      taskRunId: env.taskRunId,
+      executionGeneration: env.executionGeneration,
+      payload: { ok: result.ok, ...(result.code !== undefined ? { code: result.code } : {}), ...(result.error !== undefined ? { error: result.error } : {}) },
+    };
+    this.send(response);
+  }
+
+  private respondTool(env: IpcEnvelope, result: ToolResponse): void {
     const response: IpcEnvelope = {
       protocolVersion: PROTOCOL_VERSION,
       rootEpoch: this.binding.rootEpoch,
@@ -314,7 +475,13 @@ export class WorkerHandle {
       operation: "tool.execute",
       taskRunId: env.taskRunId,
       executionGeneration: env.executionGeneration,
-      payload: { ok: !result.isError, content: result.content },
+      payload: {
+        ok: !result.isError,
+        content: result.content,
+        ...(result.details !== undefined ? { details: result.details } : {}),
+        ...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
+        ...(result.usage !== undefined ? { usage: result.usage } : {}),
+      },
     };
     // A worker that died while its tool ran gets no answer; that is not an
     // error in the governing process.

@@ -12,12 +12,13 @@ import { Supervisor } from "../src/supervisor.ts";
 import type { WorkerEvent } from "../src/protocol.ts";
 import type { ToolRequest } from "../src/worker-launch.ts";
 import { InMemoryRunStore, type RunStore } from "../src/store.ts";
+import type { GoverningRegistry } from "../src/external-dispatcher.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
 import { DummyWorkspaceManager, type WorkspaceManager } from "../src/workspace.ts";
 import { defaultSupervisorPolicy, type SupervisorPolicy } from "../src/policy.ts";
 import { testGovernor } from "./fake-worker.ts";
 
-type ToolHandler = (p: ToolRequest) => Promise<{ content: string; isError: boolean }>;
+type ToolHandler = (p: ToolRequest, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => Promise<{ content: string; isError: boolean }>;
 
 export class CtlWorker implements WorkerPort {
   readonly instanceId = randomUUID();
@@ -105,7 +106,10 @@ export class CtlWorker implements WorkerPort {
   }
 
   call(tool: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
-    return this.tool!({ tool, args, toolCallId: randomUUID(), usage: { input: 3, output: 2, cost: 0.01, unknown: false } });
+    return this.tool!(
+      { tool, args, toolCallId: randomUUID(), usage: { input: 3, output: 2, cost: 0.01, unknown: false } },
+      { taskRunId: this.taskRunId, executionGeneration: this.generation },
+    );
   }
 
   /** A child question through the send_message control tool (as a real child asks). */
@@ -123,6 +127,8 @@ export function mkSup(opts: {
   policy?: (p: SupervisorPolicy) => void;
   factory?: WorkerFactory;
   store?: RunStore;
+  rootId?: string;
+  governingRegistry?: () => GoverningRegistry | null;
   dir?: string;
   workspace?: WorkspaceManager;
   governor?: () => GovernorContext;
@@ -134,7 +140,7 @@ export function mkSup(opts: {
   const workers: CtlWorker[] = [];
   const executors = { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() };
   const sup = new Supervisor({
-    rootId: "root-1",
+    rootId: opts.rootId ?? "root-1",
     governor: opts.governor ?? testGovernor,
     rootDir: dir,
     store: opts.store ?? new InMemoryRunStore("root-1"),
@@ -142,6 +148,7 @@ export function mkSup(opts: {
     schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1, ...(opts.limits ?? {}) },
     executors,
     workspace: opts.workspace ?? new DummyWorkspaceManager(),
+    governingRegistry: opts.governingRegistry,
     workerFactory: opts.factory ?? ((o) => {
       const w = new CtlWorker(o.agentId);
       workers.push(w);

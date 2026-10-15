@@ -33,6 +33,22 @@ export const WRITER_TOOLS = ["read", "grep", "find", "ls", "write", "edit", "bas
 /** Tools the worker proxy layer may ever expose. Closed set. */
 export const KNOWN_PROXY_TOOLS = ["read", "grep", "find", "ls", "write", "edit", "bash"] as const;
 
+/** Pinned Pi 1.1.0 builtin tools beyond the seven worker proxies (never delegable). */
+export const PINNED_BUILTINS_EXTRA = ["powershell"] as const;
+
+/** Child control/delegation and gate tools: never delegable via allowedTools. */
+export const RESERVED_CHILD_TOOLS = [
+  "send_message",
+  "wait_agent",
+  "list_agents",
+  "read_agent",
+  "spawn_agent",
+  "interrupt_agent",
+  "close_agent",
+  "submit_gate_decision",
+  "manage_gate",
+] as const;
+
 export interface SupervisorPolicy {
   revision: number;
   /** Maximum tree depth (root = 0 children at depth 1). Default 1. */
@@ -49,6 +65,28 @@ export interface SupervisorPolicy {
   gateMaxRoundsCeiling: number | null;
   /** Tool-job network default (deny unless an explicit grant allows). */
   toolNetwork: boolean;
+  /**
+   * Generic explicit full-name allowlist for governing-session external tools
+   * (MCP etc). Patterns match full tool names with `*` as full-name glob
+   * (other regex punctuation escaped, no implicit rewriting, no +/- grammar).
+   * Default empty: no external delegation. Concrete names are resolved
+   * against the governing session's current callable tools at each edge.
+   */
+  allowedTools: string[];
+  /**
+   * Pooled writer-worktree root (absolute host path) or null for the
+   * default `<agentBaseDir>/subagents/<sessionId>/worktrees` layout.
+   * When set, writer worktrees allocate under
+   * `<worktreeRoot>/<sessionId>/worktrees/...` (cross-session separation).
+   * Session/log/IPC/tmp dirs stay under the session root; saved allocations
+   * keep their recorded absolute paths (no migration). The directory must
+   * exist and be writable; when pi runs inside the yolo sandbox it must
+   * additionally be listed in
+   * `smind.hm.dev.llm.yolo.extraReadWritePaths` (missing paths are skipped
+   * there, never created persistently). Never a store path: a literal
+   * absolute string.
+   */
+  worktreeRoot: string | null;
   /** Directories a caller-prepared workspace must lie inside (absolute paths). Empty: none is accepted. */
   workspaceRoots: string[];
   /** Whether the governing session's own checkout may be assigned as a prepared workspace. */
@@ -85,9 +123,71 @@ export function defaultSupervisorPolicy(): SupervisorPolicy {
     gateBypassAllowed: false,
     gateMaxRoundsCeiling: 3,
     toolNetwork: false,
+    allowedTools: [],
+    worktreeRoot: null,
     workspaceRoots: [],
     workspaceOwnerCheckoutAllowed: false,
   };
+}
+
+/** A tool name that allowedTools can never grant (built-in/control/delegation). */
+export function isReservedToolName(name: string): boolean {
+  return (
+    (KNOWN_PROXY_TOOLS as readonly string[]).includes(name) ||
+    (PINNED_BUILTINS_EXTRA as readonly string[]).includes(name) ||
+    (RESERVED_CHILD_TOOLS as readonly string[]).includes(name)
+  );
+}
+
+/**
+ * Validate a configured allowedTools list. Fails visibly (never silently
+ * discards) on malformed lists/patterns: non-array, non-string or empty
+ * entries. Patterns are full names with optional `*` globs; leading `+`/`-`
+ * is literal (no plus/minus grammar).
+ */
+export function validateAllowedTools(raw: unknown): string[] {
+  if (!Array.isArray(raw)) throw err("INVALID", "allowedTools must be an array of full tool-name patterns");
+  return (raw as unknown[]).map((entry, i) => {
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw err("INVALID", `allowedTools[${i}] must be a nonempty full tool-name pattern`);
+    }
+    return entry;
+  });
+}
+
+/**
+ * Validate a configured worktreeRoot. Absent (undefined) or null keeps the
+ * default home layout. A present string must be a non-empty absolute path
+ * with no NUL byte (a literal absolute string, never a store path).
+ * Anything else fails visibly (INVALID), never a silent home fallback.
+ */
+export function validateWorktreeRoot(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string" || raw.length === 0 || !raw.startsWith("/") || raw.includes("\0")) {
+    throw err("INVALID", "worktreeRoot must be null or an absolute path");
+  }
+  return raw;
+}
+
+/** Compile one full-name `*` glob (all other regex punctuation escaped). */
+export function compileAllowedPattern(pattern: string): RegExp {
+  const parts = pattern.split("*").map((chunk) => chunk.replace(/[.+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^${parts.join(".*")}$`);
+}
+
+/** Whether a concrete tool name matches any allowlist pattern. */
+export function matchesAllowedTool(name: string, patterns: readonly string[]): boolean {
+  return patterns.some((pattern) => compileAllowedPattern(pattern).test(name));
+}
+
+/**
+ * Resolve root-approved concrete capabilities: available governing tool names
+ * filtered by allowlist patterns, excluding reserved built-in/control names
+ * even when a wildcard matches them. Preserves available order.
+ */
+export function resolveAllowedConcrete(available: readonly string[], patterns: readonly string[]): string[] {
+  if (patterns.length === 0) return [];
+  return available.filter((name) => !isReservedToolName(name) && matchesAllowedTool(name, patterns));
 }
 
 /**
@@ -99,6 +199,8 @@ export function intersectGrants(
   policy: SupervisorPolicy,
   owner: GrantSet | null,
   request: GrantRequest,
+  /** Root-approved concrete external names at this edge (re-resolved, never cached widening). */
+  rootExternalConcrete: readonly string[] = [],
 ): { ok: true; grants: GrantSet } | { ok: false; error: ReturnType<typeof err> } {
   if (request.depth > policy.maxDepth) {
     return { ok: false, error: err("POLICY_DENIED", `depth ${request.depth} exceeds maxDepth ${policy.maxDepth}`) };
@@ -170,10 +272,20 @@ export function intersectGrants(
       return { ok: false, error: err("POLICY_DENIED", `model ${request.model.provider}/${request.model.id} not in root allowlist`) };
     }
   }
+  // External delegation: sandbox never gains parent external capabilities;
+  // host children intersect owner delegable names with current root-concrete.
+  // Reviewers are stripped at exposure (childTools) and execution time.
+  let externalTools: string[] = [];
+  if (request.isolation !== "sandbox") {
+    const rootConcrete = rootExternalConcrete.filter((t) => !isReservedToolName(t));
+    const ownerExternal = owner ? (owner.externalTools ?? []) : rootConcrete;
+    externalTools = ownerExternal.filter((t) => rootConcrete.includes(t) && !isReservedToolName(t));
+  }
   return {
     ok: true,
     grants: {
       tools,
+      externalTools,
       repos,
       shell: request.profile === "writer" && request.shell,
       network: request.network && policy.toolNetwork,
@@ -185,9 +297,10 @@ export function intersectGrants(
 }
 
 /** Root agent's own grants: full policy authority bounded by registration. */
-export function rootGrants(policy: SupervisorPolicy): GrantSet {
+export function rootGrants(policy: SupervisorPolicy, rootExternalConcrete: readonly string[] = []): GrantSet {
   return {
     tools: [...KNOWN_PROXY_TOOLS],
+    externalTools: rootExternalConcrete.filter((t) => !isReservedToolName(t)),
     repos: policy.repos.map((r) => ({ repoId: r.repoId, read: true, write: r.allowWriters })),
     shell: true,
     network: policy.toolNetwork,
@@ -224,6 +337,20 @@ export function authorizeTool(
     return { ok: false, error: err("POLICY_DENIED", `unknown tool ${toolName}`) };
   }
   if (!grants.tools.includes(toolName)) {
+    return { ok: false, error: err("POLICY_DENIED", `tool ${toolName} not granted to caller`) };
+  }
+  return { ok: true };
+}
+
+/** Validate an external (governing-session) tool name against caller grants. */
+export function authorizeExternalTool(
+  grants: GrantSet,
+  toolName: string,
+): { ok: true } | { ok: false; error: ReturnType<typeof err> } {
+  if (isReservedToolName(toolName)) {
+    return { ok: false, error: err("POLICY_DENIED", `tool ${toolName} is never delegable via allowedTools`) };
+  }
+  if (!(grants.externalTools ?? []).includes(toolName)) {
     return { ok: false, error: err("POLICY_DENIED", `tool ${toolName} not granted to caller`) };
   }
   return { ok: true };

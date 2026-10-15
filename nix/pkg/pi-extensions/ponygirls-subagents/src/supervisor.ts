@@ -12,16 +12,19 @@
  * replays read that map, never a window of the journal.
  */
 
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ToolBroker, type BrokerCaller, type CallerSandbox, type ToolExecutors } from "./broker.ts";
 import { err } from "./errors.ts";
 import { GateController, fingerprintSummary, type CandidateRecord, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type WorkspaceFingerprint } from "./gate.ts";
 import { EMPTY_INSTRUCTIONS, instructionHash, parseSelection, selectInstructions } from "./instructions.ts";
 import { ISOLATION_LEVELS } from "./types.ts";
-import { authorizeWorkspace, intersectGrants, pathWithin, rootGrants, type RegisteredRepo, type SupervisorPolicy } from "./policy.ts";
+import { authorizeWorkspace, intersectGrants, pathWithin, resolveAllowedConcrete, rootGrants, type RegisteredRepo, type SupervisorPolicy } from "./policy.ts";
+import { GoverningToolDispatcher, type GoverningRegistry } from "./external-dispatcher.ts";
+import { snapshotGoverningHandles } from "./governing-runtime.ts";
 import { killAndConfirm, readProcessIdentity, verifyOwnership, type OwnershipVerdict, type ProcessIdentity } from "./process-identity.ts";
 import { AdmissionScheduler, PathRegistry, type LeaseTicket } from "./scheduler.ts";
 import { BwrapToolExecutor, HostToolExecutor, sandboxRuntimePath } from "./sandbox.ts";
@@ -37,6 +40,7 @@ import type {
   MailboxMessage,
   MessageId,
   MessageMode,
+  OperationId,
   PendingQuestion,
   QueuedTask,
   ResolvedModel,
@@ -50,9 +54,12 @@ import type {
   WaitResult,
   WorkspaceAllocation,
 } from "./types.ts";
-import { WorkerHandle, newWorkerBinding, type ToolRequest } from "./worker-launch.ts";
-import type { WorkerEvent } from "./protocol.ts";
-import { GitWorkspaceManager, fingerprintWorktree, realDirectory, type CheckoutInfo, type WorkspaceManager, type WorktreeAllocation } from "./workspace.ts";
+import { WorkerHandle, newWorkerBinding, type ToolPrepareRequest, type ToolPrepareResponse, type ToolRequest, type ToolResponse } from "./worker-launch.ts";
+import { validateToolArguments } from "@earendil-works/pi-ai";
+import type { Tool as AiTool, ToolCall as AiToolCall } from "@earendil-works/pi-ai";
+import type { IpcEnvelope, ProviderAdmissionPayload, ProviderAdmissionResponse, WorkerEvent } from "./protocol.ts";
+import { MAX_PAYLOAD_BYTES } from "./protocol.ts";
+import { GitWorkspaceManager, encodeWorktreeLeaf, fingerprintWorktree, realDirectory, type CheckoutInfo, type WorkspaceManager, type WorktreeAllocation } from "./workspace.ts";
 
 export type CallerId = AgentId | "governor" | "user";
 
@@ -212,7 +219,10 @@ export interface WorkerPort {
   request(operation: string, payload: unknown, opts?: { taskRunId?: string; generation?: number; timeoutMs?: number }): Promise<unknown>;
   kill(): void;
   setEventHandler(h: (event: WorkerEvent) => void): void;
-  setToolRequestHandler(h: (payload: ToolRequest) => Promise<{ content: string; isError: boolean }>): void;
+  setToolRequestHandler(h: (payload: ToolRequest, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => Promise<ToolResponse>): void;
+  setPrepareRequestHandler?(h: (payload: ToolPrepareRequest, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => Promise<ToolPrepareResponse>): void;
+  setTicketReleaseHandler?(h: (payload: { tickets: string[] }, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => void): void;
+  setProviderAdmissionRequestHandler?(h: (payload: ProviderAdmissionPayload, envelope: IpcEnvelope) => Promise<ProviderAdmissionResponse>): void;
   /** Abrupt process exit (crash, kill): the run it carried is lost. */
   setExitHandler(h: (info: { code: number | null; signal: string | null }) => void): void;
 }
@@ -222,6 +232,28 @@ export type WorkerFactory = (opts: {
   instanceId: string;
   rootEpoch: string;
 }) => WorkerPort;
+
+/**
+ * Single-use prepared-arguments ticket minted by tool.prepare.
+ *
+ * Besides the prepared args it binds the underlying implementation
+ * references (execute/prepare) and schema snapshot observed at preparation:
+ * a same-name handle replacement or in-place mutation before execution —
+ * even with an identical schema — fails verification instead of executing
+ * the new impl under the old ticket.
+ */
+interface PreparedTicket {
+  ticket: string;
+  agentId: AgentId;
+  tool: string;
+  preparedArgs: Record<string, unknown>;
+  taskRunId: string;
+  generation: number;
+  executeRef: unknown;
+  prepareRef: unknown;
+  paramsJson: string | null;
+  description: unknown;
+}
 
 interface ActiveRun {
   taskRunId: TaskRunId;
@@ -318,6 +350,8 @@ export interface SupervisorOptions {
   deterministic?: boolean;
   /** Host agent dir whose credential store workers open live (no copies). */
   hostAgentDir?: string;
+  /** Live governing-session tool registry (revoked on reload/replacement/disposal). */
+  governingRegistry?: () => GoverningRegistry | null;
   workerFactory?: WorkerFactory;
   now?: () => string;
   questionTtlMs?: number;
@@ -397,21 +431,36 @@ function isGovernor(caller: CallerId): caller is "governor" | "user" {
   return caller === "governor" || caller === "user";
 }
 
+/** Escape a recorded repo ID for literal use inside a leaf-match pattern. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export class Supervisor implements GateHost {
   readonly rootId: string;
   readonly rootDir: string;
   private store: RunStore;
   private lock: RootLock;
-  private policy: SupervisorPolicy;
-  private scheduler: AdmissionScheduler;
+  private policy!: SupervisorPolicy;
+  private scheduler!: AdmissionScheduler;
   private paths = new PathRegistry();
-  private broker: ToolBroker;
-  private workspace: WorkspaceManager;
+  private broker!: ToolBroker;
+  private workspace!: WorkspaceManager;
   private agents = new Map<AgentId, AgentRuntime>();
   private messages = new Map<MessageId, MailboxMessage>();
   private questions = new Map<MessageId, PendingQuestion>();
   /** Exactly one terminal outcome per task run. */
   private terminalRuns = new Map<TaskRunId, { agentId: AgentId; outcome: string }>();
+  /** External operation IDs whose usage was already accounted (exactly-once). */
+  private accountedExternalOps = new Set<string>();
+  /**
+   * Operation IDs reserved exactly once across native (broker) and external
+   * (dispatcher) routes. Shared by reference into both; rehydrated from
+   * journaled intents on attach so restarts keep denying duplicates.
+   */
+  private sharedOpIds = new Set<OperationId>();
+  /** Prepared-arg tickets: single-use, bound to agent/tool/task/generation. */
+  private preparedTickets = new Map<string, PreparedTicket>();
   private waiters: WaiterReg[] = [];
   /** Unfinished runs restored from the journal (no live worker). */
   private pendingLost = new Map<AgentId, { taskRunId: TaskRunId; generation: number; workerPid: number | null; workerBoot: ProcessIdentity | null }>();
@@ -419,14 +468,45 @@ export class Supervisor implements GateHost {
   private reviewSessions: ReviewSession[] = [];
   /** Runs whose generation settled but whose outcome was deferred (owner joining descendants) at a crash. */
   private pendingSettle = new Map<AgentId, { taskRunId: TaskRunId; outcome: string; error: string }>();
-  private epoch: string;
+  private epoch!: string;
   private suspended = false;
-  private gate: GateController;
+  /**
+   * Fresh-attach catch-up hit a persistence fault: the receipt stays
+   * unbilled until an explicit recover() completes it. Throwing out of the
+   * constructor would strand the just-acquired root lock with no supervisor
+   * to release it, so the fault surfaces here (needsRecovery) and at the
+   * next recover() instead.
+   */
+  private attachCatchUpNeeded = false;
+  /**
+   * Normal external-usage publication faults: the known OWN receipt stays
+   * unbilled until explicit reconciliation commits it exactly once. The
+   * journal retains the durable canonical receipt; this set only signals
+   * the debt for health (needsRecovery) and admission gating. Cleared
+   * solely by a successful billing commit — never by store healing alone.
+   */
+  private pendingExternalBilling = new Set<string>();
+  /**
+   * Retained late ORIGINAL-usage commits that failed persistence, keyed by
+   * captured identity. Retried by recover(); non-empty holds admission
+   * (debt) exactly like uncommitted external billing.
+   */
+  private pendingLateBilling = new Map<string, { agentId: string; taskRunId: string; generation: number; receiptId: string; usage: UsageDetail }>();
+  /**
+   * True once the root is shut down: the journal is no longer owned (store
+   * closed, lock released). Receipt ownership fails closed here, while mere
+   * suspension (recovery in progress) keeps ownership with the root.
+   */
+  private disposed = false;
+  private gate!: GateController;
+  private externalDispatcher!: GoverningToolDispatcher;
   private chain: Promise<void> = Promise.resolve();
   private cumulativeUsage: UsageTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost: 0, unknown: false };
-  private opts: SupervisorOptions;
-  private questionTtlMs: number;
-  private now: () => string;
+  // Definite-assignment: the constructor assigns these exactly once through
+  // constructOwned (post-lease construction); `!` carries that invariant.
+  private opts!: SupervisorOptions;
+  private questionTtlMs!: number;
+  private now!: () => string;
 
   constructor(options: SupervisorOptions) {
     this.rootId = options.rootId;
@@ -436,24 +516,77 @@ export class Supervisor implements GateHost {
     this.lock = new RootLock(this.rootDir);
     const lockRes = this.lock.acquire();
     if (!lockRes.ok) throw lockRes.error;
-    this.policy = options.policy;
-    this.scheduler = new AdmissionScheduler(options.schedulerLimits);
-    const executors = options.executors ?? { sandbox: new BwrapToolExecutor(), host: new HostToolExecutor() };
-    // Sandboxed jobs see the host runtime PATH (read-only, minus home and
-    // setuid wrapper directories) so generated commands find their tools;
-    // host jobs get the governing process's whole environment.
-    const runtimePath = sandboxRuntimePath(process.env["PATH"] ?? "", homedir());
-    const hostEnv: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined) hostEnv[k] = v;
-    this.broker = new ToolBroker(executors, this.store, runtimePath, { PATH: [...runtimePath, "/usr/bin", "/bin"].join(":") }, hostEnv);
-    this.workspace = options.workspace ?? new GitWorkspaceManager();
-    this.epoch = randomUUID();
-    this.gate = new GateController(this);
-    this.opts = options;
-    this.questionTtlMs = options.questionTtlMs ?? QUESTION_TTL_MS;
-    this.now = options.now ?? (() => new Date().toISOString());
-    this.replayJournal();
-    this.store.append("root.init", { rootId: this.rootId, epoch: this.epoch, at: this.now() });
+    try {
+      this.constructOwned(options);
+    } catch (e) {
+      // Construction failed after acquiring the root lease: release it so a
+      // healed successor can acquire instead of stranding on our PID. The
+      // original error is preserved; a cleanup failure surfaces combined
+      // with it (never discarded, never swallowed).
+      let cleanupError: unknown = null;
+      try {
+        this.lock.release();
+      } catch (ce) {
+        cleanupError = ce;
+      }
+      if (cleanupError !== null) {
+        throw err(
+          "STORE_FAILED",
+          `supervisor construction failed (${(e as Error)?.message ?? e}); lease release also failed (${(cleanupError as Error)?.message ?? cleanupError})`,
+        );
+      }
+      throw e;
+    }
+  }
+
+
+  /** Post-lease construction: everything that can fail after the root lock is acquired. */
+  private constructOwned(options: SupervisorOptions): void {
+      this.policy = options.policy;
+      this.scheduler = new AdmissionScheduler(options.schedulerLimits);
+      const executors = options.executors ?? { sandbox: new BwrapToolExecutor(), host: new HostToolExecutor() };
+      // Sandboxed jobs see the host runtime PATH (read-only, minus home and
+      // setuid wrapper directories) so generated commands find their tools;
+      // host jobs get the governing process's whole environment.
+      const runtimePath = sandboxRuntimePath(process.env["PATH"] ?? "", homedir());
+      const hostEnv: Record<string, string> = {};
+      for (const [k, v] of Object.entries(process.env)) if (v !== undefined) hostEnv[k] = v;
+      this.broker = new ToolBroker(executors, this.store, runtimePath, { PATH: [...runtimePath, "/usr/bin", "/bin"].join(":") }, hostEnv, this.sharedOpIds);
+      this.externalDispatcher = new GoverningToolDispatcher(
+        this.store,
+        () => this.opts.governingRegistry?.() ?? null,
+        async (caller, request) => {
+          const res = await this.broker.execute(caller, request);
+          return { stdout: res.stdout, stderr: res.stderr, exitCode: res.exitCode, timedOut: res.timedOut, truncated: res.truncated };
+        },
+        {
+          authorizeLive: (agentId, tool, scope) => this.authorizeExternalLive(agentId, tool, scope),
+          // Same actual root hold contract as NEW-task/check/native routes:
+          // genuinely NEW nested effects deny while billing debt/attach
+          // catch-up holds, even inside an already-admitted outer. Preparation
+          // never passes here, so it stays available; already-admitted outer
+          // settlement truthfully completes elsewhere.
+          admissionHold: () => {
+            const e = this.admissionHoldError();
+            if (!e) return null;
+            return { code: String((e as { code?: unknown }).code ?? "RECOVERY_OWNER_UNCONFIRMED"), message: String((e as Error).message).replace(/^[A-Z_]+: /, "") };
+          },
+          isValid: () => !this.suspended,
+          // Receipt ownership survives suspension (recovery still owns the
+          // journal) and fails closed only on genuine disposal/transfer.
+          ownsJournal: () => !this.disposed,
+          onUsage: (info) => this.accountExternalUsage(info),
+          sharedIds: this.sharedOpIds,
+        },
+      );
+      this.workspace = options.workspace ?? new GitWorkspaceManager();
+      this.epoch = randomUUID();
+      this.gate = new GateController(this);
+      this.opts = options;
+      this.questionTtlMs = options.questionTtlMs ?? QUESTION_TTL_MS;
+      this.now = options.now ?? (() => new Date().toISOString());
+      this.replayJournal();
+      this.store.append("root.init", { rootId: this.rootId, epoch: this.epoch, at: this.now() });
   }
 
   /**
@@ -494,6 +627,10 @@ export class Supervisor implements GateHost {
           const path = b["path"] as string;
           if (!agentId || this.agents.has(agentId) || !path) break;
           this.paths.reserve(path);
+          const replayGrants = b["grants"] as GrantSet;
+          if (replayGrants && !Array.isArray((replayGrants as GrantSet).externalTools)) {
+            (replayGrants as GrantSet).externalTools = [];
+          }
           const record: AgentRecord = {
             id: agentId,
             path,
@@ -503,7 +640,7 @@ export class Supervisor implements GateHost {
             profile: (b["profile"] as "reader" | "writer") ?? "reader",
             createdEntryId: (b["requestId"] as string) ?? "",
             nativeSessionPath: null,
-            grants: b["grants"] as GrantSet,
+            grants: replayGrants,
             // Journals written before prepared workspaces carry no flag: extension-made.
             allocation: { ...(b["allocation"] as WorkspaceAllocation), external: (b["allocation"] as { external?: unknown } | undefined)?.external === true },
             instructions: b["instructions"] as InstructionSet,
@@ -840,6 +977,77 @@ export class Supervisor implements GateHost {
       if (settled && settled.agentId === rt.record.id) this.pendingSettle.set(rt.record.id, { taskRunId: cur, outcome: settled.outcome, error: settled.error });
     }
     this.scheduler.restoreSnapshot({ created: spawned });
+    // A discarded uncommitted tail means a previous owner may have acted on
+    // appends that never committed: require one explicit recover() before
+    // healthy continuation, reusing the attach flag (cleared by a completed
+    // recovery exactly like a faulted attach catch-up). Journals without
+    // such a tail attach cleanly.
+    {
+      let discarded = false;
+      for (const r of records) {
+        if (r.kind !== "recovery.event") continue;
+        const phase = (r.body as Record<string, unknown>)["phase"];
+        if (phase === "uncommitted_tail_discarded") discarded = true;
+        else if (phase === "completed") discarded = false;
+      }
+      if (discarded) this.attachCatchUpNeeded = true;
+    }
+    // Durable narrowed grants: reload-time narrowing journaled as
+    // agent.grants replays here so a restart reconstructs narrowed authority
+    // instead of reviving the original spawned grants. Journals predating
+    // the event (or malformed events) keep spawned grants: valid under the
+    // current policy with no migration guessed.
+    {
+      const narrowed = new Map<AgentId, GrantSet>();
+      for (const r of records) {
+        if (r.kind !== "agent.grants") continue;
+        const b = r.body as Record<string, unknown>;
+        const agentId = b["agentId"];
+        const grants = b["grants"];
+        if (typeof agentId !== "string" || typeof grants !== "object" || grants === null) continue;
+        const g = grants as Record<string, unknown>;
+        if (!Array.isArray(g["tools"]) || !Array.isArray(g["externalTools"])) continue;
+        narrowed.set(agentId, grants as GrantSet);
+      }
+      for (const [agentId, grants] of narrowed) {
+        const rt = this.agents.get(agentId);
+        if (rt) rt.record.grants = grants;
+      }
+    }
+    // Fresh-attach catch-up: known durable receipts (outcomes/late events
+    // carrying own usage without a committed usage.reported) bill here, so
+    // a fresh supervisor with nothing pending still accounts exactly once
+    // with no manual recover required. No-op on fully-billed journals. A
+    // persistence fault here must not throw out of the constructor (that
+    // would strand the root lock): flag explicit recovery instead.
+    try {
+      this.catchUpExternalUsage(records);
+    } catch {
+      this.attachCatchUpNeeded = true;
+    }
+    // Exactly-once accounting across restarts: usage already journaled in
+    // external tool outcomes must not be re-accounted on replay. Duplicate
+    // fencing likewise rebuilds from journaled intents (memory-only otherwise).
+    {
+      const seen: string[] = [];
+      for (const r of records) {
+        if (r.kind !== "tool.intent") continue;
+        const op = (r.body as Record<string, unknown>)["operationId"];
+        if (typeof op === "string") seen.push(op);
+      }
+      this.externalDispatcher.rehydrateSeen(seen);
+      for (const id of seen) this.sharedOpIds.add(id);
+    }
+    // NOTE: accountedExternalOps is intentionally NOT rebuilt from tool
+    // outcomes here. Dedupe keys on committed usage.reported records only
+    // (completed below by the recovery catch-up); an outcome carrying usage
+    // without a usage.reported means accounting never committed and must
+    // complete instead of zeroing.
+    // Durable late-usage obligations (usage_late.pending without a matching
+    // committed usage.reported) rebuild into memory here, so a restart
+    // after a failed late commit restores both the payloads and the debt
+    // hold. Pure read plus memory fill; cannot fail past a readable journal.
+    this.rebuildLateObligations(records);
   }
 
   // -- lifecycle -----------------------------------------------------------
@@ -851,6 +1059,11 @@ export class Supervisor implements GateHost {
    */
   async shutdown(): Promise<void> {
     this.suspended = true;
+    // Retire broker journal ownership up front: detached late paths from
+    // this owner (abort settlements, receipt flushes) must not append
+    // behind whoever acquires the root next. cancelJobs records below are
+    // unaffected (direct, pre-close appends).
+    this.toolBroker.dispose();
     return this.serialized(async () => {
       for (const waiter of this.waiters.splice(0)) {
         clearTimeout(waiter.timer);
@@ -860,6 +1073,8 @@ export class Supervisor implements GateHost {
         rt.leaseWaitCancel?.();
         rt.leaseWaitCancel = null;
         await this.broker.cancelJobs(rt.record.id);
+        await this.externalDispatcher.fenceAgent(rt.record.id, "root shutdown; effect unconfirmed");
+        this.purgePreparedTickets(rt.record.id);
         const worker = rt.worker;
         rt.worker = null;
         worker?.kill();
@@ -872,6 +1087,7 @@ export class Supervisor implements GateHost {
       }
       this.store.close();
       this.lock.release();
+      this.disposed = true;
     });
   }
 
@@ -887,6 +1103,10 @@ export class Supervisor implements GateHost {
     return this.broker;
   }
 
+  get governingDispatcher(): GoverningToolDispatcher {
+    return this.externalDispatcher;
+  }
+
   get activePolicy(): SupervisorPolicy {
     return this.policy;
   }
@@ -899,9 +1119,37 @@ export class Supervisor implements GateHost {
     return this.gate;
   }
 
-  /** True when the journal holds runs that recover() must reconcile first. */
+  /**
+   * Why NEW model/task admission is currently held, or null when healthy.
+   * Centralized fail-closed gate for EFFECT-time inference starts
+   * (continueStartup, deliverRun); scheduling paths park instead of
+   * throwing. Cancellation, recovery, control, reviewer, and gate-check
+   * routes never consult it. A bare needsRecovery flag alone implies
+   * nothing about health — only these concrete states gate admission.
+   */
+  private admissionHoldError(): ReturnType<typeof err> | null {
+    if (this.suspended || this.disposed) {
+      return err("NOT_RUNNING", "root suspended: no new model inference during recovery/shutdown");
+    }
+    if (this.attachCatchUpNeeded || this.pendingExternalBilling.size > 0 || this.pendingLateBilling.size > 0) {
+      return err("RECOVERY_OWNER_UNCONFIRMED", "admission held: known billing not yet committed; explicit recovery required");
+    }
+    if (this.toolBroker.hasPendingReceipts()) {
+      return err("STORE_FAILED", "journal holds uncommitted fault receipts; explicit recovery required");
+    }
+    return null;
+  }
+
+  /**
+   * True when the journal holds runs that recover() must reconcile first,
+   * a fresh-attach catch-up hit a persistence fault (explicit recovery
+   * required instead of a silent unbilled attach), known external billing
+   * is uncommitted (explicit reconciliation required instead of an
+   * unbilled budget obligation), or the broker retains undelivered fault
+   * receipts. Observable while idle, with no new tool call required.
+   */
   get needsRecovery(): boolean {
-    return this.pendingLost.size > 0 || this.pendingSettle.size > 0;
+    return this.pendingLost.size > 0 || this.pendingSettle.size > 0 || this.attachCatchUpNeeded || this.pendingExternalBilling.size > 0 || this.pendingLateBilling.size > 0 || this.toolBroker.hasPendingReceipts();
   }
 
   // -- serialized controller transitions ------------------------------------
@@ -1031,6 +1279,10 @@ export class Supervisor implements GateHost {
         }
         throw err("DUPLICATE_REQUEST", `conflicting reuse of requestId ${requestId}`);
       }
+      // Admission hold: no new agents while held (billing uncommitted,
+      // retained faults, or suspend/dispose) — before capacity or records.
+      const spawnHold = this.admissionHoldError();
+      if (spawnHold !== null) throw spawnHold;
       // Validate everything before charging capacity or creating anything.
       if (!params.taskName || !params.message) throw err("INVALID", "spawn requires taskName and message");
       if (params.profile !== "reader" && params.profile !== "writer") throw err("INVALID", "profile must be reader/writer");
@@ -1040,7 +1292,10 @@ export class Supervisor implements GateHost {
       if (parentRt && parentRt.record.desiredLifecycle === "closed") throw err("CLOSED", "caller is closed");
       if (parentRt && params.gate) throw err("FORBIDDEN", "only the governing session configures validation gates");
       const depth = parentRt ? parentRt.record.depth + 1 : 1;
-      const ownerGrants = parentRt ? parentRt.record.grants : rootGrants(this.policy);
+      // Root-approved concrete external names at this edge (re-resolved live;
+      // runtime updates never widen already-admitted children silently).
+      const rootConcrete = this.governingExternalConcrete();
+      const ownerGrants = parentRt ? parentRt.record.grants : rootGrants(this.policy, rootConcrete);
       // Omitted: the default, or the owner's isolation where that is stricter.
       const isolation = params.isolation ?? (ISOLATION_LEVELS.indexOf(ownerGrants.isolation) > ISOLATION_LEVELS.indexOf(DEFAULT_ISOLATION) ? ownerGrants.isolation : DEFAULT_ISOLATION);
       if (!ISOLATION_LEVELS.includes(isolation)) throw err("INVALID", "isolation must be none/worktree/sandbox");
@@ -1064,7 +1319,7 @@ export class Supervisor implements GateHost {
         network: false,
         model: params.model ? { provider: params.model.provider, id: params.model.id } : null,
         depth,
-      });
+      }, this.governingExternalConcrete());
       if (!granted.ok) throw granted.error;
       // The controller excludes its own writers during review.
       if (parentRt && this.isPhaseLocked(parentRt) && params.profile === "writer") {
@@ -1253,6 +1508,11 @@ export class Supervisor implements GateHost {
     from: { ownerWorkdir: string; checkout: CheckoutInfo | null; prepared: PreparedWorkspace | null; reg: RegisteredRepo | null; baseCommit: string | null; instructions: InstructionSet },
   ): WorkspaceAllocation {
     const tmpDir = this.agentTmp(agentId);
+    // The pool namespace new worktree allocations land under, carried from
+    // the allocator wrapper (present for pooled allocations only, keeping
+    // default records byte-identical).
+    const birthPool = (wt: WorktreeAllocation): { poolRoot: string } | Record<string, never> =>
+      wt.poolRoot != null ? { poolRoot: wt.poolRoot } : {};
     if (from.prepared) {
       // The git dir and HEAD are recorded now, before the agent can touch the directory.
       const writer = profile === "writer";
@@ -1270,7 +1530,7 @@ export class Supervisor implements GateHost {
       const readRoots = [...from.reg.readRoots, ...skillDirs];
       if (profile === "reader") return { kind: "reader", workdir: from.reg.readRoots[0] ?? tmpDir, readRoots, writableRoot: null, git: null, repoId: from.reg.repoId, tmpDir, external: false };
       const wt = this.allocateWorktree(from.reg.repoId, from.reg.checkoutPath, from.baseCommit, "");
-      return { kind: "writer", workdir: wt.worktreePath, readRoots, writableRoot: wt.worktreePath, git: { workTree: wt.worktreePath, gitDir: wt.gitDir, baseCommit: wt.baseCommit }, repoId: from.reg.repoId, tmpDir, external: false };
+      return { kind: "writer", workdir: wt.worktreePath, readRoots, writableRoot: wt.worktreePath, git: { workTree: wt.worktreePath, gitDir: wt.gitDir, baseCommit: wt.baseCommit }, repoId: from.reg.repoId, tmpDir, external: false, ...birthPool(wt) };
     }
     const checkout = from.checkout!;
     const wt = this.allocateWorktree(basename(checkout.workTree), checkout.workTree, from.baseCommit, ", or use isolation none to edit the checkout in place");
@@ -1279,42 +1539,703 @@ export class Supervisor implements GateHost {
       this.workspace.releaseAllocation(wt, { prune: true });
       throw err("CONFLICT", `working directory ${relative(checkout.workTree, from.ownerWorkdir)} does not exist at the worktree's base commit`);
     }
-    return { kind: "writer", workdir, readRoots: [], writableRoot: wt.worktreePath, git: { workTree: wt.worktreePath, gitDir: wt.gitDir, baseCommit: wt.baseCommit }, repoId: null, tmpDir, external: false };
+    return { kind: "writer", workdir, readRoots: [], writableRoot: wt.worktreePath, git: { workTree: wt.worktreePath, gitDir: wt.gitDir, baseCommit: wt.baseCommit }, repoId: null, tmpDir, external: false, ...birthPool(wt) };
+  }
+
+  /**
+   * Writer-worktree destination: the default session home, or the pooled
+   * `<worktreeRoot>/<sessionId>/worktrees` layout when configured.
+   * Session/log/IPC/tmp dirs stay under rootDir; saved allocations keep
+   * their recorded paths. An invalid or unwritable destination fails
+   * visibly here (never a silent home fallback).
+   */
+  private worktreesDir(): string {
+    const custom = this.policy.worktreeRoot;
+    if (custom == null) return join(this.rootDir, "worktrees");
+    if (!isAbsolute(custom) || custom.includes("\0")) {
+      throw err("INVALID", "worktreeRoot must be null or an absolute path");
+    }
+    return join(custom, this.rootId, "worktrees");
+
   }
 
   /** A writer worktree from a committed base; a dirty checkout needs an explicit base. */
   private allocateWorktree(label: string, checkoutPath: string, baseCommit: string | null, alternative: string): WorktreeAllocation {
-    const wt = this.workspace.allocateWriter(label, checkoutPath, baseCommit ?? "HEAD", join(this.rootDir, "worktrees"));
+    const wt = this.workspace.allocateWriter(label, checkoutPath, baseCommit ?? "HEAD", this.worktreesDir());
     if (wt.baseDirty && !baseCommit) {
       // Actionable precondition: an agreed committed base is required.
       this.workspace.releaseAllocation(wt, { prune: true });
       throw err("CONFLICT", `checkout has uncommitted changes; supply an explicit base_commit, commit first${alternative}`);
     }
-    return wt;
+    // Pin the allocation-time physical namespace: the fresh worktree
+    // exists, so canonicalize it once — later alias removal/retarget
+    // cannot misdirect recorded paths — and derive the exact pool from
+    // the canonical destination. Anything else fails visibly here.
+    let canonical: string;
+    try {
+      canonical = realpathSync(wt.worktreePath);
+    } catch (e) {
+      // Rollback is load-bearing: a failed cleanup stays publicly
+      // observable alongside the primary canonical error, never swallowed.
+      throw err("WORKSPACE_UNAVAILABLE", `allocated worktree cannot be resolved: ${(e as Error).message}${this.releaseQuietly(wt)}`);
+    }
+    if (this.policy.worktreeRoot == null) return { ...wt, worktreePath: canonical };
+    const canonicalDest = dirname(canonical);
+    const tail = `${sep}${this.rootId}${sep}worktrees`;
+    if (!canonicalDest.endsWith(tail) || canonicalDest.length <= tail.length) {
+      throw err("WORKSPACE_UNAVAILABLE", `allocated worktree outside the session shard: ${canonical}${this.releaseQuietly({ ...wt, worktreePath: canonical })}`);
+    }
+    return { ...wt, worktreePath: canonical, poolRoot: canonicalDest.slice(0, canonicalDest.length - tail.length) };
+  }
+
+  /**
+   * Best-effort startup rollback through the public release path (exactly
+   * once, with pruning). Success contributes nothing; a cleanup failure
+   * is returned as a joined suffix so it stays publicly observable next
+   * to the primary error instead of being swallowed.
+   */
+  private releaseQuietly(allocation: WorktreeAllocation): string {
+    try {
+      this.workspace.releaseAllocation(allocation, { prune: true });
+    } catch (cleanupError) {
+      return `; workspace cleanup also failed: ${(cleanupError as Error).message}`;
+    }
+    return "";
+  }
+
+  /**
+   * Root-approved concrete external names at this moment: the governing
+   * registry's current callable names filtered by policy allowlist patterns.
+   * Empty when unbound (deny-by-default); re-resolved at every edge and at
+   * execution so runtime updates cannot widen admitted authority silently.
+   */
+  private governingExternalConcrete(): string[] {
+    const registry = this.opts.governingRegistry?.() ?? null;
+    if (!registry || !registry.isActive()) return [];
+    const names = registry.listHandles().map((h) => h.name);
+    return resolveAllowedConcrete(names, this.policy.allowedTools ?? []);
+  }
+
+  /**
+   * Live external authorization immediately before effects: current binding,
+   * worker identity, active task/generation, current root/owner grants.
+   * Captured caller grants alone are never sufficient (policy may narrow,
+   * generations supersede, bindings revoke).
+   */
+  private authorizeExternalLive(
+    agentId: AgentId,
+    tool: string,
+    scope: { taskRunId: string | null; generation: number | null },
+  ): { ok: true } | { ok: false; code: string; message: string } {
+    // Global pause: while suspended (recovery) or disposed (shutdown), no
+    // NEW external/direct/nested/native/prep admission — before intents and
+    // effects, immediately, independent of per-agent fence iteration. A
+    // retained broker fault receipt pauses admissions the same way until it
+    // is delivered. Effect validity ends here; receipt ownership (durable
+    // late billing while the journal is owned) is separate and stays open.
+    // Cancel, fence, reconcile, reviewer-settle, control, and gate-check
+    // routes never pass through this function, so recovery itself is never
+    // blanket-stopped.
+    if (this.suspended || this.disposed) {
+      return { ok: false, code: "NOT_RUNNING", message: "root suspended: no new admissions during recovery/shutdown" };
+    }
+    if (this.toolBroker.hasPendingReceipts()) {
+      return { ok: false, code: "STORE_FAILED", message: "journal holds uncommitted fault receipts; explicit recovery required" };
+    }
+    const rt = this.agents.get(agentId);
+    if (!rt) return { ok: false, code: "NOT_FOUND", message: `agent ${agentId} unknown` };
+    if (rt.record.desiredLifecycle === "closed") return { ok: false, code: "CLOSED", message: "agent is closed" };
+    const run = rt.activeRun;
+    if (!run) return { ok: false, code: "STALE_GENERATION", message: "no admitted execution" };
+    if (scope.taskRunId === null || scope.taskRunId === undefined || scope.taskRunId !== run.taskRunId) {
+      return { ok: false, code: "STALE_GENERATION", message: "task run superseded" };
+    }
+    if (scope.generation === null || scope.generation === undefined || scope.generation !== run.generation) {
+      return { ok: false, code: "STALE_GENERATION", message: "execution generation superseded" };
+    }
+    if (run.interruptRequested) return { ok: false, code: "NOT_RUNNING", message: "the generation is being interrupted" };
+    const registry = this.opts.governingRegistry?.() ?? null;
+    if (!registry || !registry.isActive()) {
+      return { ok: false, code: "STALE_GENERATION", message: "governing session binding revoked" };
+    }
+    if (this.gate.isReviewer(agentId)) {
+      if (tool !== GATE_DECISION_TOOL && !(FILE_TOOLS as readonly string[]).includes(tool)) {
+        return { ok: false, code: "POLICY_DENIED", message: `tool ${tool} is not available to a reviewer` };
+      }
+      return { ok: true };
+    }
+    // Live-owner chain: current root + caller + every live ancestor intersect
+    // at EVERY edge, immediately before prep/effects. A reloaded owner that
+    // lost the tool revokes already-admitted descendants too (no immutable
+    // child grandfathering); restoring the root registry never silently
+    // restores an already-revoked owner. Centralized here so preparation,
+    // direct handles, and nested invocation share one authority.
+    const ownerChain = this.checkLiveOwnerChain(rt, tool);
+    if (!ownerChain.ok) return ownerChain;
+    // Shared live identity/scope checks above; tool-specific authority below.
+    // Native file/shell tools route to the child broker (child workdir and
+    // isolation); they are authorized against CURRENT native grants here so
+    // narrowing (reload) revokes nested/direct calls immediately.
+    if (([...FILE_TOOLS, ...WRITE_TOOLS, SHELL_TOOL] as readonly string[]).includes(tool)) {
+      if (!rt.record.grants.tools.includes(tool)) {
+        return { ok: false, code: "POLICY_DENIED", message: `tool ${tool} not granted to caller` };
+      }
+      return { ok: true };
+    }
+    if (rt.record.grants.isolation === "sandbox") {
+      return { ok: false, code: "POLICY_DENIED", message: `tool ${tool} unavailable in sandbox isolation` };
+    }
+    // Current root-concrete (not captured): narrowing revokes immediately.
+    const current = new Set(this.governingExternalConcrete());
+    if (!current.has(tool)) {
+      return { ok: false, code: "POLICY_DENIED", message: `tool ${tool} is not currently available` };
+    }
+    if (!(rt.record.grants.externalTools ?? []).includes(tool)) {
+      return { ok: false, code: "POLICY_DENIED", message: `tool ${tool} not granted to caller` };
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Walk the caller's live owner chain (parent links) and require every
+   * ancestor to still hold the tool in its CURRENT grants: native names in
+   * `grants.tools`, external names in `grants.externalTools`. The governor
+   * (parentId null) ends the walk — root authority arrives via the
+   * root-concrete check, not a record. Missing or closed ancestors fail
+   * visible: a call must never execute on a severed chain. Deny-only: this
+   * never grants sandbox or any other capability, it only revokes.
+   */
+  private checkLiveOwnerChain(
+    callerRt: { record: { parentId: AgentId | null } },
+    tool: string,
+  ): { ok: true } | { ok: false; code: string; message: string } {
+    const native = ([...FILE_TOOLS, ...WRITE_TOOLS, SHELL_TOOL] as readonly string[]).includes(tool);
+    let parentId = callerRt.record.parentId;
+    while (parentId !== null && parentId !== undefined) {
+      const ancestor = this.agents.get(parentId);
+      if (!ancestor) {
+        return { ok: false, code: "POLICY_DENIED", message: `live owner ${parentId} unknown; authority for ${tool} cannot be verified` };
+      }
+      if (ancestor.record.desiredLifecycle === "closed") {
+        return { ok: false, code: "POLICY_DENIED", message: `live owner ${parentId} is closed; authority for ${tool} retired` };
+      }
+      const held = native
+        ? ancestor.record.grants.tools.includes(tool)
+        : (ancestor.record.grants.externalTools ?? []).includes(tool);
+      if (!held) {
+        return { ok: false, code: "POLICY_DENIED", message: `live owner ${parentId} no longer grants ${tool}` };
+      }
+      parentId = ancestor.record.parentId;
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Per-invocation OWN external usage (normal and late completions alike).
+   * Accounted exactly once per invocation under its immutable originating
+   * identity — never under a newer task the agent may have started since.
+   * Model-generation totals stay separate. Totals are derived by summing
+   * these receipts, each once; no aggregate is ever stored as an own report.
+   */
+  private accountExternalUsage(info: {
+    operationId: string;
+    agentId: AgentId;
+    usage: unknown;
+    originTaskRunId: string | null;
+    originGeneration: number | null;
+    late: boolean;
+  }): void {
+    if (this.suspended) return;
+    if (this.accountedExternalOps.has(info.operationId)) return;
+    const usage = normalizeExternalUsage(info.usage);
+    if (!usage) return;
+    // Counters/dedupe follow the SUCCESSFUL usage.reported persistence commit
+    // only: a genuine pre-append store fault must leave live totals and the
+    // op unmarked so recovery catch-up retries exactly once. Compute the
+    // commit payload without side effects, append, then increment. A
+    // persistence fault surfaces through the observable project error
+    // channel (recovery.event), never as a throw past the dispatcher
+    // (which would be an unhandled rejection). The durable canonical receipt
+    // (outcome/recovery.event usage from rawOwnUsage) enables the retry.
+    // A PUBLIC observer exception AFTER the commit (evaluateWaiters/onChange)
+    // must NOT strand debt or skip accounting: the report is already durable,
+    // so counters/dedupe clear exactly once and only the notification fault
+    // stays observable. Same-instance recovery must never leave live totals
+    // missing an already-committed 5/7 or a false permanent hold.
+    const accounted = {
+      input: usage.input ?? 0,
+      output: usage.output ?? 0,
+      cacheRead: usage.cacheRead ?? 0,
+      cacheWrite: usage.cacheWrite ?? 0,
+      cost: typeof usage.cost === "number" ? usage.cost : null,
+      unknown: usage.unknown === true,
+    };
+    try {
+      this.store.append("usage.reported", {
+        agentId: info.agentId,
+        taskRunId: info.originTaskRunId,
+        generation: info.originGeneration,
+        ...accounted,
+        external: true,
+        operationId: info.operationId,
+        late: info.late,
+      });
+    } catch (e) {
+      // Genuine pre-append persistence failure: the known OWN receipt is
+      // unbilled, so new effects must wait for explicit reconciliation (no
+      // fail-open admission against the debt). Counters/dedupe stay untouched.
+      this.pendingExternalBilling.add(info.operationId);
+      this.reportFailure(e);
+      return;
+    }
+    const rt = this.agents.get(info.agentId) ?? null;
+    this.accountUsage(rt, usage);
+    this.accountedExternalOps.add(info.operationId);
+    this.pendingExternalBilling.delete(info.operationId);
+    try {
+      this.evaluateWaiters();
+      this.opts.onChange?.();
+    } catch (e) {
+      // Observer-only fault after a durable commit: already accounted exactly
+      // once above, so never re-add debt or undo counters. Stay observable.
+      this.reportFailure(e);
+    }
+  }
+
+  /** External definitions (preserved schemas/descriptions) for worker exposure. */
+  private externalDefinitions(names: readonly string[]): Array<{ name: string; description: string; parameters: unknown; outputSchema?: unknown }> {
+    const registry = this.opts.governingRegistry?.() ?? null;
+    if (!registry || !registry.isActive()) return [];
+    const out: Array<{ name: string; description: string; parameters: unknown; outputSchema?: unknown }> = [];
+    for (const name of names) {
+      const handle = registry.getHandle(name);
+      if (!handle) continue;
+      out.push({
+        name: handle.name,
+        description: handle.description,
+        parameters: handle.parameters,
+        ...((handle as { outputSchema?: unknown }).outputSchema !== undefined ? { outputSchema: (handle as { outputSchema?: unknown }).outputSchema } : {}),
+      });
+    }
+    return out;
+  }
+
+  /** Cancel all in-flight external (governing-runtime) work. */
+  private async cancelAllExternal(): Promise<void> {
+    for (const rt of this.agents.values()) {
+      try {
+        await this.externalDispatcher.cancelJobs(rt.record.id);
+      } catch {
+        // best effort on teardown
+      }
+    }
   }
 
   /** Tool-call authority of an agent's active run, derived from the authenticated channel. */
   private brokerCaller(rt: AgentRuntime): BrokerCaller {
     const record = rt.record;
+    const alloc = this.effectiveAllocation(record);
     return {
       agentId: record.id,
       taskRunId: rt.activeRun?.taskRunId ?? null,
       generation: rt.activeRun?.generation ?? null,
       grants: record.grants,
-      workdir: record.allocation.workdir,
-      writableRoot: record.allocation.writableRoot,
-      sandbox: this.sandboxOf(record, record.allocation.readRoots),
+      workdir: alloc.workdir,
+      writableRoot: alloc.writableRoot,
+      sandbox: this.sandboxOf({ ...record, allocation: alloc }, alloc.readRoots, this.reviewerCandidateOf(record)),
     };
   }
 
   /**
    * Sandbox view inputs, or null for host isolation. The whole root store
    * (journal, sessions, sibling workspaces) and the host credential store
-   * are absent from tool views; approved paths beneath them are bound again.
+   * are absent from tool views as soft legacy hides; approved paths beneath
+   * them are bound again. Pooled writer-worktree roots travel as hard
+   * storage namespaces instead (see SandboxView.storageRoots): sibling and
+   * other-session pooled worktrees stay masked even when an approved read
+   * root equals the pool or nests under it, while the child's own writable
+   * worktree is bound again afterwards (storage masks precede the
+   * writableRoot bind). A supervisor-selected read-only exception
+   * (readOnlyRoots) re-exposes exactly the candidate/own workspace for
+   * managed reviewers and controller checks — never an arbitrary approved
+   * read root, never writer permission. Retained allocations keep their
+   * exclusion across reconfigures (see pooledHideRoots): changing the
+   * option never unhides a recorded pool.
    */
-  private sandboxOf(record: AgentRecord, readRoots: string[]): CallerSandbox | null {
+  private sandboxOf(record: AgentRecord, readRoots: string[], readOnlyRoots: string[] = []): CallerSandbox | null {
     if (record.grants.isolation !== "sandbox") return null;
-    return { readRoots, tmpDir: record.allocation.tmpDir, hidePaths: [this.rootDir, ...(this.opts.hostAgentDir ? [this.opts.hostAgentDir] : [])] };
+    return {
+      readRoots,
+      tmpDir: record.allocation.tmpDir,
+      hidePaths: [this.rootDir, ...(this.opts.hostAgentDir ? [this.opts.hostAgentDir] : [])],
+      ...(readOnlyRoots.length > 0 ? { readOnlyRoots } : {}),
+      storageRoots: this.pooledHideRoots(),
+    };
+  }
+
+  /**
+   * The exact writer workspace a managed reviewer validates, if any: the
+   * main agent owning this reviewer through the gate, narrowed to its
+   * current writableRoot. Ordinary agents (including sandbox readers) get
+   * no exception. The path is bound read-only after the storage masks; the
+   * reviewer's tool grants stay read-only, so this confers no writer
+   * permission — only visibility of the single candidate worktree.
+   */
+  private reviewerCandidateOf(record: AgentRecord): string[] {
+    for (const rt of this.agents.values()) {
+      if (rt.record.id === record.id) continue;
+      if (this.gate.reviewersOf(rt.record.id).includes(record.id)) {
+        const w = this.effectiveAllocation(rt.record).writableRoot;
+        return typeof w === "string" && w.length > 0 ? [w] : [];
+      }
+    }
+    return [];
+  }
+
+  /**
+   * Pool namespaces to mask from sandbox tool views: the currently
+   * configured root plus every pooled root represented by retained
+   * allocations. Saved allocations keep their recorded absolute paths (no
+   * migration, no relocation). Every record first passes through
+   * effectiveAllocation: stable namespaces stand as recorded, while
+   * alias-involved ones are proven to their physical target through the
+   * persisted git administration identity (or fail visibly). Display
+   * surfaces (AgentView) intentionally keep showing the recorded path.
+   * Precedence per retained workspace:
+   * 1. the recorded allocation-time pool namespace when present;
+   * 2. the exact default namespace (`<rootDir>/worktrees`), still on the
+   *    store hide;
+   * 3. otherwise, the namespace anchored on the recorded repo ID: the
+   *    terminal old-form `wt-<repoId>-<commit>-<unique>` leaf (repo IDs
+   *    match literally, slashes and dots included) stripped off, with the
+   *    remainder required to end in `/<sessionId>/worktrees`;
+   * 4. otherwise, for repo ID-less records, ONLY actual host-worktree
+   *    allocations prove a pool, distinguished by the persisted admission
+   *    fact (grants isolation "worktree"): kind writer with git, a safe
+   *    flat leaf, and a parent dir ending in `/<sessionId>/worktrees`.
+   *    Isolation "none" in-place workdirs contribute NO mask even when
+   *    namespace-looking. Anything else is an explicitly unknown retained
+   *    shape, which fails visibly instead of guessing a broad parent or
+   *    unhiding the pool.
+   */
+  private pooledHideRoots(): string[] {
+    const roots = new Set<string>();
+    const current = this.policy.worktreeRoot;
+    if (current != null) {
+      roots.add(current);
+      const resolved = this.resolvePoolTarget(current, "worktreeRoot");
+      if (resolved !== null && resolved !== current) roots.add(resolved);
+    }
+    const homeWorktrees = join(this.rootDir, "worktrees");
+    const sessionTail = `${sep}${this.rootId}${sep}worktrees`;
+    for (const rt of this.agents.values()) {
+      // Ephemeral effective paths: alias-involved retained namespaces are
+      // proven to their physical target (or fail visibly); everything
+      // else passes through byte-identical. The journal is never rewritten.
+      const alloc = this.effectiveAllocation(rt.record);
+      const w = alloc?.writableRoot;
+      if (alloc === null || alloc === undefined || typeof w !== "string" || w.length === 0) continue;
+      // 1. Recorded or proven allocation-time namespace.
+      if (alloc.poolRoot != null) {
+        roots.add(alloc.poolRoot);
+        const resolved = this.resolvePoolTarget(alloc.poolRoot, "retained worktree pool");
+        if (resolved !== null && resolved !== alloc.poolRoot) roots.add(resolved);
+        continue;
+      }
+      // 2. Exact default namespace: the store hide covers it.
+      if (dirname(w) === homeWorktrees) continue;
+      // 3. Old-form leaf anchored on the recorded repo ID.
+      const repoId = alloc.repoId;
+      if (repoId === null || repoId === undefined) {
+        // 4. Repo ID-less records: ONLY actual host-worktree allocations
+        // prove a pool, distinguished by the persisted admission fact
+        // (grants isolation "worktree") — kind/git/basename merely look
+        // physical, and isolation "none" can legitimately carry git with
+        // a namespace-looking parent. Anything else is an in-place
+        // workdir (owner working directory, never pooled storage) and
+        // is skipped.
+        if (rt.record.grants?.isolation !== "worktree") continue;
+        if (alloc.kind !== "writer" || alloc.git === null || alloc.git === undefined) continue;
+        const leafName = basename(w);
+        if (leafName === "" || leafName === "." || leafName === "..") {
+          throw err("WORKSPACE_UNAVAILABLE", `retained workspace has an unrecognized shape and cannot be masked safely: ${w}`);
+        }
+        const parentDir = dirname(w);
+        if (parentDir === homeWorktrees) continue;
+        if (!parentDir.endsWith(sessionTail) || parentDir.length <= sessionTail.length) continue;
+        const hosted = parentDir.slice(0, parentDir.length - sessionTail.length);
+        roots.add(hosted);
+        const hostedResolved = this.resolvePoolTarget(hosted, "retained worktree pool");
+        if (hostedResolved !== null && hostedResolved !== hosted) roots.add(hostedResolved);
+        continue;
+      }
+      const leaf = new RegExp(`\/wt-${escapeRegExp(repoId)}-[0-9a-f]{12}-\\d+$`);
+      const match = leaf.exec(w);
+      if (match === null) {
+        throw err("WORKSPACE_UNAVAILABLE", `retained workspace has an unrecognized shape and cannot be masked safely: ${w}`);
+      }
+      const destDir = w.slice(0, w.length - match[0].length);
+      if (destDir === homeWorktrees) continue;
+      if (!destDir.endsWith(sessionTail) || destDir.length <= sessionTail.length) {
+        throw err("WORKSPACE_UNAVAILABLE", `retained workspace has an unrecognized shape and cannot be masked safely: ${w}`);
+      }
+      const lexical = destDir.slice(0, destDir.length - sessionTail.length);
+      roots.add(lexical);
+      const resolved = this.resolvePoolTarget(lexical, "retained worktree pool");
+      if (resolved !== null && resolved !== lexical) roots.add(resolved);
+    }
+    return [...roots];
+  }
+
+  /**
+   * Ephemeral effective allocation for confinement and tool-routing
+   * decisions. The journal record is never rewritten or migrated. Retained
+   * pooled namespaces carrying git administration identity ALWAYS prove
+   * physical provenance through it (below) or fail visibly — never silently
+   * unhide. Directory existence and stable resolution certify nothing by
+   * themselves for worktree bindings: a recreated leaf under a replaced
+   * alias both exists and resolves stably while addressing bytes the record
+   * never owned. Rows without recorded git identity have no
+   * out-of-namespace anchor to prove against; their containment rests on
+   * the stable pool path itself (alias confusion without a worktree
+   * binding cannot divert them elsewhere), so they keep the stable
+   * existence behavior. Display surfaces (AgentView) intentionally keep
+   * showing the recorded path; observe both sides, never assume they match.
+   */
+  private effectiveAllocation(record: AgentRecord): WorkspaceAllocation {
+    const alloc = record.allocation;
+    if (alloc === null || alloc === undefined) return alloc;
+    const w = alloc.writableRoot;
+    if (typeof w !== "string" || w.length === 0) return alloc;
+    const pool = alloc.poolRoot != null ? alloc.poolRoot : this.deriveLexicalPool(record);
+    if (pool === null) return alloc;
+    if (this.isStablePath(pool)) {
+      const g = alloc.git;
+      const hasGitIdentity = g !== null && g !== undefined && typeof g.gitDir === "string" && g.gitDir.length > 0;
+      // Existence-only certification is removed exactly where an identity
+      // exists to check: a recorded git administration must prove, even
+      // when the leaf exists and the namespace resolves stably.
+      if (!hasGitIdentity && existsSync(w)) return alloc;
+      return this.proveRetainedWorkspace(record, alloc);
+    }
+    return this.proveRetainedWorkspace(record, alloc);
+  }
+
+  /** True when a path resolves to itself (no alias involved, exists). */
+  private isStablePath(p: string): boolean {
+    try {
+      return realpathSync(p) === p;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Candidate pool namespace for a retained workspace, or null when no
+   * pooled masking applies (exact default namespace, in-place workdir).
+   * Throws visibly on malformed retained shapes. Pure string logic over
+   * recorded fields; filesystem resolution happens in the caller.
+   */
+  private deriveLexicalPool(record: AgentRecord): string | null {
+    const alloc = record.allocation;
+    const w = alloc?.writableRoot;
+    if (alloc === null || alloc === undefined || typeof w !== "string" || w.length === 0) return null;
+    const homeWorktrees = join(this.rootDir, "worktrees");
+    if (dirname(w) === homeWorktrees) return null;
+    const sessionTail = `${sep}${this.rootId}${sep}worktrees`;
+    const repoId = alloc.repoId;
+    if (repoId === null || repoId === undefined) {
+      if (record.grants?.isolation !== "worktree") return null;
+      if (alloc.kind !== "writer" || alloc.git === null || alloc.git === undefined) return null;
+      const leafName = basename(w);
+      if (leafName === "" || leafName === "." || leafName === "..") {
+        throw err("WORKSPACE_UNAVAILABLE", `retained workspace has an unrecognized shape and cannot be masked safely: ${w}`);
+      }
+      const parentDir = dirname(w);
+      if (parentDir === homeWorktrees) return null;
+      if (!parentDir.endsWith(sessionTail) || parentDir.length <= sessionTail.length) return null;
+      return parentDir.slice(0, parentDir.length - sessionTail.length);
+    }
+    const leaf = new RegExp(`\/wt-${escapeRegExp(repoId)}-[0-9a-f]{12}-\\d+$`);
+    const match = leaf.exec(w);
+    if (match === null) {
+      throw err("WORKSPACE_UNAVAILABLE", `retained workspace has an unrecognized shape and cannot be masked safely: ${w}`);
+    }
+    const destDir = w.slice(0, w.length - match[0].length);
+    if (destDir === homeWorktrees) return null;
+    if (!destDir.endsWith(sessionTail) || destDir.length <= sessionTail.length) {
+      throw err("WORKSPACE_UNAVAILABLE", `retained workspace has an unrecognized shape and cannot be masked safely: ${w}`);
+    }
+    return destDir.slice(0, destDir.length - sessionTail.length);
+  }
+
+  /**
+   * Prove the physical workspace behind a retained pooled namespace
+   * through the persisted git administration identity, and return the
+   * effective allocation naming the proven paths. The admin dir recorded
+   * at creation names the worktree's gitfile; that file must point back
+   * at the admin dir (bidirectional), name the recorded leaf, and sit in
+   * a session shard. Any missing link or mismatch fails visibly - an
+   * unprovable namespace never silently unhides.
+   */
+  private proveRetainedWorkspace(record: AgentRecord, alloc: WorkspaceAllocation): WorkspaceAllocation {
+    const w = alloc.writableRoot as string;
+    const fail = (why: string): Error =>
+      err("WORKSPACE_UNAVAILABLE", `retained workspace identity unprovable and cannot be masked safely (${why}): ${w}`);
+    const g = alloc.git;
+    if (g === null || g === undefined || typeof g.gitDir !== "string" || g.gitDir.length === 0) throw fail("no git administration identity");
+    const admin = g.gitDir;
+    let backRaw: string;
+    try {
+      backRaw = readFileSync(join(admin, "gitdir"), "utf8");
+    } catch {
+      throw fail("administration backlink unreadable");
+    }
+    const back = backRaw.trim();
+    // An emptied backlink names no worktree at all: reject here rather
+    // than resolving an empty path against the process working directory.
+    if (back.length === 0) throw fail("administration backlink empty");
+    const gitSuffix = `${sep}.git`;
+    const wt = back.endsWith(gitSuffix) ? back.slice(0, back.length - gitSuffix.length) : back;
+    let fwdRaw: string;
+    try {
+      fwdRaw = readFileSync(join(wt, ".git"), "utf8");
+    } catch {
+      throw fail("worktree pointer unreadable");
+    }
+    const m = /^gitdir: (.+)$/m.exec(fwdRaw);
+    if (m === null) throw fail("worktree pointer malformed");
+    let fwdAdmin: string;
+    let wtReal: string;
+    let adminReal: string;
+    try {
+      fwdAdmin = realpathSync(m[1].trim());
+      wtReal = realpathSync(wt);
+      adminReal = realpathSync(admin);
+    } catch {
+      throw fail("pointer unresolvable");
+    }
+    if (fwdAdmin !== adminReal) throw fail("pointer mismatch");
+    // Complete retained leaf (see provenRetainedLeaf): the recorded path
+    // must name the identical full leaf, and the physical destination
+    // behind it must sit in this session's shard. The immediate parent
+    // alone would misread a mid-leaf directory as the pool namespace.
+    const leaf = this.provenRetainedLeaf(record, w, wtReal, fail);
+    const destDir = wtReal.slice(0, wtReal.length - leaf.length);
+    const tail = `${sep}${this.rootId}${sep}worktrees`;
+    if (!destDir.endsWith(tail) || destDir.length <= tail.length) throw fail("shard mismatch");
+    const provenPool = destDir.slice(0, destDir.length - tail.length);
+    // Persisted workspace identity: a resolvable recorded worktree must be
+    // the proven workspace. A vanished namespace (removed alias) resolves
+    // nothing and stays governed by the backlink-plus-leaf proof above;
+    // any other resolution failure fails visibly instead of guessing.
+    if (typeof g.workTree !== "string" || g.workTree.length === 0) throw fail("workspace mismatch");
+    let recordedTree: string | null = null;
+    try {
+      recordedTree = realpathSync(g.workTree);
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw fail("workspace unresolvable");
+      // A vanished namespace (removed alias) resolves nothing: acceptable
+      // only when the recorded worktree IS the original allocation path.
+      // An unresolvable DIFFERENT path is a wrong identity, not a
+      // removed namespace, and is rejected even though it is missing.
+      if (g.workTree !== w) throw fail("workspace mismatch");
+    }
+    if (recordedTree !== null && recordedTree !== wtReal) throw fail("workspace mismatch");
+    // Birth commit identity: pinned rows name the allocated leaf's commit
+    // infix and it still resolves as a commit object in the proven
+    // repository. A legitimately advanced HEAD keeps its unchanged birth
+    // commit and passes. Unpinned ("HEAD") rows never recorded a hash:
+    // birth is proven live (HEAD resolves now), not pinned. A forged or
+    // missing commit fails visibly.
+    if (g.baseCommit === "HEAD") {
+      if (!this.birthCommitResolves(adminReal, "HEAD")) throw fail("commit unresolvable");
+    } else {
+      const infix = /-([0-9a-f]{12})-\d+$/.exec(leaf)?.[1] ?? "";
+      if (infix === "" || g.baseCommit.slice(0, 12) !== infix) throw fail("commit mismatch");
+      if (!this.birthCommitResolves(adminReal, g.baseCommit)) throw fail("commit unresolvable");
+    }
+    const rel = relative(w, alloc.workdir);
+    if (rel === ".." || rel.startsWith(`..${sep}`)) throw fail("workdir outside workspace");
+    return { ...alloc, workdir: join(wtReal, rel), writableRoot: wtReal, git: { ...g, workTree: wtReal }, poolRoot: provenPool };
+  }
+
+  /**
+   * The complete allocation leaf of a proven physical worktree path.
+   * Historical producers encoded slash repo IDs verbatim, so the leaf can
+   * span several path components (`wt-<repoId>-<commit>-<unique>`, slashes
+   * included): derive the full suffix from the recorded repo ID against
+   * the proven path, and require the recorded path to name the identical
+   * leaf. Repo ID-less legacy records only prove a single-component
+   * current-form leaf. Anything else is unprovable, never guessed.
+   */
+  private provenRetainedLeaf(record: AgentRecord, w: string, wtReal: string, fail: (why: string) => Error): string {
+    const repoId = record.allocation.repoId;
+    if (typeof repoId === "string" && repoId.length > 0) {
+      // Historical and unpinned forms share the shape; only the commit
+      // infix differs (12-hex hash, or HEAD for allocations recorded
+      // without a pinned base). The recorded and proven paths must name
+      // the identical full leaf — never guessed, never migrated.
+      const historical = new RegExp(`\/wt-${escapeRegExp(repoId)}-(?:[0-9a-f]{12}|HEAD)-\\d+$`);
+      const physical = historical.exec(wtReal);
+      const recorded = historical.exec(w);
+      if (physical !== null && recorded !== null && physical[0] === recorded[0]) return physical[0];
+      // Current-encoder single-component form (genuine a04-era hashed
+      // unsafe IDs; identical to the historical form for safe IDs,
+      // returned above): the basename must round-trip through the
+      // supported encoder for the exact recorded ID — hash, commit
+      // infix, and counter alike. Anything else is unprovable.
+      const base = basename(wtReal);
+      const current = /^wt-h-([0-9a-f]{32})-([0-9a-f]{12})-(\d+)$/.exec(base);
+      if (current !== null && base === basename(w) && encodeWorktreeLeaf(repoId, current[2]!, current[3]!) === base) {
+        return `${sep}${base}`;
+      }
+      throw fail("leaf mismatch");
+    }
+    const base = basename(wtReal);
+    if (!/^wt-(?:(?!\.{1,2}-)[A-Za-z0-9._-]{1,64}|h-[0-9a-f]{32})-(?:[0-9a-f]{12}|HEAD)-\d+$/.test(base) || base !== basename(w)) {
+      throw fail("leaf mismatch");
+    }
+    return `${sep}${base}`;
+  }
+
+  /**
+   * The birth commit still resolves as a commit object through the proven
+   * administration dir. Host git runs hardened (no hooks/fsmonitor, no
+   * inherited GIT_* overrides, no object locks); any failure — missing
+   * binary, unreadable repo, unknown object — is unprovable, not absent.
+   */
+  private birthCommitResolves(adminReal: string, baseCommit: string): boolean {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined && !k.startsWith("GIT_")) env[k] = v;
+    }
+    env["GIT_OPTIONAL_LOCKS"] = "0";
+    const r = spawnSync(
+      "git",
+      ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "--git-dir", adminReal, "cat-file", "-e", `${baseCommit}^{commit}`],
+      { env, encoding: "utf8", timeout: 30_000 },
+    );
+    return r.error === undefined && r.status === 0;
+  }
+
+  /**
+   * Canonical host target of a pool path, resolved before namespace
+   * assembly. Returns null only when the path is genuinely gone (ENOENT /
+   * ENOTDIR); any other resolution failure (permissions, loops) throws
+   * visibly instead of silently unhiding. existsSync is deliberately not
+   * used as a pre-check: it reports EACCES as absent, which would convert
+   * an unsafe but valid scope into a silent skip.
+   */
+  private resolvePoolTarget(pool: string, what: string): string | null {
+    try {
+      return realpathSync(pool);
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return null;
+      throw err("WORKSPACE_UNAVAILABLE", `${what} ${pool} cannot be resolved for sandbox masking: ${(e as Error).message}`);
+    }
   }
 
   /** Failed startup keeps a terminal record (no ghost identity) and frees capacity. */
@@ -1369,7 +2290,12 @@ export class Supervisor implements GateHost {
         if (rt.worker === worker) this.onWorkerEvent(rt, event);
       });
     });
-    worker.setToolRequestHandler(async (payload) => this.onToolRequest(rt, worker, payload));
+    worker.setToolRequestHandler(async (payload, envelope) => this.onToolRequest(rt, worker, payload, envelope));
+    worker.setPrepareRequestHandler?.(async (payload, envelope) => this.onPrepareRequest(rt, worker, payload, envelope));
+    worker.setTicketReleaseHandler?.((payload, envelope) => this.onTicketRelease(rt, worker, payload, envelope));
+    // Narrow per-request provider admission: available during hold so it can
+    // return a denial (model inference itself is never exempt control).
+    worker.setProviderAdmissionRequestHandler?.(async (payload, envelope) => this.onProviderAdmission(rt, worker, payload, envelope));
     worker.setExitHandler((info) => {
       this.detached(() => this.onWorkerExit(rt, worker, info));
     });
@@ -1391,16 +2317,30 @@ export class Supervisor implements GateHost {
 
   /** The exact tool allowlist a child's worker registers (the supervisor re-checks every call). */
   private childTools(rt: AgentRuntime): string[] {
+    // Reviewers hold only read tools + gate decision (never external).
     if (this.gate.isReviewer(rt.record.id)) return [...FILE_TOOLS, GATE_DECISION_TOOL];
     const tools: string[] = [...FILE_TOOLS];
     if (rt.record.profile === "writer" && rt.record.allocation.writableRoot) tools.push(...WRITE_TOOLS);
     if (rt.record.grants.shell) tools.push(SHELL_TOOL);
     tools.push(...CHILD_CONTROL_TOOLS);
     if (rt.record.grants.nesting && rt.record.depth < rt.record.grants.maxDepth) tools.push(...DELEGATION_TOOLS);
+    // Host isolation only: sandbox never gains parent external capabilities.
+    // Intersected at exposure AND re-checked at execution (no silent widening).
+    if (rt.record.grants.isolation !== "sandbox") {
+      const current = new Set(this.governingExternalConcrete());
+      for (const name of rt.record.grants.externalTools ?? []) {
+        if (current.has(name) && !tools.includes(name)) tools.push(name);
+      }
+    }
     return tools;
   }
 
   private initPayload(rt: AgentRuntime, taskText: string | null, workdir: string): Record<string, unknown> {
+    const tools = this.childTools(rt);
+    // Preserved parent schemas/descriptions for external proxies (no generic catchall).
+    const externalDefs = this.externalDefinitions(
+      tools.filter((name) => (rt.record.grants.externalTools ?? []).includes(name)),
+    );
     return {
       taskText,
       profile: rt.record.profile,
@@ -1412,19 +2352,26 @@ export class Supervisor implements GateHost {
       workdir,
       readRoots: rt.record.allocation.readRoots,
       writable: rt.record.profile === "writer",
-      tools: this.childTools(rt),
+      tools,
       resultLimit: rt.record.resultLimit,
+      externalTools: externalDefs,
       restore: rt.pendingRestore,
     };
   }
 
   private workdirOf(rt: AgentRuntime): string {
-    return rt.record.allocation.workdir;
+    return this.effectiveAllocation(rt.record).workdir;
   }
 
   /** Launch the worker process and accept initial input (runnable lease held). */
   private async continueStartup(rt: AgentRuntime, taskText: string): Promise<void> {
     const record = rt.record;
+    // Effect-time admission gate: no new model inference while held
+    // (suspended/disposed, uncommitted billing, or retained faults).
+    // Throws into startupFailed: a visible failed terminal, never silent
+    // inference and never an unowned run.
+    const startupHold = this.admissionHoldError();
+    if (startupHold) throw startupHold;
     record.observed = "starting";
     let worker: WorkerPort;
     try {
@@ -1432,6 +2379,21 @@ export class Supervisor implements GateHost {
     } catch (e) {
       this.releaseRunnable(rt);
       throw e;
+    }
+    // Effect-time re-check AFTER the launch await: a public shutdown or
+    // recover that landed mid-launch holds the root now, so the worker
+    // must not be prompted. A pre-call guard cannot cover a future async
+    // send unconditionally; the boundary checked here is the actual
+    // initialize send below. Cleanup touches only what this startup owns
+    // (fresh worker, runnable lease); the queued task stays observable via
+    // startupFailed, never silently dropped and never reported successful.
+    const postLaunchHold = this.admissionHoldError();
+    if (postLaunchHold) {
+      this.releaseRunnable(rt);
+      rt.worker = null;
+      worker.kill();
+      record.residency = "unloaded";
+      throw postLaunchHold;
     }
     const init = this.initPayload(rt, taskText, this.workdirOf(rt));
     rt.pendingRestore = null;
@@ -1459,6 +2421,17 @@ export class Supervisor implements GateHost {
   // -- worker event intake -----------------------------------------------------
 
   private onWorkerEvent(rt: AgentRuntime, event: WorkerEvent): void {
+    // Late ORIGINAL-usage receipts bypass both the generation fence and
+    // the reviewer early-return below: they carry their own captured
+    // (agent, task, generation) identity, and losing them merely to a
+    // current-generation transition (or reviewer status) would silently
+    // drop recoverable billing. Ordinary and reviewer workers alike.
+    if (event.kind === "usage_late") {
+      const record = rt.record;
+      record.lastActivityAt = this.now();
+      this.intakeLateUsage(rt, event.detail as Record<string, unknown> | undefined);
+      return;
+    }
     const record = rt.record;
     if (event.executionGeneration !== null && event.executionGeneration !== record.executionGeneration) {
       return; // Fence stale generations.
@@ -1523,25 +2496,274 @@ export class Supervisor implements GateHost {
       // Effects of jobs still running at exit are unknown: cancel them and
       // keep the outcome uncertain rather than inventing success or failure.
       const cancelled = await this.broker.cancelJobs(rt.record.id);
+      const cancelledExt = await this.externalDispatcher.cancelJobs(rt.record.id);
+      this.purgePreparedTickets(rt.record.id);
+      const totalCancelled = cancelled.length + cancelledExt.length;
       // Known usage up to the last tool call, plus an unknown remainder.
-      this.finalizeGeneration(rt, cancelled.length > 0 ? "uncertain" : "failed", NO_FINAL_TEXT, why, { ...(rt.usageSnapshot ?? {}), unknown: true });
+      // Fence remaining external work now (durable uncertainty + scope
+      // retirement; control-quiescent afterwards, effects still unknown —
+      // a later task may proceed after terminal UNCERTAIN in host scope).
+      await this.externalDispatcher.fenceAgent(rt.record.id, "worker exited; effect unconfirmed");
+      this.finalizeGeneration(rt, totalCancelled > 0 ? "uncertain" : "failed", NO_FINAL_TEXT, why, { ...(rt.usageSnapshot ?? {}), unknown: true });
     }
     rt.record.detail = why;
     this.releaseResident(rt);
+  }
+
+  /** Drop prepared tickets for an agent (interrupt/close/exit/reload/shutdown). */
+  private purgePreparedTickets(agentId: AgentId): void {
+    for (const [id, ticket] of this.preparedTickets) {
+      if (ticket.agentId === agentId) this.preparedTickets.delete(id);
+    }
+  }
+
+  /**
+   * Preparation-only RPC: run the parent's prepareArguments + public schema
+   * validation WITHOUT executing, and mint a single-use ticket binding the
+   * prepared args to this caller/task/generation. Fenced exactly like
+   * execution (binding, instance, task/generation, interrupt, allowlist,
+   * live grants). Only successful preparations journal an intent
+   * (prepareOnly); denials/failures record nothing and mint nothing.
+   */
+  private async onPrepareRequest(
+    rt: AgentRuntime,
+    worker: WorkerPort,
+    payload: ToolPrepareRequest,
+    envelope?: { taskRunId?: string | null; executionGeneration?: number | null },
+  ): Promise<ToolPrepareResponse> {
+    const record = rt.record;
+    if (rt.worker !== worker || !rt.activeRun) return { ok: false, error: "STALE_INSTANCE: no admitted execution for this worker" };
+    if (!envelope || envelope.taskRunId == null || envelope.executionGeneration == null) {
+      return { ok: false, error: "STALE_GENERATION: preparation requires an authenticated task run and generation" };
+    }
+    if (envelope.taskRunId !== rt.activeRun.taskRunId || envelope.executionGeneration !== rt.activeRun.generation) {
+      return { ok: false, error: "STALE_GENERATION: task run superseded" };
+    }
+    if (rt.activeRun.interruptRequested) return { ok: false, error: "NOT_RUNNING: the generation is being interrupted" };
+    if (!this.childTools(rt).includes(payload.tool)) {
+      return { ok: false, error: `POLICY_DENIED: tool ${payload.tool} is not available to this agent` };
+    }
+    if (this.gate.isReviewer(record.id)) {
+      return { ok: false, error: `POLICY_DENIED: tool ${payload.tool} is not available to a reviewer` };
+    }
+    if (record.grants.isolation === "sandbox") {
+      return { ok: false, error: `POLICY_DENIED: tool ${payload.tool} unavailable in sandbox isolation` };
+    }
+    const live = this.authorizeExternalLive(record.id, payload.tool, { taskRunId: rt.activeRun.taskRunId, generation: rt.activeRun.generation });
+    if (!live.ok) return { ok: false, error: `${live.code}: ${live.message}` };
+    const registry = this.opts.governingRegistry?.() ?? null;
+    const parent = registry?.isActive() === true ? registry.getHandle(payload.tool) : undefined;
+    if (!parent) return { ok: false, error: `POLICY_DENIED: tool ${payload.tool} unavailable in the governing session` };
+    if (typeof payload.args !== "object" || payload.args === null || Array.isArray(payload.args)) {
+      return { ok: false, error: "INVALID: tool args must be an object" };
+    }
+    // Admitted references captured BEFORE any preparation: a same-object
+    // in-place execute/prepare swap during preparation must deny, while a
+    // fresh stable SDK wrapper clone (same underlying refs + metadata/schema)
+    // still mints normally. Re-authorized immediately before effects
+    // (ticket verification + dispatcher wrapLive); never trust an arbitrary
+    // fifth ctx or a post-preparation refetch alone.
+    const admittedExecute = (parent as { execute?: unknown }).execute;
+    const admittedPrepare = (parent as { prepareArguments?: unknown }).prepareArguments;
+    let admittedParamsJson: string | null = null;
+    try {
+      admittedParamsJson = JSON.stringify(parent.parameters ?? null);
+    } catch {
+      return { ok: false, error: `POLICY_DENIED: tool ${parent.name} schema not serializable` };
+    }
+    const admittedDescription = parent.description;
+    // Parent preparation (may be sync or async, may throw) then PUBLIC schema
+    // validation — the same order the agent loop applies. Nothing executes
+    // here. Validation RETURNS the normalized clone (coercions/optional-null
+    // normalization applied); the ticket caches/sends that actual validated
+    // value, never the raw original, with the MODEL schema intact.
+    // Parent preparation is sync (public prepareArguments contract) then
+    // PUBLIC schema validation — the same order the agent loop applies.
+    // Validation RETURNS the normalized clone; the ticket caches/sends that
+    // actual validated value with the MODEL schema intact (native parity:
+    // {n:'3'}->{n:3}, {n:null}->{n:0} for required number; oneOf/anyOf
+    // entirely via the public validator, no DIY parsing). Nothing executes.
+    let prepared: unknown;
+    try {
+      prepared = parent.prepareArguments !== undefined ? parent.prepareArguments(payload.args) : payload.args;
+    } catch (e) {
+      return { ok: false, error: `INVALID: preparation failed: ${(e as Error).message}` };
+    }
+    try {
+      const validated = validateToolArguments(
+        { name: parent.name, description: parent.description, parameters: parent.parameters } as unknown as AiTool,
+        { type: "toolCall", id: `prepare:${payload.toolCallId}`, name: parent.name, arguments: prepared } as unknown as AiToolCall,
+      );
+      prepared = validated;
+    } catch (e) {
+      return { ok: false, error: `INVALID: ${(e as Error).message}` };
+    }
+    // A prepared value that cannot cross the worker IPC channel must fail
+    // HERE, visibly, before minting: the worker would reject the oversize
+    // response without ever learning the ticket id, orphaning a full
+    // args/refs entry no release can reference. No ticket, no intent.
+    let preparedJson: string;
+    try {
+      preparedJson = JSON.stringify(prepared ?? {});
+    } catch {
+      return { ok: false, error: `INVALID: prepared arguments not serializable` };
+    }
+    if (Buffer.byteLength(preparedJson, "utf8") > MAX_PAYLOAD_BYTES - PREPARE_RESPONSE_HEADROOM_BYTES) {
+      return { ok: false, error: `PAYLOAD_TOO_LARGE: prepared arguments exceed ${MAX_PAYLOAD_BYTES - PREPARE_RESPONSE_HEADROOM_BYTES} bytes; split the content into smaller writes/edits` };
+    }
+    // Re-resolve before minting and always compare underlying refs +
+    // metadata/schema regardless of object identity: a preparation blocked
+    // (or slow) across a revocation must not mint against a stale handle.
+    const current = registry !== null && registry.isActive() ? registry.getHandle(parent.name) : undefined;
+    if (
+      !current ||
+      (current as { execute?: unknown }).execute !== admittedExecute ||
+      (current as { prepareArguments?: unknown }).prepareArguments !== admittedPrepare ||
+      current.description !== admittedDescription
+    ) {
+      return { ok: false, error: `POLICY_DENIED: tool ${parent.name} implementation changed during preparation` };
+    }
+    let currentParamsJson: string | null = null;
+    try {
+      currentParamsJson = JSON.stringify(current.parameters ?? null);
+    } catch {
+      return { ok: false, error: `POLICY_DENIED: tool ${parent.name} schema not serializable` };
+    }
+    if (currentParamsJson !== admittedParamsJson) {
+      return { ok: false, error: `POLICY_DENIED: tool ${parent.name} schema changed during preparation` };
+    }
+    const ticket = randomUUID();
+    this.preparedTickets.set(ticket, {
+      ticket,
+      agentId: record.id,
+      tool: parent.name,
+      preparedArgs: (prepared ?? {}) as Record<string, unknown>,
+      taskRunId: rt.activeRun.taskRunId,
+      generation: rt.activeRun.generation,
+      executeRef: admittedExecute,
+      prepareRef: admittedPrepare,
+      paramsJson: admittedParamsJson,
+      description: admittedDescription,
+    });
+    this.store.append("tool.intent", {
+      operationId: ticket,
+      agentId: record.id,
+      taskRunId: rt.activeRun.taskRunId,
+      generation: rt.activeRun.generation,
+      tool: parent.name,
+      external: true,
+      prepareOnly: true,
+      parentOperationId: null,
+    });
+    return { ok: true, ticket, preparedArgs: (prepared ?? {}) as Record<string, unknown> };
+  }
+
+  /** Best-effort release of unconsumed prepared tickets. Never throws. */
+  private onTicketRelease(
+    rt: AgentRuntime,
+    worker: WorkerPort,
+    payload: { tickets: string[] },
+    _envelope?: { taskRunId?: string | null; executionGeneration?: number | null },
+  ): void {
+    if (rt.worker !== worker) return;
+    for (const id of payload.tickets) {
+      const ticket = this.preparedTickets.get(id);
+      if (ticket && ticket.agentId === rt.record.id) this.preparedTickets.delete(id);
+    }
+  }
+
+  /**
+   * Narrow per-request provider admission (fail-closed permission query).
+   * Authoritative execution-time hold check: root debt/suspended/disposed/
+   * retained-fault semantics match existing admissionHoldError (a bare
+   * needsRecovery boolean alone is never authorization). Fences: channel
+   * worker instance, live owner/current run, envelope task/generation,
+   * operative selected original model identity (exact physical provider/id;
+   * thinking level must match the admitted record — SDK normalization
+   * applies after the route returns, never as substitution here).
+   * Forged/stale/cross-task requests denied visibly. Available during hold
+   * so it can return a denial; model inference itself is never exempt.
+   * Denial surfaces as a visible typed SDK routing error (task failure);
+   * retry/new prompt requires genuine successful recovery (no transparent
+   * parking, no auto-resume on healed storage, nothing swallowed).
+   */
+  private async onProviderAdmission(
+    rt: AgentRuntime,
+    worker: WorkerPort,
+    payload: ProviderAdmissionPayload,
+    envelope: IpcEnvelope,
+  ): Promise<ProviderAdmissionResponse> {
+    const record = rt.record;
+    if (rt.worker !== worker || !rt.activeRun) {
+      return { ok: false, code: "STALE_INSTANCE", error: "STALE_INSTANCE: no admitted execution for this worker" };
+    }
+    const envTask: unknown = (envelope as { taskRunId?: unknown } | null | undefined)?.taskRunId;
+    const envGen: unknown = (envelope as { executionGeneration?: unknown } | null | undefined)?.executionGeneration;
+    if (typeof envTask !== "string" || envTask.length === 0) {
+      return { ok: false, code: "INVALID", error: "INVALID: provider admission requires a nonempty taskRunId" };
+    }
+    if (typeof envGen !== "number" || !Number.isInteger(envGen) || envGen < 0) {
+      return { ok: false, code: "INVALID", error: "INVALID: provider admission requires a nonneg integer executionGeneration" };
+    }
+    if (rt.activeRun.taskRunId !== envTask) {
+      return { ok: false, code: "STALE_GENERATION", error: "STALE_GENERATION: task run superseded" };
+    }
+    if (rt.activeRun.generation !== envGen) {
+      return { ok: false, code: "STALE_GENERATION", error: "STALE_GENERATION: execution generation superseded" };
+    }
+    if (rt.activeRun.interruptRequested) {
+      return { ok: false, code: "NOT_RUNNING", error: "NOT_RUNNING: the generation is being interrupted" };
+    }
+    if (record.desiredLifecycle === "closed") {
+      return { ok: false, code: "CLOSED", error: "CLOSED: agent is closed" };
+    }
+    if (!record.model) {
+      return { ok: false, code: "NOT_FOUND", error: "NOT_FOUND: agent has no admitted model" };
+    }
+    // Operative selected original model identity: exact physical provider/id;
+    // thinking level must match the admitted record (SDK clamps after route).
+    if (payload.provider !== record.model.provider || payload.modelId !== record.model.id) {
+      return { ok: false, code: "POLICY_DENIED", error: `POLICY_DENIED: provider model ${payload.provider}/${payload.modelId} is not the admitted ${record.model.provider}/${record.model.id}` };
+    }
+    const admittedThinking = record.model.thinkingLevel ?? "off";
+    if (payload.thinkingLevel !== admittedThinking) {
+      return { ok: false, code: "POLICY_DENIED", error: `POLICY_DENIED: thinking level ${payload.thinkingLevel} is not the admitted ${admittedThinking}` };
+    }
+    // Authoritative execution-time hold (same contract as NEW-task/check/native).
+    const hold = this.admissionHoldError();
+    if (hold) {
+      return { ok: false, code: String((hold as { code?: unknown }).code ?? "RECOVERY_OWNER_UNCONFIRMED"), error: `${String((hold as { code?: unknown }).code ?? "RECOVERY_OWNER_UNCONFIRMED")}: ${String((hold as Error).message).replace(/^[A-Z_]+: /, "")}` };
+    }
+    return { ok: true };
   }
 
   private async onToolRequest(
     rt: AgentRuntime,
     worker: WorkerPort,
     payload: ToolRequest,
-  ): Promise<{ content: string; isError: boolean }> {
+    envelope?: { taskRunId?: string | null; executionGeneration?: number | null },
+  ): Promise<ToolResponse> {
     const record = rt.record;
+    // Fencing: current binding, worker instance, taskRunId/generation,
+    // interrupt state. A parent's spawn return is NOT inactivity.
     if (rt.worker !== worker || !rt.activeRun) return { content: "STALE_INSTANCE: no admitted execution for this worker", isError: true };
+    if (envelope?.taskRunId != null && rt.activeRun.taskRunId !== envelope.taskRunId) {
+      return { content: "STALE_GENERATION: task run superseded", isError: true };
+    }
+    if (envelope?.executionGeneration != null && rt.activeRun.generation !== envelope.executionGeneration) {
+      return { content: "STALE_GENERATION: execution generation superseded", isError: true };
+    }
     if (rt.activeRun.interruptRequested) return { content: "NOT_RUNNING: the generation is being interrupted", isError: true };
     if (payload.usage) rt.usageSnapshot = payload.usage;
     // Supervisor-side allowlist: the worker's registry is never trusted.
+    // Re-checked at execution (not just exposure) with current root-concrete.
     if (!this.childTools(rt).includes(payload.tool)) {
       return { content: `POLICY_DENIED: tool ${payload.tool} is not available to this agent`, isError: true };
+    }
+    // Reviewers never receive external tools (defense in depth: exposure
+    // already strips them, but a wildcard must not bypass here).
+    if (this.gate.isReviewer(record.id) && !(FILE_TOOLS as readonly string[]).includes(payload.tool) && payload.tool !== GATE_DECISION_TOOL) {
+      return { content: `POLICY_DENIED: tool ${payload.tool} is not available to a reviewer`, isError: true };
     }
     try {
       if (payload.tool === GATE_DECISION_TOOL) {
@@ -1552,12 +2774,92 @@ export class Supervisor implements GateHost {
         return { content: boundedText(JSON.stringify(await this.childControl(rt, payload.tool, payload.args, payload.toolCallId))), isError: false };
       }
       const caller = this.brokerCaller(rt);
-      const result = await this.broker.execute(caller, { tool: payload.tool, args: payload.args });
-      const text = result.timedOut
-        ? `tool timed out${result.stdout ? `\n${result.stdout.slice(0, 4000)}` : ""}`
-        : `${result.stdout}${result.stderr ? `\n[stderr]\n${result.stderr.slice(0, 2000)}` : ""}${result.truncated ? "\n[output truncated by the sandbox]" : ""}`;
-      const exit = result.exitCode !== 0 ? `\n[exit ${result.exitCode ?? result.signal}]` : "";
-      return { content: `${boundedText(text)}${exit}`, isError: result.exitCode !== 0 || result.timedOut };
+      // Native file/shell route (existing broker, child workdir/isolation).
+      // Global pause: no NEW native effects while suspended/disposed or
+      // while fault receipts await delivery (the broker journals intents on
+      // entry, so the denial precedes it). Control, gate-decision, cancel,
+      // fence, and reconcile routes above and elsewhere never pass here.
+      if (this.suspended || this.disposed) {
+        return { content: "NOT_RUNNING: root suspended: no new admissions during recovery/shutdown", isError: true };
+      }
+      if (this.toolBroker.hasPendingReceipts()) {
+        return { content: "STORE_FAILED: journal holds uncommitted fault receipts; explicit recovery required", isError: true };
+      }
+      // Known-billing hold (attach catch-up or failed external usage
+      // commit): no NEW native effects until explicit reconciliation.
+      const billingHold = this.admissionHoldError();
+      if (billingHold) return { content: `${billingHold.code}: ${billingHold.message}`, isError: true };
+      if (([...FILE_TOOLS, ...WRITE_TOOLS, SHELL_TOOL] as readonly string[]).includes(payload.tool)) {
+        const result = await this.broker.execute(caller, { tool: payload.tool, args: payload.args });
+        const text = result.timedOut
+          ? `tool timed out${result.stdout ? `\n${result.stdout.slice(0, 4000)}` : ""}`
+          : `${result.stdout}${result.stderr ? `\n[stderr]\n${result.stderr.slice(0, 2000)}` : ""}${result.truncated ? "\n[output truncated by the sandbox]" : ""}`;
+        const exit = result.exitCode !== 0 ? `\n[exit ${result.exitCode ?? result.signal}]` : "";
+        return { content: `${boundedText(text)}${exit}`, isError: result.exitCode !== 0 || result.timedOut };
+      }
+      // Generic external route: fail closed without an authenticated
+      // envelope, then live re-authorization (current binding/identity/
+      // grants/scope) inside the dispatcher. Sandbox/reviewers never pass.
+      if (!envelope || envelope.taskRunId === null || envelope.taskRunId === undefined || envelope.executionGeneration === null || envelope.executionGeneration === undefined) {
+        return { content: "STALE_GENERATION: external calls require an authenticated task run and generation", isError: true };
+      }
+      if (envelope.taskRunId !== rt.activeRun.taskRunId || envelope.executionGeneration !== rt.activeRun.generation) {
+        return { content: "STALE_GENERATION: task run superseded", isError: true };
+      }
+      // Prepared-ticket verification: a ticket binds prepared args to this
+      // exact caller/task/generation and is single-use. Verification consumes
+      // it; any mismatch denies without effect. Calls without a ticket keep
+      // the legacy path (prepare runs at execution via the dispatcher).
+      let skipPrepare = false;
+      if (payload.ticket !== undefined) {
+        const ticket = typeof payload.ticket === "string" ? this.preparedTickets.get(payload.ticket) : undefined;
+        // Consume-attempt-once: a failed verification still burns the ticket
+        // so it cannot be probed or replayed.
+        if (ticket) this.preparedTickets.delete(ticket.ticket);
+        const registryNow = this.opts.governingRegistry?.() ?? null;
+        const currentNow = registryNow !== null && registryNow.isActive() ? registryNow.getHandle(payload.tool) : undefined;
+        let paramsJsonNow: string | null = null;
+        try {
+          paramsJsonNow = JSON.stringify((currentNow as { parameters?: unknown } | undefined)?.parameters ?? null);
+        } catch {
+          paramsJsonNow = null;
+        }
+        if (
+          !ticket ||
+          !currentNow ||
+          ticket.agentId !== record.id ||
+          ticket.tool !== payload.tool ||
+          ticket.taskRunId !== rt.activeRun.taskRunId ||
+          ticket.generation !== rt.activeRun.generation ||
+          ticket.executeRef !== (currentNow as { execute?: unknown }).execute ||
+          ticket.prepareRef !== (currentNow as { prepareArguments?: unknown }).prepareArguments ||
+          ticket.paramsJson !== paramsJsonNow ||
+          ticket.description !== (currentNow as { description?: unknown }).description ||
+          JSON.stringify(ticket.preparedArgs ?? {}) !== JSON.stringify(payload.args ?? {})
+        ) {
+          return { content: "POLICY_DENIED: prepared ticket invalid, stale, mismatched, or rebound", isError: true };
+        }
+        skipPrepare = true;
+      }
+      const ext = await this.externalDispatcher.execute(caller, { tool: payload.tool, args: payload.args, skipPrepare });
+      // Exactly-once accounting keyed by invocation, attributed to the
+      // immutable originating task/generation (late completions during a new
+      // task never misattribute). Model-generation totals stay separate:
+      // the worker no longer folds external usage into gen.usage.
+      // Dedupe on committed accounting (a usage.reported record), keyed by
+      // invocation: an early-cancelled return carries no usage and must NOT
+      // mark the op accounted, or late billing would be swallowed.
+      // Accounting arrives via the dispatcher's per-op onUsage hook (normal
+      // and late completions alike) under the originating identity; nothing
+      // is accounted on return here, so an early-cancelled return (no usage)
+      // can never swallow late billing.
+      return {
+        content: ext.content as Array<Record<string, unknown>>,
+        details: ext.details,
+        structuredContent: ext.structuredContent,
+        usage: ext.usage,
+        isError: ext.isError,
+      };
     } catch (e) {
       const code = (e as { code?: string }).code ?? "INVALID";
       return { content: `${code}: ${(e as Error).message.replace(/^[A-Z_]+: /, "")}`, isError: true };
@@ -1618,6 +2920,7 @@ export class Supervisor implements GateHost {
    */
   private async childWait(rt: AgentRuntime, args: Record<string, unknown>): Promise<WaitResult> {
     this.broker.assertQuiescent(rt.record.id);
+    this.externalDispatcher.assertQuiescent(rt.record.id);
     const targets = Array.isArray(args["targets"]) ? (args["targets"] as Array<{ agentId: string; taskRunId: string | null }>) : null;
     const condition = (typeof args["condition"] === "string" ? args["condition"] : "activity") as WaitCondition;
     const pending = this.wait(rt.record.id, typeof args["cursor"] === "number" ? args["cursor"] : 0, typeof args["timeout_ms"] === "number" ? args["timeout_ms"] : WAIT_DEFAULT_MS, targets, condition);
@@ -1685,9 +2988,17 @@ export class Supervisor implements GateHost {
     const run = rt.activeRun;
     if (!run) return; // Duplicate terminal outcome: ignore (exactly-once).
     const retained = this.retainText(rt, run, final);
-    const outcome: TaskOutcome = run.interruptRequested && status !== "uncertain"
-      ? "interrupted"
-      : status === "succeeded" || status === "interrupted" || status === "uncertain" ? status : "failed";
+    // Fence unconfirmed external effects first: a run settling while
+    // abort-ignoring tools are still tracked ends uncertain (durable
+    // uncertainty + scope retirement; terminal UNCERTAIN does not by itself
+    // prohibit a later task — control-quiescent is distinct from
+    // effects-stopped, with late billing preserved).
+    const fenced = this.externalDispatcher.fenceAgentNow(record.id, "generation settled with unconfirmed external effects");
+    const outcome: TaskOutcome = fenced.length > 0 || status === "uncertain"
+      ? "uncertain"
+      : run.interruptRequested
+        ? "interrupted"
+        : status === "succeeded" || status === "interrupted" ? status : "failed";
     const accounted = this.accountUsage(rt, usage ?? { unknown: true });
     this.publish("usage.reported", { agentId: record.id, taskRunId: run.taskRunId, generation: run.generation, ...accounted });
     record.observed = "settled";
@@ -1699,6 +3010,12 @@ export class Supervisor implements GateHost {
       record.taskPhase = "candidate_recording";
     }
     rt.activeRun = null;
+    // Prepared tickets die with their generation: single-use tickets bound
+    // to this taskRunId+generation can never be consumed afterwards, and a
+    // worker that never learned an id (oversize/expired response) cannot
+    // release it. Purging here bounds the map without any worker-knows-ticket
+    // assumption (interrupt/shutdown/exit/reload/recover already purge).
+    this.purgePreparedTickets(record.id);
     rt.lastText = { taskRunId: run.taskRunId, ...retained };
     rt.usageSnapshot = null;
     this.publish("generation.settled", {
@@ -1773,6 +3090,144 @@ export class Supervisor implements GateHost {
       }
       parentId = parent.record.parentId;
     }
+  }
+
+  /**
+   * Consume one invocation-identified late ORIGINAL-usage receipt under
+   * its captured identity, for ordinary and reviewer workers alike.
+   * Discipline mirrors external billing commits: persist (durable
+   * usage.reported with an explicit late marker) BEFORE live accounting
+   * and notification, dedupe on committed records, retain failed commits
+   * for recovery with a debt hold. Worker-side set-dedup guarantees the
+   * settled snapshot and the late receipt never bill the same message.
+   * The immutable per-invocation receiptId (not the generation triple)
+   * identifies the receipt end to end: two distinct late results in one
+   * generation carry distinct IDs and bill independently, duplicate
+   * deliveries share one ID and bill once, and retained obligations keep
+   * their own payloads across failure and retry.
+   */
+  private intakeLateUsage(rt: AgentRuntime, detail: Record<string, unknown> | undefined): void {
+    const usage = detail?.["usage"];
+    const lateAgentId = detail?.["agentId"];
+    const lateTaskRunId = detail?.["taskRunId"];
+    const lateGeneration = detail?.["generation"];
+    const receiptId = detail?.["receiptId"];
+    if (typeof usage !== "object" || usage === null || typeof lateAgentId !== "string" || typeof lateTaskRunId !== "string" || typeof lateGeneration !== "number" || typeof receiptId !== "string" || receiptId.length === 0) {
+      throw err("INVALID", `malformed late usage receipt: ${JSON.stringify(detail ?? null).slice(0, 160)}`);
+    }
+    this.commitLateReceipt(rt, { agentId: lateAgentId, taskRunId: lateTaskRunId, generation: lateGeneration, receiptId, usage: usage as UsageDetail }, true);
+  }
+
+  /** Pure normalization for late receipts (mirrors accountUsage defaults
+   * without side effects, so the durable commit precedes live mutation). */
+  private normalizeLateUsage(usage: UsageDetail): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean } {
+    return {
+      input: usage.input ?? 0,
+      output: usage.output ?? 0,
+      cacheRead: usage.cacheRead ?? 0,
+      cacheWrite: usage.cacheWrite ?? 0,
+      reasoning: typeof usage.reasoning === "number" ? usage.reasoning : null,
+      cost: typeof usage.cost === "number" ? usage.cost : null,
+      unknown: usage.unknown === true,
+    };
+  }
+
+  /** True when the durable ledger already holds this receipt ID (journal
+   * scan; rare path only, never hot). Receipt identity — not the
+   * generation triple — decides duplicates, so two distinct late results
+   * in one generation never mask each other. */
+  private hasCommittedLateReceipt(receiptId: string): boolean {
+    const { records } = this.store.readSince(0, Number.MAX_SAFE_INTEGER);
+    return records.some((r) => {
+      if (r.kind !== "usage.reported") return false;
+      const b = r.body as Record<string, unknown>;
+      return b["late"] === true && b["receiptId"] === receiptId;
+    });
+  }
+
+  /**
+   * Rebuild memory-only late obligations from durable outbox records:
+   * usage_late.pending entries WITHOUT a matching committed
+   * usage.reported (by receipt ID) are still owed. Runs at fresh attach
+   * (post-restart) and at recover start (fresh records), so a restart
+   * after a failed commit restores both the payloads and the debt hold.
+   * Pure read plus memory fill; never throws past a readable journal.
+   */
+  private rebuildLateObligations(records: JournalRecord[]): void {
+    const committed = new Set<string>();
+    for (const r of records) {
+      if (r.kind !== "usage.reported") continue;
+      const id = (r.body as Record<string, unknown>)["receiptId"];
+      if (typeof id === "string") committed.add(id);
+    }
+    for (const r of records) {
+      if (r.kind !== "usage_late.pending") continue;
+      const b = r.body as Record<string, unknown>;
+      const receiptId = b["receiptId"];
+      const agentId = b["agentId"];
+      const taskRunId = b["taskRunId"];
+      const generation = b["generation"];
+      const usage = b["usage"];
+      if (typeof receiptId !== "string" || receiptId.length === 0) continue;
+      if (committed.has(receiptId)) continue;
+      if (typeof agentId !== "string" || typeof taskRunId !== "string" || typeof generation !== "number") continue;
+      if (typeof usage !== "object" || usage === null) continue;
+      if (!this.pendingLateBilling.has(receiptId)) {
+        this.pendingLateBilling.set(receiptId, { agentId, taskRunId, generation, receiptId, usage: usage as UsageDetail });
+      }
+    }
+  }
+
+  /**
+   * Commit one late receipt: dedupe, persist, then account live, clear any
+   * retained retry, and notify. Returns true on commit. A persistence fault
+   * retains the payload for recovery (debt hold) and stays observable;
+   * live totals are untouched until the commit succeeds. A PUBLIC observer
+   * exception after the commit never strands debt: counters already
+   * cleared, only the notification fault stays observable.
+   */
+  private commitLateReceipt(rt: AgentRuntime | null, info: { agentId: string; taskRunId: string; generation: number; receiptId: string; usage: UsageDetail }, notify: boolean): boolean {
+    if (this.hasCommittedLateReceipt(info.receiptId)) {
+      this.pendingLateBilling.delete(info.receiptId);
+      return true;
+    }
+    const accounted = this.normalizeLateUsage(info.usage);
+    // Durable outbox first: this record is the cross-restart obligation.
+    // A committed usage.reported for the same receipt ID implicitly
+    // acknowledges it (dedupe above skips both); outbox twins never bill.
+    try {
+      this.store.append("usage_late.pending", { agentId: info.agentId, taskRunId: info.taskRunId, generation: info.generation, receiptId: info.receiptId, usage: info.usage });
+    } catch (e) {
+      // Store fully unavailable: memory-only retention (current-instance
+      // hold) is all that remains; same residual as every journal write.
+      this.pendingLateBilling.set(info.receiptId, { agentId: info.agentId, taskRunId: info.taskRunId, generation: info.generation, receiptId: info.receiptId, usage: info.usage });
+      this.reportFailure(e);
+      return false;
+    }
+    const body = { agentId: info.agentId, taskRunId: info.taskRunId, generation: info.generation, receiptId: info.receiptId, ...accounted, late: true };
+    try {
+      this.store.append("usage.reported", body);
+    } catch (e) {
+      // Genuine pre-append persistence failure: retain the full payload
+      // under its own receipt ID for recovery retry and hold admission
+      // (no fail-open billing against the debt). Distinct invocations keep
+      // distinct payloads — a sibling failure never overwrites this one.
+      // Counters stay untouched.
+      this.pendingLateBilling.set(info.receiptId, { agentId: info.agentId, taskRunId: info.taskRunId, generation: info.generation, receiptId: info.receiptId, usage: info.usage });
+      this.reportFailure(e);
+      return false;
+    }
+    this.accountUsage(rt, info.usage);
+    this.pendingLateBilling.delete(info.receiptId);
+    if (notify) {
+      try {
+        this.evaluateWaiters();
+        this.opts.onChange?.();
+      } catch (e) {
+        this.reportFailure(e);
+      }
+    }
+    return true;
   }
 
   private accountUsage(rt: AgentRuntime | null, usage: UsageDetail): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean } {
@@ -1858,6 +3313,9 @@ export class Supervisor implements GateHost {
   /** Dispatch the next queued task to a loaded idle worker (runnable lease required). */
   private pumpQueue(rt: AgentRuntime): void {
     if (rt.activeRun || rt.held || rt.record.desiredLifecycle === "closed" || rt.quarantined || this.isPhaseLocked(rt)) return;
+    // Admission hold (billing uncommitted, retained faults, or
+    // suspend/dispose): queued work waits; nothing dispatches.
+    if (this.admissionHoldError() !== null) return;
     if (this.pendingLost.has(rt.record.id) || rt.parkedStartup !== null) return;
     const next = rt.queue.find((q) => !q.dispatched);
     if (!next) return;
@@ -1917,12 +3375,33 @@ export class Supervisor implements GateHost {
   /** Send a task/repair to the worker; a rejected or failed delivery settles the run. */
   private deliverRun(rt: AgentRuntime, run: ActiveRun, payload: { mode: "task" | "repair"; text: string; messageId?: string }): void {
     const worker = rt.worker!;
+    // Effect-time admission gate: a task admitted to the queue before the
+    // hold must still not prompt inference while held; it settles failed
+    // with the hold reason instead.
+    const deliverHold = this.admissionHoldError();
     void (async () => {
+      if (deliverHold !== null) {
+        const heldFailure: string = `${deliverHold.code}: ${deliverHold.message}`;
+        this.detached(() => {
+          if (rt.activeRun !== run) return;
+          if (rt.record.observed === "starting") rt.record.observed = "running";
+          this.finalizeGeneration(rt, "failed", NO_FINAL_TEXT, heldFailure, { unknown: false });
+        });
+        return;
+      }
       let failure: string | null = null;
       try {
         await rt.checkpointing;
-        const res = (await worker.request("deliver", payload, { taskRunId: run.taskRunId, generation: run.generation })) as { ok?: boolean; code?: string; message?: string } | null;
-        if (!res || res.ok !== true) failure = `delivery rejected: ${res?.code ?? "INVALID"}: ${res?.message ?? "no response"}`;
+        // Effect-time re-check AFTER the checkpoint await: a broker commit
+        // fault (or any hold) that landed while parked must still deny the
+        // prompt. Same visible failure shape as the entry-time denial.
+        const postCheckpointHold = this.admissionHoldError();
+        if (postCheckpointHold !== null) {
+          failure = `${postCheckpointHold.code}: ${postCheckpointHold.message}`;
+        } else {
+          const res = (await worker.request("deliver", payload, { taskRunId: run.taskRunId, generation: run.generation })) as { ok?: boolean; code?: string; message?: string } | null;
+          if (!res || res.ok !== true) failure = `delivery rejected: ${res?.code ?? "INVALID"}: ${res?.message ?? "no response"}`;
+        }
       } catch (e) {
         failure = `delivery failed: ${(e as Error).message}`;
       }
@@ -2032,9 +3511,15 @@ export class Supervisor implements GateHost {
         rt.queue.push(queued);
         rt.record.pendingTaskIds.push(queued.id);
         this.publish("task.queued", { id: queued.id, agentId: to, messageId, text, replaces: null });
-        // An explicit new task resumes an agent recovery held.
+        // An explicit new task resumes an agent recovery held — unless
+        // admission itself is held (billing uncommitted, retained faults,
+        // or suspend/dispose): the task queues with a held detail and
+        // nothing dispatches until explicit recovery.
         rt.held = false;
-        if (rt.activeRun || rt.parkedStartup !== null || this.isPhaseLocked(rt)) {
+        const taskHold = this.admissionHoldError();
+        if (taskHold !== null) {
+          rt.record.detail = `task queued: ${taskHold.message}`;
+        } else if (rt.activeRun || rt.parkedStartup !== null || this.isPhaseLocked(rt)) {
           rt.record.detail = "task queued behind the unfinished run";
         } else if (rt.worker) {
           this.pumpQueue(rt);
@@ -2488,6 +3973,8 @@ export class Supervisor implements GateHost {
       this.settleTaskTerminal(rt, record.currentTaskRunId, "interrupted", "interrupted before repair dispatch");
     }
     await this.broker.cancelJobs(record.id);
+    await this.externalDispatcher.cancelJobs(record.id);
+    this.purgePreparedTickets(record.id);
     if (rt.worker && rt.activeRun) {
       try {
         await rt.worker.request("interrupt", {}, { taskRunId: rt.activeRun.taskRunId, generation: rt.activeRun.generation, timeoutMs: INTERRUPT_TIMEOUT_MS });
@@ -2546,16 +4033,21 @@ export class Supervisor implements GateHost {
     return out;
   }
 
-  /** Confirm stopped state: no active runs and no owned jobs. */
+  /** Confirm stopped state: no active runs and no owned jobs (native or external). */
   private async awaitIdle(members: AgentRuntime[], timeoutMs: number): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (!members.some((rt) => rt.activeRun !== null || this.broker.activeJobs(rt.record.id).length > 0)) return;
+      if (!members.some((rt) => rt.activeRun !== null || this.broker.activeJobs(rt.record.id).length > 0 || this.externalDispatcher.activeJobs(rt.record.id).length > 0)) return;
       await new Promise((r) => setTimeout(r, IDLE_POLL_MS));
+    }
+    // Fence leftovers so close never retires unconfirmed effects as clean.
+    for (const rt of members) {
+      await this.externalDispatcher.fenceAgent(rt.record.id, "close join timed out; effect unconfirmed");
     }
   }
 
   private retire(rt: AgentRuntime): void {
+    this.purgePreparedTickets(rt.record.id);
     rt.record.desiredLifecycle = "closed";
     rt.pendingReview = null;
     rt.pendingRepair = null;
@@ -2599,12 +4091,13 @@ export class Supervisor implements GateHost {
    * entries. Work is dispatched separately (task or repair).
    */
   private async reloadAgent(rt: AgentRuntime): Promise<void> {
+    this.purgePreparedTickets(rt.record.id);
     if (rt.record.desiredLifecycle === "closed") throw err("CLOSED", "closed agents cannot be resumed");
     if (rt.worker) return;
     if (rt.quarantined) throw err("RECOVERY_OWNER_UNCONFIRMED", rt.quarantined);
     if (this.pendingLost.has(rt.record.id)) throw err("RECOVERY_OWNER_UNCONFIRMED", "an unfinished run awaits recovery reconciliation");
     const parent = rt.record.parentId ? this.agents.get(rt.record.parentId) : undefined;
-    const ownerGrants = parent ? parent.record.grants : rootGrants(this.policy);
+    const ownerGrants = parent ? parent.record.grants : rootGrants(this.policy, this.governingExternalConcrete());
     const granted = intersectGrants(this.policy, ownerGrants, {
       profile: rt.record.profile,
       isolation: rt.record.grants.isolation,
@@ -2615,8 +4108,19 @@ export class Supervisor implements GateHost {
       // not inherited sessions. Unavailable models fail at worker launch.
       model: null,
       depth: rt.record.depth,
-    });
+    }, this.governingExternalConcrete());
     if (!granted.ok) throw granted.error;
+    // Reload never widens external authority beyond the admitted grant.
+    const previousExternal = rt.record.grants.externalTools ?? [];
+    granted.grants.externalTools = granted.grants.externalTools.filter((tool) => previousExternal.includes(tool));
+    // Durable narrowing BEFORE live mutation: a restart replaying this
+    // journal must reconstruct the narrowed set, never revive the original
+    // spawned grants. The append precedes the assignment, so a persistence
+    // fault fails the reload visibly instead of leaving memory-only
+    // authority. Unchanged grants journal nothing (no log spam).
+    if (JSON.stringify(granted.grants) !== JSON.stringify(rt.record.grants)) {
+      this.publish("agent.grants", { agentId: rt.record.id, grants: granted.grants, policyRevision: this.policy.revision, reason: "reload-narrow" });
+    }
     rt.record.grants = granted.grants;
     rt.record.policyRevision = this.policy.revision;
     if (rt.record.allocation.external) this.assertPreparedWorkspace(rt.record.allocation);
@@ -2683,6 +4187,101 @@ export class Supervisor implements GateHost {
     }
   }
 
+  /**
+   * Catch-up accounting over a FRESH journal read: external outcomes and
+   * late receipts carrying own usage without a committed usage.reported
+   * are accounted once here under their originating identity. Runs at the
+   * END of recover (after reconciliation awaits, so receipts that settled
+   * after the opening snapshot are included) and at fresh attach (so known
+   * durable receipts never require a manual second recover). Dedupe keys on
+   * committed usage.reported records only — never on outcome existence — so
+   * a fault in this window cannot zero the totals. Counters and dedupe
+   * follow the SUCCESSFUL usage.reported append, exactly like the normal
+   * hook path; faults propagate instead of being swallowed. Bills receipts
+   * only — never admits effects.
+   */
+  private catchUpExternalUsage(records: JournalRecord[]): void {
+    // Catch-up accounting: external outcomes carrying usage without a
+    // committed usage.reported (crash between the two appends) are
+    // accounted once here under their originating identity. Dedupe keys
+    // on committed usage.reported records only — never on outcome
+    // existence — so a fault in this window cannot zero the totals.
+    {
+      const intentByOp = new Map<string, { agentId: string; taskRunId: string | null; generation: number | null }>();
+      const reportedOps = new Set<string>();
+      const outcomeUsage = new Map<string, unknown>();
+      for (const r of records) {
+        const b = r.body as Record<string, unknown>;
+        if (r.kind === "tool.intent" && typeof b["operationId"] === "string") {
+          intentByOp.set(b["operationId"] as string, {
+            agentId: typeof b["agentId"] === "string" ? (b["agentId"] as string) : "",
+            taskRunId: typeof b["taskRunId"] === "string" ? (b["taskRunId"] as string) : null,
+            generation: typeof b["generation"] === "number" ? (b["generation"] as number) : null,
+          });
+        }
+        if (r.kind === "usage.reported" && typeof b["operationId"] === "string") {
+          reportedOps.add(b["operationId"] as string);
+        }
+        if (r.kind === "tool.outcome" && typeof b["operationId"] === "string" && b["usage"] !== null && b["usage"] !== undefined) {
+          outcomeUsage.set(b["operationId"] as string, b["usage"]);
+        }
+        // Late receipts journaled as recovery events (commit-failed hook
+        // or fenced-while-running evidence) carry the same own-usage
+        // shape as outcomes and complete identically.
+        if (
+          r.kind === "recovery.event" &&
+          (b["phase"] === "external-late-settlement" || b["phase"] === "external-usage-commit-failed") &&
+          typeof b["operationId"] === "string" &&
+          b["usage"] !== null &&
+          b["usage"] !== undefined
+        ) {
+          if (!outcomeUsage.has(b["operationId"] as string)) {
+            outcomeUsage.set(b["operationId"] as string, b["usage"]);
+          }
+          if (typeof b["agentId"] === "string" && !intentByOp.has(b["operationId"] as string)) {
+            intentByOp.set(b["operationId"] as string, {
+              agentId: b["agentId"] as string,
+              taskRunId: typeof b["taskRunId"] === "string" ? (b["taskRunId"] as string) : null,
+              generation: typeof b["generation"] === "number" ? (b["generation"] as number) : null,
+            });
+          }
+        }
+      }
+      for (const [op, usage] of outcomeUsage) {
+        if (reportedOps.has(op) || this.accountedExternalOps.has(op)) continue;
+        const normalized = normalizeExternalUsage(usage);
+        if (!normalized) continue;
+        const origin = intentByOp.get(op);
+        // Counters and dedupe follow the SUCCESSFUL usage.reported
+        // append, exactly like the normal hook path: a fault here must
+        // leave live totals and the op unmarked so a retry completes
+        // exactly once. The fault propagates (observable STORE_FAILED,
+        // suspended state preserved) — never swallowed.
+        const accounted = {
+          input: normalized.input ?? 0,
+          output: normalized.output ?? 0,
+          cacheRead: normalized.cacheRead ?? 0,
+          cacheWrite: normalized.cacheWrite ?? 0,
+          cost: typeof normalized.cost === "number" ? normalized.cost : null,
+          unknown: normalized.unknown === true,
+        };
+        this.store.append("usage.reported", {
+          agentId: origin?.agentId ?? "",
+          taskRunId: origin?.taskRunId ?? null,
+          generation: origin?.generation ?? null,
+          ...accounted,
+          external: true,
+          operationId: op,
+          recovered: true,
+        });
+        const rt = (origin && origin.agentId ? this.agents.get(origin.agentId) : undefined) ?? null;
+        this.accountUsage(rt, normalized);
+        this.accountedExternalOps.add(op);
+        this.pendingExternalBilling.delete(op);
+      }
+    }
+  }
+
   // -- recovery ----------------------------------------------------------------------------
 
   async recover(): Promise<{ epoch: string; settled: string[]; quarantined: string[]; requeued: string[] }> {
@@ -2693,6 +4292,13 @@ export class Supervisor implements GateHost {
       this.epoch = randomUUID();
       // Fence old connections; owned handles die here. Suspended throughout
       // recovery: no parked startups or repairs dispatch mid-recovery.
+      // Recovery cancels/fences existing dispatcher jobs/scopes FIRST and
+      // synchronizes outcome ownership: a backend ignoring abort cannot
+      // produce duplicate ok outcomes after recover (late settlements become
+      // guarded recovery events, late billing stays durable/once). Authority
+      // is retired regardless of backend cooperation; control-quiescence
+      // (no owned jobs) is distinct from effects-stopped. Truthful
+      // uncertainty and native workspace quarantine are preserved below.
       this.suspended = true;
       for (const rt of this.agents.values()) {
         const worker = rt.worker;
@@ -2704,6 +4310,15 @@ export class Supervisor implements GateHost {
         if (rt.residentLease) this.scheduler.release(rt.residentLease);
         rt.runnableLease = null;
         rt.residentLease = null;
+        // Fencing retires authority before any fallible journal write
+        // (fenceAgentNow marks + deletes with internal best-effort append;
+        // broker cancel marks done). Invariant failures propagate: recover
+        // fails through the project error channel and stays suspended rather
+        // than unsuspending after uncertain ownership. Durable native
+        // quarantine below is preserved.
+        this.externalDispatcher.fenceAgentNow(rt.record.id, "recovery: retire live external scopes; effect unconfirmed");
+        await this.broker.cancelJobs(rt.record.id);
+        this.purgePreparedTickets(rt.record.id);
       }
       for (const waiter of [...this.waiters]) waiter.resolve(this.waitResult(waiter, false, "cancelled", []));
       // Gate recovery: running reviews become interrupted (resumable with
@@ -2711,6 +4326,34 @@ export class Supervisor implements GateHost {
       this.gate.markInterruptedForRecovery();
       this.publish("recovery.event", { epoch: this.epoch, phase: "started" });
       const { records } = this.store.readSince(0, Number.MAX_SAFE_INTEGER);
+      // Rebuild durable late obligations from the fresh snapshot too:
+      // entries committed by lives that ended without attach-rebuild
+      // (or re-faulted since) must be retried by this recovery.
+      this.rebuildLateObligations(records);
+      // External intents without outcomes (crash between effect and
+      // confirmation, or abort-ignoring tools): fence as uncertain now.
+      // Durable uncertainty (not a global quarantine): replacement work may
+      // proceed; late billing stays linked to the original identity. Never
+      // auto-replayed.
+      {
+        const intentOps = new Set<string>();
+        const outcomeOps = new Set<string>();
+        for (const r of records) {
+          const b = r.body as Record<string, unknown>;
+          if (typeof b["operationId"] !== "string") continue;
+          // Preparation-only intents never produce outcomes (no effect was
+          // ever dispatched); fencing them as uncertain would invent effects.
+          if (r.kind === "tool.intent" && b["external"] === true && b["prepareOnly"] !== true) intentOps.add(b["operationId"] as string);
+          if (r.kind === "tool.outcome") outcomeOps.add(b["operationId"] as string);
+        }
+        for (const op of intentOps) {
+          if (outcomeOps.has(op)) continue;
+          this.store.append("tool.outcome", { operationId: op, status: "uncertain", external: true, error: "recovery: intent without outcome; effect unconfirmed" });
+        }
+        // Catch-up runs at the END of recover (fresh records) and at fresh
+        // attach: see catchUpExternalUsage. Running it here on the opening
+        // snapshot would miss receipts that settle during reconciliation.
+      }
       for (const rt of this.agents.values()) {
         if (rt.record.desiredLifecycle === "closed") continue;
         if (this.gate.isReviewer(rt.record.id)) {
@@ -2752,6 +4395,21 @@ export class Supervisor implements GateHost {
         }
       }
       this.pendingSettle.clear();
+      // Automatic end-of-recovery catch-up on FRESH records: receipts that
+      // settled after the opening snapshot (during reconciliation awaits)
+      // bill here, with no manual second recover required. Success clears a
+      // flagged fresh-attach catch-up fault (a fault here propagates with
+      // suspended state preserved, as before).
+      this.catchUpExternalUsage(this.store.readSince(0, Number.MAX_SAFE_INTEGER).records);
+      // Retry retained late ORIGINAL-usage commits (failed persistence
+      // held admission): each retry is persist-first and idempotent via
+      // the committed-record dedupe, so successes clear debt exactly once
+      // and surviving failures keep the hold for the next recovery.
+      for (const info of [...this.pendingLateBilling.values()]) {
+        const target = this.agents.get(info.agentId) ?? null;
+        this.commitLateReceipt(target, info, false);
+      }
+      this.attachCatchUpNeeded = false;
       this.publish("recovery.event", { epoch: this.epoch, phase: "completed", settled: settled.length, quarantined: quarantined.length });
       this.suspended = false;
       // Committed gate work (a reserved repair, a parked review) resumes;
@@ -2773,7 +4431,11 @@ export class Supervisor implements GateHost {
     settled: string[],
     quarantined: string[],
   ): Promise<void> {
-    const intents = records.filter((r) => r.kind === "tool.intent" && r.body["agentId"] === rt.record.id && r.body["taskRunId"] === lost.taskRunId);
+    // Preparation-only intents never dispatched an effect (no outcome ever
+    // follows): they must not quarantine the writer. The first recovery scan
+    // already excludes them; this second scan must too. Genuinely unconfirmed
+    // native effects stay quarantined (positive control).
+    const intents = records.filter((r) => r.kind === "tool.intent" && r.body["agentId"] === rt.record.id && r.body["taskRunId"] === lost.taskRunId && r.body["prepareOnly"] !== true);
     // A cancelled or uncertain job may have left partial effects: only
     // completed outcomes (ok/error) account for an intent.
     const accounted = new Set(records.filter((r) => r.kind === "tool.outcome" && (r.body["status"] === "ok" || r.body["status"] === "error")).map((r) => r.body["operationId"]));
@@ -2795,10 +4457,17 @@ export class Supervisor implements GateHost {
     let detail = "PROCESS_LOST: owned-job termination confirmed; effects accounted";
     if (unconfirmed.length > 0 || !ownershipOk) {
       outcome = "uncertain";
+      // Quarantine (and its prohibition) applies to writer workspaces and
+      // unverifiable ownership only — the preexisting native-workspace
+      // policy. Other cases stay uncertain with effects unknown (see
+      // journal), without claiming a prohibition that isn't enforced.
+      const quarantinedHere = !!rt.record.allocation.writableRoot || !ownershipOk;
       detail = !ownershipOk
         ? `RECOVERY_OWNER_UNCONFIRMED: unverifiable worker ownership (${ownership}); replacement execution prohibited here`
-        : `${unconfirmed.length} unconfirmed tool effect(s); replacement execution prohibited here`;
-      if (rt.record.allocation.writableRoot || !ownershipOk) {
+        : quarantinedHere
+          ? `${unconfirmed.length} unconfirmed tool effect(s); replacement execution prohibited here`
+          : `${unconfirmed.length} unconfirmed tool effect(s); effects unknown, see journal`;
+      if (quarantinedHere) {
         rt.quarantined = detail;
         quarantined.push(rt.record.id);
         this.publish("agent.quarantined", { agentId: rt.record.id, reason: detail });
@@ -2830,6 +4499,9 @@ export class Supervisor implements GateHost {
     const worker = rt.worker;
     rt.worker = null;
     worker?.kill();
+    // An evicted worker cannot release tickets it never learned; drop them
+    // with the residency (no worker-knows-ticket assumption).
+    this.purgePreparedTickets(rt.record.id);
     this.releaseRunnable(rt);
     this.releaseResident(rt);
     rt.record.residency = "unloaded";
@@ -2858,6 +4530,8 @@ export class Supervisor implements GateHost {
       const queued = rt.queue.find((q) => q.id === taskRunId && !q.dispatched);
       if (!queued) throw err("NOT_FOUND", `pending task ${taskRunId} unknown`);
       if (rt.activeRun) throw err("CONFLICT", "agent has an unfinished run");
+      const resumeHold = this.admissionHoldError();
+      if (resumeHold !== null) throw resumeHold;
       rt.held = false;
       // Move it to the front: the explicit choice dispatches first.
       rt.queue = [queued, ...rt.queue.filter((q) => q !== queued)];
@@ -2938,7 +4612,7 @@ export class Supervisor implements GateHost {
 
   quiescent(agentId: AgentId): boolean {
     const rt = this.agents.get(agentId);
-    if (!rt || rt.activeRun || rt.pendingRepair || this.broker.activeJobs(agentId).length > 0) return false;
+    if (!rt || rt.activeRun || rt.pendingRepair || this.broker.activeJobs(agentId).length > 0 || this.externalDispatcher.activeJobs(agentId).length > 0) return false;
     for (const reviewerId of this.gate.reviewersOf(agentId)) {
       if (this.agents.get(reviewerId)?.activeRun) return false;
     }
@@ -2962,7 +4636,7 @@ export class Supervisor implements GateHost {
       profile: "reader",
       createdEntryId: `gate:${taskRunId}`,
       nativeSessionPath: null,
-      grants: { tools: [...FILE_TOOLS], repos: [], shell: false, network: false, nesting: false, maxDepth: main.record.depth, isolation: main.record.grants.isolation },
+      grants: { tools: [...FILE_TOOLS], externalTools: [], repos: [], shell: false, network: false, nesting: false, maxDepth: main.record.depth, isolation: main.record.grants.isolation },
       allocation: { kind: "reader", workdir: mainAlloc.workdir, readRoots, writableRoot: null, git: null, repoId: mainAlloc.repoId, tmpDir: this.agentTmp(reviewerId), external: mainAlloc.external },
       instructions: EMPTY_INSTRUCTIONS,
       instructionHash: instructionHash(EMPTY_INSTRUCTIONS),
@@ -3001,13 +4675,30 @@ export class Supervisor implements GateHost {
     rt.pendingReview = input;
     rt.record.observed = "queued";
     rt.record.detail = "review queued: waiting for capacity";
-    if (this.scheduler.hasRunnableCapacity()) {
+    // NEW reviewer inference is not exempt from the admission hold: while
+    // held, the review stays parked (no worker, no model cost) instead of
+    // prompting. Settle/control/cancel routes are unaffected; the wake
+    // paths re-enter launchReview, which re-checks before any new launch.
+    const reviewHold = this.admissionHoldError();
+    if (reviewHold) {
+      rt.record.detail = `review queued: waiting for hold (${reviewHold.code})`;
+    } else if (this.scheduler.hasRunnableCapacity()) {
       rt.pendingReview = null;
       this.launchReview(rt, input);
     }
   }
 
   private launchReview(rt: AgentRuntime, input: ReviewInput): void {
+    // Admission hold applies to reviewer launches from every path (direct
+    // start, capacity wake, parked retry): while held, park without new
+    // inference cost instead of launching a worker.
+    const launchHold = this.admissionHoldError();
+    if (launchHold) {
+      rt.pendingReview = input;
+      rt.record.observed = "queued";
+      rt.record.detail = `review queued: waiting for hold (${launchHold.code})`;
+      return;
+    }
     if (!rt.residentLease) {
       const resident = this.acquireResident(rt.record.id);
       if (!resident) {
@@ -3032,6 +4723,28 @@ export class Supervisor implements GateHost {
     void (async () => {
       try {
         const worker = await this.launchWorker(rt);
+        // Re-check AFTER the launch await at the actual send boundary: a
+        // shutdown or recover that landed mid-launch holds the root now, so
+        // the fresh worker must not be prompted. Park visibly without model
+        // cost — but only while this run still owns the runtime; a newer
+        // run or worker owns its own boundary and must not be disturbed.
+        const postLaunchHold = this.admissionHoldError();
+        if (postLaunchHold !== null) {
+          if (rt.activeRun === run && rt.worker === worker) {
+            rt.pendingReview = input;
+            rt.record.observed = "queued";
+            rt.record.detail = `review queued: waiting for hold (${postLaunchHold.code})`;
+            rt.activeRun = null;
+            rt.worker = null;
+            worker.kill();
+            rt.record.residency = "unloaded";
+            this.releaseRunnable(rt);
+            this.releaseResident(rt);
+          } else if (rt.worker !== worker) {
+            worker.kill();
+          }
+          return;
+        }
         const res = (await worker.request("initialize", { ...this.initPayload(rt, input.prompt, this.workdirOf(rt)), restore: null }, { taskRunId: run.taskRunId, generation })) as { ok?: boolean; message?: string; sessionFile?: string | null };
         if (!res || res.ok !== true) throw new Error(`reviewer initialize rejected: ${res?.message ?? "unknown"}`);
         this.detached(() => {
@@ -3054,7 +4767,10 @@ export class Supervisor implements GateHost {
         });
       } catch (e) {
         this.detached(() => {
-          if (rt.activeRun === run) this.reviewerSettled(rt, (e as Error).message, undefined);
+          // Never settle into a retired journal: once shutdown closed the
+          // store, usage/receipt appends would corrupt it. Live-store
+          // cancel/settlement paths are unaffected.
+          if (rt.activeRun === run && !this.disposed) this.reviewerSettled(rt, (e as Error).message, undefined);
         });
       }
     })();
@@ -3157,7 +4873,7 @@ export class Supervisor implements GateHost {
 
   fingerprintWorkspace(agentId: AgentId, promisedOutputs: string[]): WorkspaceFingerprint {
     const rt = this.agents.get(agentId);
-    const git = rt?.record.allocation.git ?? null;
+    const git = (rt ? this.effectiveAllocation(rt.record) : null)?.git ?? null;
     if (!git) {
       const text = rt?.lastText?.text ?? "";
       return { baseCommit: null, textOnly: true, textHash: createHash("sha256").update(text, "utf8").digest("hex"), files: [] };
@@ -3180,9 +4896,17 @@ export class Supervisor implements GateHost {
   }
 
   async runCheck(agentId: AgentId, expectedTaskRunId: TaskRunId, check: NormalizedGateCheck): Promise<{ exitCode: number | null; output: string }> {
+    // NEW native check effects are not CONTROL-route exempt: while the
+    // admission hold is active no next declared check may start, even with
+    // a valid binding. The gate loop reports this denial as visible paused
+    // evidence per check; it never invents effects. Gate-control
+    // availability is not new-execution privilege.
+    const checkHold = this.admissionHoldError();
+    if (checkHold) throw checkHold;
     const rt = this.agents.get(agentId);
     if (!rt) throw err("NOT_FOUND", `agent ${agentId} unknown`);
-    const writable = rt.record.allocation.writableRoot;
+    const alloc = this.effectiveAllocation(rt.record);
+    const writable = alloc.writableRoot;
     if (!writable) throw err("INVALID", "checks require a writer workspace");
     // Admission fence (before intent): expected run must still be current and nonterminal.
     // Already-dispatched checks keep their OLD binding (no logical cancellation of effects
@@ -3195,9 +4919,11 @@ export class Supervisor implements GateHost {
       agentId,
       taskRunId: expectedTaskRunId,
       generation: rt.record.executionGeneration,
-      sandbox: this.sandboxOf(rt.record, [writable]),
+      // The check reads the writer's own workspace: exact read-only
+      // exception, never writer permission (the job's writableRoot is null).
+      sandbox: this.sandboxOf({ ...rt.record, allocation: alloc }, [writable], [writable]),
       command: check.command,
-      cwd: rt.record.allocation.workdir,
+      cwd: alloc.workdir,
       timeoutMs: check.timeoutMs,
     });
     return { exitCode: result.exitCode, output: `${result.stdout}${result.stderr ? `\n[stderr]\n${result.stderr}` : ""}`.slice(0, RESULT_TEXT_MAX) };
@@ -3329,6 +5055,8 @@ function assertGateFits(spec: NormalizedGateSpec, writer: boolean): void {
 
 /** Tool results returned to a child are bounded; a cut is always marked. */
 export const TOOL_RESULT_MAX = 24_000;
+/** Headroom for the tool.prepare response envelope around prepared args. */
+const PREPARE_RESPONSE_HEADROOM_BYTES = 8 * 1024;
 function boundedText(text: string): string {
   return text.length <= TOOL_RESULT_MAX ? text : `${text.slice(0, TOOL_RESULT_MAX)}\n[output truncated: ${text.length - TOOL_RESULT_MAX} more characters]`;
 }
@@ -3356,6 +5084,38 @@ interface UsageDetail {
   reasoning?: number | null;
   cost?: number | null;
   unknown?: boolean;
+}
+
+/**
+ * Normalize parent-tool-reported usage to the supervisor's UsageDetail.
+ * Returns null when no billable usage was reported (unknown stays unset;
+ * callers decide whether to mark unknown). Never throws.
+ */
+function normalizeExternalUsage(raw: unknown): UsageDetail | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  // Validated finite non-negative domain: negatives, Infinity, and NaN are
+  // dropped (never summed into totals); unrecognized shapes are null.
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
+  const input = num(r["input"]) ?? num(r["inputTokens"]);
+  const output = num(r["output"]) ?? num(r["outputTokens"]);
+  const cacheRead = num(r["cacheRead"]);
+  const cacheWrite = num(r["cacheWrite"]);
+  let cost: number | null | undefined;
+  const c = r["cost"];
+  if (typeof c === "number" && Number.isFinite(c) && c >= 0) cost = c;
+  else if (c !== null && typeof c === "object" && typeof (c as { total?: unknown }).total === "number" && Number.isFinite((c as { total: number }).total) && (c as { total: number }).total >= 0) cost = (c as { total: number }).total;
+  const unknown = r["unknown"] === true;
+  if (input === undefined && output === undefined && cacheRead === undefined && cacheWrite === undefined && cost === undefined && !unknown) return null;
+  return {
+    ...(input !== undefined ? { input } : {}),
+    ...(output !== undefined ? { output } : {}),
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+    ...(cost !== undefined ? { cost } : {}),
+    ...(unknown ? { unknown: true } : {}),
+  };
 }
 
 function pendingIntentOf(rt: AgentRuntime): string {

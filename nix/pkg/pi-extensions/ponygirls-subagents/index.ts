@@ -14,7 +14,8 @@ import { FileRunStore } from "./src/store.ts";
 import { Supervisor, TOOL_RESULT_MAX, type CallerId } from "./src/supervisor.ts";
 import type { GateSpecInput } from "./src/gate.ts";
 import { instructionsFromPromptOptions, parseSelection } from "./src/instructions.ts";
-import { defaultSupervisorPolicy, type SupervisorPolicy } from "./src/policy.ts";
+import { defaultSupervisorPolicy, validateAllowedTools, validateWorktreeRoot, type SupervisorPolicy } from "./src/policy.ts";
+import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/governing-runtime.ts";
 import { gateParameters, readParameters, spawnParameters, waitParameters } from "./src/tools.ts";
 import type { InstructionSet, Isolation, ResolvedModel } from "./src/types.ts";
 import { AgentsScreen, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
@@ -43,7 +44,7 @@ function agentBaseDir(): string {
  * Root authority from the user-owned policy file. A present but invalid
  * file is an error, never a silent fallback to defaults.
  */
-function loadPolicy(): SupervisorPolicy {
+export function loadPolicy(): SupervisorPolicy {
   const policy = defaultSupervisorPolicy();
   const path = join(agentBaseDir(), "subagents-policy.json");
   if (!existsSync(path)) return policy;
@@ -85,6 +86,17 @@ function loadPolicy(): SupervisorPolicy {
   else if (Array.isArray(raw.allowedModels)) {
     policy.allowedModels = raw.allowedModels.filter((m) => typeof m?.provider === "string" && typeof m?.id === "string");
   }
+  // Generic external allowlist: malformed lists/patterns fail visibly, never
+  // silently discarded (empty default = no external delegation).
+  if (raw.allowedTools === undefined) {
+    policy.allowedTools = [];
+  } else {
+    policy.allowedTools = validateAllowedTools(raw.allowedTools);
+  }
+  // Pooled writer-worktree root: absent/null keeps the default home layout;
+  // a present value must be an absolute path (relative/empty/NUL rejected
+  // visibly, never a silent home fallback).
+  policy.worktreeRoot = validateWorktreeRoot(raw.worktreeRoot);
   policy.revision += 1;
   return policy;
 }
@@ -92,6 +104,10 @@ function loadPolicy(): SupervisorPolicy {
 interface SessionBinding {
   sessionId: string;
   supervisor: Supervisor;
+  /** Latest governing tool context (live getters, revoked on reload/replacement). */
+  governingBaseCtx: object | null;
+  /** Binding active until session shutdown (revokes external dispatch). */
+  governingActive: boolean;
   /** The governing session's model at its latest tool call (what children inherit). */
   model: ResolvedModel | null;
   /** The governing session's working directory (host-isolated children start here). */
@@ -163,7 +179,7 @@ export default function (pi: ExtensionAPI): void {
     const sdkRoot = process.env["PI_SUBAGENTS_SDK_ROOT"];
     if (!sdkRoot) throw new Error("SANDBOX_UNAVAILABLE: PI_SUBAGENTS_SDK_ROOT is not set; workers cannot load the pi SDK");
     const rootDir = join(agentBaseDir(), "subagents", sessionId);
-    const binding: SessionBinding = { sessionId, supervisor: null as unknown as Supervisor, model: null, cwd: ctx.cwd, instructions: null, noticeCursor: 0, ui: ctx.ui, statusTimer: null };
+    const binding: SessionBinding = { sessionId, supervisor: null as unknown as Supervisor, model: null, cwd: ctx.cwd, instructions: null, noticeCursor: 0, ui: ctx.ui, statusTimer: null, governingBaseCtx: null, governingActive: true };
     const store = new FileRunStore(rootDir, sessionId);
     // Notices start at the current journal end: history is not redelivered.
     binding.noticeCursor = store.durableSeq();
@@ -173,6 +189,33 @@ export default function (pi: ExtensionAPI): void {
       store,
       policy: loadPolicy(),
       governor: () => ({ model: binding.model, cwd: binding.cwd, instructions: binding.instructions }),
+      governingRegistry: () => {
+        if (!binding.governingActive || !binding.governingBaseCtx) return null;
+        const base = binding.governingBaseCtx;
+        // liveness check: revoked on reload/replacement (assertActive throws)
+        try {
+          const probe = (base as { tools?: unknown }).tools;
+          if (!Array.isArray(probe)) return null;
+        } catch {
+          return null;
+        }
+        return {
+          isActive: () => {
+            if (!binding.governingActive) return false;
+            try {
+              void (binding.governingBaseCtx as { tools?: unknown })?.tools;
+              // Touch a getter that asserts (cwd) to detect staleMessage.
+              void (binding.governingBaseCtx as { cwd?: unknown })?.cwd;
+              return true;
+            } catch {
+              return false;
+            }
+          },
+          listHandles: () => snapshotGoverningHandles(binding.governingBaseCtx),
+          getHandle: (name: string) => snapshotGoverningHandles(binding.governingBaseCtx).find((h) => h.name === name),
+          baseCtx: () => binding.governingBaseCtx,
+        };
+      },
       workerPath: WORKER_PATH,
       sdkRoot,
       deterministic: false,
@@ -195,6 +238,11 @@ export default function (pi: ExtensionAPI): void {
   function governing(ctx: ExtensionContext): SessionBinding {
     const binding = bindingFor(ctx);
     binding.model = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id, thinkingLevel: pi.getThinkingLevel() } : null;
+    // Capture the live tool context for external delegation (prototype-
+    // preserved scoped contexts keep getters/revocation; spawn return is NOT
+    // inactivity — dispatch uses broker-owned IDs/signals after return).
+    // ExtensionToolContext extends ExtensionContext with tools/executeTool.
+    binding.governingBaseCtx = ctx as unknown as object;
     return binding;
   }
 
@@ -606,6 +654,8 @@ export default function (pi: ExtensionAPI): void {
     const binding = bindings.get(sessionId);
     if (!binding) return;
     bindings.delete(sessionId);
+    binding.governingActive = false;
+    binding.governingBaseCtx = null;
     if (binding.statusTimer) clearTimeout(binding.statusTimer);
     publishBadge(binding.ui, null, () => {});
     // Switching sessions cancels and joins the live subtree, closes owned

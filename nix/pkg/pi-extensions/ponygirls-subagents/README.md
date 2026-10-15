@@ -1,6 +1,6 @@
 # ponygirls-subagents
 
-Supervisor/worker subagents for pi 1.0.0: durable asynchronous delegation
+Supervisor/worker subagents for pi 1.1.0: durable asynchronous delegation
 with inspectable progress, attributed messages, interruption, resumption,
 bounded nesting, and an optional reviewer/fixer validation gate.
 
@@ -34,6 +34,11 @@ genuine limitations.
 - `src/tools.ts` — child tool contract: pi-shaped schemas, argument
   validation, file-tool scripts (arguments on stdin)
 - `src/broker.ts` — supervisor-owned tool brokering and owned jobs
+- `src/governing-runtime.ts` — pinned (1.1.0) governing-session adapter:
+  handle snapshots, prototype-preserving scoped contexts, result bounds
+- `src/external-dispatcher.ts` — approved external (MCP etc) dispatch with
+  child-owned IDs/signals, independent journal, public `runToolCall`
+  validation (no parent hook replay)
 - `src/sandbox.ts` — host and bubblewrap tool backends (+ dummy contract pair)
 - `src/workspace.ts` — Git worktree manager (+ dummy contract pair)
 - `src/process-identity.ts` — pid + boot id + start time ownership checks
@@ -132,10 +137,71 @@ invalid file is an error, not a fallback to defaults):
   "allowedModels": [{ "provider": "zai", "id": "glm-5.3" }],
   "gateBypassAllowed": false,
   "gateMaxRoundsCeiling": 3,
+  "allowedTools": ["mcp__codegraph__codegraph_explore"],
+  "worktreeRoot": null,
   "workspaceRoots": ["/home/user/worktrees"],
   "workspaceOwnerCheckoutAllowed": false
 }
 ```
+
+Writer worktrees default to `~/.pi/agent/subagents/<sessionId>/worktrees`.
+`worktreeRoot` (null or an absolute path; relative, empty, or NUL-bearing
+values fail visibly) relocates only writer worktrees — host `worktree` and
+`sandbox` writers alike — under `<root>/<sessionId>/worktrees/...` for
+cross-session separation. Session, log, IPC, and tmp dirs stay home; saved
+allocations keep their recorded paths (no migration, prune, or deletion);
+an unwritable destination fails visibly instead of falling back home. New
+allocations land in a single traversal-free leaf component inside the exact
+session destination (`wt-<repoId>-…` verbatim for ordinary IDs, hashed
+otherwise); the fresh worktree is canonicalized once, so the recorded
+workdir and pool namespace name the allocation-time physical target even
+if a configured alias is later removed or retargeted. Logical repo IDs
+stay unrestricted plain strings. The
+directory must already exist; under the yolo sandbox it must also be listed
+in `smind.hm.dev.llm.yolo.extraReadWritePaths` (missing paths are skipped
+there, so an unlisted root is not persistently visible). The pooled root
+stays hidden from sandbox tool views except the child's own workspace:
+sibling and other-session pooled content is masked even under an approved
+read root covering the pool. The mask covers retained pools too: reallocating
+under a new root (or back to null) never unhides a recorded pool namespace.
+Provenance is physical, not nominal: a retained namespace whose git
+administration identity cannot be proven — missing leaf, missing/emptied
+backlink, or a backlink that no longer resolves bidirectionally — fails
+closed with a user-visible WORKSPACE_UNAVAILABLE rather than masking on
+guesswork (a backlink string matching the recorded path proves nothing by
+itself; no token, marker, or mere file readability certifies a namespace).
+Concrete case corrected in-tree (not deployed in main): an alias-born pool
+whose alias was replaced by an ordinary directory and whose backlink was
+rewritten to the recorded path used to keep the alias mask while the true
+pool stayed natively readable. Fail-closed is session-wide by construction
+— every retained allocation is examined for every sandbox tool view — so
+one unprovable retained namespace blocks fresh sandbox filesystem
+operations, controller checks, and reviewer file tools in the same
+supervisor session until resolved. Closing the stale retained agent does
+NOT restore availability: closed records are kept and still examined, so
+the hold persists. Truthful restoration requires a trustworthy successful
+namespace re-proof — restore the alias/backlink so the proof succeeds
+again. Nothing is migrated, dropped, or rewritten automatically. Boundaryless
+host isolation "none" remains boundaryless; only this retained-provenance
+failure is not a global model-inference hold (runtime recovery holds are a
+separate policy). Recorded
+workdir/gitDir paths are never rewritten, migrated, or deleted.
+Canonical host targets are masked alongside the configured path, so a pool
+reached through a symlink inside a protected dir stays masked at its real
+location; unresolvable paths fail visibly instead of silently unhiding.
+Pool masks are hard storage namespaces: unlike legacy hides (which re-bind
+approved paths beneath them, e.g. skill/context dirs), a read root equal
+to or nested under pooled storage stays masked — only the child's own
+writable worktree is bound again. A retained namespace comes from the
+recorded allocation-time pool, else the exact default namespace, else the
+namespace anchored on the recorded repo ID (never untrusted marker
+counting); legacy host worktrees prove theirs by actual allocation shape
+(writer with git, flat leaf, session-namespace parent, persisted isolation
+"worktree") while isolation-"none" in-place workdirs contribute none,
+and anything else fails visibly instead of guessing. A managed
+reviewer's candidate worktree and a controller check's own workspace are
+bound read-only after the masks as exact supervisor-selected exceptions
+(never arbitrary approved roots, never writer permission).
 
 A sandboxed writer without a registered repository is denied
 (`POLICY_DENIED`), and sandboxing never falls back to host execution.
@@ -157,7 +223,12 @@ half-clobbered:
 conflict), `...AllowedModels`, `...MaxDepth` (1–2), `...Nesting` (needs
 depth 2), `...Repos` (`repoId`, `checkoutPath`, optional `readRoots`,
 `allowWriters`), `...GateBypassAllowed`, `...GateMaxRoundsCeiling`
-(`null` for unlimited), `...WorkspaceRoots`,
+(`null` for unlimited), `...AllowedTools` (explicit full-name allowlist for
+governing-session external tools; empty default denies all; Home Manager
+grants `mcp__codegraph__codegraph_explore` by default only when the
+`codegraph` MCP server is configured), `...WorktreeRoot` (null default keeps
+the home layout; an absolute path pools writer worktrees per session as
+above; setting it manages the file), `...WorkspaceRoots`,
 `...WorkspaceOwnerCheckoutAllowed`.
 
 Provider credentials stay in `~/.pi/agent/auth.json` (declarative custom
@@ -207,6 +278,58 @@ network and a read-only runtime `PATH`). Every child also has
 that preempts the parent's settlement waits), `wait_agent` (releases its
 runnable slot while waiting), `list_agents`, and `read_agent`. Reviewers
 hold only the read tools plus `submit_gate_decision`.
+
+### Delegated governing-session tools (MCP etc)
+
+Host-isolated children (`none`/`worktree`; readers and writers alike) may
+additionally call explicitly approved governing-session tools — typically
+MCP tools such as `mcp__codegraph__codegraph_explore` — through the
+supervisor's governing-runtime dispatcher. The root `allowedTools` list
+holds full-name patterns (`*` globs whole names; other regex punctuation is
+literal; no `+`/`-` grammar); sandbox children and reviewers never receive
+external tools, and built-in/control/delegation names (`read`, `bash`,
+`send_message`, `spawn_agent`, `submit_gate_decision`, `manage_gate`, …)
+are never delegable even via `*`. A malformed list fails visibly
+(`INVALID`), never silently discards entries.
+
+Each edge resolves patterns to concrete currently-callable parent names and
+intersects with the owner's grant, so children cannot widen authority and
+runtime updates (deferred/codemode tools, MCP reconnects) never silently
+widen admitted children. The worker registers only its allowed concrete
+names with the parent's actual schemas/descriptions (no generic catchall);
+every call is re-authorized at execution with binding, worker-instance,
+task-run/generation, and interrupt fencing. Effects run in the supervisor
+via the governing runtime with broker-owned IDs and child-owned
+cancellation (a parent's spawn return is not inactivity); intent is
+journaled before effects with unique IDs, outcomes as ok/error/uncertain
+(never replayed), results bounded to IPC limits with text/image/structured
+content, errors, and billed usage preserved and accounted exactly once in
+the supervisor journal (not the parent transcript). Session
+reload/replacement/disposal revokes the binding and cancels in-flight
+external work.
+
+This is independent subagent authorization (same model as the file/shell
+broker): governing `tool_call`/`tool_result` hooks, permission prompts,
+transcript events, and `nestedCalls` summaries are NOT replayed for
+delegated calls. The pinned 1.1.0 five-argument runtime adapter is an
+implementation constraint, not hook equivalence.
+
+Every nested/direct call is re-authorized live immediately before effects
+(current binding, worker identity, active task/generation, current
+root/owner grants, live scope); completed scopes are revoked, so retained
+contexts die with `STALE_GENERATION`, and each nested invocation gets its
+own scoped context (never the outer scope object). Cancellation combines
+child lifetime with explicit nested signals and never waits indefinitely:
+cancelled calls return promptly while late settlements journal a single
+`uncertain` outcome (usage preserved) or a guarded recovery event after
+fencing. Results preserve the invocation's own valid SDK `Usage` verbatim
+on the wire (totalTokens, cost breakdown); the internal ledger keeps a
+separate numeric aggregate (own + nested, exactly once) for accounting and
+`usage.reported`, never mapped back into SDK shape. Control-quiescence (no
+owned jobs) is distinct from effects-stopped: fencing records durable
+uncertainty and a next task may proceed after terminal UNCERTAIN in host
+scope, with late billing preserved under the original identity; replays
+rebuild duplicate fencing and never re-account.
 
 ## Ungated example
 

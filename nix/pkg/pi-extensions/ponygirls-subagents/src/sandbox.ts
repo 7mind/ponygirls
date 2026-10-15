@@ -37,6 +37,24 @@ export interface SandboxView {
    * the approved paths (which may live under a hidden parent).
    */
   hidePaths: string[];
+  /**
+   * Hard storage namespaces (pooled writer-worktree roots): masked with
+   * fresh tmpfs AFTER every read-only bind above, including the
+   * approved-path re-bind, so a read root equal to or nested under pooled
+   * storage cannot re-expose sibling/other-session content. Never
+   * re-bound below: only the read-only exceptions and the writer's own
+   * writableRoot (bound next) re-appear. Legacy hidePaths keep their
+   * re-bind route for selected skill/context dirs.
+   */
+  storageRoots?: string[];
+  /**
+   * Supervisor-selected exact read-only exceptions (a managed reviewer's
+   * candidate worktree, a controller check's own workspace): bound
+   * read-only after the storage masks above. Only exact workspace paths
+   * chosen by the supervisor, never arbitrary approved read roots, and
+   * conferring no writer permission (grants and writableRoot unchanged).
+   */
+  readOnlyRoots?: string[];
   /** Extra read-only runtime paths (resolved closures, no /nix/store scan). */
   runtimeRoots: string[];
   /** Tool-job network is denied by default; no destination allowlist exists. */
@@ -333,6 +351,29 @@ export class BwrapToolExecutor implements ToolExecutor {
     }
     for (const root of view.readRoots) {
       if (existsSync(root) && hidden(root)) args.push("--ro-bind", root, root);
+    }
+    // Hard storage namespaces: masked after every read-only bind above
+    // (base and approved-path re-bind alike). Unlike hidePaths, storage
+    // roots are never re-bound here — equality/descendant read roots stay
+    // masked — while the writer's own writableRoot below still re-appears.
+    // Matched by real path like hides; an exposed root at or under storage
+    // is shadowed at its shown path.
+    const storageMasks = new Set<string>();
+    for (const storage of (view.storageRoots ?? []).filter((s) => existsSync(s)).map(real)) {
+      for (const root of exposed) {
+        const realRoot = real(root);
+        if (isUnder(storage, realRoot)) storageMasks.add(root + storage.slice(realRoot.length));
+        else if (isUnder(realRoot, storage)) storageMasks.add(root);
+      }
+    }
+    for (const mask of storageMasks) {
+      if (statSync(mask).isDirectory()) args.push("--tmpfs", mask);
+      else args.push("--ro-bind", "/dev/null", mask);
+    }
+    // Supervisor-selected read-only exceptions: exact workspace paths bound
+    // after the storage masks (missing paths skipped, never an error).
+    for (const root of view.readOnlyRoots ?? []) {
+      if (existsSync(root)) args.push("--ro-bind", root, root);
     }
     if (view.writableRoot) args.push("--bind", view.writableRoot, view.writableRoot);
     args.push("--bind", view.tmpDir, view.tmpDir);
