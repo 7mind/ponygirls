@@ -329,6 +329,34 @@ if (!CONN) {
       assert.equal(res.headers.get("referrer-policy"), "no-referrer");
     });
 
+    it("passes full-result sort and cursors through HTTP and rejects invalid input", async () => {
+      const h = bearer(ctx.tokens.alice);
+      for (const [key, title] of [["p:a", "Zulu"], ["p:b", "Alpha"], ["p:c", "Alpha"]]) {
+        assert.equal((await api.post("/api/v1/put", { key, document_json: DOC.replace('"title":"t"', `"title":${JSON.stringify(title)}`), expected_revision: 0, request_id: freshRequestId() }, h)).status, 200);
+      }
+      const input = { query: "", limit: 1, sort: { field: "title", direction: "asc" } };
+      const first = await api.post("/api/v1/search", input, h);
+      assert.equal(first.status, 200);
+      const page = await first.json() as { items: Array<{ item: string }>; cursor: string };
+      assert.deepEqual(page.items.map((item) => item.item), ["b"]);
+      assert.equal(typeof page.cursor, "string");
+      const next = await api.post("/api/v1/search", { ...input, cursor: page.cursor }, h);
+      assert.deepEqual(((await next.json()) as typeof page).items.map((item) => item.item), ["c"]);
+      const mismatch = await api.post("/api/v1/search", { ...input, cursor: page.cursor, sort: { field: "title", direction: "desc" } }, h);
+      assert.equal(mismatch.status, 400);
+      assert.equal(((await mismatch.json()) as { error: { code: string } }).error.code, "invalid-cursor");
+      for (const sort of [null, [], {}, { field: "title", direction: "up" }, { field: "revision DESC; --", direction: "asc" }]) {
+        const response = await api.post("/api/v1/search", { query: "", sort }, h);
+        assert.equal(response.status, 400);
+        assert.equal(((await response.json()) as { error: { code: string } }).error.code, "bad-envelope");
+      }
+      for (const cursor of [null, 1, {}, "nope"]) {
+        const response = await api.post("/api/v1/search", { query: "", cursor }, h);
+        assert.equal(response.status, 400);
+        assert.equal(((await response.json()) as { error: { code: string } }).error.code, "invalid-cursor");
+      }
+    });
+
     it("maps faults to typed HTTP errors", async () => {
       const h = bearer(ctx.tokens.alice);
       assert.equal((await api.post("/api/v1/get", { key: "nope:x" }, h)).status, 404);

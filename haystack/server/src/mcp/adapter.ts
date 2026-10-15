@@ -9,7 +9,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ItemService } from "../application/service.js";
-import { SearchService } from "../application/search.js";
+import { SearchService, SEARCH_CURSOR_MAX_CHARS } from "../application/search.js";
 import type { SearchableRepository } from "../storage/search.js";
 import type { Clock } from "../application/clock.js";
 import type { ResolvedAuth } from "../auth/config.js";
@@ -180,7 +180,7 @@ export function mountMcp(app: Express, deps: McpDeps): void {
           query: z.string().max(4096),
           project: z.string().min(1).max(256).optional(),
           limit: z.number().int().min(1).max(100).optional(),
-          cursor: z.string().min(1).max(4096).optional(),
+          cursor: z.string().min(1).max(SEARCH_CURSOR_MAX_CHARS).optional(),
         },
         annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
       },

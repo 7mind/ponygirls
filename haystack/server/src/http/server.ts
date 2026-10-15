@@ -6,7 +6,7 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import { randomUUID } from "node:crypto";
 import { ItemService } from "../application/service.js";
-import { SearchService } from "../application/search.js";
+import { SearchService, parseSearchSort } from "../application/search.js";
 import { InvalidQuery } from "../query/ast.js";
 import { InvalidCursor } from "../application/search.js";
 import { InvalidId } from "../domain/qid.js";
@@ -192,7 +192,7 @@ export function createApp(deps: AppDeps): express.Express {
 
   app.post("/api/v1/search", withAuth("search", false, async (req, res, authed) => {
     void authed;
-    const body = req.body as { query?: unknown; project?: unknown; limit?: unknown; cursor?: unknown };
+    const body = req.body as { query?: unknown; project?: unknown; limit?: unknown; cursor?: unknown; sort?: unknown };
     if (typeof body?.query !== "string") throw new BadEnvelope("query must be a string");
     if (body.project !== undefined && typeof body.project !== "string") throw new BadEnvelope("project must be a string");
     const page = await search.search({
@@ -200,6 +200,7 @@ export function createApp(deps: AppDeps): express.Express {
       project: body.project as string | undefined,
       limit: body.limit as number | undefined,
       cursor: body.cursor as string | undefined,
+      sort: parseSearchSort(body.sort),
     });
     res.json(page);
   }));

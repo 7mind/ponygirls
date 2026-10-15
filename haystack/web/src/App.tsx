@@ -1,28 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, AuthError, NetworkError, type Principal } from "./api";
 import { Login } from "./Login";
-import { Browse, type BrowseState } from "./Browse";
+import { Browse } from "./Browse";
+import { readBrowseState, type BrowseState } from "./browse-state";
 import { Detail } from "./Detail";
 import { LiveProvider } from "./Live";
 import { Icon, type IconName } from "./Icon";
 
-type Route = { name: "browse"; state: BrowseState } | { name: "item"; key: string } | { name: "inbox" };
+type Route = { name: "browse" | "inbox"; state: BrowseState } | { name: "item"; key: string };
 
 function routeFromHash(): Route {
   const hash = location.hash;
   if (hash.startsWith("#/item/")) return { name: "item", key: decodeURIComponent(hash.slice("#/item/".length)) };
-  if (hash.startsWith("#/inbox")) return { name: "inbox" };
-  const query = hash.startsWith("#/browse?") ? new URLSearchParams(hash.slice("#/browse?".length)) : new URLSearchParams();
-  const archive = query.get("archive");
-  return {
-    name: "browse",
-    state: {
-      query: query.get("q") ?? "",
-      project: query.get("project") ?? "",
-      archive: archive === "show" || archive === "only" ? archive : "hide",
-      tag: query.get("tag") ?? "",
-    },
-  };
+  const inbox = hash.startsWith("#/inbox");
+  return { name: inbox ? "inbox" : "browse", state: readBrowseState(hash, inbox) };
 }
 
 export function App() {
@@ -139,7 +130,7 @@ export function App() {
       {route.name === "inbox" && (
         <Browse
           key="inbox"
-          initial={{ query: "human-attention:required", project: "", archive: "hide", tag: "" }}
+          initial={route.state}
           inbox={true}
           onOpen={(key) => { location.hash = `#/item/${encodeURIComponent(key)}`; }}
           onAuthLost={handleAuthLost}

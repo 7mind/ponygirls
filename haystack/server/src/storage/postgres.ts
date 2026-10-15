@@ -25,8 +25,8 @@ import {
   type ValidatedPut,
 } from "./repository.js";
 import { corpusSegmentStrings, corpusWords } from "../query/text.js";
-import { compileWhere } from "./postgresSearch.js";
-import type { SearchableRepository, SearchPage, SearchRequest, SearchSummary } from "./search.js";
+import { compileWhere, compileSort } from "./postgresSearch.js";
+import { searchPosition, type SearchableRepository, type SearchPage, type SearchRequest, type SearchSummary } from "./search.js";
 
 interface CommittedOutcome {
   kind: "committed";
@@ -431,11 +431,9 @@ export class PgItemRepository implements SearchableRepository {
       params.push(request.scope);
       conditions.push(`(i.project_id = $${params.length})`);
     }
-    if (request.after !== undefined) {
-      params.push(request.after.project, request.after.item);
-      const n = params.length;
-      conditions.push(`((i.project_id, i.item_id) > ($${n - 1}, $${n}))`);
-    }
+    const sort = compileSort(request.sort, request.after, params.length);
+    params.push(...sort.params);
+    if (sort.afterSql !== null) conditions.push(sort.afterSql);
     params.push(request.limit);
     const lim = params.length;
     const res = await this.pool.query(
@@ -448,7 +446,7 @@ export class PgItemRepository implements SearchableRepository {
        FROM items i LEFT JOIN item_search s
          ON s.project_id = i.project_id AND s.item_id = i.item_id
        WHERE ${conditions.join(" AND ")}
-       ORDER BY i.project_id, i.item_id
+       ORDER BY ${sort.orderBy}
        LIMIT $${lim}`,
       params,
     );
@@ -469,7 +467,7 @@ export class PgItemRepository implements SearchableRepository {
     // rows); otherwise the page is complete. Matches the dummy leg.
     if (items.length < request.limit) return { items };
     const last = items[items.length - 1]!;
-    return { items, next: { project: last.project, item: last.item } };
+    return { items, next: searchPosition(last, request.sort) };
   }
 
   async observedValues(field: "type" | "status" | "importance" | "tags"): Promise<string[]> {

@@ -12,6 +12,7 @@ import type {
 import { corpusSegmentStrings, corpusWords } from "../query/text.js";
 import { evaluate, type SearchCandidate } from "../query/evaluate.js";
 import { decodeKey, encodeKey } from "../domain/qid.js";
+import { compareSearchPositions, searchPosition } from "./search.js";
 import type {
   SearchableRepository,
   SearchPage,
@@ -223,17 +224,6 @@ export class InMemoryItemRepository implements SearchableRepository {
   }
 
   async search(request: SearchRequest): Promise<SearchPage> {
-    const records = [...this.items.values()].sort((a, b) =>
-      a.current.project < b.current.project
-        ? -1
-        : a.current.project > b.current.project
-          ? 1
-          : a.current.item < b.current.item
-            ? -1
-            : a.current.item > b.current.item
-              ? 1
-              : 0,
-    );
     const incoming = (targetProject: string, targetItem: string) => {
       const sources: Array<{ project: string; item: string }> = [];
       for (const record of this.items.values()) {
@@ -251,13 +241,9 @@ export class InMemoryItemRepository implements SearchableRepository {
       return sources;
     };
     const matched: SearchSummary[] = [];
-    for (const record of records) {
+    for (const record of this.items.values()) {
       const cur = record.current;
       if (request.scope !== undefined && cur.project !== request.scope) continue;
-      if (request.after !== undefined) {
-        if (cur.project < request.after.project) continue;
-        if (cur.project === request.after.project && cur.item <= request.after.item) continue;
-      }
       if (request.ast !== null && !evaluate(request.ast, this.candidateOf(record), incoming)) continue;
       matched.push({
         project: cur.project,
@@ -272,11 +258,15 @@ export class InMemoryItemRepository implements SearchableRepository {
         modifiedAt: cur.metadata.modifiedAt,
         modifiedBy: cur.metadata.modifiedBy,
       });
-      if (matched.length >= request.limit) break;
     }
-    if (matched.length < request.limit) return { items: matched };
-    const last = matched[matched.length - 1]!;
-    return { items: matched, next: { project: last.project, item: last.item } };
+    matched.sort((a, b) => compareSearchPositions(searchPosition(a, request.sort), searchPosition(b, request.sort), request.sort));
+    const after = request.after;
+    const remaining = after === undefined ? matched : matched.filter((item) =>
+      compareSearchPositions(searchPosition(item, request.sort), after, request.sort) > 0,
+    );
+    const items = remaining.slice(0, request.limit);
+    if (items.length < request.limit) return { items };
+    return { items, next: searchPosition(items[items.length - 1]!, request.sort) };
   }
 
   async observedValues(field: "type" | "status" | "importance" | "tags"): Promise<string[]> {

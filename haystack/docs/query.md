@@ -1,6 +1,6 @@
-# Haystack — search contract (frozen, Step 0)
+# Haystack — search contract
 
-Normative freeze of plan §4. CQ-like grammar, haystack semantics.
+Normative search grammar and paging semantics. CQ-like grammar, haystack semantics.
 Reference (read, not vendored): cq4 `63db1c2` query-language.md.
 
 ## 1. Grammar
@@ -85,12 +85,34 @@ predicates — every authenticated user reads everything.
 
 ## 6. Results and paging
 
-- Order: `(project_id, item_id)` ascending. Summaries (key/title/type/
-  status/importance/human-attention/author/time/revision), never full
-  documents; no total counts; no ranking.
-- Opaque cursor bound to (query text, scope, order); `limit` 1–100,
-  default 20. Pages are live views across concurrent writes (no snapshot);
-  UI restarts browsing after writes. Malformed/foreign cursors rejected.
+- Summaries (key/title/type/status/importance/human-attention/author/time/
+  revision), never full documents; no total counts; no ranking.
+- Default order remains raw `(project_id, item_id)` ascending, including
+  MCP search. Browser HTTP search accepts optional `sort: { field, direction }`:
+  `field` is `key | title | project | type | status | importance |
+  human-attention | modified-at | revision`; `direction` is `asc | desc`.
+  Sorting applies to the **complete eligible result set before limiting**,
+  not just the loaded page. The browser requests `modified-at desc` by default.
+- Text fields and raw key components use literal UTF-8 byte lexical order
+  (PostgreSQL `COLLATE "C"`), without case folding, Unicode normalization,
+  locale rules, or invented importance/status ranks. `revision` is numeric;
+  `modified-at` is chronological. Equal values use `(project_id, item_id)`
+  ascending as a deterministic tie-break, even for descending primary order.
+  `key desc` instead reverses both key components. Keys are compared as raw
+  components, not percent-encoded qualified strings.
+- Opaque, versioned cursors bind the exact query text, explicit project
+  scope, limit, and effective sort field/direction; omitted sort is equivalent
+  to explicit `key asc`. `limit` is 1–100, default 20. Malformed, obsolete,
+  or mismatched cursors produce `invalid-cursor`; changing any bound input
+  requires starting again without a cursor.
+- Paging uses saved primary sort value + key, not an offset or a lookup of
+  the boundary row. Deleting, archiving, or modifying that row does not
+  invalidate the saved position. Pages are **live views**, not a snapshot:
+  inserts/moves before the boundary can be missed; a previously emitted row
+  moved after it can recur; removed or newly ineligible rows disappear.
+  Duplicate-free/exhaustive traversal is guaranteed only for an unchanged
+  result set. The UI restarts browsing after writes/change notifications.
+  Cursors are positions, not authorization tokens or snapshot handles.
 - Explicit project scope parameter intersects query predicates; it restricts
   candidates, never the permitted project of link targets.
 - SQL compiler: fixed operators/columns + bound values only; link types and

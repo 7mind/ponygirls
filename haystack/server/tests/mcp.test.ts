@@ -18,6 +18,7 @@ import { migrate } from "../src/storage/migrate.js";
 import { PgItemRepository } from "../src/storage/postgres.js";
 import { ManualClock } from "../src/application/clock.js";
 import { loadAuth } from "../src/auth/config.js";
+import { encodeKey, MAX_COMPONENT_CHARS } from "../src/domain/qid.js";
 import { freshRequestId } from "./suites/repository.js";
 
 const CONN = process.env.HAYSTACK_TEST_PG ?? "";
@@ -160,6 +161,31 @@ if (!CONN) {
         })) as unknown as { structuredContent: { items: unknown[]; cursor?: string } };
         assert.equal(page2.structuredContent.items.length, 1);
         assert.equal(page2.structuredContent.cursor, undefined);
+      } finally {
+        await client.close();
+      }
+    });
+
+    it("accepts its own search cursor for maximum-length escaped project IDs", async () => {
+      const client = await connect(app.url, app.token);
+      try {
+        const project = "\u0001".repeat(MAX_COMPONENT_CHARS);
+        for (const item of ["a", "b"]) {
+          const result = await client.callTool({ name: "put", arguments: {
+            key: encodeKey({ project, item }), document_json: DOC(item), expected_revision: 0, request_id: freshRequestId(),
+          } });
+          assert.notEqual(result.isError, true);
+        }
+        const first = await client.callTool({ name: "search", arguments: { query: "", limit: 1 } });
+        assert.notEqual(first.isError, true);
+        const page = first.structuredContent as { items: Array<{ title: string }>; cursor?: string };
+        assert.deepEqual(page.items.map((item) => item.title), ["a"]);
+        assert.ok(page.cursor);
+        const next = await client.callTool({ name: "search", arguments: { query: "", limit: 1, cursor: page.cursor } });
+        assert.notEqual(next.isError, true, JSON.stringify(next));
+        const last = next.structuredContent as typeof page;
+        assert.deepEqual(last.items.map((item) => item.title), ["b"]);
+        assert.equal(last.cursor, undefined);
       } finally {
         await client.close();
       }

@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, AuthError, NetworkError, summaryKey, type Summary } from "./api";
+import { api, ApiError, AuthError, NetworkError, summaryKey, type SearchSort, type SearchSortField, type Summary } from "./api";
+import { browseHash, sameBrowseState, type ArchiveMode, type BrowseState } from "./browse-state";
 import { useLiveUpdates } from "./Live";
 import { Icon } from "./Icon";
 import { QueryInput } from "./QueryInput";
 
-export type ArchiveMode = "hide" | "show" | "only";
-
-export interface BrowseState {
-  query: string;
-  project: string;
-  archive: ArchiveMode;
-  tag: string;
-}
+const PAGE_SIZE = 20;
+const PREFETCH_MARGIN = "200px";
+const SORT_COLUMNS: ReadonlyArray<{ field: SearchSortField; label: string }> = [
+  { field: "title", label: "Record" }, { field: "project", label: "Project" },
+  { field: "type", label: "Type" }, { field: "status", label: "Status" },
+  { field: "importance", label: "Priority" }, { field: "human-attention", label: "Attention" },
+  { field: "modified-at", label: "Modified" }, { field: "revision", label: "Rev" },
+];
 
 function tagPredicate(tag: string): string {
   const t = tag.trim();
@@ -39,84 +40,112 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   const [query, setQuery] = useState(initial.query);
   const [project, setProject] = useState(initial.project);
   const [archive, setArchive] = useState<ArchiveMode>(initial.archive);
-  const [tag, setTag] = useState(initial.tag ?? "");
+  const [tag, setTag] = useState(initial.tag);
+  const [sort, setSort] = useState<SearchSort>(initial.sort);
   const [items, setItems] = useState<Summary[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
-  // Cursors that produced each visited page; trail[0] is the first page.
-  const [trail, setTrail] = useState<Array<string | undefined>>([undefined]);
   const [diagnostics, setDiagnostics] = useState<Array<{ message: string; start: number; end: number }>>([]);
-  const [status, setStatus] = useState<string>("");
-  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(true);
   const sequence = useRef(0);
+  const pending = useRef<number | null>(null);
+  const continuation = useRef<string | undefined>(undefined);
   const applied = useRef(initial);
+  const panel = useRef<HTMLDivElement>(null);
+  const sentinel = useRef<HTMLDivElement>(null);
   const live = useLiveUpdates();
 
   const run = useCallback(async (state: BrowseState, cursorValue: string | undefined) => {
+    const append = cursorValue !== undefined;
+    if (append && (pending.current !== null || cursorValue !== continuation.current)) return;
     const request = ++sequence.current;
+    pending.current = request;
     setBusy(true);
-    setStatus("Searching…");
+    setError("");
     setDiagnostics([]);
+    if (!append) {
+      setItems([]);
+      continuation.current = undefined;
+      setCursor(undefined);
+      if (panel.current !== null) panel.current.scrollTop = 0;
+    }
     try {
       const page = await api.search(composedQuery(state), {
         project: state.project.trim() === "" ? undefined : state.project.trim(),
-        limit: 20,
+        limit: PAGE_SIZE,
         cursor: cursorValue,
+        sort: state.sort,
       });
       if (request !== sequence.current) return;
-      setItems(page.items);
+      if (append && page.cursor === cursorValue) throw new Error("Search returned a repeated continuation cursor.");
+      setItems((previous) => [...new Map([...(append ? previous : []), ...page.items].map((item) => [summaryKey(item), item])).values()]);
+      continuation.current = page.cursor;
       setCursor(page.cursor);
-      setStatus(page.items.length === 0 ? "No matching items." : "");
     } catch (err) {
       if (request !== sequence.current) return;
       if (err instanceof AuthError) {
         onAuthLost();
         return;
       }
-      if (err instanceof NetworkError) {
-        setStatus("Server unreachable — the service may be down.");
-        return;
-      }
       if (err instanceof ApiError && err.code === "invalid-query") {
         setDiagnostics(err.spans ?? []);
-        setItems([]);
-        setStatus("");
+        setError("Invalid search query.");
         return;
       }
-      setStatus(`Search failed: ${err instanceof Error ? err.message : "unknown"}`);
+      setError(err instanceof NetworkError ? "Server unreachable — the service may be down." : `Search failed: ${err instanceof Error ? err.message : "unknown"}`);
     } finally {
-      if (request === sequence.current) setBusy(false);
+      if (request === sequence.current) { pending.current = null; setBusy(false); }
     }
   }, [onAuthLost]);
 
   useEffect(() => {
-    const state = { query: initial.query, project: initial.project, archive: initial.archive, tag: initial.tag ?? "" };
     // A submitted route can arrive after the user starts a newer draft.
-    const submitted = state.query === applied.current.query && state.project === applied.current.project && state.archive === applied.current.archive && state.tag === (applied.current.tag ?? "");
-    if (!submitted) { setQuery(state.query); setProject(state.project); setArchive(state.archive); setTag(state.tag); }
-    applied.current = state; setTrail([undefined]);
-    void run(state, undefined);
-  }, [initial.query, initial.project, initial.archive, run]);
+    if (!sameBrowseState(initial, applied.current)) {
+      setQuery(initial.query); setProject(initial.project); setArchive(initial.archive); setTag(initial.tag);
+    }
+    setSort(initial.sort);
+    applied.current = initial;
+    void run(initial, undefined);
+  }, [initial.query, initial.project, initial.archive, initial.tag, initial.sort.field, initial.sort.direction, run]);
 
   useEffect(() => {
-    if (live.version === 0) return;
-    setTrail([undefined]);
-    void run(applied.current, undefined);
+    if (live.version !== 0) void run(applied.current, undefined);
   }, [live.version, run]);
   useEffect(() => () => { sequence.current++; }, []);
 
-  function submit() {
-    const state = { query, project, archive, tag };
+  useEffect(() => {
+    if (cursor === undefined || busy || error !== "" || sentinel.current === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void run(applied.current, cursor);
+    }, { root: panel.current, rootMargin: PREFETCH_MARGIN });
+    observer.observe(sentinel.current);
+    return () => observer.disconnect();
+  }, [cursor, busy, error, run]);
+
+  function apply(state: BrowseState) {
+    // Invalidate an in-flight page before the hashchange event can arrive.
+    pending.current = ++sequence.current;
+    continuation.current = undefined;
+    setBusy(true);
     applied.current = state;
-    if (!inbox) {
-      const params = new URLSearchParams();
-      if (query !== "") params.set("q", query);
-      if (project !== "") params.set("project", project);
-      if (archive !== "hide") params.set("archive", archive);
-      if (tag.trim() !== "") params.set("tag", tag.trim());
-      const hash = `#/browse${params.size > 0 ? `?${params.toString()}` : ""}`;
-      if (location.hash !== hash) { location.hash = hash; return; }
-    }
-    setTrail([undefined]); void run(state, undefined);
+    const hash = browseHash(state, inbox);
+    if (location.hash !== hash) { location.hash = hash; return; }
+    void run(state, undefined);
+  }
+
+  function changeSort(field: SearchSortField) {
+    const direction = sort.field === field ? sort.direction === "asc" ? "desc" : "asc" : field === "modified-at" || field === "revision" ? "desc" : "asc";
+    const next: SearchSort = { field, direction };
+    setSort(next);
+    apply({ ...applied.current, sort: next });
+  }
+
+  function sortHeader(field: SearchSortField, label: string) {
+    return <th key={field} scope="col" aria-sort={sort.field === field ? sort.direction === "asc" ? "ascending" : "descending" : "none"}>
+      <button type="button" className="sort-header" aria-label={`Sort by ${label}`} onClick={() => changeSort(field)}>
+        {label}<span aria-hidden="true">{sort.field === field ? sort.direction === "asc" ? "↑" : "↓" : "↕"}</span>
+      </button>
+    </th>;
   }
 
   return (
@@ -128,7 +157,7 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
         className="search-panel"
         onSubmit={(e) => {
           e.preventDefault();
-          submit();
+          apply({ query, project, archive, tag, sort });
         }}
       >
         <QueryInput value={query} onChange={setQuery} onAuthLost={onAuthLost} />
@@ -166,21 +195,16 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
           ))}
         </ul>
       )}
-      <div className="results-heading"><h2>{inbox ? "Waiting for review" : "Records"} <span className="count-badge">{items.length}{cursor !== undefined && "+"}</span></h2><span>Page {trail.length} · ordered by record key</span></div>
-      {status !== "" && <p role="status" className="notice">{status}</p>}
-      {items.length === 0 && !busy && diagnostics.length === 0 && <div className="empty-state"><Icon name={inbox ? "inbox" : "search"} /><h3>{inbox ? "No records requiring review" : "No records found"}</h3><p>{inbox ? "Records requiring attention appear here." : "Try a different query or include archived records."}</p></div>}
-      {items.length > 0 && (
-        <div className="records-panel"><table>
+      <div className="results-heading"><h2>{inbox ? "Waiting for review" : "Records"} <span className="count-badge">{items.length}{cursor !== undefined && "+"}</span></h2><span>Sorted by {SORT_COLUMNS.find((column) => column.field === sort.field)?.label ?? "record key"} {sort.direction === "asc" ? "↑" : "↓"}</span></div>
+      <p id="records-scroll-help" className="scroll-help">Scroll the table to load more records. Select a column heading to sort all results.</p>
+      {error !== "" && <p role="alert">{error} {diagnostics.length === 0 && <button type="button" onClick={() => void run(applied.current, cursor)}>Retry loading records</button>}</p>}
+      {items.length === 0 && !busy && error === "" && <div className="empty-state"><Icon name={inbox ? "inbox" : "search"} /><h3>{inbox ? "No records requiring review" : "No records found"}</h3><p>{inbox ? "Records requiring attention appear here." : "Try a different query or include archived records."}</p></div>}
+        <div className="records-panel" ref={panel} role="region" aria-label="Record results" aria-describedby="records-scroll-help" tabIndex={0}><table>
           <thead>
             <tr>
-              <th scope="col">Record</th>
-              <th scope="col">Type</th>
-              <th scope="col">Status</th>
-              <th scope="col">Priority</th>
-              <th scope="col">Attention</th>
+              {SORT_COLUMNS.slice(0, 6).map((column) => sortHeader(column.field, column.label))}
               <th scope="col">Tags</th>
-              <th scope="col">Modified</th>
-              <th scope="col">Rev</th>
+              {SORT_COLUMNS.slice(6).map((column) => sortHeader(column.field, column.label))}
             </tr>
           </thead>
           <tbody>
@@ -189,9 +213,10 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
                 <td>
                   <button className="record-open" type="button" aria-label={summaryKey(item)} onClick={() => onOpen(summaryKey(item))}>
                     <span className={`record-icon type-${item.type}`}><Icon name={item.type === "skill-draft" ? "spark" : item.type.startsWith("github-") ? "branch" : "stack"} /></span>
-                    <span><strong>{item.title}</strong><small>{item.project}:{item.item}</small></span>
+                    <span><strong>{item.title}</strong><small>{item.item}</small></span>
                   </button>
                 </td>
+                <td data-label="Project" className="project-cell">{item.project}</td>
                 <td data-label="Type"><span className="type-badge">{item.type}</span></td>
                 <td data-label="Status"><span className={`status-badge ${item.status === "archived" ? "archived" : ""}`}>{item.status}</span></td>
                 <td data-label="Priority"><span className={`priority ${item.importance === "high" ? "high" : ""}`}>{item.importance}</span></td>
@@ -204,32 +229,10 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
               </tr>
             ))}
           </tbody>
-        </table></div>
-      )}
-      <div className="pagination">
-        <button
-          type="button"
-          disabled={trail.length <= 1}
-          onClick={() => {
-            const next = trail.slice(0, -1);
-            setTrail(next);
-            void run(applied.current, next[next.length - 1]);
-          }}
-        >
-          Back
-        </button>
-        <button
-          type="button"
-          disabled={cursor === undefined}
-          onClick={() => {
-            if (cursor !== undefined) {
-              setTrail((t) => [...t, cursor]);
-              void run(applied.current, cursor);
-            }
-          }}
-        >
-          Next
-        </button>
+        </table><div ref={sentinel} className="scroll-sentinel" aria-hidden="true" /></div>
+      <div className="results-footer">
+        <span role="status" aria-live="polite">{busy ? items.length === 0 ? "Searching…" : "Loading more records…" : error === "" && items.length > 0 && cursor === undefined ? `All ${items.length} records loaded.` : `${items.length} records loaded.`}</span>
+        {cursor !== undefined && error === "" && <button type="button" disabled={busy} onClick={() => void run(applied.current, cursor)}>Load more records</button>}
       </div>
     </section>
   );

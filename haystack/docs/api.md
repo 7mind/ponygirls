@@ -1,4 +1,4 @@
-# Haystack — API schemas (frozen, Step 0)
+# Haystack — API schemas
 
 MCP and browser transports call the same application service; one rulebook.
 All JSON parsed with the lossless codec (`model.md` §2). Raw-text fields
@@ -71,7 +71,8 @@ was wrong. (The browser HTTP API keeps the generic public message.)
 
 `project`/`cursor` optional. Returns `{ items: [summaries], cursor? }`
 (summaries carry `tags: string[]`). Empty/whitespace query browses. Scope
-intersects predicates.
+intersects predicates. MCP search retains key-ascending order; optional
+browser sorting is described below.
 
 ## 3. Browser API (`/api/v1`, JSON bodies, versioned envelope)
 
@@ -81,7 +82,8 @@ intersects predicates.
   activityProjectId }`.
 - `POST /get { key, revision? }`, `POST /put { key, document_json,
   expected_revision, request_id }`, `POST /search { query, project?,
-  limit?, cursor? }` — same semantics as MCP.
+  limit?, cursor?, sort? }` — same semantics as MCP, with the browser sort
+  extension described below.
 - `POST /history { key }` → revision list (numbers, authors, times —
   no document bodies); `POST /history/get { key, revision }` → snapshot.
 - `POST /query/analyze { query }` → `{ ast?, diagnostics[] }` (bounded,
@@ -92,6 +94,39 @@ intersects predicates.
 - All responses: `Cache-Control: no-store`. All errors: typed faults.
   Item bodies render client-side as untrusted data (escaped; CSP; no raw
   HTML, no auto-executed instructions/skills, no unsafe schemes).
+
+### Browser search order and cursors
+
+```json
+{ "query": "", "limit": 20,
+  "sort": { "field": "modified-at", "direction": "desc" } }
+```
+
+`sort` is optional. Omission preserves server-side `key asc` (the browser
+explicitly requests `modified-at desc` by default). `field` must be one of
+`key`, `title`, `project`, `type`, `status`, `importance`, `human-attention`,
+`modified-at`, `revision`; `direction` must be `asc` or `desc`. Both members
+are required when supplying `sort`; null, unknown members/fields, and invalid
+directions produce HTTP 400 `bad-envelope` rather than a fallback order.
+
+Sorting covers all query/scope/archive-eligible results before the page
+limit. Text is literal UTF-8 byte lexical order (`COLLATE "C"`), not locale,
+case-insensitive, normalized, or importance-rank order. Revisions sort
+numerically and modification timestamps chronologically. Ties use raw
+`(project, item)` ascending, except `key desc` reverses both key components.
+
+Return the opaque cursor unchanged with the same query text, scope, limit,
+and effective sort. These inputs are bound into its versioned context;
+changing them or sending a malformed/obsolete cursor produces HTTP 400
+`invalid-cursor`. Omitted and explicit default sorting are equivalent.
+Existing key-only cursors from before this extension must be restarted.
+
+A cursor saves the last emitted sort value and raw key. The boundary row
+need not still exist or keep that value. Pages remain live views: a row
+moving past the saved position can recur, a row moving before it can be
+missed, and removed/ineligible rows disappear. This is not snapshot or
+exactly-once traversal under concurrent writes. Restart without a cursor
+after changes to obtain a fresh ordering; see `query.md` §6.
 
 ## Browser live updates
 
