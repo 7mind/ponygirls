@@ -410,6 +410,7 @@ class ArtifactStore:
         self._db = sqlite3.connect(db_path,
                                    check_same_thread=False)
         self._db.row_factory = sqlite3.Row
+        self._db.create_function("casefold", 1, str.casefold, deterministic=True)
         self._db.isolation_level = None
         with self._lock:
             # Init-only (object unpublished; no post-close race here) and
@@ -867,22 +868,56 @@ class ArtifactStore:
     def list_artifacts(self, limit: int, cursor: str,
                        include_expired: bool,
                        visibility: Optional[str] = None,
-                       state: Optional[str] = None
+                       state: Optional[str] = None, *,
+                       q: Optional[str] = None,
+                       sort_by: Optional[str] = None,
+                       direction: Optional[str] = None
                        ) -> tuple[list[dict[str, Any]], Optional[str]]:
-        # A1: cursor/expiry/visibility/state filters apply in SQL and only
-        # limit+1 rows (with manifests) are fetched, preserving
-        # created_at ASC, id ASC ordering and next_cursor semantics.
         self._ensure_open()
-        now = self._now()
+        catalogue = None
+        column = "created_at_s"
+        order = "created_at_s ASC, id ASC"
         clauses: list[str] = []
         params: list[Any] = []
-        if cursor:
+        if q is not None or sort_by is not None or direction is not None:
+            catalogue = D.CatalogueQuery(
+                limit, include_expired, visibility, state,
+                "" if q is None else q,
+                "created_at" if sort_by is None else sort_by,
+                "desc" if direction is None else direction)
+            # Only validated fields/directions reach SQL; all values are bound.
+            column = {"created_at": "created_at_s",
+                      "expires_at": "expires_at_s"}.get(catalogue.sort_by,
+                                                        catalogue.sort_by)
+            sql_direction = catalogue.direction.upper()
+            operator = ">" if catalogue.direction == "asc" else "<"
+            order = f"{column} {sql_direction}, id {sql_direction}"
+            if column == "expires_at_s":
+                order = f"({column} IS NULL) ASC, " + order
+            if catalogue.q:
+                clauses.append("(instr(casefold(name), ?) > 0 OR "
+                               "instr(casefold(id), ?) > 0)")
+                params.extend([catalogue.q.casefold(), catalogue.q.casefold()])
+            if cursor:
+                value, after_id = catalogue.decode_cursor(cursor)
+                if value is None:
+                    clauses.append(f"({column} IS NULL AND id {operator} ?)")
+                    params.append(after_id)
+                else:
+                    boundary = (f"({column} {operator} ? OR "
+                                f"({column} = ? AND id {operator} ?))")
+                    if column == "expires_at_s":
+                        boundary = f"({column} IS NULL OR {boundary})"
+                    clauses.append(boundary)
+                    params.extend([value, value, after_id])
+        elif cursor:
             after_created, after_id = D.decode_cursor(cursor)
             after_s = D.parse_time(after_created)
             clauses.append(
                 "(created_at_s > ? OR "
                 "(created_at_s = ? AND id > ?))")
             params.extend([after_s, after_s, after_id])
+        now = self._now()
         if not include_expired:
             clauses.append("(expires_at_s IS NULL OR expires_at_s > ?)")
             params.append(now)
@@ -896,7 +931,7 @@ class ArtifactStore:
         # Bounded fetch: one extra row probes exhaustion without loading
         # the catalog or its manifest_json blobs.
         query = ("SELECT * FROM artifacts" + where +
-                 " ORDER BY created_at_s ASC, id ASC LIMIT ?")
+                 " ORDER BY " + order + " LIMIT ?")
         params.append(int(limit) + 1)
         with self._lock:
             self._ensure_open()
@@ -908,8 +943,10 @@ class ArtifactStore:
             item["manifest"] = json.loads(item.pop("manifest_json"))
         if has_more:
             last = page[-1]
-            next_cursor: Optional[str] = D.encode_cursor(last["created_at"],
-                                                         last["id"])
+            next_cursor: Optional[str] = (
+                D.encode_cursor(last["created_at"], last["id"])
+                if catalogue is None else
+                catalogue.encode_cursor(last[column], last["id"]))
         else:
             next_cursor = None
         return page, next_cursor

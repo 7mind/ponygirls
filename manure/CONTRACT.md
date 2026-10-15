@@ -585,10 +585,46 @@ Ranges are `[start_inclusive, end_exclusive]`, sorted, non-overlapping.
 `PUT .../chunks` → `{"path":"big.bin","offset":2097152,"length":1048576,
 "received_bytes":3145728}` (per-file scope).
 Paginated `GET /api/v1/artifacts` → `{"artifacts":[<summary>...],
-"next_cursor":"ey...” | null}`. Order `created_at ASC, artifact_id
-ASC`; `limit` default 50 clamped to `max_list_limit`; `cursor` opaque
-(base64url of last `(created_at, artifact_id)`); absent/empty = start;
-invalid → 400 `bad-envelope`; `next_cursor: null` ⇔ exhausted.
+"next_cursor":"opaque" | null}`. `limit` default 50 clamped to
+`1..max_list_limit`; `cursor` opaque; absent/empty = start; invalid →
+400 `bad-envelope`; `next_cursor: null` ⇔ exhausted. Optional filters:
+`include_expired` (default false), `visibility` (`internal` / `external` /
+`public`), and `state` (`uploading` / `publishing` / `ready`).
+
+Catalogue mode is selected by the presence of any of `q`, `sort_by`, or
+`direction` (including `q=`). `q` is a literal Unicode case-insensitive
+substring of name OR artifact ID, using Python Unicode casefold, not a
+wildcard or regular expression; `%` and `_` are literal. Empty/omitted
+`q` matches all; no normalization, whitespace trimming, truncation, or
+additional search-length cap beyond the HTTP request-line bound. `sort_by` is one of `name`, `created_at`,
+`expires_at`, `total_bytes`, `file_count`, `visibility`, `state`, `kind`,
+`created_by_user` (default `created_at`); `direction` is `asc` or `desc`
+(default `desc`). Dates sort by stored numeric timestamps, counts by
+integer value, text by SQLite binary order (not casefolded or locale
+collation). Artifact ID breaks ties in the requested direction.
+`expires_at: null` (never) sorts last in BOTH directions. Browser calls
+always specify sort and direction; initial order is `created_at desc`.
+Filtering and ordering cover the full dataset in SQLite with keyset
+pagination and `LIMIT limit+1`, never OFFSET or Python catalogue sorting.
+
+Catalogue cursors carry a typed last sort value and ID, and bind the
+effective search, filters, sort, direction, and clamped limit. Changing
+any effective option requires restarting without a cursor (casefold-
+equivalent searches are the same option). Cursors are opaque, unsigned
+pagination positions, not credentials or snapshots. Removing or moving
+the boundary row does not require a lookup of that row; concurrent
+changes can still add, omit, or repeat changed rows relative to the
+saved position. Expiry is evaluated at each request, not frozen in the
+cursor. Invalid UTF-8 list query values, unknown sort/direction,
+duplicate recognized catalogue-mode arguments, malformed or mismatched
+cursors → 400 `bad-envelope`.
+
+Legacy calls omitting ALL three new arguments retain `created_at ASC,
+artifact_id ASC` and the existing base64url `(created_at, artifact_id)`
+cursor format. Legacy cursors are accepted only in legacy mode;
+catalogue cursors only in catalogue mode. Existing CLI, Python client,
+and MCP list interfaces remain in legacy mode.
+
 `expires_in_s`: int|null; present ⇒ `60 <= v <= max_ttl_s`, else 400
 `invalid-ttl`; PATCH `null` clears (any authed user when ready, owner
 when uploading).

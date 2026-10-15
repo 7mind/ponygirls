@@ -3,88 +3,142 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>manure — artifact dashboard</title>
+<title>manure — artifact workspace</title>
 <link rel="stylesheet" href="./styles.css">
 <script src="./app.js" defer></script>
 </head>
 <body>
-<a class="skip" href="#main">Skip to main content</a>
-<header>
-<h1>manure</h1>
-<p class="subtitle">artifact dashboard</p>
-<div id="whoami" class="whoami" hidden>
-<span id="whoami-text"></span>
-<button type="button" id="logout-button">Log out</button>
+<section id="session-section" class="auth-screen" role="main" aria-label="Dashboard session">
+<div class="auth-card session-card">
+<span class="brand-mark" aria-hidden="true"></span>
+<p class="eyebrow">MANURE / ARTIFACT WORKSPACE</p>
+<h1>Opening your workspace</h1>
+<p id="session-status" role="status">Checking your session…</p>
+<button type="button" id="session-retry-button" class="primary" hidden>Retry connection</button>
 </div>
-</header>
-<main id="main">
-<section id="login-section" aria-labelledby="login-heading" hidden>
-<h2 id="login-heading">Log in</h2>
-<p>Paste an API token to open a dashboard session. The token is sent
-once in the login request body and is never stored in the browser
-(not in storage, not in URLs).</p>
+</section>
+
+<section id="login-section" class="auth-screen" role="main" aria-labelledby="login-heading" hidden>
+<div class="auth-card">
+<span class="brand-mark" aria-hidden="true"></span>
+<p class="eyebrow">MANURE / ARTIFACT WORKSPACE</p>
+<h1 id="login-heading">Log in</h1>
+<p>A quiet place for your files, directories, and published artifacts.</p>
 <form id="login-form" method="post" action="/api/v1/login">
 <label for="token-input">API token</label>
 <input type="password" id="token-input" name="token"
-required spellcheck="false" autocapitalize="off" autocomplete="current-password">
-<button type="submit">Log in</button>
+required spellcheck="false" autocapitalize="off" autocomplete="current-password"
+aria-describedby="token-note">
+<button type="submit" class="primary">Log in</button>
 </form>
 <p id="login-error" class="error" role="alert" hidden></p>
+<p id="token-note" class="auth-note">Your token is sent in the login request body, then cleared from the input and JavaScript reference. Your session uses a host-only HttpOnly cookie, not web storage or a URL.</p>
+<div class="auth-footer"><span class="small-mark" aria-hidden="true"></span> Upload from your terminal. Manage here.</div>
+</div>
 </section>
+
+<div id="workspace-shell" class="app-shell" hidden>
+<a class="skip" href="#main">Skip to main content</a>
+<aside class="sidebar" aria-label="Workspace navigation">
+<a class="brand" href="#main"><span class="brand-mark" aria-hidden="true"></span><span>manure<small>artifact workspace</small></span></a>
+<p class="workspace-label">LIBRARY</p>
+<nav aria-label="Artifact access">
+<button type="button" class="nav-entry selected" data-visibility-preset="" aria-pressed="true"><span class="nav-mark mark-all" aria-hidden="true"></span>All artifacts</button>
+<button type="button" class="nav-entry" data-visibility-preset="internal" aria-pressed="false"><span class="nav-mark mark-internal" aria-hidden="true"></span>Internal</button>
+<button type="button" class="nav-entry" data-visibility-preset="external" aria-pressed="false"><span class="nav-mark mark-external" aria-hidden="true"></span>External</button>
+<button type="button" class="nav-entry" data-visibility-preset="public" aria-pressed="false"><span class="nav-mark mark-public" aria-hidden="true"></span>Public</button>
+</nav>
+<div class="sidebar-note">
+<p class="workspace-label">FROM YOUR TERMINAL</p>
+<p>Files in. Links out.</p>
+<code>manure upload ./path --access internal</code>
+<small>Uploads are handled by the CLI.</small>
+</div>
+<div id="whoami" class="identity" hidden>
+<span class="avatar" aria-hidden="true">M</span>
+<div class="identity-copy"><small>Workspace session</small><span id="whoami-text"></span></div>
+<button type="button" id="logout-button" class="quiet">Log out</button>
+</div>
+</aside>
+
+<main id="main" class="workspace-main" tabindex="-1">
+<header class="topbar"><span>Workspace<span class="breadcrumb-separator" aria-hidden="true">/</span><strong>Artifacts</strong></span><span class="service-label">Artifact management</span></header>
+<div class="workspace-content">
 <section id="dashboard-section" aria-labelledby="artifacts-heading" hidden>
-<h2 id="artifacts-heading">Artifacts</h2>
-<div class="controls">
-<label for="filter-text">Filter</label>
-<input type="search" id="filter-text" placeholder="name or id substring"
-autocomplete="off">
-<label for="filter-visibility">Access</label>
-<select id="filter-visibility">
-<option value="">all</option>
-<option value="internal">internal</option>
-<option value="external">external</option>
-<option value="public">public</option>
-</select>
-<label for="filter-state">State</label>
-<select id="filter-state">
-<option value="">all</option>
-<option value="ready">ready</option>
-<option value="uploading">uploading</option>
-<option value="publishing">publishing</option>
-</select>
-<label for="include-expired">
-<input type="checkbox" id="include-expired"> include expired
-</label>
-<button type="button" id="refresh-button">Refresh</button>
+<div class="page-heading">
+<div><p class="eyebrow">YOUR WORKSPACE</p><h1 id="artifacts-heading">Artifacts</h1><p>Find, inspect, and manage files and directories.</p></div>
+<details class="upload-guide">
+<summary>Upload with the CLI</summary>
+<div class="upload-guide-body"><p>Uploads stay in your terminal. Choose an access mode when you publish.</p><pre><code>manure upload ./path --access internal</code></pre><p>Access modes: <code>internal</code>, <code>external</code>, or <code>public</code>.</p></div>
+</details>
 </div>
-<p id="list-status" role="status"></p>
-<ul id="artifact-list" class="artifacts"></ul>
-<div class="pager">
-<button type="button" id="prev-button" disabled>Previous</button>
-<button type="button" id="next-button" disabled>Next</button>
+
+<form id="list-form" class="search-panel">
+<div class="query-control"><label for="filter-text">Search artifacts</label><input type="search" id="filter-text" placeholder="Name or artifact ID" autocomplete="off" spellcheck="false"></div>
+<div class="query-control"><label for="filter-visibility">Access</label><select id="filter-visibility"><option value="">All access modes</option><option value="internal">Internal</option><option value="external">External</option><option value="public">Public</option></select></div>
+<div class="query-control"><label for="filter-state">State</label><select id="filter-state"><option value="">All states</option><option value="ready">Ready</option><option value="uploading">Uploading</option><option value="publishing">Publishing</option></select></div>
+<div class="search-actions"><button type="submit" class="primary">Search</button><button type="button" id="refresh-button">Refresh</button></div>
+<label for="include-expired" class="checkbox-label"><input type="checkbox" id="include-expired"> Include expired artifacts</label>
+</form>
+
+<div class="results-heading"><h2>Results <span id="loaded-count" class="count-badge">0 loaded</span></h2><span id="sort-summary">Created · newest first</span></div>
+<p id="results-help" class="scroll-help">Sort all matching artifacts by any column. Scroll within the table to load more; all columns remain available horizontally.</p>
+<p id="list-error" class="error" role="alert" hidden></p>
+<div id="results-panel" class="records-panel" role="region" aria-label="Artifact results" aria-describedby="results-help" tabindex="0">
+<table class="artifacts">
+<caption class="sr-only">Artifact library. Column heading buttons sort all matching artifacts.</caption>
+<thead><tr>
+<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="name" aria-label="Sort by Name">Name<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="kind" aria-label="Sort by Kind">Kind<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="visibility" aria-label="Sort by Access">Access<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="state" aria-label="Sort by State">State<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="total_bytes" aria-label="Sort by Size">Size<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="file_count" aria-label="Sort by Files">Files<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+<th scope="col" aria-sort="descending"><button type="button" class="sort-header" data-sort="created_at" aria-label="Sort by Created">Created<span class="sort-indicator" aria-hidden="true">↓</span></button></th>
+<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="expires_at" aria-label="Sort by Expires">Expires<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="created_by_user" aria-label="Sort by Owner">Owner<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
+<th scope="col">Actions</th>
+</tr></thead>
+<tbody id="artifact-list"></tbody>
+</table>
+<div id="empty-state" class="empty-state" hidden><span class="empty-mark" aria-hidden="true"></span><h3>No matching artifacts</h3><p>Try another search or access filter.<br>To add an artifact, upload with the <code>manure</code> CLI.</p></div>
+<div id="list-sentinel" class="scroll-sentinel" aria-hidden="true"></div>
+</div>
+<div class="results-footer"><p id="list-status" role="status">Loading artifacts…</p><div class="results-actions"><button type="button" id="retry-list-button" hidden>Retry loading</button><button type="button" id="load-more-button" hidden>Load more</button></div></div>
+</section>
+
+<section id="detail-section" aria-labelledby="detail-name" hidden>
+<button type="button" id="detail-back-button" class="back-button"><span aria-hidden="true">←</span> Back to artifacts</button>
+<div class="page-heading detail-heading">
+<div><p class="eyebrow">ARTIFACT DETAILS</p><h1 id="detail-name">Artifact</h1><p id="detail-subtitle">Metadata and content manifest.</p></div>
+<div class="detail-actions"><button type="button" id="copy-id-button">Copy ID</button><button type="button" id="copy-link-button">Copy content link</button></div>
+</div>
+<p id="detail-status" class="detail-status" role="status"></p>
+<div id="rotate-output" class="password-reveal" role="region" aria-label="New external password" hidden>
+<div><p class="eyebrow">SHOWN ONCE</p><h2>Save your new external password</h2><p>Copy it now and share it securely. Dismissing this panel clears the password; it cannot be retrieved again.</p></div>
+<p class="password-value"><code id="rotate-password"></code></p>
+<div class="reveal-actions"><button type="button" id="rotate-copy-button">Copy password</button><button type="button" id="rotate-dismiss-button" class="primary">Dismiss password</button></div>
+</div>
+<div class="detail-layout">
+<div class="detail-primary">
+<section class="detail-panel" aria-labelledby="detail-heading"><div class="panel-heading"><h2 id="detail-heading">Overview</h2><span class="muted">Artifact metadata</span></div><dl id="detail-list" class="metadata-list"></dl></section>
+<section class="detail-panel manifest-section" aria-labelledby="manifest-heading">
+<div class="panel-heading"><h2 id="manifest-heading">Content manifest</h2><span class="muted">Files &amp; directories</span></div>
+<div class="manifest-panel" role="region" aria-label="Content manifest" tabindex="0"><table><caption class="sr-only">Paths contained in this artifact</caption><thead><tr><th scope="col">Path</th><th scope="col">Kind</th><th scope="col">Size</th><th scope="col">Download</th></tr></thead><tbody id="file-list"></tbody></table></div>
+<div class="manifest-footer"><p id="files-status" role="status">Loading file manifest…</p><button type="button" id="files-retry-button" hidden>Retry manifest</button></div>
+</section>
+</div>
+<aside class="action-panels" aria-label="Artifact actions">
+<section class="detail-panel action-panel"><h2>Open content</h2><p id="content-note">Content opens on the artifact’s isolated host. Internal artifacts use a one-time access grant.</p><button type="button" id="open-button" class="primary">Open artifact</button></section>
+<section class="detail-panel action-panel"><h2>Access &amp; sharing</h2><p>External passwords can be rotated here. Rotation revokes existing access grants and replaces the current password.</p><button type="button" id="rotate-button" hidden>Rotate external password</button></section>
+<section class="detail-panel action-panel danger-panel"><h2>Delete artifact</h2><p>Permanently remove this artifact and its content. This action cannot be undone.</p><button type="button" id="delete-button" class="danger">Delete artifact</button></section>
+</aside>
 </div>
 </section>
-<section id="detail-section" aria-labelledby="detail-heading" hidden>
-<h2 id="detail-heading">Artifact detail</h2>
-<dl id="detail-list"></dl>
-<div class="detail-actions">
-<button type="button" id="open-button">Open</button>
-<button type="button" id="rotate-button" hidden>Rotate external password</button>
-<button type="button" id="delete-button">Delete</button>
-<button type="button" id="detail-back-button">Back to list</button>
 </div>
-<div id="rotate-output" hidden>
-<p><strong>New external password (shown once):</strong></p>
-<p><code id="rotate-password"></code></p>
-<button type="button" id="rotate-dismiss-button">Dismiss</button>
-</div>
-<p id="detail-status" role="status"></p>
-</section>
+<footer class="workspace-footer"><p>Uploads use the <code>manure</code> CLI. This workspace lists, opens, rotates passwords, and deletes artifacts.</p><p>All configured users can manage all artifacts. Content is served on isolated artifact hosts.</p></footer>
 </main>
-<footer>
-<p>Uploads are handled by the <code>manure</code> CLI; this dashboard
-lists, opens, rotates, and deletes artifacts.</p>
-</footer>
-<noscript><p>This dashboard requires JavaScript; the API remains usable
-without it.</p></noscript>
+</div>
+<noscript><p class="noscript-note">This dashboard requires JavaScript; the API and <code>manure</code> CLI remain usable without it.</p></noscript>
 </body>
 </html>

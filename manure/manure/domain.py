@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
+import math
 import posixpath
 import re
 from dataclasses import dataclass, field
@@ -30,6 +32,7 @@ __all__ = [
     "validate_ttl_seconds",
     "encode_cursor",
     "decode_cursor",
+    "CatalogueQuery",
     "error_envelope",
     "session_cookie_name",
     "grant_cookie_name",
@@ -535,6 +538,88 @@ def decode_cursor(cursor: str) -> tuple[str, str]:
         return pair[0], pair[1]
     except (ValueError, binascii.Error) as exc:
         raise DomainError("bad-envelope", "bad cursor") from exc
+
+
+@dataclass(frozen=True)
+class CatalogueQuery:
+    """Effective catalogue options and their typed, query-bound keyset cursor."""
+
+    limit: int
+    include_expired: bool
+    visibility: Optional[str]
+    state: Optional[str]
+    q: str
+    sort_by: str
+    direction: str
+
+    MAX_SQLITE_INTEGER = 2**63 - 1
+    SORT_FIELDS = ("name", "created_at", "expires_at", "total_bytes",
+                   "file_count", "visibility", "state", "kind",
+                   "created_by_user")
+
+    def __post_init__(self) -> None:
+        if (type(self.limit) is not int
+                or not 1 <= self.limit < self.MAX_SQLITE_INTEGER):
+            raise DomainError("bad-envelope", "bad limit")
+        if type(self.include_expired) is not bool:
+            raise DomainError("bad-envelope", "bad include_expired")
+        if self.visibility not in (None, "internal", "external", "public"):
+            raise DomainError("bad-envelope", "bad visibility filter")
+        if self.state not in (None, "uploading", "publishing", "ready"):
+            raise DomainError("bad-envelope", "bad state filter")
+        if not isinstance(self.q, str):
+            raise DomainError("bad-envelope", "bad search query")
+        try:
+            self.q.encode("utf-8")
+        except UnicodeError as exc:
+            raise DomainError("bad-envelope", "bad search query") from exc
+        if self.sort_by not in self.SORT_FIELDS:
+            raise DomainError("bad-envelope", "bad sort field")
+        if self.direction not in ("asc", "desc"):
+            raise DomainError("bad-envelope", "bad sort direction")
+
+    def _fingerprint(self) -> str:
+        effective = [self.limit, self.include_expired, self.visibility,
+                     self.state, self.q.casefold(), self.sort_by, self.direction]
+        return hashlib.sha256(json.dumps(effective).encode("utf-8")).hexdigest()
+
+    def encode_cursor(self, value: str | int | float | None,
+                      artifact_id: str) -> str:
+        raw = json.dumps({"v": 1, "query": self._fingerprint(),
+                          "value": value, "id": artifact_id}).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+    def decode_cursor(self, cursor: str) -> tuple[str | int | float | None, str]:
+        try:
+            padded = cursor + "=" * (-len(cursor) % 4)
+            obj = json.loads(base64.b64decode(padded.encode("ascii"),
+                                            altchars=b"-_", validate=True))
+            if (not isinstance(obj, dict)
+                    or set(obj) != {"v", "query", "value", "id"}
+                    or type(obj["v"]) is not int or obj["v"] != 1
+                    or obj["query"] != self._fingerprint()
+                    or not isinstance(obj["id"], str)
+                    or not valid_artifact_id(obj["id"])):
+                raise ValueError("bad cursor shape or query")
+            value = obj["value"]
+            if value is None:
+                valid = self.sort_by == "expires_at"
+            elif self.sort_by in ("created_at", "expires_at"):
+                valid = (type(value) in (int, float)
+                         and abs(value) <= self.MAX_SQLITE_INTEGER
+                         and math.isfinite(value))
+            elif self.sort_by in ("total_bytes", "file_count"):
+                valid = (type(value) is int
+                         and 0 <= value <= self.MAX_SQLITE_INTEGER)
+            else:
+                valid = isinstance(value, str)
+                if valid:
+                    value.encode("utf-8")
+            if not valid:
+                raise ValueError("bad cursor value type")
+            return value, obj["id"]
+        except (ValueError, TypeError, binascii.Error, RecursionError) as exc:
+            raise DomainError("bad-envelope", "bad catalogue cursor") from exc
 
 
 def error_envelope(code: str, message: str = "") -> bytes:
