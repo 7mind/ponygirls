@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from math import isfinite
 from typing import Any, Mapping
 
 from tokemon.credentials import Credential
@@ -61,6 +62,14 @@ def optional_float(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def optional_nonnegative_float(value: Any) -> float | None:
+    try:
+        parsed = optional_float(value)
+    except OverflowError:
+        return None
+    return parsed if parsed is not None and isfinite(parsed) and parsed >= 0 else None
 
 
 def optional_int(value: Any) -> int | None:

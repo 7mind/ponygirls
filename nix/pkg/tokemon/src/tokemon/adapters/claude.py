@@ -15,11 +15,12 @@ are reported with a note.  Schemas pinned against live responses (2026-09-29):
         account: {email, ...}
         organization: {organization_type, rate_limit_tier, ...}
 
-The per-window top-level keys include opaque codenames that change over time,
-so windows are read from the ``limits`` list, which names them explicitly.
-``spend`` is extra usage beyond the plan, billed in the account's currency: a
-row while enabled, nothing while disabled (no credits, or blocked for any
-other reason, means nothing to spend and nothing to show).
+The ``limits`` list names rolling windows explicitly. When it yields no
+windows, legacy ``five_hour`` / ``seven_day`` and Opus/Sonnet fields are used.
+Enabled ``spend`` is extra usage billed in the account's currency; legacy
+``extra_usage`` (cents) is a fallback, never an additional spend row. Enterprise
+profiles without monetary spend receive an explicit unavailable note, not an
+invented zero or unlimited allowance.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from tokemon.adapters.common import (
     bearer_headers,
     get_json,
     optional_float,
+    optional_nonnegative_float,
     parse_datetime_string,
     require_object,
     top_level_keys,
@@ -60,6 +62,9 @@ CLAUDE_OAUTH_SCOPES = (
     "user:file_upload",
     "user:plugins",
 )
+
+CENTS_PER_UNIT = 100.0
+ENTERPRISE_ORGANIZATION_TYPES = {"enterprise", "claude_enterprise"}
 
 LIMIT_KIND_LABELS: Mapping[str, str] = {
     "session": "session (5h)",
@@ -101,12 +106,18 @@ def _limit_window(node: Any) -> QuotaWindow | None:
 def _money(node: Any) -> tuple[float, str] | None:
     if not isinstance(node, Mapping):
         return None
-    amount_minor = optional_float(node.get("amount_minor"))
-    exponent = optional_float(node.get("exponent"))
+    amount_minor = optional_nonnegative_float(node.get("amount_minor"))
+    exponent = optional_nonnegative_float(node.get("exponent"))
     currency = node.get("currency")
-    if amount_minor is None or exponent is None or not isinstance(currency, str):
+    if (
+        amount_minor is None or exponent is None or not exponent.is_integer()
+        or not isinstance(currency, str) or not currency
+    ):
         return None
-    return amount_minor / 10**exponent, currency
+    try:
+        return amount_minor / 10**exponent, currency
+    except OverflowError:
+        return None
 
 
 def _extra_usage(spend: Any) -> tuple[QuotaWindow | None, str | None]:
@@ -122,11 +133,28 @@ def _extra_usage(spend: Any) -> tuple[QuotaWindow | None, str | None]:
     window = QuotaWindow(
         name="extra usage",
         used=used[0],
-        limit=limit[0] if limit is not None else None,
+        limit=limit[0] if limit is not None and limit[1] == used[1] else None,
         unit=used[1],
-        resets_at=None,
+        resets_at=parse_datetime_string(spend.get("resets_at")),
     )
     return window, None
+
+
+def _legacy_extra_usage(extra: Any) -> QuotaWindow | None:
+    if not isinstance(extra, Mapping) or extra.get("is_enabled") is not True:
+        return None
+    used = optional_nonnegative_float(extra.get("used_credits"))
+    if used is None:
+        return None
+    limit = optional_nonnegative_float(extra.get("monthly_limit"))
+    currency = extra.get("currency")
+    return QuotaWindow(
+        name="extra usage",
+        used=used / CENTS_PER_UNIT,
+        limit=limit / CENTS_PER_UNIT if limit is not None else None,
+        unit=currency if isinstance(currency, str) and currency else "USD",
+        resets_at=parse_datetime_string(extra.get("resets_at")),
+    )
 
 
 class ClaudeQuota:
@@ -143,9 +171,25 @@ class ClaudeQuota:
         parsed = [_limit_window(node) for node in limits] if isinstance(limits, list) else []
         present = tuple(window for window in parsed if window is not None)
         if not present:
-            raise QuotaFetchError(f"claude usage: no recognizable quota data (top-level keys: {top_level_keys(usage)})")
-
+            legacy_limits = []
+            for key, kind, model in (
+                ("five_hour", "session", None),
+                ("seven_day", "weekly_all", None),
+                ("seven_day_opus", "weekly_scoped", "Opus"),
+                ("seven_day_sonnet", "weekly_scoped", "Sonnet"),
+            ):
+                node = usage.get(key)
+                if isinstance(node, Mapping):
+                    legacy_limits.append(_limit_window({
+                        "kind": kind,
+                        "percent": optional_nonnegative_float(node.get("utilization")),
+                        "resets_at": node.get("resets_at"),
+                        "scope": {"model": {"display_name": model}} if model is not None else None,
+                    }))
+            present = tuple(window for window in legacy_limits if window is not None)
         extra_window, note = _extra_usage(usage.get("spend"))
+        if extra_window is None:
+            extra_window = _legacy_extra_usage(usage.get("extra_usage"))
         if extra_window is not None:
             present = (*present, extra_window)
 
@@ -153,6 +197,11 @@ class ClaudeQuota:
         organization = profile.get("organization")
         email = account.get("email") if isinstance(account, Mapping) else None
         plan = organization.get("organization_type") if isinstance(organization, Mapping) else None
+        enterprise = isinstance(plan, str) and plan in ENTERPRISE_ORGANIZATION_TYPES
+        if enterprise and extra_window is None:
+            note = "enterprise spend unavailable through OAuth"
+        if not present and not enterprise:
+            raise QuotaFetchError(f"claude usage: no recognizable quota data (top-level keys: {top_level_keys(usage)})")
         return QuotaSnapshot(
             plan_name=plan if isinstance(plan, str) else None,
             identity=email if isinstance(email, str) else None,

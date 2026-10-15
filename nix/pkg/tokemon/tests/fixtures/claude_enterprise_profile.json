@@ -1,0 +1,4 @@
+{
+  "account": {"email": "member@example.test"},
+  "organization": {"organization_type": "claude_enterprise"}
+}

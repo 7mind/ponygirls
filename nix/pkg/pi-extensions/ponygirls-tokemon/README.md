@@ -1,8 +1,8 @@
 # ponygirls-tokemon
 
 Provider quotas inside pi (`v1.0.0` verified): this repository's `tokemon`
-dashboard (`nix/pkg/tokemon`) without the Claude profiles and
-without yolo profile discovery. It covers only the providers the running pi
+dashboard (`nix/pkg/tokemon`) without external Claude/Codex profiles or
+yolo profile discovery. It covers only the providers the running pi
 is configured for.
 
 ## Install
@@ -35,12 +35,23 @@ an expired login. That includes logins whose auth is a header only, such as
 kimi-coding's `Authorization: Bearer …`. Copilot and Meta query with the
 stored refresh/identity token instead, as tokemon does.
 
-Quota adapters, ported from tokemon: `zai`, `kimi-coding`, `minimax`,
+Quota adapters, ported from tokemon: `anthropic` (Claude OAuth personal
+quota/spend; API keys have no subscription quota endpoint), `zai`, `kimi-coding`, `minimax`,
 `openrouter`, `vercel-ai-gateway`, `github-copilot`, `openai-codex` (ChatGPT
 plan; the `ChatGPT-Account-Id` header is sent when the login carries an
 account id), `xai` (Grok
 subscription; inference-key status), `xai-management`, and `meta` (Muse; one
 key-mint POST, no retry). Any other provider is listed as "no quota endpoint".
+Codex enterprise/business monthly allowance is shown as `monthly credits`,
+separate from rolling quotas and the credit balance. Claude accepts both modern
+`spend` money objects and legacy `extra_usage` cents, including spend-only
+enterprise responses. Missing limits stay unknown, never unlimited. When an
+enterprise account exposes no spend through OAuth, the note says
+`enterprise spend unavailable through OAuth`; this does not mean zero spend.
+No organization-admin key or browser cookie is used. Anthropic requires a usable
+OAuth login configured in pi; this extension does not import or refresh Claude
+Code profiles. API-key usage cannot reveal enterprise subscription spend.
+
 Each target fails independently. An HTTP 429 holds that target's last result
 until `Retry-After` passes. Targets that resolve to the same account are
 merged into one row.

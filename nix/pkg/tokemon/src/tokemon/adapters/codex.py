@@ -10,7 +10,8 @@ Schema pinned against a live ``GET /wham/usage`` response (2026-09-29):
     additional_rate_limits: [{limit_name, metered_feature,
                               rate_limit: <as rate_limit> | null}, ...] | null
     credits: {has_credits, unlimited, overage_limit_reached, balance: "0", ...}
-    spend_control: {reached, individual_limit}
+    spend_control: {reached, individual_limit: {limit, used, remaining,
+                    used_percent, remaining_percent, reset_at} | null}
     rate_limit_reset_credits: {available_count, applicable_available_count}
     plan_type, model_usage, promo, ...
 
@@ -21,7 +22,9 @@ CLI's own model (openai/codex, AdditionalRateLimitDetails).  ``chatpass`` is a
 separate quota for ChatPass (ChatGPT sign-in for third-party apps) that the CLI
 model does not carry.  ``code_review_rate_limit`` was null too and is read as a
 rate-limit status like ``rate_limit``; that shape is not confirmed by an
-observed response.
+observed response. ``spend_control.individual_limit`` uses the schema supplied
+in https://github.com/openai/codex/pull/24812, not a captured enterprise response.
+It is monthly credits, separate from the purchased ``credits`` balance.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from tokemon.adapters.common import (
     humanize_seconds,
     optional_float,
     optional_int,
+    optional_nonnegative_float,
     require_object,
     top_level_keys,
 )
@@ -76,6 +80,31 @@ def _status_windows(primary_name: str, secondary_name: str, status: Any) -> list
     return [window for window in windows if window is not None]
 
 
+def _monthly_credits(spend_control: Any) -> QuotaWindow | None:
+    if not isinstance(spend_control, Mapping):
+        return None
+    individual = spend_control.get("individual_limit")
+    if not isinstance(individual, Mapping):
+        return None
+    used = optional_nonnegative_float(individual.get("used"))
+    limit = optional_nonnegative_float(individual.get("limit"))
+    if used is None or (individual.get("limit") is not None and limit is None):
+        return None
+    reset_seconds = optional_nonnegative_float(individual.get("reset_at"))
+    try:
+        resets_at = epoch_seconds_to_datetime(reset_seconds)
+    except (ValueError, OverflowError, OSError):
+        resets_at = None
+    return QuotaWindow(
+        name="monthly credits",
+        used=used,
+        limit=limit,
+        unit="credits",
+        resets_at=resets_at,
+        exhausted=True if spend_control.get("reached") is True else None,
+    )
+
+
 class CodexQuota:
     def fetch(self, credential: Credential, transport: Transport) -> QuotaSnapshot:
         headers = bearer_headers(credential)
@@ -106,6 +135,10 @@ class CodexQuota:
                 limit_name = details.get("limit_name")
                 name = limit_name if isinstance(limit_name, str) and limit_name else "additional"
                 windows.extend(_status_windows(name, name, details.get("rate_limit")))
+
+        monthly = _monthly_credits(body.get("spend_control"))
+        if monthly is not None:
+            windows.append(monthly)
 
         credits = body.get("credits")
         if isinstance(credits, dict):
