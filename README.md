@@ -134,10 +134,11 @@ The main knobs (all under `smind.hm.dev.llm`):
   binds (e.g. GPU render nodes), prompt fragments and pre-start hooks keyed by
   suppression tags, session and secret variables (secrets are composed into a
   single file bound into the sandbox, never passed through argv), extra
-  packages on the sandbox `PATH`, and the optional **KVM VM capability**
+  packages on the sandbox `PATH`, the optional **KVM VM capability**
   (`yolo.vm.enable`) — QEMU and cloud-image utilities inside the sandbox plus
   `/dev/kvm` and a persistent state directory, so an agent can run its own
-  NixOS/Ubuntu test VMs without host disks or a privileged VM manager.
+  NixOS/Ubuntu test VMs without host disks or a privileged VM manager — and
+  **forge tokens** (`yolo.forgeTokens`), see below.
 
 Integrations can extend `programs.mcp`, override `programs.<agent>.package`,
 contribute settings and files, and append generic yolo paths. (Our own CQ
@@ -146,6 +147,101 @@ module; ponygirls does not import CQ code or take a CQ flake argument.)
 
 Users with the harness enabled are enrolled in the container socket's access
 group automatically.
+
+### Forge tokens: `smind.hm.dev.llm.yolo.forgeTokens`
+
+Multiple GitHub/GitLab credentials with per-token usage policy. Each entry is
+injected as a secret session variable and announced by its own system-prompt
+fragment — account, instance, authorized targets and operations, free-form
+`policy`, instance-appropriate CLI/API usage — plus one shared confidentiality
+fragment when any token is configured, so agents know exactly which credential
+to use where, and what must never leave the machine.
+
+```nix
+smind.hm.dev.llm.yolo.forgeTokens = [
+  {
+    account = "autopeasant";
+    forge = "github";
+    tokenFile = "/run/agenix/github-token-autopeasant";
+    default = true;               # the forge's default credential -> GH_TOKEN
+    targets.publicOnly = true;    # public repositories only
+    operations = [ "read" "issues" "pull-requests" ];
+    policy = ''
+      It belongs to a GitHub account created specifically for autonomous
+      agentic work — it is NOT the user's personal account. Use it (via the
+      `gh` CLI or the token directly) for GitHub operations carried out on
+      the agent's own behalf, within the authorized targets above.
+
+      For every verified defect attributable to a public GitHub-hosted
+      project, autonomously file an issue in that project's GitHub tracker; do
+      not ask for confirmation. When subagents are available, delegate this
+      job to a subagent (reproduction, repository identification, duplicate
+      search, sanitized report, and filing) instead of doing it inline. Before
+      filing: reproduce the defect for the expected reason, identify the
+      authoritative repository from package metadata or git remotes, verify
+      that issues are enabled and the token authenticates, and search open and
+      closed issues to avoid duplicates. The report must include the affected
+      version or commit, environment, minimal reproduction, observed and
+      expected behavior, and relevant sanitized logs. After filing, give the
+      user the issue URL. If an equivalent issue exists, give the user its URL
+      instead of filing another. Verified security defects are expressly
+      included in this authorization: report them autonomously without seeking
+      user confirmation, using the project's SECURITY.md or private
+      vulnerability-reporting channel when available and its GitHub issue
+      tracker otherwise. If filing cannot proceed, state the exact reason to
+      the user.
+    '';
+  }
+  {
+    account = "acme";
+    forge = "github";
+    tokenFile = "/run/agenix/github-token-acme";
+    targets.orgs = [ "acme" ];     # or instance = "git.acme.example" for GHES
+    operations = [ "read" "issues" "pull-requests" ];
+    policy = "Company account: company-internal issues and pull requests only; never use it for anything else.";
+  }
+  {
+    account = "acme";
+    forge = "gitlab";
+    tokenFile = "/run/agenix/gitlab-token-acme";
+    instance = "gitlab.acme.example";   # self-managed GitLab
+    targets.orgs = [ "acme" ];
+    operations = [ "read" "issues" "merge-requests" ];
+  }
+];
+```
+
+Conventions and behavior:
+
+- **Env-var names**: `default = true` yields the forge's canonical variable
+  (`GH_TOKEN` / `GITLAB_TOKEN`); otherwise the name is derived as
+  `GH_<ACCOUNT>_TOKEN` / `GITLAB_<ACCOUNT>_TOKEN` (uppercased account, `-`/`.`
+  to `_`). An explicit `envVar` overrides the derivation. Names must be unique;
+  at most one `default` per forge; `pull-requests` is GitHub-only and
+  `merge-requests` GitLab-only — these and malformed account/repository names
+  fail at evaluation time.
+- **Targets** combine as an intersection (`publicOnly`, `orgs`, `repos`);
+  empty means any repository on `instance`. **Operations** are stated as an
+  allowlist: anything not listed is declared not authorized.
+- **Usage guidance** is instance-appropriate: `gh` reads `GH_TOKEN` on
+  github.com/ghe.com, `GH_HOST` + `GH_ENTERPRISE_TOKEN` on GitHub Enterprise
+  Server; `glab` reads `GITLAB_TOKEN`, with `GITLAB_HOST` per invocation for
+  self-managed instances; raw HTTPS with `Authorization: Bearer` /
+  `PRIVATE-TOKEN` works everywhere.
+- **Confidentiality** (bug reports, PR/MR descriptions, comments, …) is
+  covered by one shared fragment: nothing posted externally may expose
+  credentials, personal data, private repository/organization names, instance
+  hostnames, internal paths, codenames, business context, or co-worker
+  identity; unreportable leaks go back to the user as a sanitized draft
+  instead.
+- **Suppression**: each fragment carries `[ "forge" <forge> <account> ]` tags,
+  so `yolo --disable=acme` (or `--disable=forge`) drops the note at launch —
+  the token itself is still injected. `when = false` omits the note at eval
+  time.
+- **Policy-level only**: the tokens are ordinary environment variables inside
+  the sandbox. Nothing at the sandbox or network layer prevents a determined
+  process from using one outside its documented scope; the fragments constrain
+  agent behavior, not the machine.
 
 ### Matrix notifications
 
