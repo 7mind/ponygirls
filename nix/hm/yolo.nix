@@ -68,6 +68,203 @@ let
     map (e: { inherit (e) target tags prompt; }) (lib.filter (e: e.when) cfg.yolo.promptExtensions)
   );
 
+  # --- Forge tokens (GitHub / GitLab credentials with usage policy) ----------
+  # One configured credential per (forge, account): injected as a secret
+  # session variable under its resolved env-var name, and announced by its own
+  # prompt fragment (account, instance, authorized targets/operations,
+  # freeform policy, instance-appropriate CLI/API usage) plus one shared
+  # confidentiality fragment when any token is configured. Policy-level only:
+  # nothing at the sandbox or network layer restricts what a token is used for
+  # once it is in the environment.
+  forgeTokenOperations = [
+    "read"
+    "push"
+    "issues"
+    "pull-requests"
+    "merge-requests"
+    "comments"
+    "discussions"
+    "releases"
+    "packages"
+    "workflows"
+    "wiki"
+    "administration"
+  ];
+  forgeLabel = forge: if forge == "github" then "GitHub" else "GitLab";
+  envComponent = account: lib.toUpper (builtins.replaceStrings [ "-" "." ] [ "_" "_" ] account);
+  # The forge's canonical variable for `default = true`, else a derived
+  # per-account name; an explicit `envVar` always wins.
+  resolvedEnvVar = token:
+    if token.envVar != null then
+      token.envVar
+    else if token.forge == "github" then
+      (if token.default then "GH_TOKEN" else "GH_${envComponent token.account}_TOKEN")
+    else
+      (if token.default then "GITLAB_TOKEN" else "GITLAB_${envComponent token.account}_TOKEN");
+  targetsText = instance: targets:
+    let
+      clauses =
+        lib.optional targets.publicOnly "public repositories only (private and internal repositories are out of scope)"
+        ++ lib.optional (targets.orgs != [ ]) "repositories owned by the organization(s): ${lib.concatStringsSep ", " targets.orgs}"
+        ++ lib.optional (targets.repos != [ ]) "exactly these repositories: ${lib.concatStringsSep ", " targets.repos}";
+    in
+    if clauses == [ ] then "any repository on ${instance}" else lib.concatStringsSep ", and " clauses;
+  usageText = token:
+    let
+      instance = token.instance;
+    in
+    if token.forge == "github" then
+      if instance == "github.com" || lib.hasSuffix ".ghe.com" instance then
+        "the `gh` CLI (it reads GH_TOKEN for these hosts — set GH_TOKEN to this token's value for the invocation when it is not named GH_TOKEN) or HTTPS calls to https://api.github.com with an `Authorization: Bearer` header"
+      else
+        "the `gh` CLI with GH_HOST=${instance} and GH_ENTERPRISE_TOKEN set to this token's value for the invocation, or HTTPS calls to https://${instance}/api/v3 with an `Authorization: Bearer` header"
+    else if instance == "gitlab.com" then
+      "the `glab` CLI (it reads GITLAB_TOKEN — set GITLAB_TOKEN to this token's value for the invocation when it is not named GITLAB_TOKEN) or HTTPS calls to https://gitlab.com/api/v4 with a `PRIVATE-TOKEN` header"
+    else
+      "the `glab` CLI with GITLAB_HOST=${instance} and GITLAB_TOKEN set to this token's value for the invocation, or HTTPS calls to https://${instance}/api/v4 with a `PRIVATE-TOKEN` header";
+  forgeTokenPrompt = token: {
+    target = "*";
+    inherit (token) tags when;
+    prompt = ''
+      Forge token "${token.account}" (${forgeLabel token.forge}, ${token.instance}): the ${resolvedEnvVar token} environment variable carries a ${forgeLabel token.forge} token for the "${token.account}" account. Use it only as authorized below; when in doubt, do not use it and ask.
+
+      Authorized targets: ${targetsText token.instance token.targets}.
+      Authorized operations: ${lib.concatStringsSep ", " token.operations}. Any operation not listed is not authorized.
+      API access: ${usageText token}.
+    '' + lib.optionalString (token.policy != "") "\n${token.policy}\n";
+  };
+  forgeConfidentialityPrompt = {
+    target = "*";
+    tags = [ "forge" ];
+    prompt = ''
+      External-posting confidentiality (binds every forge token above): anything posted outside this machine — issues, pull or merge requests, comments, gists, packages, releases, commit messages — must not expose credentials, personal data, or any detail of a private project or host: no private repository or organization names, instance hostnames, internal paths, branch names, internal codenames, business or domain context, logs with private identifiers, or co-worker identity. Build self-contained reproductions that refer only to the dependency's public API and generic inputs; rewrite stack traces, file paths, and environment dumps so they contain nothing attributable. If a faithful report cannot be written without such leakage, do not post it — hand the user a sanitized draft instead. Never post an unverified hypothesis or a duplicate. Respect an explicit user instruction not to file.
+    '';
+  };
+  forgeTokenType = lib.types.submodule (
+    { config, ... }:
+    {
+      options = {
+        account = lib.mkOption {
+          type = lib.types.str;
+          example = "autopeasant";
+          description = ''
+            Account label agents see in this token's prompt fragment. Must
+            match `[A-Za-z0-9][A-Za-z0-9._-]*` — it also derives the
+            environment-variable name and the default suppression tags.
+          '';
+        };
+        forge = lib.mkOption {
+          type = lib.types.enum [ "github" "gitlab" ];
+          description = "Forge the token belongs to.";
+        };
+        tokenFile = lib.mkOption {
+          type = lib.types.str;
+          example = "/run/agenix/github-token-autopeasant";
+          description = ''
+            Host path of the secret FILE holding the single-line token (e.g. an
+            agenix secret under `/run/agenix`). Transport is exactly
+            {option}`smind.hm.dev.llm.yolo.secretSessionVariables`: composed
+            into one 0600 file sourced inside the sandbox, never through argv.
+          '';
+        };
+        default = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Make this the forge's default credential: the environment variable
+            becomes `GH_TOKEN` (github) or `GITLAB_TOKEN` (gitlab). At most one
+            entry per forge may set this.
+          '';
+        };
+        envVar = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "GH_WORK_TOKEN";
+          description = ''
+            Explicit environment-variable name, overriding the derived one
+            (`GH_<ACCOUNT>_TOKEN` / `GITLAB_<ACCOUNT>_TOKEN`, or the forge
+            default when `default = true`).
+          '';
+        };
+        instance = lib.mkOption {
+          type = lib.types.str;
+          default = if config.forge == "github" then "github.com" else "gitlab.com";
+          defaultText = lib.literalExpression ''if forge == "github" then "github.com" else "gitlab.com"'';
+          description = ''
+            Forge instance the token is valid for: `github.com`, a `*.ghe.com`
+            tenant, a GitHub Enterprise Server hostname, `gitlab.com`, or a
+            self-managed GitLab hostname. The prompt fragment gives agents
+            instance-appropriate API/CLI usage (`api/v3` vs `api/v4`,
+            `GH_HOST`/`GH_ENTERPRISE_TOKEN` vs `GITLAB_HOST`/`GITLAB_TOKEN`).
+          '';
+        };
+        targets = lib.mkOption {
+          type = lib.types.submodule {
+            options = {
+              publicOnly = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Restrict to public repositories; private and internal repositories are out of scope.";
+              };
+              orgs = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                example = [ "acme" ];
+                description = "Restrict to repositories owned by these organizations (GitHub) or groups (GitLab).";
+              };
+              repos = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                example = [ "acme/backend" ];
+                description = ''Restrict to exactly these repositories, each `owner/name`.'';
+              };
+            };
+          };
+          default = { };
+          description = ''
+            Repository allowlist this token may act on. The constraints combine
+            (intersection); an empty allowlist means any repository on
+            `instance`.
+          '';
+        };
+        operations = lib.mkOption {
+          type = lib.types.listOf (lib.types.enum forgeTokenOperations);
+          example = [ "read" "issues" "pull-requests" ];
+          description = ''
+            Operations the token is authorized for; anything not listed is
+            stated as not authorized. `pull-requests` is GitHub-only and
+            `merge-requests` GitLab-only.
+          '';
+        };
+        policy = lib.mkOption {
+          type = lib.types.lines;
+          default = "";
+          description = ''
+            Free-form usage policy appended to this token's prompt fragment:
+            what the account is for, when the token may and may not be used,
+            and any autonomy rules (e.g. whether verified defects may be filed
+            without asking).
+          '';
+        };
+        tags = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ "forge" config.forge config.account ];
+          defaultText = lib.literalExpression ''[ "forge" <forge> <account> ]'';
+          description = ''
+            Suppression tags for the token's prompt fragment (`yolo
+            --disable=<tag>` drops the fragment; the token itself is still
+            injected).
+          '';
+        };
+        when = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Static (Nix-eval-time) gate: announce this token only when true (the token is still injected).";
+        };
+      };
+    }
+  );
+
   # Shared submodule for a tagged pre-start hook.
   hookType = lib.types.submodule {
     options = {
@@ -330,8 +527,9 @@ in
         statically by `when` (Nix-eval) and at runtime by `tags` + the
         `yolo --disable=<tag>` flag. List-merges across modules: this module
         contributes the YOLO pre-authorization note (target "claude"), the
-        configured remote-worker SSH note (tag "ssh"), and GitHub agent-account
-        note (tag "github"). The consumer appends
+        configured remote-worker SSH note (tag "ssh"), and the forge-token
+        usage/confidentiality notes (tag "forge", see
+        {option}`smind.hm.dev.llm.yolo.forgeTokens`). The consumer appends
         host-specific fragments (e.g. the GPU
         availability note, tagged "gpu"). Replaces the old hardcoded
         permission/GPU notes and the former `extraPromptFragments` option. Codex
@@ -416,6 +614,47 @@ in
       '';
     };
 
+    smind.hm.dev.llm.yolo.forgeTokens = lib.mkOption {
+      type = lib.types.listOf forgeTokenType;
+      default = [ ];
+      example = lib.literalExpression ''
+        [
+          {
+            account = "autopeasant";
+            forge = "github";
+            tokenFile = "/run/agenix/github-token-autopeasant";
+            default = true;
+            targets.publicOnly = true;
+            operations = [ "read" "issues" "pull-requests" ];
+            policy = "An agent account for autonomous work, not the user's personal account. ...";
+          }
+          {
+            account = "acme";
+            forge = "gitlab";
+            tokenFile = "/run/agenix/gitlab-token-acme";
+            instance = "gitlab.acme.example";
+            targets.orgs = [ "acme" ];
+            operations = [ "read" "issues" "merge-requests" ];
+          }
+        ]
+      '';
+      description = ''
+        GitHub/GitLab credentials with per-token usage policy. Each entry is
+        injected as a secret session variable under its resolved env-var name
+        (same transport as
+        {option}`smind.hm.dev.llm.yolo.secretSessionVariables`) and announced by
+        its own system-prompt fragment — account, instance, authorized targets
+        and operations, free-form `policy`, instance-appropriate CLI/API usage —
+        plus one shared confidentiality fragment when any token is configured.
+        With several tokens per forge, each fragment tells agents which one to
+        use for which target.
+
+        Policy-level only: the tokens are ordinary environment variables once
+        inside the sandbox — nothing at the sandbox or network layer prevents a
+        determined process from using one outside its documented scope.
+      '';
+    };
+
     smind.hm.dev.llm.yolo.codegraph = lib.mkOption {
       type = lib.types.nullOr lib.types.package;
       default = codegraphPkg;
@@ -494,6 +733,48 @@ in
           message = "smind.hm.dev.llm.yolo.piSharedAssets entries must be safe relative paths";
         }
         {
+          assertion = lib.all (t: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" t.account != null) cfg.yolo.forgeTokens;
+          message = "smind.hm.dev.llm.yolo.forgeTokens: account must match [A-Za-z0-9][A-Za-z0-9._-]*";
+        }
+        {
+          assertion = lib.all (t: builtins.match "[A-Za-z_][A-Za-z0-9_]*" (resolvedEnvVar t) != null) cfg.yolo.forgeTokens;
+          message = "smind.hm.dev.llm.yolo.forgeTokens: resolved env var must match [A-Za-z_][A-Za-z0-9_]*";
+        }
+        {
+          assertion = lib.length (lib.unique (map resolvedEnvVar cfg.yolo.forgeTokens)) == lib.length cfg.yolo.forgeTokens;
+          message = "smind.hm.dev.llm.yolo.forgeTokens: env var names must be unique";
+        }
+        {
+          assertion = lib.length (lib.unique (map (t: "${t.account}/${t.forge}") cfg.yolo.forgeTokens)) == lib.length cfg.yolo.forgeTokens;
+          message = "smind.hm.dev.llm.yolo.forgeTokens: account/forge pairs must be unique";
+        }
+        {
+          assertion = lib.all (forge: lib.length (lib.filter (t: t.forge == forge && t.default) cfg.yolo.forgeTokens) <= 1) [ "github" "gitlab" ];
+          message = "smind.hm.dev.llm.yolo.forgeTokens: at most one default = true entry per forge";
+        }
+        {
+          assertion =
+            lib.all (t: t.forge == "github" || !(builtins.elem "pull-requests" t.operations)) cfg.yolo.forgeTokens
+            && lib.all (t: t.forge == "gitlab" || !(builtins.elem "merge-requests" t.operations)) cfg.yolo.forgeTokens;
+          message = "smind.hm.dev.llm.yolo.forgeTokens: pull-requests is github-only, merge-requests is gitlab-only";
+        }
+        {
+          assertion = lib.all (t: t.operations != [ ]) cfg.yolo.forgeTokens;
+          message = "smind.hm.dev.llm.yolo.forgeTokens: operations must not be empty";
+        }
+        {
+          assertion = lib.all (t: t.instance != "") cfg.yolo.forgeTokens;
+          message = "smind.hm.dev.llm.yolo.forgeTokens: instance must not be empty";
+        }
+        {
+          assertion = lib.all (t: lib.all (r: builtins.match "[A-Za-z0-9._-]+/[A-Za-z0-9._-]+" r != null) t.targets.repos) cfg.yolo.forgeTokens;
+          message = ''smind.hm.dev.llm.yolo.forgeTokens: targets.repos entries must be "owner/name"'';
+        }
+        {
+          assertion = lib.intersectLists (map resolvedEnvVar cfg.yolo.forgeTokens) (lib.attrNames cfg.yolo.validatedSessionVariables) == [ ];
+          message = "smind.hm.dev.llm.yolo.forgeTokens: env var collides with validatedSessionVariables";
+        }
+        {
           assertion = !cfg.yolo.vm.enable || isLinux;
           message = "smind.hm.dev.llm.yolo.vm.enable is supported only on Linux";
         }
@@ -503,13 +784,20 @@ in
         }
       ];
 
+      # Forge tokens ride the generic secret transport under their resolved
+      # env-var names (per-key merge with any plain secretSessionVariables).
+      smind.hm.dev.llm.yolo.secretSessionVariables = lib.mkMerge (
+        map (token: { "${resolvedEnvVar token}" = token.tokenFile; }) cfg.yolo.forgeTokens
+      );
+
       # Module-provided prompt fragments, leading the list (mkBefore); the
       # consumer's fragments append after.
       #   - YOLO authorization (claude only — Pi/Codex have no permission system).
       #   - Sandbox-active note (every harness — yolo always sets SMIND_SANDBOXED,
       #     so presence of this fragment IS the "sandbox active" signal).
       #   - SSH remote-worker key usage (when llmSshKeyPath is set).
-      #   - GitHub agent-account note (when GH_TOKEN is a secret session var).
+      #   - Per-token forge usage notes + shared confidentiality note (when
+      #     forgeTokens is non-empty).
       smind.hm.dev.llm.yolo.promptExtensions = lib.mkBefore (
         [
           {
@@ -530,17 +818,8 @@ in
           tags = [ "ssh" ];
           prompt = ''A dedicated SSH private key for logging into remote worker machines is available read-only at ${cfg.llmSshKeyPath} inside the sandbox. When you are instructed to use remote worker machines, authenticate with this key — e.g. `ssh -i ${cfg.llmSshKeyPath} <user>@<host>` or `GIT_SSH_COMMAND='ssh -i ${cfg.llmSshKeyPath}' git <push|fetch> ...`.'';
         }
-        ++ lib.optional (cfg.yolo.secretSessionVariables ? GH_TOKEN) {
-          target = "*";
-          tags = [ "github" ];
-          prompt = ''
-            A GitHub token is available in the GH_TOKEN environment variable. It belongs to a GitHub account created specifically for autonomous agentic work — it is NOT the user's personal account. Use it (via the `gh` CLI, which reads GH_TOKEN, or the token directly) for GitHub operations carried out on the agent's own behalf.
-
-            For every verified defect attributable to a GitHub-hosted project, autonomously file an issue in that project's GitHub tracker; do not ask for confirmation. When subagents are available, delegate this job to a subagent (reproduction, repository identification, duplicate search, sanitized report, and filing) instead of doing it inline. Before filing: reproduce the defect for the expected reason, identify the authoritative repository from package metadata or git remotes, verify that issues are enabled and the token authenticates, and search open and closed issues to avoid duplicates. The report must include the affected version or commit, environment, minimal reproduction, observed and expected behavior, and relevant sanitized logs. After filing, give the user the issue URL. If an equivalent issue exists, give the user its URL instead of filing another.
-
-            Never file an unverified hypothesis, a duplicate, or a report that exposes credentials, personal data, or unrelated private source/context. When the working tree is a private repository (or otherwise not the public upstream being reported to) and the filing target is a third-party dependency or upstream project, the report MUST NOT leak any detail of the private project: no private repo name, org, path, URL, branch, internal codename, proprietary source, business/domain context, architecture, stack beyond what the minimal public repro needs, logs with private identifiers, or co-worker/user identity. Construct a self-contained minimal reproduction that refers only to the dependency's public API and generic inputs; rewrite stack traces, file paths, and env dumps so they contain nothing attributable to the private project. If a faithful report cannot be written without such leakage, do not file — tell the user why and hand them the sanitized draft instead. Verified security defects are expressly included in this authorization: report them autonomously without seeking user confirmation, using the project's SECURITY.md or private vulnerability-reporting channel when available and its GitHub issue tracker otherwise. Respect an explicit user instruction not to file. If filing cannot proceed, state the exact reason to the user.
-          '';
-        }
+        ++ map forgeTokenPrompt cfg.yolo.forgeTokens
+        ++ lib.optional (cfg.yolo.forgeTokens != [ ]) forgeConfidentialityPrompt
         ++ lib.optional codegraphSet {
           target = "*";
           tags = [ "codegraph" ];
