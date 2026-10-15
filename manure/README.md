@@ -112,6 +112,46 @@ secrets or passwords). Token-free external fetch needs only the
 content URL + `--password[-file]`; public fetch needs no token. No
 secret ever goes in a URL, log, or error.
 
+## Artifact workspace
+
+The dashboard uses a responsive workspace layout with light/dark themes,
+access-mode navigation, full-catalogue search and sortable columns. Newest
+artifacts appear first. The table loads batches of 25 while scrolling;
+**Load more** provides keyboard access and works without IntersectionObserver.
+Search, filters and sort persist in the URL fragment, never in web storage.
+Failed batches preserve loaded rows and offer an explicit retry.
+
+Details show metadata and the file manifest, with same-origin attachment
+Downloads. **Open** uses the existing isolated content origin and one-time
+internal grant handoff; when content hosting is unavailable, no working link
+is advertised. Uploads remain CLI-only. All configured users can manage all
+artifacts; the sidebar is an access filter, not an ownership boundary.
+
+External passwords are shown once after rotation. Dismissal, navigation and
+logout clear the reveal. Login input is cleared after submission; the session
+uses the existing host-only HttpOnly cookie. Tokens, passwords and grants
+never enter URLs or web storage. A connection failure is distinguished from
+an expired session, with an explicit recovery action.
+
+## Dashboard catalogue API
+
+`GET /api/v1/artifacts?q=report&sort_by=created_at&direction=desc&limit=50`
+searches the full catalogue, not just the current page. Search is a literal
+Unicode case-insensitive substring of name or artifact ID (`%` / `_` are
+not wildcards). Sort fields: `name`, `created_at`,
+`expires_at`, `total_bytes`, `file_count`, `visibility`, `state`, `kind`,
+`created_by_user`; direction: `asc` / `desc`. Never-expiring artifacts sort
+last either way; text uses SQLite binary ordering. Existing visibility,
+state, and expiry filters combine with search.
+
+The presence of `q`, `sort_by`, or `direction` selects catalogue mode
+(default `created_at desc`). Continue with `next_cursor` and the same
+filters, search, sort, direction, and limit; restart on changes. Keyset pages
+materialize at most `limit + 1` rows in Python; search/sort may scan or order
+more data inside SQLite. This is not a snapshot. Requests omitting all three
+new arguments, including existing CLI/Python/MCP calls, retain their
+oldest-first order and legacy cursors. See `CONTRACT.md` §7 for details.
+
 ## MCP (stdio) + agent skill
 
 Real JSON-RPC 2.0 over stdio, one object per line, protocol
@@ -212,6 +252,12 @@ directory** (resolved absolutely, first existing hit wins). Browser
   `MANURE_MCP_SDK_PATH` it fails, not skips — so a missing
   driver/browser/SDK/node/openssl or a skipped mandatory case is a
   failed acceptance, never a green run.
+- Additional workspace UX checks: run
+  `python3 -m unittest discover -s manure/tests -p test_browser_dashboard_ux.py`
+  with the same driver/browser environment. `MANURE_FIREFOX_BIN` explicitly
+  selects Firefox instead of Chromium; `MANURE_UX_ARTIFACTS` optionally writes
+  screenshots to a scratch directory. A Firefox UX run does not replace the
+  mandatory Chromium, TLS or NixOS/HM security gates.
 - Absolute scratch paths from a developer run are not gates either;
   release acceptance is the parent-run F/B/N matrix (`CONTRACT.md` §13).
   Linux covers service/storage acceptance; CLI portability beyond Linux

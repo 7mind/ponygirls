@@ -14,22 +14,28 @@
 <script src="/unlock.js" defer></script>
 </head>
 <body>
-<main>
-<h1>Protected artifact</h1>
-<p>This artifact requires its external password. The password is sent
-only to this artifact's own origin, in the request body — never in
-the URL.</p>
+<main class="unlock-screen">
+<section class="unlock-card" aria-labelledby="unlock-heading">
+<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>manure<small>artifact access</small></span></div>
+<div class="card-content">
+<p class="eyebrow">EXTERNAL ARTIFACT</p>
+<h1 id="unlock-heading">Protected artifact</h1>
+<p class="intro">This artifact is shared with a password. Enter the external password provided by its owner to continue.</p>
 <form id="unlock-form" method="post" action="/__manure/unlock"
 enctype="application/x-www-form-urlencoded">
 <label for="password-input">External password</label>
 <input type="password" id="password-input" name="password"
 required autocomplete="current-password"
-spellcheck="false" autocapitalize="off">
-<button type="submit">Unlock</button>
+spellcheck="false" autocapitalize="off" aria-describedby="password-note">
+<button type="submit">Unlock artifact <span aria-hidden="true">→</span></button>
 </form>
 <p id="unlock-error" class="error" role="alert" hidden></p>
+<p id="password-note" class="security-note">Your password is sent only to this artifact’s own origin, in the request body — never in the URL.</p>
+</div>
+<footer class="card-footer"><span class="small-mark" aria-hidden="true"></span> Need access? Ask the person who shared this artifact.</footer>
+</section>
+<p class="workspace-note">File and directory sharing, with a boundary around every artifact.</p>
 </main>
-<noscript><p>JavaScript is off; the form above still works with a plain
-form post.</p></noscript>
+<noscript><p class="noscript-note">JavaScript is off; the form above still works with a plain form post.</p></noscript>
 </body>
 </html>

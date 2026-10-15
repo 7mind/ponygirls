@@ -816,7 +816,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         state: _State = self.server._mstate
         split = urllib.parse.urlsplit(self.path)
         path = split.path
-        query = urllib.parse.parse_qs(split.query, keep_blank_values=True)
+        try:
+            query = urllib.parse.parse_qs(
+                split.query, keep_blank_values=True,
+                errors="strict" if path == "/api/v1/artifacts" else "replace")
+        except UnicodeError as exc:
+            raise DomainError("bad-envelope", "bad query encoding") from exc
         method = self.command
         if path == "/api/v1/health" and method == "GET":
             self._log_info = ("health", "-", 0)
@@ -1024,6 +1029,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _api_list(self, query: dict[str, list[str]],
                   ident: authmod.TokenIdentity) -> None:
         state: _State = self.server._mstate
+        if any(key in query for key in ("q", "sort_by", "direction")):
+            for key in ("q", "sort_by", "direction", "limit", "cursor",
+                        "include_expired", "visibility", "state"):
+                if key in query and len(query[key]) != 1:
+                    raise DomainError("bad-envelope", "duplicate list argument")
         try:
             limit = int((query.get("limit") or ["50"])[0])
         except ValueError as exc:
@@ -1041,7 +1051,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 "uploading", "publishing", "ready"):
             raise DomainError("bad-envelope", "bad state filter")
         items, next_cursor = state.store.list_artifacts(
-            limit, cursor, include, visibility, fstate)
+            limit, cursor, include, visibility, fstate,
+            q=(query.get("q") or [None])[0],
+            sort_by=(query.get("sort_by") or [None])[0],
+            direction=(query.get("direction") or [None])[0])
         _ = ident
         self._send_json({"artifacts": [self._summary_with_state(i)
                                        for i in items],

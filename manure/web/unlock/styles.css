@@ -1,11 +1,82 @@
-/* manure unlock shell: minimal styling, no remote assets. */
-body {
-  font-family: system-ui, sans-serif;
-  line-height: 1.5;
-  margin: 0 auto;
-  max-width: 36rem;
-  padding: 2rem 1rem;
+:root {
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  color-scheme: light;
+  color: var(--ink);
+  background: var(--background);
+  --ink: #28332d;
+  --muted: #626e66;
+  --line: #dce2db;
+  --line-strong: #aebcaf;
+  --input-line: #89958b;
+  --background: #f5f7f4;
+  --surface: #fff;
+  --surface-muted: #edf1eb;
+  --selected: #dfe9dd;
+  --accent: #365a46;
+  --accent-hover: #294635;
+  --on-accent: #fff;
+  --focus: #56865f;
+  --positive: #426d47;
+  --danger: #a34d3a;
+  --danger-surface: #f9ece7;
 }
-form { display: grid; gap: 0.5rem; }
-input, button { font: inherit; }
-.error { color: #b00020; font-weight: bold; }
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ink: #e0e8e2;
+    --muted: #a1aea6;
+    --line: #333e37;
+    --line-strong: #64756a;
+    --input-line: #65776b;
+    --background: #141916;
+    --surface: #1b221d;
+    --surface-muted: #202a23;
+    --selected: #2d4234;
+    --accent: #8cbe9e;
+    --accent-hover: #a2d2b2;
+    --on-accent: #15241a;
+    --focus: #99ccaa;
+    --positive: #a1cca0;
+    --danger: #eba68e;
+    --danger-surface: #382820;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; font-size: 14px; line-height: 1.5; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.unlock-screen { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 18px; }
+.unlock-card { width: 100%; max-width: 460px; background: var(--surface); border: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 11px; padding: 22px 28px; border-bottom: 1px solid var(--line); font-size: 21px; line-height: 1.2; font-weight: 650; letter-spacing: -.8px; }
+.brand small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; font-weight: 400; letter-spacing: .2px; }
+.brand-mark { display: inline-block; position: relative; width: 32px; height: 34px; flex: none; background: var(--accent); color: var(--on-accent); }
+.brand-mark::before, .brand-mark::after { content: ''; position: absolute; width: 14px; height: 15px; border: 1.5px solid currentColor; }
+.brand-mark::before { left: 6px; top: 7px; }
+.brand-mark::after { left: 11px; top: 12px; background: var(--accent); }
+.card-content { padding: 28px; }
+p { margin-top: 0; line-height: 1.7; }
+.eyebrow { color: var(--muted); font-size: 10px; line-height: 1.4; font-weight: 650; letter-spacing: 1.7px; margin-bottom: 9px; }
+h1 { font-size: 27px; line-height: 1.25; letter-spacing: -.5px; font-weight: 600; margin: 0 0 12px; }
+.intro { color: var(--muted); font-size: 13px; margin-bottom: 0; }
+form { display: grid; gap: 8px; margin: 24px 0 19px; }
+label { font-size: 12px; font-weight: 500; }
+input, button { font: inherit; border-radius: 0; -webkit-tap-highlight-color: transparent; }
+input { width: 100%; min-width: 0; padding: 11px; border: 1px solid var(--input-line); color: var(--ink); background: var(--surface); font-size: 14px; }
+input:hover { border-color: var(--accent); }
+button { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 11px; margin-top: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 550; line-height: 1.5; cursor: pointer; }
+button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button:disabled { opacity: .45; cursor: default; }
+.error { padding: 10px 12px; color: var(--danger); background: var(--danger-surface); border: 1px solid var(--danger); font-size: 12px; }
+.security-note { color: var(--muted); font-size: 11px; line-height: 1.8; margin-bottom: 0; }
+.card-footer { display: flex; align-items: baseline; gap: 8px; padding: 16px 28px; border-top: 1px solid var(--line); background: var(--surface-muted); color: var(--muted); font-size: 10px; line-height: 1.7; }
+.small-mark { width: 5px; height: 5px; background: var(--positive); flex: none; }
+.workspace-note { max-width: 380px; color: var(--muted); text-align: center; font-size: 10px; margin: 17px 0 0; }
+.noscript-note { padding: 13px 18px; margin: 0; border-top: 1px solid var(--line); background: var(--surface-muted); color: var(--muted); font-size: 12px; }
+@media (max-width: 480px) {
+  .unlock-screen { padding: 24px 14px; }
+  .brand { padding: 20px 22px; }
+  .card-content { padding: 24px 22px; }
+  .card-footer { padding: 15px 22px; }
+  h1 { font-size: 25px; }
+}
