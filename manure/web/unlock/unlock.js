@@ -4,8 +4,8 @@
  * password as application/x-www-form-urlencoded to /__manure/unlock
  * on THIS content origin (same-origin by construction; fetch carries
  * the real Origin for the server's CSRF check). On success the server
- * sets the grant cookie and answers 303 to /, which fetch follows;
- * the page then navigates to /. On failure a generic error is shown.
+ * sets the grant cookie and redirects to the artifact root, which fetch
+ * follows; the page then navigates to that root. On failure a generic error is shown.
  * The password is never placed in URLs, storage, or logs, and the
  * field is always cleared after the attempt. This file contains no
  * innerHTML/outerHTML/insertAdjacentHTML and touches no storage.
@@ -23,14 +23,14 @@
     err.textContent = "";
     var body = new URLSearchParams();
     body.set("password", input.value);
-    fetch(form.getAttribute("action") || "/__manure/unlock", {
+    fetch(form.action, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString()
     }).then(function (res) {
       if (res.ok || res.redirected) {
-        window.location.assign("/");
+        window.location.assign(new URL("../", form.action).href);
         return;
       }
       throw new Error(String(res.status));

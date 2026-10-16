@@ -1,4 +1,4 @@
-# manure file & directory hosting service (CONTRACT.md frozen v0.2.0).
+# manure file & directory hosting service (CONTRACT.md v0.2.0 + path-mode amendment).
 #
 # Option names are exactly CONTRACT.md §3.3 (closed set — no other
 # options without an amendment). Notable consequences:
@@ -84,7 +84,7 @@ let
     port = cfg.port;
     data_dir = cfg.dataDir;
     api_origin = cfg.apiOrigin;
-    content_suffix = cfg.contentSuffix;
+    content_mode = cfg.contentMode;
     loopback_dev = cfg.loopbackDev;
     trusted_proxies = cfg.trustedProxies;
     users = lib.mapAttrsToList
@@ -118,6 +118,8 @@ let
     incomplete_session_ttl_s = cfg.incompleteSessionTtl;
     grant_ttl_s = cfg.grantTtl;
     one_time_grant_ttl_s = cfg.oneTimeGrantTtl;
+  } // lib.optionalAttrs (cfg.contentSuffix != null) {
+    content_suffix = cfg.contentSuffix;
   } // lib.optionalAttrs (cfg.dashboardDir != null) {
     dashboard_dir = cfg.dashboardDir;
   } // lib.optionalAttrs (cfg.unlockShellDir != null) {
@@ -306,11 +308,16 @@ in
       example = "https://artifacts.7mind.io";
       description = "Public dashboard/API origin (required when enabled). http: only with loopbackDev on loopback hosts.";
     };
+    contentMode = lib.mkOption {
+      type = lib.types.enum [ "subdomain" "path" ];
+      default = "subdomain";
+      description = "Content routing. Subdomain is the secure default. Path is LOW-SECURITY: /view/<artifact-id> shares the API/dashboard origin and all artifacts; TRUSTED CONTENT ONLY. Cookie paths are not origin isolation. No wildcard DNS or certificate is needed in path mode.";
+    };
     contentSuffix = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
       example = "artifacts.7mind.io";
-      description = "Content suffix; each artifact serves from <hex32>.<contentSuffix>. A separate registrable domain is strongly recommended when unrelated apps share the parent domain (§5.6).";
+      description = "Required in subdomain mode, optional in path mode. Content suffix; each artifact serves from <hex32>.<contentSuffix>. A separate registrable domain is strongly recommended when unrelated apps share the parent domain (§5.6).";
     };
     dataDir = lib.mkOption {
       type = lib.types.str;
@@ -382,12 +389,12 @@ in
       enable = lib.mkOption {
         type = lib.types.bool;
         default = true;
-        description = "Manage host-local nginx virtual hosts (API host + wildcard content host) forwarding Host-intact with X-Forwarded-Proto. Disable when TLS terminates on an external edge.";
+        description = "Manage host-local nginx virtual hosts (API host; wildcard content host in subdomain mode) forwarding Host-intact with X-Forwarded-Proto. Disable when TLS terminates on an external edge.";
       };
       acmeHost = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "Use this ACME host's certificate (null: plain HTTP proxy, loopback development only). Wildcard content needs a DNS-01 cert covering *.<contentSuffix>; never assume an HTTP-issued wildcard.";
+        description = "Use this ACME host's certificate (null: plain HTTP proxy, loopback development only). Subdomain mode needs a DNS-01 cert covering *.<contentSuffix>; never assume an HTTP-issued wildcard.";
       };
       openFirewall = lib.mkOption {
         type = lib.types.bool;
@@ -424,8 +431,8 @@ in
         message = "smind.services.manure: tokenHashFile must be an absolute runtime path outside the Nix store (a secret-manager path, never Nix-store material).";
       }
       {
-        assertion = cfg.apiOrigin != null && cfg.contentSuffix != null;
-        message = "smind.services.manure: apiOrigin and contentSuffix are required.";
+        assertion = cfg.apiOrigin != null && (cfg.contentMode == "path" || cfg.contentSuffix != null);
+        message = "smind.services.manure: apiOrigin is required; contentSuffix is required in subdomain mode.";
       }
       {
         assertion = cfg.loopbackDev || lib.hasPrefix "https://" (cfg.apiOrigin or "");
@@ -519,22 +526,25 @@ in
     services.nginx = lib.mkIf cfg.proxy.enable {
       enable = true;
       commonHttpConfig = logFormat + hostMap;
-      virtualHosts.${apiHost} = {
-        serverName = apiHost;
-        onlySSL = tls;
-        useACMEHost = cfg.proxy.acmeHost;
-        locations."/" = backendLocation;
-        extraConfig = accessLog;
+      virtualHosts = {
+        ${apiHost} = {
+          serverName = apiHost;
+          onlySSL = tls;
+          useACMEHost = cfg.proxy.acmeHost;
+          locations."/" = backendLocation;
+          extraConfig = accessLog;
+        };
+        "redirect-${apiHost}" = redirectVhost "redirect" apiHost;
+      } // lib.optionalAttrs (cfg.contentMode == "subdomain") {
+        "content-${cfg.contentSuffix}" = {
+          serverName = "*.${cfg.contentSuffix}";
+          onlySSL = tls;
+          useACMEHost = cfg.proxy.acmeHost;
+          locations."/" = backendLocation;
+          extraConfig = accessLog;
+        };
+        "redirect-content-${cfg.contentSuffix}" = redirectVhost "redirect-content" "*.${cfg.contentSuffix}";
       };
-      virtualHosts."content-${cfg.contentSuffix}" = {
-        serverName = "*.${cfg.contentSuffix}";
-        onlySSL = tls;
-        useACMEHost = cfg.proxy.acmeHost;
-        locations."/" = backendLocation;
-        extraConfig = accessLog;
-      };
-      virtualHosts."redirect-${apiHost}" = redirectVhost "redirect" apiHost;
-      virtualHosts."redirect-content-${cfg.contentSuffix}" = redirectVhost "redirect-content" "*.${cfg.contentSuffix}";
     };
     networking.firewall.allowedTCPPorts = lib.mkIf (cfg.proxy.openFirewall) (
       [ 80 ] ++ lib.optional (cfg.proxy.acmeHost != null) 443

@@ -6,8 +6,8 @@
 <title>manure — unlock artifact</title>
 <!--
   External assets only (no inline script/style): the server serves these
-  trusted sibling files from unlock_shell_dir while locked, so absolute
-  same-origin paths work from both / and /__manure/password.
+  trusted sibling files from unlock_shell_dir while locked. The server
+  prefixes absolute paths in path mode, including the password entry page.
   No secrets, no item data, nothing to cache.
 -->
 <link rel="stylesheet" href="/styles.css">
@@ -16,7 +16,7 @@
 <body>
 <main class="unlock-screen">
 <section class="unlock-card" aria-labelledby="unlock-heading">
-<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>manure<small>artifact access</small></span></div>
+<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>manure<small>artifact access</small></span><span id="path-mode-warning" hidden class="path-mode-indicator" role="img" tabindex="0" title="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only." aria-label="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only.">ⓘ</span></div>
 <div class="card-content">
 <p class="eyebrow">EXTERNAL ARTIFACT</p>
 <h1 id="unlock-heading">Protected artifact</h1>
@@ -30,11 +30,11 @@ spellcheck="false" autocapitalize="off" aria-describedby="password-note">
 <button type="submit">Unlock artifact <span aria-hidden="true">→</span></button>
 </form>
 <p id="unlock-error" class="error" role="alert" hidden></p>
-<p id="password-note" class="security-note">Your password is sent only to this artifact’s own origin, in the request body — never in the URL.</p>
+<p id="password-note" class="security-note">Your password is sent only to this artifact’s content endpoint, in the request body — never in the URL.</p>
 </div>
 <footer class="card-footer"><span class="small-mark" aria-hidden="true"></span> Need access? Ask the person who shared this artifact.</footer>
 </section>
-<p class="workspace-note">File and directory sharing, with a boundary around every artifact.</p>
+<p class="workspace-note">File and directory sharing.</p>
 </main>
 <noscript><p class="noscript-note">JavaScript is off; the form above still works with a plain form post.</p></noscript>
 </body>

@@ -76,7 +76,11 @@
     try {
       var url = new URL(info.content_url);
       if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password ||
-          url.hostname.split(".")[0] !== info.artifact_id || url.search || url.hash || url.pathname !== "/") { return null; }
+          !ID_RE.test(info.artifact_id) || url.search || url.hash) { return null; }
+      var subdomain = url.hostname.split(".")[0] === info.artifact_id && url.pathname === "/";
+      var pathMode = url.origin === window.location.origin &&
+        (url.pathname === "/view/" + info.artifact_id || url.pathname === "/view/" + info.artifact_id + "/");
+      if (!subdomain && !pathMode) { return null; }
       return url.href;
     } catch (_error) { return null; }
   }
@@ -453,14 +457,13 @@
     });
   }
 
-  /* Internal artifacts use a single-use form POST to the isolated content host;
-   * the dashboard session credential never travels to that host or into a URL. */
+  /* Internal artifacts use a single-use form POST to their content endpoint. */
   function openArtifact(id, knownInfo) {
     if (!ID_RE.test(id)) { return; }
     var epoch = sessionEpoch;
     var generation = ++openGeneration;
     var infoRequest = knownInfo === null ? apiFetch("/artifacts/" + id, { method: "GET" }).then(jsonResponse) : Promise.resolve(knownInfo);
-    setText("detail-status", "Opening isolated content…");
+    setText("detail-status", "Opening content…");
     infoRequest.then(function (info) {
       if (epoch !== sessionEpoch || generation !== openGeneration) { return; }
       var url = contentUrl(info);

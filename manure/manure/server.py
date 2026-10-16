@@ -2,7 +2,8 @@
 
 Single-socket Host dispatch: one bounded-thread ``ThreadingHTTPServer``
 serves the API/dashboard origin and every ``<artifact-id>.<suffix>``
-content origin, routed by ``Host``. Entry points::
+content origin, routed by ``Host``. Opt-in LOW-SECURITY ``content_mode="path"``
+serves trusted content under the shared API origin at ``/view/<artifact-id>``. Entry points::
 
     from manure.server import create_server, ServerConfig
     with create_server(config) as server:
@@ -26,12 +27,15 @@ grants, cookies, and bodies are never logged.
 from __future__ import annotations
 
 import argparse
+import html
 import http.server
+from html.parser import HTMLParser
 import ipaddress
 import itertools
 import json
 import mimetypes
 import os
+import re
 import socket
 import sqlite3
 import sys
@@ -111,6 +115,50 @@ class _State:
 
 # ------------------------------------------------------------------ helpers
 
+class _ShellURLRewriter(HTMLParser):
+    _ATTRIBUTE = re.compile(r"""([^\s=/>]+)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)""")
+
+    def __init__(self, source: str, prefix: str):
+        super().__init__(convert_charrefs=False)
+        self._source = source
+        self._prefix = prefix
+        self._line_starts = [0] + [m.end() for m in re.finditer("\n", source)]
+        self._edits: list[tuple[int, int, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        raw = self.get_starttag_text()
+        line, column = self.getpos()
+        start = self._line_starts[line - 1] + column
+        self._edits.append((start, start + len(raw), self._ATTRIBUTE.sub(self._rewrite_attribute, raw)))
+
+    def _rewrite_attribute(self, match: re.Match[str]) -> str:
+        if match[1].lower() not in ("href", "src", "action"):
+            return match[0]
+        raw = match[3]
+        quote = raw[0] if raw[0] in ("'", '"') else ""
+        value = html.unescape(raw[1:-1] if quote else raw).strip(" \t\r\n\f")
+        if not value.startswith("/") or value.startswith("//"):
+            return match[0]
+        quote = quote or '"'
+        return match[1] + match[2] + quote + html.escape(self._prefix + value, quote=True) + quote
+
+    def result(self) -> str:
+        parts: list[str] = []
+        end = 0
+        for start, next_end, replacement in self._edits:
+            parts.extend((self._source[end:start], replacement))
+            end = next_end
+        parts.append(self._source[end:])
+        return "".join(parts)
+
+
+def _prefix_shell_urls(source: str, prefix: str) -> str:
+    parser = _ShellURLRewriter(source, prefix)
+    parser.feed(source)
+    parser.close()
+    return parser.result()
+
+
 def _resolve_shell(configured: Optional[str], name: str) -> Optional[str]:
     """Explicit dir -> package tree -> repo fallback -> None (null semantics)."""
     if configured is None:
@@ -137,7 +185,13 @@ def _credential_live(state: _State, user_id: str, token_id: str,
         and identity.token_id == token_id
 
 
-def _content_origin(state: _State, aid: str) -> str:
+def _content_path(config: ServerConfig, aid: str) -> str:
+    return "/view/" + aid if config.content_mode == "path" else ""
+
+
+def _content_base_url(state: _State, aid: str) -> str:
+    if state.config.content_mode == "path":
+        return state.effective_origin.rstrip("/") + _content_path(state.config, aid)
     scheme = urllib.parse.urlsplit(state.config.api_origin).scheme
     eff = urllib.parse.urlsplit(state.effective_origin)
     host = "%s.%s" % (aid, state.config.content_suffix)
@@ -414,7 +468,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 state: _State = self.server._mstate
                 api_host = state.api_host
                 if host != api_host and not (
-                        host.endswith("." + state.config.content_suffix)
+                        state.config.content_mode == "subdomain"
+                        and host.endswith("." + state.config.content_suffix)
                         and D.valid_artifact_id(
                             host[:-(len(state.config.content_suffix) + 1)])):
                     raise DomainError("bad-host", "unknown Host")
@@ -529,11 +584,18 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         parts.append("Max-Age=%d" % (0 if clear else _SESSION_MAX_AGE))
         return "; ".join(parts)
 
-    def _grant_cookie(self, value: str, max_age: int,
+    def _content_cookie_name(self, aid: str) -> str:
+        config = self.server._mstate.config
+        if config.content_mode == "path":
+            return ("mgrant-dev-" if config.loopback_dev else "__Secure-mgrant-") + aid
+        return D.grant_cookie_name(config.loopback_dev)
+
+    def _grant_cookie(self, aid: str, value: str, max_age: int,
                       clear: bool = False) -> str:
         state: _State = self.server._mstate
-        name = D.grant_cookie_name(state.config.loopback_dev)
-        parts = ["%s=%s" % (name, "" if clear else value), "Path=/",
+        name = self._content_cookie_name(aid)
+        path = _content_path(state.config, aid) + "/"
+        parts = ["%s=%s" % (name, "" if clear else value), "Path=" + path,
                  "HttpOnly", "SameSite=Lax"]
         if not state.config.loopback_dev:
             parts.append("Secure")
@@ -650,10 +712,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             self._fail(exc.code, exc.message)
             return
+        self._content_prefix = ""
         if host == state.api_host:
             side: Optional[str] = "api"
             aid = ""
-        elif (host.endswith("." + state.config.content_suffix)
+            if state.config.content_mode == "path":
+                parts = urllib.parse.urlsplit(self.path).path.split("/", 3)
+                if len(parts) >= 3 and parts[1] == "view" and D.valid_artifact_id(parts[2]):
+                    aid = parts[2]
+                    self._content_prefix = _content_path(state.config, aid)
+                    side = "content"
+        elif (state.config.content_mode == "subdomain" and host.endswith("." + state.config.content_suffix)
                 and D.valid_artifact_id(
                     host[:-(len(state.config.content_suffix) + 1)])):
             side = "content"
@@ -805,7 +874,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         }
 
     def _content_url(self, aid: str) -> str:
-        return _content_origin(self.server._mstate, aid)
+        return _content_base_url(self.server._mstate, aid)
 
     def _expired_fail(self, authed: bool, content_side: bool = False) -> None:
         # R15: 410 for authenticated API reads, 404 for anonymous/content.
@@ -1497,6 +1566,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     # -- dashboard -----------------------------------------------------------
     def _dashboard_csp(self) -> str:
         state: _State = self.server._mstate
+        if state.config.content_mode == "path":
+            return ("default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+                    "form-action 'self'; object-src 'none'")
         parts = urllib.parse.urlsplit(state.effective_origin)
         default_port = 443 if parts.scheme == "https" else 80
         host = "*.%s" % state.config.content_suffix
@@ -1523,6 +1595,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         except OSError:
             self._fail("not-found", "no dashboard")
             return
+        if state.config.content_mode == "path":
+            data = data.replace(b'id="path-mode-warning" hidden', b'id="path-mode-warning"')
         # Precision decision: dashboard HTML (navigational grant-handoff
         # form) uses origin-only policy so Chromium sends a real Origin;
         # API JSON and uploaded bytes stay no-referrer.
@@ -1571,7 +1645,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if item["visibility"] == "public":
             return True
         cookies = authmod.parse_cookies(self.headers.get("Cookie"))
-        value = cookies.get(D.grant_cookie_name(state.config.loopback_dev))
+        value = cookies.get(self._content_cookie_name(item["id"]))
         if not value:
             return False
         record = state.store.lookup_content_grant(value, item["id"])
@@ -1590,8 +1664,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _handle_content(self, aid: str) -> None:
         state: _State = self.server._mstate
         split = urllib.parse.urlsplit(self.path)
-        raw_path = split.path or "/"
+        raw_path = split.path[len(self._content_prefix):]
         method = self.command
+        if raw_path == "" and self._content_prefix and method == "GET":
+            self._send(303, b"", ctype="text/plain", content_side=True,
+                       headers={"Location": self._content_prefix + "/"})
+            return
+        raw_path = raw_path or "/"
         if raw_path == "/api" or raw_path.startswith("/api/"):
             self._log_info = ("content-api", "-", 0)
             self._fail("not-found", "no API on content hosts",
@@ -1726,7 +1805,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             if rel else True
         if rel and is_dir and not trailing:
             self._send(303, b"", ctype="text/plain", content_side=True,
-                       headers={"Location": self._redirect_location(rel)})
+                       headers={"Location": self._content_prefix + self._redirect_location(rel)})
             return
         base = rel + "/" if rel else ""
         for candidate in (base + "index.html", base + "index.htm"):
@@ -1738,7 +1817,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         raise DomainError("not-found", "no index")
 
     def _own_origin(self, aid: str) -> str:
-        return _content_origin(self.server._mstate, aid)
+        base = urllib.parse.urlsplit(_content_base_url(self.server._mstate, aid))
+        return urllib.parse.urlunsplit((base.scheme, base.netloc, "", "", ""))
 
     def _read_form(self) -> tuple[str, dict[str, str], bytes]:
         state: _State = self.server._mstate
@@ -1802,10 +1882,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             else:
                 self._fail(exc.code, exc.message, content_side=True)
             return
-        cookie = self._grant_cookie(value, int(expiry - state.now()))
+        cookie = self._grant_cookie(aid, value, int(expiry - state.now()))
         if kind == "form":
             self._send(303, b"", ctype="text/plain", content_side=True,
-                       headers={"Location": "/"}, cookie=cookie)
+                       headers={"Location": self._content_prefix + "/"}, cookie=cookie)
         else:
             self._send(200, json.dumps({"ok": True}).encode(),
                        content_side=True, cookie=cookie)
@@ -1859,10 +1939,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                            content_side=True)
             return
         value, expiry = issued
-        cookie = self._grant_cookie(value, int(expiry - state.now()))
+        cookie = self._grant_cookie(aid, value, int(expiry - state.now()))
         if kind == "form":
             self._send(303, b"", ctype="text/plain", content_side=True,
-                       headers={"Location": "/"}, cookie=cookie)
+                       headers={"Location": self._content_prefix + "/"}, cookie=cookie)
         else:
             self._send(200, json.dumps({"ok": True}).encode(),
                        content_side=True, cookie=cookie)
@@ -1883,13 +1963,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # R3: revoke the presented grant server-side; replay stays dead.
         state: _State = self.server._mstate
         cookies = authmod.parse_cookies(self.headers.get("Cookie"))
-        presented = cookies.get(D.grant_cookie_name(state.config.loopback_dev))
+        presented = cookies.get(self._content_cookie_name(aid))
         if presented:
             state.store.delete_content_grant(presented)
-        clear = self._grant_cookie("", 0, clear=True)
+        clear = self._grant_cookie(aid, "", 0, clear=True)
         if kind == "form":
             self._send(303, b"", ctype="text/plain", content_side=True,
-                       headers={"Location": "/"}, cookie=clear)
+                       headers={"Location": self._content_prefix + "/"}, cookie=clear)
         else:
             self._send(200, json.dumps({"ok": True}).encode(),
                        content_side=True, cookie=clear)
@@ -1968,15 +2048,19 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 try:
                     with open(os.path.join(state.unlock_shell_dir, name),
                               "rb") as fh:
-                        return fh.read().decode("utf-8", "replace")
+                        shell = fh.read().decode("utf-8", "replace")
+                        if state.config.content_mode == "path":
+                            shell = shell.replace('id="path-mode-warning" hidden', 'id="path-mode-warning"')
+                            shell = _prefix_shell_urls(shell, self._content_prefix)
+                        return shell
                 except OSError:
                     continue
         err = "<p>%s</p>" % error if error else ""
         return ("<!doctype html><html><body><h1>password required</h1>%s"
-                '<form method="post" action="/__manure/unlock">'
+                '<form method="post" action="%s/__manure/unlock">'
                 '<input type="password" name="password" autocomplete="off">'
                 '<button type="submit">unlock</button></form></body></html>'
-                % err)
+                % (err, self._content_prefix))
 
     def _content_password_page(self, aid: str) -> None:
         state: _State = self.server._mstate
@@ -2029,7 +2113,7 @@ class RunningServer:
         return self._effective_origin
 
     def content_url(self, artifact_id: str) -> str:
-        return _content_origin(self._state, artifact_id)
+        return _content_base_url(self._state, artifact_id)
 
     def sweep_for_test(self) -> int:
         """Run the expiry/orphan sweeper synchronously (tests only)."""

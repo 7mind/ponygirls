@@ -52,6 +52,19 @@ class DashboardMarkupTests(unittest.TestCase):
         self.assertIn("hidden", self.elements.ids["workspace-shell"][1])
         self.assertEqual(self.elements.ids["token-input"][1]["type"], "password")
 
+    def test_path_mode_notice_is_an_icon_with_a_tooltip(self):
+        for shell in ("dashboard", "unlock"):
+            with self.subTest(shell=shell):
+                source = (WEB / shell / "index.html").read_text()
+                tag, attrs = Elements(source).ids["path-mode-warning"]
+                self.assertEqual(tag, "span")
+                self.assertEqual(attrs["role"], "img")
+                self.assertEqual(attrs["tabindex"], "0")
+                self.assertIn("hidden", attrs)
+                self.assertIn("share", attrs["title"])
+                self.assertEqual(attrs["aria-label"], attrs["title"])
+                self.assertIn(">ⓘ</span>", source)
+
     def test_both_shells_offer_dark_mode_without_external_assets(self):
         for shell in ("dashboard", "unlock"):
             css = (WEB / shell / "styles.css").read_text()

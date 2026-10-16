@@ -1,6 +1,7 @@
-# manure — file & directory hosting (frozen contract v0.2.0)
+# manure — file & directory hosting (v0.2.0, amended)
 
-Freeze for implementation. Later agents build strictly to this document.
+Original implementation freeze, with the explicit §0.1 amendment below.
+Later agents build strictly to this document.
 No drift without a contract amendment. Runtime is Python ≥3.12 stdlib
 only (`http.server`, `sqlite3`, `hashlib`, `urllib`, MCP over stdio line
 JSON-RPC). Typed dataclasses, explicit constructor dependencies, no
@@ -75,6 +76,68 @@ global mutable state.
   <https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Origin-Agent-Cluster>.
   Actual controls are SOP separate origins, Host checks, Origin-checked
   APIs, `__Host-` cookies, and content restrictions below.
+
+### 0.1 Amendment: opt-in LOW-SECURITY path hosting
+
+This is an explicit amendment to the previously frozen origin/routing,
+configuration, cookie and client rules. Version/runtime/dependency pins stay
+unchanged. **Subdomain mode remains the secure default.** Statements below
+about isolated content hosts, session separation, wildcard certificates and
+cross-artifact SOP describe **subdomain mode only**; this amendment takes
+precedence for path mode.
+
+- JSON `content_mode` is the closed enum `"subdomain"` (default) | `"path"`;
+  Nix `smind.services.manure.contentMode` has the same values/default.
+  `content_suffix`/`contentSuffix` remains required in subdomain mode, but
+  may be omitted in path mode. Unknown modes fail startup/evaluation.
+- **LOW-SECURITY / TRUSTED CONTENT ONLY:** path mode serves uploaded bytes
+  inline on the dashboard/API origin and every artifact shares that origin.
+  Uploaded JavaScript can invoke authenticated management APIs using a
+  visiting browser's session and read other accessible artifacts. **Cookie
+  Path is routing, not origin isolation.** HttpOnly/SameSite, exact Origin
+  checks, COOP/CORP/OAC and the existing CSP do not restore the lost boundary.
+  This mode MUST NOT be represented as safe for untrusted HTML/JavaScript.
+- `content_url` is `<effective-api-origin>/view/<hex32>` (fixed literal prefix,
+  lowercase 32-hex ID). The API host is the only accepted host in path mode;
+  wildcard content hosts are not accepted/created. To avoid ambiguous client
+  URL parsing, a path-mode API hostname MUST NOT have a valid 32-lowercase-hex
+  artifact-ID first label (startup failure). Valid artifact-subdomain hosts
+  retain precedence, including URLs containing `/view/<id>/...` paths.
+  The managed proxy needs
+  only the API host's certificate. No DNS or certificate fallback is implied.
+- Map every §7.3 content route beneath `/view/<id>`; its content root is
+  `/view/<id>/`. Entry URLs without the trailing slash redirect with 303;
+  nested directory redirects retain the artifact prefix and percent-encode
+  their path. The existing strict, single-pass decoding applies **after** the
+  exact prefix; encoded/invalid IDs do not select an artifact. Relative site
+  URLs resolve beneath the canonical mount. Root-relative `/assets/...`
+  targets the API root; uploaded bytes are NOT rewritten.
+- Password/grant/logout form redirects land on `/view/<id>/`. The trusted
+  unlock shell's absolute asset/form URLs receive the prefix, including the
+  `/view/<id>/__manure/password` entry. Dashboard Open accepts only an exact
+  same-origin `/view/<matching-id>` URL (optional terminal slash), in addition
+  to the existing per-artifact subdomain URLs. Dashboard form-action is
+  `'self'` in path mode, without a wildcard.
+- Origin comparisons remain exact **bare origins**, never the content path
+  base: grant redemption requires the API Origin; unlock/logout require
+  their own origin, which in path mode is also the API Origin. Missing,
+  `null`, other origins, trailing slashes and path-bearing Origin values
+  remain forbidden. This does not distinguish same-origin artifact scripts.
+- Path grants use production `__Secure-mgrant-<id>` (`Secure`, `HttpOnly`,
+  `SameSite=Lax`, no `Domain`) or loopback-dev `mgrant-dev-<id>` (no Secure),
+  with `Path=/view/<id>/`. `__Host-` is not used because its required Path=/
+  would be incompatible. Artifact-specific names and paths avoid ordinary
+  authentication collisions; server-side artifact/password/token bindings,
+  expiry and revocation remain authoritative. Dashboard session cookies are
+  unchanged and necessarily reach this shared host.
+- Clients parse the fixed path prefix, use prefixed unlock/manifest/ranged
+  file endpoints, and key path grants by origin + artifact prefix. They send
+  the bare Origin on POST and no bearer on content-URL fetch. Public/external
+  token-free URL fetch, authenticated ID fetch, visibility gates, lifecycle,
+  one-time semantics, revocation and API attachment behavior are unchanged.
+- Path-mode tests supplement, never replace, retained subdomain-origin
+  isolation tests. Browser checks cover internal handoff, password forms,
+  relative assets and nested redirects. Path mode has no isolation assertion.
 
 ## 1. Scope, non-goals, ownership
 
@@ -156,7 +219,8 @@ Top-level keys are exactly (unknown keys → startup failure, fail closed):
 | `port` | int | `47329` | `0` = ephemeral (tests; see `effective_api_origin`, §11). |
 | `data_dir` | str | — (required) | sqlite + staging + live dirs live here. Tests use tmp. |
 | `api_origin` | str | — (required) | e.g. `https://artifacts.7mind.io`; local `http://127.0.0.1:PORT`. |
-| `content_suffix` | str | — (required) | e.g. `artifacts.7mind.io`; local `artifacts.localhost`. Content host `<id>.<suffix>`. |
+| `content_mode` | enum | `"subdomain"` | `subdomain` or LOW-SECURITY `path` (§0.1). |
+| `content_suffix` | str | required in subdomain; `""` in path | e.g. `artifacts.7mind.io`; local `artifacts.localhost`. Content host `<id>.<suffix>`. |
 | `loopback_dev` | bool | `false` | `true` allows http + non-Secure dev cookies on loopback only (§5.7). Production MUST be `false`. |
 | `trusted_proxies` | list[str] | `["127.0.0.1/32", "::1/128"]` | CIDRs whose `X-Forwarded-Proto` is honored (§5.8). All other forwarded headers ignored. |
 | `dashboard_dir` | str\|null | package `manure/manure/web/dashboard` (repo fallback `manure/web/dashboard`, §11) | `null` = JSON API only (`dashboard-disabled`). |
@@ -209,7 +273,7 @@ configured-but-missing dir → startup failure. `null` semantics above.
 ### 3.3 Nix option names (frozen names; implemented by the Nix agent)
 
 - `smind.services.manure.{enable, package, listenAddress, port,
-  apiOrigin, contentSuffix, dataDir, users, storageQuotaBytes,
+  apiOrigin, contentMode, contentSuffix, dataDir, users, storageQuotaBytes,
   chunkBytes, maxFileBytes, maxArtifactBytes, maxFilesPerArtifact,
   maxRequestBodyBytes, maxConnections, requestTimeoutS,
   maxSessionsPerUser, maxSessionsGlobal, maxGrantsPerArtifact,
@@ -698,7 +762,7 @@ expiry. `kind`, `manifest`, `artifact_id`, or any other field present
   `ready` only (external/public → `invalid-visibility`); returns
   `{grant, expires_in_s}` one-time.
 
-### 7.3 Content-host routes (`https://<id>.<suffix>`)
+### 7.3 Content routes (`https://<id>.<suffix>`, or `/view/<id>` per §0.1)
 
 Path handling (frozen): split the RAW path on `/` (percent-encoded
 `%2F` never becomes a separator), single-pass percent-decode each

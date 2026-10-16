@@ -124,6 +124,8 @@ class ManifestEntry:
 _DEFAULTS: dict[str, Any] = {
     "listen_address": "127.0.0.1",
     "port": 47329,
+    "content_mode": "subdomain",
+    "content_suffix": "",
     "loopback_dev": False,
     "trusted_proxies": ["127.0.0.1/32", "::1/128"],
     "dashboard_dir": "package",
@@ -151,7 +153,7 @@ _DEFAULTS: dict[str, Any] = {
     "one_time_grant_ttl_s": 60,
 }
 
-_REQUIRED = ("data_dir", "api_origin", "content_suffix")
+_REQUIRED = ("data_dir", "api_origin")
 _KNOWN = frozenset(list(_DEFAULTS.keys()) + list(_REQUIRED))
 
 
@@ -187,6 +189,7 @@ class ServerConfig:
     incomplete_session_ttl_s: int = 86400
     grant_ttl_s: int = 86400
     one_time_grant_ttl_s: int = 60
+    content_mode: str = "subdomain"
 
     def __post_init__(self) -> None:
         # Single fail-closed validator shared by JSON loading and direct
@@ -239,14 +242,21 @@ class ServerConfig:
         if isinstance(self.port, bool) or not isinstance(self.port, int) \
                 or not 0 <= self.port <= 65535:
             raise bad("port: int 0..65535 required")
-        for key in ("data_dir", "api_origin", "content_suffix"):
+        for key in ("data_dir", "api_origin"):
             value = getattr(self, key)
             if not isinstance(value, str) or not value:
                 raise bad("%s: non-empty string required" % key)
         if type(self.loopback_dev) is not bool:  # reject truthy "false"
             raise bad("loopback_dev: boolean required")
         origin = self._validate_origin(self.api_origin)
-        self._validate_suffix(self.content_suffix)
+        if self.content_mode not in ("subdomain", "path"):
+            raise bad("content_mode: subdomain or path required")
+        if self.content_mode == "path" and valid_artifact_id(origin["host"].split(".")[0]):
+            raise bad("path mode api_origin must not have an artifact-id first label")
+        if not isinstance(self.content_suffix, str):
+            raise bad("content_suffix: string required")
+        if self.content_mode == "subdomain" or self.content_suffix:
+            self._validate_suffix(self.content_suffix)
         if not self.loopback_dev:
             if origin["scheme"] != "https":
                 raise bad("production api_origin must be https:")
@@ -255,7 +265,7 @@ class ServerConfig:
             # scheme — remote https + loopback_dev would otherwise accept
             # plain backend requests with non-Secure dev cookies.
             raise bad("loopback_dev requires a loopback api host")
-        if self.loopback_dev and not _is_loopback_suffix(
+        if self.loopback_dev and self.content_suffix and not _is_loopback_suffix(
                 self.content_suffix):
             raise bad("loopback_dev requires a loopback content suffix")
         for key in ("dashboard_dir", "unlock_shell_dir"):
@@ -363,6 +373,7 @@ class ServerConfig:
             listen_address=merged["listen_address"], port=merged["port"],
             data_dir=merged["data_dir"], api_origin=merged["api_origin"],
             content_suffix=merged["content_suffix"],
+            content_mode=merged["content_mode"],
             loopback_dev=merged["loopback_dev"],
             trusted_proxies=merged["trusted_proxies"],
             dashboard_dir=merged["dashboard_dir"],

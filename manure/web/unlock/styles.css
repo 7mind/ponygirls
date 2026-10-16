@@ -50,6 +50,7 @@ body { margin: 0; font-size: 14px; line-height: 1.5; }
 .unlock-card { width: 100%; max-width: 460px; background: var(--surface); border: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 11px; padding: 22px 28px; border-bottom: 1px solid var(--line); font-size: 21px; line-height: 1.2; font-weight: 650; letter-spacing: -.8px; }
 .brand small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; font-weight: 400; letter-spacing: .2px; }
+.path-mode-indicator { margin-left: auto; color: var(--muted); font-size: 16px; font-weight: 400; letter-spacing: normal; cursor: help; }
 .brand-mark { display: inline-block; position: relative; width: 32px; height: 34px; flex: none; background: var(--accent); color: var(--on-accent); }
 .brand-mark::before, .brand-mark::after { content: ''; position: absolute; width: 14px; height: 15px; border: 1.5px solid currentColor; }
 .brand-mark::before { left: 6px; top: 7px; }
