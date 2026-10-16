@@ -89,6 +89,40 @@ class ContentDummy:
         return (404, {"Content-Type": "application/json"}, _jb({"error": {"code": "not-found", "message": "x"}}))
 
 
+class PathContentDummy:
+    """Two password-protected artifacts sharing one origin, with distinct grants."""
+
+    origin = "http://127.0.0.1:8901"
+
+    def __init__(self):
+        self.requests = []
+        self.artifacts = {"a" * 32: b"first", "b" * 32: b"second"}
+
+    def request(self, method, url, headers, body):
+        parsed = urllib.parse.urlparse(url)
+        self.requests.append((method, url, dict(headers)))
+        hdrl = {k.lower(): v for k, v in headers.items()}
+        assert "authorization" not in hdrl, "bearer leaked to content endpoint"
+        aid = parsed.path.split("/")[2]
+        assert aid in self.artifacts
+        control = parsed.path[len("/view/" + aid):]
+        cookie = "mgrant-dev-" + aid + "=" + aid
+        if method == "POST" and control == "/__manure/unlock":
+            assert hdrl.get("origin") == self.origin, "Origin must be bare, not the content path base"
+            assert json.loads(body)["password"] == PASSWORD
+            return 200, {"Set-Cookie": cookie + "; Path=/view/" + aid + "/; HttpOnly"}, _jb({"ok": True})
+        assert hdrl.get("cookie") == cookie, "missing or cross-artifact grant"
+        assert "origin" not in hdrl
+        data = self.artifacts[aid]
+        if control == "/__manure/manifest":
+            return 200, {}, _jb({"artifact_id": aid, "state": "ready", "files": [
+                {"path": "f.txt", "kind": "file", "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}]})
+        assert control == "/__manure/files/f.txt/content"
+        if "range" in hdrl:
+            return 206, {"Content-Range": f"bytes 0-{len(data) - 1}/{len(data)}"}, data
+        return 200, {}, data
+
+
 class TestExternalTokenFreeFetch(unittest.TestCase):
     def test_password_to_manifest_to_ranged_files(self):
         from manure.client import ManureClient
@@ -123,6 +157,30 @@ class TestExternalTokenFreeFetch(unittest.TestCase):
             out = c.fetch_to_dest(f"{CONTENT_ORIGIN}/", os.path.join(td, "out"))
             self.assertEqual(Path(os.path.join(td, "out", "f.txt")).read_bytes(), b"public")
             self.assertFalse(any(r["url"].endswith("/__manure/unlock") for r in dummy.requests))
+
+    def test_subdomain_url_nested_view_path_keeps_subdomain_routing(self):
+        from manure.client import ManureClient
+        dummy = ContentDummy({"f.txt": b"public"}, require_password=False)
+        with tempfile.TemporaryDirectory() as td:
+            client = ManureClient("http://127.0.0.1:8000", cache_dir=os.path.join(td, "cache"), transport=dummy)
+            for suffix in ("/view/nested.txt", "/view/" + "a" * 32 + "/nested"):
+                result = client.fetch_to_dest(CONTENT_ORIGIN + suffix, os.path.join(td, "out"))
+                self.assertEqual(result["artifact_id"], ART_ID)
+                self.assertEqual(Path(td, "out", "f.txt").read_bytes(), b"public")
+
+    def test_path_mode_bare_origin_no_bearer_and_independent_grant_jar(self):
+        from manure.client import ManureClient
+        dummy = PathContentDummy()
+        with tempfile.TemporaryDirectory() as td:
+            client = ManureClient(dummy.origin, token=VALID_TOKEN, cache_dir=Path(td, "cache"), transport=dummy)
+            for aid in dummy.artifacts:
+                result = client.fetch_to_dest(dummy.origin + "/view/" + aid, Path(td, aid), password=PASSWORD)
+                self.assertEqual(result["artifact_id"], aid)
+                self.assertEqual(Path(td, aid, "f.txt").read_bytes(), dummy.artifacts[aid])
+            # A second unlock must not overwrite the grant for the first artifact.
+            first = next(iter(dummy.artifacts))
+            client.fetch_to_dest(dummy.origin + "/view/" + first + "/nested/file", Path(td, "again"))
+            self.assertEqual(Path(td, "again", "f.txt").read_bytes(), dummy.artifacts[first])
 
     def test_fetch_resumes_partial_temp(self):
         from manure.client import ManureClient

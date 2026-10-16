@@ -32,10 +32,29 @@ Both wrap the same client code; bearer auth never travels on the command line
 - `http:` URLs are accepted only for loopback hosts (`127.0.0.1`, `::1`,
   `localhost`, `*.localhost`); anything else must be `https:` (rejected
   before network otherwise).
-- Bearer goes ONLY to the configured API origin; grant cookies go ONLY to
-  their exact content host. Cross-origin redirects drop credentials, and any
+- Bearer goes ONLY to the configured API origin; content-URL fetch never
+  sends it. Grant cookies go ONLY to their exact content host (subdomain mode)
+  or origin + `/view/<artifact-id>` prefix (path mode). Cross-origin redirects drop credentials, and any
   cross-origin redirect that would replay a request body (unlock password,
   chunk bytes) is refused outright.
+
+## Content routing and trust
+
+- Secure default `content_mode: "subdomain"` uses per-artifact origins.
+- Explicit `content_mode: "path"` (Nix `contentMode = "path"`) is
+  **LOW-SECURITY / TRUSTED CONTENT ONLY**. URLs are
+  `https://<api-origin>/view/<artifact-id>`; all artifacts and management
+  share one origin. Uploaded JavaScript can exercise a visiting browser's
+  authenticated management permissions. Cookie Path is not origin isolation.
+  Do not enable it as a workaround for hosting untrusted content.
+- Path mode needs no content suffix or wildcard DNS/cert. Its API hostname
+  must not start with a 32-lowercase-hex artifact-ID label (startup rejects
+  ambiguous URLs). Use returned URLs,
+  not invented hostnames. Token-free external/public fetch works in both
+  modes; internal authenticated ID fetch remains the API flow.
+- Mounted sites must use relative asset URLs. Directory URLs have canonical
+  trailing slashes; `/assets/...` targets the API root, not the artifact.
+  Uploaded HTML/CSS/JS is not automatically rewritten.
 
 ## Visibility / access
 

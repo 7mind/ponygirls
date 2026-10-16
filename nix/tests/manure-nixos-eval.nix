@@ -42,6 +42,13 @@ let
     smind.services.manure.proxy.acmeHost = "artifacts.example.net";
   };
 
+  pathMode = mkSystem {
+    smind.services.manure.users = fullUsers;
+    smind.services.manure.apiOrigin = "https://artifacts.example.net";
+    smind.services.manure.contentMode = "path";
+    smind.services.manure.proxy.acmeHost = "artifacts.example.net";
+  };
+
   dev = mkSystem {
     smind.services.manure.users = fullUsers;
     smind.services.manure.apiOrigin = "http://127.0.0.1:47329";
@@ -215,6 +222,19 @@ assert lib.all (a: a.assertion) (evalManure {
   smind.services.manure.contentSuffix = "content.example.net";
   smind.services.manure.proxy.enable = false;
 }).config.assertions;
+assert pathMode.smind.services.manure.contentSuffix == null;
+assert pathMode.smind.services.manure.contentMode == "path";
+assert lib.all (a: a.assertion) (evalManure {
+  smind.services.manure.users = fullUsers;
+  smind.services.manure.apiOrigin = "https://artifacts.example.net";
+  smind.services.manure.contentMode = "path";
+  smind.services.manure.proxy.acmeHost = "artifacts.example.net";
+}).config.assertions;
+assert builtins.attrNames pathMode.services.nginx.virtualHosts == [
+  "artifacts.example.net" "redirect-artifacts.example.net"
+];
+assert pathMode.services.nginx.virtualHosts."artifacts.example.net".locations."/".proxyPass == "http://127.0.0.1:47329";
+assert full.smind.services.manure.contentMode == "subdomain";
 assert full.systemd.services.manure.description != "";
 assert builtins.elem "multi-user.target" full.systemd.services.manure.wantedBy;
 # Digest credentials load via LoadCredential, never store material
@@ -342,6 +362,7 @@ pkgs.runCommandLocal "manure-nixos-eval-test"
   # Realized template + launcher: grep the actual bytes (credential
   # names only; no digest material, no /run/secrets paths, launcher
   # resolves $CREDENTIALS_DIRECTORY at runtime and fails closed).
+  pathLauncherBin = pathMode.systemd.services.manure.serviceConfig.ExecStart;
   launcherBin = (evalManure {
     smind.services.manure.users = fullUsers;
     smind.services.manure.apiOrigin = "https://artifacts.example.net";
@@ -363,5 +384,9 @@ pkgs.runCommandLocal "manure-nixos-eval-test"
   ! grep -q '/run/secrets' "$tmpl"
   ! grep -q 'CREDENTIALS_DIRECTORY' "$tmpl"
   ! grep -q '"hashFile"' "$tmpl"
+  pathTmpl=$(grep -o '/nix/store/[^ "]*manure-config.template.json' "$pathLauncherBin" | head -n 1)
+  grep -q '"content_mode":"path"' "$pathTmpl"
+  ! grep -q '"content_suffix"' "$pathTmpl"
+  grep -q '"content_mode":"subdomain"' "$tmpl"
   touch $out
 ''

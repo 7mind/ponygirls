@@ -293,6 +293,21 @@ def _origin_from_parsed(parsed: urllib.parse.ParseResult) -> str:
     return f"{parsed.scheme}://{_bracket_host(host)}{port_s}"
 
 
+def _content_scope(parsed: urllib.parse.ParseResult) -> tuple[str, str]:
+    host = (parsed.hostname or "").lower()
+    first_label = host.split(".")[0]
+    if ARTIFACT_ID_RE.fullmatch(first_label):
+        return host, first_label
+    origin = _origin_from_parsed(parsed)
+    if parsed.path.startswith("/view/"):
+        match = re.match(r"^/view/([0-9a-f]{32})(?:/|$)", parsed.path)
+        if match is None:
+            raise InvalidUrl("invalid path-mode artifact URL")
+        aid = match.group(1)
+        return origin + "/view/" + aid, aid
+    return host, first_label
+
+
 def _validate_chunk_bytes(n: Any) -> int:
     if isinstance(n, bool) or not isinstance(n, int):
         raise ManureError("bad-envelope", "bad chunk_bytes")
@@ -1242,10 +1257,10 @@ class ManureClient:
                 for k in list(req_headers):
                     if k.lower() == "authorization":
                         req_headers.pop(k, None)
-            # grant: ONLY exact host
-            host = (parsed.hostname or "").lower()
+            # grant: exact host, or origin + artifact prefix in path mode
             if send_grant:
-                g = self._grant_for(host)
+                scope, _aid = _content_scope(parsed)
+                g = self._grant_for(scope)
                 if g is not None:
                     req_headers["Cookie"] = g
                 else:
@@ -2103,13 +2118,14 @@ class ManureClient:
         parsed = validate_url_before_network(content_url)
         host = (parsed.hostname or "").lower()
         content_origin = _origin_from_parsed(parsed)
-        first_label = host.split(".")[0] if "." in host else host
+        scope, first_label = _content_scope(parsed)
+        content_base = content_origin if scope == host else scope
         if password is not None:
             if password == "":
                 raise MissingCredentials("empty external password")
             _validate_token_format(password)
             pw = password
-            unlock_url = content_origin + "/__manure/unlock"
+            unlock_url = content_base + "/__manure/unlock"
             body = json.dumps({"password": pw}).encode()
             try:
                 status, hdrs, resp = self._request("POST", unlock_url,
@@ -2127,11 +2143,11 @@ class ManureClient:
             if sc:
                 for line in sc.split("\n"):
                     if "mgrant" in line.lower():
-                        self._store_grant(host, line)
+                        self._store_grant(scope, line)
                         break
                 else:
-                    self._store_grant(host, sc)
-        man_url = content_origin + "/__manure/manifest"
+                    self._store_grant(scope, sc)
+        man_url = content_base + "/__manure/manifest"
         try:
             status, hdrs, body = self._request("GET", man_url, {"Accept": "application/json"}, None,
                                                send_auth=False, send_grant=True, origin=None)
@@ -2150,6 +2166,8 @@ class ManureClient:
         artifact_id = str(manifest.get("artifact_id") or first_label)
         if not ARTIFACT_ID_RE.match(artifact_id):
             raise ManureError("bad-envelope", "bad artifact id in manifest")
+        if scope != host and artifact_id != first_label:
+            raise ManureError("bad-envelope", "artifact id does not match content URL")
         files = manifest.get("files", [])
         validate_fetch_manifest(files)
         self._check_fetch_bounds(files)
@@ -2174,7 +2192,7 @@ class ManureClient:
                 rel = str(e["path"])
                 final = dest / rel
                 enc = "/".join(urllib.parse.quote(seg, safe="") for seg in rel.split("/"))
-                url = content_origin + f"/__manure/files/{enc}/content"
+                url = content_base + f"/__manure/files/{enc}/content"
                 self._ranged_download(url, final, int(e["size"]), str(e["sha256"]),
                                       grant_host=host, is_content=True,
                                       artifact_id=artifact_id, rel=rel, staging_dir=staging_dir)

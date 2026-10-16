@@ -5,7 +5,7 @@ Python ≥3.12, stdlib only, no runtime dependencies.
 Service/storage supported runtime is Linux (exclusive `data_dir` claim
 requires Linux abstract Unix sockets, fails closed elsewhere);
 CLI/MCP client portability beyond Linux is unverified.
-Normative spec: `CONTRACT.md` (v0.2.0, frozen); this README is a handoff
+Normative spec: `CONTRACT.md` (v0.2.0 plus explicit path-mode amendment); this README is a handoff
 summary, not a second contract. Where they disagree, `CONTRACT.md` wins.
 
 > Docs state: commands/JSON ran against the server+UI and client/CLI/MCP
@@ -28,6 +28,42 @@ summary, not a second contract. Where they disagree, `CONTRACT.md` wins.
 - `internal` (authed reads) / `external` (password link, password
   returned **once**, hash stored; lost it → `rotate-password`) /
   `public` (anonymous reads); optional TTL on upload.
+
+## Opt-in LOW-SECURITY path hosting (TRUSTED CONTENT ONLY)
+
+The secure default remains `content_mode: "subdomain"`: each artifact has
+its own origin. Opting into **`content_mode: "path"`** instead serves all
+artifacts at **`https://<api-origin>/view/<artifact-id>`**, on the SAME origin
+as the dashboard/API and every other artifact. **Uploaded JavaScript can
+exercise a visiting browser's authenticated management permissions and read
+other accessible artifacts. Do not host untrusted HTML/JavaScript here.**
+HttpOnly, SameSite, cookie `Path`, CSP and exact Origin checks do NOT restore
+origin isolation. Path mode is a deliberate security downgrade, not a
+replacement security boundary.
+
+Set JSON `"content_mode": "path"`; `content_suffix` may then be omitted
+(no dummy suffix). In Nix set `smind.services.manure.contentMode = "path";`
+and omit `contentSuffix`. Only the API hostname/certificate is needed; the
+managed proxy creates no wildcard content vhost. The setting is explicit;
+there is no automatic fallback from subdomain mode. A path-mode API hostname
+must not start with a 32-lowercase-hex artifact-ID label: such ambiguous
+configurations are rejected so existing subdomain URLs keep their meaning.
+
+Directory entry URLs redirect to `/view/<id>/` (and nested directories to
+trailing-slash URLs), so **relative** assets such as `assets/site.css` work.
+Sites must be mount-point aware: root-relative `/assets/site.css` targets the
+API origin's root, NOT the artifact. Uploaded HTML/CSS/JS is never rewritten.
+The trusted password shell and dashboard handoff use the artifact prefix.
+Content controls are `/view/<id>/__manure/{grant,unlock,logout,password,manifest}`
+and `/view/<id>/__manure/files/<path>/content`; Origin is still the **bare
+API origin**, never the path base.
+
+Visibility gates, one-time handoffs, external password rotation, revocation,
+TTL, ranged downloads and API attachment downloads are unchanged. Per-artifact
+grant names/paths prevent ordinary cookie collisions but are not a boundary
+against same-origin scripts. CLI/MCP fetch accepts the returned content URL
+in either mode (public token-free; external with password); authenticated
+fetch by ID still uses the API.
 
 ## Quick local run (no secrets store, no Nix)
 
@@ -122,8 +158,8 @@ Search, filters and sort persist in the URL fragment, never in web storage.
 Failed batches preserve loaded rows and offer an explicit retry.
 
 Details show metadata and the file manifest, with same-origin attachment
-Downloads. **Open** uses the existing isolated content origin and one-time
-internal grant handoff; when content hosting is unavailable, no working link
+Downloads. **Open** uses the configured content endpoint and one-time
+internal grant handoff (isolated origin in default subdomain mode only); when content hosting is unavailable, no working link
 is advertised. Uploads remain CLI-only. All configured users can manage all
 artifacts; the sidebar is an access filter, not an ownership boundary.
 
@@ -186,7 +222,7 @@ Package `.#manure` = stdlib wheel **plus the web shells**,
 
 NixOS service, loopback-dev flavor (production flips `loopbackDev`
 to `false`, sets an `https:` `apiOrigin`, and needs `proxy.acmeHost`
-with a DNS-01 wildcard cert — see “Security & deployment”):
+with a DNS-01 wildcard cert in subdomain mode — see “Security & deployment”):
 
 ```nix
 smind.services.manure = {
@@ -267,10 +303,11 @@ directory** (resolved absolutely, first existing hit wins). Browser
 
 No host/DNS/deployment change is implied here — operator configuration only.
 
-- `https://artifacts.7mind.io` is the **management/API origin only**.
+- **In default subdomain mode**, `https://artifacts.7mind.io` is the **management/API origin only**.
   Uploaded HTML/JS serves **exclusively** from per-artifact content
   hostnames (`<hex32>.<content-suffix>`), **never** inline under the
   management origin (API byte downloads: `attachment` + `nosniff`).
+- **Path mode has no origin isolation**; see the LOW-SECURITY warning above.
 - The default `<id>.artifacts.7mind.io` subdomains are same-site, **not**
   separate-site: untrusted JS on one artifact host can read/write
   non-`HttpOnly` parent-domain cookies (including ones scoped as high
@@ -288,7 +325,7 @@ No host/DNS/deployment change is implied here — operator configuration only.
   (default loopback) **and** `X-Forwarded-Proto: https`; direct
   plaintext with `loopback_dev=false` → 403 `tls-required`.
   `X-Forwarded-Host`, `Forwarded:`, client-IP headers are always
-  ignored; unknown `Host` rejected. Wildcard content hosts cannot use
+  ignored; unknown `Host` rejected. In subdomain mode, wildcard content hosts cannot use
   ACME HTTP-01 — provision a DNS-01 cert for the API host plus
   `*.<content-suffix>` out of band, point `proxy.acmeHost` at it.
 - Header nuance (reproduced against Chromium): `no-referrer` on a native

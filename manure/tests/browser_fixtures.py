@@ -316,7 +316,7 @@ def start_server(*, suffix_mode: str = "sibling", unlock_shell: str | None = "de
 
     suffix_mode: "sibling" (api dashboard.artifacts.localhost, content
       *.artifacts.localhost) or "separate" (api 127.0.0.1, content
-      *.manure-files.localhost). unlock_shell: "default" (repo unlock
+      *.manure-files.localhost), or "path" (API 127.0.0.1, content /view/<id>). unlock_shell: "default" (repo unlock
       shell), None (built-in fallback -> unlock_shell_dir=null), or an
       explicit directory path.
     """
@@ -337,6 +337,9 @@ def start_server(*, suffix_mode: str = "sibling", unlock_shell: str | None = "de
         api_host = SIBLING_API_HOST
     elif suffix_mode == "separate":
         suffix = SEPARATE_SUFFIX
+        api_host = SEPARATE_API_HOST
+    elif suffix_mode == "path":
+        suffix = ""
         api_host = SEPARATE_API_HOST
     else:
         raise ValueError(f"unknown suffix_mode: {suffix_mode}")
@@ -362,6 +365,7 @@ def start_server(*, suffix_mode: str = "sibling", unlock_shell: str | None = "de
         data_dir=data_dir,
         api_origin=api_origin,
         content_suffix=suffix,
+        content_mode="path" if suffix_mode == "path" else "subdomain",
         loopback_dev=True,
         port=0,
         dashboard_dir=DASHBOARD_DIR,
