@@ -163,7 +163,14 @@ internal grant handoff (isolated origin in default subdomain mode only); when co
 is advertised. Uploads remain CLI-only. All configured users can manage all
 artifacts; the sidebar is an access filter, not an ownership boundary.
 
-External passwords are shown once after rotation. Dismissal, navigation and
+Ready artifacts have an **Access mode** selector in details. Any configured
+user can change Internal, External, or Public access; Public changes require
+confirmation. Changes revoke existing content grants. Switching to External
+generates a password shown once. Failed or ambiguous changes refresh metadata
+without retrying the mutation; rotate the external password if it was lost.
+Incomplete uploads cannot change access in the dashboard.
+
+External passwords are shown once after switching to External or rotation. Dismissal, navigation and
 logout clear the reveal. Login input is cleared after submission; the session
 uses the existing host-only HttpOnly cookie. Tokens, passwords and grants
 never enter URLs or web storage. A connection failure is distinguished from

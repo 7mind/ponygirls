@@ -236,6 +236,9 @@ th[aria-sort=ascending] .sort-indicator, th[aria-sort=descending] .sort-indicato
 .action-panel h2 { margin-bottom: 9px; }
 .action-panel p { color: var(--muted); font-size: 12px; margin-bottom: 13px; }
 .action-panel button { width: 100%; }
+.access-form { display: grid; gap: 8px; margin-bottom: 15px; }
+.access-form p { margin: 0; }
+#access-status:empty { display: none; }
 .danger-panel { border-top: 2px solid var(--danger); }
 .danger-panel h2 { color: var(--danger); }
 .password-reveal { padding: 18px; border: 1px solid var(--warning-line); background: var(--warning-surface); margin: 0 0 18px; }

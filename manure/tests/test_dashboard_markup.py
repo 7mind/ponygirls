@@ -11,6 +11,8 @@ class Elements(HTMLParser):
         super().__init__()
         self.ids = {}
         self.sorts = []
+        self.select_options = {}
+        self.current_select = None
         self.feed(source)
 
     def handle_starttag(self, tag, attrs):
@@ -19,6 +21,15 @@ class Elements(HTMLParser):
             self.ids[attributes["id"]] = (tag, attributes)
         if "data-sort" in attributes:
             self.sorts.append((tag, attributes))
+        if tag == "select":
+            self.current_select = attributes.get("id")
+            self.select_options[self.current_select] = []
+        if tag == "option" and self.current_select is not None:
+            self.select_options[self.current_select].append(attributes.get("value"))
+
+    def handle_endtag(self, tag):
+        if tag == "select":
+            self.current_select = None
 
 
 class DashboardMarkupTests(unittest.TestCase):
@@ -45,6 +56,16 @@ class DashboardMarkupTests(unittest.TestCase):
         for key in ("files-status", "files-retry-button", "copy-id-button", "copy-link-button", "rotate-copy-button", "rotate-dismiss-button"):
             self.assertIn(key, self.elements.ids)
         self.assertIn("hidden", self.elements.ids["rotate-output"][1])
+
+    def test_detail_offers_access_modes_and_live_feedback(self):
+        self.assertIn("access-form", self.elements.ids, "artifact details need an access-editing form")
+        self.assertEqual(self.elements.ids["access-form"][0], "form")
+        self.assertEqual(self.elements.ids["access-mode"][0], "select")
+        self.assertEqual(set(self.elements.select_options["access-mode"]), {"internal", "external", "public"})
+        self.assertEqual(self.elements.ids["access-save-button"][1]["type"], "submit")
+        self.assertIn("access-description", self.elements.ids)
+        status = self.elements.ids["access-status"][1]
+        self.assertTrue(status.get("role") == "status" or status.get("aria-live") in ("polite", "assertive"))
 
     def test_dashboard_distinguishes_session_unavailability_from_login(self):
         for key in ("workspace-shell", "session-section", "session-status", "session-retry-button"):

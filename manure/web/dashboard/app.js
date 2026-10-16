@@ -24,6 +24,7 @@
   var currentDetailInfo = null;
   var state = readRoute().state;
   var deleting = new Set();
+  var accessMutations = new Map();
 
   function $(id) { return document.getElementById(id); }
   function setText(id, text) { $(id).textContent = text; }
@@ -182,6 +183,7 @@
     $("file-list").textContent = "";
     setText("detail-name", "Artifact"); setText("detail-subtitle", "");
     setText("whoami-text", ""); setText("detail-status", ""); setText("list-status", "");
+    setText("access-status", ""); $("access-refresh-button").hidden = true; updateDetailActions();
     $("list-error").hidden = true;
     $("detail-section").hidden = true;
     $("dashboard-section").hidden = true;
@@ -302,11 +304,11 @@
       var group = element("div", null, "row-actions");
       var open = rowAction("Open", "open", item, function () { openArtifact(item.artifact_id, item); });
       open.dataset.visibility = item.visibility;
-      open.disabled = item.state !== "ready" || expired(item) || contentUrl(item) === null;
+      open.disabled = item.state !== "ready" || expired(item) || contentUrl(item) === null || accessMutations.has(item.artifact_id);
       open.title = contentUrl(item) === null ? "Content hosting is not configured" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" : "Open on its isolated content origin";
       group.appendChild(open);
       var remove = rowAction("Delete", "delete", item, function () { deleteArtifact(item.artifact_id); });
-      remove.disabled = deleting.has(item.artifact_id);
+      remove.disabled = deleting.has(item.artifact_id) || accessMutations.has(item.artifact_id);
       group.appendChild(remove);
       actions.appendChild(group); row.appendChild(actions); fragment.appendChild(row);
     });
@@ -349,6 +351,7 @@
       var merged = new Map(summaries.map(function (item) { return [item.artifact_id, item]; }));
       body.artifacts.forEach(function (item) {
         if (!item || !ID_RE.test(item.artifact_id)) { throw new Error("bad-response"); }
+        delete item.external_password;
         merged.set(item.artifact_id, item);
       });
       summaries = Array.from(merged.values()); nextCursor = next;
@@ -373,6 +376,40 @@
     $("detail-list").appendChild(element("dt", term, null));
     $("detail-list").appendChild(element("dd", value, null));
   }
+  function updateDetailActions() {
+    var info = currentDetailInfo;
+    var busy = currentDetailId !== null && (accessMutations.has(currentDetailId) || deleting.has(currentDetailId));
+    var ready = info !== null && info.state === "ready";
+    var selected = $("access-mode").value;
+    $("access-mode").disabled = info === null || !ready || busy;
+    $("access-save-button").disabled = info === null || !ready || busy || selected === info.visibility;
+    $("rotate-button").hidden = info === null || info.visibility !== "external";
+    $("rotate-button").disabled = info === null || busy;
+    $("delete-button").disabled = info === null || busy;
+    $("open-button").disabled = info === null || !ready || busy || contentUrl(info) === null;
+    var description = selected === "internal" ? "Only authenticated users can read this artifact, through the API or an internal access grant." : selected === "external" ? "Readers need the external password. Changing to External generates a password shown once. If it is lost, rotate to issue another." : "No Manure authentication is required for anyone who can reach the content URL.";
+    setText("access-description", info !== null && !ready ? "Access changes are available after the upload is ready. " + description : description);
+  }
+  function renderDetail(info, id) {
+    if (!info || info.artifact_id !== id || ["internal", "external", "public"].indexOf(info.visibility) === -1 ||
+        ["uploading", "publishing", "ready"].indexOf(info.state) === -1) { throw new Error("bad-response"); }
+    delete info.external_password;
+    currentDetailId = id; currentDetailInfo = info;
+    $("copy-id-button").disabled = false;
+    $("detail-list").textContent = "";
+    setText("detail-name", info.name || id);
+    setText("detail-subtitle", id);
+    [["Artifact ID", id], ["Kind", info.kind], ["Access", info.visibility], ["State", info.state], ["Created by", info.created_by_user],
+      ["Created", dateText(info.created_at, "Unknown")], ["Expires", dateText(info.expires_at, "Never")], ["Size", bytes(info.total_bytes)], ["Files", String(info.file_count)]].forEach(function (pair) { addDetailRow(pair[0], pair[1]); });
+    var url = contentUrl(info);
+    if (url !== null) { addDetailRow("Content URL", url); }
+    $("copy-link-button").disabled = url === null;
+    $("access-mode").value = info.visibility;
+    if (info.visibility !== "external") { hideRotateOutput(); }
+    updateDetailActions();
+    setText("content-note", url === null ? "Content hosting is not configured. Use the file downloads below or the CLI; no content link is available." : info.visibility === "internal" ? "Internal content opens through a single-use grant. The dashboard credential never leaves this origin." : info.visibility === "external" ? "This link requires its external password. Rotation revokes the old password and existing grants." : "No Manure authentication is required for anyone who can reach this content URL.");
+    $("dashboard-section").hidden = true; $("detail-section").hidden = false;
+  }
   function showDetail(id) {
     var generation = ++detailGeneration;
     var epoch = sessionEpoch;
@@ -384,30 +421,17 @@
     setText("detail-subtitle", id);
     $("detail-list").textContent = ""; $("file-list").textContent = "";
     ["delete-button", "open-button", "copy-id-button", "copy-link-button"].forEach(function (key) { $(key).disabled = true; });
-    $("rotate-button").hidden = true;
+    updateDetailActions();
+    setText("access-status", "Loading access settings…");
+    $("access-refresh-button").hidden = true;
     $("files-retry-button").hidden = true;
     setText("files-status", "Waiting for artifact metadata…");
     setText("detail-status", "Loading artifact details…");
     setText("list-status", "Loading artifact details…");
     apiFetch("/artifacts/" + id, { method: "GET" }).then(jsonResponse).then(function (info) {
       if (epoch !== sessionEpoch || generation !== detailGeneration) { return; }
-      if (info.artifact_id !== id) { throw new Error("bad-response"); }
-      currentDetailId = id; currentDetailInfo = info;
-      $("copy-id-button").disabled = false;
-      $("detail-list").textContent = "";
-      setText("detail-name", info.name || id);
-      setText("detail-subtitle", id);
-      [["Artifact ID", id], ["Kind", info.kind], ["Access", info.visibility], ["State", info.state], ["Created by", info.created_by_user],
-        ["Created", dateText(info.created_at, "Unknown")], ["Expires", dateText(info.expires_at, "Never")], ["Size", bytes(info.total_bytes)], ["Files", String(info.file_count)]].forEach(function (pair) { addDetailRow(pair[0], pair[1]); });
-      var url = contentUrl(info);
-      if (url !== null) { addDetailRow("Content URL", url); }
-      $("open-button").disabled = url === null || info.state !== "ready";
-      $("copy-link-button").disabled = url === null;
-      $("delete-button").disabled = deleting.has(id);
-      $("rotate-button").hidden = info.visibility !== "external";
-      $("rotate-button").disabled = false;
-      setText("content-note", url === null ? "Content hosting is not configured. Use the file downloads below or the CLI; no content link is available." : info.visibility === "internal" ? "Internal content opens through a single-use grant. The dashboard credential never leaves this origin." : info.visibility === "external" ? "This link requires its external password. Rotation revokes the old password and existing grants." : "Public content is accessible to anyone with the link.");
-      $("dashboard-section").hidden = true; $("detail-section").hidden = false;
+      renderDetail(info, id);
+      setText("access-status", accessMutations.has(id) ? "An access or password update is still in progress. Wait for its status to be refreshed." : "");
       setText("detail-status", "");
       loadFiles();
     }).catch(function (error) {
@@ -459,7 +483,7 @@
 
   /* Internal artifacts use a single-use form POST to their content endpoint. */
   function openArtifact(id, knownInfo) {
-    if (!ID_RE.test(id)) { return; }
+    if (!ID_RE.test(id) || accessMutations.has(id)) { return; }
     var epoch = sessionEpoch;
     var generation = ++openGeneration;
     var infoRequest = knownInfo === null ? apiFetch("/artifacts/" + id, { method: "GET" }).then(jsonResponse) : Promise.resolve(knownInfo);
@@ -489,11 +513,11 @@
     form.submit(); form.remove();
   }
   function deleteArtifact(id) {
-    if (!ID_RE.test(id) || deleting.has(id) || !window.confirm("Delete artifact " + id + "? This cannot be undone.")) { return; }
+    if (!ID_RE.test(id) || deleting.has(id) || accessMutations.has(id) || !window.confirm("Delete artifact " + id + "? This cannot be undone.")) { return; }
     var epoch = sessionEpoch;
     deleting.add(id);
     document.querySelectorAll('button[data-action="delete"][data-artifact-id="' + id + '"]').forEach(function (button) { button.disabled = true; });
-    if (currentDetailId === id) { $("delete-button").disabled = true; setText("detail-status", "Deleting artifact…"); }
+    if (currentDetailId === id) { updateDetailActions(); setText("detail-status", "Deleting artifact…"); }
     setText("list-status", "Deleting artifact…");
     apiFetch("/artifacts/" + id, { method: "DELETE" }).then(jsonResponse).then(function () {
       if (epoch !== sessionEpoch) { return; }
@@ -510,7 +534,7 @@
       deleting.delete(id);
       if (epoch === sessionEpoch) {
         document.querySelectorAll('button[data-action="delete"][data-artifact-id="' + id + '"]').forEach(function (button) { button.disabled = false; });
-        if (currentDetailId === id) { $("delete-button").disabled = false; }
+        if (currentDetailId === id) { updateDetailActions(); }
       }
     });
   }
@@ -520,26 +544,115 @@
     setText("rotate-password", "");
     $("rotate-copy-button").disabled = true;
   }
-  function onRotate() {
-    if (currentDetailId === null || currentDetailInfo === null || currentDetailInfo.visibility !== "external") { return; }
-    var id = currentDetailId;
+  function invalidateCatalogue() {
+    listGeneration++; pendingPage = null; summaries = []; nextCursor = null; loadedKey = ""; listError = false;
+    if (observer !== null) { observer.disconnect(); }
+    renderList();
+    if (authenticated && readRoute().id === null) { loadPage(true); }
+  }
+  function beginAccessMutation(id, message) {
+    openGeneration++; hideRotateOutput();
+    var mutation = { epoch: sessionEpoch, generation: detailGeneration, reveal: revealGeneration, refreshNeeded: true };
+    accessMutations.set(id, mutation);
+    invalidateCatalogue(); updateDetailActions();
+    setText("access-status", message); setText("detail-status", message);
+    return mutation;
+  }
+  function isMutationView(id, mutation) {
+    return mutation.epoch === sessionEpoch && mutation.generation === detailGeneration &&
+      id === currentDetailId && readRoute().id === id;
+  }
+  function canReveal(id, mutation) {
+    return isMutationView(id, mutation) && mutation.reveal === revealGeneration;
+  }
+  function takeExternalPassword(body, required) {
+    if (!body || typeof body !== "object" || Array.isArray(body)) { throw new Error("bad-response"); }
+    var password = body.external_password;
+    delete body.external_password;
+    if (!required) { return null; }
+    if (typeof password !== "string" || password.length !== 43 || !/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(password)) { throw new Error("bad-response"); }
+    return password;
+  }
+  function revealPassword(password) {
+    setText("rotate-password", password);
+    $("rotate-output").hidden = false; $("rotate-copy-button").disabled = false;
+    $("rotate-dismiss-button").focus();
+  }
+  function settleAccessMutation(id, mutation, message) {
+    invalidateCatalogue();
+    if (!authenticated || readRoute().id !== id) { return Promise.resolve(); }
     var epoch = sessionEpoch;
-    var generation = detailGeneration;
-    hideRotateOutput(); $("rotate-button").disabled = true;
-    var reveal = revealGeneration;
-    setText("detail-status", "Rotating external password…");
-    apiFetch("/artifacts/" + id + "/external-password:rotate", { method: "POST" }).then(jsonResponse).then(function (body) {
-      if (epoch !== sessionEpoch || generation !== detailGeneration || reveal !== revealGeneration || id !== currentDetailId) { return; }
-      if (typeof body.external_password !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(body.external_password)) { throw new Error("bad-response"); }
-      setText("rotate-password", body.external_password);
-      $("rotate-output").hidden = false; $("rotate-copy-button").disabled = false;
-      setText("detail-status", "Password rotated. Copy it now; it will not be shown again.");
-      $("rotate-dismiss-button").focus();
+    if (!mutation.refreshNeeded && epoch === mutation.epoch && currentDetailId === id) {
+      setText("access-status", message); setText("detail-status", message);
+      return Promise.resolve();
+    }
+    var generation = ++detailGeneration;
+    if (epoch !== mutation.epoch) { message = "A previous access request finished. If an external password was not shown, rotate to issue another."; }
+    $("access-refresh-button").hidden = true;
+    setText("access-status", message + " Refreshing current metadata…");
+    return apiFetch("/artifacts/" + id, { method: "GET" }).then(jsonResponse).then(function (info) {
+      if (epoch !== sessionEpoch || generation !== detailGeneration || readRoute().id !== id) { return; }
+      renderDetail(info, id); loadFiles();
+      setText("access-status", message); setText("detail-status", message);
     }).catch(function (error) {
-      if (epoch === sessionEpoch && generation === detailGeneration) { setText("detail-status", "Rotate failed (" + errorLabel(error) + ")."); }
-    }).finally(function () {
-      if (epoch === sessionEpoch && generation === detailGeneration) { $("rotate-button").disabled = false; }
+      if (epoch !== sessionEpoch || generation !== detailGeneration || readRoute().id !== id) { return; }
+      currentDetailInfo = null; updateDetailActions();
+      $("access-refresh-button").hidden = false;
+      var failure = message + " Current metadata could not be refreshed (" + errorLabel(error) + "). Reload access status before changing access again. If External is enabled and its password was not saved, rotate to recover access.";
+      setText("access-status", failure); setText("detail-status", failure);
     });
+  }
+  function releaseAccessMutation(id, mutation) {
+    if (accessMutations.get(id) === mutation) { accessMutations.delete(id); }
+    if (currentDetailId === id) { updateDetailActions(); }
+    if (authenticated && readRoute().id === null) { renderList(); }
+  }
+  function onAccessSubmit(event) {
+    event.preventDefault();
+    var id = currentDetailId;
+    var info = currentDetailInfo;
+    var visibility = $("access-mode").value;
+    if (id === null || info === null || info.state !== "ready" || accessMutations.has(id) || deleting.has(id) ||
+        ["internal", "external", "public"].indexOf(visibility) === -1 || visibility === info.visibility) { return; }
+    if (visibility === "public" && !window.confirm("Make artifact " + id + " public? No Manure authentication will be required for anyone who can reach its content URL. Existing content grants will be revoked.")) { return; }
+    var mutation = beginAccessMutation(id, "Saving access mode… If you leave before a generated password appears, rotate it to issue another.");
+    apiFetch("/artifacts/" + id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ visibility: visibility }) }).then(jsonResponse).then(function (body) {
+      var password = takeExternalPassword(body, visibility === "external");
+      if (body.artifact_id !== id || body.visibility !== visibility || body.state !== "ready") { throw new Error("bad-response"); }
+      var sameView = isMutationView(id, mutation);
+      var showPassword = canReveal(id, mutation);
+      if (sameView) {
+        renderDetail(body, id);
+        if (password !== null && showPassword) { revealPassword(password); }
+      }
+      password = null;
+      mutation.refreshNeeded = !sameView;
+      return visibility === "external" ? showPassword ? "Access changed to External. Save the shown password; it cannot be retrieved again. If it is no longer displayed, rotate to issue another." : "Access changed to External. The password was not displayed in this view; rotate to issue another." : "Access changed to " + visibility + ". Existing content grants were revoked.";
+    }).catch(function (error) {
+      mutation.refreshNeeded = true;
+      return "Access change could not be confirmed (" + errorLabel(error) + "). It may have been applied; no change was retried. If External is enabled and its password was not shown, rotate to issue another.";
+    }).then(function (message) {
+      return settleAccessMutation(id, mutation, message);
+    }).finally(function () { releaseAccessMutation(id, mutation); });
+  }
+  function onRotate() {
+    if (currentDetailId === null || currentDetailInfo === null || currentDetailInfo.visibility !== "external" ||
+        accessMutations.has(currentDetailId) || deleting.has(currentDetailId)) { return; }
+    var id = currentDetailId;
+    var mutation = beginAccessMutation(id, "Rotating external password…");
+    apiFetch("/artifacts/" + id + "/external-password:rotate", { method: "POST" }).then(jsonResponse).then(function (body) {
+      var password = takeExternalPassword(body, true);
+      var showPassword = canReveal(id, mutation);
+      if (showPassword) { revealPassword(password); }
+      password = null;
+      mutation.refreshNeeded = !isMutationView(id, mutation);
+      return showPassword ? "Password rotated. Save the shown password; it cannot be retrieved again. If it is no longer displayed, rotate again to issue another." : "Password rotated, but it was not displayed in this view. Rotate again to issue another.";
+    }).catch(function (error) {
+      mutation.refreshNeeded = true;
+      return "Rotation could not be confirmed (" + errorLabel(error) + "). The old password may have been revoked. Refresh status, then rotate again if the new password was not saved.";
+    }).then(function (message) {
+      return settleAccessMutation(id, mutation, message);
+    }).finally(function () { releaseAccessMutation(id, mutation); });
   }
   function copy(value, statusId, message) {
     if (!value) { return; }
@@ -582,6 +695,12 @@
   });
   $("open-button").addEventListener("click", function () { if (currentDetailId !== null) { openArtifact(currentDetailId, currentDetailInfo); } });
   $("delete-button").addEventListener("click", function () { if (currentDetailId !== null) { deleteArtifact(currentDetailId); } });
+  $("access-form").addEventListener("submit", onAccessSubmit);
+  $("access-mode").addEventListener("change", function () { setText("access-status", ""); updateDetailActions(); });
+  $("access-refresh-button").addEventListener("click", function () {
+    var id = readRoute().id;
+    if (id !== null && !accessMutations.has(id) && !deleting.has(id)) { showDetail(id); }
+  });
   $("rotate-button").addEventListener("click", onRotate);
   $("rotate-dismiss-button").addEventListener("click", function () { hideRotateOutput(); setText("detail-status", ""); });
   $("rotate-copy-button").addEventListener("click", function () { copy($("rotate-password").textContent, "detail-status", "Password copied. Dismiss the reveal when finished."); });

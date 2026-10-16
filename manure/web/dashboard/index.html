@@ -130,13 +130,23 @@ aria-describedby="token-note">
 </div>
 <aside class="action-panels" aria-label="Artifact actions">
 <section class="detail-panel action-panel"><h2>Open content</h2><p id="content-note">Content opens at the configured artifact endpoint. Internal artifacts use a one-time access grant.</p><button type="button" id="open-button" class="primary">Open artifact</button></section>
-<section class="detail-panel action-panel"><h2>Access &amp; sharing</h2><p>External passwords can be rotated here. Rotation revokes existing access grants and replaces the current password.</p><button type="button" id="rotate-button" hidden>Rotate external password</button></section>
+<section class="detail-panel action-panel"><h2>Access &amp; sharing</h2>
+<form id="access-form" class="access-form">
+<label for="access-mode">Access mode</label>
+<select id="access-mode" aria-describedby="access-description" disabled><option value="internal">Internal</option><option value="external">External</option><option value="public">Public</option></select>
+<p id="access-description">Access changes are available after the upload is ready.</p>
+<button type="submit" id="access-save-button" class="primary" disabled>Save access mode</button>
+<p id="access-status" role="status" aria-live="polite"></p>
+<button type="button" id="access-refresh-button" hidden>Reload access status</button>
+</form>
+<p>All configured users can change access for ready artifacts. Changes revoke existing content grants. Rotating an external password also replaces the current password.</p>
+<button type="button" id="rotate-button" hidden>Rotate external password</button></section>
 <section class="detail-panel action-panel danger-panel"><h2>Delete artifact</h2><p>Permanently remove this artifact and its content. This action cannot be undone.</p><button type="button" id="delete-button" class="danger">Delete artifact</button></section>
 </aside>
 </div>
 </section>
 </div>
-<footer class="workspace-footer"><p>Uploads use the <code>manure</code> CLI. This workspace lists, opens, rotates passwords, and deletes artifacts.</p><p>All configured users can manage all artifacts. Subdomain mode isolates artifact origins; path mode does not.</p></footer>
+<footer class="workspace-footer"><p>Uploads use the <code>manure</code> CLI. This workspace lists, opens, changes access, rotates passwords, and deletes artifacts.</p><p>All configured users can manage all artifacts. Subdomain mode isolates artifact origins; path mode does not.</p></footer>
 </main>
 </div>
 <noscript><p class="noscript-note">This dashboard requires JavaScript; the API and <code>manure</code> CLI remain usable without it.</p></noscript>
