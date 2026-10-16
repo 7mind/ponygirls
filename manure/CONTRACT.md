@@ -1077,7 +1077,7 @@ release. M1 MUST NOT survive past the skeleton stage.
 | B5 | API byte downloads are `attachment`, never execute under API origin | U | browser |
 | B6 | reserved `__manure/*` + `api/*` never servable as user content | S/U | unittest + browser |
 | B7 | hostile sibling: wrong-Origin login creates no session; wrong-Origin mutation with planted cookie leaves state unchanged (both suffix modes) | U | browser + HTTP |
-| D1 | dashboard shell: list/open/delete/rotate flows work; artifact names/paths rendered escaped (XSS probe names) | U | browser |
+| D1 | dashboard shell: list/open/change-access/delete/rotate flows work; artifact names/paths rendered escaped (XSS probe names) | U | browser |
 | N1 | Nix eval: options shape, `LoadCredential` digests (no material), storage paths configurable, service starts, health ok | N | `nix flake check` |
 | N2 | production edge: spoofed `X-Forwarded-Proto` from untrusted peer → `tls-required`; `X-Forwarded-Host` never routes; Host-intact proxy serves login+handoff end-to-end | N | `nix flake check` + browser |
 | N3 | HM `cacheDir` reaches CLI default; `--cache-dir`/env precedence | N/C | eval + unittest |
