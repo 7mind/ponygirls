@@ -196,14 +196,19 @@ exactly one successor. Switching sessions or shutting down pi cancels owned
 tool jobs and stops workers; runs left active are reconciled when the
 session is attached again (below). Ephemeral (`--no-session`) governing
 sessions still delegate, but recovery has no native session to restore.
-With `--no-session`, pi core also skips `turn_end` boundary handlers, so
-governing-run notice drains are inactive there.
+Notice delivery does not depend on session persistence or user-input handlers.
 
 Child notices (terminal outcomes, messages and questions addressed to the
-governing session) are delivered once per journal position: appended at
-the turn boundary while the root runs, queued for the next user turn while
-it is idle (no idle-root inference). The footer status shows the tree
-counts.
+governing session) are drained by one session-scoped delivery pump whenever
+the supervisor changes. It drains all pending pages and submits context-only
+messages: Pi appends them immediately while idle, or after the active turn's
+tool results. No user message or idle-root inference is required. Shutdown
+revokes scheduled delivery; the footer status independently shows tree counts.
+
+The attachment's journal cursor suppresses repeat submissions, not a durable
+session receipt. It advances after submission returns; a synchronous rejection
+is reported and leaves that page for the next change, without a retry loop.
+Reattaching starts at the current journal end, so old history is not replayed.
 
 ## Usage accounting
 

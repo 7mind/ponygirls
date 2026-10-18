@@ -24,6 +24,7 @@ genuine limitations.
 ## Layout
 
 - `index.ts` — thin extension registration (tools, `/agents`, events)
+- `src/notice-delivery.ts` — producer-driven, context-only journal notice delivery
 - `src/types.ts`, `src/errors.ts` — domain identities, frozen error codes
 - `src/protocol.ts` — versioned IPC envelopes, ownership/fencing validation
 - `src/policy.ts` — root authority, grant intersection, fixed profiles,

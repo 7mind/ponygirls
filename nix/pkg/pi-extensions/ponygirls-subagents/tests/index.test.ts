@@ -7,20 +7,22 @@ import test from "node:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+type Submission = { message: unknown; options: Parameters<ExtensionAPI["sendMessage"]>[1] };
 type ToolExecute = (id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: undefined, ctx: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
 
 type Handler = (event: unknown, ctx: unknown) => Promise<void>;
 
 type Schema = { properties?: Record<string, Schema>; items?: Schema; anyOf?: Schema[] };
 
-async function loadExtension(agentDir: string): Promise<{ tools: Map<string, ToolExecute>; schemas: Map<string, Schema>; handlers: Map<string, Handler>; sent: unknown[]; ctx: unknown }> {
+async function loadExtension(agentDir: string): Promise<{ tools: Map<string, ToolExecute>; schemas: Map<string, Schema>; handlers: Map<string, Handler>; sent: Submission[]; ctx: unknown }> {
   process.env["PI_CODING_AGENT_DIR"] = agentDir;
   process.env["PI_SUBAGENTS_SDK_ROOT"] = process.env["PI_SUBAGENTS_SDK_ROOT"] ?? "/nonexistent-sdk";
   const tools = new Map<string, ToolExecute>();
   const schemas = new Map<string, Schema>();
   const handlers = new Map<string, Handler>();
-  const sent: unknown[] = [];
+  const sent: Submission[] = [];
   const pi = {
     registerTool: (t: { name: string; execute: ToolExecute; parameters: Schema }) => {
       tools.set(t.name, t.execute);
@@ -28,7 +30,7 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
     },
     registerCommand: () => {},
     on: (event: string, h: Handler) => handlers.set(event, h),
-    sendMessage: (m: unknown) => sent.push(m),
+    sendMessage: (message: unknown, options: Parameters<ExtensionAPI["sendMessage"]>[1]) => sent.push({ message, options }),
     getThinkingLevel: () => "low",
   };
   const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
@@ -85,6 +87,29 @@ test("notices already in the journal are not redelivered when a session is attac
     await handlers.get("input")!({}, ctx);
     assert.deepEqual(sent, [], "old notices were delivered again");
   } finally {
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
+// Regression: a terminal event after the governing run ends must not wait for input.
+test("an idle child's startup failure is displayed without another user message", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-ext-"));
+  const { tools, handlers, sent, ctx } = await loadExtension(agentDir);
+  try {
+    await handlers.get("session_start")!({}, ctx);
+    await tools.get("spawn_agent")!("notice-child", { task_name: "notice-child", message: "unused", profile: "reader", isolation: "none" }, undefined, undefined, ctx);
+    const outcome = async (): Promise<string | null> => {
+      const result = await tools.get("list_agents")!("notice-status", {}, undefined, undefined, ctx);
+      return (JSON.parse(result.content[0]!.text) as { taskOutcome: string | null }[])[0]!.taskOutcome;
+    };
+    const deadline = Date.now() + 10_000;
+    while (await outcome() === null && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(await outcome(), "failed", "the unavailable fixture model must produce a terminal event");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(sent.some((s) => JSON.stringify(s.message).includes("ended failed")), "terminal notice was not delivered without user input");
+    assert.deepEqual(sent.map((s) => s.options), [{ triggerTurn: false }], "delivery must neither defer to input nor request inference");
+  } finally {
+    await handlers.get("session_shutdown")!({}, ctx);
     rmSync(agentDir, { recursive: true, force: true });
   }
 });
