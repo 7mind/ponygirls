@@ -18,7 +18,7 @@ import type { Clock } from "../application/clock.js";
 import type { ResolvedAuth } from "../auth/config.js";
 import { TokenFault, TOKEN_RE } from "../auth/tokens.js";
 import { mountMcp } from "../mcp/adapter.js";
-import { cookieName, parseSessionCookie, serializeSessionCookie } from "./cookies.js";
+import { cookieName, parseSessionCookie, serializeSessionCookie, requestCookieSecure, cookieOriginMatches } from "./cookies.js";
 import { LiveUpdates } from "./live.js";
 import { PublishingRepository } from "../storage/publishing.js";
 
@@ -82,6 +82,9 @@ export function createApp(deps: AppDeps): express.Express {
     if (!host || !allowed.includes(host)) {
       return finish(res, req, "host", 403, { error: { code: "forbidden", message: "disallowed host" } }, log, undefined);
     }
+    if (!cookieOriginMatches(deps.getAuth().config, req.headers)) {
+      return finish(res, req, "origin", 403, { error: { code: "forbidden", message: "origin/host mismatch" } }, log, undefined);
+    }
     next();
   });
 
@@ -104,7 +107,7 @@ export function createApp(deps: AppDeps): express.Express {
       }
       // Rolling session: renew the cookie lifetime on authenticated activity.
       if (authed.method === "cookie") {
-        res.setHeader("Set-Cookie", serializeSessionCookie(authed.token, deps.getAuth().config.cookieSecure));
+        res.setHeader("Set-Cookie", serializeSessionCookie(authed.token, requestCookieSecure(deps.getAuth().config, req.headers)));
       }
       handler(req, res, authed)
         .then(() => {
@@ -133,15 +136,15 @@ export function createApp(deps: AppDeps): express.Express {
     if (!principal) {
       return fault(res, req, "login", requestId, started, new TokenFault(), log, undefined);
     }
-    deps.updates.endSession(req.headers.cookie);
-    res.set("Set-Cookie", serializeSessionCookie(token, deps.getAuth().config.cookieSecure));
+    deps.updates.endSession(req);
+    res.set("Set-Cookie", serializeSessionCookie(token, requestCookieSecure(deps.getAuth().config, req.headers)));
     log({ requestId, route: "login", status: 200, result: "ok", userId: principal.userId, tokenId: principal.tokenId, durationMs: Date.now() - started });
     res.json({ user: { id: principal.userId, type: principal.type } });
   });
 
   app.post("/api/v1/logout", withAuth("logout", true, async (req, res) => {
-    deps.updates.endSession(req.headers.cookie);
-    res.set("Set-Cookie", serializeSessionCookie(null, deps.getAuth().config.cookieSecure));
+    deps.updates.endSession(req);
+    res.set("Set-Cookie", serializeSessionCookie(null, requestCookieSecure(deps.getAuth().config, req.headers)));
     res.json({ ok: true });
   }));
 
@@ -275,7 +278,7 @@ export function createApp(deps: AppDeps): express.Express {
 
 function resolveAuth(req: Request, auth: ResolvedAuth): Authed {
   const header = req.headers.authorization;
-  const cookie = parseSessionCookie(req.headers.cookie, cookieName(auth.config.cookieSecure));
+  const cookie = parseSessionCookie(req.headers.cookie, cookieName(requestCookieSecure(auth.config, req.headers)));
   const hasBearer = typeof header === "string" && header.length > 0;
   if (hasBearer && cookie !== null) {
     throw Object.assign(new Error("ambiguous credentials"), { code: "ambiguous-credentials", status: 401 });

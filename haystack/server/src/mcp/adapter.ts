@@ -13,7 +13,7 @@ import { SearchService, SEARCH_CURSOR_MAX_CHARS } from "../application/search.js
 import type { SearchableRepository } from "../storage/search.js";
 import type { Clock } from "../application/clock.js";
 import type { ResolvedAuth } from "../auth/config.js";
-import { cookieName, parseSessionCookie } from "../http/cookies.js";
+import { COOKIE_NAME_SECURE, COOKIE_NAME_DEV, parseSessionCookie } from "../http/cookies.js";
 import type { Principal } from "../domain/document.js";
 import type { Logger } from "../http/server.js";
 
@@ -86,8 +86,8 @@ export function mountMcp(app: Express, deps: McpDeps): void {
     }
     // Bearer only: browser cookies are never accepted here.
     const header = req.headers.authorization;
-    const cookie = parseSessionCookie(req.headers.cookie, cookieName(auth.config.cookieSecure));
-    if (cookie !== null) {
+    const hasCookie = [COOKIE_NAME_SECURE, COOKIE_NAME_DEV].some((name) => parseSessionCookie(req.headers.cookie, name) !== null);
+    if (hasCookie) {
       res.status(401).json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "cookie auth not accepted on /mcp" } });
       return;
     }

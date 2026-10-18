@@ -2,7 +2,7 @@ import type { IncomingMessage, Server } from "node:http";
 import { randomBytes } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 import type { ResolvedAuth } from "../auth/config.js";
-import { cookieName, parseSessionCookie } from "./cookies.js";
+import { cookieName, parseSessionCookie, requestCookieSecure, cookieOriginMatches } from "./cookies.js";
 import type { Principal } from "../domain/document.js";
 
 const HEARTBEAT_MS = 30_000;
@@ -35,7 +35,8 @@ export class LiveUpdates {
       const host = (req.headers.host ?? "").split(":")[0]!.toLowerCase();
       if (this.destroyed || req.url !== "/api/v1/live" ||
           !auth.config.allowedHosts.some((h) => h.toLowerCase() === host) ||
-          typeof req.headers.origin !== "string" || !auth.config.allowedOrigins.includes(req.headers.origin)) {
+          typeof req.headers.origin !== "string" || !auth.config.allowedOrigins.includes(req.headers.origin) ||
+          !cookieOriginMatches(auth.config, req.headers)) {
         socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
         return;
       }
@@ -72,11 +73,11 @@ export class LiveUpdates {
   }
 
   private cookie(req: IncomingMessage): string | null {
-    return parseSessionCookie(req.headers.cookie, cookieName(this.getAuth().config.cookieSecure));
+    return parseSessionCookie(req.headers.cookie, cookieName(requestCookieSecure(this.getAuth().config, req.headers)));
   }
 
-  endSession(cookieHeader: string | undefined): void {
-    const token = parseSessionCookie(cookieHeader, cookieName(this.getAuth().config.cookieSecure));
+  endSession(req: IncomingMessage): void {
+    const token = this.cookie(req);
     if (token === null) return;
     for (const [ws, session] of this.sessions) if (session.token === token) ws.close(4401, "Session changed; sign in again");
   }

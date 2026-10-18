@@ -104,6 +104,45 @@ Loopback HTTP needs no setup on `127.0.0.1` (one socket,
 Host-routed). `*.localhost` content names depend on your resolver —
 Python has no built-in wildcard — so fetch by artifact id when
 content URLs do not resolve locally (id fetch uses the API origin).
+### Private-overlay HTTP (explicit opt-in)
+
+HTTPS remains the default. For an encrypted private overlay whose hostname has
+no TLS endpoint, set server `allow_insecure_http: true` (not `loopback_dev`).
+The operator must restrict network access: the application cannot verify overlay
+encryption. Tokens, passwords and content otherwise travel in cleartext.
+
+To retain an existing HTTPS endpoint alongside HTTP, use path mode, for example:
+
+```json
+{
+  "api_origin": "https://existing-tailnet.example:8446",
+  "content_mode": "path",
+  "content_suffix": "",
+  "allow_insecure_http": true,
+  "allowed_api_origins": ["http://private-overlay.example:8086"]
+}
+```
+
+These are additional keys in a complete server config (users/data directory still
+required). Aliases require distinct hostnames and are initially path-mode only;
+no wildcard origins, CORS relaxation, or forwarded-host/proto spoofing is used.
+Each endpoint requires its exact configured Host/port and same-origin browser
+mutations. HTTPS still requires a trusted TLS edge and retains Secure cookies;
+HTTP uses separate host-only `manure-http` / `mgrant-http-<id>` cookies.
+Path-mode content URLs returned over HTTP stay on HTTP, so handoff/unlock works
+without reaching Tailscale. `RunningServer.content_url()` remains canonical HTTPS.
+Sessions are separate per hostname; sign in independently. Path mode's existing
+shared-origin trusted-content limitation still applies.
+
+Clients must opt in independently: Python `ManureClient(...,
+allow_insecure_http=True)`, CLI `manure --allow-insecure-http upload ...`, or
+`MANURE_ALLOW_INSECURE_HTTP=1` for CLI **and stdio MCP**. Unset/empty/`0` keeps
+rejection; other environment values fail closed. Public HTTP content URL fetch
+also needs this opt-in, even without credentials. This does not relax redirect,
+bearer-origin or artifact-grant scoping. Browsers need no flag: the dashboard
+uses same-origin fetch/forms and no secure-context-only crypto APIs. Uploads
+remain CLI-only; Python hashing/RNG are unchanged.
+
 **Production: `loopback_dev: false`, `https:` `api_origin`, proxy**
 (see “Security & deployment”). Cleanup: stop the server, then
 `rm -rf /tmp/manure-local` (token, hash, config, data).
@@ -123,7 +162,7 @@ env → exit 2 (observed: flag + env is rejected, not overridden —
 unset the env pair first). Secret files: exact-byte rule (43 chars +
 optional LF). Flag-over-env holds **only** for the non-secret cache:
 `--cache-dir` > `MANURE_CACHE_DIR` > Home Manager default >
-`~/.cache/manure`. HTTP URLs: loopback hosts only, else rejected
+`~/.cache/manure`. HTTP URLs: loopback hosts only by default, else rejected
 pre-network.
 
 ```bash
@@ -330,7 +369,7 @@ No host/DNS/deployment change is implied here — operator configuration only.
   original `Host` intact, including any explicit port** (`proxy_set_header Host $http_host`, or an identity-preserving map of it — never normalized `$host`, which drops the port) with
   `X-Forwarded-Proto`. Secure ⇔ socket peer ∈ `trusted_proxies`
   (default loopback) **and** `X-Forwarded-Proto: https`; direct
-  plaintext with `loopback_dev=false` → 403 `tls-required`.
+  plaintext on HTTPS endpoints with `loopback_dev=false` → 403 `tls-required` (unless the request targets an explicitly configured HTTP endpoint as described above).
   `X-Forwarded-Host`, `Forwarded:`, client-IP headers are always
   ignored; unknown `Host` rejected. In subdomain mode, wildcard content hosts cannot use
   ACME HTTP-01 — provision a DNS-01 cert for the API host plus

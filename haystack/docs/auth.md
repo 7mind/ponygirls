@@ -35,7 +35,8 @@ Normative freeze of plan §5 (minus dropped preflight — see decisions.md).
   activityProjectId }`. Diagnostic endpoint (preflight is dropped, but the
   server still reports authoritative identity + namespace so clients and
   operators can detect skew).
-- TLS mandatory outside loopback development. `Origin` validated when
+- TLS is the default outside loopback development; the explicit HTTP opt-in
+  below is the only production cookie exception. `Origin` validated when
   present; allowed-hosts enforced; no CORS for API by default; proxy
   headers trusted only from the configured local reverse proxy.
 
@@ -47,6 +48,35 @@ Normative freeze of plan §5 (minus dropped preflight — see decisions.md).
   separate plain name `haystack-dev` without `Secure` (browsers reject
   Secure-less `__Host-` cookies outright — verified by browser tests).
   180-day lifetime renewed on authenticated activity in both modes.
+- Optional `insecureHttpOrigins: string[]` enables plain `haystack-dev`
+  cookies for dedicated HTTP authorities while keeping `cookieSecure: true`
+  and `__Host-haystack; Secure` on HTTPS. Absent/empty preserves existing
+  policy; `cookieSecure: false` remains the global development override.
+  Every entry must be an exact canonical `http://host:port` origin (no path,
+  trailing slash, credentials, query, or fragment), also present verbatim in
+  `allowedOrigins`, with its hostname in `allowedHosts`. An allowed HTTPS
+  origin cannot share that authority. Example alongside HTTPS on port 8445:
+  ```json
+  {
+    "cookieSecure": true,
+    "allowedHosts": ["haystack.example", "haystack.vpn.example"],
+    "allowedOrigins": ["https://haystack.example:8445", "http://haystack.vpn.example:8085"],
+    "insecureHttpOrigins": ["http://haystack.vpn.example:8085"]
+  }
+  ```
+  Cookie selection uses the configured request Host authority including port,
+  never client `X-Forwarded-Proto`/`X-Forwarded-Host`. The reverse proxy must
+  preserve the public Host, validate listeners, and prevent untrusted access
+  to the backend. An Origin involving an opted-in authority must match that
+  exact HTTP Origin and Host; this also applies to reads and live upgrades.
+  Login, renewal, logout, and live session replacement use the same selection;
+  the other cookie name is never a fallback. `/mcp` rejects either cookie name.
+- **HTTP exposes the static bearer token and all content to interception.**
+  Use only on a trusted, encrypted private overlay, with listener/firewall
+  restrictions (for example NetBird interface and loopback only). HTTP is not
+  made safe merely by adding it to an allowlist. Cookies are host-only, not
+  port-scoped: do not serve untrusted applications on the same HTTP hostname.
+  The HTTPS cookie remains Secure and is not sent to the HTTP endpoint.
 - Same-origin validation on login and every cookie-authenticated mutation
   (CSRF). Logout expires the cookie (does not revoke the static token
   elsewhere). Tokens never in URLs, localStorage, logs, or tracing.

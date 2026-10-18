@@ -222,6 +222,8 @@ Top-level keys are exactly (unknown keys → startup failure, fail closed):
 | `content_mode` | enum | `"subdomain"` | `subdomain` or LOW-SECURITY `path` (§0.1). |
 | `content_suffix` | str | required in subdomain; `""` in path | e.g. `artifacts.7mind.io`; local `artifacts.localhost`. Content host `<id>.<suffix>`. |
 | `loopback_dev` | bool | `false` | `true` allows http + non-Secure dev cookies on loopback only (§5.7). Production MUST be `false`. |
+| `allow_insecure_http` | bool | `false` | Explicit plaintext HTTP opt-in for an operator-secured private overlay; independent of `loopback_dev`. |
+| `allowed_api_origins` | list[str] | `[]` | Additional exact API origins, path mode only and `loopback_dev=false`; distinct hostnames including canonical origin. HTTP requires `allow_insecure_http=true`. |
 | `trusted_proxies` | list[str] | `["127.0.0.1/32", "::1/128"]` | CIDRs whose `X-Forwarded-Proto` is honored (§5.8). All other forwarded headers ignored. |
 | `dashboard_dir` | str\|null | package `manure/manure/web/dashboard` (repo fallback `manure/web/dashboard`, §11) | `null` = JSON API only (`dashboard-disabled`). |
 | `unlock_shell_dir` | str\|null | package `manure/manure/web/unlock` (repo fallback `manure/web/unlock`, §11) | `null` = built-in minimal unlock form (§5.4). |
@@ -469,12 +471,42 @@ performance hint, NOT the boundary (§0).
   `POST /api/v1/login` always
   requires exact `api_origin` (§4). Bearer-authed non-login API calls
   allow absent `Origin` but reject a mismatched one.
-- TLS: `loopback_dev=false` requires `api_origin` starting `https:` and
+- TLS by default: `loopback_dev=false` requires `api_origin` starting `https:` and
   `Secure` cookies; acceptance of a request as secure is defined ONLY by
   §5.8. `loopback_dev=true` permits `http:` only for loopback hosts and
   uses dev cookie names. Fully functional default local HTTP mode uses
   `127.0.0.1` / `*.localhost` with Host dispatch; no extra hosts edits
   or network needed (§11).
+
+#### Explicit private-overlay HTTP endpoints
+
+`allow_insecure_http=true` permits HTTP canonical origins and HTTP aliases, not
+implicit downgrade of HTTPS endpoints. The operator must restrict access to an
+encrypted private overlay; the server does not verify overlay membership.
+`allowed_api_origins` is initially path-mode only, requires distinct hostnames
+(no same-host scheme/port aliases), and never enables CORS. Origin values must
+be bare HTTP(S) origins (optional terminal `/`); explicit ports must be valid.
+With HTTP opt-in or aliases configured, authority matching is exact: omitted
+ports denote the configured scheme's default port, not an arbitrary backend port.
+
+Request origin is selected exclusively from configured origins by Host/port,
+never from Origin or forwarded headers. In this mode references to `api_origin`
+in login/mutation/bearer/grant Origin guards mean the matched endpoint origin
+(without a trailing slash). All exact Origin checks remain; an HTTPS alias does
+not authorize mutations at HTTP or vice versa. HTTP ignores X-Forwarded-Proto;
+HTTPS retains §5.8 even when HTTP is also enabled. Path content/grant URLs in API
+responses use the matched endpoint, while `RunningServer.content_url()` and
+`effective_api_origin` remain canonical. HTTP cookies are host-only, HttpOnly,
+non-Secure `manure-http` (SameSite=Strict) and `mgrant-http-<id>` (SameSite=Lax,
+path `/view/<id>/`); HTTP subdomain mode uses `mgrant-http`. HTTPS cookie names,
+Secure attributes, expiry, revocation and artifact scoping remain unchanged.
+Loopback development retains its separate existing rules/names.
+
+The Python client independently requires `allow_insecure_http=True` (default
+false), including content URL fetch and redirect targets. CLI uses the global
+`--allow-insecure-http` flag or `MANURE_ALLOW_INSECURE_HTTP=1`; stdio MCP uses the
+same environment variable. Unset/empty/`0` means false; all other values fail
+closed. No URL alone opts in. Redirect and credential-forwarding rules remain.
 
 ### 5.8 Edge trust boundary (production)
 
@@ -483,7 +515,7 @@ performance hint, NOT the boundary (§0).
   peer (loopback by default). Rule: a request counts as secure IFF its
   socket peer ∈ `trusted_proxies` AND `X-Forwarded-Proto: https`
   (exact, single value). Direct-plaintext requests (peer ∉ trusted, or
-  header absent/≠https) with `loopback_dev=false` → 403 `tls-required`
+  header absent/≠https) targeting an HTTPS endpoint with `loopback_dev=false` → 403 `tls-required`
   (no redirect; the edge owns redirects/HSTS).
 - `X-Forwarded-Host` (and any `Forwarded:` header) is ALWAYS ignored;
   authority comes only from the request `Host`. `X-Forwarded-For` /

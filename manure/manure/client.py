@@ -257,7 +257,17 @@ def _bracket_host(host: str) -> str:
     return host
 
 
-def validate_url_before_network(url: str) -> urllib.parse.ParseResult:
+def insecure_http_from_env(value: str | None) -> bool:
+    if value in (None, "", "0"):
+        return False
+    if value == "1":
+        return True
+    raise ManureError("bad-envelope", "MANURE_ALLOW_INSECURE_HTTP must be 0 or 1")
+
+
+def validate_url_before_network(url: str, allow_insecure_http: bool = False) -> urllib.parse.ParseResult:
+    if type(allow_insecure_http) is not bool:
+        raise ManureError("bad-envelope", "allow_insecure_http: boolean required")
     if not isinstance(url, str) or not url:
         raise InvalidUrl("malformed url")
     try:
@@ -270,7 +280,7 @@ def validate_url_before_network(url: str) -> urllib.parse.ParseResult:
     if not host:
         raise InvalidUrl("missing host")
     _parsed_port(parsed)
-    if parsed.scheme == "http" and not is_loopback_host(host):
+    if parsed.scheme == "http" and not is_loopback_host(host) and not allow_insecure_http:
         raise InvalidUrl("http only allowed for loopback hosts")
     return parsed
 
@@ -1073,13 +1083,16 @@ class HttpTransport(Protocol):
 class StdlibTransport:
     """Single-request stdlib transport (no redirect/auth logic; client handles it)."""
 
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = 30.0, allow_insecure_http: bool = False):
+        if type(allow_insecure_http) is not bool:
+            raise ManureError("bad-envelope", "allow_insecure_http: boolean required")
+        self.allow_insecure_http = allow_insecure_http
         self.timeout = timeout
 
     def request(self, method: str, url: str, headers: dict[str, str],
                 body: bytes | None) -> tuple[int, dict[str, str], bytes]:
         # Validate URL shape/loopback/port before any socket use (sanitized).
-        validate_url_before_network(url)
+        validate_url_before_network(url, self.allow_insecure_http)
         parsed = urllib.parse.urlparse(url)
         host = parsed.hostname or ""
         try:
@@ -1178,7 +1191,11 @@ class ManureClient:
     def __init__(self, api_base: str, token: str | None = None,
                  token_file: str | None = None,
                  cache_dir: str | os.PathLike | None = None,
-                 transport: HttpTransport | None = None):
+                 transport: HttpTransport | None = None,
+                 allow_insecure_http: bool = False):
+        if type(allow_insecure_http) is not bool:
+            raise ManureError("bad-envelope", "allow_insecure_http: boolean required")
+        self.allow_insecure_http = allow_insecure_http
         if not isinstance(api_base, str) or strip_secret_value(api_base) is None:
             raise MissingCredentials("missing api base url")
         base = strip_secret_value(api_base) or ""
@@ -1214,7 +1231,7 @@ class ManureClient:
             self.cache_dir = Path.home() / ".cache" / "manure"
         else:
             self.cache_dir = Path(cache_dir)
-        self._transport: HttpTransport = transport if transport is not None else StdlibTransport()
+        self._transport: HttpTransport = transport if transport is not None else StdlibTransport(allow_insecure_http=allow_insecure_http)
         self._grants: dict[str, str] = {}
 
     # ------------------------------------------------- grants jar
@@ -1243,7 +1260,7 @@ class ManureClient:
         # origin for first request only; redirects re-derive? Keep explicit origin only for first.
         current_origin = origin
         for _ in range(MAX_REDIRECTS + 1):
-            validate_url_before_network(current_url)
+            validate_url_before_network(current_url, self.allow_insecure_http)
             parsed = urllib.parse.urlparse(current_url)
             req_headers = dict(current_headers)
             # auth: bearer ONLY to configured API origin
@@ -1291,7 +1308,7 @@ class ManureClient:
                 if not loc:
                     return (status, resp_hdrs, resp_body)
                 nxt = urllib.parse.urljoin(current_url, loc)
-                validate_url_before_network(nxt)
+                validate_url_before_network(nxt, self.allow_insecure_http)
                 # cross-origin? compare scheme+host+port (port access sanitized)
                 old_p = urllib.parse.urlparse(current_url)
                 new_p = urllib.parse.urlparse(nxt)
@@ -2115,7 +2132,7 @@ class ManureClient:
 
     # ----- content fetch
     def _fetch_via_content(self, content_url: str, dest: Path, password: str | None) -> dict[str, Any]:
-        parsed = validate_url_before_network(content_url)
+        parsed = validate_url_before_network(content_url, self.allow_insecure_http)
         host = (parsed.hostname or "").lower()
         content_origin = _origin_from_parsed(parsed)
         scope, first_label = _content_scope(parsed)

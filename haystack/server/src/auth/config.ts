@@ -20,8 +20,11 @@ export interface UserConfig {
 export interface HaystackConfig {
   readonly activityProjectId: string;
   readonly users: readonly UserConfig[];
-  /** Require Secure cookies (production). Explicitly false for loopback dev. */
+  /** Default to Secure cookies; false is the global development override.
+   * Explicit insecureHttpOrigins exceptions do not change this default. */
   readonly cookieSecure: boolean;
+  /** Explicit HTTP origins allowed to use plain session cookies alongside HTTPS. */
+  readonly insecureHttpOrigins?: readonly string[];
   /** Allowed Host header hostnames (port ignored). */
   readonly allowedHosts: readonly string[];
   /** Allowed Origin values for login + cookie-authenticated mutations. */
@@ -44,6 +47,30 @@ const TOKEN_ID_RE = /^[^\s:]{1,64}$/;
 export async function loadAuth(config: HaystackConfig): Promise<ResolvedAuth> {
   if (!config.activityProjectId) throw new Error("activityProjectId is required");
   if (config.users.length === 0) throw new Error("at least one user is required");
+  if (config.insecureHttpOrigins !== undefined && !Array.isArray(config.insecureHttpOrigins)) {
+    throw new Error("insecureHttpOrigins must be an array");
+  }
+  for (const origin of config.insecureHttpOrigins ?? []) {
+    let url: URL;
+    try { url = new URL(origin); }
+    catch { throw new Error("invalid insecureHttpOrigins entry"); }
+    if (url.protocol !== "http:" || url.origin !== origin ||
+        !config.allowedOrigins.includes(origin) ||
+        !config.allowedHosts.some((host) => host.toLowerCase() === url.hostname) ||
+        config.allowedOrigins.some((allowed) => {
+          try {
+            const other = new URL(allowed);
+            // Compare canonical Host spellings AND effective ports. HTTPS
+            // default :443 may be present or omitted in the request Host.
+            return other.protocol === "https:" && (
+              new URL(`http://${other.host}`).host === url.host ||
+              (other.hostname === url.hostname && (other.port || "443") === (url.port || "80"))
+            );
+          } catch { return false; }
+        })) {
+      throw new Error("insecureHttpOrigins must contain exact HTTP origins in allowedOrigins/allowedHosts with a dedicated authority");
+    }
+  }
   const seenUsers = new Set<string>();
   const digestToPrincipal = new Map<string, Principal>();
   for (const user of config.users) {
