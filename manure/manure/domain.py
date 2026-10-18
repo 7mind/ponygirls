@@ -127,6 +127,8 @@ _DEFAULTS: dict[str, Any] = {
     "content_mode": "subdomain",
     "content_suffix": "",
     "loopback_dev": False,
+    "allow_insecure_http": False,
+    "allowed_api_origins": [],
     "trusted_proxies": ["127.0.0.1/32", "::1/128"],
     "dashboard_dir": "package",
     "unlock_shell_dir": "package",
@@ -165,6 +167,8 @@ class ServerConfig:
     api_origin: str = ""
     content_suffix: str = ""
     loopback_dev: bool = False
+    allow_insecure_http: bool = False
+    allowed_api_origins: tuple[str, ...] = ()
     trusted_proxies: tuple[str, ...] = ("127.0.0.1/32", "::1/128")
     dashboard_dir: Optional[str] = "package"
     unlock_shell_dir: Optional[str] = "package"
@@ -201,6 +205,8 @@ class ServerConfig:
         proxies = self.trusted_proxies
         if isinstance(proxies, list):
             object.__setattr__(self, "trusted_proxies", tuple(proxies))
+        if isinstance(self.allowed_api_origins, list):
+            object.__setattr__(self, "allowed_api_origins", tuple(self.allowed_api_origins))
         self._validate()
 
     @staticmethod
@@ -248,6 +254,8 @@ class ServerConfig:
                 raise bad("%s: non-empty string required" % key)
         if type(self.loopback_dev) is not bool:  # reject truthy "false"
             raise bad("loopback_dev: boolean required")
+        if type(self.allow_insecure_http) is not bool:
+            raise bad("allow_insecure_http: boolean required")
         origin = self._validate_origin(self.api_origin)
         if self.content_mode not in ("subdomain", "path"):
             raise bad("content_mode: subdomain or path required")
@@ -258,7 +266,7 @@ class ServerConfig:
         if self.content_mode == "subdomain" or self.content_suffix:
             self._validate_suffix(self.content_suffix)
         if not self.loopback_dev:
-            if origin["scheme"] != "https":
+            if origin["scheme"] != "https" and not self.allow_insecure_http:
                 raise bad("production api_origin must be https:")
         elif not _is_loopback_host(origin["host"]):
             # R12: the development exception is loopback-only regardless of
@@ -268,6 +276,20 @@ class ServerConfig:
         if self.loopback_dev and self.content_suffix and not _is_loopback_suffix(
                 self.content_suffix):
             raise bad("loopback_dev requires a loopback content suffix")
+        if not isinstance(self.allowed_api_origins, tuple):
+            raise bad("allowed_api_origins: list required")
+        if self.allowed_api_origins and (self.content_mode != "path" or self.loopback_dev):
+            raise bad("allowed_api_origins requires path mode and loopback_dev=false")
+        hosts = {origin["host"]}
+        for alias in self.allowed_api_origins:
+            if not isinstance(alias, str) or not alias:
+                raise bad("allowed_api_origins: origin strings required")
+            parsed = self._validate_origin(alias)
+            if parsed["scheme"] == "http" and not self.allow_insecure_http:
+                raise bad("HTTP origins require allow_insecure_http=true")
+            if parsed["host"] in hosts:
+                raise bad("API origins must have distinct hostnames")
+            hosts.add(parsed["host"])
         for key in ("dashboard_dir", "unlock_shell_dir"):
             value = getattr(self, key)
             if value is not None and \
@@ -337,6 +359,9 @@ class ServerConfig:
         import urllib.parse as _up
         try:
             parts = _up.urlsplit(value)
+            port = parts.port
+            if port is not None and not 0 <= port <= 65535:
+                raise ValueError("bad port")
         except ValueError as exc:
             raise DomainError("bad-envelope",
                               "api_origin: bad origin") from exc
@@ -348,6 +373,9 @@ class ServerConfig:
             raise DomainError("bad-envelope",
                               "api_origin: bare host required")
         if parts.query or parts.fragment or parts.path not in ("", "/"):
+            raise DomainError("bad-envelope",
+                              "api_origin: origin only, no path")
+        if any(ch.isspace() or ord(ch) < 32 for ch in value):
             raise DomainError("bad-envelope",
                               "api_origin: origin only, no path")
         return {"scheme": parts.scheme, "host": host.lower()}
@@ -375,6 +403,8 @@ class ServerConfig:
             content_suffix=merged["content_suffix"],
             content_mode=merged["content_mode"],
             loopback_dev=merged["loopback_dev"],
+            allow_insecure_http=merged["allow_insecure_http"],
+            allowed_api_origins=merged["allowed_api_origins"],
             trusted_proxies=merged["trusted_proxies"],
             dashboard_dir=merged["dashboard_dir"],
             unlock_shell_dir=merged["unlock_shell_dir"],
@@ -638,12 +668,12 @@ def error_envelope(code: str, message: str = "") -> bytes:
                                  "message": message or code}}).encode()
 
 
-def session_cookie_name(loopback_dev: bool) -> str:
-    return "manure-dev" if loopback_dev else "__Host-manure"
+def session_cookie_name(loopback_dev: bool, insecure_http: bool = False) -> str:
+    return "manure-dev" if loopback_dev else ("manure-http" if insecure_http else "__Host-manure")
 
 
-def grant_cookie_name(loopback_dev: bool) -> str:
-    return "mgrant-dev" if loopback_dev else "__Host-mgrant"
+def grant_cookie_name(loopback_dev: bool, insecure_http: bool = False) -> str:
+    return "mgrant-dev" if loopback_dev else ("mgrant-http" if insecure_http else "__Host-mgrant")
 
 
 def valid_artifact_id(value: str) -> bool:

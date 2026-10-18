@@ -189,9 +189,9 @@ def _content_path(config: ServerConfig, aid: str) -> str:
     return "/view/" + aid if config.content_mode == "path" else ""
 
 
-def _content_base_url(state: _State, aid: str) -> str:
+def _content_base_url(state: _State, aid: str, origin: Optional[str] = None) -> str:
     if state.config.content_mode == "path":
-        return state.effective_origin.rstrip("/") + _content_path(state.config, aid)
+        return (origin or state.effective_origin).rstrip("/") + _content_path(state.config, aid)
     scheme = urllib.parse.urlsplit(state.config.api_origin).scheme
     eff = urllib.parse.urlsplit(state.effective_origin)
     host = "%s.%s" % (aid, state.config.content_suffix)
@@ -268,6 +268,27 @@ def _check_production_port(state: _State, hostname: str,
     expected = parts.port or (443 if parts.scheme == "https" else 80)
     if port != expected:
         raise DomainError("bad-host", "unexpected port")
+
+
+def _request_endpoint(state: _State, host: str, port: Optional[int]) -> tuple[str, bool]:
+    config = state.config
+    if not config.allowed_api_origins and not config.allow_insecure_http:
+        _check_production_port(state, host, port)
+        return state.effective_origin, False
+    origins = (state.effective_origin,) + config.allowed_api_origins
+    origin = next((value for value in origins
+                   if (urllib.parse.urlsplit(value).hostname or "").lower() == host), None)
+    if origin is None:
+        if not (config.content_mode == "subdomain"
+                and host.endswith("." + config.content_suffix)
+                and D.valid_artifact_id(host[:-(len(config.content_suffix) + 1)])):
+            raise DomainError("bad-host", "unknown Host")
+        origin = state.effective_origin
+    parsed = urllib.parse.urlsplit(origin)
+    default_port = 443 if parsed.scheme == "https" else 80
+    if (port or default_port) != (parsed.port or default_port):
+        raise DomainError("bad-host", "unexpected port")
+    return origin.rstrip("/"), parsed.scheme == "http"
 
 
 def _is_secure(state: _State, handler: http.server.BaseHTTPRequestHandler
@@ -467,14 +488,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 host, port = _parse_authority(self)
                 state: _State = self.server._mstate
                 api_host = state.api_host
-                if host != api_host and not (
+                alias_hosts = {(urllib.parse.urlsplit(origin).hostname or "").lower()
+                               for origin in state.config.allowed_api_origins}
+                if host != api_host and host not in alias_hosts and not (
                         state.config.content_mode == "subdomain"
                         and host.endswith("." + state.config.content_suffix)
                         and D.valid_artifact_id(
                             host[:-(len(state.config.content_suffix) + 1)])):
                     raise DomainError("bad-host", "unknown Host")
-                _check_production_port(state, host, port)
-                if not _is_secure(state, self):
+                _, http_endpoint = _request_endpoint(state, host, port)
+                if not http_endpoint and not _is_secure(state, self):
                     raise DomainError("tls-required", "TLS required")
         except DomainError as exc:
             self._emit_gate_fault(exc.code, exc.message)
@@ -576,10 +599,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     # -- cookies ---------------------------------------------------------
     def _session_cookie(self, token: str, clear: bool = False) -> str:
         state: _State = self.server._mstate
-        name = D.session_cookie_name(state.config.loopback_dev)
+        name = D.session_cookie_name(state.config.loopback_dev, self._http_endpoint)
         parts = ["%s=%s" % (name, "" if clear else token), "Path=/",
                  "HttpOnly", "SameSite=Strict"]
-        if not state.config.loopback_dev:
+        if not state.config.loopback_dev and not self._http_endpoint:
             parts.append("Secure")
         parts.append("Max-Age=%d" % (0 if clear else _SESSION_MAX_AGE))
         return "; ".join(parts)
@@ -587,8 +610,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _content_cookie_name(self, aid: str) -> str:
         config = self.server._mstate.config
         if config.content_mode == "path":
-            return ("mgrant-dev-" if config.loopback_dev else "__Secure-mgrant-") + aid
-        return D.grant_cookie_name(config.loopback_dev)
+            return ("mgrant-dev-" if config.loopback_dev else ("mgrant-http-" if self._http_endpoint else "__Secure-mgrant-")) + aid
+        return D.grant_cookie_name(config.loopback_dev, self._http_endpoint)
 
     def _grant_cookie(self, aid: str, value: str, max_age: int,
                       clear: bool = False) -> str:
@@ -597,7 +620,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         path = _content_path(state.config, aid) + "/"
         parts = ["%s=%s" % (name, "" if clear else value), "Path=" + path,
                  "HttpOnly", "SameSite=Lax"]
-        if not state.config.loopback_dev:
+        if not state.config.loopback_dev and not self._http_endpoint:
             parts.append("Secure")
         parts.append("Max-Age=%d" % (0 if clear else max(1, max_age)))
         return "; ".join(parts)
@@ -712,8 +735,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             self._fail(exc.code, exc.message)
             return
+        try:
+            self._request_origin, self._http_endpoint = _request_endpoint(state, host, port)
+        except DomainError as exc:
+            self._fail(exc.code, exc.message)
+            return
         self._content_prefix = ""
-        if host == state.api_host:
+        if host == state.api_host or any(
+                (urllib.parse.urlsplit(origin).hostname or "").lower() == host
+                for origin in state.config.allowed_api_origins):
             side: Optional[str] = "api"
             aid = ""
             if state.config.content_mode == "path":
@@ -731,16 +761,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._fail("bad-host", "unknown Host")
             return
         self._side = side
-        try:
-            _check_production_port(state, host, port)
-        except DomainError as exc:
-            self._fail(exc.code, exc.message)
-            return
         if state.config.loopback_dev and state.config.api_origin.startswith(
                 "http://") and not D._is_loopback_host(host):
             self._fail("tls-required", "loopback http only")
             return
-        if not _is_secure(state, self):
+        if not self._http_endpoint and not _is_secure(state, self):
             self._fail("tls-required", "TLS required at edge")
             return
         if self.command not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
@@ -793,7 +818,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         state: _State = self.server._mstate
         authz = self.headers.get("Authorization")
         cookies = authmod.parse_cookies(self.headers.get("Cookie"))
-        session_name = D.session_cookie_name(state.config.loopback_dev)
+        session_name = D.session_cookie_name(state.config.loopback_dev, self._http_endpoint)
         bearer: Optional[str] = None
         if authz is not None:
             scheme, sep, value = authz.partition(" ")
@@ -844,9 +869,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         state: _State = self.server._mstate
         origin = self._origin()
         if kind == "cookie":
-            if origin != state.effective_origin:
+            if origin != self._request_origin:
                 raise DomainError("forbidden", "origin check failed")
-        elif origin is not None and origin != state.effective_origin:
+        elif origin is not None and origin != self._request_origin:
             raise DomainError("forbidden", "origin check failed")
 
     def _mutation_gate(self, identity: authmod.TokenIdentity,
@@ -874,7 +899,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         }
 
     def _content_url(self, aid: str) -> str:
-        return _content_base_url(self.server._mstate, aid)
+        return _content_base_url(self.server._mstate, aid, self._request_origin)
 
     def _expired_fail(self, authed: bool, content_side: bool = False) -> None:
         # R15: 410 for authenticated API reads, 404 for anonymous/content.
@@ -904,7 +929,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # bearer mismatch-Origin rejected on every non-login call (§4/§5.7)
         if identity is not None and kind == "bearer":
             origin = self._origin()
-            if origin is not None and origin != state.effective_origin:
+            if origin is not None and origin != self._request_origin:
                 self._log_info = ("auth", identity.user_id, 0)
                 raise DomainError("forbidden", "origin check failed")
         principal = identity.user_id if identity else "-"
@@ -996,7 +1021,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _raw_session_token(self) -> Optional[str]:
         state: _State = self.server._mstate
         cookies = authmod.parse_cookies(self.headers.get("Cookie"))
-        return cookies.get(D.session_cookie_name(state.config.loopback_dev))
+        return cookies.get(D.session_cookie_name(state.config.loopback_dev, self._http_endpoint))
 
     def _need_auth_logged(self, identity: Optional[authmod.TokenIdentity],
                           route: str, principal: str
@@ -1022,7 +1047,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     # -- API endpoints -------------------------------------------------------
     def _api_login(self) -> None:
         state: _State = self.server._mstate
-        if self._origin() != state.effective_origin:
+        if self._origin() != self._request_origin:
             self._log_info = ("login", "-", 0)
             raise DomainError("forbidden", "login requires exact Origin")
         peer = self.client_address[0]
@@ -1569,7 +1594,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if state.config.content_mode == "path":
             return ("default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
                     "form-action 'self'; object-src 'none'")
-        parts = urllib.parse.urlsplit(state.effective_origin)
+        parts = urllib.parse.urlsplit(self._request_origin)
         default_port = 443 if parts.scheme == "https" else 80
         host = "*.%s" % state.config.content_suffix
         # Contract clarification: the wildcard MUST include the effective
@@ -1817,7 +1842,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         raise DomainError("not-found", "no index")
 
     def _own_origin(self, aid: str) -> str:
-        base = urllib.parse.urlsplit(_content_base_url(self.server._mstate, aid))
+        base = urllib.parse.urlsplit(_content_base_url(self.server._mstate, aid, self._request_origin))
         return urllib.parse.urlunsplit((base.scheme, base.netloc, "", "", ""))
 
     def _read_form(self) -> tuple[str, dict[str, str], bytes]:
@@ -1850,7 +1875,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if state.store.is_expired(item, state.now()):
             self._expired_fail(False, content_side=True)
             return
-        if self._origin() != state.effective_origin:
+        if self._origin() != self._request_origin:
             raise DomainError("forbidden", "origin check failed")
         try:
             kind, fields, _raw = self._read_form()

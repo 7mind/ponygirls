@@ -59,7 +59,7 @@ let auth = await loadAuth({
     { id: "op", type: "human", displayName: "Op", tokens: [{ id: "browser", hashFile: path.join(dir, "human.sha") }] },
     { id: "agent", type: "agent", displayName: "Agent", tokens: [{ id: "default", hashFile: path.join(dir, "agent.sha") }] },
   ],
-  cookieSecure: false,
+  cookieSecure: true,
   allowedHosts: ["127.0.0.1", "localhost", "haystack.test"],
   allowedOrigins: [],
 });
@@ -83,7 +83,11 @@ const base = `http://127.0.0.1:${server.address().port}`;
 const insecureBase = `http://haystack.test:${server.address().port}`;
 // The page origin (with its ephemeral port) joins the CSRF allowlist after
 // listen — mirroring production, where the public URL is configured.
-auth = await loadAuth({ ...auth.config, allowedOrigins: [base, insecureBase] });
+// Exercise production Secure default with explicit HTTP exceptions, not the
+// global development override. Both ordinary and non-secure-context UI paths
+// must retain working login, renewal, writes, and live updates.
+auth = await loadAuth({ ...auth.config, allowedOrigins: [base, insecureBase],
+  insecureHttpOrigins: [base, insecureBase] });
 
 // Seed through the service layer (agent authorship, big ints, links).
 const seedRepo = new PgItemRepository(BCONN);
@@ -172,6 +176,14 @@ await check("plain HTTP preview verifies heartbeat without secure-context APIs",
     } catch (error) {
       throw new Error(`Heartbeat not verified: ${errors.join("; ") || error.message}`);
     }
+    const cookie = (await ctx.cookies(insecureBase)).find((entry) => entry.name === "haystack-dev");
+    assert.ok(cookie && cookie.httpOnly && !cookie.secure && cookie.sameSite === "Strict");
+    await page.reload();
+    await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor({ timeout: 3000 });
+    assert.equal((await ctx.cookies(insecureBase)).find((entry) => entry.name === "haystack-dev").value, cookie.value);
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await page.getByLabel("Token").waitFor();
+    assert.equal((await ctx.cookies(insecureBase)).some((entry) => entry.name === "haystack-dev"), false);
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
@@ -438,7 +450,7 @@ await check("search + diagnostics + archive", async () => {
     await page.getByLabel("Search errors").waitFor();
     await page.getByLabel("Query").fill("buried");
     await page.getByRole("button", { name: "Search", exact: true }).click();
-    await page.getByText("No matching items.").waitFor();
+    await page.getByRole("heading", { name: "No records found", exact: true }).waitFor();
     await page.getByLabel("Show").check();
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await page.getByText("buried memory").waitFor();
@@ -710,7 +722,7 @@ await check("attention inbox", async () => {
   await page.getByRole("button", { name: "Clear attention" }).click();
   await page.getByText(/Attention cleared/).waitFor();
   await page.getByRole("button", { name: "Attention inbox" }).click();
-  await page.getByText("No matching items.").waitFor();
+  await page.getByRole("heading", { name: "No records requiring review", exact: true }).waitFor();
   await ctx.close();
 });
 

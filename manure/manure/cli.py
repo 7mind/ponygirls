@@ -125,6 +125,8 @@ def _exit_for_error(e: ManureError) -> int:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="manure")
     ap.add_argument("--cache-dir", default=None, help="upload-session cache dir")
+    ap.add_argument("--allow-insecure-http", action="store_true",
+                    help="allow plaintext HTTP over an operator-secured private network")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_list = sub.add_parser("list")
     p_list.add_argument("--limit", type=int, default=None)
@@ -169,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     cache_dir = _resolve_cache_dir(getattr(args, "cache_dir", None))
     # Resolve credentials before network; ambiguity -> exit 2 no-network
     try:
+        allow_insecure_http = _client_mod.insecure_http_from_env(os.environ.get("MANURE_ALLOW_INSECURE_HTTP")) or args.allow_insecure_http
         api_base = _resolve_api_base()
         token = _resolve_token()
     except AmbiguousCredentials as e:
@@ -205,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
             # content-URL fetch needs no api_base/token; id fetch needs api_base
             effective_base = api_base if api_base is not None else "http://127.0.0.1:9"
             try:
-                client = _client_mod.ManureClient(effective_base, token=token, cache_dir=cache_dir)
+                client = _client_mod.ManureClient(effective_base, token=token, cache_dir=cache_dir, allow_insecure_http=allow_insecure_http)
             except AmbiguousCredentials as e:
                 _eprint(f"ambiguous-credentials: {e.message}")
                 return 2
@@ -224,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
             _eprint("missing-credentials: MANURE_URL and MANURE_TOKEN are required")
             return 2
         try:
-            client = _client_mod.ManureClient(api_base, token=token, cache_dir=cache_dir)
+            client = _client_mod.ManureClient(api_base, token=token, cache_dir=cache_dir, allow_insecure_http=allow_insecure_http)
         except ManureError as e:
             _eprint(f"{e.code}: {e.message}")
             return _exit_for_error(e)

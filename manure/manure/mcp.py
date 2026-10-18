@@ -133,7 +133,9 @@ def _client_from_env(client_module: Any | None = None):
     if api_base is None:
         from manure.client import MissingCredentials
         raise MissingCredentials("MANURE_URL is required")
-    return MC(api_base, token=token, cache_dir=cache_dir)
+    from manure.client import insecure_http_from_env
+    allow_http = insecure_http_from_env(os.environ.get("MANURE_ALLOW_INSECURE_HTTP"))
+    return MC(api_base, token=token, cache_dir=cache_dir, allow_insecure_http=allow_http)
 
 
 def _validate_call_args(name: str, args: Any) -> str | None:

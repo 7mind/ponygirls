@@ -77,7 +77,7 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       example = "http://127.0.0.1:47329";
-      description = "manure API base URL (client accepts http: only for loopback hosts). Also exported as the host MANURE_URL default.";
+      description = "manure API base URL (non-loopback http: requires explicit MANURE_ALLOW_INSECURE_HTTP=1 in the client environment). Also exported as the host MANURE_URL default.";
     };
     tokenFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
