@@ -11,6 +11,7 @@ import { Type, type TSchema } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { FileRunStore } from "./src/store.ts";
+import { NoticeDelivery } from "./src/notice-delivery.ts";
 import { Supervisor, TOOL_RESULT_MAX, type CallerId } from "./src/supervisor.ts";
 import type { GateSpecInput } from "./src/gate.ts";
 import { instructionsFromPromptOptions, parseSelection } from "./src/instructions.ts";
@@ -26,13 +27,10 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CUSTOM_NOTICE = "pi-subagents-notice";
 /** Footer statuses sort by key; this one sorts ahead of long ones such as "search". */
 const STATUS_KEY = "agents";
 /** How often an open /agents screen re-reads state and transcripts. */
 const SCREEN_POLL_MS = 500;
-const NOTICE_BATCH = 20;
-const NOTICE_TEXT_MAX = 48_000;
 const STATUS_THROTTLE_MS = 250;
 const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "src", "worker.ts");
 
@@ -114,8 +112,7 @@ interface SessionBinding {
   cwd: string;
   /** Skills and context files pi loaded for the current run (what children can receive). */
   instructions: InstructionSet | null;
-  /** Notices already delivered to the governing conversation. */
-  noticeCursor: number;
+  notices: NoticeDelivery;
   ui: ExtensionContext["ui"] | null;
   statusTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -179,10 +176,20 @@ export default function (pi: ExtensionAPI): void {
     const sdkRoot = process.env["PI_SUBAGENTS_SDK_ROOT"];
     if (!sdkRoot) throw new Error("SANDBOX_UNAVAILABLE: PI_SUBAGENTS_SDK_ROOT is not set; workers cannot load the pi SDK");
     const rootDir = join(agentBaseDir(), "subagents", sessionId);
-    const binding: SessionBinding = { sessionId, supervisor: null as unknown as Supervisor, model: null, cwd: ctx.cwd, instructions: null, noticeCursor: 0, ui: ctx.ui, statusTimer: null, governingBaseCtx: null, governingActive: true };
     const store = new FileRunStore(rootDir, sessionId);
-    // Notices start at the current journal end: history is not redelivered.
-    binding.noticeCursor = store.durableSeq();
+    const binding: SessionBinding = {
+      sessionId, supervisor: null as unknown as Supervisor, model: null, cwd: ctx.cwd, instructions: null,
+      ui: ctx.ui, statusTimer: null, governingBaseCtx: null, governingActive: true,
+      // Start at the journal end: history from an earlier attachment is not redelivered.
+      notices: new NoticeDelivery(
+        { noticesSince: (cursor, limit) => binding.supervisor.noticesSince(cursor, limit) },
+        {
+          submit: (message) => pi.sendMessage(message, { triggerTurn: false }),
+          error: (error) => ctx.ui.notify(`subagents: notice delivery failed: ${String(error)}`, "error"),
+        },
+        store.durableSeq(),
+      ),
+    };
     binding.supervisor = new Supervisor({
       rootId: sessionId,
       rootDir,
@@ -220,7 +227,11 @@ export default function (pi: ExtensionAPI): void {
       sdkRoot,
       deterministic: false,
       hostAgentDir: agentBaseDir(),
-      onChange: () => refreshStatus(binding, ctx),
+      onChange: () => {
+        if (!binding.governingActive) return;
+        refreshStatus(binding, ctx);
+        binding.notices.changed();
+      },
     });
     bindings.set(sessionId, binding);
     // Runs left unfinished by a previous process settle before any new
@@ -595,27 +606,6 @@ export default function (pi: ExtensionAPI): void {
     handler: openAgents,
   });
 
-  /**
-   * Deliver child notices (terminal outcomes, messages addressed to the
-   * governing session) into the governing conversation exactly once per
-   * cursor position: appended at the turn boundary while a run is active,
-   * queued for the next user turn while idle. No idle-root inference.
-   */
-  function drainNotices(binding: SessionBinding, whileRunning: boolean): void {
-    const { lines, cursor } = binding.supervisor.noticesSince(binding.noticeCursor, NOTICE_BATCH);
-    binding.noticeCursor = cursor;
-    if (lines.length === 0) return;
-    pi.sendMessage(
-      {
-        customType: CUSTOM_NOTICE,
-        content: [{ type: "text", text: sanitizeDisplay(`[subagents]\n${lines.join("\n")}`, NOTICE_TEXT_MAX) }],
-        display: true,
-        details: { schemaVersion: 1, cursor },
-      },
-      whileRunning ? { triggerTurn: false } : { deliverAs: "nextTurn" },
-    );
-  }
-
   pi.on("session_start", async (_event, ctx) => {
     try {
       bindingFor(ctx);
@@ -641,12 +631,6 @@ export default function (pi: ExtensionAPI): void {
     if (!binding) return;
     // New user input cancels waits without cancelling children.
     binding.supervisor.cancelCallerWaits(caller);
-    drainNotices(binding, false);
-  });
-
-  pi.on("turn_end", async (_event, ctx) => {
-    const binding = bindings.get(ctx.sessionManager.getSessionId());
-    if (binding) drainNotices(binding, true);
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -655,6 +639,7 @@ export default function (pi: ExtensionAPI): void {
     if (!binding) return;
     bindings.delete(sessionId);
     binding.governingActive = false;
+    binding.notices.dispose();
     binding.governingBaseCtx = null;
     if (binding.statusTimer) clearTimeout(binding.statusTimer);
     publishBadge(binding.ui, null, () => {});
