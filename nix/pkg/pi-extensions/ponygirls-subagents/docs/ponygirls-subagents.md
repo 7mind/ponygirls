@@ -129,6 +129,11 @@ exceeding the file cap fails closed instead of silently partial.
 ## Results
 
 A task run's result is the final assistant text of its last generation.
+Reviewer feedback stays separate: `read_agent view=reviews` pages the complete
+concatenation of attributed verdicts and errors from all candidate rounds after
+the task settles, with the same `offset`/`length`/`nextOffset` contract.
+`result.reviewCount` indicates how many reports are available; `task_run_id`
+selects a historical run. Feedback is durable and is not cut at `result_limit`.
 
 - **Retention.** By default the first 8,000 characters are kept. `spawn_agent`
   takes `result_limit` (characters, an integer from 8,000 to 524,288) to
@@ -251,9 +256,19 @@ Reattaching starts at the current journal end, so old history is not replayed.
   or `uncertain` (outstanding effects preserved, workspace quarantined).
   Accepted-but-undispatched tasks keep their IDs for explicit resume
   (`dispatchPending` path); replacements always get new task-run IDs.
-- Gate recovery: running reviews become `interrupted` (resumable with
-  fresh context, counters kept). A committed decision is never reapplied;
-  a reviewer that died without one is retried explicitly, never inferred.
+- Gate/review recovery: running panel members become `interrupted` (resumable
+  with fresh context, counters kept). Completed verdicts and failed-member
+  diagnostics are preserved; resuming runs only missing members, never infers
+  their verdicts. If every member reported before a crash but the aggregate
+  was not applied, explicit `resume_review` finishes that aggregate without
+  rerunning reviewers or charging another round. A committed repair reservation
+  retains its existing deduplicated command; it is not reserved a second time.
+- `spawn_agent review` is advisory: one successful main candidate and one panel,
+  no acceptance condition and no automatic repair. It ends `succeeded` even if
+  reviewers request changes, are blocked, or fail; the report retains those
+  outcomes. `gate` retains unanimous approval and round-limit semantics. Both
+  modes pause the candidate while reviews run, use the same protected read-only
+  workers, and charge all reviewer identities before dispatch.
 
 ## Genuine limitations
 

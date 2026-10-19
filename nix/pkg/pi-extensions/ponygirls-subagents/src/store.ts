@@ -71,6 +71,7 @@ export type JournalKind =
   | "gate.candidate"
   | "gate.evidence"
   | "gate.decision"
+  | "gate.review_failed"
   | "gate.repair_command"
   | "gate.limits"
   | "gate.review_session"

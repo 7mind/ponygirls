@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ToolBroker, type BrokerCaller, type CallerSandbox, type ToolExecutors } from "./broker.ts";
 import { err } from "./errors.ts";
-import { GateController, fingerprintSummary, type CandidateRecord, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type WorkspaceFingerprint } from "./gate.ts";
+import { GateController, fingerprintSummary, restoreGateSpec, type CandidateRecord, type GateDecisionInput, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type NormalizedReviewerSpec, type ReviewFeedback, type ReviewSpecInput, type WorkspaceFingerprint } from "./gate.ts";
 import { EMPTY_INSTRUCTIONS, instructionHash, parseSelection, selectInstructions } from "./instructions.ts";
 import { ISOLATION_LEVELS } from "./types.ts";
 import { authorizeWorkspace, intersectGrants, pathWithin, resolveAllowedConcrete, rootGrants, type RegisteredRepo, type SupervisorPolicy } from "./policy.ts";
@@ -85,18 +85,11 @@ export interface SpawnParams {
   /** Explicit override; must be in the root allowlist. */
   model?: { provider: string; id: string; thinkingLevel?: string } | null;
   shell?: boolean;
-  gate?: GateSpec | null;
+  gate?: GateSpecInput | null;
+  review?: ReviewSpecInput | null;
 }
 
-export interface GateSpec {
-  model: { provider: string; id: string };
-  thinkingLevel: string;
-  prompt: string;
-  /** Omitted: the named default; null: explicitly unlimited (policy permitting). */
-  maxRounds?: number | null;
-  checks?: Array<{ id: string; command: string; timeoutMs?: number }>;
-  promisedOutputs?: string[];
-}
+export type GateSpec = GateSpecInput;
 
 export interface SpawnResult {
   agentId: AgentId;
@@ -179,6 +172,8 @@ export interface ReadResult {
     truncated: boolean;
     /** The agent's retention limit in characters. */
     resultLimit: number;
+    /** Completed reviewer reports available through view=reviews. */
+    reviewCount: number;
   } | null;
   events: JournalEventView[];
   cursor: number;
@@ -389,7 +384,7 @@ const CHECKPOINT_TIMEOUT_MS = 15_000;
 const FIND_ENTRY_TIMEOUT_MS = 10_000;
 const IDLE_POLL_MS = 25;
 /** Events a settlement wait reports (tool-level progress stays in activity waits and read_agent). */
-const MATERIAL_EVENTS: ReadonlySet<string> = new Set(["task.terminal", "generation.settled", "mailbox.accepted", "mailbox.answered", "mailbox.question_expired", "agent.closed", "agent.interrupted", "gate.decision", "task.phase"]);
+const MATERIAL_EVENTS: ReadonlySet<string> = new Set(["task.terminal", "generation.settled", "mailbox.accepted", "mailbox.answered", "mailbox.question_expired", "agent.closed", "agent.interrupted", "gate.decision", "gate.review_failed", "task.phase"]);
 
 function newRuntime(record: AgentRecord): AgentRuntime {
   return {
@@ -600,7 +595,6 @@ export class Supervisor implements GateHost {
     let spawned = 0;
     const started = new Map<TaskRunId, { agentId: AgentId; generation: number; workerPid: number | null; workerBoot: ProcessIdentity | null }>();
     const settledGen = new Set<string>();
-    const decidedReviews = new Set<string>();
     const reviewerLinks: Array<{ reviewerId: AgentId; taskRunId: TaskRunId }> = [];
     const settledRuns = new Map<TaskRunId, { agentId: AgentId; outcome: string; error: string }>();
     interface GateDraft {
@@ -615,6 +609,8 @@ export class Supervisor implements GateHost {
       repairCriticism: string | null;
       linkedFrom: TaskRunId | null;
       reviewerId: AgentId | null;
+      reviewerIds: AgentId[];
+      feedback: ReviewFeedback[];
       evidence: Array<{ round: number; id: string; exitCode: number | null; output: string }>;
     }
     const gates = new Map<TaskRunId, GateDraft>();
@@ -841,7 +837,7 @@ export class Supervisor implements GateHost {
           gates.set(taskRunId, {
             agentId: (b["agentId"] as string) ?? "",
             taskText: (b["taskText"] as string) ?? "",
-            spec: b["spec"] as NormalizedGateSpec,
+            spec: restoreGateSpec(b["spec"] as Parameters<typeof restoreGateSpec>[0]),
             rounds: 0,
             candidates: [],
             findings: [],
@@ -850,6 +846,8 @@ export class Supervisor implements GateHost {
             repairCriticism: null,
             linkedFrom: (b["linkedFrom"] as string | null) ?? null,
             reviewerId: (b["reviewerId"] as string | null) ?? null,
+            reviewerIds: (b["reviewerIds"] as string[] | undefined) ?? (typeof b["reviewerId"] === "string" ? [b["reviewerId"]] : []),
+            feedback: [],
             evidence: [],
           });
           break;
@@ -879,11 +877,24 @@ export class Supervisor implements GateHost {
           }
           break;
         }
-        case "gate.decision": {
+        case "gate.decision":
+        case "gate.review_failed": {
           const draft = gates.get(b["taskRunId"] as string);
           if (draft) {
-            draft.findings = [...((b["blockers"] as GateFinding[]) ?? []), ...((b["advisories"] as GateFinding[]) ?? [])];
-            decidedReviews.add(`${b["taskRunId"] as string}:${b["reviewId"] as string}`);
+            const legacy = {
+              schemaVersion: 1, candidateId: b["candidateId"], decision: b["decision"],
+              blockers: b["blockers"] ?? [], advisories: b["advisories"] ?? [],
+              reason: "blocked (legacy journal did not retain the reason)", missingPrerequisites: ["not retained"],
+            } as GateDecisionInput;
+            draft.feedback.push({
+              round: (b["round"] as number | undefined) ?? draft.rounds,
+              reviewerIndex: (b["reviewerIndex"] as number | undefined) ?? 0,
+              reviewerId: (b["reviewerId"] as string | undefined) ?? draft.reviewerId ?? "",
+              reviewId: b["reviewId"] as string, candidateId: b["candidateId"] as string,
+              verdict: r.kind === "gate.review_failed" ? null : (b["verdict"] as GateDecisionInput | undefined) ?? legacy,
+              error: (b["error"] as string | null) ?? null,
+            });
+            draft.findings = draft.feedback.filter((f) => f.round === draft.rounds).flatMap((f) => f.verdict?.decision === "revise" ? [...f.verdict.blockers, ...f.verdict.advisories] : f.verdict?.decision === "approve" ? f.verdict.advisories : []);
           }
           break;
         }
@@ -930,17 +941,14 @@ export class Supervisor implements GateHost {
         terminal: terminal as GateTerminalOutcome | null,
         linkedFrom: draft.linkedFrom,
         reviewerId: draft.reviewerId,
+        reviewerIds: draft.reviewerIds,
+        feedback: draft.feedback,
         evidence: draft.evidence,
         fingerprintHistory: history,
         stagnationWarning: stagnation,
       });
       const state = this.gate.inspect(taskRunId);
-      if (state && !state.terminal && draft.rounds > 0 && draft.candidates.length > 0) {
-        const reviewId = `review-${draft.rounds}`;
-        if (!decidedReviews.has(`${taskRunId}:${reviewId}`)) {
-          state.review = { reviewId, status: "interrupted", candidateId: draft.candidates[draft.candidates.length - 1]!.candidateId, decisionUsed: false };
-        }
-      }
+      if (draft.reviewerIds.length > 0) this.gate.restoreReview(taskRunId);
       // A reserved repair never dispatched before the crash stays reserved
       // with its criticism; recovery dispatches it.
       if (state && !state.terminal && draft.repairCommandId && draft.repairCriticism) {
@@ -958,6 +966,7 @@ export class Supervisor implements GateHost {
     // Journals that predate reviewer ids in gate.registered link reviewers
     // through their spawn record.
     for (const link of reviewerLinks) this.gate.linkReviewer(link.reviewerId, link.taskRunId);
+    for (const [taskRunId, draft] of gates) if (draft.reviewerIds.length === 0) this.gate.restoreReview(taskRunId);
     // Unfinished runs (started, never settled/terminal, agent open) become
     // pending-lost for recover(): old joins settle, replacements wait.
     for (const [taskRunId, info] of started) {
@@ -1290,7 +1299,8 @@ export class Supervisor implements GateHost {
       if (!isGovernor(caller) && !parentRt) throw err("NOT_FOUND", `caller ${caller} unknown`);
       if (!isGovernor(caller) && this.gate.isReviewer(caller)) throw err("FORBIDDEN", "managed reviewer cannot delegate");
       if (parentRt && parentRt.record.desiredLifecycle === "closed") throw err("CLOSED", "caller is closed");
-      if (parentRt && params.gate) throw err("FORBIDDEN", "only the governing session configures validation gates");
+      if (params.gate && params.review) throw err("INVALID", "pass gate or review, not both");
+      if (parentRt && (params.gate || params.review)) throw err("FORBIDDEN", "only the governing session configures reviews");
       const depth = parentRt ? parentRt.record.depth + 1 : 1;
       // Root-approved concrete external names at this edge (re-resolved live;
       // runtime updates never widen already-admitted children silently).
@@ -1326,7 +1336,7 @@ export class Supervisor implements GateHost {
         throw err("CONFLICT", "owner workspace is locked for review; writers excluded until review ends");
       }
       const model = this.resolveChildModel(parentRt, params.model ?? null);
-      const gateSpec = params.gate ? this.gate.validateSpec({ ...params.gate }) : null;
+      const gateSpec = params.gate ? this.gate.validateSpec(params.gate) : params.review ? this.gate.validateSpec(params.review, "review") : null;
       if (gateSpec) assertGateFits(gateSpec, params.profile === "writer");
       const path = PathRegistry.childPath(parentRt ? parentRt.record.path : "/root", params.taskName);
       if (this.paths.isTaken(path)) throw err("CONFLICT", `task path ${path} already used`);
@@ -1344,19 +1354,19 @@ export class Supervisor implements GateHost {
         throw err("INVALID", `a gated writer needs a git checkout to fingerprint; ${ownerWorkdir} is not one`);
       }
 
-      // Capacity: one identity (two with a managed reviewer) and a resident
-      // worker, acquired before any workspace exists.
-      const charged = this.scheduler.chargeAgentCreation(gateSpec ? 2 : 1);
+      // Reserve the complete panel before creating any workspace or identity.
+      const identities = 1 + (gateSpec ? gateSpec.reviewers.length : 0);
+      const charged = this.scheduler.chargeAgentCreation(identities);
       if (!charged.ok) throw err(charged.code, charged.message);
       const agentId = randomUUID();
       const resident = this.acquireResident(agentId);
       if (!resident) {
-        this.scheduler.refundAgentCreation(gateSpec ? 2 : 1);
+        this.scheduler.refundAgentCreation(identities);
         throw err("CAPACITY_EXCEEDED", "no resident worker capacity; close or wait for settled agents");
       }
       const rollbackCapacity = (): void => {
         this.scheduler.release(resident);
-        this.scheduler.refundAgentCreation(gateSpec ? 2 : 1);
+        this.scheduler.refundAgentCreation(identities);
       };
 
       // Bind the concrete workspace after grant intersection. A nested
@@ -1425,9 +1435,10 @@ export class Supervisor implements GateHost {
       this.store.recordCommand(requestId, spawnedRecord);
       record.lastEventSeq = spawnedRecord.seq;
       if (gateSpec) {
-        // Both logical identities exist before the main agent is dispatched.
+        // Every panel identity exists before the main agent is dispatched.
         rt.gateTaskRunId = taskRunId;
-        this.gate.register(agentId, taskRunId, gateSpec, params.message, this.createManagedReviewer(agentId, taskRunId, gateSpec));
+        const reviewerIds = gateSpec.reviewers.map((spec, index) => this.createManagedReviewer(agentId, taskRunId, spec, index));
+        this.gate.register(agentId, taskRunId, gateSpec, params.message, reviewerIds);
       }
       try {
         await this.startWorker(rt, params.message);
@@ -2884,15 +2895,17 @@ export class Supervisor implements GateHost {
       case "list_agents":
         return this.list(caller);
       case "read_agent":
-        if (args["view"] === "result") {
-          return this.readResult(caller, str("target"), typeof args["task_run_id"] === "string" ? args["task_run_id"] : null, { offset: typeof args["offset"] === "number" ? args["offset"] : 0, length: typeof args["length"] === "number" ? args["length"] : null }, typeof args["cursor"] === "number" ? args["cursor"] : 0);
+        if (args["view"] === "result" || args["view"] === "reviews") {
+          const read = args["view"] === "reviews" ? this.readReviews.bind(this) : this.readResult.bind(this);
+          return read(caller, str("target"), typeof args["task_run_id"] === "string" ? args["task_run_id"] : null, { offset: typeof args["offset"] === "number" ? args["offset"] : 0, length: typeof args["length"] === "number" ? args["length"] : null }, typeof args["cursor"] === "number" ? args["cursor"] : 0);
         }
-        return this.read(caller, str("target"), str("view") as "status" | "result" | "events", typeof args["cursor"] === "number" ? args["cursor"] : 0, typeof args["limit"] === "number" ? args["limit"] : 20, typeof args["task_run_id"] === "string" ? args["task_run_id"] : null);
+        return this.read(caller, str("target"), str("view") as "status" | "result" | "reviews" | "events", typeof args["cursor"] === "number" ? args["cursor"] : 0, typeof args["limit"] === "number" ? args["limit"] : 20, typeof args["task_run_id"] === "string" ? args["task_run_id"] : null);
       case "wait_agent":
         return this.childWait(rt, args);
       case "spawn_agent":
         // Not offered to children; an argument sent anyway is refused, not dropped.
         if (args["workspace_path"] !== undefined) throw err("FORBIDDEN", "only the governing session assigns a prepared workspace");
+        if (args["gate"] !== undefined || args["review"] !== undefined) throw err("FORBIDDEN", "only the governing session configures reviews");
         return this.spawn(caller, {
           taskName: str("task_name"),
           message: str("message"),
@@ -3649,13 +3662,14 @@ export class Supervisor implements GateHost {
     return out;
   }
 
-  read(caller: CallerId, target: AgentId, view: "status" | "result" | "events", cursor: number, limit: number, taskRunId: TaskRunId | null): ReadResult {
+  read(caller: CallerId, target: AgentId, view: "status" | "result" | "reviews" | "events", cursor: number, limit: number, taskRunId: TaskRunId | null): ReadResult {
     const rt = this.agents.get(target);
     if (!rt) throw err("NOT_FOUND", `agent ${target} unknown`);
     if (!this.visibleTo(caller, rt.record)) throw err("FORBIDDEN", "agent not visible to caller");
     if (view === "status") return { status: this.viewOf(rt), result: null, events: [], cursor };
     if (view === "result") return this.readResult(caller, target, taskRunId, { offset: 0, length: RESULT_TEXT_MAX }, cursor);
-    if (view !== "events") throw err("INVALID", "view must be status, result, or events");
+    if (view === "reviews") return this.readReviews(caller, target, taskRunId, { offset: 0, length: RESULT_TEXT_MAX }, cursor);
+    if (view !== "events") throw err("INVALID", "view must be status, result, reviews, or events");
     const bounded = Math.min(Math.max(1, limit), 100);
     const { records } = this.store.readSince(cursor, Number.MAX_SAFE_INTEGER);
     const mine = records.filter((r) => this.recordConcerns(r, target));
@@ -3714,14 +3728,31 @@ export class Supervisor implements GateHost {
     const run = taskRunId !== null && taskRunId !== rt.lastResult?.taskRunId ? this.resultFromJournal(target, taskRunId) : rt.lastResult;
     if (!run) return { status, result: null, events: [], cursor };
     const whole = run.stored ? this.store.loadResult(target, run.stored) : run.text;
+    const truncated = run.fullLength !== null ? run.fullLength > whole.length : whole.length >= rt.record.resultLimit;
+    return this.pageText(status, run, whole, page, cursor, rt.record.resultLimit, truncated, this.gate.inspect(run.taskRunId)?.feedback.length ?? 0);
+  }
+
+  /** A stable, paged concatenation of every review, separate from the main deliverable. */
+  readReviews(caller: CallerId, target: AgentId, taskRunId: TaskRunId | null, page: ResultPage, cursor: number): ReadResult {
+    const rt = this.agents.get(target);
+    if (!rt) throw err("NOT_FOUND", `agent ${target} unknown`);
+    if (!this.visibleTo(caller, rt.record)) throw err("FORBIDDEN", "agent not visible to caller");
+    const status = this.viewOf(rt);
+    const runId = taskRunId ?? rt.record.currentTaskRunId;
+    const state = runId === null ? null : this.gate.inspect(runId);
+    if (!state || state.agentId !== target) return { status, result: null, events: [], cursor };
+    if (!state.terminal) throw err("CONFLICT", "review report is available after the task settles; use events for progress");
+    const report = this.gate.report(state.taskRunId);
+    return this.pageText(status, { taskRunId: state.taskRunId, outcome: state.terminal, detail: "All reviewer feedback in candidate-round and reviewer declaration order." }, report.text, page, cursor, report.text.length, false, report.count);
+  }
+
+  private pageText(status: AgentView, run: { taskRunId: string; outcome: string | null; detail: string }, whole: string, page: ResultPage, cursor: number, resultLimit: number, truncated: boolean, reviewCount: number): ReadResult {
     const total = whole.length;
     if (!Number.isInteger(page.offset) || page.offset < 0 || page.offset > total) throw err("INVALID", `offset must be an integer from 0 to ${total} (the retained length)`);
     if (page.length !== null && (!Number.isInteger(page.length) || page.length < 1)) throw err("INVALID", "length must be a positive integer");
-    const resultLimit = rt.record.resultLimit;
-    const truncated = run.fullLength !== null ? run.fullLength > total : total >= resultLimit;
     const reply = (text: string, nextOffset: number | null): ReadResult => ({
       status,
-      result: { taskRunId: run.taskRunId, outcome: run.outcome, text, detail: run.detail, totalLength: total, offset: page.offset, nextOffset, truncated, resultLimit },
+      result: { taskRunId: run.taskRunId, outcome: run.outcome, text, detail: run.detail, totalLength: total, offset: page.offset, nextOffset, truncated, resultLimit, reviewCount },
       events: [],
       cursor,
     });
@@ -4558,6 +4589,7 @@ export class Supervisor implements GateHost {
       // The task's governor is whoever owns the main agent; the main actor
       // and its reviewer never control their own validation.
       if (!isGovernor(caller) && caller !== main.record.parentId) throw err("FORBIDDEN", "only the task's governor manages its gate");
+      if (state.spec.mode === "review" && action.kind !== "resume_review") throw err("INVALID", "review-only dispatch has no gate limits, retry, or bypass");
       switch (action.kind) {
         case "resume_review":
           this.gate.resumeReview(action.taskRunId, action.reviewId, commandId);
@@ -4578,6 +4610,11 @@ export class Supervisor implements GateHost {
 
   nowIso(): string {
     return this.now();
+  }
+
+  feedbackRecorded(): void {
+    this.evaluateWaiters();
+    this.opts.onChange?.();
   }
 
   setTaskPhase(agentId: AgentId, expectedTaskRunId: TaskRunId, phase: TaskPhase): void {
@@ -4619,13 +4656,21 @@ export class Supervisor implements GateHost {
     return true;
   }
 
-  /** The protected reviewer sibling of a gated task (one identity, many executions). */
-  createManagedReviewer(mainAgentId: AgentId, taskRunId: TaskRunId, spec: NormalizedGateSpec): AgentId {
+  /** A replacement gate specification gets fresh, correctly configured reviewer identities. */
+  createReviewerPanel(mainAgentId: AgentId, taskRunId: TaskRunId, spec: NormalizedGateSpec): AgentId[] {
+    const charged = this.scheduler.chargeAgentCreation(spec.reviewers.length);
+    if (!charged.ok) throw err(charged.code, charged.message);
+    return spec.reviewers.map((reviewer, index) => this.createManagedReviewer(mainAgentId, taskRunId, reviewer, index));
+  }
+
+  /** One protected sibling identity per panel slot, reused across candidate rounds. */
+  private createManagedReviewer(mainAgentId: AgentId, taskRunId: TaskRunId, spec: NormalizedReviewerSpec, index: number): AgentId {
     const main = this.agents.get(mainAgentId)!;
     const reviewerId = randomUUID();
     const mainAlloc = main.record.allocation;
     const readRoots = mainAlloc.writableRoot ? [mainAlloc.writableRoot, ...mainAlloc.readRoots] : [...mainAlloc.readRoots];
-    const path = `${main.record.path}/__gate`;
+    const basePath = `${main.record.path}/__gate${index === 0 ? "" : `-${index + 1}`}`;
+    const path = this.paths.isTaken(basePath) ? `${basePath}-${taskRunId}` : basePath;
     this.paths.reserve(path);
     const record: AgentRecord = {
       id: reviewerId,

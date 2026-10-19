@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GitWorkspaceManager } from "../src/workspace.ts";
-import { blocked, gateSpec, mkSup, tick } from "./ctl-worker.ts";
+import { approve, blocked, gateSpec, mkSup, terminals, tick } from "./ctl-worker.ts";
 import { until } from "./fake-worker.ts";
 import { testGovernor } from "./fake-worker.ts";
 import type { Supervisor } from "../src/supervisor.ts";
@@ -290,6 +290,79 @@ test("interrupted approval recheck keeps OLD binding and does not pass", async (
     rmSync(dir, { recursive: true, force: true });
   }
 });
+test("recovery fences an old panel approval recheck; explicit resume applies the retained verdicts", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "subagents-panel-recheck-"));
+  const held = Promise.withResolvers<void>();
+  const repo = gitCheckout(dir);
+  const { sup, byAgent, executors } = mkSup({ dir: join(dir, "root"), workspace: new GitWorkspaceManager(), governor: () => ({ ...testGovernor(), cwd: repo }) });
+  try {
+    let invocations = 0;
+    let settled = 0;
+    const runCheck = sup.runCheck.bind(sup);
+    sup.runCheck = async (...args: Parameters<typeof sup.runCheck>) => {
+      try { return await runCheck(...args); }
+      finally { settled++; }
+    };
+    executors.host.handler = async () => {
+      invocations++;
+      if (invocations === 2) await held.promise;
+      return { exitCode: 0, signal: null, stdout: "ok", stderr: "", truncated: false, timedOut: false };
+    };
+    const g = await sup.spawn("governor", {
+      taskName: "recheck", message: "work", profile: "writer", isolation: "worktree",
+      gate: { prompt: "rubric", thinkingLevel: "high", reviewers: [{ model: { provider: "p", id: "m" } }, { model: { provider: "p", id: "m" } }], checks: [{ id: "check", command: "true" }] },
+    }, "spawn");
+    byAgent(g.agentId)[0]!.settle();
+    await until(() => sup.list("governor").filter((v) => v.managedGateFor === g.taskRunId).every((v) => byAgent(v.id)[0]?.initText != null));
+    const rs = sup.list("governor").filter((v) => v.managedGateFor === g.taskRunId);
+    for (const r of rs) await byAgent(r.id)[0]!.decide(approve("candidate-1"));
+    await until(() => invocations === 2);
+    await sup.recover();
+    assert.deepEqual(terminals(sup, g.taskRunId), []);
+    held.resolve();
+    await until(() => settled === 2);
+    await tick();
+    assert.deepEqual(terminals(sup, g.taskRunId), [], "the cancelled pre-recovery approval attempt must not settle the recovered panel");
+    await sup.manageGate("governor", { kind: "resume_review", taskRunId: g.taskRunId, reviewId: "review-1" }, "resume");
+    await until(() => terminals(sup, g.taskRunId).length === 1);
+    assert.deepEqual(terminals(sup, g.taskRunId), ["passed"]);
+    assert.equal(invocations, 3);
+    assert.ok(rs.every((r) => byAgent(r.id).length === 1));
+  } finally {
+    held.resolve();
+    await sup.shutdown();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("every initial panel reviewer sees failed checks beyond the history retention window", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "subagents-panel-evidence-"));
+  const repo = gitCheckout(dir);
+  const { sup, byAgent, executors } = mkSup({ dir: join(dir, "root"), workspace: new GitWorkspaceManager(), governor: () => ({ ...testGovernor(), cwd: repo }) });
+  try {
+    let calls = 0;
+    executors.host.handler = async () => {
+      const first = calls++ === 0;
+      return { exitCode: first ? 1 : 0, signal: null, stdout: first ? "first check failed" : "ok", stderr: "", truncated: false, timedOut: false };
+    };
+    const g = await sup.spawn("governor", {
+      taskName: "evidence", message: "work", profile: "writer", isolation: "worktree",
+      gate: { prompt: "rubric", thinkingLevel: "high", reviewers: [{ model: { provider: "p", id: "m" } }, { model: { provider: "p", id: "m" } }], checks: Array.from({ length: 31 }, (_, i) => ({ id: `check-${i}`, command: "true" })) },
+    }, "spawn");
+    byAgent(g.agentId)[0]!.settle();
+    await until(() => sup.list("governor").filter((v) => v.managedGateFor === g.taskRunId).every((v) => byAgent(v.id)[0]?.initText != null));
+    for (const r of sup.list("governor").filter((v) => v.managedGateFor === g.taskRunId)) {
+      assert.match(byAgent(r.id)[0]!.initText!, /check-0: exit=1/);
+      assert.match(byAgent(r.id)[0]!.initText!, /first check failed/);
+      assert.match(byAgent(r.id)[0]!.initText!, /Required checks failed or are missing/);
+    }
+    assert.equal(calls, 31);
+  } finally {
+    await sup.shutdown();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("checks and promised outputs need a writer; malformed checks are rejected at spawn", async () => {
   const { sup } = mkSup({});
   const spawn = (profile: "reader" | "writer", gate: Record<string, unknown>) =>
