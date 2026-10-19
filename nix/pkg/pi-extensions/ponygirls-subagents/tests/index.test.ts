@@ -157,6 +157,25 @@ test("the governing model is told about gate checks and promised outputs", async
   }
 });
 
+test("review panels and advisory dispatch are exposed by the governing schemas", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-ext-"));
+  try {
+    const { schemas } = await loadExtension(agentDir);
+    const spawn = schemas.get("spawn_agent")!.properties!;
+    for (const review of [spawn["gate"]!, spawn["review"]!, schemas.get("manage_gate")!.properties!["gate"]!]) {
+      assert.ok(review.properties!["prompt"]);
+      assert.ok(review.properties!["model"]);
+      const slot = review.properties!["reviewers"]!.items!.properties!;
+      assert.deepEqual(Object.keys(slot).sort(), ["model", "prompt", "thinkingLevel"]);
+    }
+    assert.equal(spawn["review"]!.properties!["maxRounds"], undefined);
+    assert.equal(spawn["review"]!.properties!["checks"], undefined);
+    assert.equal(spawn["review"]!.properties!["promisedOutputs"], undefined);
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
 test("the policy file's workspaceRoots gate spawn_agent workspace_path; a malformed list is an error", async () => {
   const agentDir = mkdtempSync(join(tmpdir(), "subagents-ext-"));
   try {

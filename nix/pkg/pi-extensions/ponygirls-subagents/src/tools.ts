@@ -167,7 +167,7 @@ export function childToolSpec<S>(T: TypeBuilder<S>, name: string): ToolSpec<S> {
     case "list_agents":
       return { description: "List the agents visible to you (your parent and your subtree).", parameters: T.Object({}) };
     case "read_agent":
-      return { description: "Read status, a result (one page of its retained text from offset; totalLength, nextOffset, and truncated say what is left or was cut), or bounded events of a visible agent.", parameters: readParameters(T) };
+      return { description: "Read status, a result, all reviewer feedback (view=reviews after task settlement), or bounded events. Result/review text is paged with offset and nextOffset.", parameters: readParameters(T) };
     case "spawn_agent":
       return {
         description: "Delegate a task to a new child agent in your subtree. Returns immediately with its id and task-run id; use wait_agent to join it. You must wait for (or close) your children before finishing. A child is never less isolated than you; it can receive only skills and context files you have.",
@@ -202,12 +202,29 @@ export function spawnParameters<S>(T: TypeBuilder<S>, extra: Record<string, S>):
   });
 }
 
+function reviewProperties<S>(T: TypeBuilder<S>): Record<string, S> {
+  const model = T.Object({ provider: T.String(), id: T.String() }, { description: "Reviewer model (must be allowlisted)" });
+  return {
+    model: T.Optional(model),
+    thinkingLevel: T.Optional(T.String({ description: "Shared thinking level; required here or for every reviewer" })),
+    prompt: T.Optional(T.String({ description: "Shared frozen rubric; required here or for every reviewer" })),
+    reviewers: T.Optional(T.Array(T.Object({
+      model,
+      thinkingLevel: T.Optional(T.String()),
+      prompt: T.Optional(T.String({ description: "Independent rubric, replacing the shared prompt for this reviewer" })),
+    }), { minItems: 1, description: "Reviewer panel, instead of model. All evaluate the same candidate independently; feedback is concatenated in this order" })),
+  };
+}
+
+/** One-shot advisory reviews: no gate, checks, rounds, or automatic repair. */
+export function reviewParameters<S>(T: TypeBuilder<S>): S {
+  return T.Object(reviewProperties(T));
+}
+
 /** A validation gate specification (spawn_agent and manage_gate retry_review). */
 export function gateParameters<S>(T: TypeBuilder<S>): S {
   return T.Object({
-    model: T.Object({ provider: T.String(), id: T.String() }, { description: "Reviewer model (must be allowlisted)" }),
-    thinkingLevel: T.String(),
-    prompt: T.String({ description: "Frozen rubric the reviewer judges the candidate against" }),
+    ...reviewProperties(T),
     maxRounds: T.Optional(T.Union([T.Integer({ minimum: 1 }), T.Null()], { description: "Review rounds (default 3; null: unlimited if policy allows)" })),
     checks: T.Optional(T.Array(T.Object({
       id: T.String({ description: "Unique id; the reviewer cites its output as <id>:output" }),
@@ -230,10 +247,10 @@ export function waitParameters<S>(T: TypeBuilder<S>): S {
 export function readParameters<S>(T: TypeBuilder<S>): S {
   return T.Object({
     target: T.String(),
-    view: T.Union([T.Literal("status"), T.Literal("result"), T.Literal("events")]),
-    task_run_id: T.Optional(T.String({ description: "result view: a specific earlier task run (default: the latest)" })),
-    offset: T.Optional(T.Integer({ minimum: 0, description: "result view: character offset into the retained text (default 0); continue with the reply's nextOffset until it is null" })),
-    length: T.Optional(T.Integer({ minimum: 1, description: "result view: at most this many characters in this reply (default: as many as fit one reply)" })),
+    view: T.Union([T.Literal("status"), T.Literal("result"), T.Literal("reviews"), T.Literal("events")]),
+    task_run_id: T.Optional(T.String({ description: "result/reviews view: a specific earlier task run (default: the latest)" })),
+    offset: T.Optional(T.Integer({ minimum: 0, description: "result/reviews view: character offset into the text (default 0); continue with nextOffset until null" })),
+    length: T.Optional(T.Integer({ minimum: 1, description: "result/reviews view: at most this many characters (default: as many as fit one reply)" })),
     cursor: T.Optional(T.Integer({ minimum: 0 })),
     limit: T.Optional(T.Integer({ minimum: 1, maximum: 100 })),
   });

@@ -13,11 +13,11 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { FileRunStore } from "./src/store.ts";
 import { NoticeDelivery } from "./src/notice-delivery.ts";
 import { Supervisor, TOOL_RESULT_MAX, type CallerId } from "./src/supervisor.ts";
-import type { GateSpecInput } from "./src/gate.ts";
+import type { GateSpecInput, ReviewSpecInput } from "./src/gate.ts";
 import { instructionsFromPromptOptions, parseSelection } from "./src/instructions.ts";
 import { defaultSupervisorPolicy, validateAllowedTools, validateWorktreeRoot, type SupervisorPolicy } from "./src/policy.ts";
 import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/governing-runtime.ts";
-import { gateParameters, readParameters, spawnParameters, waitParameters } from "./src/tools.ts";
+import { gateParameters, readParameters, reviewParameters, spawnParameters, waitParameters } from "./src/tools.ts";
 import type { InstructionSet, Isolation, ResolvedModel } from "./src/types.ts";
 import { AgentsScreen, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
 import { themeStyle } from "./src/display.ts";
@@ -264,10 +264,11 @@ export default function (pi: ExtensionAPI): void {
       name: "spawn_agent",
       label: "Spawn subagent",
       description:
-        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). workspace_path instead puts the child in a git work tree you prepared and keep (policy workspaceRoots must contain it). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. Optional gate enables reviewer validation, with deterministic checks for writers.",
+        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). workspace_path instead puts the child in a git work tree you prepared and keep (policy workspaceRoots must contain it). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. Optional gate requires unanimous reviewer validation (single model or panel), with deterministic checks for writers. Alternatively review runs one-shot advisory reviewers without gating or automatic repairs. Both return all feedback through read_agent view=reviews.",
       parameters: spawnParameters<TSchema>(Type, {
         model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String(), thinkingLevel: Type.Optional(Type.String()) })),
         gate: Type.Optional(gateParameters<TSchema>(Type)),
+        review: Type.Optional(reviewParameters<TSchema>(Type)),
         workspace_path: Type.Optional(Type.String({
           description: "Absolute path of a git work tree you prepared for this child (its top-level directory, with a commit), used instead of a worktree made for it; isolation worktree only, without base_commit. Accepted only inside a policy workspaceRoots entry. It stays yours: nothing creates, resets, or removes it",
         })),
@@ -275,7 +276,7 @@ export default function (pi: ExtensionAPI): void {
       executionMode: "sequential",
       async execute(toolCallId, params, _signal, _onUpdate, ctx) {
         try {
-          const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; base_commit?: string; workspace_path?: string; result_limit?: number; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput };
+          const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; base_commit?: string; workspace_path?: string; result_limit?: number; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput; review?: ReviewSpecInput };
           return ok(await governing(ctx).supervisor.spawn(caller, {
             taskName: p.task_name,
             message: p.message,
@@ -289,6 +290,7 @@ export default function (pi: ExtensionAPI): void {
             contextFiles: parseSelection(params as Record<string, unknown>, "context_files"),
             model: p.model ?? null,
             gate: p.gate ?? null,
+            review: p.review ?? null,
           }, `tool:${toolCallId}`));
         } catch (e) {
           return failed(e);
@@ -341,13 +343,15 @@ export default function (pi: ExtensionAPI): void {
     defineTool({
       name: "read_agent",
       label: "Read subagent",
-      description: "Read a subagent's status, a task result (deliverable text plus outcome detail; latest run unless task_run_id names an earlier one), or a bounded page of its events after a cursor. A result reply holds one page of the retained text from offset: totalLength is the retained length, nextOffset continues it (null at the end), and truncated says the agent wrote more than its result_limit kept.",
+      description: "Read a subagent's status, task result, reviewer feedback (view=reviews after settlement), or bounded events. Results keep the main deliverable separate; reviews concatenates every review and error in panel order across all rounds. result/reviews use task_run_id for an earlier run and offset/length for paging; continue from nextOffset until null to receive all text. result.reviewCount says how many reviews are available.",
       parameters: readParameters<TSchema>(Type),
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
         try {
-          const p = params as { target: string; view: "status" | "result" | "events"; task_run_id?: string; cursor?: number; limit?: number; offset?: number; length?: number };
-          if (p.view === "result") {
-            return ok(governing(ctx).supervisor.readResult(caller, p.target, p.task_run_id ?? null, { offset: p.offset ?? 0, length: p.length ?? null }, p.cursor ?? 0));
+          const p = params as { target: string; view: "status" | "result" | "reviews" | "events"; task_run_id?: string; cursor?: number; limit?: number; offset?: number; length?: number };
+          if (p.view === "result" || p.view === "reviews") {
+            const supervisor = governing(ctx).supervisor;
+            const read = p.view === "reviews" ? supervisor.readReviews.bind(supervisor) : supervisor.readResult.bind(supervisor);
+            return ok(read(caller, p.target, p.task_run_id ?? null, { offset: p.offset ?? 0, length: p.length ?? null }, p.cursor ?? 0));
           }
           return ok(governing(ctx).supervisor.read(caller, p.target, p.view, p.cursor ?? 0, p.limit ?? 20, p.task_run_id ?? null));
         } catch (e) {

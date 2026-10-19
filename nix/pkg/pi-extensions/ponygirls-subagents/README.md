@@ -2,7 +2,7 @@
 
 Supervisor/worker subagents for pi 1.1.0: durable asynchronous delegation
 with inspectable progress, attributed messages, interruption, resumption,
-bounded nesting, and an optional reviewer/fixer validation gate.
+bounded nesting, reviewer-panel validation gates, and one-shot advisory reviews.
 
 One supervisor owns the governing pi session. Each resident child runs in a
 separate SDK worker process with a native pi session, reached over a private
@@ -216,7 +216,7 @@ error.
 Children inherit the governing session's current model and thinking level;
 `model` on `spawn_agent` overrides it only with an `allowedModels` entry
 (`"allowedModels": null` allows every model instead of listing them).
-Gate reviewer models must also be allowlisted (or run under `null`).
+Every reviewer model must also be allowlisted (or run under `null`). A dispatch reserves one agent identity plus one per reviewer before creating anything; reviewers share the normal runnable/resident limits and can drain a panel even with one slot.
 The whole file is declarative in home-manager — setting any of these
 manages `subagents-policy.json` complete, so partial files are never
 half-clobbered:
@@ -380,11 +380,78 @@ each with its own timeout (default 120 s, at most 600 s); a non-zero exit
 forbids approval. `promisedOutputs` (writers only) name files the
 deliverable must contain; they are part of the reviewed candidate.
 
-The main execution settling records a *candidate*, not success. The managed
+The main execution settling records a *candidate*, not success. Each managed
 reviewer reads the paused workspace and returns one structured decision
 through `submit_gate_decision`. Terminal outcomes are `passed`,
 `review_limit_reached`, `gate_blocked`, `gate_error`, `candidate_superseded`,
 or (explicit governor bypass only) `gate_bypassed`.
+
+### Reviewer panels
+
+Use `reviewers` instead of `model` for a panel. `prompt` and `thinkingLevel`
+can be shared or supplied independently on each reviewer; per-reviewer values
+replace the shared ones. Each reviewer must resolve both values. Repeated
+models are allowed (for example, with different rubrics).
+
+```text
+spawn_agent(task_name="parser", profile="writer", message="Implement SPEC.md.",
+  gate={prompt:"Require conformance to SPEC.md.", thinkingLevel:"high",
+        reviewers:[{model:{provider:"openai", id:"gpt-5"}},
+                   {model:{provider:"anthropic", id:"claude-sonnet-4-5"},
+                    prompt:"Check security and failure handling."}],
+        maxRounds:3})
+```
+
+All reviewers evaluate the same candidate independently. The controller waits
+for the entire panel, then combines findings in reviewer declaration order
+(with reviewer attribution, including overlapping finding IDs). Every reviewer
+must approve for a gate to pass; any execution/protocol error produces
+`gate_error`, otherwise any blocked verdict produces `gate_blocked`, otherwise
+any revision request triggers one combined repair. The round limit counts
+**candidates**, not individual reviewers. Checks run once before the panel and
+are rechecked once on unanimous approval.
+
+A resumed panel retains completed feedback and reruns only interrupted members.
+Recovery never infers a missing verdict or automatically reapplies a completed
+panel; `manage_gate resume_review` explicitly resumes an interrupted panel or
+finishes its unapplied aggregate. A replacement specification on `retry_review`
+uses correctly configured reviewer models and prompts.
+
+### One-shot reviews (no gate or repair loop)
+
+Pass `review` instead of `gate` for advisory feedback. It accepts the same
+single-reviewer or panel configuration, but not rounds, checks, or promised
+outputs. `gate` and `review` are mutually exclusive; only the governing session
+configures either.
+
+```text
+spawn_agent(task_name="analysis", profile="reader", message="Analyze the design.",
+  review={thinkingLevel:"high", prompt:"Identify unsupported assumptions.",
+          reviewers:[{model:{provider:"openai", id:"gpt-5"}},
+                     {model:{provider:"anthropic", id:"claude-sonnet-4-5"}}]})
+wait_agent(targets=[{agentId:"<id>", taskRunId:"<run>"}], condition="all_settled")
+read_agent(target="<id>", view="result")
+read_agent(target="<id>", view="reviews")
+```
+
+After successful main work, every requested reviewer runs once. Approval,
+revision, blocked verdicts, and reviewer failures are returned as feedback;
+none triggers acceptance/rejection or another main generation. The task ends
+`succeeded`, not `passed`. Main execution failure still ends the task normally
+without reviewing a nonexistent candidate. The candidate stays paused until
+all reviews finish, so queued tasks cannot change it under the reviewers.
+
+### Reading all feedback
+
+`read_agent view=result` preserves the main deliverable and includes
+`reviewCount`. After the task settles, `view=reviews` returns the concatenated,
+attributed structured verdicts and failure diagnostics from **every round**,
+including blockers, advisories, blocked reasons and missing prerequisites.
+`task_run_id` selects an older run. Like result text, review text is paged using
+`offset` / `length`; follow `nextOffset` until `null` to receive everything.
+Reports are not cut at the main agent's `result_limit`, fit the tool's output
+bound per page, and survive restart. During a panel use `view=events` for
+progress; report pagination is available after settlement so offsets are stable.
 
 ## Tests
 
