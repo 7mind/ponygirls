@@ -141,6 +141,7 @@ class CodexQuota:
             windows.append(monthly)
 
         credits = body.get("credits")
+        credits_available = isinstance(credits, dict) and credits.get("has_credits") is True
         if isinstance(credits, dict):
             balance = optional_float(credits.get("balance"))
             unlimited = credits.get("unlimited") is True
@@ -155,6 +156,8 @@ class CodexQuota:
                         unlimited=unlimited,
                     )
                 )
+            elif credits_available:
+                notes.append("credits available (balance unavailable)")
 
         reset_credits = body.get("rate_limit_reset_credits")
         if isinstance(reset_credits, dict):
@@ -162,7 +165,7 @@ class CodexQuota:
             if available is not None:
                 notes.append(f"resets: {available}")
 
-        if not windows:
+        if not windows and not credits_available:
             raise QuotaFetchError(f"codex usage: no recognizable quota data (top-level keys: {top_level_keys(body)})")
 
         plan_type = body.get("plan_type")
