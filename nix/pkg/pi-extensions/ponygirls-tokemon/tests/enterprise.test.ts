@@ -19,6 +19,19 @@ const claude = (body: unknown, plan: string): Promise<QuotaSnapshot> => adapterF
 ]));
 const money = (amount: number) => ({ amount_minor: amount, currency: "USD", exponent: 2 });
 
+// BA regression: credit availability can be exposed without any numeric quota.
+test("codex business: available credits with undisclosed balance are not a fetch error", async () => {
+  const s = await codex({ plan_type: "business", rate_limit: null, code_review_rate_limit: null, additional_rate_limits: null,
+    credits: { has_credits: true, unlimited: false, overage_limit_reached: false, balance: null, approx_local_messages: null, approx_cloud_messages: null },
+    spend_control: { reached: false, individual_limit: null } });
+  assert.equal(s.plan, "business");
+  assert.deepEqual(s.windows, []);
+  assert.equal(s.note, "credits available (balance unavailable)");
+  for (const has_credits of [null, "true", 1]) {
+    await assert.rejects(codex({ credits: { has_credits, balance: null } }), QuotaFetchError);
+  }
+});
+
 test("codex enterprise: monthly credit allowance without rolling windows", async () => {
   const http = new ScriptedHttp([["GET", CODEX, json(200, { plan_type: "enterprise", spend_control: { reached: false, individual_limit: monthly } })]]);
   const s = await new CodexQuota().fetch({ ...OAUTH, accountId: "workspace" }, http);

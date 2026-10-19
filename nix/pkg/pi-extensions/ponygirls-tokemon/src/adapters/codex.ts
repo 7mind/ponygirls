@@ -82,11 +82,14 @@ export class CodexQuota implements QuotaAdapter {
     }
 
     const credits = payload["credits"];
+    const creditsAvailable = isObject(credits) && credits["has_credits"] === true;
     if (isObject(credits)) {
       const balance = optionalNumber(credits["balance"]);
       const unlimited = credits["unlimited"] === true;
       if (balance !== null || unlimited) {
         windows.push({ name: "credits", used: null, limit: balance, unit: "credits", resetsAt: null, unlimited, exhausted: null });
+      } else if (creditsAvailable) {
+        notes.push("credits available (balance unavailable)");
       }
     }
 
@@ -96,7 +99,7 @@ export class CodexQuota implements QuotaAdapter {
       if (available !== null) notes.push(`resets: ${available}`);
     }
 
-    if (windows.length === 0) throw new QuotaFetchError(`codex usage: no recognizable quota data (top-level keys: ${topLevelKeys(payload)})`);
+    if (windows.length === 0 && !creditsAvailable) throw new QuotaFetchError(`codex usage: no recognizable quota data (top-level keys: ${topLevelKeys(payload)})`);
 
     const plan = payload["plan_type"];
     const email = payload["email"];

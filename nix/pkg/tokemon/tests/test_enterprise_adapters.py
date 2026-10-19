@@ -126,6 +126,22 @@ class CodexEnterpriseTests(unittest.TestCase):
     def _fetch(self, usage):
         return test_adapters.CodexAdapterTests()._fetch(usage)
 
+    # BA regression: availability is meaningful even when numeric quotas are undisclosed.
+    def test_available_credits_without_balance(self):
+        snapshot = self._fetch({
+            "plan_type": "business", "rate_limit": None, "code_review_rate_limit": None,
+            "additional_rate_limits": None,
+            "credits": {"has_credits": True, "unlimited": False, "overage_limit_reached": False,
+                        "balance": None, "approx_local_messages": None, "approx_cloud_messages": None},
+            "spend_control": {"reached": False, "individual_limit": None},
+        })
+        self.assertEqual(snapshot.plan_name, "business")
+        self.assertEqual(snapshot.windows, ())
+        self.assertEqual(snapshot.note, "credits available (balance unavailable)")
+        for has_credits in (None, "true", 1):
+            with self.subTest(has_credits=has_credits), self.assertRaises(QuotaFetchError):
+                self._fetch({"credits": {"has_credits": has_credits, "balance": None}})
+
     def test_monthly_credits_only(self):
         snapshot = self._fetch(fixture("codex_enterprise_usage.json"))
         self.assertEqual(snapshot.plan_name, "enterprise")
