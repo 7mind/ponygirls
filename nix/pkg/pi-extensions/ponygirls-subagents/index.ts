@@ -153,6 +153,7 @@ function publishBadge(ui: ExtensionContext["ui"] | null, line: string | null, op
 }
 
 export default function (pi: ExtensionAPI): void {
+  if (typeof pi.enqueueMessage !== "function") throw new Error("UNSUPPORTED_SDK: subagent notices require this flake's retained-ingress Pi patch");
   const bindings = new Map<string, SessionBinding>();
 
   function refreshStatus(binding: SessionBinding, ctx: ExtensionContext): void {
@@ -184,7 +185,7 @@ export default function (pi: ExtensionAPI): void {
       notices: new NoticeDelivery(
         { noticesSince: (cursor, limit) => binding.supervisor.noticesSince(cursor, limit) },
         {
-          submit: (message) => pi.sendMessage(message, { triggerTurn: false }),
+          submit: (message) => pi.enqueueMessage(message, { triggerTurn: true, deliverAs: "steer" }),
           error: (error) => ctx.ui.notify(`subagents: notice delivery failed: ${String(error)}`, "error"),
         },
         store.durableSeq(),

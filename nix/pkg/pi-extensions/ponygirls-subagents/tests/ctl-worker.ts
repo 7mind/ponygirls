@@ -132,6 +132,7 @@ export function mkSup(opts: {
   dir?: string;
   workspace?: WorkspaceManager;
   governor?: () => GovernorContext;
+  onChange?: () => void;
 }): { sup: Supervisor; dir: string; workers: CtlWorker[]; byAgent: (agentId: string) => CtlWorker[]; executors: { sandbox: DummyToolExecutor; host: DummyToolExecutor } } {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "subagents-ctl-"));
   const policy = defaultSupervisorPolicy();
@@ -149,6 +150,7 @@ export function mkSup(opts: {
     executors,
     workspace: opts.workspace ?? new DummyWorkspaceManager(),
     governingRegistry: opts.governingRegistry,
+    onChange: opts.onChange,
     workerFactory: opts.factory ?? ((o) => {
       const w = new CtlWorker(o.agentId);
       workers.push(w);

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-type Submission = { message: unknown; options: Parameters<ExtensionAPI["sendMessage"]>[1] };
+type Submission = { message: unknown; options: Parameters<ExtensionAPI["enqueueMessage"]>[1] };
 type ToolExecute = (id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: undefined, ctx: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
 
 type Handler = (event: unknown, ctx: unknown) => Promise<void>;
@@ -30,7 +30,8 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
     },
     registerCommand: () => {},
     on: (event: string, h: Handler) => handlers.set(event, h),
-    sendMessage: (message: unknown, options: Parameters<ExtensionAPI["sendMessage"]>[1]) => sent.push({ message, options }),
+    sendMessage: () => { throw new Error("legacy ingress must not be used"); },
+    enqueueMessage: (message: unknown, options: Parameters<ExtensionAPI["enqueueMessage"]>[1]) => sent.push({ message, options }),
     getThinkingLevel: () => "low",
   };
   const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
@@ -43,6 +44,12 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
   };
   return { tools, schemas, handlers, sent, ctx };
 }
+
+test("an SDK without retained ingress is rejected before delegation or legacy fallback", async () => {
+  const mod = await import("../index.ts");
+  const unsupported = { sendMessage() { throw new Error("legacy ingress must not be used"); } } as unknown as ExtensionAPI;
+  assert.throws(() => mod.default(unsupported), /UNSUPPORTED_SDK.*retained-ingress/);
+});
 
 test("a corrupt root store is reported, never replaced by an empty in-memory store", async () => {
   const agentDir = mkdtempSync(join(tmpdir(), "subagents-ext-"));
@@ -107,7 +114,7 @@ test("an idle child's startup failure is displayed without another user message"
     assert.equal(await outcome(), "failed", "the unavailable fixture model must produce a terminal event");
     await new Promise((resolve) => setImmediate(resolve));
     assert.ok(sent.some((s) => JSON.stringify(s.message).includes("ended failed")), "terminal notice was not delivered without user input");
-    assert.deepEqual(sent.map((s) => s.options), [{ triggerTurn: false }], "delivery must neither defer to input nor request inference");
+    assert.deepEqual(sent.map((s) => s.options), [{ triggerTurn: true, deliverAs: "steer" }], "actionable delivery must resume the governor at the next safe model boundary");
   } finally {
     await handlers.get("session_shutdown")!({}, ctx);
     rmSync(agentDir, { recursive: true, force: true });

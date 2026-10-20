@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { BwrapToolExecutor, DummyToolExecutor, HostToolExecutor, type ToolExecutor, type ToolJobSpec } from "../src/sandbox.ts";
 import { readProcessIdentity } from "../src/process-identity.ts";
@@ -68,8 +68,10 @@ test("[bwrap] allowed reads succeed; traversal escape and secret access fail", a
   writeFileSync(join(secret, "key"), "TOPSECRET\n");
   const bash = absBin("bash") ?? "/bin/bash";
   const cat = absBin("cat") ?? "/bin/cat";
-  const ls = absBin("ls") ?? "/bin/ls";
-  const wc = absBin("wc") ?? "/bin/wc";
+  const hostHome = mkdtempSync(join(homedir(), ".subagents-host-only-"));
+  after(() => rmSync(hostHome, { recursive: true, force: true }));
+  const homeSentinel = join(hostHome, "sentinel");
+  writeFileSync(homeSentinel, "synthetic host-home content\n");
   const base: Omit<ToolJobSpec, "argv"> = { operationId: "op-r", cwd: work, env: { PATH: "/usr/bin:/bin" }, stdin: null, timeoutMs: 30_000, maxOutputBytes: 64 * 1024,
     view: { readRoots: [work], writableRoot: null, tmpDir: join(dir, "tmp"), hidePaths: [dir], runtimeRoots: ["/nix/store"], network: false } };
   const readOk = await exec.exec({ ...base, operationId: "op-ok", argv: [bash, "-c", `${cat} ok.txt`] });
@@ -83,13 +85,52 @@ test("[bwrap] allowed reads succeed; traversal escape and secret access fail", a
   spawnSync("ln", ["-s", join(secret, "key"), join(work, "link")]);
   const escapeLink = await exec.exec({ ...base, operationId: "op-link", argv: [bash, "-c", `${cat} link`] });
   assert.notEqual(escapeLink.exitCode, 0);
-  // Unrelated workspace content hidden even though --ro-bind / / is the base.
-  // Missing dirs count as hidden (nothing to expose).
-  const homeHidden = await exec.exec({ ...base, operationId: "op-home", argv: [bash, "-c", `${ls} /home 2>/dev/null | ${wc} -l`] });
-  assert.equal(homeHidden.stdout.trim(), "0");
+  // Runtime aliases may create /home ancestors without exposing host-home content.
+  const homeHidden = await exec.exec({ ...base, operationId: "op-home", argv: [bash, "-c", 'test ! -e "$1" && test ! -e "$2"', "home-check", hostHome, homeSentinel] });
+  assert.equal(homeHidden.exitCode, 0, homeHidden.stderr);
+  const homeRead = await exec.exec({ ...base, operationId: "op-home-read", argv: [bash, "-c", '"$1" "$2"', "home-check", cat, homeSentinel] });
+  assert.equal(homeRead.exitCode, 1, homeRead.stderr);
+  assert.equal(homeRead.stdout, "");
   // Host network is unreachable from the tool job: no routes in the netns.
   const net = await exec.exec({ ...base, operationId: "op-net", argv: [bash, "-c", `${cat} /proc/net/route`] });
   assert.ok(!net.stdout.includes("00000000"));
+});
+
+test("[bwrap] runtime aliases create ancestors without exposing their host contents", async (t) => {
+  const exec = new BwrapToolExecutor();
+  if (!exec.probe().ok) {
+    t.skip("bwrap unavailable; runtime alias check not executed");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "subagents-runtime-alias-"));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  const home = join(dir, "home", "synthetic-user");
+  const profile = join(home, ".nix-profile");
+  const bin = join(profile, "bin");
+  const work = join(dir, "work");
+  const scratch = join(dir, "tmp");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(work);
+  mkdirSync(scratch);
+  const homeSentinel = join(home, "home-sentinel");
+  const profileSentinel = join(profile, "profile-sentinel");
+  const runtimeMarker = join(bin, "runtime-marker");
+  writeFileSync(homeSentinel, "synthetic home content\n");
+  writeFileSync(profileSentinel, "synthetic profile content\n");
+  writeFileSync(runtimeMarker, "runtime content\n");
+  const bash = realpathSync(absBin("bash") ?? "/bin/bash");
+  const alias = join(bin, "bash");
+  symlinkSync(bash, alias);
+  const base: Omit<ToolJobSpec, "argv"> = { operationId: "op-alias", cwd: work, env: { PATH: "/usr/bin:/bin" }, stdin: null, timeoutMs: 30_000, maxOutputBytes: 64 * 1024,
+    view: { readRoots: [work], writableRoot: null, tmpDir: scratch, hidePaths: [dir], runtimeRoots: ["/nix/store"], network: false } };
+  const canonical = await exec.exec({ ...base, argv: [bash, "-c", 'test ! -e "$1"', "canonical-check", home] });
+  assert.equal(canonical.exitCode, 0, canonical.stderr);
+  const aliased = await exec.exec({ ...base, argv: [alias, "-c", 'set -e; test -d "$1"; test -d "$2"; IFS= read -r marker < "$3"; test "$marker" = "runtime content"; test ! -e "$4"; test ! -e "$5"; printf "isolated\\n"', "alias-check", home, profile, runtimeMarker, homeSentinel, profileSentinel] });
+  assert.equal(aliased.exitCode, 0, aliased.stderr);
+  assert.equal(aliased.stdout, "isolated\n");
+  const write = await exec.exec({ ...base, argv: [alias, "-c", 'printf changed > "$1"', "alias-write", runtimeMarker] });
+  assert.equal(write.exitCode, 1, write.stderr);
+  assert.equal(readFileSync(runtimeMarker, "utf8"), "runtime content\n");
 });
 
 test("[bwrap] cancellation terminates the job; grandchildren do not survive", async () => {

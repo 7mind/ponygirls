@@ -3,6 +3,8 @@ import { sanitizeDisplay } from "./display.ts";
 const CUSTOM_NOTICE = "pi-subagents-notice";
 const NOTICE_BATCH = 20;
 const NOTICE_TEXT_MAX = 48_000;
+const NOTICE_RETRY_DELAY_MS = 100;
+const NOTICE_MAX_ATTEMPTS = 3;
 
 export interface NoticeSource {
   noticesSince(cursor: number, limit: number): { lines: string[]; cursor: number };
@@ -16,7 +18,7 @@ export interface NoticeMessage {
 }
 
 export interface NoticeSink {
-  /** Context-only delivery: Pi appends now if idle, or after the active turn's tool results. */
+  /** Returning transfers ownership to Pi; throwing leaves the page with this pump. */
   submit(message: NoticeMessage): void;
   error(error: unknown): void;
 }
@@ -26,6 +28,8 @@ export class NoticeDelivery {
   private cursor: number;
   private scheduled = false;
   private disposed = false;
+  private failures = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly source: NoticeSource;
   private readonly sink: NoticeSink;
 
@@ -37,6 +41,8 @@ export class NoticeDelivery {
 
   changed(): void {
     if (this.scheduled || this.disposed) return;
+    if (this.retryTimer !== undefined) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
     this.scheduled = true;
     // Publishing a journal record may still be updating supervisor state.
     queueMicrotask(() => {
@@ -52,11 +58,19 @@ export class NoticeDelivery {
             });
           }
           this.cursor = cursor;
+          this.failures = 0;
           if (lines.length === 0) break;
         }
       } catch (error) {
-        // Keep the failed page for the next change; never spin on a rejected sink.
-        this.sink.error(error);
+        try { this.sink.error(error); }
+        catch (reporterError) { console.error("subagents: notice delivery error reporter failed:", error, reporterError); }
+        this.failures++;
+        if (this.failures < NOTICE_MAX_ATTEMPTS && !this.disposed) {
+          this.retryTimer = setTimeout(() => {
+            this.retryTimer = undefined;
+            this.changed();
+          }, NOTICE_RETRY_DELAY_MS);
+        }
       } finally {
         this.scheduled = false;
       }
@@ -65,5 +79,7 @@ export class NoticeDelivery {
 
   dispose(): void {
     this.disposed = true;
+    if (this.retryTimer !== undefined) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
   }
 }

@@ -23,7 +23,7 @@ interface NoticeEvent {
 // Regression #25: release a successful real child only after the parent settles;
 // neither a startup failure nor polling list_agents establishes idle delivery.
 for (const persistent of [true, false]) {
-  test(`extension delivers a real child's completion to an idle ${persistent ? "file" : "memory"} Pi session without input or polling`, { timeout: 20_000 }, async (t) => {
+  test(`real child completion autonomously resumes an idle ${persistent ? "file" : "memory"} governor without input or polling`, { timeout: 20_000 }, async (t) => {
     if (!process.env["PI_SUBAGENTS_SDK_ROOT"]) {
       t.skip("PI_SUBAGENTS_SDK_ROOT is required for the real worker");
       return;
@@ -35,6 +35,8 @@ for (const persistent of [true, false]) {
     const childEntered = Promise.withResolvers<void>();
     const releaseChild = Promise.withResolvers<void>();
     const noticeDelivered = Promise.withResolvers<void>();
+    const governorResumed = Promise.withResolvers<void>();
+    const wakeContexts: string[] = [];
     const errors: unknown[] = [];
     let session: AgentSession | null = null;
     const server = createServer(async (req, res) => {
@@ -78,8 +80,12 @@ for (const persistent of [true, false]) {
     let requests = 0;
     modelRuntime.registerProvider("notice-fixture", {
       ...provider,
-      streamSimple(model) {
+      streamSimple(model, context) {
         requests++;
+        if (requests === 3) {
+          wakeContexts.push(JSON.stringify(context.messages));
+          governorResumed.resolve();
+        }
         const content = requests === 1
           ? [{ type: "toolCall" as const, id: "spawn-child", name: "spawn_agent", arguments: { task_name: "idle-child", message: "finish when released", profile: "reader", isolation: "none" } }]
           : [{ type: "text" as const, text: "parent finished" }];
@@ -135,7 +141,12 @@ for (const persistent of [true, false]) {
     assert.equal(displayed.length, 1);
     assert.equal(displayed[0]!.display, true);
     assert.match(displayed[0]!.text, /\/root\/idle-child task .* ended succeeded/);
-    assert.equal(requests, 2, "notice delivery must not start parent inference");
+    const wakeTimer = setTimeout(() => governorResumed.reject(new Error("completion reached context but did not resume the governor")), NOTICE_DELIVERY_TIMEOUT_MS);
+    try { await governorResumed.promise; }
+    finally { clearTimeout(wakeTimer); }
+    await session.waitForIdle();
+    assert.equal(requests, 3, "one automatic turn must process the child's completion");
+    assert.match(wakeContexts[0]!, /ended succeeded/);
     assert.ok(session.isIdle);
     assert.deepEqual(inputs, ["start child"], "no status prompt or polling may drive delivery");
     const notices = session.sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === CUSTOM_NOTICE);

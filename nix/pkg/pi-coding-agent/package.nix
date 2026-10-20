@@ -63,6 +63,9 @@ buildNpmPackage (finalAttrs: {
     ./patches/agent-retry-after-delays.patch
     ./patches/border-widgets.patch
     ./patches/footer-options.patch
+    # Retain accepted extension messages across flush failures/cancellation;
+    # allow subagent lifecycle notices to resume their governor safely.
+    ./patches/retained-custom-message-ingress.patch
   ];
 
   npmDepsHash = "sha256-P/KWhkvLjtpWRiwLCHu2iUVyI8nragSnQGWUQNsRhw8=";
