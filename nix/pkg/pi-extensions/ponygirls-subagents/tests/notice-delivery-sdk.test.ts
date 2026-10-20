@@ -114,6 +114,7 @@ for (const persistent of [true, false]) {
 
 const boundaries: Array<{ name: string; register(api: ExtensionAPI, handler: () => void): void }> = [
   { name: "before_agent_start", register: (api, handler) => { api.on("before_agent_start", handler); } },
+  { name: "message_end", register: (api, handler) => { api.on("message_end", (event) => { if (event.message.role === "assistant") handler(); }); } },
   { name: "turn_end", register: (api, handler) => { api.on("turn_end", handler); } },
   { name: "agent_end", register: (api, handler) => { api.on("agent_end", handler); } },
   { name: "agent_before_settle", register: (api, handler) => { api.on("agent_before_settle", handler); } },
