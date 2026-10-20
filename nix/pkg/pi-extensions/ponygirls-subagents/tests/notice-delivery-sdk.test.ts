@@ -6,13 +6,25 @@ import { join } from "node:path";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import {
   createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager,
-  type ExtensionAPI,
+  type AgentSession, type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { NoticeDelivery } from "../src/notice-delivery.ts";
 
+// Explicit triggerTurn:false compatibility tests, not the extension's actionable-notice policy.
 const CUSTOM_NOTICE = "pi-subagents-notice";
+const NOTICE_DELIVERY_TIMEOUT_MS = 5_000;
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+function observeNotice(t: TestContext, session: AgentSession): Promise<void> {
+  const delivered = Promise.withResolvers<void>();
+  const timer = setTimeout(() => delivered.reject(new Error("SDK context notice was not delivered")), NOTICE_DELIVERY_TIMEOUT_MS);
+  t.after(() => clearTimeout(timer));
+  t.after(session.subscribe((event) => {
+    if (event.type === "message_end" && event.message.role === "custom" && event.message.customType === CUSTOM_NOTICE) delivered.resolve();
+  }));
+  return delivered.promise;
+}
 
 /** Real Pi message sink, with a controlled journal and credential-free provider. */
 async function fixture(t: TestContext, persistent: boolean) {
@@ -21,6 +33,7 @@ async function fixture(t: TestContext, persistent: boolean) {
   const modelRuntime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
   let requests = 0;
   let callHold = false;
+  let providerError: string | null = null;
   modelRuntime.registerProvider("notice-fixture", {
     api: "openai-completions", baseUrl: "http://fixture.invalid", apiKey: "fixture-only",
     models: [{ id: "scripted", name: "Scripted", reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 1000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
@@ -29,6 +42,16 @@ async function fixture(t: TestContext, persistent: boolean) {
       const content = callHold ? [{ type: "toolCall" as const, id: "hold-call", name: "hold", arguments: {} }] : [{ type: "text" as const, text: "root response" }];
       callHold = false;
       const stream = createAssistantMessageEventStream();
+      if (providerError !== null) {
+        const errorMessage = providerError;
+        providerError = null;
+        stream.push({ type: "error", reason: "error", error: {
+          role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id,
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "error", errorMessage, timestamp: Date.now(),
+        } });
+        return stream;
+      }
       stream.push({ type: "done", reason: content[0]!.type === "toolCall" ? "toolUse" : "stop", message: {
         role: "assistant", content, api: model.api, provider: model.provider, model: model.id,
         usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
@@ -83,8 +106,9 @@ async function fixture(t: TestContext, persistent: boolean) {
   });
   await session.prompt("prime the session");
   return {
-    api, session, errors, holdEntered,
+    api, session, errors, holdEntered, settingsManager,
     requests: () => requests,
+    fail: (error: string) => { providerError = error; },
     hold: () => { callHold = true; },
     release,
     publish(text: string) { lines.push(text); delivery.changed(); },
@@ -124,9 +148,10 @@ const boundaries: Array<{ name: string; register(api: ExtensionAPI, handler: () 
 for (const boundary of boundaries) {
   test(`Pi sink delivers a notice published at ${boundary.name} without another root run`, async (t) => {
     const f = await fixture(t, true);
+    const delivered = observeNotice(t, f.session);
     boundary.register(f.api, () => { f.publish(`notice at ${boundary.name}`); });
     await f.session.prompt("exercise boundary");
-    await tick();
+    await delivered;
     assert.equal(f.notices().length, 1);
     assert.equal(f.requests(), 2);
     assert.ok(f.session.isIdle);
@@ -168,3 +193,57 @@ test("Pi sink persists a context notice through clearQueue and abort without lat
   assert.equal(f.requests(), 2);
   assert.deepEqual(f.errors, []);
 });
+
+test("Pi sink drains a notice arriving during retry backoff without another input", async (t) => {
+  const f = await fixture(t, true);
+  f.settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } });
+  let retries = 0;
+  f.session.subscribe((event) => {
+    if (event.type === "auto_retry_start") {
+      retries++;
+      f.publish("terminal during retry");
+    }
+  });
+  f.fail("503 Service Unavailable");
+  await f.session.prompt("retry once");
+  await tick();
+  assert.equal(retries, 1);
+  assert.equal(f.notices().length, 1);
+  assert.equal(f.requests(), 3, "prime, failed attempt and its retry only");
+  assert.ok(f.session.isIdle);
+  assert.deepEqual(f.errors, []);
+});
+
+for (const automatic of [false, true]) {
+  test(`Pi sink drains a notice arriving during ${automatic ? "automatic" : "manual"} compaction`, async (t) => {
+    const f = await fixture(t, true);
+    let compactions = 0;
+    const delivered = observeNotice(t, f.session);
+    f.api.on("session_before_compact", async (event) => {
+      compactions++;
+      f.settingsManager.setCompactionEnabled(false);
+      f.publish("terminal during compaction");
+      await tick();
+      assert.equal(f.notices().length, automatic ? 0 : 1, "preserve legacy context-only compaction timing");
+      return { compaction: { summary: "Controlled summary", firstKeptEntryId: event.preparation.firstKeptEntryId, tokensBefore: event.preparation.tokensBefore } };
+    });
+    if (automatic) {
+      f.hold();
+      const run = f.session.prompt("compact between tool turns");
+      await f.holdEntered;
+      f.settingsManager.applyOverrides({ compaction: { enabled: true, reserveTokens: 99_999, keepRecentTokens: 1 } });
+      f.release();
+      await run;
+    } else {
+      f.settingsManager.applyOverrides({ compaction: { enabled: false, keepRecentTokens: 1 } });
+      await f.session.compact();
+    }
+    await tick();
+    await delivered;
+    assert.equal(compactions, 1);
+    assert.equal(f.notices().length, 1);
+    assert.equal(f.requests(), automatic ? 3 : 1, "compaction notices must not start another root request");
+    assert.ok(f.session.isIdle);
+    assert.deepEqual(f.errors, []);
+  });
+}

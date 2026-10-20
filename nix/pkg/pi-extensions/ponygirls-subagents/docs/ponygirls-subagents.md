@@ -2,12 +2,13 @@
 
 ## Supported versions and platforms
 
-- pi **1.1.0** (`@earendil-works/*` namespace). The worker imports the
+- Repository-patched pi **1.2.0** (`@earendil-works/*` namespace). The worker imports the
   **built** package tree (`dist/index.js`, `pi-ai/dist/compat.js`,
   `typebox`) from `PI_SUBAGENTS_SDK_ROOT`, which the home-manager pi wrapper
   sets to the exact pi derivation it runs. Unset, spawning fails with an
-  explicit error. Other pi versions are untested and unsupported; SDK drift
-  surfaces as worker startup errors, never as silent behavior change.
+  explicit error. Use this flake's derivation, including its retained custom-message
+  ingress/flush/reload patch: a matching version string alone does not establish
+  protocol compatibility. Other pi builds are untested and unsupported.
   External delegation additionally pins the five-argument tool-runtime
   adapter (`tool-definition-wrapper.js`): public `AgentTool.execute` has four
   arguments, but the runtime forwards a fifth `ExtensionToolContext`. The
@@ -203,17 +204,41 @@ session is attached again (below). Ephemeral (`--no-session`) governing
 sessions still delegate, but recovery has no native session to restore.
 Notice delivery does not depend on session persistence or user-input handlers.
 
-Child notices (terminal outcomes, messages and questions addressed to the
-governing session) are drained by one session-scoped delivery pump whenever
-the supervisor changes. It drains all pending pages and submits context-only
-messages: Pi appends them immediately while idle, or after the active turn's
-tool results. No user message or idle-root inference is required. Shutdown
-revokes scheduled delivery; the footer status independently shows tree counts.
+Child notices (terminal outcomes, quarantines, controller failures, messages
+and questions addressed to the governing session) are drained by one
+session-scoped delivery pump whenever the supervisor changes. Every page is
+handed to the patched SDK's `pi.enqueueMessage` with
+`triggerTurn:true, deliverAs:"steer"`. SDKs without this capability are rejected
+before delegation; there is no legacy fallback. While busy, Pi inserts
+accepted notices after complete tool results; the next natural model request
+consumes them, or a continuation is scheduled when current work would stop.
+While idle, Pi starts a coalesced turn containing the accepted notices. No user
+input or status polling is required to resume the governing model.
+
+Explicit `clearQueue()` or abort cancels the existing wake intent, not accepted
+context; it does not immediately restart the canceled run. Genuinely new child
+activity can request another turn. Shutdown revokes scheduled delivery and retries;
+the footer status independently shows tree counts.
 
 The attachment's journal cursor suppresses repeat submissions, not a durable
-session receipt. It advances after submission returns; a synchronous rejection
-is reported and leaves that page for the next change, without a retry loop.
-Reattaching starts at the current journal end, so old history is not replayed.
+session receipt. A successful synchronous `enqueueMessage` return transfers message ownership to
+Pi; a pre-acceptance rejection retains the page in the pump. Its scheduling fields
+are explicit, and it supports `steer` / `followUp`, not deferred `nextTurn`. Rejected ingress has
+three attempts with 100 ms between failures. Pi separately retains its accepted
+pending queue and bounds background drain retries to three attempts, reporting
+failures through the host's `onError` binding. Later producer activity permits a
+new attempt; permanent failure does not spin or hold the active-run flag forever.
+A failed disk rollback disables further appends on that session manager: repair
+storage and reopen it rather than append behind an uncertain suffix.
+
+Retained ingress appends native context and emits public message events; it does
+not replay extension message-transformation hooks. Ordinary `pi.sendMessage` keeps
+its existing pipeline and is not an ownership receipt. Retained ingress can and
+does request inference independently of that pipeline.
+
+Ownership acceptance is neither model-run completion nor fsync. The pending SDK
+queue is in-process; reattaching starts at the current journal end, so old history
+is not replayed. There is no crash-durable exactly-once governing-notice receipt.
 
 ## Usage accounting
 
@@ -288,8 +313,10 @@ Reattaching starts at the current journal end, so old history is not replayed.
   load built-in providers plus declarative `models.json` entries; a model
   only an extension provides fails with `MODEL_UNAVAILABLE`.
 - **The sandboxed tool `PATH` is the host's.** Sandboxed commands see the
-  host runtime `PATH` directories read-only (not `$HOME` ones); there is no
-  network, no nix daemon, and no package installation inside the sandbox.
+  host runtime `PATH` directories read-only. An explicitly selected executable
+  alias can expose its runtime directory under `$HOME` and synthesize ancestor
+  directories, but does not bind the surrounding home/profile contents. There is
+  no network, no nix daemon, and no package installation inside the sandbox.
 - **No token/cost budgets are enforced yet.** Usage is accounted per
   agent and cumulatively (unknown usage is flagged, never treated as zero),
   but nothing stops admission on spend; the plan's budget stops are not

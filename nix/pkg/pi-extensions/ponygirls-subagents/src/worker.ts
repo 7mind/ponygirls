@@ -41,6 +41,7 @@ const CAPABILITIES = ["proxy-tools", "sequential", "checkpoint", "gate-decision"
 const TOOL_REQUEST_TIMEOUT_MS = 15 * 60_000;
 const CHECKPOINT_MAX_BYTES = 16 * 1024 * 1024;
 const PREVIEW_MAX = 2000;
+const TERMINAL_ERROR_MAX_BYTES = 8 * 1024;
 /** In-flight assistant text is forwarded at most this often (the transcript view shows it live). */
 const STREAM_PREVIEW_INTERVAL_MS = 300;
 
@@ -524,6 +525,22 @@ function observeStreamResult(
   gen.pendingUsage.push(Promise.race([usageObservation, completionObservation]));
 }
 
+function boundedTerminalError(error: string | null): string | null {
+  if (error === null || Buffer.byteLength(JSON.stringify(error), "utf8") <= TERMINAL_ERROR_MAX_BYTES) return error;
+  const marker = `\n[truncated terminal error: ${Buffer.byteLength(error, "utf8")} UTF-8 bytes total]`;
+  const budget = TERMINAL_ERROR_MAX_BYTES - Buffer.byteLength(JSON.stringify(marker), "utf8");
+  let bytes = 0;
+  let end = 0;
+  // JSON escaping can expand one code point to six bytes; never split a surrogate pair.
+  for (const point of error) {
+    const size = Buffer.byteLength(JSON.stringify(point), "utf8") - 2;
+    if (bytes + size > budget) break;
+    bytes += size;
+    end += point.length;
+  }
+  return error.slice(0, end) + marker;
+}
+
 /** Publish the current generation's single outcome after joining usage observations. */
 async function settleGeneration(failure: string | null): Promise<void> {
   const gen = state.gen;
@@ -581,7 +598,7 @@ async function settleGeneration(failure: string | null): Promise<void> {
       : gen.stopReason === "error"
         ? "failed"
         : "succeeded";
-  const error = combinedFailure ?? (status === "failed" ? gen.errorMessage ?? "provider error" : null);
+  const error = boundedTerminalError(combinedFailure ?? (status === "failed" ? gen.errorMessage ?? "provider error" : null));
   // Text beyond the inline bound travels as a file; `textLength` lets the
   // supervisor state any cut (at the limit, or after a failed handoff).
   const retained = gen.lastText.slice(0, state.resultLimit);

@@ -461,8 +461,8 @@ export class Supervisor implements GateHost {
   private pendingLost = new Map<AgentId, { taskRunId: TaskRunId; generation: number; workerPid: number | null; workerBoot: ProcessIdentity | null }>();
   /** Every gate evaluation's conversation file, in start order. */
   private reviewSessions: ReviewSession[] = [];
-  /** Runs whose generation settled but whose outcome was deferred (owner joining descendants) at a crash. */
-  private pendingSettle = new Map<AgentId, { taskRunId: TaskRunId; outcome: string; error: string }>();
+  /** Deferred owner outcomes and failed terminal commits retained until recovery. */
+  private pendingSettle = new Map<TaskRunId, { agentId: AgentId; outcome: string; error: string }>();
   private epoch!: string;
   private suspended = false;
   /**
@@ -822,6 +822,11 @@ export class Supervisor implements GateHost {
           this.accountUsage(rt ?? null, b as UsageDetail);
           break;
         }
+        case "agent.quarantined": {
+          const rt = this.agents.get(b["agentId"] as string);
+          if (rt && typeof b["reason"] === "string") rt.quarantined = b["reason"];
+          break;
+        }
         case "agent.closed": {
           const rt = this.agents.get(b["agentId"] as string);
           if (rt) {
@@ -977,13 +982,26 @@ export class Supervisor implements GateHost {
       rt.record.observed = "lost";
       this.pendingLost.set(info.agentId, { taskRunId, generation: info.generation, workerPid: info.workerPid, workerBoot: info.workerBoot });
     }
-    // A settled generation without a terminal outcome (and no gate owning
-    // it) was an owner joining descendants: recovery settles it.
+    // Recover deferred owner outcomes; a gate may keep waiting only if its
+    // current generation reached a resumable review or committed repair.
     for (const rt of this.agents.values()) {
       const cur = rt.record.currentTaskRunId;
-      if (!cur || this.terminalRuns.has(cur) || this.pendingLost.has(rt.record.id) || rt.gateTaskRunId === cur || rt.record.desiredLifecycle === "closed") continue;
+      if (!cur || this.terminalRuns.has(cur) || this.pendingLost.has(rt.record.id) || rt.record.desiredLifecycle === "closed") continue;
+      const gated = rt.gateTaskRunId === cur;
+      const gate = gated ? this.gate.inspect(cur) : null;
+      if (gate !== null && gate.candidate !== null && gate.candidate.generation === rt.record.executionGeneration && (gate.review !== null || gate.repairReserved)) continue;
       const settled = settledRuns.get(cur);
-      if (settled && settled.agentId === rt.record.id) this.pendingSettle.set(rt.record.id, { taskRunId: cur, outcome: settled.outcome, error: settled.error });
+      if (settled && settled.agentId === rt.record.id) {
+        const outcome = gated && settled.outcome === "succeeded" ? "interrupted" : settled.outcome;
+        const error = gated ? "PROCESS_LOST: gated execution stopped before resumable review admission; no review inferred" : settled.error;
+        this.pendingSettle.set(cur, { agentId: rt.record.id, outcome, error });
+      }
+    }
+    for (const [taskRunId, draft] of gates) {
+      const gate = this.gate.inspect(taskRunId);
+      if (gate !== null && !gate.terminal && gate.linkedFrom !== null && gate.candidate === null) {
+        this.pendingSettle.set(taskRunId, { agentId: draft.agentId, outcome: "interrupted", error: "PROCESS_LOST: linked review stopped before candidate publication" });
+      }
     }
     this.scheduler.restoreSnapshot({ created: spawned });
     // A discarded uncommitted tail means a previous owner may have acted on
@@ -1185,15 +1203,25 @@ export class Supervisor implements GateHost {
   private reportFailure(e: unknown): void {
     try {
       this.store.append("recovery.event", { phase: "controller_error", error: String((e as Error)?.message ?? e).slice(0, 500) });
+      this.evaluateWaiters();
+      this.opts.onChange?.();
     } catch {
-      // The store itself failed; its own error already refuses further writes.
+      // A failing store or observer cannot recursively report its own failure.
+    }
+  }
+
+  private notifyChanged(): void {
+    this.evaluateWaiters();
+    try {
+      this.opts.onChange?.();
+    } catch (error) {
+      this.reportFailure(error);
     }
   }
 
   private publish(kind: JournalKind, body: Record<string, unknown>): JournalRecord {
     const record = this.store.append(kind, body);
-    this.evaluateWaiters();
-    this.opts.onChange?.();
+    this.notifyChanged();
     return record;
   }
 
@@ -1271,7 +1299,7 @@ export class Supervisor implements GateHost {
   /** Review/repair phases, and an owner still joining its descendants, keep new tasks queued. */
   private isPhaseLocked(rt: AgentRuntime): boolean {
     const p = rt.record.taskPhase;
-    return rt.afterDescendants !== null || p === "candidate_recording" || p === "review_queued" || p === "reviewing" || p === "repair_queued";
+    return rt.afterDescendants !== null || [...this.pendingSettle.values()].some((pending) => pending.agentId === rt.record.id) || p === "candidate_recording" || p === "review_queued" || p === "reviewing" || p === "repair_queued";
   }
 
   // -- spawn -----------------------------------------------------------------
@@ -3014,6 +3042,16 @@ export class Supervisor implements GateHost {
         : status === "succeeded" || status === "interrupted" ? status : "failed";
     const accounted = this.accountUsage(rt, usage ?? { unknown: true });
     this.publish("usage.reported", { agentId: record.id, taskRunId: run.taskRunId, generation: run.generation, ...accounted });
+    this.store.append("generation.settled", {
+      agentId: record.id,
+      taskRunId: run.taskRunId,
+      generation: run.generation,
+      outcome,
+      error: error ? error.slice(0, PREVIEW_MAX) : undefined,
+      text: retained.text,
+      textLength: retained.fullLength,
+      result: retained.stored ?? undefined,
+    });
     record.observed = "settled";
     record.outcome = outcome;
     // Guard admission: lock queued tasks before releasing capacity so a newer
@@ -3031,18 +3069,7 @@ export class Supervisor implements GateHost {
     this.purgePreparedTickets(record.id);
     rt.lastText = { taskRunId: run.taskRunId, ...retained };
     rt.usageSnapshot = null;
-    this.publish("generation.settled", {
-      agentId: record.id,
-      taskRunId: run.taskRunId,
-      generation: run.generation,
-      outcome,
-      error: error ? error.slice(0, PREVIEW_MAX) : undefined,
-      text: retained.text,
-      textLength: retained.fullLength,
-      result: retained.stored ?? undefined,
-    });
-    // Never hold a main runnable lease while waiting for review.
-    this.releaseRunnable(rt);
+    this.notifyChanged();
     // Capture the settled generation's native checkpoint at this safe
     // boundary; the next dispatch to this worker waits for it.
     if (rt.worker) {
@@ -3068,16 +3095,20 @@ export class Supervisor implements GateHost {
       if (rt.gateTaskRunId === run.taskRunId) this.gate.cancelTask(run.taskRunId, final);
       this.settleTaskTerminal(rt, run.taskRunId, final, detail);
     };
+    // Releasing capacity synchronously pumps queued tasks, including this
+    // owner's next task. Install its completion barrier before that pump.
+    if (rt.afterDescendants) throw err("CONFLICT", `agent ${record.id} settled a generation while still joining descendants`);
+    rt.afterDescendants = continuation;
+    this.releaseRunnable(rt);
     // A child owner cancels and joins active descendants before publishing
     // its own outcome (structured ownership). New tasks queue meanwhile.
     const active = this.activeDescendants(record.id);
     if (active.length > 0) {
-      if (rt.afterDescendants) throw err("CONFLICT", `agent ${record.id} settled a generation while still joining descendants`);
-      rt.afterDescendants = continuation;
       record.detail = `joining ${active.length} active descendant(s) before settling`;
       for (const child of active) this.interruptSubtree(child).catch((e: unknown) => this.reportFailure(e));
       return;
     }
+    rt.afterDescendants = null;
     continuation();
   }
 
@@ -3306,11 +3337,14 @@ export class Supervisor implements GateHost {
   /** Publish each task run's terminal outcome exactly once and durably. */
   settleTaskTerminal(rt: AgentRuntime, taskRunId: TaskRunId, outcome: string, detail: string): void {
     if (this.terminalRuns.has(taskRunId)) return;
-    this.terminalRuns.set(taskRunId, { agentId: rt.record.id, outcome });
     const retained: RetainedText = rt.lastText?.taskRunId === taskRunId
       ? { text: rt.lastText.text, stored: rt.lastText.stored, fullLength: rt.lastText.fullLength }
       : { text: "", stored: null, fullLength: 0 };
     const text = retained.text;
+    this.pendingSettle.set(taskRunId, { agentId: rt.record.id, outcome, error: detail });
+    this.store.append("task.terminal", { agentId: rt.record.id, taskRunId, outcome, preview: text.slice(0, PREVIEW_MAX), detail: detail.slice(0, PREVIEW_MAX) });
+    this.terminalRuns.set(taskRunId, { agentId: rt.record.id, outcome });
+    this.pendingSettle.delete(taskRunId);
     if (taskRunId === rt.record.currentTaskRunId) {
       rt.record.taskPhase = "terminal";
       rt.record.taskOutcome = outcome;
@@ -3318,7 +3352,7 @@ export class Supervisor implements GateHost {
     }
     rt.queue = rt.queue.filter((q) => q.id !== taskRunId);
     rt.lastResult = { taskRunId, outcome, detail, ...retained };
-    this.publish("task.terminal", { agentId: rt.record.id, taskRunId, outcome, preview: text.slice(0, PREVIEW_MAX), detail: detail.slice(0, PREVIEW_MAX) });
+    this.notifyChanged();
     this.pumpQueue(rt);
     this.resumeOwnerAfterDescendant(rt);
   }
@@ -3490,6 +3524,7 @@ export class Supervisor implements GateHost {
         messageId,
         agentId: from === "governor" ? to : from,
         from,
+        fromTaskRunId: from === "governor" ? null : this.agents.get(from)!.record.currentTaskRunId,
         to,
         mode,
         text,
@@ -3593,7 +3628,7 @@ export class Supervisor implements GateHost {
       receipt: null,
       replied: false,
     };
-    const accepted = this.publish("mailbox.accepted", { messageId, agentId: question.from, from, to: question.from, mode: "note", text, replyTo, taskRunId: null, requestId });
+    const accepted = this.publish("mailbox.accepted", { messageId, agentId: question.from, from, fromTaskRunId: from === "governor" ? null : this.agents.get(from)!.record.currentTaskRunId, to: question.from, mode: "note", text, replyTo, taskRunId: null, requestId });
     message.seq = accepted.seq;
     this.messages.set(messageId, message);
     const original = this.messages.get(replyTo);
@@ -3699,6 +3734,8 @@ export class Supervisor implements GateHost {
       } else if (r.kind === "agent.quarantined" && typeof r.body["reason"] === "string") {
         const path = this.agents.get(r.body["agentId"] as AgentId)?.record.path ?? String(r.body["agentId"]);
         line = `${path} quarantined: ${r.body["reason"]}`;
+      } else if (r.kind === "recovery.event" && r.body["phase"] === "controller_error" && typeof r.body["error"] === "string") {
+        line = `controller failure: ${r.body["error"]}`;
       } else if (r.kind === "mailbox.accepted" && r.body["to"] === "governor" && typeof r.body["text"] === "string") {
         const from = this.agents.get(r.body["from"] as AgentId)?.record.path ?? String(r.body["from"]);
         line = `${r.body["requestReply"] === true ? `question ${String(r.body["messageId"])}` : "message"} from ${from} (${String(r.body["from"])}): ${(r.body["text"] as string).slice(0, 2000)}`;
@@ -3854,7 +3891,12 @@ export class Supervisor implements GateHost {
       if (!rt) throw err("NOT_FOUND", `wait target ${t.agentId} unknown`);
       if (!this.visibleTo(caller, rt.record)) throw err("FORBIDDEN", `wait target ${t.agentId} not visible to caller`);
       const id = t.taskRunId ?? rt.record.currentTaskRunId;
-      if (id) joinTaskRunIds.push(id);
+      if (id !== null) {
+        const gate = this.gate.inspect(id);
+        const belongs = id === rt.record.currentTaskRunId || rt.queue.some((queued) => queued.id === id) || this.terminalRuns.get(id)?.agentId === rt.record.id || this.pendingSettle.get(id)?.agentId === rt.record.id || (gate !== null && (gate.agentId === rt.record.id || gate.reviewerIds.includes(rt.record.id)));
+        if (!belongs) throw err("NOT_FOUND", `task run ${id} does not belong to agent ${t.agentId}`);
+        joinTaskRunIds.push(id);
+      }
     }
     if (!targets && condition !== "activity") {
       // No explicit targets: join every unfinished run the caller can see.
@@ -3933,6 +3975,9 @@ export class Supervisor implements GateHost {
       const relevant = this.relevantRecords(waiter);
       return relevant.length > 0 ? this.waitResult(waiter, true, "events", relevant) : null;
     }
+    const addressee = this.authorOf(waiter.caller);
+    const openQuestion = [...this.questions.values()].some((q) => !q.answered && !q.cancelled && q.to === addressee && Date.parse(q.deadlineAt) > Date.now());
+    if (openQuestion) return this.waitResult(waiter, false, "needs_response", this.relevantRecords(waiter));
     const done = waiter.joinTaskRunIds.filter((id) => this.terminalRuns.has(id));
     const satisfied = waiter.joinTaskRunIds.length === 0 || (waiter.condition === "any_settled" ? done.length > 0 : done.length === waiter.joinTaskRunIds.length);
     return satisfied ? this.waitResult(waiter, true, "settled", this.relevantRecords(waiter)) : null;
@@ -3942,7 +3987,7 @@ export class Supervisor implements GateHost {
   private eventRelevant(waiter: WaiterReg, r: JournalRecord): boolean {
     const b = r.body;
     if (waiter.targets) {
-      return waiter.targets.some((t) => (t.taskRunId === null || t.taskRunId === b["taskRunId"]) && (b["agentId"] === t.agentId || b["from"] === t.agentId || b["to"] === t.agentId));
+      return waiter.targets.some((t) => (t.taskRunId === null || t.taskRunId === b["taskRunId"] || (b["from"] === t.agentId && t.taskRunId === b["fromTaskRunId"])) && (b["agentId"] === t.agentId || b["from"] === t.agentId || b["to"] === t.agentId));
     }
     if (isGovernor(waiter.caller)) return true;
     if (b["to"] === waiter.caller) return true;
@@ -4093,6 +4138,7 @@ export class Supervisor implements GateHost {
       this.reviewerSettled(rt, "closed", undefined);
     } else if (rt.activeRun) {
       const run = rt.activeRun;
+      this.pendingSettle.set(run.taskRunId, { agentId: rt.record.id, outcome: "interrupted", error: "closed; the worker did not confirm its interrupt and was stopped" });
       rt.activeRun = null;
       const accounted = this.accountUsage(rt, { ...(rt.usageSnapshot ?? {}), unknown: true });
       rt.usageSnapshot = null;
@@ -4399,6 +4445,7 @@ export class Supervisor implements GateHost {
           ? { taskRunId: rt.activeRun.taskRunId, generation: rt.activeRun.generation, workerPid: rt.workerPid, workerBoot: rt.workerBoot }
           : (this.pendingLost.get(rt.record.id) ?? null);
         if (lost) {
+          this.pendingLost.set(rt.record.id, lost);
           await this.reconcileLostRun(rt, lost, records, settled, quarantined);
           this.pendingLost.delete(rt.record.id);
         } else if (rt.parkedStartup !== null) {
@@ -4418,11 +4465,12 @@ export class Supervisor implements GateHost {
       }
       // Owners that were joining descendants settle now that the
       // descendants' lost runs are settled.
-      for (const [agentId, pending] of this.pendingSettle) {
-        const rt = this.agents.get(agentId);
-        if (rt && !this.terminalRuns.has(pending.taskRunId)) {
-          this.settleTaskTerminal(rt, pending.taskRunId, pending.outcome, pending.outcome === "succeeded" ? "" : pending.error || pending.outcome);
-          settled.push(pending.taskRunId);
+      for (const [taskRunId, pending] of this.pendingSettle) {
+        const rt = this.agents.get(pending.agentId);
+        if (rt && !this.terminalRuns.has(taskRunId)) {
+          this.gate.cancelTask(taskRunId, pending.outcome);
+          this.settleTaskTerminal(rt, taskRunId, pending.outcome, pending.outcome === "succeeded" ? "" : pending.error || pending.outcome);
+          settled.push(taskRunId);
         }
       }
       this.pendingSettle.clear();
@@ -4613,8 +4661,7 @@ export class Supervisor implements GateHost {
   }
 
   feedbackRecorded(): void {
-    this.evaluateWaiters();
-    this.opts.onChange?.();
+    this.notifyChanged();
   }
 
   setTaskPhase(agentId: AgentId, expectedTaskRunId: TaskRunId, phase: TaskPhase): void {
@@ -4650,6 +4697,7 @@ export class Supervisor implements GateHost {
   quiescent(agentId: AgentId): boolean {
     const rt = this.agents.get(agentId);
     if (!rt || rt.activeRun || rt.pendingRepair || this.broker.activeJobs(agentId).length > 0 || this.externalDispatcher.activeJobs(agentId).length > 0) return false;
+    if (rt.record.currentTaskRunId !== null && !this.terminalRuns.has(rt.record.currentTaskRunId)) return false;
     for (const reviewerId of this.gate.reviewersOf(agentId)) {
       if (this.agents.get(reviewerId)?.activeRun) return false;
     }
@@ -4712,6 +4760,7 @@ export class Supervisor implements GateHost {
   startReviewerExecution(reviewerId: AgentId, input: ReviewInput): void {
     const rt = this.agents.get(reviewerId);
     if (!rt) throw err("NOT_FOUND", `reviewer ${reviewerId} unknown`);
+    if (rt.record.desiredLifecycle === "closed") throw err("CLOSED", `reviewer ${reviewerId} is permanently closed`);
     // A crashed gate is rerun with fresh context, never resumed mid-evaluation.
     const old = rt.worker;
     rt.worker = null;
