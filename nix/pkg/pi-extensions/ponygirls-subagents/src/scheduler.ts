@@ -108,7 +108,7 @@ export class AdmissionScheduler {
   /** Charge created identities against the cumulative spawn budget (all or none). */
   chargeAgentCreation(count: number): { ok: true } | { ok: false; code: ErrorCode; message: string } {
     if (this.agentsCreated + count > this.limits.maxAgentsCreated) {
-      return { ok: false, code: "CAPACITY_EXCEEDED", message: `maxAgentsCreated (${this.limits.maxAgentsCreated}) exhausted` };
+      return { ok: false, code: "CAPACITY_EXCEEDED", message: `lifetime maxAgentsCreated (${this.limits.maxAgentsCreated}) exhausted (${this.agentsCreated} created, ${count} requested); waiting or closing cannot refund created identities` };
     }
     this.agentsCreated += count;
     return { ok: true };

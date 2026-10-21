@@ -296,3 +296,15 @@ test("recovery marks running reviews interrupted; resume_review continues withou
   await sup.shutdown();
   rmSync(dir, { recursive: true, force: true });
 });
+
+
+test("settled gated owners and managed reviewers reject explicit reuse model overrides", async () => {
+  const { sup, cleanup } = setup();
+  try {
+    const a = await sup.spawn("governor", { taskName: "g", message: "do work", profile: "reader", gate: gateSpec() }, "model-gate");
+    await until(() => sup.list("governor").find((agent) => agent.id === a.agentId)?.taskOutcome === "passed");
+    for (const agent of sup.list("governor")) {
+      await assert.rejects(() => sup.sendMessage("governor", agent.id, "task", "next", { model: { provider: "p", id: "m" } }, `model-${agent.id}`), agent.id === a.agentId ? /CONFLICT.*non-gated/ : /FORBIDDEN.*reviewer/);
+    }
+  } finally { cleanup(); }
+});

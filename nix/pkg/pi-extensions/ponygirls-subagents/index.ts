@@ -304,19 +304,20 @@ export default function (pi: ExtensionAPI): void {
     defineTool({
       name: "send_message",
       label: "Message subagent",
-      description: "Send a durable attributed message to a subagent. mode note persists without starting work; steer affects the running generation (rejects idle agents); task starts a new task run (queued behind unfinished work; reloads an idle agent). reply_to answers a child's question (see openQuestion in list_agents or messages in wait_agent).",
+      description: "Send a durable attributed message to a subagent. mode note persists without starting work; steer affects the running generation (rejects idle agents); task starts a new task run (queued behind unfinished work; reloads an idle agent). Reuse settled open agents at the lifetime spawn cap; closing cannot refund it. Optional model explicitly switches a settled non-gated agent before its task, subject to the root allowlist and current checkpoint (rejects busy/queued/closed targets). Root model changes never update retained children automatically. reply_to answers a child's question (see openQuestion in list_agents or messages in wait_agent).",
       parameters: Type.Object({
         target: Type.String({ description: "Agent id" }),
         message: Type.String(),
         mode: Type.Union([Type.Literal("note"), Type.Literal("steer"), Type.Literal("task")]),
         request_reply: Type.Optional(Type.Boolean()),
         reply_to: Type.Optional(Type.String({ description: "Question message id being answered" })),
+        model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String(), thinkingLevel: Type.Optional(Type.String()) }, { description: "Explicit model for safe settled task reuse; requires root allowedModels approval" })),
       }),
       executionMode: "sequential",
       async execute(toolCallId, params, _signal, _onUpdate, ctx) {
         try {
-          const p = params as { target: string; message: string; mode: "note" | "steer" | "task"; request_reply?: boolean; reply_to?: string };
-          return ok(await governing(ctx).supervisor.sendMessage(caller, p.target, p.mode, p.message, { requestReply: p.request_reply, replyTo: p.reply_to }, `tool:${toolCallId}`));
+          const p = params as { target: string; message: string; mode: "note" | "steer" | "task"; request_reply?: boolean; reply_to?: string; model?: { provider: string; id: string; thinkingLevel?: string } };
+          return ok(await governing(ctx).supervisor.sendMessage(caller, p.target, p.mode, p.message, { requestReply: p.request_reply, replyTo: p.reply_to, model: p.model }, `tool:${toolCallId}`));
         } catch (e) {
           return failed(e);
         }

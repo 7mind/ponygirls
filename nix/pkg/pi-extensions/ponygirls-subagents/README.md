@@ -332,6 +332,60 @@ uncertainty and a next task may proceed after terminal UNCERTAIN in host
 scope, with late billing preserved under the original identity; replays
 rebuild duplicate fencing and never re-account.
 
+## Capacity recovery and retained models
+
+Before falling back to working alone, inspect `list_agents` and the capacity
+feedback. The three limits are independent:
+
+- **Lifetime identities** (`maxAgentsCreated`, default 32) accumulate across
+  tasks, compaction, root turns, and recovery. Waiting, eviction, interruption,
+  and `close_agent` do not refund them. Closed agents cannot resume.
+- **Runnable slots** (default 4) park accepted work until a slot is free.
+  Wait for owned runs to settle; do not create replacement identities.
+- **Resident workers** (default 8) are evicted automatically when eligible idle
+  workers become available. Wait for running work/checkpoint capture to finish.
+  Resident saturation is not lifetime exhaustion.
+
+At the lifetime cap, reuse a settled, open, ordinary agent with
+`send_message(target="<id>", mode="task", message="...")`. This starts a new
+run under the same identity, history, workspace, grants, and retained model.
+A governing-session model/provider change **does not** switch retained children.
+The capacity response separates same-model reusable IDs from checkpoint-ready
+model-switch IDs. A fresh gated/reviewed spawn still needs its reserved managed
+reviewer identities; ordinary-agent reuse is not a substitute for that panel.
+
+For an explicit model/provider change, the owner or governor can pass:
+
+```text
+send_message(target="<settled-id>", mode="task", message="Continue the audit.", model={provider:"openai-codex", id:"<exact-model-id>", thinkingLevel:"off"})
+```
+
+The exact provider/id must be permitted by root `allowedModels` (`[]` denies
+explicit overrides; `null` allows all). The model must resolve in the worker's
+approved model store. The override is task-only, not a note/steer/reply; children
+cannot change their parent or siblings. Running, starting, queued, closed,
+gated/reviewer, joining, checkpointing, quarantined, loading, and owned-work
+states are rejected. Unknown usage or a root admission/billing hold also blocks
+switching: this path never retires a potentially outstanding billing obligation.
+
+Switching requires a validated checkpoint of the current settled generation.
+If capture is still running, wait and retry. A missing/stale checkpoint fails
+closed without stopping the old worker or discarding history. Resolve the
+checkpoint failure before retrying; a same-model task can continue on a retained
+worker without switching. Unknown usage is sticky accounting uncertainty, not a
+zero-cost result; no automatic reconciliation/reset is supplied by this operation.
+Once accepted durably, the replacement model and task intent survive replay;
+the worker reloads the selected native branch and appends model/thinking metadata
+without rewriting earlier messages or their billing attribution. Unavailable
+models fail visibly at reload; they are not silently replaced by the root model.
+
+Do not close or retire uncertain/background-owned effects as a capacity tactic.
+A settled invocation is not proof that an external background job has stopped;
+inspect that backend's ownership/status and join or manage it explicitly. If no
+safe reusable agent or required panel is available, report **delegation
+unavailable** before solo fallback. Do not reset counters, reopen tombstones,
+weaken reviews, or silently bypass the lifetime cap.
+
 ## Ungated example
 
 ```text

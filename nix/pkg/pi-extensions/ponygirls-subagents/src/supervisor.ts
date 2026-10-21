@@ -793,7 +793,16 @@ export class Supervisor implements GateHost {
           };
           this.messages.set(messageId, message);
           const rt = to !== "governor" ? this.agents.get(to) : undefined;
-          if (rt) rt.record.pendingMessageIds.push(messageId);
+          if (rt) {
+            rt.record.pendingMessageIds.push(messageId);
+            if (b["model"]) rt.record.model = b["model"] as ResolvedModel;
+            // Acceptance owns task intent; task.queued is only a projection.
+            // A crash between these appends must not lose the accepted run.
+            if (message.mode === "task" && message.taskRunId !== null && !rt.queue.some((q) => q.id === message.taskRunId)) {
+              rt.queue.push({ id: message.taskRunId, agentId: rt.record.id, messageId, text: message.text, createdAt: r.at, replaces: null, dispatched: false });
+              rt.record.pendingTaskIds.push(message.taskRunId);
+            }
+          }
           if (message.requestReply && typeof b["deadlineAt"] === "string") {
             this.questions.set(messageId, { messageId, from: message.from as AgentId, to, text: message.text, createdAt: r.at, deadlineAt: b["deadlineAt"] as string, answered: false, cancelled: false });
           }
@@ -1385,12 +1394,24 @@ export class Supervisor implements GateHost {
       // Reserve the complete panel before creating any workspace or identity.
       const identities = 1 + (gateSpec ? gateSpec.reviewers.length : 0);
       const charged = this.scheduler.chargeAgentCreation(identities);
-      if (!charged.ok) throw err(charged.code, charged.message);
+      if (!charged.ok) {
+        const reusable = [...this.agents.values()].filter((rt) => rt.record.parentId === (parentRt ? parentRt.record.id : null) && this.canReuseSettled(rt));
+        const switchable = reusable.filter((rt) => this.hasCurrentCheckpoint(rt));
+        const switchAdvice = switchable.length > 0
+          ? `Explicit model switching requires root allowlist approval; checkpoint-ready ids: ${switchable.map((rt) => rt.record.id).join(", ")}.`
+          : "No checkpoint-ready model switch is available; retain workers/history and resolve checkpoint recovery before switching.";
+        const recovery = gateSpec
+          ? "The requested gate/review requires fresh managed reviewer identities; ordinary settled-agent reuse cannot replace this panel. Review delegation unavailable; do not bypass the requested review."
+          : reusable.length > 0
+            ? `Reuse a settled open agent with send_message mode=task using the same retained model (ids: ${reusable.map((rt) => rt.record.id).join(", ")}). ${switchAdvice}`
+            : "Delegation unavailable now: no safely reusable settled open agent; wait for owned work to settle and inspect list_agents, otherwise report delegation unavailable before solo fallback.";
+        throw err(charged.code, `${charged.message}. ${recovery} close_agent does not refund lifetime identities; closed agents cannot resume. Do not retire uncertain or background-owned effects to recover capacity.`, { capacity: "lifetime", ...this.scheduler.snapshot(), reusableAgentIds: gateSpec ? [] : reusable.map((rt) => rt.record.id), modelSwitchAgentIds: gateSpec ? [] : switchable.map((rt) => rt.record.id) });
+      }
       const agentId = randomUUID();
       const resident = this.acquireResident(agentId);
       if (!resident) {
         this.scheduler.refundAgentCreation(identities);
-        throw err("CAPACITY_EXCEEDED", "no resident worker capacity; close or wait for settled agents");
+        throw err("CAPACITY_EXCEEDED", "resident worker capacity saturated (not lifetime exhaustion); wait for running workers/checkpoints to settle so idle workers can be evicted automatically; do not close uncertain or background-owned work");
       }
       const rollbackCapacity = (): void => {
         this.scheduler.release(resident);
@@ -2919,6 +2940,7 @@ export class Supervisor implements GateHost {
         return this.sendMessage(caller, str("target"), str("mode") as MessageMode, str("message"), {
           requestReply: args["request_reply"] === true ? true : undefined,
           replyTo: typeof args["reply_to"] === "string" ? args["reply_to"] : undefined,
+          model: args["model"] as SpawnParams["model"],
         }, requestId);
       case "list_agents":
         return this.list(caller);
@@ -3468,11 +3490,14 @@ export class Supervisor implements GateHost {
     target: AgentId | "parent",
     mode: MessageMode,
     text: string,
-    opts: { requestReply?: boolean; replyTo?: MessageId },
+    opts: { requestReply?: boolean; replyTo?: MessageId; model?: SpawnParams["model"] },
     requestId: string,
   ): Promise<{ messageId: MessageId; taskRunId: TaskRunId | null }> {
     return this.serialized(async () => {
       this.sweepExpiredQuestions();
+      if (opts.model !== undefined && (mode !== "task" || opts.replyTo !== undefined)) {
+        throw err("INVALID", "model override requires mode=task and cannot answer a question");
+      }
       if (opts.requestReply === true && opts.replyTo !== undefined) {
         throw err("INVALID", "request_reply and reply_to are mutually exclusive");
       }
@@ -3501,6 +3526,8 @@ export class Supervisor implements GateHost {
       if (rt && mode === "task" && (this.pendingLost.has(rt.record.id) || rt.quarantined)) {
         throw err("RECOVERY_OWNER_UNCONFIRMED", rt.quarantined ?? "an unfinished run awaits recovery reconciliation");
       }
+      if (rt && opts.model !== undefined) this.checkControl(caller, rt.record);
+      const model = opts.model === undefined ? null : this.validateReuseModel(rt, opts.model);
       const messageId = randomUUID();
       const taskRunId = mode === "task" ? randomUUID() : (rt?.record.currentTaskRunId ?? null);
       const deadlineAt = opts.requestReply === true ? new Date(Date.now() + this.questionTtlMs).toISOString() : undefined;
@@ -3530,14 +3557,26 @@ export class Supervisor implements GateHost {
         text,
         taskRunId,
         requestReply: message.requestReply,
+        model,
         deadlineAt,
         requestId,
         digest,
       });
       message.seq = accepted.seq;
       this.messages.set(messageId, message);
-      this.store.recordCommand(requestId, accepted);
+      if (rt && model) {
+        rt.record.model = model;
+        this.unloadWorker(rt);
+      }
       rt?.record.pendingMessageIds.push(messageId);
+      const queued: QueuedTask | null = rt && mode === "task"
+        ? { id: taskRunId!, agentId: to, messageId, text, createdAt: this.now(), replaces: null, dispatched: false }
+        : null;
+      if (rt && queued) {
+        rt.queue.push(queued);
+        rt.record.pendingTaskIds.push(queued.id);
+        rt.record.detail = "task queued: acceptance persistence interrupted; explicit recovery may be required";
+      }
 
       if (deadlineAt) {
         this.questions.set(messageId, { messageId, from: from as AgentId, to, text, createdAt: this.now(), deadlineAt, answered: false, cancelled: false });
@@ -3553,11 +3592,9 @@ export class Supervisor implements GateHost {
         this.preemptForQuestion(message);
       }
 
+      this.store.recordCommand(requestId, accepted);
       if (!rt) return { messageId, taskRunId };
-      if (mode === "task") {
-        const queued: QueuedTask = { id: taskRunId!, agentId: to, messageId, text, createdAt: this.now(), replaces: null, dispatched: false };
-        rt.queue.push(queued);
-        rt.record.pendingTaskIds.push(queued.id);
+      if (queued) {
         this.publish("task.queued", { id: queued.id, agentId: to, messageId, text, replaces: null });
         // An explicit new task resumes an agent recovery held — unless
         // admission itself is held (billing uncommitted, retained faults,
@@ -3582,6 +3619,38 @@ export class Supervisor implements GateHost {
       }
       return { messageId, taskRunId };
     });
+  }
+
+  private canReuseSettled(rt: AgentRuntime): boolean {
+    return rt.record.desiredLifecycle === "open" && rt.record.taskPhase === "terminal" && rt.record.observed === "settled"
+      && rt.activeRun === null && rt.parkedStartup === null && rt.checkpointing === null
+      && !rt.queue.some((q) => !q.dispatched) && !this.isPhaseLocked(rt)
+      && !this.gate.isReviewer(rt.record.id) && rt.gateTaskRunId === null
+      && !rt.loading && !rt.usage.unknown && !rt.quarantined && !this.pendingLost.has(rt.record.id)
+      && this.activeDescendants(rt.record.id).length === 0
+      && this.broker.activeJobs(rt.record.id).length === 0 && this.externalDispatcher.activeJobs(rt.record.id).length === 0;
+  }
+
+  private hasCurrentCheckpoint(rt: AgentRuntime): boolean {
+    const checkpoint = this.store.loadCheckpoint(rt.record.id);
+    return checkpoint !== null && checkpoint.ref.generation === rt.record.executionGeneration && checkpoint.ref.taskRunId === rt.record.currentTaskRunId;
+  }
+
+  private validateReuseModel(rt: AgentRuntime | null, override: SpawnParams["model"]): ResolvedModel {
+    if (!override || typeof override.provider !== "string" || !override.provider.trim() || typeof override.id !== "string" || !override.id.trim()
+      || (override.thinkingLevel !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(override.thinkingLevel))) {
+      throw err("INVALID", "model requires nonempty provider/id and a valid thinkingLevel");
+    }
+    if (!rt || !this.canReuseSettled(rt)) throw err("CONFLICT", "model switch requires a settled open non-gated agent with no running, queued, checkpointing, descendant or owned work and no unknown usage");
+    const hold = this.admissionHoldError();
+    if (hold !== null) throw hold;
+    if (this.policy.allowedModels !== null && !this.policy.allowedModels.some((m) => m.provider === override.provider && m.id === override.id)) {
+      throw err("POLICY_DENIED", `model ${override.provider}/${override.id} not in root allowlist`);
+    }
+    if (!this.hasCurrentCheckpoint(rt)) {
+      throw err("RECOVERY_OWNER_UNCONFIRMED", "model switch requires a validated checkpoint of the current settled generation; retain this worker/history and resolve checkpoint recovery first");
+    }
+    return { provider: override.provider, id: override.id, thinkingLevel: override.thinkingLevel ?? rt.record.model?.thinkingLevel ?? "medium" };
   }
 
   private deliverMessage(rt: AgentRuntime, message: MailboxMessage): void {
@@ -4575,6 +4644,11 @@ export class Supervisor implements GateHost {
   }
 
   private evict(rt: AgentRuntime): void {
+    this.publish("recovery.event", { agentId: rt.record.id, phase: "evicted" });
+    this.unloadWorker(rt);
+  }
+
+  private unloadWorker(rt: AgentRuntime): void {
     const worker = rt.worker;
     rt.worker = null;
     worker?.kill();
@@ -4585,7 +4659,6 @@ export class Supervisor implements GateHost {
     this.releaseResident(rt);
     rt.record.residency = "unloaded";
     rt.record.detail = "evicted; native session retained for resume";
-    this.publish("recovery.event", { agentId: rt.record.id, phase: "evicted" });
   }
 
   /** Evict one idle loaded worker to make room; false when none exists. */
@@ -4707,7 +4780,7 @@ export class Supervisor implements GateHost {
   /** A replacement gate specification gets fresh, correctly configured reviewer identities. */
   createReviewerPanel(mainAgentId: AgentId, taskRunId: TaskRunId, spec: NormalizedGateSpec): AgentId[] {
     const charged = this.scheduler.chargeAgentCreation(spec.reviewers.length);
-    if (!charged.ok) throw err(charged.code, charged.message);
+    if (!charged.ok) throw err(charged.code, `${charged.message}. A replacement reviewer panel requires fresh identities; settled ordinary-agent reuse cannot replace a managed panel. Review delegation unavailable; closing cannot refund lifetime identities.`);
     return spec.reviewers.map((reviewer, index) => this.createManagedReviewer(mainAgentId, taskRunId, reviewer, index));
   }
 
@@ -5220,7 +5293,8 @@ function pendingIntentOf(rt: AgentRuntime): string {
   if (r.taskPhase === "reviewing") return "reviewing";
   if (r.taskPhase === "review_queued") return "review queued";
   if (r.taskPhase === "repair_queued") return "repair queued";
-  if (rt.queue.some((q) => !q.dispatched)) return "task queued";
+  if (rt.parkedStartup !== null) return "queued: waiting for runnable capacity; wait for running work to settle";
+  if (rt.queue.some((q) => !q.dispatched)) return r.detail.startsWith("task queued:") ? r.detail : "task queued";
   if (r.observed === "awaiting_parent") return "awaiting parent reply";
   if (r.observed === "running") return r.detail || "running";
   return r.observed;
