@@ -143,7 +143,7 @@ test("R7 a task accepted while reload fails for capacity is not stranded", async
   const b = await sup.spawn("governor", { taskName: "b", message: "m", profile: "reader" }, "rb");
   // No resident capacity while b runs: the task is accepted and waits.
   const sent = await sup.sendMessage("governor", a.agentId, "task", "follow-up", {}, "ra2");
-  assert.equal(sup.list("governor").find((v) => v.id === a.agentId)!.pendingIntent, "task queued");
+  assert.equal(sup.list("governor").find((v) => v.id === a.agentId)!.pendingIntent, "task queued: waiting for resident capacity");
   byAgent(b.agentId)[0]!.settle();
   await tick(50);
   assert.equal(byAgent(a.agentId).length, 2, "a reloaded once capacity freed");

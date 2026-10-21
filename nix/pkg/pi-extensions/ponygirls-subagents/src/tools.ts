@@ -150,13 +150,14 @@ export function childToolSpec<S>(T: TypeBuilder<S>, name: string): ToolSpec<S> {
     }
     case "send_message":
       return {
-        description: "Send a durable attributed message. target is 'parent' or an agent id in your own subtree. mode note persists without starting work; steer affects a running generation; task schedules a new task run for a descendant. request_reply asks a question (then call wait_agent for the answer); reply_to answers one.",
+        description: "Send a durable attributed message. target is 'parent' or an agent id in your own subtree. mode note persists without starting work; steer affects a running generation; task schedules a new task run for a descendant. request_reply asks a question (then call wait_agent for the answer); reply_to answers one. Reuse settled open agents at the lifetime spawn cap (closing cannot refund it). Optional model explicitly switches a settled non-gated descendant for its task; requires root allowlist approval and current checkpoint, rejects busy/queued/closed targets. Root model changes never update retained children automatically.",
         parameters: T.Object({
           target: T.String({ description: "'parent' or a descendant agent id" }),
           message: T.String(),
           mode: T.Union([T.Literal("note"), T.Literal("steer"), T.Literal("task")]),
           request_reply: T.Optional(T.Boolean()),
           reply_to: T.Optional(T.String()),
+          model: T.Optional(T.Object({ provider: T.String(), id: T.String(), thinkingLevel: T.Optional(T.String()) })),
         }),
       };
     case "wait_agent":

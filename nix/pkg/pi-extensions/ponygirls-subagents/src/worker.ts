@@ -143,12 +143,16 @@ interface WorkerModelRuntime {
 interface SessionManagerLike {
   getSessionFile: () => string | undefined;
   getLeafId: () => string | null;
-  getBranch: () => Array<{ id: string; type: string; details?: unknown }>;
+  getBranch: () => Array<{ id: string; type: string; details?: unknown; provider?: string; modelId?: string; thinkingLevel?: string }>;
+  appendModelChange: (provider: string, modelId: string) => string;
+  appendThinkingLevelChange: (thinkingLevel: string) => string;
   branch: (branchFromId: string) => void;
 }
 
 interface WorkerSession {
   sessionId: string;
+  readonly model: { provider: string; id: string };
+  readonly thinkingLevel: string;
   readonly isCompacting?: boolean;
   agent: {
     toolExecution: string;
@@ -1623,6 +1627,21 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
       tools: init.tools,
       customTools,
     })) as { session: WorkerSession });
+    if (session.model.provider !== model["provider"] || session.model.id !== model["id"]) {
+      throw new Error("MODEL_UNAVAILABLE: restored worker did not select the admitted model");
+    }
+    // The SDK honors explicit selection on restore but only records initial
+    // selection for new sessions. Persist changed selection on the native
+    // branch too, without rewriting any historical assistant attribution.
+    if (init.restore) {
+      const branch = sessionManager.getBranch();
+      const selected = branch.filter((entry) => entry.type === "model_change").at(-1);
+      if (!selected || selected.provider !== session.model.provider || selected.modelId !== session.model.id) {
+        sessionManager.appendModelChange(session.model.provider, session.model.id);
+      }
+      const thinking = branch.filter((entry) => entry.type === "thinking_level_change").at(-1);
+      if (!thinking || thinking.thinkingLevel !== session.thinkingLevel) sessionManager.appendThinkingLevelChange(session.thinkingLevel);
+    }
   } catch (e) {
     fail(env.requestId, "INVALID", (e as Error).message);
     return;

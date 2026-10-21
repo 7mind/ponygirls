@@ -25,6 +25,37 @@
   probe, so every tool of a sandboxed child returns `SANDBOX_UNAVAILABLE`
   until bwrap is allowed.
 
+## Supervisor recovery procedure
+
+1. Inspect `list_agents` and capacity feedback before solo fallback. Lifetime
+   `maxAgentsCreated` is cumulative; closing never refunds identities and closed
+   agents cannot resume. Runnable saturation parks work; resident saturation can
+   clear when eligible idle workers are evicted. Wait/join rather than respawn.
+2. Reuse settled open ordinary agents with `send_message(mode="task")`. The
+   retained model does not follow governing-session provider/model changes.
+   For an explicit change, pass `model: {provider, id, thinkingLevel?}` on that
+   task. Only an owner/governor can do this, and root `allowedModels` applies.
+3. Model switching requires a current validated native checkpoint, known usage,
+   no admission hold, and a quiescent, non-gated target: no running/starting,
+   queued/parked, joining, checkpointing, loading, recovery-uncertain, or owned
+   work. Wait for transient states; do not discard history when capture fails.
+   Acceptance journals model and task together; replay retains the same identity,
+   history, grants, workspace, and cumulative billing. Worker reload records the
+   explicit native model/thinking selection without rewriting historical messages.
+4. Same-model reuse is distinct from checkpoint-ready switching. A fresh required
+   review panel still needs fresh managed identities; ordinary reuse cannot
+   replace it. Unresolvable models and failed checkpoints are visible failures,
+   never an implicit provider fallback. Unknown usage remains sticky; switching
+   does not reconcile it or make outstanding billing disappear.
+5. Never retire uncertain or background-owned effects merely to free capacity.
+   Backend background ownership can outlive an invocation's settlement; check and
+   join/manage it explicitly. If safe reuse or a required panel is unavailable,
+   report **delegation unavailable** before solo fallback. No counter reset,
+   tombstone reopening, or review bypass is authorized.
+
+See [Capacity recovery and retained models](../README.md#capacity-recovery-and-retained-models)
+for the tool example and limit defaults.
+
 ## Isolation
 
 Chosen per child with `spawn_agent`'s `isolation`; a child is never less

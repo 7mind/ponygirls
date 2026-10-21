@@ -777,3 +777,90 @@ test("real worker: ORIGINAL end(message) completes the Agent loop with identical
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("restored worker records the explicitly admitted replacement model without rewriting native history", async (t) => {
+  if (!SDK_ROOT) { t.skip("PI_SUBAGENTS_SDK_ROOT unset"); return; }
+  const { mkdirSync, writeFileSync, readFileSync } = await import("node:fs");
+  const { bindChannel } = await import("../src/protocol.ts");
+  const dir = mkdtempSync(join(tmpdir(), "subagents-model-restore-"));
+  const sessionsDir = join(dir, "sessions");
+  const hostAgentDir = join(dir, "host-agent");
+  mkdirSync(sessionsDir);
+  mkdirSync(hostAgentDir);
+  writeFileSync(join(hostAgentDir, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "dummy" } }));
+  const sessionFile = join(sessionsDir, "old.jsonl");
+  const timestamp = new Date().toISOString();
+  const entries = [
+    { type: "session", version: 3, id: "9e62585b-7cc3-45d2-afab-803f3342ca6a", timestamp, cwd: dir },
+    { type: "model_change", id: "model-old", parentId: null, timestamp, provider: "anthropic", modelId: "claude-sonnet-4-5" },
+    { type: "thinking_level_change", id: "thinking-old", parentId: "model-old", timestamp, thinkingLevel: "high" },
+    { type: "message", id: "history", parentId: "thinking-old", timestamp, message: { role: "user", content: "KEEP-NATIVE-HISTORY", timestamp: Date.now() } },
+  ];
+  writeFileSync(sessionFile, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  const handle = new WorkerHandle({ workerPath: WORKER_PATH, rootEpoch: "epoch", agentId: "agent", sdkRoot: SDK_ROOT, deterministic: false, agentDir: join(dir, "worker-home"), sessionsDir, hostAgentDir }, bindChannel("epoch", "agent", "instance"));
+  handle.setProviderAdmissionRequestHandler(async () => { throw new Error("restore must not infer"); });
+  try {
+    await handle.launch();
+    const ack = await handle.request("initialize", {
+      taskText: null, profile: "reader", instructionHash: "", instructions: { contextFiles: [], skills: [] },
+      model: { provider: "openai", id: "gpt-4o", thinkingLevel: "off" }, taskRunId: "task", executionGeneration: 2,
+      workdir: dir, readRoots: [dir], writable: false, tools: [], restore: { sessionFile, leafEntryId: "history" },
+    }, { timeoutMs: 60_000 }) as { ok: boolean; message?: string };
+    assert.equal(ack.ok, true, ack.message);
+    const cp = await handle.request("checkpoint", {}, { timeoutMs: 15_000 }) as { ok: boolean; sessionFile: string; byteCount: number };
+    assert.equal(cp.ok, true);
+    const restored = readFileSync(cp.sessionFile).subarray(0, cp.byteCount).toString("utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.deepEqual(restored.slice(0, entries.length), entries);
+    const selection = restored.filter((entry) => entry["type"] === "model_change").at(-1)!;
+    assert.equal(selection["provider"], "openai");
+    assert.equal(selection["modelId"], "gpt-4o");
+    assert.equal(restored.filter((entry) => entry["type"] === "thinking_level_change").at(-1)!["thinkingLevel"], "off");
+  } finally { handle.kill(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("real settled worker reuses its identity at the lifetime cap with an explicit model and retained history/billing", async (t) => {
+  if (!SDK_ROOT) { t.skip("PI_SUBAGENTS_SDK_ROOT unset"); return; }
+  const { Supervisor } = await import("../src/supervisor.ts");
+  const { InMemoryRunStore } = await import("../src/store.ts");
+  const { DummyToolExecutor } = await import("../src/sandbox.ts");
+  const { DummyWorkspaceManager } = await import("../src/workspace.ts");
+  const { defaultSupervisorPolicy } = await import("../src/policy.ts");
+  const { newWorkerBinding } = await import("../src/worker-launch.ts");
+  const { until } = await import("./fake-worker.ts");
+  const dir = mkdtempSync(join(tmpdir(), "subagents-cap-reuse-"));
+  const store = new InMemoryRunStore("cap-reuse");
+  const policy = defaultSupervisorPolicy();
+  const model = { provider: "replacement", id: "new-model", thinkingLevel: "off" };
+  policy.allowedModels = [model];
+  let launches = 0;
+  const sup = new Supervisor({
+    rootId: "cap-reuse", rootDir: dir, store, policy, governor: testGovernor,
+    schedulerLimits: { maxAgentsCreated: 1 },
+    executors: bothExecutors(new DummyToolExecutor()), workspace: new DummyWorkspaceManager(),
+    workerFactory: ({ agentId, rootEpoch }) => new WorkerHandle({
+      workerPath: WORKER_PATH, rootEpoch, agentId, sdkRoot: SDK_ROOT, deterministic: true,
+      agentDir: join(dir, "agents", agentId), sessionsDir: join(dir, "sessions"),
+      script: [{ text: `run-${++launches}` }],
+    }, newWorkerBinding(rootEpoch, agentId)),
+  });
+  try {
+    const a = await sup.spawn("governor", { taskName: "retained", message: "first-history", profile: "reader" }, "first");
+    await until(() => sup.list("governor")[0]?.taskOutcome === "succeeded" && store.loadCheckpoint(a.agentId) !== null, 30_000);
+    const usageBefore = sup.list("governor")[0]!.usage;
+    await assert.rejects(() => sup.spawn("governor", { taskName: "excess", message: "no", profile: "reader" }, "excess"), /lifetime/);
+    const next = await sup.sendMessage("governor", a.agentId, "task", "second-history", { model }, "reuse");
+    await until(() => sup.list("governor")[0]?.taskOutcome === "succeeded" && store.loadCheckpoint(a.agentId)?.ref.generation === 2, 30_000);
+    assert.equal(launches, 2);
+    assert.equal(sup.admissionScheduler.agentsCreatedCount, 1);
+    assert.equal(sup.list("governor")[0]!.model, "replacement/new-model");
+    assert.equal(sup.list("governor")[0]!.usage.inputTokens, usageBefore.inputTokens * 2);
+    assert.equal(sup.list("governor")[0]!.usage.cost, usageBefore.cost! * 2);
+    assert.equal(sup.list("governor")[0]!.usage.unknown, false);
+    assert.notEqual(next.taskRunId, a.taskRunId);
+    const history = Buffer.from(store.loadCheckpoint(a.agentId)!.bytes).toString("utf8");
+    assert.ok(history.includes("first-history"));
+    assert.ok(history.includes("second-history"));
+    assert.ok(history.includes("run-1"));
+    assert.ok(history.includes("run-2"));
+  } finally { await sup.shutdown(); rmSync(dir, { recursive: true, force: true }); }
+});
