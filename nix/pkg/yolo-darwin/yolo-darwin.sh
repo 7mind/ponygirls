@@ -13,6 +13,7 @@
 : "${YOLO_CUSTOM_PROMPT:?must be set}"
 : "${YOLO_SANDBOX_ENTRYPOINT:?must be set}"
 
+# YOLO_MANAGED_CONFIG_HOME optionally supplies managed assets for named profiles.
 # An empty profile preserves each agent's native home-directory defaults.
 PROFILE=""
 # Host-side profile management (`--list-profiles`, `--delete-profile NAME`,
@@ -721,12 +722,13 @@ sync_profile_asset() {
 reshare_profile_assets() {
   local agent="$1"
   [[ -z "$PROFILE" ]] && return 0
+  local config_home="${YOLO_MANAGED_CONFIG_HOME:-$HOME}"
   local src_dir dst_dir
   local -a assets
   case "$agent" in
-    claude) src_dir="${HOME}/.claude";   dst_dir="$CLAUDE_CONFIG_DIR"; assets=(settings.json CLAUDE.md skills plugins commands agents) ;;
-    codex)  src_dir="${HOME}/.codex";    dst_dir="$CODEX_HOME";        assets=(AGENTS.md prompts skills) ;;
-    pi)     src_dir="${HOME}/.pi/agent"; dst_dir="$PI_PROFILE_DIR";    assets=("${PI_SHARED_ASSETS[@]}") ;;
+    claude) src_dir="${config_home}/.claude";   dst_dir="$CLAUDE_CONFIG_DIR"; assets=(settings.json CLAUDE.md skills plugins commands agents) ;;
+    codex)  src_dir="${config_home}/.codex";    dst_dir="$CODEX_HOME";        assets=(AGENTS.md prompts skills) ;;
+    pi)     src_dir="${config_home}/.pi/agent"; dst_dir="$PI_PROFILE_DIR";    assets=("${PI_SHARED_ASSETS[@]}") ;;
     *) return 0 ;;
   esac
   mkdir -p "$dst_dir"
@@ -740,13 +742,14 @@ reshare_profile_assets() {
 
 prepare_profile_assets() {
   [[ -z "$PROFILE" ]] && return 0
+  local config_home="${YOLO_MANAGED_CONFIG_HOME:-$HOME}"
   reshare_profile_assets claude
   reshare_profile_assets codex
   reshare_profile_assets pi
   if tag_active codex-config off; then
-    ensure_codex_config "$CODEX_HOME/config.toml" "${HOME}/.codex/config.toml" "$PWD"
+    ensure_codex_config "$CODEX_HOME/config.toml" "${config_home}/.codex/config.toml" "$PWD"
   else
-    mirror_codex_config "$CODEX_HOME/config.toml" "${HOME}/.codex/config.toml"
+    mirror_codex_config "$CODEX_HOME/config.toml" "${config_home}/.codex/config.toml"
   fi
 }
 
@@ -912,6 +915,8 @@ yolo_exec_agent() {
       base_env_pairs+=("$name=${!name}")
     fi
   done
+  local named_profile=0
+  [[ -z "$PROFILE" ]] || named_profile=1
   env -i \
     "${base_env_pairs[@]}" \
     "${PROFILE_ENV_PAIRS[@]}" \
@@ -921,6 +926,7 @@ yolo_exec_agent() {
     "${ENV_PAIRS[@]}" \
     SMIND_SANDBOXED=1 \
     CLAUDE_CODE_SANDBOXED=1 \
+    "YOLO_NAMED_PROFILE=$named_profile" \
     "${entrypoint_env[@]}" \
     "${sandbox_argv[@]}" \
     "${child_argv[@]}"

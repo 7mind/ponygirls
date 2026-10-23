@@ -463,7 +463,8 @@ assert_zero "claude launch with custom prompt succeeds" "$STATUS"
 assert_contains "claude receives targeted and shared prompt fragments" "$OUT" $'prompt<<claude only\n\nshared line\n\naudio line>>'
 assert_not_contains "claude excludes pi-targeted prompt fragments" "$OUT" "pi only"
 # Regression: D1 — orchestration variables must stop at the launcher boundary.
-assert_not_contains "confined child excludes the YOLO orchestration namespace" "$OUT" "YOLO_"
+assert_not_contains "confined child excludes orchestration variables except profile marker" \
+  "$(printf '%s\n' "$OUT" | grep -v '^YOLO_NAMED_PROFILE$')" "YOLO_"
 run_prompt_exec pi
 assert_zero "pi launch with custom prompt succeeds" "$STATUS"
 assert_contains "pi receives shared and targeted prompt fragments" "$OUT" $'prompt<<shared line\n\naudio line\n\npi only>>'
@@ -547,7 +548,8 @@ CAPTURED_PROFILE="$(cat "$CAPTURE_PROFILE_FILE" 2>/dev/null || true)"
 assert_contains "Podman stable socket symlink receives read access" "$CAPTURED_PROFILE" "(literal \"$PODMAN_SOCKET_LINK\")"
 assert_contains "Podman runtime socket target receives read access" "$CAPTURED_PROFILE" "(literal \"$PODMAN_SOCKET_TARGET\")"
 assert_contains "extra package bin is prepended to PATH" "$OUT" "EXTRA_TOOL=$EXTRA_BIN/yolo-extra-tool"
-assert_not_contains "configured child excludes YOLO orchestration variables" "$OUT" "YOLO_"
+assert_not_contains "configured child excludes orchestration variables except profile marker" \
+  "$(printf '%s\n' "$OUT" | grep -v '^YOLO_NAMED_PROFILE$')" "YOLO_"
 assert_eq "enabled host hook runs" "host" "$(cat "$HOST_HOOK_MARKER" 2>/dev/null || true)"
 assert_eq "disabled host hook does not run" "absent" "$(if [[ -e "$DISABLED_HOST_HOOK_MARKER" ]]; then echo present; else echo absent; fi)"
 CAPTURED_ARGS="$(cat "$CAPTURE_ARGS_FILE" 2>/dev/null || true)"
@@ -800,5 +802,60 @@ done
 unset YOLO_VALIDATED_VARS
 
 # ── summary ─────────────────────────────────────────────────────────────────
+# Specified: managed assets replace conflicting native assets only for named profiles.
+MANAGED_HOME="$WORKDIR/managed home"
+for asset in .claude/settings.json .claude/CLAUDE.md .claude/skills/review/SKILL.md \
+  .claude/plugins/plugin.json .claude/commands/plan.md .claude/agents/reviewer.md \
+  .codex/AGENTS.md .codex/prompts/plan.md .codex/skills/review/SKILL.md \
+  .pi/agent/settings.json .pi/agent/AGENTS.md .pi/agent/APPEND_SYSTEM.md \
+  .pi/agent/integration-agents/reviewer.md .pi/agent/prompts/plan.md \
+  .pi/agent/skills/review/SKILL.md .pi/agent/extensions/plugin.js .pi/agent/mcp.json; do
+  mkdir -p "$MANAGED_HOME/$(dirname "$asset")"
+  printf 'managed:%s\n' "$asset" > "$MANAGED_HOME/$asset"
+done
+printf 'model = "managed"\n' > "$MANAGED_HOME/.codex/config.toml"
+printf 'not-profile-auth\n' > "$MANAGED_HOME/.pi/agent/auth.json"
+printf 'not-profile-state\n' > "$MANAGED_HOME/.claude/history.jsonl"
+OUT="$(YOLO_MANAGED_CONFIG_HOME="$MANAGED_HOME" run_profile_sync)"
+assert_zero "managed-source named launch succeeds" "$?"
+for asset in claude/settings.json claude/CLAUDE.md claude/skills/review/SKILL.md \
+  claude/plugins/plugin.json claude/commands/plan.md claude/agents/reviewer.md \
+  codex/AGENTS.md codex/prompts/plan.md codex/skills/review/SKILL.md \
+  pi/settings.json pi/AGENTS.md pi/APPEND_SYSTEM.md pi/integration-agents/reviewer.md \
+  pi/prompts/plan.md pi/skills/review/SKILL.md pi/extensions/plugin.js pi/mcp.json; do
+  assert_contains "managed named asset $asset" "$(cat "$RESHARE_PROF/$asset" 2>/dev/null)" 'managed:'
+done
+assert_eq "named Codex config uses managed source" 'model = "managed"' "$(cat "$RESHARE_PROF/codex/config.toml")"
+assert_eq "managed Pi credentials are not copied" no "$([[ -e "$RESHARE_PROF/pi/auth.json" ]] && echo yes || echo no)"
+assert_eq "managed Claude state is not copied" no "$([[ -e "$RESHARE_PROF/claude/history.jsonl" ]] && echo yes || echo no)"
+OUT="$(YOLO_MANAGED_CONFIG_HOME="$MANAGED_HOME" run_profile_sync --enable=codex-config)"
+assert_zero "managed writable-config launch succeeds" "$?"
+assert_contains "writable named Codex config uses managed base" "$(cat "$RESHARE_PROF/codex/config.toml")" 'model = "managed"'
+# A missing managed asset must not import a native counterpart into a fresh profile.
+printf 'native-only\n' > "$RESHARE_HOME/.claude/settings.json"
+rm "$MANAGED_HOME/.claude/settings.json"
+OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
+  YOLO_MANAGED_CONFIG_HOME="$MANAGED_HOME" YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+  bash "$SCRIPT" --profile managed-missing cmd true 2>&1)"
+assert_zero "missing managed asset launch succeeds" "$?"
+assert_eq "missing managed asset does not fall back to native" no \
+  "$([[ -e "$RESHARE_HOME/.config/yolo/managed-missing/claude/settings.json" ]] && echo yes || echo no)"
+YOLO_MANAGED_CONFIG_HOME="$MANAGED_HOME" run_codex
+assert_zero "managed-source default launch succeeds" "$STATUS"
+assert_not_contains "default launch ignores managed source" "$OUT" "$MANAGED_HOME"
+assert_not_contains "native Codex config never uses managed source" "$(cat "$CODEX_HOME_DIR/.codex/config.toml")" 'model = "managed"'
+assert_eq "native Claude settings remain unchanged" native-only "$(cat "$RESHARE_HOME/.claude/settings.json")"
+
+OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
+  YOLO_NAMED_PROFILE=0 YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+  bash "$SCRIPT" --profile foo --env YOLO_NAMED_PROFILE=0 cmd printenv YOLO_NAMED_PROFILE 2>&1)"
+assert_zero "named marker child launch succeeds" "$?"
+assert_eq "named marker overrides ambient and CLI env in child" 1 "$OUT"
+OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
+  YOLO_NAMED_PROFILE=1 YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+  bash "$SCRIPT" --env YOLO_NAMED_PROFILE=1 cmd printenv YOLO_NAMED_PROFILE 2>&1)"
+assert_zero "default marker child launch succeeds" "$?"
+assert_eq "default marker overrides ambient and CLI env in child" 0 "$OUT"
+
 echo "$TESTS_RUN assertions run, $FAILURES failed."
 [[ "$FAILURES" -eq 0 ]]

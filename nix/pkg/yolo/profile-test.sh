@@ -783,6 +783,44 @@ assert_eq "failed composition removes private temporary file" "" "$LEFTOVER"
 unset HAYSTACK_TOKEN MANURE_TOKEN_FILE
 unset YOLO_VALIDATED_VARS
 
+# Specified: managed home supplies named-profile assets, not auth/state.
+MANAGED_HOME="$WORKDIR/managed home"
+mkdir -p "$MANAGED_HOME/.claude" "$MANAGED_HOME/.codex" "$MANAGED_HOME/.pi/agent"
+printf 'model = "managed"\n' > "$MANAGED_HOME/.codex/config.toml"
+OUT="$(YOLO_MANAGED_CONFIG_HOME="$MANAGED_HOME" run_yolo --profile managed cmd true)"
+assert_eq "managed-source named launch succeeds" "0" "$?"
+for asset in .claude/skills .claude/plugins .claude/commands .claude/agents \
+  .claude/settings.json .claude/CLAUDE.md .codex/AGENTS.md .codex/prompts .codex/skills .codex/config.toml; do
+  assert_contains "named $asset uses managed source" "$OUT" "$MANAGED_HOME/$asset,$FAKE_HOME/$asset"
+  assert_not_contains "named $asset never falls back to native source" "$OUT" "$FAKE_HOME/$asset,$FAKE_HOME/$asset"
+done
+while IFS= read -r asset; do
+  assert_contains "named Pi $asset uses managed source" "$OUT" \
+    "$MANAGED_HOME/.pi/agent/$asset,$FAKE_HOME/.pi/agent/$asset"
+  assert_not_contains "named Pi $asset never falls back to native source" "$OUT" \
+    "$FAKE_HOME/.pi/agent/$asset,$FAKE_HOME/.pi/agent/$asset"
+done <<< "$YOLO_PI_SHARED_ASSETS"
+assert_contains "named credentials/state still use profile backing" "$OUT" \
+  "$FAKE_HOME/.config/yolo/managed/claude/home,$FAKE_HOME/.claude"
+assert_not_contains "managed source is not a credential/state mount" "$OUT" \
+  "$MANAGED_HOME/.claude,$FAKE_HOME/.claude"
+OUT="$(YOLO_MANAGED_CONFIG_HOME="$MANAGED_HOME" run_yolo --profile managed --enable=codex-config cmd true)"
+assert_eq "managed writable-config launch succeeds" "0" "$?"
+assert_contains "writable named Codex config uses managed base" \
+  "$(cat "$FAKE_HOME/.config/yolo/managed/codex/home/config.toml")" 'model = "managed"'
+OUT="$(YOLO_MANAGED_CONFIG_HOME="$MANAGED_HOME" run_yolo cmd true)"
+assert_eq "managed-source default launch succeeds" "0" "$?"
+assert_not_contains "default launch ignores managed source" "$OUT" "$MANAGED_HOME"
+assert_contains "default launch keeps native Claude home" "$OUT" $'--rw\n'"$FAKE_HOME/.claude"
+
+OUT="$(YOLO_NAMED_PROFILE=0 run_yolo --profile managed --env YOLO_NAMED_PROFILE=0 cmd true)"
+assert_contains "named launch marks inherited harness configuration" "$OUT" $'--env\nYOLO_NAMED_PROFILE=1'
+assert_eq "named marker overrides CLI env" YOLO_NAMED_PROFILE=1 \
+  "$(printf '%s\n' "$OUT" | grep '^YOLO_NAMED_PROFILE=' | tail -1)"
+OUT="$(YOLO_NAMED_PROFILE=1 run_yolo --env YOLO_NAMED_PROFILE=1 cmd true)"
+assert_eq "default marker overrides ambient and CLI env" YOLO_NAMED_PROFILE=0 \
+  "$(printf '%s\n' "$OUT" | grep '^YOLO_NAMED_PROFILE=' | tail -1)"
+
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"
   exit 1

@@ -305,7 +305,11 @@ let
       && builtins.match "^[A-Za-z0-9._-]+$" component != null
     ) components;
 
+  managedConfigHome = if cfg.yolo.configureDefaultProfile then null
+    else "${config.home.homeDirectory}/.config/yolo-managed-config";
+
   yoloPkg = pkgs.callPackage ../pkg/yolo/default.nix {
+    inherit managedConfigHome;
     podmanSocketPath = cfg.podman.socketPath;
     podmanSocketUri = cfg.podman.socketUri;
     vmStateDirectory = if cfg.yolo.vm.enable then cfg.yolo.vm.stateDirectory else null;
@@ -340,7 +344,22 @@ let
   };
 in
 {
+  imports = [ ./yolo-managed-config.nix ];
+
   options = {
+    smind.hm.dev.llm.yolo.configureDefaultProfile = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether to manage the native default Claude Code, Codex and Pi
+        configuration files. When false, generated files are installed under
+        {file}`~/.config/yolo-managed-config` instead, for named yolo profiles
+        only. Bare harnesses and the default yolo profile retain their native,
+        unmanaged configuration. This does not change harness configDir options
+        or export configuration-directory environment variables.
+      '';
+    };
+
     # Host/hardware coupling surfaced as plain options; the consumer wires
     # them from its own NixOS config (device passthrough, rootless-Podman
     # socket). All default to off/null so a bare consumer works.
@@ -876,6 +895,7 @@ in
     (lib.mkIf (cfg.enable && isDarwin) {
       home.packages = [
         (pkgs.callPackage ../pkg/yolo-darwin/default.nix {
+          inherit managedConfigHome;
           claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
           podmanSocketPath = cfg.podman.socketPath;
           podmanSocketUri = cfg.podman.socketUri;

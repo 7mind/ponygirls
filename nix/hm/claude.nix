@@ -45,6 +45,31 @@ let
   };
 in
 {
+  # Upstream may inject MCP/plugins through --plugin-dir in finalPackage,
+  # rather than home.file. Keep that wrapper for named profiles only.
+  options.programs.claude-code.finalPackage = lib.mkOption {
+    apply = managedPackage:
+      if !cfg.enable || cfg.yolo.configureDefaultProfile || config.programs.claude-code.package == null then
+        managedPackage
+      else
+        pkgs.symlinkJoin {
+          name = "claude-code-profile-dispatch";
+          inherit (managedPackage) meta;
+          paths = [ managedPackage ];
+          postBuild = ''
+            rm "$out/bin/claude"
+            cat > "$out/bin/claude" <<'WRAPPER'
+            #!${pkgs.runtimeShell}
+            if [ "''${YOLO_NAMED_PROFILE:-}" = 1 ]; then
+              exec ${managedPackage}/bin/claude "$@"
+            fi
+            exec ${config.programs.claude-code.package}/bin/claude "$@"
+            WRAPPER
+            chmod +x "$out/bin/claude"
+          '';
+        };
+  };
+
   options.smind.hm.dev.llm.openaiCodexPlugin.enable =
     lib.mkEnableOption "the OpenAI Codex plugin for Claude Code" // { default = false; };
 
