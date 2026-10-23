@@ -386,6 +386,21 @@ safe reusable agent or required panel is available, report **delegation
 unavailable** before solo fallback. Do not reset counters, reopen tombstones,
 weaken reviews, or silently bypass the lifetime cap.
 
+`close_agent` irreversibly tombstones an identity but preserves its sessions,
+results, and worktree. Automatic resident-worker eviction only releases a process;
+it leaves an open identity eligible for later reuse. Neither operation deletes
+retained files or replenishes lifetime admission. Retained-file cleanup is a
+separate operator action, not a capacity-recovery operation.
+
+When no eligible child remains on an available model (including an authorized,
+checkpoint-ready switch), there is no supported in-place identity-budget reset.
+A new governing Pi session with a new session ID creates a separate supervisor
+root and budget; resuming the old session does not. This does not transfer child
+history/worktrees or resolve old ownership, recovery holds, or billing uncertainty.
+Preserve the old root and manage its outstanding effects explicitly. If independent
+delegated review cannot be obtained, state that it was **not performed**; self-review
+is not independent review.
+
 ## Ungated example
 
 ```text

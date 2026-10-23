@@ -393,12 +393,12 @@ export class ToolBroker {
       case "grep":
       case "find":
       case "ls":
-        spec = this.jobSpec(caller.sandbox, caller.writableRoot, operationId, ["node", "-e", TOOL_SCRIPTS[tool]!], caller.workdir, JSON.stringify(args), TOOL_TIMEOUT_MS);
+        spec = this.jobSpec(caller.sandbox, caller.writableRoot, operationId, [process.execPath, "-e", TOOL_SCRIPTS[tool]!], caller.workdir, JSON.stringify(args), TOOL_TIMEOUT_MS);
         break;
       case "write":
       case "edit":
         if (!caller.writableRoot) throw err("POLICY_DENIED", `${tool} requires a writer workspace`);
-        spec = this.jobSpec(caller.sandbox, caller.writableRoot, operationId, ["node", "-e", TOOL_SCRIPTS[tool]!], caller.workdir, JSON.stringify(args), TOOL_TIMEOUT_MS);
+        spec = this.jobSpec(caller.sandbox, caller.writableRoot, operationId, [process.execPath, "-e", TOOL_SCRIPTS[tool]!], caller.workdir, JSON.stringify(args), TOOL_TIMEOUT_MS);
         break;
       case "bash":
         if (!caller.grants.shell) throw err("POLICY_DENIED", "shell authority not granted");

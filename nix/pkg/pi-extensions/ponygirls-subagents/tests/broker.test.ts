@@ -97,7 +97,7 @@ test("[bwrap] brokered file tools follow pi's argument shapes inside the sandbox
   writeFileSync(join(wt, "src", "deep", "c.ts"), "const needle = true;\n");
   writeFileSync(join(wt, "notes.md"), "needle in markdown\n");
   writeFileSync(join(wt, "src", "x_ts"), "not a ts file\n");
-  const broker = new ToolBroker({ sandbox: exec, host: new DummyToolExecutor() }, new InMemoryRunStore("r"), [], { PATH: process.env["PATH"] ?? "/usr/bin:/bin" }, { PATH: process.env["PATH"] ?? "/usr/bin:/bin" });
+  const broker = new ToolBroker({ sandbox: exec, host: new DummyToolExecutor() }, new InMemoryRunStore("r"), [], { PATH: wt }, { PATH: wt });
   const writer = caller({ workdir: wt, writableRoot: wt, sandbox: { readRoots: [wt], tmpDir: join(dir, "tmp"), hidePaths: [] } });
   const run = (tool: string, args: Record<string, unknown>) => broker.execute(writer, { tool, args });
 
@@ -150,4 +150,37 @@ test("a cancelled job keeps its cancellation as the only recorded outcome", asyn
   await pending;
   const outcomes = store.readSince(0, 100).records.filter((r) => r.kind === "tool.outcome" && r.body["operationId"] === "op-c");
   assert.deepEqual(outcomes.map((r) => r.body["status"]), ["cancelled"]);
+});
+
+// Regression #28: internal file tools must not require a second Node on PATH.
+test("file tools use the running Node runtime with no node on the job PATH", async (t) => {
+  const { HostToolExecutor, resolveExe } = await import("../src/sandbox.ts");
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "broker-runtime-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "fixture.txt"), "hello\n");
+  assert.throws(() => resolveExe("node", dir), /cannot resolve executable node/);
+  const host = new HostToolExecutor();
+  const broker = new ToolBroker(bothExecutors(host), new InMemoryRunStore("r"), [], { PATH: dir }, { PATH: dir });
+  const writer = caller({ workdir: dir, writableRoot: dir });
+  const run = async (tool: string, args: Record<string, unknown>) => {
+    const result = await broker.execute(writer, { tool, args });
+    assert.equal(result.exitCode, 0, result.stderr);
+    return result.stdout;
+  };
+  assert.equal(await run("read", { path: "fixture.txt" }), "hello\n");
+  assert.match(await run("grep", { pattern: "hello", path: "fixture.txt" }), /hello/);
+  assert.match(await run("find", { pattern: "*.txt" }), /fixture.txt/);
+  assert.match(await run("ls", { path: "." }), /fixture.txt/);
+  await run("write", { path: "new.txt", content: "before\n" });
+  await run("edit", { path: "new.txt", edits: [{ oldText: "before", newText: "after" }] });
+  assert.equal(await run("read", { path: "new.txt" }), "after\n");
+
+  const sandbox = new DummyToolExecutor();
+  const sandboxBroker = new ToolBroker(bothExecutors(sandbox), new InMemoryRunStore("s"), [], { PATH: dir }, { PATH: dir });
+  await sandboxBroker.execute(caller({ workdir: dir, sandbox: { readRoots: [dir], tmpDir: dir, hidePaths: [] } }), { tool: "read", args: { path: "fixture.txt" } });
+  assert.equal(sandbox.specs[0]!.argv[0], resolveExe(process.execPath));
+  assert.notEqual(sandbox.specs[0]!.view, null);
 });
