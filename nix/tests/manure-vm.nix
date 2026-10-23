@@ -143,11 +143,10 @@ assert builtins.length (builtins.filter (h: h.tags == [ "manure-cache" ]) hmEval
 assert builtins.length (builtins.filter (h: h.tags == [ "manure-cache" ]) hmEval.smind.hm.dev.llm.yolo.hooks.pre-start.sandbox) == 1;
 assert hmCacheDir == "/srv/manure-hm-cache";
 assert hmBindsRw == [ "/srv/manure-hm-cache" ];
-# Merge order is evaluated truth (test-block cert sorts before the module
-# token here); order pins mount precedence, so any change fails loudly.
-assert hmBindsRo == [ "/srv/manure-test/cert.crt" "/srv/manure-test/token.raw" ];
+# The selected credential file is bound dynamically; literals expose no file.
+assert hmBindsRo == [ "/srv/manure-test/cert.crt" ];
 assert hmSession.MANURE_URL == "https://api.example.test";
-assert hmSession.MANURE_TOKEN_FILE == "/srv/manure-test/token.raw";
+assert hmEval.smind.hm.dev.llm.yolo.validatedSessionVariables.MANURE_TOKEN_FILE == "/srv/manure-test/token.raw";
 assert hmSession.MANURE_CACHE_DIR == "/srv/manure-hm-cache";
 assert hmSession.SSL_CERT_FILE == "/srv/manure-test/cert.crt";
 assert lib.hasInfix "mkdir -p" hmHook.command;

@@ -462,6 +462,7 @@
                 ];
               });
               linuxMod = evalHaystackHm "x86_64-linux" "/run/secrets/haystack-token" null;
+              runtimeMod = evalHaystackHm "x86_64-linux" null null;
               darwinMod = evalHaystackHm "aarch64-darwin" "/run/secrets/haystack-token" null;
               disabledMod = linuxMod.extendModules {
                 modules = [ { smind.hm.dev.llm.haystack.enable = nixpkgs.lib.mkForce false; } ];
@@ -504,6 +505,8 @@
               });
               mappedCfg = mappedMod.config.smind.hm.dev.llm.haystack;
             in
+            assert nixpkgs.lib.all (a: a.assertion) runtimeMod.config.assertions;
+            assert runtimeMod.config.smind.hm.dev.llm.yolo.validatedSessionVariables.HAYSTACK_TOKEN == "";
             assert linuxCfg.url == "http://127.0.0.1:47328";
             assert darwinCfg.url == "http://127.0.0.1:47328";
             # One logical entry; literal placeholder (no secret) for Claude/Pi.
@@ -540,6 +543,12 @@
             assert mappedMod.config.programs.mcp.servers.haystack.url == "http://127.0.0.1:47328/mcp";
             assert mappedMod.config.smind.hm.dev.llm.yolo.validatedSessionVariables.HAYSTACK_TOKEN == "/run/secrets/agent-token";
             pkgs.runCommandLocal "haystack-hm-eval-test" { } "touch $out";
+          runtime-token = pkgs.runCommandLocal "runtime-token-test"
+            { nativeBuildInputs = [ pkgs.bash pkgs.coreutils pkgs.gnugrep ]; }
+            ''
+              bash ${./nix/lib/runtime-token-test.sh} ${./nix/lib/runtime-token.sh}
+              touch $out
+            '';
           # haystack-run wrapper: exact-byte accept/reject behavior.
           haystack-run-check =
             let
@@ -584,11 +593,17 @@
             pkgs.runCommandLocal "haystack-run-test"
               { nativeBuildInputs = [ pkgs.coreutils pkgs.ripgrep ]; }
               ''
+                ! ${goodRun}/bin/haystack-run > no-command.out 2> no-command.err
+                test ! -s no-command.out
+                ! grep -q "${good43}" no-command.err
                 ${goodRun}/bin/haystack-run true
                 ${goodRun}/bin/haystack-run sh -c 'test "$HAYSTACK_TOKEN" = "${good43}"'
                 ${lfRun}/bin/haystack-run sh -c 'test "$HAYSTACK_TOKEN" = "${good43}"'
                 ! ${badRun}/bin/haystack-run true
                 ! ${missingRun}/bin/haystack-run true
+                HAYSTACK_TOKEN="${good43}" ${missingRun}/bin/haystack-run true
+                HAYSTACK_TOKEN_FILE=${tok44} ${missingRun}/bin/haystack-run true
+                ! env HAYSTACK_TOKEN="${good43}" HAYSTACK_TOKEN_FILE=${tok43} ${goodRun}/bin/haystack-run true
                 # The wrapper embeds the token FILE path, never its content.
                 ${goodRun}/bin/haystack-run sh -c 'echo "$HAYSTACK_TOKEN"' | grep -q "${good43}"
                 ! rg -q "${good43}" ${goodRun}
@@ -731,6 +746,7 @@
             cp -r ${./nix/pkg/yolo} yolo
             chmod -R u+w yolo
             cd yolo
+            export YOLO_RUNTIME_TOKEN_HELPER=${import ./nix/lib/runtime-token.nix { inherit pkgs; }}
             bash llm-sandbox-test.sh
             bash profile-test.sh
             bash resource-limits-test.sh
