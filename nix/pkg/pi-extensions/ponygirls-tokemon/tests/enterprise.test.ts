@@ -27,9 +27,20 @@ test("codex business: available credits with undisclosed balance are not a fetch
   assert.equal(s.plan, "business");
   assert.deepEqual(s.windows, []);
   assert.equal(s.note, "credits available (balance unavailable)");
-  for (const has_credits of [null, "true", 1]) {
-    await assert.rejects(codex({ credits: { has_credits, balance: null } }), QuotaFetchError);
+});
+
+test("codex: false, missing or malformed credit availability is not quota data", async () => {
+  const creditsCases: unknown[] = [false, null, "true", "false", 1, 0, "", [], {}]
+    .map((has_credits) => ({ has_credits, unlimited: false, balance: null }));
+  creditsCases.push({ unlimited: false, balance: null }, null, [], "available");
+  for (const credits of creditsCases) {
+    await assert.rejects(codex({ rate_limit: null, credits }), {
+      name: "QuotaFetchError", message: /codex usage: no recognizable quota data/,
+    });
   }
+  await assert.rejects(codex({ rate_limit: null }), {
+    name: "QuotaFetchError", message: /codex usage: no recognizable quota data/,
+  });
 });
 
 test("codex enterprise: monthly credit allowance without rolling windows", async () => {

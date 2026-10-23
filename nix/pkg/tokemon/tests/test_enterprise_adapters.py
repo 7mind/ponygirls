@@ -138,9 +138,18 @@ class CodexEnterpriseTests(unittest.TestCase):
         self.assertEqual(snapshot.plan_name, "business")
         self.assertEqual(snapshot.windows, ())
         self.assertEqual(snapshot.note, "credits available (balance unavailable)")
-        for has_credits in (None, "true", 1):
-            with self.subTest(has_credits=has_credits), self.assertRaises(QuotaFetchError):
-                self._fetch({"credits": {"has_credits": has_credits, "balance": None}})
+
+    def test_false_missing_or_malformed_credit_availability_is_not_quota_data(self):
+        credits_cases = [
+            {"has_credits": value, "unlimited": False, "balance": None}
+            for value in (False, None, "true", "false", 1, 0, "", [], {})
+        ]
+        credits_cases.extend([{"unlimited": False, "balance": None}, None, [], "available"])
+        for credits in credits_cases:
+            with self.subTest(credits=credits), self.assertRaisesRegex(QuotaFetchError, "codex usage: no recognizable quota data"):
+                self._fetch({"rate_limit": None, "credits": credits})
+        with self.assertRaisesRegex(QuotaFetchError, "codex usage: no recognizable quota data"):
+            self._fetch({"rate_limit": None})
 
     def test_monthly_credits_only(self):
         snapshot = self._fetch(fixture("codex_enterprise_usage.json"))
