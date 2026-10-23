@@ -765,9 +765,7 @@ class TestRealServer(unittest.TestCase):
                 from manure import client as _client
                 from manure import mcp as _mcp
                 import unittest.mock as _mock
-                with _mock.patch.dict(os.environ,
-                                       {"MANURE_URL": base, "MANURE_TOKEN": token,
-                                        "MANURE_CACHE_DIR": os.path.join(td, "mcp-cache")}):
+                with _mock.patch.dict(os.environ, env, clear=True):
                     r1 = _mcp.handle_tools_call("upload_artifact",
                                                 {"local_path": src, "access": "internal"}, _client)
                     self.assertNotIn("isError", r1, msg=r1)

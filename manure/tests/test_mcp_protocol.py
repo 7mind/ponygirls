@@ -219,7 +219,7 @@ class TestMcpProtocol(unittest.TestCase):
                                          side_effect=lambda *a, **kw: Real(*a, **{**kw, "transport": tr})) as MC:
             # drive handler directly
             handler_env = {"MANURE_URL": "http://127.0.0.1:8000", "MANURE_TOKEN": VALID_TOKEN}
-            with unittest.mock.patch.dict(os.environ, handler_env, clear=False):
+            with unittest.mock.patch.dict(os.environ, handler_env, clear=True):
                 # simulate tools/call via helper
                 res = mcp_mod.handle_tools_call("whoami", {}, client_mod)
                 self.assertIn("content", res)
@@ -240,7 +240,7 @@ class TestMcpProtocol(unittest.TestCase):
         with unittest.mock.patch.object(client_mod, "ManureClient",
                                          side_effect=lambda *a, **kw: Real(*a, **{**kw, "transport": FailTransport()})) as MC:
             with unittest.mock.patch.dict(os.environ, {"MANURE_URL": "http://127.0.0.1:8000",
-                                                       "MANURE_TOKEN": VALID_TOKEN}):
+                                                       "MANURE_TOKEN": VALID_TOKEN}, clear=True):
                 res = mcp_mod.handle_tools_call("get_artifact", {"artifact_id": ART_ID}, client_mod)
                 self.assertTrue(res.get("isError"))
                 self.assertIn("not-found", res["content"][0]["text"])
@@ -308,7 +308,8 @@ await client.close();
             here = pathlib.Path(__file__).resolve()
             proj = here.parents[1]
             worktree = here.parents[2]
-            env = dict(os.environ)
+            env = {key: value for key, value in os.environ.items()
+                   if not key.startswith("MANURE_")}
             env["MANURE_URL"] = "http://127.0.0.1:8000"
             env["MANURE_TOKEN"] = VALID_TOKEN
             env["MANURE_PY_PATH"] = str(proj)
