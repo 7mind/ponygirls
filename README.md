@@ -336,13 +336,13 @@ characters); files may contain exactly one additional final LF, nothing else.
 
 ```bash
 # Read secrets at runtime, not in Nix expressions or shell command arguments.
-read -r -s HAYSTACK_TOKEN; export HAYSTACK_TOKEN
+IFS= read -r -s HAYSTACK_TOKEN; export HAYSTACK_TOKEN
 haystack-run pi                         # direct harness launch
 # Or use a runtime file instead:
 unset HAYSTACK_TOKEN
 HAYSTACK_TOKEN_FILE=/run/secrets/haystack-token haystack-run pi
 
-read -r -s MANURE_TOKEN; export MANURE_TOKEN
+IFS= read -r -s MANURE_TOKEN; export MANURE_TOKEN
 manure whoami                          # packaged CLI wrapper
 # Or use a runtime file instead:
 unset MANURE_TOKEN
