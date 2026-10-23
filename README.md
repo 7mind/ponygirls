@@ -141,6 +141,19 @@ The main knobs (all under `smind.hm.dev.llm`):
   NixOS/Ubuntu test VMs without host disks or a privileged VM manager — and
   **forge tokens** (`yolo.forgeTokens`), see below.
 
+To configure harnesses **only in named yolo profiles**, leaving their native
+(default-profile) configuration unmanaged:
+
+```nix
+smind.hm.dev.llm.yolo.configureDefaultProfile = false; # default: true
+```
+
+Named launches such as `yolo --profile work pi` still receive the managed
+settings, MCP servers, skills, and extensions. Default-profile launches and
+bare harness commands use their own native configuration; binaries remain
+installed. This does not delete existing unmanaged configuration or credentials.
+Claude Code and Codex `mutableSettings` must remain disabled in this mode.
+
 Integrations can extend `programs.mcp`, override `programs.<agent>.package`,
 contribute settings and files, and append generic yolo paths. (Our own CQ
 integration uses exactly those extension points from its own Home Manager

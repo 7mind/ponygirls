@@ -11,6 +11,7 @@
 #   YOLO_SQLITE                 - path to sqlite3 (only needed by --copy-sessions codex:…)
 #
 # Optional env vars:
+#   YOLO_MANAGED_CONFIG_HOME - home-like source of managed assets for named profiles only
 #   YOLO_PODMAN_SOCKET_PATH - rootless podman socket path (enables container forwarding)
 #   YOLO_PODMAN_SOCKET_URI  - rootless podman socket URI
 #   YOLO_EXTRA_RO_PATHS      - newline-separated list of host paths to ro-bind (missing paths are skipped)
@@ -1195,11 +1196,13 @@ EXEC_CMD=()
 # in-sandbox path, so inside the sandbox every tool reads its usual location.
 # The default profile (empty $PROFILE) binds the real home dirs directly.
 # Nix-managed, profile-independent assets (skills/plugins/extensions, codex
-# config) are shared read-only from the main profile.
+# config) are shared read-only from YOLO_MANAGED_CONFIG_HOME when configured,
+# otherwise from the main profile.
 
 # claude: ~/.claude (state), ~/.claude.json (auth), ~/.config/claude (settings).
 add_claude_binds() {
   if [[ -n "$PROFILE" ]]; then
+    local config_home="${YOLO_MANAGED_CONFIG_HOME:-$HOME}"
     local A; A="$(profile_dir claude)"
     mkdir -p "$A/home" "$A/config"
     clear_reshare_leftovers "$A/home" skills plugins commands agents settings.json CLAUDE.md
@@ -1210,17 +1213,17 @@ add_claude_binds() {
       --bind "$A/home,${HOME}/.claude"
       --bind "$A/home.json,${HOME}/.claude.json"
       --bind "$A/config,${HOME}/.config/claude"
-      --ro-bind "${HOME}/.claude/skills,${HOME}/.claude/skills"
-      --ro-bind "${HOME}/.claude/plugins,${HOME}/.claude/plugins"
+      --ro-bind "${config_home}/.claude/skills,${HOME}/.claude/skills"
+      --ro-bind "${config_home}/.claude/plugins,${HOME}/.claude/plugins"
       # commands/ + agents/ are HM-managed (programs.claude-code.{commands,
       # agents}) and carry the ledger-flake slash commands (plan:start, …)
       # and subagents. settings.json + CLAUDE.md are likewise HM-managed and
       # profile-independent. All four are masked by the $A/home bind above,
       # so re-share them read-only from the main profile.
-      --ro-bind "${HOME}/.claude/commands,${HOME}/.claude/commands"
-      --ro-bind "${HOME}/.claude/agents,${HOME}/.claude/agents"
-      --ro-bind "${HOME}/.claude/settings.json,${HOME}/.claude/settings.json"
-      --ro-bind "${HOME}/.claude/CLAUDE.md,${HOME}/.claude/CLAUDE.md"
+      --ro-bind "${config_home}/.claude/commands,${HOME}/.claude/commands"
+      --ro-bind "${config_home}/.claude/agents,${HOME}/.claude/agents"
+      --ro-bind "${config_home}/.claude/settings.json,${HOME}/.claude/settings.json"
+      --ro-bind "${config_home}/.claude/CLAUDE.md,${HOME}/.claude/CLAUDE.md"
     )
     # The credentials file as a mount point of its own, so a token refresh here
     # rewrites it in place and reaches every --auth-override sandbox that bound
@@ -1249,12 +1252,13 @@ add_codex_binds() {
   local shared_items=(AGENTS.md prompts skills)
   tag_active codex-config off || shared_items+=(config.toml)
   if [[ -n "$PROFILE" ]]; then
+    local config_home="${YOLO_MANAGED_CONFIG_HOME:-$HOME}"
     local A item; A="$(profile_dir codex)"
     mkdir -p "$A/home" "$A/config"
     # The writable copy lives in $A/home and is bound in below; the host
     # ~/.codex is left untouched in profile mode.
     if tag_active codex-config off; then
-      ensure_codex_config "$A/home/config.toml" "${HOME}/.codex/config.toml" "${PWD}"
+      ensure_codex_config "$A/home/config.toml" "${config_home}/.codex/config.toml" "${PWD}"
     fi
     clear_reshare_leftovers "$A/home" AGENTS.md prompts skills
     EXTRA_ARGS+=(
@@ -1264,7 +1268,7 @@ add_codex_binds() {
     # HM-managed assets (and config.toml unless codex-config supplies a
     # writable copy) are shared read-only from the main profile.
     for item in "${shared_items[@]}"; do
-      EXTRA_ARGS+=(--ro-bind "${HOME}/.codex/$item,${HOME}/.codex/$item")
+      EXTRA_ARGS+=(--ro-bind "${config_home}/.codex/$item,${HOME}/.codex/$item")
     done
   else
     # Default profile shares the real ~/.codex. With codex-config, replace the
@@ -1299,6 +1303,7 @@ add_pi_binds() {
   # ~/.pi/agent/extensions/search.json, shared read-only with the rest of
   # agent/extensions below — no separate writable mount needed.
   if [[ -n "$PROFILE" ]]; then
+    local config_home="${YOLO_MANAGED_CONFIG_HOME:-$HOME}"
     local A asset item
     local -a asset_paths=()
     A="$(profile_dir pi)"
@@ -1311,7 +1316,7 @@ add_pi_binds() {
     # Share the HM-managed (read-only, store-symlinked) assets from the main
     # profile; non-existent paths are filtered by the llm-sandbox layer.
     for item in "${asset_paths[@]}"; do
-      EXTRA_ARGS+=(--ro-bind "${HOME}/.pi/$item,${HOME}/.pi/$item")
+      EXTRA_ARGS+=(--ro-bind "${config_home}/.pi/$item,${HOME}/.pi/$item")
     done
   else
     EXTRA_ARGS+=(--rw "${HOME}/.pi")
@@ -1326,6 +1331,11 @@ add_all_agent_binds() {
   add_codex_binds
   add_pi_binds
   EXTRA_ARGS+=("${AUTH_BIND_ARGS[@]}")
+  if [[ -n "$PROFILE" ]]; then
+    EXTRA_ARGS+=(--env YOLO_NAMED_PROFILE=1)
+  else
+    EXTRA_ARGS+=(--env YOLO_NAMED_PROFILE=0)
+  fi
 }
 
 # codex gates its interactive directory-trust screen on persisted trust read

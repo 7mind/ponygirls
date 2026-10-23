@@ -12,6 +12,7 @@
 , podmanSocketUri ? null
 , extraReadOnlyPaths ? [ ]
 , extraReadWritePaths ? [ ]
+, managedConfigHome ? null
 , piSharedAssets ? [ ]
 , promptJson ? "[]"
 , prehooksJson ? "[]"
@@ -90,6 +91,7 @@ let
     export YOLO_JQ="${jq}/bin/jq"
     export YOLO_SQLITE="${sqlite}/bin/sqlite3"
     export YOLO_CUSTOM_PROMPT="${customPromptScript}"
+    export YOLO_MANAGED_CONFIG_HOME=${lib.escapeShellArg (if managedConfigHome == null then "" else managedConfigHome)}
     export YOLO_SANDBOX_ENTRYPOINT="${sandboxEntrypoint}/bin/yolo-sandbox-entrypoint"
     ${podmanExports}
     ${extraRoExports}

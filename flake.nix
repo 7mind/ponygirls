@@ -753,6 +753,22 @@
             bash sandbox-entrypoint-test.sh
             touch $out
           '';
+          yolo-managed-config-eval = import ./nix/tests/yolo-managed-config-eval.nix {
+            inherit pkgs nixpkgs;
+          };
+          yolo-claude-dispatch = import ./nix/tests/yolo-claude-dispatch.nix {
+            inherit pkgs nixpkgs;
+          };
+          yolo-darwin-profile = pkgs.runCommand "yolo-darwin-profile-test" {
+            nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.python3 pkgs.sqlite ];
+          } ''
+            cp -r ${./nix/pkg/yolo} yolo
+            cp -r ${./nix/pkg/yolo-darwin} yolo-darwin
+            chmod -R u+w yolo yolo-darwin
+            export YOLO_RUNTIME_TOKEN_HELPER=${import ./nix/lib/runtime-token.nix { inherit pkgs; }}
+            bash yolo-darwin/profile-test.sh
+            touch $out
+          '';
           yolo-forge-tokens-eval = import ./nix/tests/yolo-forge-tokens-eval.nix {
             inherit pkgs nixpkgs;
             yoloHmModule = import ./nix/hm/yolo.nix { inherit inputs; };

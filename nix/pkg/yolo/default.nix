@@ -9,6 +9,7 @@
   extraReadOnlyPaths ? [ ],
   extraReadWritePaths ? [ ],
   extraDevicePaths ? [ ],
+  managedConfigHome ? null,
   piSharedAssets ? [ ],
   promptJson ? "[]",
   prehooksJson ? "[]",
@@ -154,6 +155,7 @@ pkgs.writeShellScriptBin "yolo" ''
   export YOLO_TASKSET="${pkgs.util-linux}/bin/taskset"
   export YOLO_SQLITE="${pkgs.sqlite}/bin/sqlite3"
   export YOLO_CUSTOM_PROMPT="${customPromptScript}"
+  export YOLO_MANAGED_CONFIG_HOME=${lib.escapeShellArg (if managedConfigHome == null then "" else managedConfigHome)}
   export YOLO_CLIPBOARD_PROXY="${clipboardProxy}/bin/yolo-clipboard-proxy"
   export YOLO_CLIPBOARD_SHIM_DIR="${clipboardProxy}/tmux-shim"
   export YOLO_TMUX="${pkgs.tmux}/bin/tmux"
