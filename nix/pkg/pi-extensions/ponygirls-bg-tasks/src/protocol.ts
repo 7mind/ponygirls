@@ -25,8 +25,19 @@ export const SUPERVISOR_EXIT_MARGIN_MS = 3000;
 export const SUPERVISOR_SHUTDOWN_WAIT_MS = TERM_GRACE_MS + KILL_WAIT_MS + OUTPUT_DRAIN_MS + SUPERVISOR_EXIT_MARGIN_MS;
 /** Completion events per custom message; the rest wait for the next drain. */
 export const MAX_NOTICE_BATCH = 10;
-/** Initial submission plus one retry per event per explicit-input/resume opportunity. */
-export const MAX_NOTICE_ATTEMPTS = 2;
+/**
+ * Automatic retries (notice re-submission, failed notice drains, supervisor
+ * restarts) never stop on their own; the delay doubles per consecutive failure
+ * from the base up to the cap.
+ */
+export const RETRY_BASE_MS = 1000;
+export const RETRY_MAX_MS = 300000;
+
+/** Delay before the next attempt after `failures` (≥ 1) consecutive failures. */
+export function retryDelayMs(failures: number): number {
+  if (!Number.isInteger(failures) || failures < 1) throw new Error(`retry delay needs a positive failure count, got ${failures}`);
+  return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(failures - 1, 30));
+}
 export const MAX_LABEL_CHARS = 200;
 /** Same bound as the supervisor's MAX_COMMAND_BYTES (UTF-8 bytes). */
 export const MAX_COMMAND_BYTES = 65536;

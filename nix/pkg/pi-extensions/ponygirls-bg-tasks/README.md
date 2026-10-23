@@ -94,7 +94,8 @@ remove them.
 - If Pi is killed (or its whole process group), the supervisor — in its own
   session — sees pipe EOF, cleans up, records `dead/owner_lost`, and releases
   the lock. A killed supervisor's unfinished records become
-  `dead/supervisor_lost` on the next start.
+  `dead/supervisor_lost` on the next start; during an activation the next
+  start is immediate (see below), so their notices need no user action.
 - Durable mutations: temp file → fsync → rename → fsync directory; directory
   entries for the sidecar, task directory, and log are synced before the
   admission commit; clear commits an intent, renames into `clearing/`, syncs
@@ -105,7 +106,9 @@ remove them.
   An enabled event is handed to Pi as a `bg-task-completion` custom message
   with `deliverAs: "followUp", triggerTurn: true` (idle → a new turn; active →
   queued behind the current work, preserving tool-call/result order). It is
-  marked received only when a matching complete entry is in the session file.
+  marked received only when the session file holds a matching complete entry
+  that a successful assistant response descends from (in the entry tree); an
+  errored or aborted response does not count.
   One batch (≤ 10 events) is in flight at a time.
 - Delivery is **at least once** across crash windows, deduplicated by event ID
   where a receipt is observable; not transactional exactly-once.
@@ -114,19 +117,33 @@ remove them.
 
 ### Delivery policy details
 
-- Missing after a successfully settled run: one retry at quiescence.
-- Aborted run: those events are deferred quietly (no re-wake); independent
-  later completions still notify. The next explicit input releases them when
-  that input's run settles, after a receipt check (a kept queue item that Pi
-  consumed in the meantime is reconciled, not resent).
-- Error outcome, no classifiable outcome, a retry that still finds no entry, or
-  no run starting within 3 s: `DELIVERY_UNCONFIRMED` is shown, the event stays
-  pending, and it is retried only after the next explicit input or on resume.
+- A notice that was not delivered or not answered is re-submitted
+  automatically, without waiting for input: missing after a successfully
+  settled run, an error outcome (e.g. a provider failure after Pi's own
+  retries), no classifiable outcome, or no run starting within 3 s. Retries
+  back off exponentially (1 s, 2 s, 4 s, ..., capped at 5 min) and do not stop
+  while the event is pending and enabled. Every failure except a first quiet
+  retry of a dropped follow-up shows `DELIVERY_UNCONFIRMED` with the next
+  delay. A re-sent notice whose earlier copy is already in the session says
+  so in its header.
+- The only hold is a user abort: events whose notice was in flight in an
+  aborted run are deferred quietly (no re-wake); independent later
+  completions still notify. The next explicit input releases them when that
+  input's run settles, after a receipt check (a kept queue item that Pi
+  consumed in the meantime, or a persisted notice the input's run answered,
+  is reconciled, not resent). Explicit input also releases backing-off
+  events early.
+- Failing notice reads or acknowledgements are retried with the same backoff.
+- A supervisor that exits on its own during an activation is restarted
+  immediately (failed starts are reported and retried with the same
+  backoff); recovery records its unfinished tasks as `dead/supervisor_lost`
+  and their notices go out like any other.
 - No idle submission between an accepted explicit input and its run start, or
   during compaction.
 - Session transitions dispose the sender before teardown; a resumed session
   replays its own pending events and re-checks receipts against the file
-  (a lost session-file suffix restores the notice).
+  (a lost session-file suffix, or a notice that was never answered, restores
+  the notice).
 - Muting or clearing stops further submissions but cannot recall an item Pi
   already accepted; clearing does not erase an already posted notice.
 
@@ -141,7 +158,11 @@ remove them.
 - The registry snapshot is rewritten on each mutation: metadata cost grows with
   retained history; output memory is bounded, disk usage grows until clear.
 - A notice can be duplicated after crash windows, or if a task is muted while
-  its notice is queued and later re-enabled before Pi consumes it.
+  its notice is queued and later re-enabled before Pi consumes it, or when
+  a backed-off retry comes due while an active run already holds the notice.
+- Retries are unbounded in count: a long provider outage produces one failed
+  notification run, and one more notice entry in the session, per backoff
+  step (at most one per 5 min once the cap is reached).
 - Sending a notice that starts a turn can race a user prompt submitted at the
   same instant (Pi API level; the extension avoids the input→run window it can
   observe).
@@ -197,8 +218,8 @@ nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).pon
 | `backend.test.ts` | the task-service contract on the memory dummy and the real supervisor client |
 | `tool.test.ts` | the public tool on both backends: pagination under inserts/clears, budgets, sanitization, errors |
 | `pi-runtime-probe.test.mjs` | pinned Pi delivery semantics (scripted provider, `pi.sendMessage()` path) |
-| `delivery.test.mjs` | the real extension in a scripted Pi runtime: idle/active/burst/opt-out, aborts, dropped follow-up, no-start, mute, crash windows, switch/fork, reload, compaction, provider retry |
-| `delivery-unit.test.ts` | deterministic dispatcher guard transitions |
+| `delivery.test.mjs` | the real extension in a scripted Pi runtime: idle/active/burst/opt-out, aborts, dropped follow-up, no-start retry, provider-error re-send, supervisor-loss restart, mute, crash windows, switch/fork, reload, compaction, provider retry |
+| `delivery-unit.test.ts` | deterministic dispatcher guard transitions, retry backoff, answered-receipt scanning |
 | `status.test.ts` | border badge text: running counts, singular/plural, clear when idle |
 | `extension-status.test.ts` | the real extension with a faked host: the badge follows spawn/terminate/clear |
 | `ui.test.ts` | the inspector on a real supervisor: live follow/scroll, escape fixtures, bounded windows, dead/missing labels, actions |
@@ -213,7 +234,7 @@ nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).pon
   `pi-ai/dist/api/anthropic-messages.js` `convertTools`), and a nested
   `request` object was sent as a JSON string by `mimo-v2.6-pro` in live use,
   failing every call with `request: must be object`.
-- **Explicit-input release timing:** deferred/unconfirmed events are released
+- **Explicit-input release timing:** abort-deferred events are released
   when the input's run settles, not when the input arrives. The probes show an
   SDK/RPC abort keeps the custom follow-up queued and Pi consumes it after the
   next prompt; resubmitting at input time would duplicate it. Pi also runs
@@ -231,8 +252,9 @@ nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).pon
   watermark; the cursor invariants of the plan hold.
 - **Launch failures** are reported by the failed tool result and recorded with
   notice status `inline`; they are not notified again.
-- **Supervisor loss during an activation:** the next operation starts a fresh
-  supervisor, which recovers the lost records as `dead/supervisor_lost`.
+- **Supervisor loss during an activation:** the activation starts a fresh
+  supervisor immediately, which recovers the lost records as
+  `dead/supervisor_lost`.
 - **Naming:** `ponygirls-bg-tasks` (repository convention) instead of the
   plan's tentative `pi-bg-tasks`; runtime names (`bg_task`, `/bg`,
   `bg-task-completion`) are as planned.

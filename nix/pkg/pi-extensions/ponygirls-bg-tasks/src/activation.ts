@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { SupervisorBackend, type ShutdownReason, type TaskBackend } from "./backend.ts";
-import { BgTaskError, OWNER_HANDOFF_WAIT_MS, SIDECAR_SUFFIX, type SessionId } from "./protocol.ts";
+import { BgTaskError, OWNER_HANDOFF_WAIT_MS, SIDECAR_SUFFIX, retryDelayMs, type SessionId } from "./protocol.ts";
 
 export interface RuntimeConfig {
   python: string;
@@ -40,6 +40,9 @@ export class Activation {
   private current: SupervisorBackend | null = null;
   private disposed = false;
   private readonly backendListeners = new Set<(backend: SupervisorBackend) => void>();
+  private readonly restartFailureListeners = new Set<(error: unknown, retryInMs: number) => void>();
+  private restartFailures = 0;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(init: ActivationInit) {
     this.sessionId = init.sessionId;
@@ -54,6 +57,11 @@ export class Activation {
   /** Whether earlier activations left state to recover and notices to replay. */
   hasExistingState(): boolean {
     return this.sidecar !== null && existsSync(this.sidecar);
+  }
+
+  /** Called when restarting a lost supervisor failed; another attempt follows after `retryInMs`. */
+  onRestartFailed(listener: (error: unknown, retryInMs: number) => void): void {
+    this.restartFailureListeners.add(listener);
   }
 
   /** Called for every newly started supervisor (startup recovery or after supervisor loss). */
@@ -76,6 +84,7 @@ export class Activation {
             throw new BgTaskError("ACTIVATION_DISPOSED", "this extension activation has ended");
           }
           this.current = backend;
+          backend.onLost(() => this.restart(backend));
           for (const listener of this.backendListeners) listener(backend);
           return backend;
         })
@@ -84,10 +93,36 @@ export class Activation {
     return this.starting;
   }
 
+  /**
+   * The current supervisor exited on its own: start its successor now, so that
+   * recovery commits the lost tasks' outcomes and their notices go out without
+   * waiting for a tool call. Failed starts are retried with backoff.
+   */
+  private restart(lost: SupervisorBackend): void {
+    if (this.disposed || this.current !== lost || this.restartTimer !== null) return;
+    this.backend().then(
+      () => {
+        this.restartFailures = 0;
+      },
+      (error: unknown) => {
+        if (this.disposed) return;
+        this.restartFailures++;
+        const delay = retryDelayMs(this.restartFailures);
+        for (const listener of this.restartFailureListeners) listener(error, delay);
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = null;
+          this.restart(lost);
+        }, delay);
+      },
+    );
+  }
+
   /** Graceful end of this activation; owned tasks stop and keep their outcomes and pending notices. */
   async shutdown(reason: ShutdownReason): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.restartTimer !== null) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
     const pending = this.starting;
     if (pending) await pending.catch(() => undefined);
     const backend = this.current;

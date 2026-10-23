@@ -1,6 +1,7 @@
 // Step 6: completion delivery through the actual Pi extension path — the real
 // extension and supervisor in a scripted, provider-free Pi runtime.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -227,7 +228,7 @@ test("a custom follow-up dropped before successful settlement gets one reconcile
   assert.deepEqual(f.rt.errors, []);
 });
 
-test("a notification that never starts a run surfaces DELIVERY_UNCONFIRMED; independent completions proceed; input retries it", async (t) => {
+test("a notification that never starts a run surfaces DELIVERY_UNCONFIRMED; independent completions proceed; it is retried without input", async (t) => {
   const ui = recordingUi();
   const f = await setup(t, (r) => {
     if (r.index === 1) return reply(spawnCall("s", "sleep 0.3; echo one"), spawnCall("t", "sleep 5; echo two"));
@@ -251,18 +252,59 @@ test("a notification that never starts a run surfaces DELIVERY_UNCONFIRMED; inde
   await taskFinished(session, first);
   await waitFor(() => ui.notifications.some((n) => /DELIVERY_UNCONFIRMED/.test(n.message)), { message: "unconfirmed surfaced", timeoutMs: 8000 });
   assert.equal(failures, 1, "one asynchronous submission failure was injected");
-  assert.equal(customEntries(session, TYPE).length, 0);
-  assert.equal(registry(session)[first].event.status, "pending", "retained, not claimed received");
-  await quiet();
-  assert.equal(customEntries(session, TYPE).length, 0, "no retry loop on timeout");
+  assert.equal(registry(session)[first].event.status === "received", false, "retained, not claimed received");
+  await receipt(session, first);
   await taskFinished(session, second);
   await receipt(session, second);
-  assert.deepEqual(deliveredEvents(session).map((e) => e.split(":")[0]), [second]);
   await session.waitForIdle();
-  await session.prompt("hello again");
-  await receipt(session, first);
-  await session.waitForIdle();
+  const prompts = session.sessionManager.getEntries().filter((e) => e.type === "message" && e.message.role === "user");
+  assert.equal(prompts.length, 1, "no explicit input was needed");
   assert.equal(deliveredEvents(session).filter((e) => e.startsWith(first)).length, 1);
+  assert.equal(deliveredEvents(session).filter((e) => e.startsWith(second)).length, 1);
+});
+
+test("a notice whose response fails with a provider error is re-sent and answered without input", async (t) => {
+  const ui = recordingUi();
+  let failed = 0;
+  const f = await setup(t, (r) => {
+    if (r.index === 1) return reply(spawnCall("s", "sleep 0.3; echo one"));
+    if (r.index === 2) return text("waiting");
+    if (isNotice(r) && failed === 0) {
+      failed++;
+      return { content: [], stopReason: "error", errorMessage: "503 overloaded" };
+    }
+    return isNotice(r) ? text("ack") : null;
+  }, { ui });
+  const session = f.rt.session;
+  await session.prompt("go");
+  const [id] = taskIdsFromResults(session);
+  await waitFor(() => failed === 1, { message: "the failed notification response" });
+  await session.waitForIdle();
+  assert.equal(registry(session)[id].event.status, "pending", "persisted but unanswered is not a receipt");
+  await receipt(session, id);
+  await session.waitForIdle();
+  const last = f.model.requests.at(-1);
+  assert.ok(isNotice(last), "the answered request was a notice");
+  assert.equal(customEntries(session, TYPE).length, 2, "the notice was re-sent once");
+  assert.ok(ui.notifications.some((n) => /DELIVERY_UNCONFIRMED/.test(n.message)));
+});
+
+test("a supervisor lost while idle is restarted and the lost task's outcome wakes the session without input", async (t) => {
+  const f = await setup(t, (r) => (r.index === 1 ? reply(spawnCall("s", "sleep 30")) : r.index === 2 ? text("waiting") : isNotice(r) ? text("ack") : null));
+  const session = f.rt.session;
+  await session.prompt("go");
+  await session.waitForIdle();
+  const [id] = taskIdsFromResults(session);
+  // Quiescence: no pending status refresh or receipt poll may restart the supervisor by accident.
+  await quiet();
+  const pid = execFileSync("pgrep", ["-f", "--", `--sidecar ${sidecarOf(session)}`], { encoding: "utf8" }).trim();
+  assert.match(pid, /^\d+$/, "exactly one supervisor for this session");
+  process.kill(Number(pid), "SIGKILL");
+  await receipt(session, id);
+  assert.deepEqual([registry(session)[id].state, registry(session)[id].reason], ["dead", "supervisor_lost"]);
+  await session.waitForIdle();
+  assert.equal(f.model.requests.length, 3, "one notification turn");
+  assert.ok(isNotice(f.model.requests[2]));
 });
 
 test("muting an in-flight notice cannot retract it and does not block later notices", async (t) => {
