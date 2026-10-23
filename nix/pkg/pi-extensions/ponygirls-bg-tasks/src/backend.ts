@@ -63,6 +63,7 @@ export class SupervisorBackend implements TaskBackend {
   private readonly launch: SupervisorLaunch;
   private readonly pending = new Map<number, Pending>();
   private readonly listeners = new Set<(terminal: boolean) => void>();
+  private readonly lossListeners = new Set<(error: BgTaskError) => void>();
   private readonly stderrTail: string[] = [];
   private nextId = 1;
   private buffer = "";
@@ -138,6 +139,14 @@ export class SupervisorBackend implements TaskBackend {
     this.greeting = null;
     for (const p of this.pending.values()) p.reject(error);
     this.pending.clear();
+    for (const listener of this.lossListeners) listener(error);
+  }
+
+  /** Called once when the supervisor process is gone (immediately, asynchronously, if it already is). */
+  onLost(listener: (error: BgTaskError) => void): void {
+    const lost = this.lost;
+    if (lost) queueMicrotask(() => listener(lost));
+    else this.lossListeners.add(listener);
   }
 
   private onData(text: string): void {

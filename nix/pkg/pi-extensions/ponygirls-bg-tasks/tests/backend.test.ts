@@ -179,3 +179,34 @@ test("activation: missing packaged executables and --no-session fail explicitly"
   await ephemeral.shutdown("quit");
   await rejectsWith(ephemeral.backend(), "ACTIVATION_DISPOSED");
 });
+
+test("activation: a supervisor that exits on its own is restarted, with reported backoff while starts fail", async (t) => {
+  const { chmodSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const { Activation, readRuntimeConfig } = await import("../src/activation.ts");
+  const { RETRY_BASE_MS } = await import("../src/protocol.ts");
+  const { defer, tempDir } = await import("./fixtures.ts");
+  const dir = tempDir(t, "bg-restart-");
+  const activation = new Activation({ sessionId: "restart" as SessionId, sessionFile: join(dir, "restart.jsonl"), config: readRuntimeConfig(process.env) });
+  defer(t, () => activation.shutdown("quit"));
+  const started: unknown[] = [];
+  const failures: Array<{ error: unknown; retryInMs: number }> = [];
+  activation.onBackend((backend) => started.push(backend));
+  activation.onRestartFailed((error, retryInMs) => failures.push({ error, retryInMs }));
+  const first = await activation.backend();
+  const task = await first.spawn({ label: "victim", command: "sleep 30", cwd: "/", notify: true });
+  const sidecar = activation.sidecar!;
+  chmodSync(sidecar, 0o000);
+  defer(t, () => chmodSync(sidecar, 0o700));
+  process.kill(Number(execFileSync("pgrep", ["-f", "--", `--sidecar ${sidecar}`], { encoding: "utf8" }).trim()), "SIGKILL");
+  await eventually(async () => failures.length > 0, "a reported restart failure");
+  assert.equal(failures[0]!.retryInMs, RETRY_BASE_MS);
+  assert.equal(started.length, 1, "no successor while the sidecar is unusable");
+  chmodSync(sidecar, 0o700);
+  await eventually(async () => started.length === 2, "the successor after backoff");
+  const successor = await activation.backend();
+  assert.notEqual(successor, first);
+  const recovered = await successor.get(task.id);
+  assert.deepEqual([recovered.state, recovered.reason, recovered.event?.status], ["dead", "supervisor_lost", "pending"]);
+});

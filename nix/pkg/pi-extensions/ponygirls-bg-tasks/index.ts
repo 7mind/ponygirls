@@ -137,7 +137,7 @@ function themeStyle(theme: Theme): ViewerStyle {
   };
 }
 
-const NO_RECEIPTS: ReceiptSource = { present: () => new Set() };
+const NO_RECEIPTS: ReceiptSource = { scan: () => ({ present: new Set(), answered: new Set() }) };
 
 /** Open the /bg inspector in the TUI (or dump a first page for RPC/print clients). */
 const openBgInspector = async (ctx: ExtensionContext, b: Bound): Promise<void> => {
@@ -200,8 +200,8 @@ export default function bgTasks(pi: ExtensionAPI): void {
       receipts: sessionFile ? new SessionFileReceipts(sessionFile, sessionId) : NO_RECEIPTS,
       sink: { submit: (message) => pi.sendMessage(message, { deliverAs: "followUp", triggerTurn: true }) },
       reporter: {
-        unconfirmed: (taskIds, detail) => report(ctx, `DELIVERY_UNCONFIRMED: completion notice for ${taskIds.join(", ")} could not be confirmed (${detail}); it stays pending and is retried after your next input or when the session resumes.`, "warning"),
-        error: (error) => report(ctx, errorText(error), "error"),
+        unconfirmed: (taskIds, detail, retryInMs) => report(ctx, `DELIVERY_UNCONFIRMED: completion notice for ${taskIds.join(", ")} could not be confirmed (${detail}); it stays pending and is re-sent automatically in ${seconds(retryInMs)}.`, "warning"),
+        error: (error, retryInMs) => report(ctx, `${errorText(error)}; notice delivery retries in ${seconds(retryInMs)}`, "error"),
       },
       host: {
         isCurrent: () => bound === self.value && !activation.isDisposed && ctx.sessionManager.getSessionId() === sessionId,
@@ -209,6 +209,7 @@ export default function bgTasks(pi: ExtensionAPI): void {
       },
       timers: systemTimers,
     });
+    activation.onRestartFailed((error, retryInMs) => report(ctx, `${errorText(error)}; restarting the task supervisor again in ${seconds(retryInMs)}`, "error"));
     activation.onBackend((backend) => {
       connectBackend(dispatcher, backend);
       backend.onChanged(() => {
@@ -288,6 +289,10 @@ export default function bgTasks(pi: ExtensionAPI): void {
   pi.on("session_before_compact", () => { bound?.dispatcher.compactionStarted(); });
   pi.on("session_compact", () => bound?.dispatcher.compactionEnded());
   pi.on("session_compact_failed", () => bound?.dispatcher.compactionEnded());
+}
+
+function seconds(ms: number): string {
+  return `${Math.ceil(ms / 1000)} s`;
 }
 
 function errorText(error: unknown): string {
