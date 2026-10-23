@@ -52,6 +52,16 @@
    join/manage it explicitly. If safe reuse or a required panel is unavailable,
    report **delegation unavailable** before solo fallback. No counter reset,
    tombstone reopening, or review bypass is authorized.
+6. Closing irreversibly tombstones an identity while retaining sessions, results,
+   and worktrees. Automatic worker eviction releases only resident resources and
+   permits later reuse. Retained-file cleanup is separate; it never refunds the
+   cumulative budget. If no eligible child remains on an available model, there
+   is no supported in-place budget reset: start a new governing Pi session with a
+   new session ID for a separate supervisor root. Resuming the old session retains
+   its budget. A new root neither transfers child state nor resolves old effects,
+   recovery holds, or billing uncertainty; preserve and manage the old root.
+   Report independent delegated review as **not performed** when unavailable;
+   do not relabel self-review as independent review.
 
 See [Capacity recovery and retained models](../README.md#capacity-recovery-and-retained-models)
 for the tool example and limit defaults.
