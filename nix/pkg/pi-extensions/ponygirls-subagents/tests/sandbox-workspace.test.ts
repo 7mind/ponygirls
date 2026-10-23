@@ -85,7 +85,7 @@ test("[bwrap] allowed reads succeed; traversal escape and secret access fail", a
   spawnSync("ln", ["-s", join(secret, "key"), join(work, "link")]);
   const escapeLink = await exec.exec({ ...base, operationId: "op-link", argv: [bash, "-c", `${cat} link`] });
   assert.notEqual(escapeLink.exitCode, 0);
-  // Runtime aliases may create /home ancestors without exposing host-home content.
+  // The host-only fixture remains outside the sandbox view.
   const homeHidden = await exec.exec({ ...base, operationId: "op-home", argv: [bash, "-c", 'test ! -e "$1" && test ! -e "$2"', "home-check", hostHome, homeSentinel] });
   assert.equal(homeHidden.exitCode, 0, homeHidden.stderr);
   const homeRead = await exec.exec({ ...base, operationId: "op-home-read", argv: [bash, "-c", '"$1" "$2"', "home-check", cat, homeSentinel] });
