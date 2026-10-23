@@ -670,26 +670,6 @@
             node --test tests/host.test.mjs
             touch $out
           '';
-          ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
-            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.bubblewrap ];
-            PI_SUBAGENTS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
-            PI_OFFLINE = "1";
-            PI_TELEMETRY = "0";
-          } ''
-            cp -r ${./nix/pkg/pi-extensions/ponygirls-subagents} ponygirls-subagents
-            chmod -R u+w ponygirls-subagents
-            cd ponygirls-subagents
-            mkdir -p node_modules/@earendil-works
-            ln -s "$PI_SUBAGENTS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
-            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
-            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-ai" node_modules/@earendil-works/pi-ai
-            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-agent-core" node_modules/@earendil-works/pi-agent-core
-            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/typebox" node_modules/typebox
-            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@types" node_modules/@types
-            tsc -p tsconfig.json
-            PI_SUBAGENTS_SDK_ROOT="$PI_SUBAGENTS_SDK_ROOT" node --test tests/*.test.ts
-            touch $out
-          '';
           ponygirls-tokemon = pkgs.runCommand "ponygirls-tokemon-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
             PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
@@ -762,6 +742,27 @@
             yoloHmModule = import ./nix/hm/yolo.nix { inherit inputs; };
           };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          # The full suite requires Linux /proc process identity and bubblewrap.
+          ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.bubblewrap ];
+            PI_SUBAGENTS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-subagents} ponygirls-subagents
+            chmod -R u+w ponygirls-subagents
+            cd ponygirls-subagents
+            mkdir -p node_modules/@earendil-works
+            ln -s "$PI_SUBAGENTS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
+            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-ai" node_modules/@earendil-works/pi-ai
+            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-agent-core" node_modules/@earendil-works/pi-agent-core
+            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/typebox" node_modules/typebox
+            ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
+            PI_SUBAGENTS_SDK_ROOT="$PI_SUBAGENTS_SDK_ROOT" node --test tests/*.test.ts
+            touch $out
+          '';
           podman-module = podmanModuleCheck;
           manure-browser = import ./nix/tests/manure-browser.nix {
             inherit pkgs;
