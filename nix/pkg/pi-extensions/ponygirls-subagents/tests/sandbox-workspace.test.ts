@@ -3,7 +3,7 @@ import test, { after } from "node:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BwrapToolExecutor, DummyToolExecutor, HostToolExecutor, type ToolExecutor, type ToolJobSpec } from "../src/sandbox.ts";
 import { readProcessIdentity } from "../src/process-identity.ts";
@@ -68,7 +68,7 @@ test("[bwrap] allowed reads succeed; traversal escape and secret access fail", a
   writeFileSync(join(secret, "key"), "TOPSECRET\n");
   const bash = absBin("bash") ?? "/bin/bash";
   const cat = absBin("cat") ?? "/bin/cat";
-  const hostHome = mkdtempSync(join(homedir(), ".subagents-host-only-"));
+  const hostHome = mkdtempSync(join(dir, ".subagents-host-only-"));
   after(() => rmSync(hostHome, { recursive: true, force: true }));
   const homeSentinel = join(hostHome, "sentinel");
   writeFileSync(homeSentinel, "synthetic host-home content\n");
