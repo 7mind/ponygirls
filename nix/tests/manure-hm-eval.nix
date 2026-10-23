@@ -1,12 +1,7 @@
 # manure Home Manager module eval test (CONTRACT.md N3).
 #
-# Pure evaluation on Linux + Darwin: asserts the frozen HM option
-# shape, CLI + stdio MCP wiring with path-only env (no secrets in the
-# store), the single file-backed credential transport ([R3]: no
-# MANURE_TOKEN in any map the module owns, so an inheriting MCP child
-# can never observe both halves of the ambiguous pair), host CLI
-# defaults ([R4]), sandbox binds, composition with unrelated MCP
-# servers, and that a disabled module builds and wires nothing.
+# Pure evaluation on Linux + Darwin: runtime credential wrappers, secret-free
+# env, file-preserving sandbox transport, unrelated MCP composition and disable.
 #
 # A final REAL-composition leg ([R8]) evaluates the module together
 # with the in-repo harness aggregation (tools/codex/pi/yolo): the
@@ -122,30 +117,30 @@ assert darwinMod.config.smind.hm.dev.llm.manure.url == "http://127.0.0.1:47329";
 # One logical stdio entry; command is the packaged manure-mcp.
 assert lib.hasSuffix "/bin/manure-mcp" linuxMcp.command;
 assert lib.hasSuffix "/bin/manure-mcp" darwinMcp.command;
-# Env carries paths/URLs only — the token FILE path, never its content.
+# Static MCP env carries no credential source; wrappers apply runtime defaults.
 assert linuxMcp.env.MANURE_URL == "http://127.0.0.1:47329";
-assert linuxMcp.env.MANURE_TOKEN_FILE == "/run/secrets/manure-token";
+assert !(linuxMcp.env ? MANURE_TOKEN_FILE);
 assert linuxMcp.env.MANURE_CACHE_DIR == "/home/alice/.cache/manure";
 assert !(darwinMcp.env ? MANURE_CACHE_DIR);
-# [R3] single transport: MANURE_TOKEN appears in NO map this module
+# [R3] runtime-selected transport: MANURE_TOKEN appears in NO map this module
 # owns (MCP env, host session, yolo session/validated). An MCP child
 # inheriting its harness env therefore observes exactly one transport.
 assert !(linuxMcp.env ? MANURE_TOKEN);
 assert !(linuxHost ? MANURE_TOKEN);
 assert !(linuxYolo ? MANURE_TOKEN);
 assert !(linuxMod.config.smind.hm.dev.llm.yolo.validatedSessionVariables ? MANURE_TOKEN);
-assert (linuxYolo // linuxMcp.env) ? MANURE_TOKEN_FILE;
+assert !((linuxYolo // linuxMcp.env) ? MANURE_TOKEN_FILE);
 assert !((linuxYolo // linuxMcp.env) ? MANURE_TOKEN);
-assert (linuxHost // linuxMcp.env) ? MANURE_TOKEN_FILE;
+assert !((linuxHost // linuxMcp.env) ? MANURE_TOKEN_FILE);
 assert !((linuxHost // linuxMcp.env) ? MANURE_TOKEN);
 # Sandbox transport: file path variable + read-only credential bind.
-assert linuxYolo.MANURE_TOKEN_FILE == "/run/secrets/manure-token";
+assert linuxMod.config.smind.hm.dev.llm.yolo.validatedSessionVariables.MANURE_TOKEN_FILE == "/run/secrets/manure-token";
 assert linuxYolo.MANURE_URL == "http://127.0.0.1:47329";
 assert linuxYolo.MANURE_CACHE_DIR == "/home/alice/.cache/manure";
-assert builtins.elem "/run/secrets/manure-token" linuxMod.config.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
+assert linuxMod.config.smind.hm.dev.llm.yolo.extraReadOnlyPaths == [ ];
 # [R4] host CLI defaults (secret-free) + writable custom-cache bind.
 assert linuxHost.MANURE_URL == "http://127.0.0.1:47329";
-assert linuxHost.MANURE_TOKEN_FILE == "/run/secrets/manure-token";
+assert !(linuxHost ? MANURE_TOKEN_FILE);
 assert linuxHost.MANURE_CACHE_DIR == "/home/alice/.cache/manure";
 assert builtins.elem "/home/alice/.cache/manure" linuxMod.config.smind.hm.dev.llm.yolo.extraReadWritePaths;
 # [R4] the host pre-start hook provisions the effective cache dir
@@ -192,31 +187,37 @@ assert disabledMod.config.smind.hm.dev.llm.yolo.extraReadWritePaths == [ ];
 assert ! lib.any (h: h.tags == [ "manure-cache" ]) disabledMod.config.smind.hm.dev.llm.yolo.hooks.pre-start.host;
 assert ! lib.any (h: h.tags == [ "manure-cache" ]) disabledMod.config.smind.hm.dev.llm.yolo.hooks.pre-start.sandbox;
 assert disabledMod.config.smind.hm.dev.llm.assetBundles == [ ];
-# Explicit enable with partial config fails loudly.
-assert !partialMod.success;
+# Runtime-only credentials need no configured tokenFile.
+assert partialMod.success;
 # [R8] the manure bundle survives the REAL merge machinery on both
 # systems, and the registry keeps both entries (no clobber).
 assert lib.all (a: a.assertion) realLinux.config.assertions;
 assert lib.all (a: a.assertion) realDarwin.config.assertions;
 assert lib.hasInfix "manure file & directory hosting" realLinux.config.smind.hm.dev.llm.merged.memoryText;
 assert lib.hasInfix "manure file & directory hosting" realDarwin.config.smind.hm.dev.llm.merged.memoryText;
-assert realLinux.config.programs.mcp.servers.manure.env.MANURE_TOKEN_FILE == "/run/secrets/manure-token";
+assert !(realLinux.config.programs.mcp.servers.manure.env ? MANURE_TOKEN_FILE);
 assert realLinux.config.programs.mcp.servers.sentinel-keepme.command == "/bin/false";
 # Pi re-emits the manure stdio entry and the host/yolo defaults come
 # from the same composition (mcp.json content grepped at build time).
-assert realLinux.config.home.sessionVariables.MANURE_TOKEN_FILE == "/run/secrets/manure-token";
-assert realLinux.config.smind.hm.dev.llm.yolo.sessionVariables.MANURE_TOKEN_FILE == "/run/secrets/manure-token";
+assert !(realLinux.config.home.sessionVariables ? MANURE_TOKEN_FILE);
+assert realLinux.config.smind.hm.dev.llm.yolo.validatedSessionVariables.MANURE_TOKEN_FILE == "/run/secrets/manure-token";
 assert builtins.elem "/home/alice/.cache/manure" realLinux.config.smind.hm.dev.llm.yolo.extraReadWritePaths;
 pkgs.runCommandLocal "manure-hm-eval-test"
 {
   mcpJson = piMcpJson;
+  manureClient = builtins.head linuxMod.config.home.packages;
 } ''
   grep -q '"manure"' "$mcpJson"
   grep -q 'manure-mcp' "$mcpJson"
-  grep -q 'MANURE_TOKEN_FILE' "$mcpJson"
-  grep -q '/run/secrets/manure-token' "$mcpJson"
+  ! grep -q 'MANURE_TOKEN_FILE' "$mcpJson"
   grep -q '"exposure": *"deferred"' "$mcpJson"
   # No secret material, no second transport in the emitted file.
   ! grep -q 'MANURE_TOKEN[^_]' "$mcpJson"
+  # Lazy wrappers must not require the configured (absent) file for help
+  # or protocol initialization. The native client owns call-time validation.
+  "$manureClient/bin/manure" --help > cli-help.out
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"credential-test","version":"1"}}}' | \
+    "$manureClient/bin/manure-mcp" > initialized.out
+  grep -q '"result"' initialized.out
   touch $out
 ''

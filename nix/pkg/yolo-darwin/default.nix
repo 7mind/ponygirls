@@ -1,5 +1,6 @@
 { lib
 , buildEnv
+, pkgs
 , runtimeShell
 , writeShellScriptBin
 , writeText
@@ -52,6 +53,7 @@ let
   '';
   validatedVarLines = lib.mapAttrsToList (name: path: "${name}=${path}") validatedSessionVariables;
   validatedVarsExports = lib.optionalString (validatedSessionVariables != { }) ''
+    export YOLO_RUNTIME_TOKEN_HELPER=${import ../../lib/runtime-token.nix { inherit pkgs; }}
     export YOLO_VALIDATED_VARS=${lib.escapeShellArg (joinLines validatedVarLines)}
   '';
   sandboxEnv = buildEnv {

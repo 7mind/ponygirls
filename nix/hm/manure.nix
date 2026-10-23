@@ -1,23 +1,12 @@
 # manure Home Manager client (CONTRACT.md frozen v0.2.0): CLI + stdio
-# MCP wiring over runtime file-backed credentials.
+# MCP wiring over runtime literal or file-backed credentials.
 #
 # Option names are exactly CONTRACT.md §3.3 (closed set — no package
 # option; the client package is resolved internally and only
 # instantiated while enabled, so a disabled module builds nothing).
 #
-# Single credential transport (R3): MANURE_TOKEN_FILE everywhere —
-# host session, MCP server env, and yolo sandbox. MANURE_TOKEN is
-# never set by this module in any of those maps, so a stdio MCP child
-# inheriting its harness environment can never observe both halves of
-# the ambiguous-credentials pair (§9). The client validates token-file
-# bytes itself per the exact-byte rule, preserving fail-closed
-# behavior without a second transport.
-#
-# Host CLI defaults (R4): secret-free session variables
-# (MANURE_URL/MANURE_TOKEN_FILE/MANURE_CACHE_DIR carry URLs and PATHS
-# only) give the contractual flag > env > default precedence; a
-# configured cacheDir additionally reaches the MCP env, the sandbox
-# session, and a writable sandbox bind.
+# Runtime credentials override the configured file fallback. No secret material
+# is evaluated by Nix; CLI resolution stays lazy for help and public fetches.
 { config
 , lib
 , pkgs
@@ -53,10 +42,25 @@ let
     command = ''cache="${effectiveCacheDir}"; if [ ! -d "$cache" ] || [ ! -w "$cache" ]; then echo "manure: cache dir unavailable: $cache (persistent bind missing; resume records would be lost)" >&2; exit 1; fi'';
   };
 
+  pkg = pkgs.callPackage ../pkg/manure/package.nix { };
+  defaultFile = if cfg.tokenFile == null then "" else toString cfg.tokenFile;
+  manureClient = pkgs.runCommand "manure-client" { } ''
+    mkdir -p $out/bin
+    for command in manure manure-mcp; do
+      cat > "$out/bin/$command" <<'SCRIPT'
+    #!${pkgs.runtimeShell}
+    if [[ -z "''${MANURE_TOKEN:-}" && -z "''${MANURE_TOKEN_FILE:-}" ]]; then
+      export MANURE_TOKEN_FILE=${lib.escapeShellArg defaultFile}
+    fi
+    SCRIPT
+      printf 'exec %s/bin/%s "$@"\n' ${pkg} "$command" >> "$out/bin/$command"
+    done
+    chmod +x $out/bin/*
+  '';
+
   # MCP server env (paths/URLs only — no secret material in the store).
   mcpEnv = {
     MANURE_URL = cfg.url;
-    MANURE_TOKEN_FILE = toString cfg.tokenFile;
   } // lib.optionalAttrs (cacheDir != null) {
     MANURE_CACHE_DIR = cacheDir;
   };
@@ -68,7 +72,7 @@ in
       default = false;
       description = ''
         manure hosting client for agent harnesses (CLI + stdio MCP).
-        Defaults to enabled when fully resolvable (url + tokenFile);
+        Defaults to enabled when a url is configured;
         override to false to opt out, or to true to fail loudly on
         partial config. Disabled builds and wires nothing.
       '';
@@ -82,7 +86,7 @@ in
     tokenFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "Runtime file holding the raw 43-char bearer token (a path, never secret material). Also exported as the host MANURE_TOKEN_FILE default.";
+      description = "Runtime file holding the raw 43-char bearer token (a path, never secret material). Used as a fallback only when neither runtime MANURE_TOKEN nor MANURE_TOKEN_FILE is nonempty; never exported as a host session default.";
     };
     userId = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
@@ -103,16 +107,16 @@ in
 
   config = lib.mkMerge [
     {
-      # Auto-enable only when fully resolvable; never half-wire.
+      # A configured URL permits runtime-only credentials.
       smind.hm.dev.llm.manure.enable = lib.mkDefault (
-        llmEnabled && cfg.url != null && cfg.tokenFile != null
+        llmEnabled && cfg.url != null
       );
     }
     (lib.mkIf cfg.enable {
       assertions = [
         {
-          assertion = cfg.url != null && cfg.tokenFile != null;
-          message = "smind.hm.dev.llm.manure: set both url and tokenFile.";
+          assertion = cfg.url != null;
+          message = "smind.hm.dev.llm.manure: set url.";
         }
         {
           assertion = cfg.url == null || lib.hasPrefix "http://" cfg.url || lib.hasPrefix "https://" cfg.url;
@@ -122,36 +126,30 @@ in
 
       # One logical stdio entry; every harness spawns it natively.
       programs.mcp.servers.manure =
-        let
-          pkg = pkgs.callPackage ../pkg/manure/package.nix { };
-        in
         {
-          command = "${pkg}/bin/manure-mcp";
+          command = "${manureClient}/bin/manure-mcp";
           env = mcpEnv;
         };
 
       # The CLI ships in the same package.
-      home.packages = [ (pkgs.callPackage ../pkg/manure/package.nix { }) ];
+      home.packages = [ manureClient ];
 
       # Host CLI defaults: secret-free session variables (URLs and
-      # paths only). CLI flag > this env > compiled default (§9).
+      # paths only). Credential defaults are resolved lazily by the CLI wrapper.
       home.sessionVariables = {
         MANURE_URL = cfg.url;
-        MANURE_TOKEN_FILE = toString cfg.tokenFile;
       } // lib.optionalAttrs (cacheDir != null) {
         MANURE_CACHE_DIR = cacheDir;
       };
 
-      # Sandbox transport: the same single file-backed transport —
-      # MANURE_TOKEN_FILE as a session variable, the file itself bound
-      # read-only, cache bound read-write. No MANURE_TOKEN anywhere.
+      # File mode retains a read-only credential bind; literal runtime mode
+      # uses the private composed environment file instead.
       smind.hm.dev.llm.yolo.sessionVariables = {
         MANURE_URL = cfg.url;
-        MANURE_TOKEN_FILE = toString cfg.tokenFile;
       } // lib.optionalAttrs (cacheDir != null) {
         MANURE_CACHE_DIR = cacheDir;
       };
-      smind.hm.dev.llm.yolo.extraReadOnlyPaths = [ (toString cfg.tokenFile) ];
+      smind.hm.dev.llm.yolo.validatedSessionVariables.MANURE_TOKEN_FILE = defaultFile;
       smind.hm.dev.llm.yolo.extraReadWritePaths = lib.optional (cacheDir != null) cacheDir;
       # Host pre-start hook provisions the effective cache dir before
       # entry; sandbox guard fail-closes if the bind is still unavailable
@@ -171,8 +169,8 @@ in
               `manure` CLI + `manure-mcp` stdio tools publish files and
               directories as artifacts (`internal` | `external(password)` |
               `public`, optional TTL). Connection: `MANURE_URL` plus the
-              bearer file at `MANURE_TOKEN_FILE` (host and sandbox
-              defaults are preconfigured; a CLI flag overrides the env).
+              runtime `MANURE_TOKEN` or `MANURE_TOKEN_FILE`; configured
+              token files are fallbacks only when neither is nonempty.
               Never export `MANURE_TOKEN` alongside `MANURE_TOKEN_FILE`
               — both non-empty is `ambiguous-credentials` (exit 2, no
               network). Uploads are chunk-resumable (`upload --resume

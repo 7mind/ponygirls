@@ -39,7 +39,7 @@ printf '%s\n' \
   'printf "%s\n" "$@"' \
   'previous=' \
   'for arg in "$@"; do' \
-  '  if [[ "$previous" == "--ro-bind" && "$arg" == *,/run/yolo-sandbox-prestart.sh ]]; then cat "${arg%%,*}"; fi' \
+  '  if [[ "$previous" == "--ro-bind" && ( "$arg" == *,/run/yolo-sandbox-prestart.sh || "$arg" == *,/run/yolo-secrets.env ) ]]; then cat "${arg%%,*}"; fi' \
   '  previous="$arg"' \
   'done' \
   > "$FAKE_BIN/record-sandbox"
@@ -739,6 +739,49 @@ OUT="$(run_yolo --work cmd true)"
 STATUS=$?
 assert_eq "retired --work alias is an unknown flag" "1" "$STATUS"
 assert_contains "retired --work alias reports an unknown flag" "$OUT" "Unknown flag: --work"
+
+# Specified runtime credential modes: private literal transport and RO file mode.
+unset HAYSTACK_TOKEN HAYSTACK_TOKEN_FILE MANURE_TOKEN MANURE_TOKEN_FILE
+TOKEN="$(printf '%043d' 0 | tr 0 A)"
+TOKEN_FILE="$WORKDIR/runtime-token"
+printf '%s\n' "$TOKEN" > "$TOKEN_FILE"
+for KEY in HAYSTACK_TOKEN MANURE_TOKEN_FILE; do
+  export YOLO_VALIDATED_VARS="$KEY=$TOKEN_FILE"
+  OUT="$(run_yolo cmd true)"
+  assert_eq "$KEY fallback succeeds" "0" "$?"
+  if [[ "$KEY" == *_FILE ]]; then
+    assert_contains "file fallback preserves transport" "$OUT" "MANURE_TOKEN_FILE=$TOKEN_FILE"
+    assert_contains "file fallback receives RO bind" "$OUT" "$TOKEN_FILE"
+  else
+    assert_contains "Haystack fallback normalizes token" "$OUT" "HAYSTACK_TOKEN=$TOKEN"
+  fi
+  BASE="${KEY%_FILE}"
+  export "$BASE=$TOKEN"
+  OUT="$(run_yolo cmd true)"
+  assert_eq "$KEY literal override succeeds" "0" "$?"
+  assert_contains "$KEY literal is composed privately" "$OUT" "$BASE=$TOKEN"
+  assert_not_contains "$KEY literal has no companion assignment" "$OUT" "${BASE}_FILE="
+  assert_not_contains "$KEY literal exposes no fallback file" "$OUT" "$TOKEN_FILE"
+  export "${BASE}_FILE=$TOKEN_FILE"
+  OUT="$(run_yolo cmd true)"
+  assert_eq "$KEY conflicting sources fail before sandbox" "3" "$?"
+  assert_not_contains "$KEY failure reveals no token" "$OUT" "$TOKEN"
+  unset "$BASE"
+  OUT="$(run_yolo cmd true)"
+  assert_eq "$KEY runtime file override succeeds" "0" "$?"
+  unset "${BASE}_FILE"
+done
+# Rejected paths after an earlier literal must not leave composed credentials.
+printf '%s' "$TOKEN" > "$PROJECT_DIR/relative-token"
+export HAYSTACK_TOKEN="$TOKEN"
+export MANURE_TOKEN_FILE=relative-token
+export YOLO_VALIDATED_VARS=$'HAYSTACK_TOKEN=\nMANURE_TOKEN_FILE='
+OUT="$(run_yolo cmd true)"
+assert_eq "relative credential file is rejected" "3" "$?"
+LEFTOVER="$(find "$FAKE_XDG" -maxdepth 1 -name 'yolo-secrets.*' -print)"
+assert_eq "failed composition removes private temporary file" "" "$LEFTOVER"
+unset HAYSTACK_TOKEN MANURE_TOKEN_FILE
+unset YOLO_VALIDATED_VARS
 
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"

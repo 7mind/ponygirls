@@ -763,6 +763,42 @@ run_codex --enable=codex-config
 assert_contains "codex-config rewrites the default-profile config with trust" \
   "$(cat "$CODEX_HOME_DIR/.codex/config.toml")" "[projects.\"$PROJECT_DIR\"]"
 
+# Specified runtime credential modes, using the real in-sandbox entrypoint.
+unset HAYSTACK_TOKEN HAYSTACK_TOKEN_FILE MANURE_TOKEN MANURE_TOKEN_FILE
+TOKEN="$(printf '%043d' 0 | tr 0 A)"
+TOKEN_FILE="$WORKDIR/runtime-token"
+printf '%s\n' "$TOKEN" > "$TOKEN_FILE"
+run_runtime_token() {
+  OUT="$(cd "$PROJECT_DIR" && HOME="$FAKE_HOME" PATH="$FAKE_BIN:$PATH" \
+    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+    bash "$SCRIPT" cmd bash -c 'printf "resolved=%s\nfile=%s\n" "${HAYSTACK_TOKEN:-${MANURE_TOKEN:-}}" "${MANURE_TOKEN_FILE:-}"' 2>&1)"
+  STATUS=$?
+}
+for KEY in HAYSTACK_TOKEN MANURE_TOKEN_FILE; do
+  export YOLO_VALIDATED_VARS="$KEY=$TOKEN_FILE"
+  run_runtime_token
+  assert_zero "$KEY fallback succeeds" "$STATUS"
+  if [[ "$KEY" == *_FILE ]]; then
+    assert_contains "Manure fallback retains file mode" "$OUT" "file=$TOKEN_FILE"
+  else
+    assert_contains "Haystack fallback normalizes token" "$OUT" "resolved=$TOKEN"
+  fi
+  BASE="${KEY%_FILE}"
+  export "$BASE=$TOKEN"
+  run_runtime_token
+  assert_zero "$KEY literal override succeeds" "$STATUS"
+  assert_contains "$KEY literal reaches child" "$OUT" "resolved=$TOKEN"
+  export "${BASE}_FILE=$TOKEN_FILE"
+  run_runtime_token
+  assert_eq "$KEY conflict fails closed" "3" "$STATUS"
+  assert_not_contains "$KEY conflict reveals no token" "$OUT" "$TOKEN"
+  unset "$BASE"
+  run_runtime_token
+  assert_zero "$KEY runtime file override succeeds" "$STATUS"
+  unset "${BASE}_FILE"
+done
+unset YOLO_VALIDATED_VARS
+
 # ── summary ─────────────────────────────────────────────────────────────────
 echo "$TESTS_RUN assertions run, $FAILURES failed."
 [[ "$FAILURES" -eq 0 ]]

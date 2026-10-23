@@ -323,3 +323,56 @@ Repository names, agent responses, and other free-form hook text are omitted.
   the VM capability.
 - `aarch64-darwin`: the agents, Pi extensions, tokemon, content packages, and
   `yolo` (= `yolo-darwin`, Seatbelt).
+
+## Runtime credentials: Haystack and Manure
+
+Home Manager configures service URLs and optional `tokenFile` **paths**, never
+literal secrets. Existing file-backed configurations continue to work. Without a
+configured file, provide credentials at launch. For either service, one nonempty
+runtime source overrides the configured file fallback; two nonempty runtime
+sources are an error, even if they identify the same token. Empty values are
+unset. Tokens must be canonical, unpadded base64url encodings of 32 bytes (43
+characters); files may contain exactly one additional final LF, nothing else.
+
+```bash
+# Read secrets at runtime, not in Nix expressions or shell command arguments.
+read -r -s HAYSTACK_TOKEN; export HAYSTACK_TOKEN
+haystack-run pi                         # direct harness launch
+# Or use a runtime file instead:
+unset HAYSTACK_TOKEN
+HAYSTACK_TOKEN_FILE=/run/secrets/haystack-token haystack-run pi
+
+read -r -s MANURE_TOKEN; export MANURE_TOKEN
+manure whoami                          # packaged CLI wrapper
+# Or use a runtime file instead:
+unset MANURE_TOKEN
+MANURE_TOKEN_FILE=/run/secrets/manure-token manure whoami
+
+# The same runtime variables are resolved on the host for sandbox launches:
+HAYSTACK_TOKEN_FILE=/run/secrets/haystack-token \
+MANURE_TOKEN_FILE=/run/secrets/manure-token yolo pi
+```
+
+Do not place secret values in Nix options, generated configuration, `--env`
+arguments, or command-line literals. `haystack-run` requires a command and
+exports only the resolved `HAYSTACK_TOKEN` to it. Native remote MCP configuration
+uses that environment variable; direct harness launches need `haystack-run` to
+resolve file credentials. Manure's CLI and MCP wrappers apply the fallback
+lazily, preserving CLI help, unauthenticated public fetches and MCP initialization;
+the native clients validate credentials when needed. The Manure CLI resolves
+credentials before public fetches too: an unreadable or invalid selected fallback
+file still fails those commands, as with the previous file-backed configuration.
+For a credential-free public fetch use runtime-only configuration (`tokenFile =
+null`). No host session default for
+`MANURE_TOKEN_FILE` is exported, so a literal runtime token does not conflict with
+the configured fallback. Restart shells carrying old session defaults after an
+upgrade (or explicitly unset the obsolete variable).
+
+Yolo transports literal tokens through its private composed environment file,
+not sandbox argv. Haystack file credentials are normalized to a literal token;
+Manure file credentials retain file transport with a read-only bind. Runtime
+Manure file paths must be absolute and single-line. The file remains read-only,
+not immutable: clients validate its current contents when read. Invalid or
+missing credentials fail yolo launch; direct Manure MCP initialization remains
+lazy and reports credential errors on tool calls. Runtime ambiguity exits 2 for
+direct clients/wrappers; yolo reports credential resolution failures as exit 3.

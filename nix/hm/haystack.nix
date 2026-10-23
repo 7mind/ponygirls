@@ -1,5 +1,5 @@
 # Haystack Home Manager client (Step 8): native three-harness wiring over
-# Streamable HTTP with runtime file-backed credentials. No preflight gate
+# Streamable HTTP with runtime literal or file-backed credentials. No preflight gate
 # (dropped by user decision): launches proceed with the configured
 # URL/token-file and MCP failures surface at call time.
 { config
@@ -45,40 +45,15 @@ let
   # (Claude/Pi header expansion) or read natively (Codex bearer_token_env_var).
   authHeader = "Bearer \${HAYSTACK_TOKEN}";
 
-  # Direct-launch wrapper: exact-byte reader + exec, no tracing, no argv
-  # secrets. Yolo launches don't need it (validated vars are composed);
-  # standalone shells use `haystack-run <harness> ...`.
+  runtimeToken = import ../lib/runtime-token.nix { inherit pkgs; };
   haystackRun = pkgs.writeShellScriptBin "haystack-run" ''
-    set -euo pipefail
-    file=${lib.escapeShellArg (toString tokenFile)}
-    if [[ ! -r "$file" ]]; then
-      echo "haystack-run: token file not readable: $file" >&2
-      exit 3
+    if [[ $# == 0 ]]; then
+      echo "usage: haystack-run COMMAND [ARG...]" >&2
+      exit 2
     fi
-    # wc -c is portable (GNU stat -c is not on Darwin); strip whitespace.
-    size="$(wc -c < "$file" | tr -d '[:space:]')"
-    if [[ "$size" != 43 && "$size" != 44 ]]; then
-      echo "haystack-run: token file wrong size $size (want 43, or 44 with one final LF)" >&2
-      exit 3
-    fi
-    content="$(cat -- "$file"; printf x)"
-    content="''${content%x}"
-    if [[ "$size" == 44 && "''${content: -1}" != $'\n' ]]; then
-      echo "haystack-run: 44 bytes without a final LF" >&2
-      exit 3
-    fi
-    HAYSTACK_TOKEN="''${content%$'\n'}"
-    if [[ "$HAYSTACK_TOKEN" == *$'\n'* || "$HAYSTACK_TOKEN" == *$'\r'* ]]; then
-      echo "haystack-run: embedded newline in token file" >&2
-      exit 3
-    fi
-    if [[ ! "$HAYSTACK_TOKEN" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
-      echo "haystack-run: token file is not 43 base64url chars" >&2
-      exit 3
-    fi
-    export HAYSTACK_TOKEN
-    exec "$@"
+    exec ${runtimeToken} HAYSTACK_TOKEN ${lib.escapeShellArg (if tokenFile == null then "" else toString tokenFile)} "$@"
   '';
+
 in
 {
   options.smind.hm.dev.llm.haystack = {
@@ -87,7 +62,7 @@ in
       default = false;
       description = ''
         Haystack memory client for agent harnesses. Defaults to enabled when
-        fully resolvable (explicit url/tokenFile/activityProjectId, or a
+        resolvable (explicit url/activityProjectId, or a
         NixOS clients mapping for this account); override to false to opt
         out on a memory host, or to true to fail loudly on partial config.
       '';
@@ -106,7 +81,10 @@ in
       default = null;
       description = ''
         Runtime file holding the raw bearer token (a path, never secret
-        material — generated configs carry no bearer secret).
+        material — generated configs carry no bearer secret). Used only when
+        neither runtime HAYSTACK_TOKEN nor HAYSTACK_TOKEN_FILE is nonempty.
+        Both runtime sources nonempty is an error; neither source and no
+        configured file fails at launch, not at evaluation.
       '';
     };
     userId = lib.mkOption {
@@ -135,7 +113,7 @@ in
       # Auto-enable only when fully resolvable; never half-wire. Explicit
       # enable=true with partial config fails loudly via the assertions below.
       smind.hm.dev.llm.haystack.enable = lib.mkDefault (
-        llmEnabled && url != null && tokenFile != null && activityProjectId != null
+        llmEnabled && url != null && activityProjectId != null
       );
       # Enrolled-but-unmapped on a memory host is an actionable error even
       # when the client stays disabled: silent no-memory is worse than noise.
@@ -149,8 +127,8 @@ in
     (lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = url != null && tokenFile != null;
-        message = "smind.hm.dev.llm.haystack: set both url and tokenFile (or enroll via the NixOS clients mapping).";
+        assertion = url != null;
+        message = "smind.hm.dev.llm.haystack: set url (or enroll via the NixOS clients mapping).";
       }
       {
         assertion = activityProjectId != null;
@@ -173,7 +151,7 @@ in
 
     # Exact-byte-validated credential transport (fail-closed launches).
     smind.hm.dev.llm.yolo.validatedSessionVariables = {
-      HAYSTACK_TOKEN = toString tokenFile;
+      HAYSTACK_TOKEN = if tokenFile == null then "" else toString tokenFile;
     };
 
     home.packages = [ haystackRun ];

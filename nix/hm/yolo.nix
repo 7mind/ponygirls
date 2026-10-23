@@ -600,17 +600,18 @@ in
         { HAYSTACK_TOKEN = "/run/secrets/haystack-agent-token"; }
       '';
       description = ''
-        Exact-byte-validated token files for the sandbox, as a map from the
-        environment-variable name to the host path of the secret FILE.
+        Runtime token credentials for the sandbox, NAME -> fallback file path
+        (empty path requires a runtime credential). Nonempty NAME and NAME_FILE
+        conflict; otherwise either runtime source overrides the fallback file.
+        Values must be canonical unpadded base64url for 32 bytes; files may have
+        one final LF. Invalid or absent credentials fail the launch.
 
-        Unlike {option}`smind.hm.dev.llm.yolo.secretSessionVariables`
-        (warn-and-skip, `$(cat)` transport), each file must hold exactly a
-        43-char base64url token plus at most one final LF. yolo validates
-        the bytes before composition and FAILS the launch on any violation
-        (unreadable, wrong size, embedded newline, bad charset) — rejected
-        files never produce an environment assignment. The same validated
-        value is composed, never reread. Existing unrelated secrets keep
-        their generic transport semantics.
+        Keys ending in _TOKEN normalize to a literal token in the private
+        composed environment file. Keys ending in _TOKEN_FILE preserve file
+        transport when no literal token is supplied, validating on the host
+        and binding the selected absolute file path read-only. Literal mode
+        never exports the companion file variable. Existing unrelated secrets
+        keep their generic transport semantics.
       '';
     };
 
