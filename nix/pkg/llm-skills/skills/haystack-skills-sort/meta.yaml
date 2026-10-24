@@ -1,0 +1,10 @@
+name: haystack-skills-sort
+description: >-
+  Review the skill drafts stored in a Haystack memory instance and sort each
+  into promote or forget with a short evidence-based reason, checking full
+  draft bodies, recurrence, novelty, actionability and overlap with installed
+  skills. Produce a table only; install, archive or edit nothing until the user
+  decides, then record each decision on its draft. Invoke ONLY when the user
+  explicitly references this skill by name (e.g. "/haystack-skills-sort",
+  "sort the haystack skill drafts"). Do NOT auto-invoke when creating or
+  saving a single skill draft.
