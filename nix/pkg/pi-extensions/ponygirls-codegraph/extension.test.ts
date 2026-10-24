@@ -38,8 +38,20 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   await assert.rejects(readFile(marker), { code: "ENOENT" });
   const widgets: { text: string[] | undefined; placement: string | undefined }[] = [];
   const notices: string[] = [];
+  const badgeBackgrounds: string[] = [];
+  const badgeComponents: { render(width: number): string[]; invalidate(): void }[] = [];
+  const theme = {
+    bg(color: string, text: string) { badgeBackgrounds.push(color); return text; },
+  };
   const ctx = { cwd: root, mode: "tui", hasUI: true, ui: {
-    setWidget(_key: string, text: string[] | undefined, options: { placement: string } | undefined) {
+    theme,
+    setWidget(_key: string, widget: string[] | ((...args: unknown[]) => { render(width: number): string[]; invalidate(): void }) | undefined, options: { placement: string } | undefined) {
+      let text: string[] | undefined;
+      if (typeof widget === "function") {
+        const component = widget({}, theme);
+        badgeComponents.push(component);
+        text = component.render(120);
+      } else text = widget;
       widgets.push({ text, placement: options === undefined ? undefined : options.placement });
     },
     notify(text: string) { notices.push(text); },
@@ -53,6 +65,13 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   const start = emit("session_start", { type: "session_start", reason: "startup" });
   assert.equal(start, undefined, "startup hook must not return the owned background promise");
   assert.equal(widgets.at(-1)!.placement, "borderBottomLeft");
+  assert.match(widgets.at(-1)!.text![0], /^ CG: working\b/);
+  assert.equal(badgeBackgrounds.at(-1), "selectedBg");
+  const firstBadge = badgeComponents.at(-1)!;
+  theme.bg = (color, text) => { badgeBackgrounds.push(color); return `new-theme:${text}`; };
+  firstBadge.invalidate();
+  assert.match(firstBadge.render(120)[0], /^new-theme: CG:/);
+  theme.bg = (color, text) => { badgeBackgrounds.push(color); return text; };
   for (let n = 0; n < 100; n++) {
     try { await readFile(marker); break; }
     catch { await new Promise((done) => setTimeout(done, 10)); }
@@ -79,7 +98,7 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   assert.match(widgets.at(-1)!.text![0], /skipped/);
   emit("tool_execution_start", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "one" });
   emit("tool_execution_start", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "two" });
-  assert.match(widgets.at(-1)!.text![0], /querying \(2\) \/ skipped/);
+  assert.equal(widgets.at(-1)!.text![0], " CG: querying (2) / skipped ");
   emit("tool_execution_end", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "one" });
   emit("tool_execution_end", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "one" });
   assert.match(widgets.at(-1)!.text![0], /querying \(1\)/);

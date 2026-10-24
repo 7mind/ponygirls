@@ -14,7 +14,10 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     if (ctx === undefined || ctx.mode !== "tui") return;
     const label = toolCalls.size > 0 ? `querying (${toolCalls.size}) / ${state.phase}` : state.phase;
     const detail = state.phase === "working" ? ` ${state.detail.split(":")[0]}` : "";
-    ctx.ui.setWidget(WIDGET, [`cg index: ${label}${detail}`], { placement: "borderBottomLeft" });
+    ctx.ui.setWidget(WIDGET, (_tui, theme) => ({
+      render: () => [theme.bg("selectedBg", ` CG: ${label}${detail} `)],
+      invalidate: () => {},
+    }), { placement: "borderBottomLeft" });
   };
   const create = (ctx: ExtensionContext): CodegraphSession => {
     currentContext = ctx;
