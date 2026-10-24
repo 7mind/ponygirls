@@ -272,6 +272,12 @@ let
         type = lib.types.lines;
         description = "Shell command to run.";
       };
+      targets = lib.mkOption {
+        type = lib.types.listOf (lib.types.enum [ "claude" "codex" "pi" "shell" "cmd" "*" ]);
+        default = [ "*" ];
+        example = [ "claude" "codex" ];
+        description = "Subcommands this hook applies to; '*' matches all subcommands in the hook's phase.";
+      };
       tags = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [ ];
@@ -281,9 +287,9 @@ let
     };
   };
 
-  # Pre-start hooks as JSON arrays of { command, tags }. Host hooks run on the
-  # host before an agent session; sandbox hooks run INSIDE the sandbox (via the
-  # entrypoint) before the command. Both drop tags in the `--disable` set.
+  # Pre-start hooks as JSON arrays of { command, tags, targets }. Host hooks
+  # run before an agent session; sandbox hooks run INSIDE the sandbox (via the
+  # entrypoint). Both filter by subcommand and drop tags in the `--disable` set.
   prehooksJson = builtins.toJSON cfg.yolo.hooks.pre-start.host;
   sandboxHooksJson = builtins.toJSON cfg.yolo.hooks.pre-start.sandbox;
   shellHooksJson = builtins.toJSON cfg.yolo.hooks.pre-start.shell;
@@ -291,7 +297,7 @@ let
 
   # codegraph passed into the sandbox via the package set (no dedicated binary
   # env anymore); the per-project index bootstrap is a sandbox pre-start hook
-  # (contributed in config below). null disables all codegraph integration.
+  # (contributed in config below). null disables these yolo contributions only.
   codegraphSet = cfg.yolo.codegraph != null;
   validPiSharedAsset = asset:
     let
@@ -680,14 +686,18 @@ in
       default = codegraphPkg;
       defaultText = lib.literalExpression "pkgs.callPackage ../pkg/codegraph/package.nix { src = inputs.codegraph; }";
       description = ''
-        The codegraph package, or null to disable codegraph integration. When
-        set, codegraph is added to the sandbox package set (its CLI / `init -i`
-        work inside the sandbox), the per-project index bootstrap is registered
-        as a `codegraph`-tagged sandbox pre-start hook (run `yolo --disable=codegraph`
-        to skip it), and a `codegraph`-tagged usage note is added to
-        {option}`smind.hm.dev.llm.yolo.promptExtensions`. null removes all three.
-        The codegraph MCP server is configured separately (in tools.nix) and is
-        unaffected by this option.
+        The codegraph package, or null to remove yolo's codegraph package,
+        bootstrap hook, and prompt contribution. When set, codegraph is added
+        to the sandbox package set (its CLI / `init -i` work inside the sandbox),
+        the per-project index bootstrap is registered as a `codegraph`-tagged
+        sandbox pre-start hook for Claude and Codex, and a `codegraph`-tagged
+        usage note is added to {option}`smind.hm.dev.llm.yolo.promptExtensions`.
+        Pi instead prepares its index asynchronously through its extension,
+        independently enabled by the codegraph MCP server in Pi's registry.
+        `yolo --disable=codegraph` skips both the launcher bootstrap and Pi's
+        automatic setup for that launch. The codegraph MCP server is configured
+        separately (in tools.nix); neither it nor Pi's registry-driven extension
+        integration is disabled by setting this option to null.
       '';
     };
 
@@ -699,8 +709,10 @@ in
         starts, for agent subcommands only (claude/codex/pi; shell/cmd skip
         them), each via `bash -c`. Run in declaration order, best-effort (a
         failure warns but does not abort). A hook is skipped if any of its
-        `tags` is in the runtime `yolo --disable=<tag>` set. List-merges across
-        modules.
+        `tags` is in the runtime `yolo --disable=<tag>` set or its `targets`
+        excludes the selected subcommand. `targets` defaults to `[ "*" ]` and
+        only filters within this phase; it does not enable host hooks for
+        shell/cmd. List-merges across modules.
       '';
     };
 
@@ -715,9 +727,11 @@ in
         agent — so a hook runs in that shell and any environment it exports is
         inherited by the agent (and it may use the secret env vars). Run in
         declaration order; a non-zero command does not abort (no `set -e`). A
-        hook is skipped if any of its `tags` is in the `yolo --disable=<tag>` set.
+        hook is skipped if any of its `tags` is in the `yolo --disable=<tag>` set
+        or its `targets` excludes the selected subcommand. `targets` defaults
+        to `[ "*" ]` and only filters within this phase.
         List-merges across modules: the per-project codegraph index bootstrap is
-        contributed here (tag "codegraph") when
+        contributed here for Claude/Codex (tag "codegraph") when
         {option}`smind.hm.dev.llm.yolo.codegraph` is non-null.
       '';
     };
@@ -728,7 +742,7 @@ in
       description = ''
         Commands run INSIDE the sandbox before the command, for the `shell`
         subcommand only. Execution, ordering, environment inheritance, failure,
-        tag suppression, and module merging follow
+        tag suppression, target filtering, and module merging follow
         {option}`smind.hm.dev.llm.yolo.hooks.pre-start.sandbox`.
       '';
     };
@@ -739,7 +753,7 @@ in
       description = ''
         Commands run INSIDE the sandbox before the command, for the `cmd`
         subcommand only. Execution, ordering, environment inheritance, failure,
-        tag suppression, and module merging follow
+        tag suppression, target filtering, and module merging follow
         {option}`smind.hm.dev.llm.yolo.hooks.pre-start.sandbox`.
       '';
     };
@@ -875,6 +889,7 @@ in
       smind.hm.dev.llm.yolo.hooks.pre-start.sandbox = lib.mkBefore [
         {
           tags = [ "codegraph" ];
+          targets = [ "claude" "codex" ];
           command = ''
             ${pkgs.bash}/bin/bash ${../pkg/yolo/codegraph-bootstrap.sh} \
               ${cfg.yolo.codegraph}/bin/codegraph ${pkgs.jq}/bin/jq ${pkgs.git}/bin/git

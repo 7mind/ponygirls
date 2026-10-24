@@ -609,6 +609,25 @@
                 ! rg -q "${good43}" ${goodRun}
                 touch $out
               '';
+          pi-codegraph-wiring = import ./nix/lib/pi-codegraph-test.nix { inherit pkgs; };
+          ponygirls-codegraph = pkgs.runCommand "ponygirls-codegraph-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.flock ];
+            PI_CODEGRAPH_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PONYGIRLS_CODEGRAPH_BIN = "${self.packages.${system}.codegraph}/bin/codegraph";
+            PONYGIRLS_CODEGRAPH_FLOCK_BIN = "${pkgs.flock}/bin/flock";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-codegraph} ponygirls-codegraph
+            chmod -R u+w ponygirls-codegraph
+            cd ponygirls-codegraph
+            mkdir -p node_modules/@earendil-works
+            ln -s "$PI_CODEGRAPH_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_CODEGRAPH_SDK_ROOT/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
+            node --test *.test.ts
+            touch $out
+          '';
           subagents-policy-shape = subagentsPolicyShapeCheck;
           tokemon = self.packages.${system}.tokemon;
           dev-llm-module-boundary = devLlmModuleBoundaryCheck;

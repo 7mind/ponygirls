@@ -215,6 +215,32 @@ run_yolo() {
 
 run_yolo_cmd() { run_yolo "$@" --profile foo cmd true; }
 
+TARGETED_HOST_HOOKS='[{"command":"printf host-target-marker","tags":["codegraph"],"targets":["claude","codex"]}]'
+TARGETED_HOOKS='[{"command":"printf codegraph-target-marker","tags":["codegraph"],"targets":["claude","codex"]},{"command":"printf shared-hook-marker","tags":[]}]'
+for agent in claude codex pi shell cmd; do
+  OUT="$(SMIND_CODEGRAPH_DISABLED=1 YOLO_PREHOOKS_JSON="$TARGETED_HOST_HOOKS" YOLO_SANDBOX_HOOKS_JSON="$TARGETED_HOOKS" run_yolo --profile foo "$agent" true)"
+  assert_eq "$agent targeted hook launch succeeds" "0" "$?"
+  if [[ "$agent" == pi ]]; then
+    assert_contains "Pi resets ambient codegraph disable state" "$OUT" "SMIND_CODEGRAPH_DISABLED=0"
+  fi
+  if [[ "$agent" != shell && "$agent" != cmd ]]; then
+    assert_contains "$agent retains untargeted hooks" "$OUT" "shared-hook-marker"
+  fi
+  if [[ "$agent" != claude && "$agent" != codex ]]; then
+    assert_not_contains "$agent excludes codegraph bootstrap" "$OUT" "codegraph-target-marker"
+    assert_not_contains "$agent excludes targeted host hook" "$OUT" "host-target-marker"
+  else
+    assert_contains "$agent retains codegraph bootstrap" "$OUT" "codegraph-target-marker"
+    assert_contains "$agent retains targeted host hook" "$OUT" "host-target-marker"
+  fi
+  OUT="$(YOLO_PREHOOKS_JSON="$TARGETED_HOST_HOOKS" YOLO_SANDBOX_HOOKS_JSON="$TARGETED_HOOKS" run_yolo --disable=codegraph --profile foo "$agent" true)"
+  if [[ "$agent" == pi ]]; then
+    assert_contains "Pi receives codegraph disable state" "$OUT" "SMIND_CODEGRAPH_DISABLED=1"
+  fi
+  assert_not_contains "$agent suppresses disabled host hook" "$OUT" "host-target-marker"
+  assert_not_contains "$agent suppresses disabled codegraph bootstrap" "$OUT" "codegraph-target-marker"
+done
+
 AGENT_HOOKS='[{"command":"printf agent-hook","tags":[]}]'
 SHELL_HOOKS='[{"command":"printf shell-hook","tags":[]}]'
 CMD_HOOKS='[{"command":"printf cmd-hook","tags":[]}]'

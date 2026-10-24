@@ -284,8 +284,8 @@ in
 
       # CodeGraph MCP server — declared once, pulled into each agent CLI via
       # its enableMcpIntegration option below. Started on-demand per project by
-      # the agent. Yolo builds the per-project index in its sandbox pre-start
-      # hook; outside yolo, initialize it manually with `codegraph init`.
+      # the agent. Pi prepares its index asynchronously via ponygirls-codegraph;
+      # Claude/Codex use yolo's sandbox pre-start hook (or manual `codegraph init`).
       programs.mcp = {
         enable = true;
         servers.codegraph = {
@@ -300,8 +300,7 @@ in
       home.packages = [
         pkgs.gh
         pkgs.nodejs # required by claude-code plugins (.mjs scripts)
-        codegraphPkg # codegraph CLI on the host PATH (the per-project index
-        # bootstrap inside yolo is a pre-start hook; see nix/hm/yolo.nix)
+        codegraphPkg # host CLI; Pi prepares indexes in-session, yolo bootstraps Claude/Codex
         (pkgs.callPackage ../pkg/tokemon/package.nix { }) # quota dashboard
         (pkgs.callPackage ../pkg/tui-tmux/default.nix { }) # bypass clipboard-only tmux shim
       ] ++ lib.optionals isDarwin [
