@@ -34,7 +34,7 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   const extension = loaded.extensions[0] as Extension;
   assert.ok(extension);
   assert.equal(extension.tools.size, 0, "existing MCP tool names must remain untouched");
-  assert.deepEqual([...extension.commands.keys()], ["cg-status", "cg-sync", "cg-reindex", "cg-cancel"]);
+  assert.deepEqual([...extension.commands.keys()], ["cg", "cg-status", "cg-sync", "cg-reindex", "cg-cancel"]);
   await assert.rejects(readFile(marker), { code: "ENOENT" });
   const widgets: { text: string[] | undefined; placement: string | undefined }[] = [];
   const notices: string[] = [];
@@ -129,6 +129,19 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   assert.equal(explicitInput.projectPath, "/explicit-other-checkout");
   const otherInput: { query: string; projectPath?: string } = { query: "other" };
   await emit("tool_call", { toolName: "mcp__codegraph__different_tool", toolCallId: "other", input: otherInput });
-  assert.equal(otherInput.projectPath, undefined);
+  assert.equal(otherInput.projectPath, root, "other Codegraph tools must use the same verified project scope");
   await emit("session_shutdown", { type: "session_shutdown", reason: "exit" });
+  const stdout: unknown[][] = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (...args) => { stdout.push(args); };
+  console.error = () => {};
+  try {
+    await extension.commands.get("cg")!.handler("help", { ...ctx, mode: "json", hasUI: false } as never);
+    assert.equal(stdout.length, 0, "command diagnostics must not corrupt JSON/RPC stdout");
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    await emit("session_shutdown", { type: "session_shutdown", reason: "exit" });
+  }
 });

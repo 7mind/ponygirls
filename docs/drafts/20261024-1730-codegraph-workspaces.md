@@ -1,7 +1,10 @@
 # Codegraph workspaces: proposed design
 
-Status: design only; no runtime changes. “Global” below means a workspace-wide
-index, not a machine-wide or home-directory index.
+Status: implemented; current behavior is documented in
+`nix/pkg/pi-extensions/ponygirls-codegraph/README.md`. Online erase remains a
+fail-closed refusal because pinned upstream cannot exclude live readers/writers.
+“Global” below means a workspace-wide index, not a machine-wide or home-directory
+index. The baseline observations below describe commit 3815557, before implementation.
 
 ## Observed baseline
 
