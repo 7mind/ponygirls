@@ -657,6 +657,9 @@ in
         settings = {
           inherit (retryPolicy) httpIdleTimeoutMs retry;
           theme = "dark";
+          defaultProjectTrust = "always";
+          showCacheMissNotices = true;
+          outputPad = 0;
           # The configured default does not restrict runtime model switching.
           defaultProvider = cfg.models.pi.provider;
           defaultModel = cfg.models.pi.model;
