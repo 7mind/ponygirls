@@ -118,7 +118,7 @@ export function mountMcp(app: Express, deps: McpDeps): void {
           const item = await items.get(key, revision);
           log({ requestId, route: "mcp/get", status: 200, result: "ok", userId: principal.userId, tokenId: principal.tokenId, revision: item.revision });
           return {
-            content: [{ type: "text" as const, text: textOfGet(item) }],
+            content: [{ type: "text" as const, text: textOfGet(key, item) }],
             structuredContent: {
               key,
               revision: item.revision,
@@ -283,8 +283,10 @@ function toolFault(
   };
 }
 
-function textOfGet(item: { revision: number; documentCanonical: string; metadata: { modifiedBy: string; modifiedAt: string } }): string {
-  // Display text only; full fidelity lives in document_json.
+function textOfGet(key: string, item: { revision: number; documentCanonical: string; metadata: { modifiedBy: string; modifiedAt: string } }): string {
+  // MCP: a tool returning structuredContent SHOULD also return it as text.
+  // Clients that show the model only `content` (e.g. Pi) would otherwise see
+  // the header but never the body, so the canonical document follows verbatim.
   let title = "";
   let type = "";
   let status = "";
@@ -299,5 +301,10 @@ function textOfGet(item: { revision: number; documentCanonical: string; metadata
     title = "(unreadable)";
   }
   const tagSuffix = tags.length > 0 ? ` #${tags.join(" #")}` : "";
-  return [`revision ${item.revision} [${type}/${status}] ${title}${tagSuffix}`, `last modified by ${item.metadata.modifiedBy} at ${item.metadata.modifiedAt}`].join("\n");
+  return [
+    `${key} revision ${item.revision} [${type}/${status}] ${title}${tagSuffix}`,
+    `last modified by ${item.metadata.modifiedBy} at ${item.metadata.modifiedAt}`,
+    "document_json:",
+    item.documentCanonical,
+  ].join("\n");
 }
