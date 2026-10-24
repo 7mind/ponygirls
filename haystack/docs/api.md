@@ -22,6 +22,10 @@ unavailable`. Faults carry a stable code, a short message, and (for
 
 `revision` optional (default: current). Returns full item (key, revision,
 document, metadata). Archived items accessible. Unknown key → `not-found`.
+The text content repeats the key, revision and last-modified metadata,
+then carries the canonical `document_json` verbatim, so clients that show
+the model only `content` (not `structuredContent`) can still read the
+document.
 
 ### `put`
 
