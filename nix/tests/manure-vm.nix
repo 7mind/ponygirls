@@ -154,7 +154,7 @@ assert lib.hasInfix "exit 1" hmGuard.command;
 assert lib.any (drv: (drv.name or "") == "yolo") hmEval.home.packages;
 assert builtins.length (builtins.filter (drv: (drv.name or "") == "yolo") hmEval.home.packages) == 1;
 assert lib.any (drv: lib.hasPrefix "bubblewrap" (drv.name or "")) hmEval.home.packages;
-assert lib.any (drv: (drv.pname or "") == "manure") hmEval.home.packages;
+assert lib.any (drv: (drv.name or "") == "manure-client") hmEval.home.packages;
 assert hmSession.MANURE_CACHE_DIR == hmCacheDir;
 assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
 (pkgs.testers.runNixOSTest {

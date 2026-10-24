@@ -12,7 +12,7 @@ index 61dd63f..e60904e 100644
 +	return join(getAgentDir(), `${APP_NAME}-captured-output.log`);
 +}
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 287d5e0..7e3a46a 100644
+index e24d150..8056dd3 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 @@ -20,6 +20,7 @@ import {
@@ -31,7 +31,7 @@ index 287d5e0..7e3a46a 100644
  	getDebugLogPath,
  	getDocsPath,
  	VERSION,
-@@ -537,6 +539,11 @@ export class InteractiveMode {
+@@ -500,6 +502,11 @@ export class InteractiveMode {
  	private lastStatusSpacer: Spacer | undefined = undefined;
  	private lastStatusText: ThemedText | undefined = undefined;
  	private lastStatusMessage = "";
@@ -43,7 +43,7 @@ index 287d5e0..7e3a46a 100644
  	private managedToolStatusStarted = false;
  
  	// Streaming message tracking
-@@ -666,6 +673,7 @@ export class InteractiveMode {
+@@ -629,6 +636,7 @@ export class InteractiveMode {
  			onRightClickPaste: this.onRightClickPaste,
  			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
  			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
@@ -51,7 +51,7 @@ index 287d5e0..7e3a46a 100644
  		});
  		this.ui = createInteractiveTuiReference(() => this.renderer);
  		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-@@ -3908,6 +3916,48 @@ export class InteractiveMode {
+@@ -3812,6 +3820,48 @@ export class InteractiveMode {
  		this.ui.requestRender();
  	}
  
@@ -129,7 +129,7 @@ index 6487c1c..a868f4e 100644
  		const styleSearchMatch = (text: string) => theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
  		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
 diff --git a/packages/tui/src/index.ts b/packages/tui/src/index.ts
-index a7aa621..6f50cf3 100644
+index eb96260..15aba3d 100644
 --- a/packages/tui/src/index.ts
 +++ b/packages/tui/src/index.ts
 @@ -116,7 +116,13 @@ export { formatProgramStatus, type ProgramStatus } from "./program-status.ts";
@@ -148,10 +148,10 @@ index a7aa621..6f50cf3 100644
  export {
  	parseTerminalColorSchemeReport,
 diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
-index b846869..77a024c 100644
+index 80d62b3..1a96f51 100644
 --- a/packages/tui/src/terminal.ts
 +++ b/packages/tui/src/terminal.ts
-@@ -147,8 +147,30 @@ export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
+@@ -153,8 +153,30 @@ export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
  /**
   * Real terminal using process.stdin/stdout
   */
@@ -182,7 +182,7 @@ index b846869..77a024c 100644
  	private inputHandler?: (data: string) => void;
  	private resizeHandler?: () => void;
  	private _kittyProtocolActive = false;
-@@ -182,6 +204,10 @@ export class ProcessTerminal implements Terminal {
+@@ -188,6 +210,10 @@ export class ProcessTerminal implements Terminal {
  		return env;
  	})();
  
@@ -193,7 +193,7 @@ index b846869..77a024c 100644
  	get kittyProtocolActive(): boolean {
  		return this._kittyProtocolActive;
  	}
-@@ -191,6 +217,7 @@ export class ProcessTerminal implements Terminal {
+@@ -197,6 +223,7 @@ export class ProcessTerminal implements Terminal {
  	}
  
  	start(onInput: (data: string) => void, onResize: () => void): void {
@@ -201,7 +201,7 @@ index b846869..77a024c 100644
  		this.inputHandler = onInput;
  		this.resizeHandler = onResize;
  
-@@ -203,7 +230,7 @@ export class ProcessTerminal implements Terminal {
+@@ -209,7 +236,7 @@ export class ProcessTerminal implements Terminal {
  		process.stdin.resume();
  
  		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
@@ -210,7 +210,7 @@ index b846869..77a024c 100644
  
  		// Set up resize handler immediately
  		process.stdout.on("resize", this.resizeHandler);
-@@ -295,7 +322,7 @@ export class ProcessTerminal implements Terminal {
+@@ -301,7 +328,7 @@ export class ProcessTerminal implements Terminal {
  		this.programStatusSupported = programStatusOverride === "1";
  		this.programStatusQueryPending = programStatusOverride !== "1" && programStatusOverride !== "0";
  		const programStatusQuery = this.programStatusQueryPending ? PROGRAM_STATUS_QUERY : "";
@@ -219,7 +219,7 @@ index b846869..77a024c 100644
  		this.writeProgramStatus();
  	}
  
-@@ -401,13 +428,13 @@ export class ProcessTerminal implements Terminal {
+@@ -407,13 +434,13 @@ export class ProcessTerminal implements Terminal {
  
  	private enableModifyOtherKeys(): void {
  		if (this._kittyProtocolActive || this._modifyOtherKeysActive) return;
@@ -235,7 +235,7 @@ index b846869..77a024c 100644
  		this._modifyOtherKeysActive = false;
  	}
  
-@@ -432,7 +459,7 @@ export class ProcessTerminal implements Terminal {
+@@ -438,7 +465,7 @@ export class ProcessTerminal implements Terminal {
  		if (shouldDisableKittyProtocol) {
  			// Disable Kitty keyboard protocol first so any late key releases
  			// do not generate new Kitty escape sequences.
@@ -244,7 +244,7 @@ index b846869..77a024c 100644
  			this.keyboardProtocolPushed = false;
  			this._kittyProtocolActive = false;
  			setKittyProtocolActive(false);
-@@ -466,24 +493,24 @@ export class ProcessTerminal implements Terminal {
+@@ -472,24 +499,24 @@ export class ProcessTerminal implements Terminal {
  
  	stop(): void {
  		if (this.clearProgressInterval()) {
@@ -273,12 +273,19 @@ index b846869..77a024c 100644
  			this.keyboardProtocolPushed = false;
  			this._kittyProtocolActive = false;
  			setKittyProtocolActive(false);
-@@ -516,10 +543,72 @@ export class ProcessTerminal implements Terminal {
+@@ -522,6 +549,7 @@ export class ProcessTerminal implements Terminal {
  		if (process.stdin.setRawMode) {
  			process.stdin.setRawMode(this.wasRaw);
  		}
-+
 +		this.removeOutputCapture();
+ 	}
+ 
+ 	restoreOnExit(before: string, after: string): void {
+@@ -537,10 +565,71 @@ export class ProcessTerminal implements Terminal {
+ 		} catch {
+ 			// The terminal may already be gone.
+ 		}
++
 +	}
 +
 +	/**
@@ -347,7 +354,7 @@ index b846869..77a024c 100644
  		if (this.writeLogPath) {
  			try {
  				fs.appendFileSync(this.writeLogPath, data, { encoding: "utf8" });
-@@ -540,63 +629,63 @@ export class ProcessTerminal implements Terminal {
+@@ -561,63 +650,63 @@ export class ProcessTerminal implements Terminal {
  	moveBy(lines: number): void {
  		if (lines > 0) {
  			// Move down
@@ -424,3 +431,60 @@ index b846869..77a024c 100644
  		}
  	}
  
+diff --git a/packages/tui/test/terminal.test.ts b/packages/tui/test/terminal.test.ts
+index 437994a..9b7638b 100644
+--- a/packages/tui/test/terminal.test.ts
++++ b/packages/tui/test/terminal.test.ts
+@@ -436,3 +436,52 @@ describe("ProcessTerminal dimensions", () => {
+ 		}
+ 	});
+ });
++
++describe("ProcessTerminal output capture", () => {
++	it("captures external writes, passes renderer/clipboard output, and restores writers on stop", async () => {
++		const previousStdout = process.stdout.write;
++		const previousStderr = process.stderr.write;
++		const writes: string[] = [];
++		const stdout = ((chunk: string | Uint8Array) => {
++			writes.push(String(chunk));
++			return true;
++		}) as typeof process.stdout.write;
++		const stderr = (() => true) as typeof process.stderr.write;
++		process.stdout.write = stdout;
++		process.stderr.write = stderr;
++		const captured: Array<[string, string]> = [];
++		const terminal = new ProcessTerminal({ onCapturedOutput: (text, stream) => captured.push([text, stream]) });
++		try {
++			// Isolate output ownership from stdin and keyboard negotiation.
++			(terminal as unknown as { installOutputCapture(): void }).installOutputCapture();
++			let callbackCalled = false;
++			assert.equal(
++				process.stdout.write("external", () => {
++					callbackCalled = true;
++				}),
++				true,
++			);
++			process.stderr.write(Buffer.from("diagnostic"));
++			terminal.write("frame");
++			process.stdout.write("\x1b]52;c;Y29weQ==\x07");
++			await Promise.resolve();
++			assert.equal(callbackCalled, true);
++			assert.deepEqual(captured, [
++				["external", "stdout"],
++				["diagnostic", "stderr"],
++			]);
++			assert.deepEqual(writes, ["frame", "\x1b]52;c;Y29weQ==\x07"]);
++			terminal.stop();
++			assert.equal(process.stdout.write, stdout);
++			assert.equal(process.stderr.write, stderr);
++			assert.deepEqual(captured, [
++				["external", "stdout"],
++				["diagnostic", "stderr"],
++			]);
++		} finally {
++			terminal.stop();
++			process.stdout.write = previousStdout;
++			process.stderr.write = previousStderr;
++		}
++	});
++});

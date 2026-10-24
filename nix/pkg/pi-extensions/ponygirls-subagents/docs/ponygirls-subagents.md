@@ -2,7 +2,7 @@
 
 ## Supported versions and platforms
 
-- Repository-patched pi **1.2.0** (`@earendil-works/*` namespace). The worker imports the
+- Repository-patched pi **1.4.0** (`@earendil-works/*` namespace). The worker imports the
   **built** package tree (`dist/index.js`, `pi-ai/dist/compat.js`,
   `typebox`) from `PI_SUBAGENTS_SDK_ROOT`, which the home-manager pi wrapper
   sets to the exact pi derivation it runs. Unset, spawning fails with an
