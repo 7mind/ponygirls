@@ -33,8 +33,9 @@ servers**. Existing Home Manager `codegraph --mcp` configuration, tool names
   on local preparation: readiness is session-local, not tracked per requested
   project. Skipped/disabled preparation does not gate the MCP server or inject paths.
 
-The bottom-left editor-border badge shows extension-owned setup/sync and Pi
-Codegraph query activity, including parallel queries. `ready` means **the last
+The padded `CG` badge on the bottom-left editor border uses the theme's
+`selectedBg` background and shows extension-owned setup/sync and Pi Codegraph
+query activity, including parallel queries. `ready` means **the last
 completed local index check**, not continuous freshness or MCP connectivity. The
 independent MCP watcher is not monitored. `wait/run` includes time waiting for
 another session's writer lock; there is no lock-wait timeout, and `/cg-cancel`
