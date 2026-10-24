@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { lstat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { join } from "node:path";
 
 const OUTPUT_LIMIT = 32_768;
 const KILL_GRACE_MS = 700;
@@ -184,7 +184,7 @@ export function localBoundary(binary: string, flock: string, env: NodeJS.Process
         if (result.stderr.includes("not a git repository") || result.stderr.includes("must be run in a work tree")) return null;
         throw new Error(`Git checkout detection failed: ${result.stderr}`);
       }
-      return resolve(result.stdout.trim());
+      return realpath(result.stdout.trim());
     },
     async localIndex(root) {
       try {
@@ -200,8 +200,18 @@ export function localBoundary(binary: string, flock: string, env: NodeJS.Process
     },
     async run(root, args, signal) {
       const git = await execute("git", ["rev-parse", "--absolute-git-dir"], root, signal, localEnv);
-      if (git.code !== 0) throw new Error(`Git directory detection failed: ${git.stderr}`);
-      const lock = join(git.stdout.trim(), "ponygirls-codegraph.lock");
+      let lock: string;
+      if (git.code === 0) lock = join(git.stdout.trim(), "ponygirls-codegraph.lock");
+      else {
+        if (!git.stderr.includes("not a git repository")) throw new Error(`Git directory detection failed: ${git.stderr}`);
+        const metadata = await lstat(join(root, ".pi"));
+        const marker = await lstat(join(root, ".pi", "codegraph-workspace.json"));
+        if (!metadata.isDirectory() || metadata.isSymbolicLink() || !marker.isFile() || marker.isSymbolicLink() ||
+            JSON.parse(await readFile(join(root, ".pi", "codegraph-workspace.json"), "utf8")).version !== 1) {
+          throw new Error("Non-Git indexing requires a local /cg init --workspace opt-in");
+        }
+        lock = join(root, ".pi", "codegraph-workspace.lock");
+      }
       // init's --yes would install fallback Git hooks when watching is disabled.
       // init never starts a watcher; override only its policy check, not the MCP environment.
       const commandEnv = args[0] === "init"

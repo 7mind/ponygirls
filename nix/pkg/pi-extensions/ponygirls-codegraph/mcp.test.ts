@@ -127,3 +127,46 @@ test("MCP before init: nested checkout defaults stay local and explicit paths re
   assert.match(await explore("parentOnly", parent), /return 'parentOnly-source'/);
   assert.match(await explore("childOnly", nested), /return 'childOnly-source'/);
 });
+
+test("MCP from a non-Git parent: lazy repository isolation and ambiguous defaults", {
+  skip: !process.env.PONYGIRLS_CODEGRAPH_BIN || !process.env.PI_CODEGRAPH_SDK_ROOT
+    ? "set PONYGIRLS_CODEGRAPH_BIN and PI_CODEGRAPH_SDK_ROOT for workspace MCP checks" : false,
+}, async (t) => {
+  const binary = process.env.PONYGIRLS_CODEGRAPH_BIN!;
+  const base = await mkdtemp(join(tmpdir(), "pi-codegraph-workspace-mcp-"));
+  const env = { ...process.env, CODEGRAPH_TELEMETRY: "0", CODEGRAPH_NO_WATCH: "1" };
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const roots = [join(base, "alpha"), join(base, "beta")];
+  for (const [index, root] of roots.entries()) {
+    await mkdir(root);
+    execFileSync("git", ["-C", root, "init", "--quiet"]);
+    await writeFile(join(root, "example.ts"), `export function sentinel${index}() { return 'only-${index}'; }\n`);
+  }
+  const mcp = client(binary, base, env);
+  t.after(() => mcp.close());
+  await mcp.request("initialize", { protocolVersion: "2024-11-05", capabilities: {},
+    clientInfo: { name: "workspace-fixture", version: "1" } });
+  mcp.notify("notifications/initialized");
+  const loader = await import(pathToFileURL(join(process.env.PI_CODEGRAPH_SDK_ROOT!, "dist/core/extensions/loader.js")).href);
+  const loaded = await loader.loadExtensions([resolve(import.meta.dirname, "index.ts")], base);
+  assert.deepEqual(loaded.errors, []);
+  const extension = loaded.extensions[0] as Extension;
+  const ctx = { cwd: base, mode: "json", hasUI: false } as ExtensionContext;
+  const emit = (name: string, event: object) => extension.handlers.get(name)![0](event, ctx);
+  t.after(() => emit("session_shutdown", { type: "session_shutdown", reason: "exit" }));
+  emit("session_start", { type: "session_start", reason: "startup" });
+  const implicit = await emit("tool_call", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "ambiguous", input: { query: "sentinel" } });
+  assert.notEqual(implicit, undefined, "multi-repository defaults must be rejected rather than forwarded to MCP");
+  assert.equal((implicit as { block: boolean }).block, true);
+  for (const root of [base, ...roots]) {
+    await assert.rejects(readFile(join(root, ".codegraph", "codegraph.db")), { code: "ENOENT" });
+  }
+  for (const [index, root] of roots.entries()) {
+    const input = { query: `sentinel${index}`, projectPath: root };
+    assert.equal(await emit("tool_call", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: root, input }), undefined);
+    const output = text(await mcp.request("tools/call", { name: "codegraph_explore", arguments: input }));
+    assert.match(output, new RegExp(`return 'only-${index}'`));
+    assert.doesNotMatch(output, new RegExp(`return 'only-${1 - index}'`));
+  }
+  await assert.rejects(readFile(join(base, ".codegraph", "codegraph.db")), { code: "ENOENT" });
+});
