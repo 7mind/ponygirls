@@ -40,6 +40,7 @@ import type { Component, SizeValue, TUI, TuiMouseEvent, TuiMouseEventResult } fr
 import { Input, matchesKey, parseKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
+	allModels,
 	cycleFavouriteEntry,
 	cycleModelEntry,
 	entryIdBase,
@@ -309,7 +310,7 @@ class ModelPicker implements Component {
 
 	private visible(): FavouriteModel[] {
 		const base: readonly FavouriteModel[] =
-			this.tab === "favourites" ? favouriteModels(this.models, this.state) : this.models.map((model) => ({ ...model }));
+			this.tab === "favourites" ? favouriteModels(this.models, this.state) : allModels(this.models);
 		return filterModels(base, this.filter.getValue());
 	}
 

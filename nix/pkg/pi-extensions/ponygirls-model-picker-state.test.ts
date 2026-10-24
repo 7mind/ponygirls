@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+	allModels,
 	cycleFavouriteEntry,
 	cycleModelEntry,
 	entryIdBase,
@@ -33,6 +34,20 @@ const models = [
 /** Display rows as `provider/id[@effort]`, in picker order. */
 const rowLabels = (state: PickerState) =>
 	favouriteModels(models, state).map((model) => `${modelKey(model)}${model.effort ? `@${model.effort}` : ""}`);
+
+test("allModels sorts by displayed model id, case-insensitively, then provider without mutating the catalog", () => {
+	const catalog = [
+		{ provider: "a", id: "zebra", name: "Alpha" },
+		{ provider: "z", id: "Alpha", name: "Zebra" },
+		{ provider: "b", id: "beta" },
+		{ provider: "a", id: "alpha" },
+	];
+	const original = [...catalog];
+	assert.deepEqual(allModels(catalog).map(modelKey), ["a/alpha", "z/Alpha", "b/beta", "a/zebra"]);
+	assert.deepEqual(catalog, original);
+	assert.deepEqual(filterModels(allModels(catalog), "alpha").map(modelKey), ["a/alpha", "z/Alpha", "a/zebra"]);
+	assert.deepEqual(allModels([]), []);
+});
 
 test("modelKey joins provider and id", () => {
 	assert.equal(modelKey(models[0]!), "anthropic/claude-sonnet");

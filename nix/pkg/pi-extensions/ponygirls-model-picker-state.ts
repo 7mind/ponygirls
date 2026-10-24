@@ -170,6 +170,12 @@ export function pickerVisibleRows(termRows: number | undefined): number {
 	return Math.max(PICKER_MIN_ROWS, Math.min(PICKER_MAX_ROWS, Math.floor((termRows * 2) / 3) - PICKER_CHROME_ROWS));
 }
 
+export function allModels(models: readonly ModelRef[]): ModelRef[] {
+	return models.map((model) => ({ ...model })).sort((left, right) =>
+		left.id.localeCompare(right.id, "en", { sensitivity: "base" }) || modelKey(left).localeCompare(modelKey(right)),
+	);
+}
+
 export function filterModels<T extends ModelRef>(models: readonly T[], query: string): T[] {
 	const needle = query.trim().toLowerCase();
 	if (!needle) return [...models];
