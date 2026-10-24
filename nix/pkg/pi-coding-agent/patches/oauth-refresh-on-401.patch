@@ -1,8 +1,8 @@
 diff --git a/packages/ai/src/auth/resolve.ts b/packages/ai/src/auth/resolve.ts
-index dfeb030..11dec8a 100644
+index dfeb030..e8981f3 100644
 --- a/packages/ai/src/auth/resolve.ts
 +++ b/packages/ai/src/auth/resolve.ts
-@@ -19,6 +19,13 @@ import type {
+@@ -19,6 +19,17 @@ import type {
  export interface AuthResolutionOverrides {
  	apiKey?: string;
  	env?: ProviderEnv;
@@ -13,18 +13,24 @@ index dfeb030..11dec8a 100644
 +	 * without widening the global HTTP 401 retry classifiers.
 +	 */
 +	forceOAuthRefresh?: boolean;
++	/** Access token rejected by the request; preserves concurrent rotation detection. */
++	rejectedOAuthAccessToken?: string;
++	/** Observe the exact credential used for request auth, without re-reading storage. */
++	onOAuthAccessToken?: (access: string) => void;
  	/** Require this much remaining OAuth-token validity; defaults to five minutes. */
  	minOAuthValidityMs?: number;
  	signal?: AbortSignal;
-@@ -77,6 +84,7 @@ async function resolveProviderAuthWithSignal(
+@@ -77,6 +88,9 @@ async function resolveProviderAuthWithSignal(
  				stored,
  				signal,
  				overrides?.minOAuthValidityMs,
 +				overrides?.forceOAuthRefresh,
++				overrides?.rejectedOAuthAccessToken,
++				overrides?.onOAuthAccessToken,
  			);
  		}
  		if (stored.type === "api_key" && provider.auth.apiKey) {
-@@ -157,6 +165,10 @@ export async function refreshStoredOAuthCredential(
+@@ -157,6 +171,10 @@ export async function refreshStoredOAuthCredential(
  /**
   * OAuth resolution with double-checked locking: tokens with less than five
   * minutes remaining are refreshed through `refreshStoredOAuthCredential`.
@@ -35,11 +41,13 @@ index dfeb030..11dec8a 100644
   */
  async function resolveStoredOAuth(
  	credentials: CredentialStore,
-@@ -165,14 +177,20 @@ async function resolveStoredOAuth(
+@@ -165,14 +183,22 @@ async function resolveStoredOAuth(
  	stored: OAuthCredential,
  	signal: AbortSignal,
  	minOAuthValidityMs?: number,
 +	forceOAuthRefresh?: boolean,
++	rejectedOAuthAccessToken?: string,
++	onOAuthAccessToken?: (access: string) => void,
  ): Promise<AuthResult | undefined> {
  	const minimumValidityMs = Math.max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, minOAuthValidityMs ?? 0);
  	const expiresSoon = (credential: OAuthCredential) => Date.now() + minimumValidityMs >= credential.expires;
@@ -51,7 +59,7 @@ index dfeb030..11dec8a 100644
 +	// Forced refresh (after a coding-API 401): refresh unless the on-disk access
 +	// token already differs from the one that failed (another process rotated it).
 +	const needsRefresh = forceOAuthRefresh
-+		? (current: OAuthCredential) => current.access !== stored.access
++		? (current: OAuthCredential) => current.access === (rejectedOAuthAccessToken ?? stored.access)
 +		: expiresSoon;
 +	if (forceOAuthRefresh || expiresSoon(credential)) {
 +		// Optimistic check said expired (or caller forced); authoritative work runs under the lock.
@@ -59,11 +67,22 @@ index dfeb030..11dec8a 100644
  		if (!post) return undefined; // logged out meanwhile
  		credential = post;
  		// The normal five-minute window triggers a refresh but does not impose a
+@@ -184,7 +210,9 @@ async function resolveStoredOAuth(
+ 	}
+ 
+ 	try {
+-		return { auth: await oauth.toAuth(credential), source: "OAuth" };
++		const auth = await oauth.toAuth(credential);
++		onOAuthAccessToken?.(credential.access);
++		return { auth, source: "OAuth" };
+ 	} catch (error) {
+ 		throw new ModelsError("oauth", `OAuth auth derivation failed for ${providerId}`, { cause: error });
+ 	}
 diff --git a/packages/ai/src/models.ts b/packages/ai/src/models.ts
-index fbcc522..ce309f1 100644
+index ac0396f..42f3890 100644
 --- a/packages/ai/src/models.ts
 +++ b/packages/ai/src/models.ts
-@@ -26,6 +26,7 @@ import type {
+@@ -27,6 +27,7 @@ import type {
  	ApiStreamOptions,
  	AssistantImages,
  	AssistantMessage,
@@ -71,23 +90,28 @@ index fbcc522..ce309f1 100644
  	AssistantMessageEventStream,
  	ClassifierApi,
  	ClassifierContext,
-@@ -846,6 +847,7 @@ class ModelsImpl implements MutableModels {
+@@ -859,6 +860,10 @@ class ModelsImpl implements MutableModels {
  	>(
  		model: TModel,
  		options: TOptions | undefined,
-+		authOverrides?: Pick<AuthResolutionOverrides, "forceOAuthRefresh">,
++		authOverrides?: Pick<
++			AuthResolutionOverrides,
++			"forceOAuthRefresh" | "rejectedOAuthAccessToken" | "onOAuthAccessToken"
++		>,
  	): Promise<{
  		requestModel: TModel;
  		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
-@@ -855,6 +857,7 @@ class ModelsImpl implements MutableModels {
+@@ -868,6 +873,9 @@ class ModelsImpl implements MutableModels {
  			apiKey: options?.apiKey,
  			env: options?.env,
  			signal: options?.signal,
 +			forceOAuthRefresh: authOverrides?.forceOAuthRefresh,
++			rejectedOAuthAccessToken: authOverrides?.rejectedOAuthAccessToken,
++			onOAuthAccessToken: authOverrides?.onOAuthAccessToken,
  		});
  		if (!resolution) {
  			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
-@@ -874,22 +877,55 @@ class ModelsImpl implements MutableModels {
+@@ -898,26 +906,65 @@ class ModelsImpl implements MutableModels {
  		return { requestModel, requestOptions };
  	}
  
@@ -106,33 +130,43 @@ index fbcc522..ce309f1 100644
 +		kind: "stream" | "streamSimple",
  	): AssistantMessageEventStream {
  		const transcript = normalizeContext(context);
- 		return lazyStream(model, async () => {
- 			const provider = this.requireChatProvider(model);
--			const { requestModel, requestOptions } = await this.applyAuth(
--				model,
--				options as ModelsApiStreamOptions<Api> | undefined,
--			);
--			return provider.stream(requestModel, transcript, requestOptions as ApiStreamOptions<TApi>);
-+			const stored = await this.credentials.read(model.provider, { signal: options?.signal });
-+			// Explicit apiKey override is treated as a static credential path — no oauth retry.
-+			const oauthEligible = stored?.type === "oauth" && options?.apiKey === undefined;
+ 		return lazyStream(
+ 			model,
+ 			async () => {
+ 				const provider = this.requireChatProvider(model);
+-				const { requestModel, requestOptions } = await this.applyAuth(
+-					model,
+-					options as ModelsApiStreamOptions<Api> | undefined,
+-				);
+-				return provider.stream(requestModel, transcript, requestOptions as ApiStreamOptions<TApi>);
++				let rejectedOAuthAccessToken: string | undefined;
++				const runOnce = async (forceOAuthRefresh: boolean) => {
++					const { requestModel, requestOptions } = await this.applyAuth(model, options, {
++						forceOAuthRefresh: forceOAuthRefresh || undefined,
++						rejectedOAuthAccessToken,
++						onOAuthAccessToken: forceOAuthRefresh
++							? undefined
++							: (access) => {
++									rejectedOAuthAccessToken = access;
++								},
++					});
++					if (kind === "stream") {
++						return provider.stream(
++							requestModel as Model<Api>,
++							transcript,
++							requestOptions as ApiStreamOptions<Api>,
++						);
++					}
++					return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
++				};
 +
-+			const runOnce = async (forceOAuthRefresh: boolean) => {
-+				const { requestModel, requestOptions } = await this.applyAuth(model, options, {
-+					forceOAuthRefresh: forceOAuthRefresh || undefined,
-+				});
-+				if (kind === "stream") {
-+					return provider.stream(requestModel as Model<Api>, transcript, requestOptions as ApiStreamOptions<Api>);
-+				}
-+				return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
-+			};
-+
-+			if (!oauthEligible) {
-+				return runOnce(false);
-+			}
-+
-+			return oauth401RetryIterable(await runOnce(false), () => runOnce(true));
- 		});
++				const first = await runOnce(false);
++				// Only the exact OAuth credential used to derive this request permits a retry.
++				// Static/explicit API-key resolution never invokes onOAuthAccessToken.
++				return rejectedOAuthAccessToken === undefined ? first : oauth401RetryIterable(first, () => runOnce(true));
+ 			},
+ 			observeModelRequest(model, options, false),
+ 		);
  	}
  
 +	stream<TApi extends Api>(
@@ -151,21 +185,25 @@ index fbcc522..ce309f1 100644
  	async complete<TApi extends Api>(
  		model: Model<TApi>,
  		context: Context,
-@@ -899,12 +935,7 @@ class ModelsImpl implements MutableModels {
+@@ -927,16 +974,7 @@ class ModelsImpl implements MutableModels {
  	}
  
  	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
 -		const transcript = normalizeContext(context);
--		return lazyStream(model, async () => {
--			const provider = this.requireChatProvider(model);
--			const { requestModel, requestOptions } = await this.applyAuth(model, options);
--			return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
--		});
+-		return lazyStream(
+-			model,
+-			async () => {
+-				const provider = this.requireChatProvider(model);
+-				const { requestModel, requestOptions } = await this.applyAuth(model, options);
+-				return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
+-			},
+-			observeModelRequest(model, options, false),
+-		);
 +		return this.streamWithOAuth401Retry(model, context, options, "streamSimple");
  	}
  
  	async completeSimple(
-@@ -989,6 +1020,53 @@ class ModelsImpl implements MutableModels {
+@@ -1025,6 +1063,53 @@ class ModelsImpl implements MutableModels {
  	}
  }
  
@@ -219,3 +257,103 @@ index fbcc522..ce309f1 100644
  export function createModels(options?: CreateModelsOptions): MutableModels {
  	return new ModelsImpl(options);
  }
+diff --git a/packages/ai/test/models-runtime.test.ts b/packages/ai/test/models-runtime.test.ts
+index 0789f94..64b09f1 100644
+--- a/packages/ai/test/models-runtime.test.ts
++++ b/packages/ai/test/models-runtime.test.ts
+@@ -1212,3 +1212,95 @@ describe("Models runtime", () => {
+ 		expect(message.stopReason).toBe("stop");
+ 	});
+ });
++
++describe("OAuth 401 forced refresh", () => {
++	it.each(["none", "stream", "auth"])("refreshes only the unchanged failed token (rotation=%s)", async (rotation) => {
++		const rotated = rotation !== "none";
++		const credentials = new InMemoryCredentialStore();
++		const credential = { type: "oauth" as const, access: "failed", refresh: "r", expires: Date.now() + 3_600_000 };
++		await credentials.modify("p1", async () => credential);
++		const refresh = vi.fn(async () => ({ ...credential, access: "refreshed" }));
++		const provider = testProvider({
++			id: "p1",
++			auth: {
++				oauth: testOAuth({
++					refresh,
++					toAuth: async (resolved) => {
++						if (rotation === "auth" && resolved.access === "failed") {
++							await credentials.modify("p1", async () => ({ ...credential, access: "rotated" }));
++						}
++						return { apiKey: resolved.access };
++					},
++				}),
++			},
++		});
++		const keys: Array<string | undefined> = [];
++		provider.stream = provider.streamSimple = (model, _context, options) => {
++			keys.push(options?.apiKey);
++			const stream = new AssistantMessageEventStream();
++			void (async () => {
++				const message = doneMessage(model, "ok");
++				if (keys.length === 1) {
++					if (rotation === "stream")
++						await credentials.modify("p1", async () => ({ ...credential, access: "rotated" }));
++					message.stopReason = "error";
++					message.errorMessage = "401 Unauthorized";
++					stream.push({ type: "error", reason: "error", error: message });
++				} else stream.push({ type: "done", reason: "stop", message });
++				stream.end(message);
++			})();
++			return stream;
++		};
++		const models = createModels({ credentials });
++		models.setProvider(provider);
++		expect((await models.completeSimple(testModel("p1", "model-a"), context)).stopReason).toBe("stop");
++		expect(keys).toEqual(["failed", rotated ? "rotated" : "refreshed"]);
++		expect(refresh).toHaveBeenCalledTimes(rotated ? 0 : 1);
++	});
++});
++
++describe("OAuth 401 auth-source rotation", () => {
++	it.each(["oauth", "api_key"])(
++		"classifies the resolved credential, not an earlier read (%s)",
++		async (initialType) => {
++			const backing = new InMemoryCredentialStore();
++			const oauth = { type: "oauth" as const, access: "oauth", refresh: "r", expires: Date.now() + 3_600_000 };
++			const staticKey = { type: "api_key" as const, key: "static" };
++			await backing.modify("p1", async () => (initialType === "oauth" ? oauth : staticKey));
++			let firstRead = true;
++			const credentials: CredentialStore = {
++				read: async (...args) => {
++					const read = await backing.read(...args);
++					if (firstRead) {
++						firstRead = false;
++						await backing.modify("p1", async () => (initialType === "oauth" ? staticKey : oauth));
++					}
++					return read;
++				},
++				modify: (...args) => backing.modify(...args),
++				list: (...args) => backing.list(...args),
++				delete: (...args) => backing.delete(...args),
++			};
++			const provider = testProvider({ id: "p1", auth: { oauth: testOAuth(), apiKey: envKeyAuth(undefined) } });
++			const keys: Array<string | undefined> = [];
++			provider.stream = provider.streamSimple = (model, _context, options) => {
++				keys.push(options?.apiKey);
++				const stream = new AssistantMessageEventStream();
++				const message = doneMessage(model, "ok");
++				if (keys.length === 1) {
++					message.stopReason = "error";
++					message.errorMessage = "401 Unauthorized";
++					stream.push({ type: "error", reason: "error", error: message });
++				} else stream.push({ type: "done", reason: "stop", message });
++				stream.end(message);
++				return stream;
++			};
++			const models = createModels({ credentials });
++			models.setProvider(provider);
++			const response = await models.completeSimple(testModel("p1", "model-a"), context);
++			// Only the auth used for the failed request determines eligibility.
++			expect(keys.length).toBe(keys[0] === "oauth" ? 2 : 1);
++			expect(response.stopReason).toBe(keys[0] === "oauth" ? "stop" : "error");
++		},
++	);
++});

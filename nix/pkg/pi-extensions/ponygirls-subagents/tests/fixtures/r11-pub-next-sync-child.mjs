@@ -11,7 +11,7 @@ const resolvePublic = (name) => {
   const packageDir = join(SDK, 'node_modules', name);
   const metadata = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
   assert.equal(metadata.name, name);
-  assert.equal(metadata.version, '1.2.0');
+  assert.equal(metadata.version, '1.4.0');
   assert.equal(metadata.exports['.'].import, './dist/index.js');
   return new URL(metadata.exports['.'].import, pathToFileURL(packageDir + '/')).href;
 };

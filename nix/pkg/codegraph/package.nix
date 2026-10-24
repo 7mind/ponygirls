@@ -36,14 +36,12 @@ buildNpmPackage {
   npmInstallFlags = [ "--ignore-scripts" ];
   dontNpmRebuild = true;
 
-  # The nixpkgs npm hook resolves workspace executables from the root, selecting
-  # Vite 5 instead of the UI workspace's declared Vite 7. Re-checked on main
-  # b635dd46 (2026-10-07): without this rewrite, `vite build` fails with
-  # vite-plugin-svelte "Cannot read properties of undefined (reading 'config')".
+  # The nixpkgs npm hook still selects root Vite 5 instead of UI Vite 7,
+  # even after upstream changed build:ui to run from the UI directory.
   postPatch = ''
     substituteInPlace package.json \
       --replace-fail \
-        'npm run build --workspace ui && node scripts/check-ui-build.mjs' \
+        'cd ui && npm run build && cd .. && node scripts/check-ui-build.mjs' \
         '(cd ui && node node_modules/vite/bin/vite.js build) && node scripts/check-ui-build.mjs'
   '';
 

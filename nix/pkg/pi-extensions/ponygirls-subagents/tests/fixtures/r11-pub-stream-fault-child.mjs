@@ -12,7 +12,7 @@ const resolvePublic = (name) => {
   const packageDir = join(SDK, 'node_modules', name);
   const metadata = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
   assert.equal(metadata.name, name, 'CONTROLLER_SETUP: authoritative package identity required');
-  assert.equal(metadata.version, '1.2.0', 'CONTROLLER_SETUP: pinned public package version required');
+  assert.equal(metadata.version, '1.4.0', 'CONTROLLER_SETUP: pinned public package version required');
   const publicImport = metadata.exports['.'].import;
   assert.equal(publicImport, './dist/index.js', 'CONTROLLER_SETUP: actual public ESM root export required');
   return new URL(publicImport, pathToFileURL(packageDir + '/')).href;

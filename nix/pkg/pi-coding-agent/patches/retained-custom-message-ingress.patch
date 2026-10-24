@@ -1,6 +1,8 @@
+diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
+index 28bd362..09cb52d 100644
 --- a/packages/coding-agent/src/core/agent-session.ts
 +++ b/packages/coding-agent/src/core/agent-session.ts
-@@ -363,6 +363,15 @@
+@@ -364,6 +364,15 @@ interface ToolDefinitionEntry {
  	sourceInfo: SourceInfo;
  }
  
@@ -16,7 +18,7 @@
  function estimateMessagesTokens(messages: AgentMessage[]): number {
  	let tokens = 0;
  	for (const message of messages) {
-@@ -396,8 +405,15 @@
+@@ -397,8 +406,15 @@ export class AgentSession {
  	private _followUpMessages: string[] = [];
  	/** Messages queued to be included with the next user prompt as context ("asides"). */
  	private _pendingNextTurnMessages: CustomMessage[] = [];
@@ -34,7 +36,7 @@
  
  	// Compaction state
  	private _compactionAbortController: AbortController | undefined = undefined;
-@@ -459,6 +475,7 @@
+@@ -459,6 +475,7 @@ export class AgentSession {
  	private _sessionStartEvent: SessionStartEvent;
  	private _extensionUIContext?: ExtensionUIContext;
  	private _extensionMode: ExtensionMode = "print";
@@ -42,7 +44,7 @@
  	private _extensionCommandContextActions?: ExtensionCommandContextActions;
  	private _extensionAbortHandler?: () => void;
  	private _extensionShutdownHandler?: ShutdownHandler;
-@@ -993,7 +1010,7 @@
+@@ -993,7 +1010,7 @@ export class AgentSession {
  	}
  
  	private _getPendingBoundaryMessages(): AgentMessage[] {
@@ -51,7 +53,7 @@
  	}
  
  	private _buildBoundaryContext(
-@@ -1066,6 +1083,7 @@
+@@ -1066,6 +1083,7 @@ export class AgentSession {
  	}
  
  	private _resolveIdleWaitIfIdle(): void {
@@ -59,7 +61,7 @@
  		if (!this.isIdle || !this._resolveIdleWait) {
  			return;
  		}
-@@ -1076,31 +1094,30 @@
+@@ -1076,31 +1094,30 @@ export class AgentSession {
  	}
  
  	private async _emitAgentSettled(): Promise<void> {
@@ -70,33 +72,30 @@
 -			const aborted = this._agentRunAbortRequested;
 -			await this._extensionRunner.emit({ type: "agent_settled", aborted });
 -			this._emit({ type: "agent_settled", aborted });
-+			this._cacheWarmer?.onAgentSettled();
-+			this._isEmittingAgentSettled = true;
-+			try {
-+				const aborted = this._agentRunAbortRequested;
-+				await this._extensionRunner.emit({ type: "agent_settled", aborted });
-+				this._emit({ type: "agent_settled", aborted });
-+			} finally {
-+				this._isEmittingAgentSettled = false;
-+			}
-+			const deferred = this._deferredSettledActions.splice(0);
-+			for (const action of deferred) await action();
- 		} finally {
+-		} finally {
 -			this._isEmittingAgentSettled = false;
 -		}
 -
 -		const deferred = this._deferredSettledActions.splice(0);
 -		if (deferred.length > 0) {
--			try {
++			this._cacheWarmer?.onAgentSettled();
++			this._isEmittingAgentSettled = true;
+ 			try {
 -				for (const action of deferred) await action();
--			} finally {
++				const aborted = this._agentRunAbortRequested;
++				await this._extensionRunner.emit({ type: "agent_settled", aborted });
++				this._emit({ type: "agent_settled", aborted });
+ 			} finally {
 -				this._resolveIdleWaitIfIdle();
--			}
++				this._isEmittingAgentSettled = false;
+ 			}
 -			return;
--		}
--		this._resolveIdleWaitIfIdle();
++			const deferred = this._deferredSettledActions.splice(0);
++			for (const action of deferred) await action();
++		} finally {
 +			this._resolveIdleWaitIfIdle();
-+		}
+ 		}
+-		this._resolveIdleWaitIfIdle();
  	}
  
  	/** Internal handler for agent events - shared by subscribe and reconnect */
@@ -108,16 +107,16 @@
  		// An abort requested while the run was starting, e.g. during before_agent_start, stops it
  		// here. agent_start is awaited before the first request.
  		if (event.type === "agent_start" && this._agentRunAbortRequested) this.agent.abort();
-@@ -1194,7 +1211,7 @@
+@@ -1193,7 +1210,7 @@ export class AgentSession {
+ 		// extension and listener dispatch above also picks up messages that turn_end
  		// handlers queued.
  		if (event.type === "turn_end") {
- 			this._lastAssistantToolResults = event.toolResults;
 -			this._flushPendingCustomMessages();
 +			this._flushPendingCustomMessages(false);
  		}
  	};
  
-@@ -1394,6 +1411,9 @@
+@@ -1410,6 +1427,9 @@ export class AgentSession {
  	 * Call this when completely done with the session.
  	 */
  	dispose(): void {
@@ -127,7 +126,7 @@
  		try {
  			this.abortRetry();
  			this.abortCompaction();
-@@ -1829,32 +1849,28 @@
+@@ -1870,32 +1890,28 @@ export class AgentSession {
  	 * starting another, and an abort requested meanwhile aborts the run as soon as it exists.
  	 * @param onStarted Called once the run's messages are prepared, before the first request.
  	 */
@@ -178,7 +177,7 @@
  			await this.agent.prompt(messages);
  			while (!this._agentRunAbortRequested) {
  				if (await this._handlePostAgentRun()) {
-@@ -1870,9 +1886,18 @@
+@@ -1911,9 +1927,18 @@ export class AgentSession {
  			if (this._agentRunAbortRequested) this._finishCancelledRetry();
  			this._failedResponse = undefined;
  			this._runSystemPromptOptions = undefined;
@@ -200,7 +199,7 @@
  		}
  	}
  
-@@ -1882,7 +1907,7 @@
+@@ -1923,7 +1948,7 @@ export class AgentSession {
  	 * message followed by pending nextTurn messages (consumed here) and handler messages, with a
  	 * system patch first when the prompt changed.
  	 */
@@ -209,7 +208,7 @@
  		// Check if we need to compact before sending (catches aborted responses).
  		// The starting message is sent below, so do not call agent.continue() here.
  		const lastAssistant = this._findLastAssistantMessage();
-@@ -1902,7 +1927,7 @@
+@@ -1943,7 +1968,7 @@ export class AgentSession {
  
  		const messages: AgentMessage[] = [];
  		if (trigger.messageType === "custom") {
@@ -218,7 +217,7 @@
  		} else {
  			// Normalize images after before_agent_start so extension-driven model selection
  			// determines the resize profile used for the request and history.
-@@ -1944,7 +1969,10 @@
+@@ -1983,7 +2008,10 @@ export class AgentSession {
  			this._finishCancelledRetry();
  			return false;
  		}
@@ -230,7 +229,7 @@
  
  		if (this._isRetryableError(message) && (await this._prepareRetry(message))) {
  			if (this._agentRunAbortRequested) this._finishCancelledRetry();
-@@ -1972,11 +2000,14 @@
+@@ -2011,11 +2039,14 @@ export class AgentSession {
  
  		// The low-level loop drains both queues before agent_end. Messages queued by
  		// agent_end handlers require a fresh run before pre-settlement handlers fire.
@@ -247,7 +246,7 @@
  		this._isBeforeSettle = true;
  		this._abortDuringBeforeSettle = false;
  		try {
-@@ -1985,10 +2016,10 @@
+@@ -2024,10 +2055,10 @@ export class AgentSession {
  				(entries) => this._buildBoundaryContext(entries, "agent_before_settle"),
  			);
  			this._commitBoundaryDrafts(result.entries);
@@ -260,7 +259,7 @@
  			if (shouldContinue && !finalContext.canContinue) {
  				if (result.continue) this._reportInvalidBoundaryContinuation("agent_before_settle");
  				return false;
-@@ -2132,6 +2163,7 @@
+@@ -2171,6 +2202,7 @@ export class AgentSession {
  
  		await this._startRun({ messageType: "user", prompt: expandedText, images: currentImages }, () =>
  			preflightResult?.("started"),
@@ -268,7 +267,7 @@
  		);
  	}
  
-@@ -2341,25 +2373,26 @@
+@@ -2380,25 +2412,26 @@ export class AgentSession {
  				this._deferredSettledActions.push(async () => await this.sendCustomMessage(message, options));
  				return;
  			}
@@ -298,17 +297,12 @@
  		this._refreshFinalizedContext();
  		this._emit({ type: "message_start", message: appMessage });
  		this._emit({ type: "message_end", message: appMessage });
-@@ -2369,13 +2402,112 @@
+@@ -2408,13 +2441,112 @@ export class AgentSession {
  	 * Append custom messages queued while the agent was running.
  	 * Called once the current turn's tool results are in agent state and session history.
  	 */
 -	private _flushPendingCustomMessages(): void {
 -		if (this._pendingCustomMessages.length === 0) return;
--
--		const pending = this._pendingCustomMessages;
--		this._pendingCustomMessages = [];
--		for (const appMessage of pending) {
--			this._appendCustomMessage(appMessage);
 +	private _flushPendingCustomMessages(includeFollowUps: boolean): void {
 +		if (this._flushingCustomMessages || this._disposed) return;
 +		this._flushingCustomMessages = true;
@@ -332,7 +326,11 @@
 +			this._flushingCustomMessages = false;
 +		}
 +	}
-+
+ 
+-		const pending = this._pendingCustomMessages;
+-		this._pendingCustomMessages = [];
+-		for (const appMessage of pending) {
+-			this._appendCustomMessage(appMessage);
 +	private _flushCustomMessagesForContinuation(): void {
 +		this._flushPendingCustomMessages(false);
 +		if (!this._pendingCustomTurn && (!this.isStreaming || !this.agent.hasQueuedMessages())) this._flushPendingCustomMessages(true);
@@ -418,7 +416,7 @@
  		}
  	}
  
-@@ -2425,6 +2557,7 @@
+@@ -2464,6 +2596,7 @@ export class AgentSession {
  	 * @returns Object with steering and followUp arrays
  	 */
  	clearQueue(): { steering: string[]; followUp: string[] } {
@@ -426,7 +424,7 @@
  		const steering = [...this._steeringMessages];
  		const followUp = [...this._followUpMessages];
  		this._steeringMessages = [];
-@@ -2457,6 +2590,7 @@
+@@ -2496,6 +2629,7 @@ export class AgentSession {
  	 * Abort current operation and wait for agent to become idle.
  	 */
  	async abort(): Promise<void> {
@@ -434,7 +432,7 @@
  		if (this._isAgentRunActive) {
  			this._agentRunAbortRequested = true;
  		}
-@@ -2466,6 +2600,7 @@
+@@ -2505,6 +2639,7 @@ export class AgentSession {
  		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
  		this.agent.abort();
  		await this.waitForIdle();
@@ -442,7 +440,7 @@
  	}
  
  	async waitForIdle(): Promise<void> {
-@@ -3264,7 +3399,11 @@
+@@ -3299,7 +3434,11 @@ export class AgentSession {
  			if (this._autoCompactionAbortController === abortController) {
  				this._autoCompactionAbortController = undefined;
  			}
@@ -455,7 +453,7 @@
  		}
  	}
  
-@@ -3281,6 +3420,7 @@
+@@ -3316,6 +3455,7 @@ export class AgentSession {
  	}
  
  	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
@@ -463,7 +461,7 @@
  		if (bindings.uiContext !== undefined) {
  			this._extensionUIContext = bindings.uiContext;
  		}
-@@ -3419,6 +3559,7 @@
+@@ -3454,6 +3594,7 @@ export class AgentSession {
  						});
  					});
  				},
@@ -471,7 +469,7 @@
  				sendUserMessage: (content, options) => {
  					this.sendUserMessage(content, options).catch((err) => {
  						runner.emitError({
-@@ -3710,12 +3851,7 @@
+@@ -3745,12 +3886,7 @@ export class AgentSession {
  			includeAllExtensionTools: true,
  		});
  
@@ -485,9 +483,88 @@
  			await options?.beforeSessionStart?.();
  			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
  			this._extensionRunner.reportUnhandledMcpServers();
+diff --git a/packages/coding-agent/src/core/extensions/loader.ts b/packages/coding-agent/src/core/extensions/loader.ts
+index cbc1100..e75112e 100644
+--- a/packages/coding-agent/src/core/extensions/loader.ts
++++ b/packages/coding-agent/src/core/extensions/loader.ts
+@@ -171,6 +171,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
+ 
+ 	const runtime: ExtensionRuntime = {
+ 		sendMessage: notInitialized,
++		enqueueMessage: notInitialized,
+ 		sendUserMessage: notInitialized,
+ 		appendEntry: notInitialized,
+ 		setSessionName: notInitialized,
+@@ -386,6 +387,11 @@ function createExtensionAPI(
+ 			runtime.sendMessage(message, options);
+ 		},
+ 
++		enqueueMessage(message, options): void {
++			assertActive();
++			runtime.enqueueMessage(message, options);
++		},
++
+ 		sendUserMessage(content, options): void {
+ 			assertActive();
+ 			runtime.sendUserMessage(content, options);
+diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
+index ea0790a..71c81d8 100644
+--- a/packages/coding-agent/src/core/extensions/runner.ts
++++ b/packages/coding-agent/src/core/extensions/runner.ts
+@@ -428,6 +428,7 @@ export class ExtensionRunner {
+ 	): void {
+ 		// Copy actions into the shared runtime (all extension APIs reference this)
+ 		this.runtime.sendMessage = actions.sendMessage;
++		this.runtime.enqueueMessage = actions.enqueueMessage;
+ 		this.runtime.sendUserMessage = actions.sendUserMessage;
+ 		this.runtime.appendEntry = actions.appendEntry;
+ 		this.runtime.setSessionName = actions.setSessionName;
+diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
+index a3ab23d..a0fdecb 100644
+--- a/packages/coding-agent/src/core/extensions/types.ts
++++ b/packages/coding-agent/src/core/extensions/types.ts
+@@ -968,7 +968,7 @@ export interface BeforeAgentStartUserEvent extends BeforeAgentStartEventBase {
+ 	images?: ImageContent[];
+ }
+ 
+-/** A run started by `pi.sendMessage(..., { triggerTurn: true })` while idle. */
++/** A run started by an extension custom message while idle. */
+ export interface BeforeAgentStartCustomEvent extends BeforeAgentStartEventBase {
+ 	messageType: "custom";
+ 	/** The custom message that starts the run. */
+@@ -1755,6 +1755,19 @@ export interface ExtensionAPI {
+ 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+ 	): void;
+ 
++	/**
++	 * Transfer retained context to the SDK. A throw means ownership was not accepted.
++	 * Returning means committed context or retained pending delivery, not run completion or fsync.
++	 * Public message events follow commit; extension message transformation hooks are not replayed.
++	 * Later delivery errors use onError and bounded retries. Cancellation clears wake intent,
++	 * not accepted context; disposal stops pending work. Use sendMessage for the legacy pipeline.
++	 * Deferred nextTurn delivery is deliberately unsupported by this ownership contract.
++	 */
++	enqueueMessage<T = unknown>(
++		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
++		options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
++	): void;
++
+ 	/**
+ 	 * Send a user message to the agent. Always triggers a turn.
+ 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+@@ -2210,6 +2223,7 @@ export interface ExtensionRuntimeState {
+  */
+ export interface ExtensionActions {
+ 	sendMessage: SendMessageHandler;
++	enqueueMessage: ExtensionAPI["enqueueMessage"];
+ 	sendUserMessage: SendUserMessageHandler;
+ 	appendEntry: AppendEntryHandler;
+ 	setSessionName: SetSessionNameHandler;
+diff --git a/packages/coding-agent/src/core/session-manager.ts b/packages/coding-agent/src/core/session-manager.ts
+index df5281a..9d9c9b6 100644
 --- a/packages/coding-agent/src/core/session-manager.ts
 +++ b/packages/coding-agent/src/core/session-manager.ts
-@@ -17,12 +17,15 @@
+@@ -17,12 +17,15 @@ import {
  	closeSync,
  	createReadStream,
  	existsSync,
@@ -503,7 +580,7 @@
  	writeFileSync,
  } from "fs";
  import { readdir, stat } from "fs/promises";
-@@ -991,6 +994,7 @@
+@@ -991,6 +994,7 @@ export class SessionManager {
  	private cwd: string;
  	private persist: boolean;
  	private flushed: boolean = false;
@@ -511,20 +588,19 @@
  	private fileEntries: FileEntry[] = [];
  	private byId: Map<string, SessionEntry> = new Map();
  	private labelsById: Map<string, string> = new Map();
-@@ -1171,28 +1175,64 @@
+@@ -1171,28 +1175,64 @@ export class SessionManager {
  
  	_persist(entry: SessionEntry): void {
  		if (!this.persist || !this.sessionFile) return;
--
--		if (!this.flushed) {
--			if (!this._hasConversation()) return;
--			const fd = openSync(this.sessionFile, "wx");
 +		if (this._persistenceFault) {
 +			throw new Error("Session writes disabled; repair storage and reopen the session", { cause: this._persistenceFault });
 +		}
 +		const creating = !this.flushed;
 +		if (creating && !this._hasConversation()) return;
-+
+ 
+-		if (!this.flushed) {
+-			if (!this._hasConversation()) return;
+-			const fd = openSync(this.sessionFile, "wx");
 +		const fd = openSync(this.sessionFile, creating ? "wx" : "a");
 +		const failures: unknown[] = [];
 +		let before: Stats | undefined;
@@ -555,22 +631,20 @@
  				}
 -			} finally {
 -				closeSync(fd);
--			}
--			this.flushed = true;
--		} else {
--			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
--		}
 +				if (creating) unlinkSync(this.sessionFile);
 +				else truncateSync(this.sessionFile, before.size);
 +			} catch (error) {
 +				rollbackFailed = true;
 +				failures.push(error);
-+			}
+ 			}
+-			this.flushed = true;
+-		} else {
+-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
 +			if (failures.length === 1) throw failures[0];
 +			const failure = new AggregateError(failures, rollbackFailed ? "Session persistence and rollback failed" : "Session persistence failed");
 +			if (rollbackFailed) this._persistenceFault = failure;
 +			throw failure;
-+		}
+ 		}
 +		this.flushed = true;
  	}
  
@@ -590,74 +664,3 @@
  	}
  
  	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
---- a/packages/coding-agent/src/core/extensions/types.ts
-+++ b/packages/coding-agent/src/core/extensions/types.ts
-@@ -968,7 +968,7 @@
- 	images?: ImageContent[];
- }
- 
--/** A run started by `pi.sendMessage(..., { triggerTurn: true })` while idle. */
-+/** A run started by an extension custom message while idle. */
- export interface BeforeAgentStartCustomEvent extends BeforeAgentStartEventBase {
- 	messageType: "custom";
- 	/** The custom message that starts the run. */
-@@ -1756,6 +1756,19 @@
- 	): void;
- 
- 	/**
-+	 * Transfer retained context to the SDK. A throw means ownership was not accepted.
-+	 * Returning means committed context or retained pending delivery, not run completion or fsync.
-+	 * Public message events follow commit; extension message transformation hooks are not replayed.
-+	 * Later delivery errors use onError and bounded retries. Cancellation clears wake intent,
-+	 * not accepted context; disposal stops pending work. Use sendMessage for the legacy pipeline.
-+	 * Deferred nextTurn delivery is deliberately unsupported by this ownership contract.
-+	 */
-+	enqueueMessage<T = unknown>(
-+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-+		options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
-+	): void;
-+
-+	/**
- 	 * Send a user message to the agent. Always triggers a turn.
- 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
- 	 * Set expandPromptTemplates to dispatch extension commands and expand skill commands and prompt templates.
-@@ -2210,6 +2223,7 @@
-  */
- export interface ExtensionActions {
- 	sendMessage: SendMessageHandler;
-+	enqueueMessage: ExtensionAPI["enqueueMessage"];
- 	sendUserMessage: SendUserMessageHandler;
- 	appendEntry: AppendEntryHandler;
- 	setSessionName: SetSessionNameHandler;
---- a/packages/coding-agent/src/core/extensions/loader.ts
-+++ b/packages/coding-agent/src/core/extensions/loader.ts
-@@ -168,6 +168,7 @@
- 
- 	const runtime: ExtensionRuntime = {
- 		sendMessage: notInitialized,
-+		enqueueMessage: notInitialized,
- 		sendUserMessage: notInitialized,
- 		appendEntry: notInitialized,
- 		setSessionName: notInitialized,
-@@ -383,6 +384,11 @@
- 			runtime.sendMessage(message, options);
- 		},
- 
-+		enqueueMessage(message, options): void {
-+			assertActive();
-+			runtime.enqueueMessage(message, options);
-+		},
-+
- 		sendUserMessage(content, options): void {
- 			assertActive();
- 			runtime.sendUserMessage(content, options);
---- a/packages/coding-agent/src/core/extensions/runner.ts
-+++ b/packages/coding-agent/src/core/extensions/runner.ts
-@@ -428,6 +428,7 @@
- 	): void {
- 		// Copy actions into the shared runtime (all extension APIs reference this)
- 		this.runtime.sendMessage = actions.sendMessage;
-+		this.runtime.enqueueMessage = actions.enqueueMessage;
- 		this.runtime.sendUserMessage = actions.sendUserMessage;
- 		this.runtime.appendEntry = actions.appendEntry;
- 		this.runtime.setSessionName = actions.setSessionName;

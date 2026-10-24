@@ -9,7 +9,7 @@
       flake = false;
     };
     crawl4ai = {
-      url = "github:unclecode/crawl4ai/v0.9.4";
+      url = "github:unclecode/crawl4ai/v0.9.5";
       flake = false;
     };
     openai-codex-plugin = {

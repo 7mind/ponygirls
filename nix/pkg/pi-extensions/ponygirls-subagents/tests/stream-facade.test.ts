@@ -15,11 +15,11 @@ import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi
 const SDK_ROOT = process.env["PI_SUBAGENTS_SDK_ROOT"] ?? null;
 
 function requireSdkRoot(): string {
-  assert.ok(SDK_ROOT, "PI_SUBAGENTS_SDK_ROOT must be set (pinned production SDK 1.2.0)");
+  assert.ok(SDK_ROOT, "PI_SUBAGENTS_SDK_ROOT must be set (pinned production SDK 1.4.0)");
   const root: string = SDK_ROOT;
   assert.ok(existsSync(root), `pinned SDK root missing: ${root}`);
   const version: unknown = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version?: unknown }).version;
-  assert.equal(version, "1.2.0", `pinned SDK must be 1.2.0 (got ${String(version)})`);
+  assert.equal(version, "1.4.0", `pinned SDK must be 1.4.0 (got ${String(version)})`);
   return root;
 }
 

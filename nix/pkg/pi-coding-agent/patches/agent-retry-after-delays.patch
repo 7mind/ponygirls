@@ -1,5 +1,5 @@
 diff --git a/packages/ai/src/api/anthropic-messages.ts b/packages/ai/src/api/anthropic-messages.ts
-index 452a3cc..1057f0b 100644
+index 2754794..a2c421d 100644
 --- a/packages/ai/src/api/anthropic-messages.ts
 +++ b/packages/ai/src/api/anthropic-messages.ts
 @@ -38,6 +38,7 @@ import type {
@@ -9,8 +9,8 @@ index 452a3cc..1057f0b 100644
 +import { extractRetryAfterMs } from "../utils/error-body.ts";
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord } from "../utils/headers.ts";
- import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
-@@ -892,6 +893,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
+ import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
+@@ -925,6 +926,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
  			}
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
@@ -19,7 +19,7 @@ index 452a3cc..1057f0b 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/azure-openai-responses.ts b/packages/ai/src/api/azure-openai-responses.ts
-index 9b07bc9..a72f667 100644
+index 07ce1a2..002c4a8 100644
 --- a/packages/ai/src/api/azure-openai-responses.ts
 +++ b/packages/ai/src/api/azure-openai-responses.ts
 @@ -2,7 +2,7 @@ import { AzureOpenAI } from "openai";
@@ -30,8 +30,8 @@ index 9b07bc9..a72f667 100644
 +import { extractRetryAfterMs, formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord } from "../utils/headers.ts";
- import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-@@ -121,6 +121,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
+ import { getIdentityHeaders } from "../utils/identity.ts";
+@@ -126,6 +126,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
  			}
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatAzureOpenAIError(error);
@@ -40,7 +40,7 @@ index 9b07bc9..a72f667 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/bedrock-converse-stream.ts b/packages/ai/src/api/bedrock-converse-stream.ts
-index 1bada07..5445953 100644
+index 8c6df25..237c422 100644
 --- a/packages/ai/src/api/bedrock-converse-stream.ts
 +++ b/packages/ai/src/api/bedrock-converse-stream.ts
 @@ -50,7 +50,7 @@ import type {
@@ -51,8 +51,8 @@ index 1bada07..5445953 100644
 +import { extractRetryAfterMs, normalizeProviderError } from "../utils/error-body.ts";
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { providerHeadersToRecord } from "../utils/headers.ts";
- import { parseStreamingJson } from "../utils/json-parse.ts";
-@@ -351,6 +351,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
+ import { type ClientIdentity, getClientVersion } from "../utils/identity.ts";
+@@ -353,6 +353,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
  			}
  			output.stopReason = options.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatBedrockError(error);
@@ -61,7 +61,7 @@ index 1bada07..5445953 100644
  				appendBedrockFailureDiagnostic(output, error, responseRequestId);
  			}
 diff --git a/packages/ai/src/api/google-generative-ai.ts b/packages/ai/src/api/google-generative-ai.ts
-index 24fe913..cfa4cd6 100644
+index 5e44ce2..f02679c 100644
 --- a/packages/ai/src/api/google-generative-ai.ts
 +++ b/packages/ai/src/api/google-generative-ai.ts
 @@ -19,7 +19,7 @@ import type {
@@ -72,7 +72,7 @@ index 24fe913..cfa4cd6 100644
 +import { extractRetryAfterMs, formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { providerHeadersToRecord } from "../utils/headers.ts";
- import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+ import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
 @@ -294,6 +294,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
  			}
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
@@ -82,7 +82,7 @@ index 24fe913..cfa4cd6 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/google-vertex.ts b/packages/ai/src/api/google-vertex.ts
-index 4e667df..9fd0713 100644
+index 1865cbc..7cc0e96 100644
 --- a/packages/ai/src/api/google-vertex.ts
 +++ b/packages/ai/src/api/google-vertex.ts
 @@ -22,7 +22,7 @@ import type {
@@ -93,8 +93,8 @@ index 4e667df..9fd0713 100644
 +import { extractRetryAfterMs, formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { providerHeadersToRecord } from "../utils/headers.ts";
- import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-@@ -302,6 +302,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
+ import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
+@@ -309,6 +309,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
  			}
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatProviderError(normalizeProviderError(error));
@@ -103,7 +103,7 @@ index 4e667df..9fd0713 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/mistral-conversations.ts b/packages/ai/src/api/mistral-conversations.ts
-index de7552a..d96d957 100644
+index 9ac7103..9a58646 100644
 --- a/packages/ai/src/api/mistral-conversations.ts
 +++ b/packages/ai/src/api/mistral-conversations.ts
 @@ -14,6 +14,7 @@ import type {
@@ -114,7 +114,7 @@ index de7552a..d96d957 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { shortHash } from "../utils/hash.ts";
  import { headersToRecord } from "../utils/headers.ts";
-@@ -172,6 +173,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
+@@ -173,6 +174,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
  			}
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatMistralError(error);
@@ -123,10 +123,10 @@ index de7552a..d96d957 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/openai-codex-responses.ts b/packages/ai/src/api/openai-codex-responses.ts
-index a6bbc2c..2163cc4 100644
+index 90a599e..bdca063 100644
 --- a/packages/ai/src/api/openai-codex-responses.ts
 +++ b/packages/ai/src/api/openai-codex-responses.ts
-@@ -26,7 +26,7 @@ import {
+@@ -25,7 +25,7 @@ import {
  	createAssistantMessageDiagnostic,
  	formatThrownValue,
  } from "../utils/diagnostics.ts";
@@ -134,8 +134,8 @@ index a6bbc2c..2163cc4 100644
 +import { extractRetryAfterMs, formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord } from "../utils/headers.ts";
- import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-@@ -489,6 +489,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+ import { getIdentityHeaders } from "../utils/identity.ts";
+@@ -504,6 +504,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  			}
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatProviderError(normalizeProviderError(error));
@@ -144,7 +144,7 @@ index a6bbc2c..2163cc4 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/openai-completions.ts b/packages/ai/src/api/openai-completions.ts
-index 96cb23a..23934ba 100644
+index 083b6dc..6ffb642 100644
 --- a/packages/ai/src/api/openai-completions.ts
 +++ b/packages/ai/src/api/openai-completions.ts
 @@ -35,7 +35,7 @@ import type {
@@ -156,7 +156,7 @@ index 96cb23a..23934ba 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { shortHash } from "../utils/hash.ts";
  import { headersToRecord } from "../utils/headers.ts";
-@@ -717,6 +717,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+@@ -720,6 +720,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
  			}
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatProviderError(normalizeProviderError(error));
@@ -165,7 +165,7 @@ index 96cb23a..23934ba 100644
  			// normalizeProviderError already stringifies the parsed body (error.error)
  			// into errorMessage, so only append the raw metadata when it is not already
 diff --git a/packages/ai/src/api/openai-responses.ts b/packages/ai/src/api/openai-responses.ts
-index 07e5624..5f2018e 100644
+index 8ddaa69..1be93da 100644
 --- a/packages/ai/src/api/openai-responses.ts
 +++ b/packages/ai/src/api/openai-responses.ts
 @@ -15,7 +15,7 @@ import type {
@@ -176,17 +176,17 @@ index 07e5624..5f2018e 100644
 +import { extractRetryAfterMs, formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord } from "../utils/headers.ts";
- import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-@@ -227,6 +227,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
- 			output.errorMessage = errorMessage.includes("subscription_sharing_usage_limit_exceeded")
- 				? `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`
- 				: errorMessage;
+ import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
+@@ -269,6 +269,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+ 			} else {
+ 				output.errorMessage = errorMessage;
+ 			}
 +			output.retryAfterMs = extractRetryAfterMs(error);
  			stream.push({ type: "error", reason: output.stopReason, error: output });
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/pi-messages.ts b/packages/ai/src/api/pi-messages.ts
-index 2137b55..f9a95d9 100644
+index 6051949..24859f1 100644
 --- a/packages/ai/src/api/pi-messages.ts
 +++ b/packages/ai/src/api/pi-messages.ts
 @@ -25,6 +25,7 @@ import type {
@@ -196,8 +196,8 @@ index 2137b55..f9a95d9 100644
 +import { extractRetryAfterMs } from "../utils/error-body.ts";
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
- import { parseStreamingJson } from "../utils/json-parse.ts";
-@@ -331,6 +332,7 @@ function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted:
+ import { getIdentityHeaders } from "../utils/identity.ts";
+@@ -332,6 +333,7 @@ function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted:
  		usage: createEmptyUsage(),
  		stopReason: reason,
  		errorMessage: error instanceof Error ? error.message : String(error),
@@ -226,10 +226,10 @@ index c3771cc..eb0ce60 100644
  		timestamp: options.timestamp ?? Date.now(),
  	};
 diff --git a/packages/ai/src/types.ts b/packages/ai/src/types.ts
-index 4b5f203..617e4fb 100644
+index c0f3b56..4d244f1 100644
 --- a/packages/ai/src/types.ts
 +++ b/packages/ai/src/types.ts
-@@ -566,6 +566,11 @@ export interface AssistantMessage {
+@@ -592,6 +592,11 @@ export interface AssistantMessage {
  	stopReason: StopReason;
  	deferred?: DeferredHandle;
  	errorMessage?: string;
@@ -323,10 +323,10 @@ index 9d7ef81..78c1bc2 100644
  
  	const exponentialDelay = Math.min(0.5 * 2 ** retryIndex, 8) * 1000;
 diff --git a/packages/ai/src/utils/retry.ts b/packages/ai/src/utils/retry.ts
-index 692f7f9..67af96f 100644
+index a1e9840..2019877 100644
 --- a/packages/ai/src/utils/retry.ts
 +++ b/packages/ai/src/utils/retry.ts
-@@ -125,10 +125,24 @@ export interface RetryPolicy {
+@@ -139,10 +139,24 @@ export interface RetryPolicy {
  
  export const DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60_000;
  
@@ -353,7 +353,7 @@ index 692f7f9..67af96f 100644
  }
  
  /** Optional callbacks emitted by {@link retryAssistantCall} around each retry. */
-@@ -221,7 +235,7 @@ export async function retryAssistantCall(
+@@ -235,7 +249,7 @@ export async function retryAssistantCall(
  
  		attempt++;
  		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
@@ -443,10 +443,10 @@ index b8e5c21..a7a9c8f 100644
 +	});
 +});
 diff --git a/packages/ai/test/retry.test.ts b/packages/ai/test/retry.test.ts
-index a6ae9d6..1ae38d7 100644
+index e943767..23a7653 100644
 --- a/packages/ai/test/retry.test.ts
 +++ b/packages/ai/test/retry.test.ts
-@@ -132,6 +132,16 @@ describe("retryDelayMs", () => {
+@@ -173,6 +173,16 @@ describe("retryDelayMs", () => {
  		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000 }, 5)).toBe(5000);
  		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 0 }, 5)).toBe(0);
  	});
@@ -463,7 +463,7 @@ index a6ae9d6..1ae38d7 100644
  });
  
  describe("retryAssistantCall", () => {
-@@ -195,6 +205,23 @@ describe("retryAssistantCall", () => {
+@@ -236,6 +246,23 @@ describe("retryAssistantCall", () => {
  		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([10, 15, 15, 15]);
  	});
  
@@ -488,10 +488,10 @@ index a6ae9d6..1ae38d7 100644
  		let n = 0;
  		const produce = vi.fn(async () => {
 diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
-index 5decccd..be6a786 100644
+index 3a9174c..28bd362 100644
 --- a/packages/coding-agent/src/core/agent-session.ts
 +++ b/packages/coding-agent/src/core/agent-session.ts
-@@ -3756,7 +3756,8 @@ export class AgentSession {
+@@ -3816,7 +3816,8 @@ export class AgentSession {
  	}
  
  	/**
@@ -501,7 +501,7 @@ index 5decccd..be6a786 100644
  	 * @returns true if the caller should continue the agent, false otherwise
  	 */
  	private async _prepareRetry(message: AssistantMessage): Promise<boolean> {
-@@ -3773,7 +3774,7 @@ export class AgentSession {
+@@ -3833,7 +3834,7 @@ export class AgentSession {
  			return false;
  		}
  
@@ -554,10 +554,10 @@ index 206b25b..97c5fce 100644
  		const created = await createSession({ failCount: 1, delayAssistantMessageEndMs: 40 });
  
 diff --git a/packages/durable/src/harness/compaction.ts b/packages/durable/src/harness/compaction.ts
-index db70016..0554384 100644
+index b7376a8..8cf64c7 100644
 --- a/packages/durable/src/harness/compaction.ts
 +++ b/packages/durable/src/harness/compaction.ts
-@@ -181,7 +181,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint,
+@@ -191,7 +191,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint,
  				isRetryableAssistantError(message) &&
  				policy.enabled &&
  				attempt <= policy.maxRetries;
@@ -567,15 +567,15 @@ index db70016..0554384 100644
  				await recordUsage(
  					tx,
 diff --git a/packages/durable/src/harness/generation.ts b/packages/durable/src/harness/generation.ts
-index ea38460..1f9e9d4 100644
+index c8d2679..0a8aaf9 100644
 --- a/packages/durable/src/harness/generation.ts
 +++ b/packages/durable/src/harness/generation.ts
-@@ -482,7 +482,7 @@ async function classify(
+@@ -564,7 +564,7 @@ async function classify(
  		isRetryableAssistantError(message) &&
  		policy.enabled &&
  		attempt <= policy.maxRetries;
 -	const until = retry ? runtime.now() + retryDelayMs(policy, attempt) : 0;
 +	const until = retry ? runtime.now() + retryDelayMs(policy, attempt, message.retryAfterMs) : 0;
  	await runtime.commit(async (tx): Promise<Next> => {
- 		const live = await tx.doc(LiveDoc, conversationId);
- 		await appendAssistant(tx, conversationId, message);
+ 		// Read before the first table write; only a failure uses it.
+ 		const failure = retry ? undefined : await prepareFailure(tx, runtime);

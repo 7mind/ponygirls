@@ -43,13 +43,13 @@ const HOLD_CODE = "RECOVERY_OWNER_UNCONFIRMED";
 const tick = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 function requireSdkRoot(): string {
-  assert.ok(SDK_ROOT, "PI_SUBAGENTS_SDK_ROOT must be set (pinned production SDK 1.2.0)");
+  assert.ok(SDK_ROOT, "PI_SUBAGENTS_SDK_ROOT must be set (pinned production SDK 1.4.0)");
   const root: string = SDK_ROOT;
   assert.ok(existsSync(root), `pinned SDK root missing: ${root}`);
   const pkgPath = join(root, "package.json");
   assert.ok(existsSync(pkgPath), `pinned SDK package.json missing: ${pkgPath}`);
   const version = (JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: unknown }).version;
-  assert.equal(version, "1.2.0", `pinned SDK must be 1.2.0 (got ${String(version)})`);
+  assert.equal(version, "1.4.0", `pinned SDK must be 1.4.0 (got ${String(version)})`);
   return root;
 }
 
