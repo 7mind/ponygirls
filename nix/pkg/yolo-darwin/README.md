@@ -233,8 +233,8 @@ When an agent runs under `yolo-darwin`:
   the configured Podman socket exists. On macOS with `podman-mac-helper`, the
   stable socket is normally `~/.local/share/containers/podman/machine/podman.sock`.
 - **Secret session variables** are read from their configured files into one mode-0600 temporary file, loaded by the child entrypoint without placing secret values in argv, and removed after the session.
-- **Host and sandbox pre-start hooks** run for agent modes only; sandbox hooks run after secrets load and can export environment variables to the agent. `--disable` filters both hook sets by tag.
-- **CodeGraph project indexes** are initialized or synchronized by the same `codegraph`-tagged sandbox pre-start hook as Linux. The agent starts the MCP server on demand; `--disable=codegraph` skips the index bootstrap for one launch.
+- **Host and sandbox pre-start hooks** run for agent modes only; sandbox hooks run after secrets load and can export environment variables to the agent. Separate shell/cmd hook phases run only for their respective subcommands. All phases filter hooks by `targets` (default `["*"]`) within the phase and by `--disable` tags.
+- **CodeGraph project indexes** are initialized or synchronized before Claude/Codex launch by the same `codegraph`-tagged sandbox pre-start hook as Linux. Pi instead prepares its index asynchronously through its extension when the codegraph MCP server is registered in Pi. `--disable=codegraph` skips both the launcher bootstrap and Pi's automatic setup for one launch; it does not disable the MCP server. Setting `smind.hm.dev.llm.yolo.codegraph = null` removes yolo's package, bootstrap hook, and prompt contribution, not Pi's independent registry-driven integration.
 - **`--env KEY=VAL` pairs** are applied to the agent process **only**, not to the launcher itself, and not visible in the command-line arguments of the spawned process.
 
 ### Remaining platform-specific gaps

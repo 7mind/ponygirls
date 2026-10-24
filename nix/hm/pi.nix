@@ -88,6 +88,7 @@ let
       wrapProgram $out/bin/pi \
         --prefix PATH : ${ddgsPython}/bin \
         --set-default PI_SUBAGENTS_SDK_ROOT ${piBase}/lib/node_modules/pi-monorepo \
+        ${lib.optionalString codegraphLocal "--set PONYGIRLS_CODEGRAPH_BIN ${lib.escapeShellArg codegraphServer.command} --set PONYGIRLS_CODEGRAPH_FLOCK_BIN ${pkgs.flock}/bin/flock"} \
         ${pkgs.callPackage ../pkg/pi-extensions/ponygirls-bg-tasks/wrapper-args.nix { }}
     '';
   };
@@ -235,6 +236,11 @@ let
   # stays evaluable under pure nixpkgs lib (pi-prompt-root-test) without a
   # home-manager input.
   piMcpDirectTools = cfg.pi.mcpDirectTools;
+  codegraphServer = config.programs.mcp.servers.codegraph or { };
+  codegraphLocal = piCfg.enableMcpIntegration
+    && (codegraphServer.command or null) != null
+    && (codegraphServer.enabled or null) != false
+    && (codegraphServer.disabled or null) != true;
   # Same empty-value filter as lib.hm.mcp.transformMcpServer + addType
   # (also drops disabled/serverUrl, which the shared transform excludes).
   normalizeMcpServer =
@@ -785,7 +791,7 @@ in
             # each provider's available models) and a /tokemon table — tokemon
             # without Claude, Codex, or yolo profiles.
             "${../pkg/pi-extensions/ponygirls-tokemon}"
-          ];
+          ] ++ lib.optional codegraphLocal "${../pkg/pi-extensions/ponygirls-codegraph}";
         };
       };
 

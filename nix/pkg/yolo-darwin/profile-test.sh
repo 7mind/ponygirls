@@ -404,6 +404,7 @@ printf '%s\n' \
   'printf "TERMINFO_DIRS=%s\n" "${TERMINFO_DIRS:-<unset>}"' \
   'printf "NIX_LD=%s\n" "${NIX_LD:-<unset>}"' \
   'printf "NIX_CONFIG=%s\n" "${NIX_CONFIG:-<unset>}"' \
+  'printf "SMIND_CODEGRAPH_DISABLED=%s\n" "${SMIND_CODEGRAPH_DISABLED:-<unset>}"' \
   'printf "SANDBOX_HOOK=%s\n" "${SANDBOX_HOOK:-<unset>}"' \
   'printf "SHELL_HOOK=%s\n" "${SHELL_HOOK:-<unset>}"' \
   'printf "CMD_HOOK=%s\n" "${CMD_HOOK:-<unset>}"' \
@@ -613,6 +614,36 @@ assert_zero "cmd hook launch succeeds" "$STATUS"
 assert_contains "cmd subcommand selects cmd hooks" "$OUT" "CMD_HOOK=ran"
 assert_contains "cmd subcommand excludes sandbox hooks" "$OUT" "SANDBOX_HOOK=<unset>"
 assert_contains "cmd subcommand excludes shell hooks" "$OUT" "SHELL_HOOK=<unset>"
+
+TARGETED_HOST_HOOKS='[{"command":"printf host-target-marker","tags":["codegraph"],"targets":["claude","codex"]}]'
+TARGETED_HOOKS='[{"command":"printf codegraph-target-marker","tags":["codegraph"],"targets":["claude","codex"]},{"command":"printf shared-hook-marker","tags":[]}]'
+ln -s "$FAKE_BIN/pi" "$FAKE_BIN/claude"
+ln -s "$FAKE_BIN/pi" "$FAKE_BIN/codex"
+for agent in claude codex pi shell cmd; do
+  for disabled in "" --disable=codegraph; do
+    OUT="$(cd "$PROJECT_DIR" && HOME="$FAKE_HOME" PATH="$FAKE_BIN:$PATH" \
+      YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+      SMIND_CODEGRAPH_DISABLED=1 SHELL="$FAKE_BIN/pi" \
+      YOLO_PREHOOKS_JSON="$TARGETED_HOST_HOOKS" YOLO_SANDBOX_HOOKS_JSON="$TARGETED_HOOKS" \
+      bash "$SCRIPT" ${disabled:+"$disabled"} "$agent" "$FAKE_BIN/pi" 2>&1)"
+    assert_zero "$agent targeted hook launch succeeds ($disabled)" "$?"
+    if [[ "$agent" == pi ]]; then
+      expected_disabled=0
+      [[ -z "$disabled" ]] || expected_disabled=1
+      assert_contains "Pi receives explicit codegraph disable state ($disabled)" "$OUT" "SMIND_CODEGRAPH_DISABLED=$expected_disabled"
+    fi
+    if [[ "$agent" != shell && "$agent" != cmd ]]; then
+      assert_contains "$agent retains untargeted hooks ($disabled)" "$OUT" "shared-hook-marker"
+    fi
+    if [[ ( "$agent" != claude && "$agent" != codex ) || -n "$disabled" ]]; then
+      assert_not_contains "$agent excludes targeted host hook ($disabled)" "$OUT" "host-target-marker"
+      assert_not_contains "$agent excludes codegraph bootstrap ($disabled)" "$OUT" "codegraph-target-marker"
+    else
+      assert_contains "$agent retains targeted host hook" "$OUT" "host-target-marker"
+      assert_contains "$agent retains codegraph bootstrap" "$OUT" "codegraph-target-marker"
+    fi
+  done
+done
 
 # An absent configured socket matches Linux yolo: warn, skip the grant, and do
 # not advertise an unusable endpoint to Docker-compatible clients.

@@ -28,9 +28,9 @@
 #   YOLO_PROMPT_JSON         - JSON array of { target, tags, prompt } objects (smind.hm.dev.llm.yolo.
 #                              promptExtensions); yolo.sh composes each agent's --append-system-prompt
 #                              with jq, dropping objects whose tags hit the --disable set
-#   YOLO_PREHOOKS_JSON       - JSON array of { command, tags } host hooks (smind.hm.dev.llm.yolo.
+#   YOLO_PREHOOKS_JSON       - JSON array of { command, tags, targets } host hooks (smind.hm.dev.llm.yolo.
 #                              hooks.pre-start.host) run before an agent session, dropping --disable'd tags
-#   YOLO_SANDBOX_HOOKS_JSON  - JSON array of { command, tags } sandbox hooks (hooks.pre-start.sandbox);
+#   YOLO_SANDBOX_HOOKS_JSON  - JSON array of { command, tags, targets } sandbox hooks (hooks.pre-start.sandbox);
 #                              surviving commands are composed into a script the entrypoint sources
 #   YOLO_CLIPBOARD_PROXY     - host binary for the clipboard broker (defects:D262)
 #   YOLO_CLIPBOARD_SHIM_DIR  - directory containing a `tmux` symlink to the proxy (prepended to
@@ -1006,7 +1006,7 @@ if [[ -n "$SELECTED_SANDBOX_HOOKS_JSON" ]]; then
   _hdis="$("$YOLO_JQ" -nc '$ARGS.positional' --args "${DISABLE_TAGS[@]}")"
   _hcomposed="$(
     printf '%s' "$SELECTED_SANDBOX_HOOKS_JSON" \
-      | "$YOLO_JQ" -j --argjson dis "$_hdis" '.[] | select((.tags - $dis) == .tags) | .command + "\n"'
+      | "$YOLO_JQ" -j --arg target "$SUBCMD" --argjson dis "$_hdis" '.[] | select((.tags - $dis) == .tags) | select((.targets // ["*"]) | index("*") != null or index($target) != null) | .command + "\n"'
   )"
   if [[ -n "$_hcomposed" ]]; then
     SANDBOX_HOOKS_TMPFILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/yolo-sandbox-hooks.XXXXXX")"
@@ -1187,6 +1187,11 @@ BASE_ARGS=(
   "${ENV_ARGS[@]}"
 )
 
+if [[ "$SUBCMD" == pi ]]; then
+  _codegraph_disabled=0
+  is_disabled codegraph && _codegraph_disabled=1
+  BASE_ARGS+=(--env "SMIND_CODEGRAPH_DISABLED=$_codegraph_disabled")
+fi
 
 EXTRA_ARGS=()
 EXEC_CMD=()
@@ -1401,9 +1406,9 @@ ensure_codex_config() {
 # Host pre-start hooks. Run on the host (in $PWD), before the sandbox launches,
 # for agent subcommands only (claude/codex/pi; shell/cmd skip them). Configured
 # via smind.hm.dev.llm.yolo.hooks.pre-start.host -> YOLO_PREHOOKS_JSON, a JSON
-# array of { command, tags } objects; a hook is skipped if any of its tags is in
-# the --disable set. The codegraph per-project index bootstrap is one such hook
-# (tag "codegraph"). Hooks are best-effort: a failure warns but does not abort.
+# array of { command, tags, targets } objects; a hook is skipped if any of its tags is in
+# the --disable set or its targets exclude the selected subcommand.
+# Hooks are best-effort: a failure warns but does not abort.
 run_prestart_hooks() {
   [[ -z "${YOLO_PREHOOKS_JSON:-}" ]] && return 0
   local dis _hook
@@ -1413,7 +1418,7 @@ run_prestart_hooks() {
     bash -c "$_hook" || echo "warning: yolo pre-start hook failed (continuing)" >&2
   done < <(
     printf '%s' "$YOLO_PREHOOKS_JSON" \
-      | "$YOLO_JQ" -j --argjson dis "$dis" '.[] | select((.tags - $dis) == .tags) | .command + "\u0000"'
+      | "$YOLO_JQ" -j --arg target "$SUBCMD" --argjson dis "$dis" '.[] | select((.tags - $dis) == .tags) | select((.targets // ["*"]) | index("*") != null or index($target) != null) | .command + "\u0000"'
   )
 }
 

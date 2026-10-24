@@ -754,19 +754,19 @@ prepare_profile_assets() {
 }
 
 # Host pre-start hooks run for agent subcommands only. Hooks are best-effort and
-# a hook is omitted when any of its tags occurs in the --disable set.
+# a hook is omitted when disabled by tags or excluded by its targets.
 run_prestart_hooks() {
   [[ -z "${YOLO_PREHOOKS_JSON:-}" ]] && return 0
   local disabled hook
   # shellcheck disable=SC2016
-  local disabled_filter='$ARGS.positional' hook_filter='.[] | select((.tags - $dis) == .tags) | .command + "\u0000"'
+  local disabled_filter='$ARGS.positional' hook_filter='.[] | select((.tags - $dis) == .tags) | select((.targets // ["*"]) | index("*") != null or index($target) != null) | .command + "\u0000"'
   disabled="$("$YOLO_JQ" -nc "$disabled_filter" --args "${DISABLE_TAGS[@]}")"
   while IFS= read -r -d '' hook; do
     [[ -z "$hook" ]] && continue
     bash -c "$hook" || echo "warning: yolo pre-start hook failed (continuing)" >&2
   done < <(
     printf '%s' "$YOLO_PREHOOKS_JSON" \
-      | "$YOLO_JQ" -j --argjson dis "$disabled" "$hook_filter"
+      | "$YOLO_JQ" -j --arg target "$SUBCMD" --argjson dis "$disabled" "$hook_filter"
   )
 }
 
@@ -799,7 +799,7 @@ yolo_exec_agent() {
   local secret_tmpfile="" sandbox_hooks_tmpfile="" have_secret=0
   local disabled_hooks composed_hooks line name path
   # shellcheck disable=SC2016
-  local disabled_filter='$ARGS.positional' sandbox_hook_filter='.[] | select((.tags - $dis) == .tags) | .command + "\n"'
+  local disabled_filter='$ARGS.positional' sandbox_hook_filter='.[] | select((.tags - $dis) == .tags) | select((.targets // ["*"]) | index("*") != null or index($target) != null) | .command + "\n"'
   local -a entrypoint_env=()
   if [[ -n "${YOLO_SECRET_VARS:-}" ]]; then
     secret_tmpfile="$(mktemp "${TMPDIR:-/tmp}/yolo-darwin-secrets.XXXXXX")"
@@ -877,7 +877,7 @@ yolo_exec_agent() {
     disabled_hooks="$("$YOLO_JQ" -nc "$disabled_filter" --args "${DISABLE_TAGS[@]}")"
     composed_hooks="$(
       printf '%s' "$selected_sandbox_hooks_json" \
-        | "$YOLO_JQ" -j --argjson dis "$disabled_hooks" "$sandbox_hook_filter"
+        | "$YOLO_JQ" -j --arg target "$SUBCMD" --argjson dis "$disabled_hooks" "$sandbox_hook_filter"
     )"
     if [[ -n "$composed_hooks" ]]; then
       sandbox_hooks_tmpfile="$(mktemp "${TMPDIR:-/tmp}/yolo-darwin-hooks.XXXXXX")"
@@ -915,6 +915,12 @@ yolo_exec_agent() {
       base_env_pairs+=("$name=${!name}")
     fi
   done
+  local -a codegraph_env=()
+  if [[ "$SUBCMD" == pi ]]; then
+    local codegraph_disabled=0
+    is_disabled codegraph && codegraph_disabled=1
+    codegraph_env=("SMIND_CODEGRAPH_DISABLED=$codegraph_disabled")
+  fi
   local named_profile=0
   [[ -z "$PROFILE" ]] || named_profile=1
   env -i \
@@ -926,6 +932,7 @@ yolo_exec_agent() {
     "${ENV_PAIRS[@]}" \
     SMIND_SANDBOXED=1 \
     CLAUDE_CODE_SANDBOXED=1 \
+    "${codegraph_env[@]}" \
     "YOLO_NAMED_PROFILE=$named_profile" \
     "${entrypoint_env[@]}" \
     "${sandbox_argv[@]}" \
