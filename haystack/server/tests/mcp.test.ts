@@ -137,7 +137,9 @@ if (!CONN) {
         })) as unknown as { isError?: boolean; structuredContent: { code: string } };
         assert.equal(stale.isError, true);
         assert.equal(stale.structuredContent.code, "conflict");
-        // get returns lossless document_json plus display text.
+        // get returns lossless document_json, and its text content carries the
+        // same document verbatim: clients that show the model only `content`
+        // must still be able to read the body.
         const get = (await client.callTool({ name: "get", arguments: { key: "mcp:doc" } })) as unknown as {
           content: Array<{ text: string }>;
           structuredContent: { revision: number; document_json: string };
@@ -145,6 +147,8 @@ if (!CONN) {
         assert.equal(get.structuredContent.revision, 1);
         assert.ok(get.structuredContent.document_json.includes("9007199254740993"));
         assert.ok(get.content[0]?.text.includes("hello"));
+        assert.ok(get.content[0]?.text.includes(get.structuredContent.document_json));
+        assert.ok(get.content[0]?.text.includes("mcp:doc"));
         // search paginates through the cursor (second doc forces a next page).
         await client.callTool({
           name: "put",
