@@ -10,20 +10,23 @@ process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1';
 const browsers = process.env.PLAYWRIGHT_BROWSERS_PATH;
 if (!browsers) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH to the provisioned Playwright 1.64.1 browsers; tests never download browsers.');
 const root = fileURLToPath(new URL('..', import.meta.url));
-const server = await createServer({ root, server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
+const server = await createServer({ root, server: { host: '127.0.0.1', port: 0, allowedHosts: ['chronicle.test'] }, logLevel: 'error' });
 await server.listen();
 const address = server.httpServer.address();
 if (address === null || typeof address === 'string') throw new Error('No fixture HTTP address');
 const origin = `http://127.0.0.1:${address.port}`;
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, args: ['--host-resolver-rules=MAP chronicle.test 127.0.0.1', '--no-proxy-server'] });
 await mkdir(new URL('../test-results/', import.meta.url), { recursive: true });
 const errors = [];
 async function scene(configure) {
+  return sceneAt(origin, true, configure);
+}
+async function sceneAt(sceneOrigin, waitForArchive, configure) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1060 } });
   const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   const fixture = new ChronicleFixture(); if (configure) configure(fixture); await fixture.install(page);
-  await page.goto(`${origin}/tests-browser/harness.html`);
-  await page.getByRole('heading', { name: 'Pick up the thread.' }).waitFor();
+  await page.goto(`${sceneOrigin}/tests-browser/harness.html`);
+  if (waitForArchive) await page.getByRole('heading', { name: 'Pick up the thread.' }).waitFor();
   return { context, page, fixture };
 }
 async function search(page) {
@@ -32,6 +35,22 @@ async function search(page) {
   await page.locator('.search-hit').getByRole('heading', { name: 'Following the migration thread', exact: true }).waitFor();
 }
 try {
+  // Regression: loopback HTTP is trustworthy; non-loopback HTTP is not.
+  // Blackbox / Good Communication: real Chromium origin security + controlled API fixture.
+  {
+    const { context, page, fixture } = await sceneAt(`http://chronicle.test:${address.port}`, false, undefined);
+    assert.deepEqual(await page.evaluate(() => ({ secure: isSecureContext, uuid: typeof crypto.randomUUID, random: typeof crypto.getRandomValues })), { secure: false, uuid: 'undefined', random: 'function' });
+    await page.locator('.connection-widget[data-state="live"]').waitFor({ timeout: 5000 });
+    await search(page);
+    await page.getByRole('button', { name: 'access', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Token name' }).fill('Private HTTP token');
+    await page.getByRole('button', { name: 'Mint token ↗' }).click();
+    await page.getByRole('heading', { name: 'Save your token now.' }).waitFor({ timeout: 5000 });
+    assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_Hello));
+    assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_MintToken));
+    for (const envelope of fixture.calls) assert.match(envelope.requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    await context.close(); console.log('PASS browser: non-loopback insecure HTTP supports Hello, reads and mutation UUIDs without randomUUID');
+  }
   const { Conversation } = await server.ssrLoadModule('/src/Conversation.tsx');
   const initialSource = renderToStaticMarkup(createElement(Conversation, { connection: {}, stats: { activeId: 1, generation: 1 }, user: new ChronicleFixture().user, sessionId: '00000000-0000-4000-8000-000000000001', select: () => {}, close: () => {}, refresh: 0, match: null }));
   assert.match(initialSource, /Rechecking source access/, 'first render must show an explicit loading state, never an empty source body');

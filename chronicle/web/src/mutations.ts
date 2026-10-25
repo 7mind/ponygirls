@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Operation_Receipt, Operation_MintToken, Result_Mutation, Result_Token, type Operation, type TokenResult } from './api.ts';
 import { read, mutate, type ChronicleConnection } from './client.ts';
 import { RequestFailure } from './transport/types.ts';
+import { randomUUID } from './uuid.ts';
 interface Uncertain { id: string; owner: string; operation: Operation; label: string; absent: boolean }
 export interface MutationState {
   busy: boolean; error: string | null; message: string | null; uncertain: Uncertain | null;
@@ -45,7 +46,7 @@ export function useMutations(connection: ChronicleConnection, userId: string | n
   async function run(operation: Operation, label: string) {
     if (uncertain !== null) { setError('Resolve the uncertain mutation before starting another write.'); return false; }
     if (currentUser.current === null) { setError('Sign in before changing the archive.'); return false; }
-    return send(operation, label, crypto.randomUUID(), currentUser.current);
+    return send(operation, label, randomUUID(crypto), currentUser.current);
   }
   async function recover() {
     if (uncertain === null || currentUser.current !== uncertain.owner || inFlight.current) return;

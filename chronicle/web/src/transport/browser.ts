@@ -1,4 +1,5 @@
 import { ConnectionManager } from './manager.ts';
+import { randomUUID } from '../uuid.ts';
 import { baboonProtocol } from './baboon.ts';
 import { connectionConfig } from './types.ts';
 import type { Lifecycle, LifecycleEvent, Socket, ConnectionConfig } from './types.ts';
@@ -44,7 +45,7 @@ export function createBrowserManager(win: Window, doc: Document, config: Connect
     scheduler: { now: () => Date.now(), setTimeout: (fn, delay) => win.setTimeout(fn, delay), clearTimeout: id => win.clearTimeout(id) },
     lifecycle: browserLifecycle(win, doc), socket: () => nativeSocket(url.href),
     random: () => { const bytes = new Uint32Array(1); win.crypto.getRandomValues(bytes); return bytes[0]! / 2 ** 32; },
-    nonce: () => win.crypto.randomUUID(), protocol: () => baboonProtocol(() => win.crypto.randomUUID()), config,
+    nonce: () => randomUUID(win.crypto), protocol: () => baboonProtocol(() => randomUUID(win.crypto)), config,
   });
 }
 export { connectionConfig };
