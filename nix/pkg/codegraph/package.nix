@@ -15,6 +15,8 @@
   buildNpmPackage,
   fetchNpmDeps,
   nodejs_24,
+  stdenv,
+  util-linux,
   src,
 }:
 
@@ -23,6 +25,11 @@ buildNpmPackage {
   version = (builtins.fromJSON (builtins.readFile "${src}/package.json")).version;
 
   inherit src;
+
+  patches = [
+    ./kernel-ownership.patch
+    ./daemon-namespace.patch
+  ];
 
   npmDeps = fetchNpmDeps {
     inherit src;
@@ -43,6 +50,21 @@ buildNpmPackage {
       --replace-fail \
         'cd ui && npm run build && cd .. && node scripts/check-ui-build.mjs' \
         '(cd ui && node node_modules/vite/bin/vite.js build) && node scripts/check-ui-build.mjs'
+  '' + lib.optionalString stdenv.hostPlatform.isLinux ''
+    # Absolute helper path is part of the runtime closure, including when the
+    # module is required directly (not through the CLI wrapper).
+    substituteInPlace src/kernel-lock.ts \
+      --replace-fail '@codegraph-flock@' '${util-linux}/bin/flock'
+  '';
+
+  doCheck = stdenv.hostPlatform.isLinux;
+  checkPhase = lib.optionalString stdenv.hostPlatform.isLinux ''
+    runHook preCheck
+    CODEGRAPH_FLOCK=${util-linux}/bin/flock node ${./tests/flock-proof.cjs}
+    node ${./tests/ownership.cjs} "$PWD/dist"
+    node ${./tests/daemon-namespace.cjs} "$PWD/dist"
+    node ${./tests/socket-paths.cjs} "$PWD/dist"
+    runHook postCheck
   '';
 
   # `build` runs the `copy-assets` npm script (.wasm + schema.sql -> dist/), so
@@ -67,8 +89,14 @@ buildNpmPackage {
     # telemetry.json) does not survive sandboxed sessions. The env var wins
     # over stored config; an explicit CODEGRAPH_TELEMETRY=1 still opts in.
     mkdir -p $out/bin
-    printf '#!/bin/sh\nexport CODEGRAPH_TELEMETRY="''${CODEGRAPH_TELEMETRY:-0}"\nexec %s --liftoff-only %s/lib/codegraph/dist/bin/codegraph.js "$@"\n' \
-      '${nodejs_24}/bin/node' "$out" > $out/bin/codegraph
+    printf '#!/bin/sh\nexport CODEGRAPH_TELEMETRY="''${CODEGRAPH_TELEMETRY:-0}"\n' > $out/bin/codegraph
+    ${lib.optionalString stdenv.hostPlatform.isLinux ''
+      # yolo shares HOME/.cache, unlike its private /tmp. Preserve explicit
+      # overrides (including invalid empty ones, which fail actionably).
+      printf 'export CODEGRAPH_SOCKET_DIR="''${CODEGRAPH_SOCKET_DIR-$HOME/.cache/codegraph/sockets}"\n' >> $out/bin/codegraph
+    ''}
+    printf 'exec %s --liftoff-only %s/lib/codegraph/dist/bin/codegraph.js "$@"\n' \
+      '${nodejs_24}/bin/node' "$out" >> $out/bin/codegraph
     chmod +x $out/bin/codegraph
 
     runHook postInstall

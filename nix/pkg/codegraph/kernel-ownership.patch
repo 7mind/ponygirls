@@ -1,0 +1,310 @@
+--- /dev/null
++++ b/src/kernel-lock.ts
+@@ -0,0 +1,46 @@
++/** Linux ownership is an OS open-file-description flock, never PID liveness.
++ * Sidecars are permanent: unlinking one would create a second lock domain.
++ */
++import * as fs from 'fs';
++import * as path from 'path';
++import { spawnSync } from 'child_process';
++
++export function namespaceIdentity(): string {
++  if (process.platform !== 'linux') return process.platform;
++  // boot ID avoids identifying a recycled namespace inode after reboot.
++  return fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() + ':' +
++    fs.readlinkSync('/proc/self/ns/pid');
++}
++
++export function sameNamespace(value?: string): boolean {
++  if (process.platform !== 'linux') return true;
++  return typeof value === 'string' && value === namespaceIdentity();
++}
++
++const heldLocks = new Map<number, string>();
++export function ownsKernelLock(lockPath: string): boolean {
++  return [...heldLocks.values()].includes(path.resolve(lockPath));
++}
++
++export function tryKernelLock(lockPath: string): number | null {
++  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
++  const fd = fs.openSync(lockPath, 'a+', 0o600);
++  // flock(1) applies flock(2) to inherited FD 3. The parent's descriptor shares
++  // its open-file-description, retaining the lock after this helper exits.
++  const result = spawnSync('@codegraph-flock@', ['-n', '3'], {
++    stdio: ['ignore', 'pipe', 'pipe', fd],
++  });
++  if (result.status === 0) { heldLocks.set(fd, path.resolve(lockPath)); return fd; }
++  fs.closeSync(fd);
++  if (result.status === 1 && !result.error) return null;
++  throw new Error(`CodeGraph kernel lock unavailable (refusing unsafe PID fallback): ${result.error?.message ?? result.stderr?.toString() ?? result.status}`);
++}
++
++export function releaseKernelLock(fd: number): void { heldLocks.delete(fd); fs.closeSync(fd); }
++
++export const LOCK_PROTOCOL = 'flock-v1';
++export function legacyLockMessage(recordPath: string): string {
++  return `CodeGraph legacy/unrecognized ownership record at ${recordPath}. ` +
++    'Refusing automatic PID-based recovery across namespaces. Stop ALL old and new CodeGraph clients, daemons and indexing jobs sharing this checkout; ' +
++    `then, while offline, remove only this record (${recordPath}) and retry. Never remove *.flock sidecars.`;
++}
+--- a/src/mcp/writer-lock.ts
++++ b/src/mcp/writer-lock.ts
+@@ -15,6 +15,7 @@
+
+ import * as fs from 'fs';
+ import * as path from 'path';
++import { tryKernelLock, releaseKernelLock, namespaceIdentity, LOCK_PROTOCOL, legacyLockMessage } from '../kernel-lock';
+ import { getCodeGraphDir } from '../directory';
+ /** Signal-0 liveness (EPERM ⇒ alive). Local copy to avoid a daemon↔writer cycle. */
+ function isProcessAlive(pid: number): boolean {
+@@ -39,6 +40,8 @@
+ /** Structured contents of the writer pidfile. */
+ export interface WriterLockInfo {
+   pid: number;
++  namespace?: string;
++  lockProtocol?: string;
+   /** `direct` | `daemon` | `fallback` — for actionable error text only. */
+   mode: string;
+   startedAt: number;
+@@ -60,6 +63,8 @@
+     if (typeof parsed.pid !== 'number' || typeof parsed.mode !== 'string') return null;
+     return {
+       pid: parsed.pid,
++      namespace: parsed.namespace,
++      lockProtocol: parsed.lockProtocol,
+       mode: parsed.mode,
+       startedAt: typeof parsed.startedAt === 'number' ? parsed.startedAt : 0,
+       ...(typeof parsed.ready === 'boolean' ? { ready: parsed.ready } : {}),
+@@ -67,6 +72,34 @@
+   } catch {
+     return null;
+   }
++}
++
++// Only this process's open descriptors confer ownership. PID equality never does.
++const kernelWriters = new Map<string, { fd: number; info: WriterLockInfo }>();
++function acquireLinuxWriter(pidPath: string, mode: string): WriterAcquireResult {
++  const own = kernelWriters.get(pidPath);
++  if (own) return { kind: 'acquired', pidPath, info: own.info };
++  const fd = tryKernelLock(pidPath + '.flock');
++  const existing = (() => {
++    try { return decodeWriterLockInfo(fs.readFileSync(pidPath, 'utf8')); } catch { return null; }
++  })();
++  if (fd === null) return { kind: 'taken', pidPath, existing };
++  try {
++    // An old client does not participate in flock; absence of a kernel holder
++    // cannot prove that an old numeric PID record is abandoned.
++    if (fs.existsSync(pidPath) && existing?.lockProtocol !== LOCK_PROTOCOL) {
++      process.stderr.write(legacyLockMessage(pidPath) + '\n');
++      releaseKernelLock(fd);
++      return { kind: 'taken', pidPath, existing };
++    }
++    const info: WriterLockInfo = {
++      pid: process.pid, mode, startedAt: Date.now(), ready: false,
++      namespace: namespaceIdentity(), lockProtocol: LOCK_PROTOCOL,
++    };
++    fs.writeFileSync(pidPath, encode(info), { mode: 0o600 });
++    kernelWriters.set(pidPath, { fd, info });
++    return { kind: 'acquired', pidPath, info };
++  } catch (err) { releaseKernelLock(fd); throw err; }
+ }
+
+ /**
+@@ -80,6 +113,8 @@
+ ): WriterAcquireResult {
+   const pidPath = getWriterPidPath(projectRoot, lockName);
+   fs.mkdirSync(path.dirname(pidPath), { recursive: true });
++
++  if (process.platform === 'linux') return acquireLinuxWriter(pidPath, mode);
+
+   const info: WriterLockInfo = {
+     pid: process.pid,
+@@ -155,7 +190,9 @@
+ export function markWriterReady(projectRoot: string): void {
+   const pidPath = getWriterPidPath(projectRoot);
+   const info = readWriterLock(projectRoot);
+-  if (!info || info.pid !== process.pid) return;
++  if (!info || (process.platform === 'linux' ? !kernelWriters.has(pidPath) : info.pid !== process.pid)) return;
++  const own = kernelWriters.get(pidPath);
++  if (own) own.info = { ...info, ready: true };
+   const tmp = `${pidPath}.${process.pid}.ready.tmp`;
+   try {
+     fs.writeFileSync(tmp, encode({ ...info, ready: true }), { mode: 0o600 });
+@@ -177,6 +214,8 @@
+  * the record was replaced. Never throws.
+  */
+ export function swapWriterLock(projectRoot: string, fromPid: number, next: WriterLockInfo): boolean {
++  // A JSON rename cannot transfer the kernel open-file-description.
++  if (process.platform === 'linux') return false;
+   const pidPath = getWriterPidPath(projectRoot);
+   const tmp = `${pidPath}.${process.pid}.swap.tmp`;
+   try {
+@@ -206,6 +245,14 @@
+ /** Release if we still own the lock (pid match). */
+ export function releaseWriterLock(projectRoot: string, lockName: 'writer.pid' | 'rebuild.pid' = 'writer.pid'): void {
+   const pidPath = getWriterPidPath(projectRoot, lockName);
++  if (process.platform === 'linux') {
++    const own = kernelWriters.get(pidPath);
++    if (!own) return;
++    try { fs.unlinkSync(pidPath); } catch { /* metadata only */ }
++    kernelWriters.delete(pidPath);
++    releaseKernelLock(own.fd);
++    return;
++  }
+   try {
+     if (!fs.existsSync(pidPath)) return;
+     const info = decodeWriterLockInfo(fs.readFileSync(pidPath, 'utf8'));
+@@ -240,7 +287,11 @@
+     'Only one live MCP writer may serve a project (auto-sync / index). ' +
+     'Stop the other server (if it is the shared daemon, pick it in `codegraph daemon` to stop it; otherwise end the other MCP session), ' +
+     'or unset CODEGRAPH_NO_DAEMON so additional clients proxy to the shared daemon. ' +
+-    'If this is stale, delete ' + pidPath
++    (process.platform === 'linux'
++      ? (existing?.lockProtocol === LOCK_PROTOCOL
++        ? 'Ownership is protected by a kernel lock; wait for the holder to exit. Never delete *.flock sidecars.'
++        : legacyLockMessage(pidPath))
++      : 'If this is stale, delete ' + pidPath)
+   );
+ }
+
+@@ -258,6 +309,19 @@
+ }
+
+ export function assertNoRebuild(root: string): void {
++  if (process.platform === 'linux') {
++    const pidPath = getWriterPidPath(root, 'rebuild.pid');
++    if (kernelWriters.has(pidPath)) return;
++    const fd = tryKernelLock(pidPath + '.flock');
++    if (fd === null) throw new RebuildInProgressError();
++    try {
++      const record = readWriterLock(root, 'rebuild.pid');
++      if (fs.existsSync(pidPath) && record?.lockProtocol !== LOCK_PROTOCOL) {
++        throw new Error(legacyLockMessage(pidPath));
++      }
++    } finally { releaseKernelLock(fd); }
++    return;
++  }
+   const lock = readWriterLock(root, 'rebuild.pid');
+   if (lock && lock.pid !== process.pid && isProcessAlive(lock.pid)) {
+     throw new RebuildInProgressError();
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -1,3 +1,4 @@
++import { tryKernelLock, releaseKernelLock, namespaceIdentity, LOCK_PROTOCOL, legacyLockMessage } from './kernel-lock';
+ /**
+  * CodeGraph Utilities
+  *
+@@ -272,6 +273,7 @@
+ export class FileLock {
+   private lockPath: string;
+   private held = false;
++  private kernelFd: number | null = null;
+
+   constructor(lockPath: string) {
+     this.lockPath = lockPath;
+@@ -281,6 +283,22 @@
+    * Acquire the lock. Throws if the lock is held by another live process.
+    */
+   acquire(): void {
++    if (process.platform === 'linux') {
++      if (this.held) throw new Error('CodeGraph database is locked by this FileLock already');
++      const fd = tryKernelLock(this.lockPath + '.flock');
++      if (fd === null) throw new Error('CodeGraph database is locked by another process (kernel flock)');
++      try {
++        if (fs.existsSync(this.lockPath)) {
++          let protocol: unknown;
++          try { protocol = JSON.parse(fs.readFileSync(this.lockPath, 'utf8')).lockProtocol; } catch { /* legacy */ }
++          if (protocol !== LOCK_PROTOCOL) throw new Error(legacyLockMessage(this.lockPath));
++        }
++        fs.writeFileSync(this.lockPath, JSON.stringify({ pid: process.pid, namespace: namespaceIdentity(), lockProtocol: LOCK_PROTOCOL }));
++        this.kernelFd = fd;
++        this.held = true;
++        return;
++      } catch (err) { releaseKernelLock(fd); throw err; }
++    }
+     // Check for existing lock
+     if (fs.existsSync(this.lockPath)) {
+       try {
+@@ -327,6 +345,13 @@
+    */
+   release(): void {
+     if (!this.held) return;
++    if (this.kernelFd !== null) {
++      try { fs.unlinkSync(this.lockPath); } catch { /* metadata only */ }
++      releaseKernelLock(this.kernelFd);
++      this.kernelFd = null;
++      this.held = false;
++      return;
++    }
+     try {
+       // Only remove if we still own it (check PID)
+       const content = fs.readFileSync(this.lockPath, 'utf-8').trim();
+--- a/src/directory.ts
++++ b/src/directory.ts
+@@ -1,3 +1,4 @@
++import { tryKernelLock, releaseKernelLock, ownsKernelLock, LOCK_PROTOCOL, legacyLockMessage } from './kernel-lock';
+ /**
+  * Directory Management
+  *
+@@ -976,7 +977,34 @@
+     return;
+   }
+
+-  // Recursively remove directory
++  // Kernel lock inodes must survive reset/rebuild. Unlinking a live sidecar
++  // would let a second process lock a new inode while the old holder runs.
++  if (process.platform === 'linux') {
++    // Hold every ownership domain while deleting database/socket artifacts.
++    // Merely preserving lock inodes is insufficient: a live holder still uses
++    // the files being deleted. Our own rebuild/writer locks may remain held.
++    const guards: number[] = [];
++    try {
++      for (const record of ['writer.pid', 'rebuild.pid', 'daemon.pid', 'codegraph.lock']) {
++        const recordPath = path.join(codegraphDir, record);
++        const lockPath = recordPath + '.flock';
++        if (!ownsKernelLock(lockPath)) {
++          const fd = tryKernelLock(lockPath);
++          if (fd === null) throw new Error('CodeGraph ownership is active; stop all clients and indexing jobs before removing the index.');
++          guards.push(fd);
++        }
++        if (fs.existsSync(recordPath)) {
++          let protocol: unknown;
++          try { protocol = JSON.parse(fs.readFileSync(recordPath, 'utf8')).lockProtocol; } catch { /* legacy */ }
++          if (protocol !== LOCK_PROTOCOL) throw new Error(legacyLockMessage(recordPath));
++        }
++      }
++      for (const name of fs.readdirSync(codegraphDir)) {
++        if (!/\.(flock|pid|lock)$/.test(name)) fs.rmSync(path.join(codegraphDir, name), { recursive: true, force: true });
++      }
++    } finally { for (const fd of guards.reverse()) releaseKernelLock(fd); }
++    return;
++  }
+   fs.rmSync(codegraphDir, { recursive: true, force: true });
+ }
+
+--- a/src/bin/codegraph.ts
++++ b/src/bin/codegraph.ts
+@@ -2298,8 +2298,21 @@
+       const lockPath = path.join(getCodeGraphDir(projectPath), 'codegraph.lock');
+       let removed = false;
+       if (fs.existsSync(lockPath)) {
+-        fs.unlinkSync(lockPath);
+-        removed = true;
++        if (process.platform === 'linux') {
++          const { tryKernelLock, releaseKernelLock, LOCK_PROTOCOL, legacyLockMessage } = await import('../kernel-lock');
++          const fd = tryKernelLock(lockPath + '.flock');
++          if (fd === null) throw new Error('Database kernel lock is held; stop the owning indexing job first.');
++          try {
++            let protocol: unknown;
++            try { protocol = JSON.parse(fs.readFileSync(lockPath, 'utf8')).lockProtocol; } catch { /* legacy */ }
++            if (protocol !== LOCK_PROTOCOL) throw new Error(legacyLockMessage(lockPath));
++            fs.unlinkSync(lockPath);
++            removed = true;
++          } finally { releaseKernelLock(fd); }
++        } else {
++          fs.unlinkSync(lockPath);
++          removed = true;
++        }
+       }
+       const { clearStaleDaemonArtifacts } = await import('../mcp/daemon-registry');
+       removed = await clearStaleDaemonArtifacts(projectPath) || removed;

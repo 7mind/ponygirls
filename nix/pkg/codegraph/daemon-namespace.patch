@@ -1,0 +1,698 @@
+--- a/src/mcp/daemon.ts
++++ b/src/mcp/daemon.ts
+@@ -40,6 +40,8 @@
+  *   - The MCP protocol state machine — that's `./session.ts`.
+  */
+
++import { namespaceIdentity, tryKernelLock, releaseKernelLock } from '../kernel-lock';
++import { localPidRecord, localDaemonRecord } from './process-identity';
+ import * as fs from 'fs';
+ import * as net from 'net';
+ import * as path from 'path';
+@@ -52,6 +54,7 @@
+   encodeLockInfo,
+   getDaemonPidPath,
+   getDaemonSocketCandidates,
++  prepareDaemonSocketPath,
+   getDaemonSocketPath,
+ } from './daemon-paths';
+ import { CodeGraphPackageJsonPath, CodeGraphPackageVersion } from './version';
+@@ -165,6 +168,7 @@
+  * direct mode on mismatch rather than risk subtle wire incompatibilities.
+  */
+ export interface DaemonHello {
++  namespace?: string;
+   codegraph: string; // package version (must match the proxy's own version)
+   pid: number;       // daemon pid (informational; for `ps` debugging)
+   socketPath: string; // echoed back so the proxy can log it
+@@ -181,6 +185,7 @@
+  * client's first JSON-RPC message.
+  */
+ export interface DaemonClientHello {
++  namespace?: string;
+   codegraph_client: 1;
+   pid: number;             // the proxy process's own pid
+   hostPid: number | null;  // the MCP host pid (past any launcher shim), if known
+@@ -210,7 +215,7 @@
+   private acceptedSockets = new Set<net.Socket>();
+   private clients = new Set<MCPSession>();
+   /** Per-client peer pids from the optional client-hello, for the liveness sweep. */
+-  private clientPeers = new Map<MCPSession, { pid: number | null; hostPid: number | null }>();
++  private clientPeers = new Map<MCPSession, { pid: number | null; hostPid: number | null; namespace?: string }>();
+   private idleTimer: NodeJS.Timeout | null = null;
+   private idleTimeoutMs: number;
+   private maxIdleMs: number;
+@@ -273,11 +278,12 @@
+     let initialLockContents: string;
+     try {
+       initialLockContents = fs.readFileSync(this.pidPath, 'utf8');
+-      if (decodeLockInfo(initialLockContents)?.pid !== process.pid) {
++      if ((process.platform === 'linux' && !daemonFences.has(this.pidPath)) ||
++          !localDaemonRecord(decodeLockInfo(initialLockContents)) || decodeLockInfo(initialLockContents)?.pid !== process.pid) {
+         throw new Error('daemon lock belongs to another process');
+       }
+     } catch {
+-      releaseWriterLock(this.projectRoot);
++      this.cleanupLockfile();
+       throw new Error('Lost daemon lock ownership before startup.');
+     }
+
+@@ -289,9 +295,12 @@
+     // before each attempt — safe because we hold the lockfile, so no live daemon
+     // owns it; without it `listen` would wedge on EADDRINUSE.
+     const candidates = getDaemonSocketCandidates(this.projectRoot);
++    const attemptedSockets = new Set<string>();
+     const listen = (socketPath: string): Promise<net.Server> =>
+       new Promise<net.Server>((resolve, reject) => {
+         if (process.platform !== 'win32') {
++          prepareDaemonSocketPath(socketPath);
++          attemptedSockets.add(socketPath);
+           try { fs.unlinkSync(socketPath); } catch { /* not-exists is fine */ }
+         }
+         const server = net.createServer((socket) => this.handleConnection(socket));
+@@ -323,7 +332,7 @@
+       // cleanly and every launcher falls back to direct mode (#974).
+       this.cleanupLockfile();
+       if (process.platform !== 'win32') {
+-        for (const candidate of candidates) {
++        for (const candidate of attemptedSockets) {
+           try { fs.unlinkSync(candidate); } catch { /* may not exist */ }
+         }
+       }
+@@ -338,6 +347,8 @@
+
+     const lock: DaemonLockInfo = {
+       pid: process.pid,
++      namespace: namespaceIdentity(),
++      lockProtocol: 'flock-v1',
+       version: CodeGraphPackageVersion,
+       socketPath: this.socketPath,
+       startedAt: Date.now(),
+@@ -421,11 +432,12 @@
+       this.server = null;
+     }
+     await this.engine.stop();
+-    this.cleanupLockfile();
++    this.cleanupLockfile(false);
+     deregisterDaemon(this.projectRoot);
+     if (process.platform !== 'win32') {
+       try { fs.unlinkSync(this.socketPath); } catch { /* may already be gone */ }
+     }
++    releaseDaemonFence(this.pidPath);
+     // POSIX exits here; Windows drains first (engine.stop() above began closing
+     // the file watcher, and exiting mid-teardown aborts the process). See
+     // finalizeDaemonExit / DAEMON_SHUTDOWN_BACKSTOP_MS.
+@@ -441,6 +453,7 @@
+     const hello: DaemonHello = {
+       codegraph: CodeGraphPackageVersion,
+       pid: process.pid,
++      namespace: namespaceIdentity(),
+       socketPath: this.socketPath,
+       protocol: 1,
+     };
+@@ -577,6 +590,9 @@
+   backstopShouldExit(isAlive: (pid: number) => boolean): boolean {
+     if (this.stopping || this.clients.size === 0) return false; // idle timer owns the no-client case
+     if (Date.now() - this.lastActivityAt < this.maxIdleMs) return false; // still within the window
++    // Foreign and unknown peers remain owned by their socket, not a PID.
++    if (process.platform === 'linux' && [...this.clients].some((session) =>
++      !localPidRecord(this.clientPeers.get(session)) || this.clientPeers.get(session)?.pid == null)) return false;
+     this.reapDeadClients(isAlive);
+     if (this.clients.size === 0) return false; // sweep cleared them — idle timer takes over
+     const anyProvablyAlive = [...this.clients].some((session) => {
+@@ -607,7 +623,7 @@
+     return reaped;
+   }
+
+-  private cleanupLockfile(): void {
++  private cleanupLockfile(releaseFence = true): void {
+     releaseWriterLock(this.projectRoot);
+     try {
+       if (fs.existsSync(this.pidPath)) {
+@@ -615,11 +631,13 @@
+         // already taken over while we were shutting down (extremely rare).
+         const raw = fs.readFileSync(this.pidPath, 'utf8');
+         const info = decodeLockInfo(raw);
+-        if (info && info.pid === process.pid) {
++        if (info && localDaemonRecord(info) && info.pid === process.pid &&
++            (process.platform !== 'linux' || daemonFences.has(this.pidPath))) {
+           fs.unlinkSync(this.pidPath);
+         }
+       }
+     } catch { /* best-effort; we're exiting anyway */ }
++    if (releaseFence) releaseDaemonFence(this.pidPath);
+   }
+ }
+
+@@ -717,6 +735,14 @@
+  * widened). The race's worst case is two daemons briefly; on a single external
+  * drive that's strictly better than the daemon never starting at all.
+  */
++const daemonFences = new Map<string, number>();
++function releaseDaemonFence(pidPath: string): void {
++  const fd = daemonFences.get(pidPath);
++  if (fd === undefined) return;
++  daemonFences.delete(pidPath);
++  releaseKernelLock(fd);
++}
++
+ export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
+   const pidPath = getDaemonPidPath(projectRoot);
+   // Make sure the .codegraph/ directory exists — the daemon may be the first
+@@ -725,10 +751,37 @@
+
+   const info: DaemonLockInfo = {
+     pid: process.pid,
++      namespace: namespaceIdentity(),
++      lockProtocol: 'flock-v1',
+     version: CodeGraphPackageVersion,
+     socketPath: getDaemonSocketPath(projectRoot),
+     startedAt: Date.now(),
+   };
++
++  if (process.platform === 'linux') {
++    // Stable inode: NEVER unlink the flock sidecar. The writer lock is a
++    // separate fence and cannot serialize daemon socket/record ownership.
++    const fd = daemonFences.has(pidPath) ? null : tryKernelLock(`${pidPath}.flock`);
++    if (fd !== null) {
++      try {
++        const old = fs.existsSync(pidPath) ? decodeLockInfo(fs.readFileSync(pidPath, 'utf8')) : null;
++        if (!fs.existsSync(pidPath) || old?.lockProtocol === 'flock-v1') {
++          // A free kernel fence proves a v1 daemon owner has exited even when
++          // its PID namespace no longer exists. Startup acquires the writer
++          // fence before touching the socket or database. Legacy records are
++          // NOT proof that their owner participates in this protocol.
++          fs.writeFileSync(pidPath, encodeLockInfo(info), { mode: 0o600 });
++          daemonFences.set(pidPath, fd);
++          return { kind: 'acquired', pidPath, info };
++        }
++      } catch (err) { releaseKernelLock(fd); throw err; }
++      releaseKernelLock(fd);
++    }
++    let lockContents: string | null = null;
++    let existing: DaemonLockInfo | null = null;
++    try { lockContents = fs.readFileSync(pidPath, 'utf8'); existing = decodeLockInfo(lockContents); } catch { /* fail closed */ }
++    return { kind: 'taken', existing, lockContents, pidPath };
++  }
+
+   // Temp name is pid-scoped so racing candidates never collide on it.
+   const tmp = `${pidPath}.${process.pid}.tmp`;
+@@ -812,6 +865,8 @@
+   expectedDeadPid?: number,
+   opts: { allowLivePid?: boolean; expectedLockContents?: string } = {}
+ ): boolean {
++  const fd = process.platform === 'linux' ? tryKernelLock(`${pidPath}.flock`) : null;
++  if (process.platform === 'linux' && fd === null) return false;
+   try {
+     const raw = fs.readFileSync(pidPath, 'utf8');
+     // The identity record changed after the caller inspected it. Even the same
+@@ -819,6 +874,7 @@
+     // disproved and must not be deleted.
+     if (opts.expectedLockContents !== undefined && raw !== opts.expectedLockContents) return false;
+     const info = decodeLockInfo(raw);
++    if (!localDaemonRecord(info)) return false;
+     if (info) {
+       // A different pid took over since we read it — not ours to clear.
+       if (expectedDeadPid !== undefined && info.pid !== expectedDeadPid) return false;
+@@ -832,7 +888,7 @@
+     const e = err as NodeJS.ErrnoException;
+     if (e.code === 'ENOENT') return true; // already gone
+     return false;
+-  }
++  } finally { if (fd !== null) releaseKernelLock(fd); }
+ }
+
+ /**
+@@ -942,13 +998,14 @@
+  */
+ export function parseClientHelloLine(
+   line: string,
+-): { pid: number; hostPid: number | null } | null {
++): { pid: number; hostPid: number | null; namespace?: string } | null {
+   let parsed: unknown;
+   try { parsed = JSON.parse(line); } catch { return null; }
+   if (!parsed || typeof parsed !== 'object') return null;
+   const o = parsed as Record<string, unknown>;
+   if (o.codegraph_client !== 1 || typeof o.pid !== 'number') return null;
+-  return { pid: o.pid, hostPid: typeof o.hostPid === 'number' ? o.hostPid : null };
++  return { pid: o.pid, hostPid: typeof o.hostPid === 'number' ? o.hostPid : null,
++    namespace: typeof o.namespace === 'string' ? o.namespace : undefined };
+ }
+
+ /**
+@@ -957,12 +1014,14 @@
+  * basis — those clients rely on the socket-close path. Exported for testing.
+  */
+ export function peerIsDead(
+-  peers: { pid: number | null; hostPid: number | null },
++  peers: { pid: number | null; hostPid: number | null; namespace?: string },
+   isAlive: (pid: number) => boolean,
+ ): boolean {
+-  if (peers.pid === null) return false;
++  if (!localPidRecord(peers) || peers.pid === null) return false;
+   if (!isAlive(peers.pid)) return true;
+-  if (peers.hostPid !== null && !isAlive(peers.hostPid)) return true;
++  // A threaded host PID can predate a namespace transition. Linux relies on
++  // the proxy's own watchdog/socket for host death, not that unqualified PID.
++  if (process.platform !== 'linux' && peers.hostPid !== null && !isAlive(peers.hostPid)) return true;
+   return false;
+ }
+
+@@ -977,13 +1036,13 @@
+  */
+ function readClientHello(
+   socket: net.Socket,
+-): Promise<{ pid: number | null; hostPid: number | null }> {
++): Promise<{ pid: number | null; hostPid: number | null; namespace?: string }> {
+   return new Promise((resolve) => {
+     let chunks: Buffer[] = [];
+     let total = 0;
+     let settled = false;
+     const finish = (
+-      peers: { pid: number | null; hostPid: number | null },
++      peers: { pid: number | null; hostPid: number | null; namespace?: string },
+       putBack?: Buffer,
+     ) => {
+       if (settled) return;
+--- a/src/mcp/daemon-registry.ts
++++ b/src/mcp/daemon-registry.ts
+@@ -28,7 +28,6 @@
+   getDaemonSocketCandidates,
+   decodeLockInfo,
+   canProbeDaemonIdentity,
+-  probeDaemonIdentity,
+   type DaemonLockInfo,
+ } from './daemon-paths';
+ import {
+@@ -40,11 +39,14 @@
+   writerLockHeldMessage,
+   type WriterLockInfo,
+ } from './writer-lock';
+-import { classifyLockHolder, describeProcess } from './process-identity';
++import { classifyLockHolder, describeProcess, localPidRecord, localDaemonRecord, probeDaemonIdentity } from './process-identity';
++import { namespaceIdentity, tryKernelLock, releaseKernelLock, ownsKernelLock } from '../kernel-lock';
+ import { isOlderRelease } from './version';
+ import { WORKER_START_SETTLE_MS } from '../worker-teardown';
+
+ export interface DaemonRecord {
++  namespace?: string;
++  lockProtocol?: 'flock-v1';
+   /** Realpath'd project root the daemon serves. */
+   root: string;
+   pid: number;
+@@ -92,7 +94,7 @@
+ export function registerDaemon(rec: DaemonRecord): void {
+   try {
+     fs.mkdirSync(getRegistryDir(), { recursive: true });
+-    fs.writeFileSync(recordPath(rec.root), JSON.stringify(rec, null, 2) + '\n', { mode: 0o600 });
++    fs.writeFileSync(recordPath(rec.root), JSON.stringify({ ...rec, namespace: namespaceIdentity() }, null, 2) + '\n', { mode: 0o600 });
+   } catch {
+     /* best-effort — list's liveness prune tolerates a missing record */
+   }
+@@ -131,6 +133,9 @@
+       rec = null;
+     }
+     const valid = rec && typeof rec.pid === 'number' && typeof rec.root === 'string';
++    // A foreign/legacy entry is neither alive nor dead in this namespace.
++    // Preserve it for its owner, but never list it as a local process.
++    if (valid && !localDaemonRecord(rec)) continue;
+     if (valid && isProcessAlive(rec!.pid)) {
+       live.push(rec!);
+     } else if (prune) {
+@@ -168,7 +173,9 @@
+   // A daemon owns writer.pid before binding or relocating its socket. Claiming
+   // the writer slot therefore freezes every legitimate daemon artifact writer
+   // while we compare the inspected lock snapshot and clean it up.
+-  if (readWriterLock(root)?.pid === process.pid) return false;
++  if (process.platform === 'linux'
++    ? ownsKernelLock(getWriterPidPath(root) + '.flock')
++    : readWriterLock(root)?.pid === process.pid) return false;
+   const claim = tryAcquireWriterLock(root, 'cleanup');
+   if (claim.kind === 'taken') return false;
+
+@@ -182,6 +189,11 @@
+ /** The removal behind {@link cleanupDaemonArtifacts}, for a caller already holding the writer slot. */
+ function removeDaemonArtifacts(root: string, expectedLockContents: string | null): boolean {
+   const pidPath = getDaemonPidPath(root);
++  const fd = process.platform === 'linux' ? tryKernelLock(`${pidPath}.flock`) : null;
++  if (process.platform === 'linux' && fd === null) return false;
++  try {
++    if (process.platform === 'linux' && expectedLockContents !== null &&
++        decodeLockInfo(expectedLockContents)?.lockProtocol !== 'flock-v1') return false;
+   if (expectedLockContents === null) {
+     if (fs.existsSync(pidPath)) return false;
+   } else {
+@@ -204,6 +216,7 @@
+     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+   }
+   return true;
++  } finally { if (fd !== null) releaseKernelLock(fd); }
+ }
+
+ /** Remove daemon artifacts only when no matching daemon answers the socket hello. */
+@@ -219,6 +232,10 @@
+     lockContents = fs.readFileSync(pidPath, 'utf8');
+     info = decodeLockInfo(lockContents);
+   } catch { /* missing/corrupt */ }
++  if (!localDaemonRecord(info)) {
++    return process.platform === 'linux' && info?.lockProtocol === 'flock-v1'
++      ? cleanupDaemonArtifacts(root, lockContents) : false;
++  }
+   if (info && isProcessAlive(info.pid)) {
+     if (canProbeDaemonIdentity(info)) {
+       if (await probeDaemonIdentity(info)) return false;
+@@ -318,6 +335,13 @@
+     if (rec) identity = rec;
+   }
+
++  if (!localDaemonRecord(identity) && (identity !== null || lockContents !== null)) {
++    // A free daemon AND writer kernel fence proves a participating owner has
++    // exited, even if its old PID namespace disappeared. Never probe that PID.
++    const removed = process.platform === 'linux' && identity?.lockProtocol === 'flock-v1'
++      ? cleanupDaemonArtifacts(root, lockContents) : false;
++    return { root, pid, outcome: removed ? 'not-running' : 'unverified' };
++  }
+   if (pid == null) {
+     cleanupDaemonArtifacts(root, lockContents);
+     return { root, pid: null, outcome: 'no-daemon' };
+@@ -364,6 +388,9 @@
+   let holder: number | null = null;
+   try {
+     const current = decodeLockInfo(fs.readFileSync(lockPath, 'utf8'));
++    if (process.platform === 'linux' && !localDaemonRecord(current)) {
++      return `The daemon record (${lockPath}) belongs to a foreign or unknown PID namespace; stop it from its owning namespace. No local PID was probed or signalled.`;
++    }
+     if (current && isProcessAlive(current.pid)) holder = current.pid;
+   } catch { /* no lock now */ }
+   if (holder !== null && result.pid !== null && holder !== result.pid) {
+@@ -387,7 +414,7 @@
+   // lock, so that is what kept it.
+   const writer = readWriterLock(root);
+   const writerPath = getWriterPidPath(root);
+-  if (writer && writer.pid > 0 && writer.pid !== process.pid && isProcessAlive(writer.pid)) {
++  if (writer && writer.pid > 0 && writer.pid !== process.pid && (!localPidRecord(writer) || isProcessAlive(writer.pid))) {
+     if (writer.pid === holder) {
+       return `The project's writer lock (${writerPath}) names process ${holder}, which is not a CodeGraph process, ` +
+         `so it is stale: delete ${writerPath}, ${retry}.`;
+@@ -418,7 +445,7 @@
+     try { return fs.readFileSync(getDaemonPidPath(root), 'utf8') === lockContents; }
+     catch { return lockContents === null; }
+   };
+-  if (!sameLock()) return { root, pid, outcome: 'unverified', version };
++  if (!localDaemonRecord(identity) || !sameLock()) return { root, pid, outcome: 'unverified', version };
+
+   // POSIX: SIGTERM runs the daemon's graceful shutdown. Windows: TerminateProcess
+   // (no graceful path), so we always sweep artifacts ourselves below.
+@@ -494,7 +521,16 @@
+   }
+   const identity = decodeLockInfo(lockContents);
+   if (!identity) return { root, pid: null, outcome: 'unverified' };
++  if (process.platform === 'linux' && identity.lockProtocol !== 'flock-v1') {
++    return { root, pid: identity.pid, outcome: 'unverified' };
++  }
++  // Same-version launch is not takeover: the new daemon arbitrates kernel
++  // ownership, including recovery after the previous PID namespace exited.
+   if (!isOlderRelease(identity.version, version)) return null;
++  if (!localDaemonRecord(identity)) return { root, pid: identity.pid, outcome: 'unverified' };
++  // An OFD flock cannot be handed to an unrelated launcher by rewriting a PID.
++  // Explicit stop followed by launch is safe; automatic upgrade is refused.
++  if (process.platform === 'linux') return { root, pid: identity.pid, outcome: 'unverified', version: identity.version };
+   const { pid } = identity;
+   if (!isProcessAlive(pid)) return { root, pid, outcome: 'not-running', version: identity.version };
+   // The hello must name this pid and version (#1553): a reused pid is no daemon.
+--- a/src/mcp/proxy.ts
++++ b/src/mcp/proxy.ts
+@@ -18,6 +18,7 @@
+  *     the direct-mode server uses; see issue #277.
+  */
+
++import { namespaceIdentity } from '../kernel-lock';
+ import * as fs from 'fs';
+ import * as net from 'net';
+ import { HOST_PPID_ENV } from '../extraction/wasm-runtime-flags';
+@@ -215,6 +216,7 @@
+ function sendClientHello(socket: net.Socket): void {
+   const clientHello: DaemonClientHello = {
+     codegraph_client: 1,
++    namespace: namespaceIdentity(),
+     pid: process.pid,
+     hostPid: parseHostPpid(process.env[HOST_PPID_ENV]) ?? EARLY_PPID,
+   };
+@@ -646,6 +648,11 @@
+           reject(new Error('daemon hello missing required fields'));
+           return;
+         }
++        if (process.platform === 'linux' &&
++            (typeof parsed.namespace !== 'string' || parsed.namespace.length === 0)) {
++          reject(new Error('daemon lacks PID namespace identity; stop it in its owning namespace and relaunch'));
++          return;
++        }
+         resolve(parsed);
+       } catch (err) {
+         reject(new Error(`daemon hello not JSON: ${err instanceof Error ? err.message : String(err)}`));
+--- a/src/mcp/process-identity.ts
++++ b/src/mcp/process-identity.ts
+@@ -144,3 +144,58 @@
+   if (description.name !== null && !mayRunCodeGraph(description.name)) return 'other';
+   return 'unknown';
+ }
++
++// PIDs are meaningful only in the namespace which allocated them. Missing
++// identity is legacy/unknown, never permission to probe or reclaim on Linux.
++import { sameNamespace } from '../kernel-lock';
++import * as net from 'net';
++import { type DaemonLockInfo, probeDaemonIdentity as legacyProbe } from './daemon-paths';
++
++declare module './daemon-paths' {
++  interface DaemonLockInfo { namespace?: string; lockProtocol?: 'flock-v1'; }
++}
++
++export function localPidRecord(record: { namespace?: string } | null | undefined): boolean {
++  return process.platform !== 'linux' || (!!record && sameNamespace(record.namespace));
++}
++
++export function localDaemonRecord(record: DaemonLockInfo | null | undefined): boolean {
++  return process.platform !== 'linux' || (localPidRecord(record) && record?.lockProtocol === 'flock-v1');
++}
++
++/** Socket proof for operations that might signal a namespace-local PID. */
++export function probeDaemonIdentity(info: DaemonLockInfo, timeoutMs = 1_000): Promise<boolean> {
++  if (!localDaemonRecord(info)) return Promise.resolve(false);
++  if (process.platform !== 'linux') return legacyProbe(info, timeoutMs);
++  return new Promise((resolve) => {
++    let socket: net.Socket | undefined;
++    let buffer = '';
++    let done = false;
++    const finish = (ok: boolean): void => {
++      if (done) return;
++      done = true;
++      clearTimeout(timer);
++      socket?.destroy();
++      resolve(ok);
++    };
++    const timer = setTimeout(() => finish(false), timeoutMs);
++    timer.unref();
++    try { socket = net.createConnection(info.socketPath); }
++    catch { finish(false); return; }
++    socket.setEncoding('utf8');
++    socket.on('data', (chunk) => {
++      buffer += chunk;
++      if (buffer.length > 4096) return finish(false);
++      const newline = buffer.indexOf('\n');
++      if (newline < 0) return;
++      try {
++        const hello = JSON.parse(buffer.slice(0, newline));
++        finish(hello.protocol === 1 && hello.pid === info.pid &&
++          hello.namespace === info.namespace && sameNamespace(hello.namespace) &&
++          (info.version === 'unknown' || hello.codegraph === info.version));
++      } catch { finish(false); }
++    });
++    socket.on('error', () => finish(false));
++    socket.on('close', () => finish(false));
++  });
++}
+--- a/src/mcp/project-lifecycle.ts
++++ b/src/mcp/project-lifecycle.ts
+@@ -1,3 +1,4 @@
++import { localPidRecord } from './process-identity';
+ /** Shared synchronization ownership for projects accessed by MCP engines (#1835). */
+ import { realpathSync } from 'fs';
+ import * as path from 'path';
+@@ -148,6 +149,7 @@
+       const current = readWriterLock(root);
+       if (!current || current.pid !== writer.existing.pid) return activate(root, project);
+       if (current.ready !== false) break;
++      if (!localPidRecord(current)) break;
+       try { process.kill(current.pid, 0); } catch (err) {
+         if ((err as NodeJS.ErrnoException).code === 'ESRCH') return activate(root, project);
+       }
+--- a/src/mcp/index.ts
++++ b/src/mcp/index.ts
+@@ -1,3 +1,5 @@
++import { tryKernelLock, releaseKernelLock, legacyLockMessage } from '../kernel-lock';
++import { localPidRecord, localDaemonRecord, probeDaemonIdentity } from './process-identity';
+ /**
+  * CodeGraph MCP Server
+  *
+@@ -63,7 +65,6 @@
+   decodeLockInfo,
+   getDaemonPidPath,
+   getDaemonSocketCandidates,
+-  probeDaemonIdentity,
+ } from './daemon-paths';
+ import { getTelemetry } from '../telemetry';
+ import { checkForUpdateInBackground } from '../upgrade/update-check';
+@@ -125,13 +126,19 @@
+ function makeFallbackEngine(root: string): MCPEngine {
+   assertNoRebuild(root);
+   let existing: ReturnType<typeof decodeLockInfo> = null;
++  let hasDaemonRecord = false;
+   try {
+-    existing = decodeLockInfo(fs.readFileSync(getDaemonPidPath(root), 'utf8'));
++    const raw = fs.readFileSync(getDaemonPidPath(root), 'utf8');
++    hasDaemonRecord = true;
++    existing = decodeLockInfo(raw);
+   } catch (err) {
+     const code = (err as NodeJS.ErrnoException).code;
+     if (code !== 'ENOENT') {
+       throw new Error(`The daemon lock could not be read (${code ?? 'unknown error'}); refusing an in-process fallback.`);
+     }
++  }
++  if (process.platform === 'linux' && hasDaemonRecord && !localDaemonRecord(existing)) {
++    throw new Error('Daemon ownership belongs to a foreign or unknown PID namespace; refusing in-process fallback.');
+   }
+   if (
+     existing &&
+@@ -142,8 +149,11 @@
+       `Cannot start an in-process fallback while live legacy daemon pid ${existing.pid} holds the project lock.`
+     );
+   }
++  if (process.platform === 'linux' && existing && existing.version !== CodeGraphPackageVersion) {
++    throw new Error('Cannot replace this daemon automatically on Linux. Run `codegraph stop` in its owning namespace, then launch again.');
++  }
+   const writer = readWriterLock(root);
+-  if (writer && writer.pid > 0 && isProcessAlive(writer.pid)) {
++  if (writer && writer.pid > 0 && (!localPidRecord(writer) || isProcessAlive(writer.pid))) {
+     // Another process owns updates. A fallback may still serve read-only WAL
+     // queries without claiming a second writer or starting a watcher (#1963).
+     return readOnlyFallback(`writer lock held by PID ${writer.pid} (${writer.mode} mode)`);
+@@ -408,6 +418,9 @@
+     );
+     return 'stopped';
+   }
++  if (process.platform === 'linux') {
++    throw new Error('Daemon takeover refused: run `codegraph stop` in the owning PID namespace, then launch again. Legacy ownership requires manual shutdown and record cleanup by its owner.');
++  }
+   if (result.outcome === 'still-running') {
+     process.stderr.write(`[CodeGraph MCP] Asked ${daemon} serving this project to stop, but it has not exited yet.\n`);
+   } else if (answered) {
+@@ -437,7 +450,7 @@
+     if (!heldForUs()) return false;
+     let holder: number | undefined;
+     try { holder = decodeLockInfo(fs.readFileSync(getDaemonPidPath(root), 'utf8'))?.pid; } catch { holder = undefined; }
+-    if (holder !== pid || !isProcessAlive(pid)) return true;
++    if (holder !== pid || (process.platform !== 'linux' && !isProcessAlive(pid))) return true;
+     await sleep(25);
+   }
+   return false;
+@@ -591,13 +604,20 @@
+     const writerRoot = resolveDaemonRoot(this.projectPath);
+     if (writerRoot) {
+       assertNoRebuild(writerRoot);
+-      const writer = tryAcquireWriterLock(writerRoot, 'direct');
+-      if (writer.kind === 'taken') {
+-        const msg = writerLockHeldMessage(writer.existing, writer.pidPath);
+-        process.stderr.write(`[CodeGraph MCP] ${msg}\n`);
+-        process.exit(1);
++      const daemonPidPath = getDaemonPidPath(writerRoot);
++      const daemonGuard = process.platform === 'linux' ? tryKernelLock(daemonPidPath + '.flock') : null;
++      if (process.platform === 'linux' && daemonGuard === null) {
++        throw new Error('A shared daemon owns this project; refusing independent direct-mode fallback.');
+       }
+-      this.writerLockRoot = writerRoot;
++      try {
++        if (process.platform === 'linux' && fs.existsSync(daemonPidPath)) {
++          const record = decodeLockInfo(fs.readFileSync(daemonPidPath, 'utf8'));
++          if (record?.lockProtocol !== 'flock-v1') throw new Error(legacyLockMessage(daemonPidPath));
++        }
++        const writer = tryAcquireWriterLock(writerRoot, 'direct');
++        if (writer.kind === 'taken') throw new Error(writerLockHeldMessage(writer.existing, writer.pidPath));
++        this.writerLockRoot = writerRoot;
++      } finally { if (daemonGuard !== null) releaseKernelLock(daemonGuard); }
+     }
+
+     this.engine = new MCPEngine({ queryPool: true, queryPoolDefaultMax: DIRECT_QUERY_POOL_MAX });
+@@ -674,6 +694,10 @@
+       // Taken. If the holder is alive, another daemon already serves (or is
+       // binding) — we're redundant; exit cleanly so the launcher proxies to it.
+       const existing = lock.existing;
++      if (process.platform === 'linux' && !localDaemonRecord(existing)) {
++        process.stderr.write('[CodeGraph daemon] Foreign/unknown ownership or busy kernel lock; refusing takeover.\n');
++        process.exit(0);
++      }
+       let disprovedLiveIdentity = false;
+       if (existing && existing.pid > 0 && isProcessAlive(existing.pid)) {
+         // Give a newly-elected daemon time to bind, then require its socket hello
+--- a/src/mcp/daemon-paths.ts
++++ b/src/mcp/daemon-paths.ts
+@@ -29,6 +29,7 @@
+  */
+
+ import * as crypto from 'crypto';
++import * as fs from 'fs';
+ import * as net from 'net';
+ import * as os from 'os';
+ import * as path from 'path';
+@@ -55,9 +56,40 @@
+  * function of the root means the daemon and the proxy compute the identical
+  * path without talking to each other.
+  */
++function configuredSocketDir(): string | null {
++  const dir = process.env.CODEGRAPH_SOCKET_DIR;
++  if (dir === undefined) return null;
++  if (!dir || !path.isAbsolute(dir)) {
++    throw new Error('CODEGRAPH_SOCKET_DIR must be a nonempty absolute private directory shared by every client namespace.');
++  }
++  return path.resolve(dir);
++}
++
+ function tmpdirSocketPath(projectRoot: string): string {
+-  return path.join(os.tmpdir(), `codegraph-${projectHash(projectRoot)}.sock`);
+-}
++  const dir = configuredSocketDir();
++  if (dir === null) return path.join(os.tmpdir(), `codegraph-${projectHash(projectRoot)}.sock`);
++  const user = typeof process.getuid === 'function' ? process.getuid() : os.userInfo().username;
++  const socket = path.join(dir, `cg-${user}-${projectHash(projectRoot)}.sock`);
++  if (Buffer.byteLength(socket, 'utf8') > POSIX_SOCKET_PATH_LIMIT) {
++    throw new Error('CODEGRAPH_SOCKET_DIR produces a Unix socket path exceeding 100 UTF-8 bytes; choose a shorter shared absolute directory.');
++  }
++  return socket;
++}
++
++/** Binding-only side effects; lookup/probing must never create directories. */
++export function prepareDaemonSocketPath(socketPath: string): void {
++  if (process.platform === 'win32') return;
++  const dir = configuredSocketDir();
++  if (dir === null || path.dirname(socketPath) !== dir) return;
++  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
++  const stat = fs.lstatSync(dir);
++  if (!stat.isDirectory() || stat.isSymbolicLink() ||
++      (typeof process.getuid === 'function' && stat.uid !== process.getuid()) ||
++      (stat.mode & 0o077) !== 0) {
++    throw new Error('CODEGRAPH_SOCKET_DIR must be an owned private directory (mode 0700), not a symlink.');
++  }
++}
++
+
+ /**
+  * Ordered socket / named-pipe path candidates the daemon should try to bind (and
+@@ -79,8 +111,8 @@
+   }
+   const inProject = path.join(getCodeGraphDir(projectRoot), 'daemon.sock');
+   const tmp = tmpdirSocketPath(projectRoot);
+-  if (inProject.length > POSIX_SOCKET_PATH_LIMIT) return [tmp];
++  if (Buffer.byteLength(inProject, 'utf8') > POSIX_SOCKET_PATH_LIMIT) return [tmp];
+   return [inProject, tmp];
+ }
+
+ /**
