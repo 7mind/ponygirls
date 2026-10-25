@@ -114,7 +114,9 @@ class HttpTest extends munit.FunSuite {
   test("BG-GoodCommunication: actual HTTP MCP Origin cookie/bearer separation and typed WS reauthentication") {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val started=System.nanoTime()
-    val c=Fixtures.config()
+    // Private-network Origin with an explicitly opted-in HTTP deployment; socket stays controllable loopback.
+    val c=Fixtures.config().copy(allowedOrigin="http://192.168.50.10:47330",allowInsecureHttp=true)
+    c.validate()
     EmberClientBuilder.default[IO].build.use { client =>
       val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client) }
       Injector().produceGet[RuntimeServices](module).toEffect[IO].use { s =>
@@ -132,6 +134,12 @@ class HttpTest extends munit.FunSuite {
               _ <- IO(assertEquals(logged._1,Status.Ok))
               cookie <- IO(logged._3.get(CIString("Set-Cookie")).get.head.value.takeWhile(_!=';'))
               _ <- IO(assert(logged._3.get(CIString("Set-Cookie")).get.head.value.contains("HttpOnly")))
+              _ <- IO {
+                val value=logged._3.get(CIString("Set-Cookie")).get.head.value
+                assert(cookie.startsWith("chronicle_session=")) // No HTTPS-only __Host-/__Secure- prefix.
+                assert(!value.split(";").exists(_.trim.equalsIgnoreCase("Secure")))
+                assert(value.contains("SameSite=Strict"))
+              }
               _ <- IO.blocking {
                 val jclient=JClient.newHttpClient()
                 val inbox=new LinkedBlockingQueue[String]()

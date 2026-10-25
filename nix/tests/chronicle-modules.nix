@@ -55,6 +55,8 @@ let
   customSsd = server (serverConfig // { services.postgresql.settings = { random_page_cost = 2.0; effective_io_concurrency = 64; maintenance_io_concurrency = 32; }; });
   externalDatabase = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.database = { manageLocal = false; jdbcUrl = "jdbc:postgresql://db.example/chronicle"; }; });
   insecureServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.publicUrl = "http://example.net"; });
+  privateHttpServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle = { publicUrl = "http://192.168.50.10:47330"; allowInsecureHttp = true; }; });
+  optedInHttpsServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.allowInsecureHttp = true; });
   ownAssertions = cfg: lib.filter (a: !a.assertion && lib.hasPrefix "Chronicle:" a.message) cfg.assertions;
 in
 assert !(source.filter "${toString source.origSrc}/.local" "directory");
@@ -73,6 +75,11 @@ assert disabled.programs.mcp.servers == { };
 assert disabled.home.packages == [ ];
 assert lib.all (a: a.assertion) (ownAssertions enabledServer);
 assert !(lib.all (a: a.assertion) (ownAssertions insecureServer));
+assert !enabledServer.smind.services.chronicle.allowInsecureHttp;
+assert ownAssertions privateHttpServer == [ ];
+assert ownAssertions optedInHttpsServer == [ ];
+assert privateHttpServer.smind.services.chronicle.listenAddress == "127.0.0.1";
+assert !(builtins.elem 47330 privateHttpServer.networking.firewall.allowedTCPPorts);
 assert !(disabledServer.systemd.services ? chronicle);
 assert enabledServer.systemd.services.chronicle.serviceConfig.User == "chronicle";
 assert enabledServer.systemd.services.chronicle.serviceConfig.TimeoutStopSec == 60;
@@ -101,5 +108,8 @@ pkgs.runCommandLocal "chronicle-modules-test" { nativeBuildInputs = [ pkgs.jq ];
   test -n '${enabledServer.systemd.services.chronicle.serviceConfig.ExecStart}'
   jq -e '.embedding.sendDimensions == false' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.embedding.sendDimensions == true' ${lib.last (lib.splitString " " sendDimensions.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.allowInsecureHttp == false and .secureCookies == true' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.allowInsecureHttp == true and .secureCookies == false and .allowedOrigin == "http://192.168.50.10:47330"' ${lib.last (lib.splitString " " privateHttpServer.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.allowInsecureHttp == true and .secureCookies == true' ${lib.last (lib.splitString " " optedInHttpsServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   touch "$out"
 ''

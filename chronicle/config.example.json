@@ -1,6 +1,6 @@
 {
   "listenHost":"127.0.0.1", "listenPort":8448,
-  "allowedOrigin":"http://127.0.0.1:8448", "secureCookies":false,
+  "allowedOrigin":"http://127.0.0.1:8448", "secureCookies":false, "allowInsecureHttp":false,
   "jdbcUrl":"jdbc:postgresql://127.0.0.1:5432/chronicle",
   "databaseUser":"chronicle", "databasePasswordFile":"/run/credentials/chronicle/database",
   "users":[{"id":"operator","login":"operator","passwordHashFile":"/run/credentials/chronicle/operator","enabled":true}],

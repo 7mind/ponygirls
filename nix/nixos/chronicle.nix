@@ -19,7 +19,8 @@ let
     listenHost = cfg.listenAddress;
     listenPort = cfg.port;
     allowedOrigin = if cfg.publicUrl == null then "configuration-required" else cfg.publicUrl;
-    secureCookies = !cfg.loopbackDevelopment;
+    secureCookies = !(cfg.loopbackDevelopment || (cfg.allowInsecureHttp && cfg.publicUrl != null && lib.hasPrefix "http://" cfg.publicUrl));
+    inherit (cfg) allowInsecureHttp;
     jdbcUrl = if cfg.database.manageLocal then "jdbc:postgresql://127.0.0.1:5432/${cfg.database.name}" else cfg.database.jdbcUrl;
     databaseUser = cfg.database.user;
     databasePasswordFile = "${credentialDir}/database-password";
@@ -64,6 +65,7 @@ in
     listenAddress = lib.mkOption { type = lib.types.str; default = "127.0.0.1"; description = "Backend binds loopback; use the TLS reverse proxy for remote access."; };
     port = lib.mkOption { type = lib.types.port; default = 47330; };
     publicUrl = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; example = "https://chronicle.example.net"; description = "Exact browser Origin (no trailing slash or path)."; };
+    allowInsecureHttp = lib.mkOption { type = lib.types.bool; default = false; description = "Allow plaintext HTTP and non-Secure cookies on a trusted private network. Credentials and archived data are exposed to network observers; prefer HTTPS. Does not open firewall ports or relax loopbackDevelopment rules."; };
     loopbackDevelopment = lib.mkOption { type = lib.types.bool; default = false; description = "Explicitly allow loopback HTTP and insecure cookies for local development only."; };
     users = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule {
@@ -111,7 +113,7 @@ in
     {
       assertions = [
         { assertion = cfg.listenAddress == "127.0.0.1" || cfg.listenAddress == "::1"; message = "Chronicle: bind the backend to loopback and expose it through a TLS proxy."; }
-        { assertion = cfg.publicUrl != null && (lib.hasPrefix "https://" cfg.publicUrl || (cfg.loopbackDevelopment && (lib.hasPrefix "http://127.0.0.1:" cfg.publicUrl || lib.hasPrefix "http://localhost:" cfg.publicUrl))); message = "Chronicle: HTTPS publicUrl is required unless loopbackDevelopment is explicit."; }
+        { assertion = cfg.publicUrl != null && (lib.hasPrefix "https://" cfg.publicUrl || (cfg.allowInsecureHttp && lib.hasPrefix "http://" cfg.publicUrl) || (cfg.loopbackDevelopment && (lib.hasPrefix "http://127.0.0.1:" cfg.publicUrl || lib.hasPrefix "http://localhost:" cfg.publicUrl))); message = "Chronicle: HTTPS publicUrl is required unless allowInsecureHttp or loopbackDevelopment is explicit."; }
         { assertion = cfg.publicUrl == null || !(lib.hasSuffix "/" cfg.publicUrl); message = "Chronicle: publicUrl must be the exact Origin without trailing slash."; }
         { assertion = !cfg.loopbackDevelopment || (cfg.publicUrl != null && (lib.hasPrefix "http://127.0.0.1:" cfg.publicUrl || lib.hasPrefix "http://localhost:" cfg.publicUrl)); message = "Chronicle: loopbackDevelopment is only valid with a loopback HTTP Origin."; }
         { assertion = lib.any (u: u.enabled) (builtins.attrValues cfg.users); message = "Chronicle: configure at least one enabled static user."; }

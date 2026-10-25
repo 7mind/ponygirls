@@ -40,7 +40,7 @@ object Wire {
 final case class UserConfig(id: String, login: String, passwordHashFile: String, enabled: Boolean)
 final case class ModelConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int)
 final case class EmbeddingConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, dimensions: Int, queryPrefix: String, documentPrefix: String, sendDimensions: Boolean)
-final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig) {
+final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean) {
   def profile: String = Wire.hash(Json.arr(List(annotation.endpoint,annotation.model,annotation.revision,annotation.maxResponseBytes.toString,embedding.endpoint,embedding.model,embedding.revision,embedding.dimensions.toString,embedding.sendDimensions.toString,embedding.queryPrefix,embedding.documentPrefix,AnnotationPartition.identity,"prompt:v3:fragment-indices-only","schema:v2","cosine").map(Json.fromString)*).noSpaces)
   def validate(): Unit = {
     Check(users.map(_.id).distinct.size == users.size && users.map(_.login).distinct.size == users.size, "config", "duplicate users")
@@ -49,8 +49,9 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
     Check(sessionTtlSeconds > 0 && annotation.timeoutSeconds > 0 && embedding.timeoutSeconds > 0 && annotation.maxResponseBytes > 0 && embedding.maxResponseBytes > 0, "config", "invalid timeouts")
     val origin = java.net.URI.create(allowedOrigin)
     val loopbacks = Set("127.0.0.1","localhost","::1","[::1]")
+    Check(origin.getHost != null && origin.getPort >= -1 && origin.getPort <= 65535, "config", "Origin must have a valid host and port")
     Check(origin.getRawPath.isEmpty && origin.getRawQuery==null && origin.getRawFragment==null && origin.getRawUserInfo==null, "config", "Origin must be scheme and authority only")
-    Check((secureCookies && origin.getScheme=="https") || (!secureCookies && origin.getScheme=="http" && loopbacks.contains(listenHost) && loopbacks.contains(origin.getHost)), "config", "insecure cookies require loopback development")
+    Check((secureCookies && origin.getScheme=="https") || (!secureCookies && origin.getScheme=="http" && (allowInsecureHttp || (loopbacks.contains(listenHost) && loopbacks.contains(origin.getHost)))), "config", "HTTP requires insecure cookies and explicit allowInsecureHttp or loopback development")
   }
 }
 object Config {
@@ -69,7 +70,24 @@ object Config {
     documentPrefix <- cursor.get[String]("documentPrefix")
     sendDimensions <- if(cursor.downField("sendDimensions").focus.isEmpty) Right(omittedSendDimensions) else cursor.get[Boolean]("sendDimensions")
   } yield EmbeddingConfig(endpoint,model,revision,credential,timeout,bound,dimensions,queryPrefix,documentPrefix,sendDimensions) }
-  given Decoder[Config] = Decoder.forProduct15("listenHost","listenPort","allowedOrigin","secureCookies","jdbcUrl","databaseUser","databasePasswordFile","users","maxBodyBytes","maxFiles","maxFileBytes","maxMessages","sessionTtlSeconds","annotation","embedding")(Config.apply)
+  given Decoder[Config] = Decoder.instance { cursor => for {
+    listenHost <- cursor.get[String]("listenHost")
+    listenPort <- cursor.get[Int]("listenPort")
+    allowedOrigin <- cursor.get[String]("allowedOrigin")
+    secureCookies <- cursor.get[Boolean]("secureCookies")
+    jdbcUrl <- cursor.get[String]("jdbcUrl")
+    databaseUser <- cursor.get[String]("databaseUser")
+    databasePasswordFile <- cursor.get[String]("databasePasswordFile")
+    users <- cursor.get[List[UserConfig]]("users")
+    maxBodyBytes <- cursor.get[Int]("maxBodyBytes")
+    maxFiles <- cursor.get[Int]("maxFiles")
+    maxFileBytes <- cursor.get[Int]("maxFileBytes")
+    maxMessages <- cursor.get[Int]("maxMessages")
+    sessionTtlSeconds <- cursor.get[Int]("sessionTtlSeconds")
+    annotation <- cursor.get[ModelConfig]("annotation")
+    embedding <- cursor.get[EmbeddingConfig]("embedding")
+    allowInsecureHttp <- if(cursor.downField("allowInsecureHttp").focus.isEmpty) Right(false) else cursor.get[Boolean]("allowInsecureHttp")
+  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp) }
   def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(_ => throw DomainError("config", "invalid configuration"), identity); c.validate(); c }
   def credential(path: String): String = Files.readString(Path.of(path)).stripTrailing()
 }
