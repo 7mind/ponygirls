@@ -108,7 +108,7 @@ test("incomplete, stale and empty indexes are rebuilt; unhealthy results remain 
     assert.equal(session.state.phase, "ready");
     assert.ok(states.some((state) => state.detail.startsWith("index (")));
   }
-  for (const field of ["pendingRefs", "filesNeedingReindex", "filesWithParseErrors"] as const) {
+  for (const field of ["pendingRefs", "filesNeedingReindex"] as const) {
     const boundary = new MemoryBoundary();
     boundary.initialized = true;
     boundary.health.index[field] = 1;
@@ -117,6 +117,25 @@ test("incomplete, stale and empty indexes are rebuilt; unhealthy results remain 
     assert.equal(session.state.phase, "error");
     await session.start("sync");
     assert.equal(session.state.phase, "ready");
+  }
+});
+
+// Regression: deterministic extraction warnings must not reject a complete index.
+test("complete indexes remain ready with visible parse warnings after status, sync and reindex", async () => {
+  class ParseWarningBoundary extends MemoryBoundary {
+    async run(root: string, args: string[], signal: AbortSignal) {
+      await super.run(root, args, signal);
+      this.health.index.filesWithParseErrors = 11;
+      return JSON.stringify(this.health);
+    }
+  }
+  const boundary = new ParseWarningBoundary();
+  boundary.initialized = true;
+  const session = new CodegraphSession(boundary, "/checkout", () => {});
+  for (const action of ["status", "sync", "reindex"] as const) {
+    await session.start(action);
+    assert.equal(session.state.phase, "ready", session.state.detail);
+    assert.match(session.state.detail, /11 files with parse warnings/);
   }
 });
 

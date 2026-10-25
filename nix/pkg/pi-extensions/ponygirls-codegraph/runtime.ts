@@ -47,7 +47,12 @@ function needsIndex(s: Status): boolean {
 }
 function ready(s: Status): boolean {
   return !needsIndex(s) && s.index.pendingRefs === 0 && s.index.filesNeedingReindex === 0 &&
-    s.index.filesWithParseErrors === 0 && Object.values(s.pendingChanges).every((n) => n === 0);
+    Object.values(s.pendingChanges).every((n) => n === 0);
+}
+function readyDetail(root: string, status: Status): string {
+  const warnings = status.index.filesWithParseErrors;
+  return `${root}: ${status.fileCount} files, ${status.nodeCount} symbols` +
+    (warnings === 0 ? "" : `; ${warnings} files with parse warnings`);
 }
 
 export class CodegraphSession {
@@ -114,7 +119,7 @@ export class CodegraphSession {
       await run(["index", root, "--quiet"]);
       const status = statusFrom(await run(["status", root, "--json"]), root);
       if (!ready(status)) throw new Error(`Index not ready at ${root}: ${JSON.stringify(status)}`);
-      this.publish("ready", `${root}: ${status.fileCount} files, ${status.nodeCount} symbols`);
+      this.publish("ready", readyDetail(root, status));
       return;
     }
     if (!local) {
@@ -133,7 +138,7 @@ export class CodegraphSession {
     if (!ready(status)) {
       throw new Error(`Index not ready at ${root}: ${JSON.stringify(status)}`);
     }
-    this.publish("ready", `${root}: ${status.fileCount} files, ${status.nodeCount} symbols`);
+    this.publish("ready", readyDetail(root, status));
   }
 }
 
