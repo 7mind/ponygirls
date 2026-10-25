@@ -1,0 +1,607 @@
+
+
+import { AbstractBaboonJsonCodecs, AbstractBaboonUebaCodecs, BaboonBinCodec, BaboonJsonCodec, BaboonDomainVersion, BaboonMeta, Lazy } from '../../BaboonSharedRuntime.js';
+import type { AbstractBaboonConversions } from '../../BaboonSharedRuntime.js';
+import { BaboonCodecsFacade } from '../../BaboonCodecsFacade.js';
+import { Chunk as ChunkV1_0_0, Chunk_JsonCodec as ChunkV1_0_0_JsonCodec } from './v1_0_0/Chunk.js';
+import { ChunksResult as ChunksResultV1_0_0, ChunksResult_JsonCodec as ChunksResultV1_0_0_JsonCodec } from './v1_0_0/ChunksResult.js';
+import { ClientEnvelope as ClientEnvelopeV1_0_0, ClientEnvelope_JsonCodec as ClientEnvelopeV1_0_0_JsonCodec } from './v1_0_0/ClientEnvelope.js';
+import { Completion as CompletionV1_0_0, Completion_JsonCodec as CompletionV1_0_0_JsonCodec } from './v1_0_0/Completion.js';
+import { ContentView as ContentViewV1_0_0, ContentView_JsonCodec as ContentViewV1_0_0_JsonCodec } from './v1_0_0/ContentView.js';
+import { Facet as FacetV1_0_0, Facet_JsonCodec as FacetV1_0_0_JsonCodec } from './v1_0_0/Facet.js';
+import { FacetsResult as FacetsResultV1_0_0, FacetsResult_JsonCodec as FacetsResultV1_0_0_JsonCodec } from './v1_0_0/FacetsResult.js';
+import { Failure as FailureV1_0_0, Failure_JsonCodec as FailureV1_0_0_JsonCodec } from './v1_0_0/Failure.js';
+import { GroupInfo as GroupInfoV1_0_0, GroupInfo_JsonCodec as GroupInfoV1_0_0_JsonCodec } from './v1_0_0/GroupInfo.js';
+import { GroupsResult as GroupsResultV1_0_0, GroupsResult_JsonCodec as GroupsResultV1_0_0_JsonCodec } from './v1_0_0/GroupsResult.js';
+import { IngestReceipt as IngestReceiptV1_0_0, IngestReceipt_JsonCodec as IngestReceiptV1_0_0_JsonCodec } from './v1_0_0/IngestReceipt.js';
+import { IngestRequest as IngestRequestV1_0_0, IngestRequest_JsonCodec as IngestRequestV1_0_0_JsonCodec } from './v1_0_0/IngestRequest.js';
+import { InviteInfo as InviteInfoV1_0_0, InviteInfo_JsonCodec as InviteInfoV1_0_0_JsonCodec } from './v1_0_0/InviteInfo.js';
+import { JobInfo as JobInfoV1_0_0, JobInfo_JsonCodec as JobInfoV1_0_0_JsonCodec } from './v1_0_0/JobInfo.js';
+import { JobState as JobStateV1_0_0, JobState_JsonCodec as JobStateV1_0_0_JsonCodec } from './v1_0_0/JobState.js';
+import { LoginRequest as LoginRequestV1_0_0, LoginRequest_JsonCodec as LoginRequestV1_0_0_JsonCodec } from './v1_0_0/LoginRequest.js';
+import { LoginResponse as LoginResponseV1_0_0, LoginResponse_JsonCodec as LoginResponseV1_0_0_JsonCodec } from './v1_0_0/LoginResponse.js';
+import { Message as MessageV1_0_0, Message_JsonCodec as MessageV1_0_0_JsonCodec } from './v1_0_0/Message.js';
+import { MessagesResult as MessagesResultV1_0_0, MessagesResult_JsonCodec as MessagesResultV1_0_0_JsonCodec } from './v1_0_0/MessagesResult.js';
+import { Metadata as MetadataV1_0_0, Metadata_JsonCodec as MetadataV1_0_0_JsonCodec } from './v1_0_0/Metadata.js';
+import { MutationReceipt as MutationReceiptV1_0_0, MutationReceipt_JsonCodec as MutationReceiptV1_0_0_JsonCodec } from './v1_0_0/MutationReceipt.js';
+import { Operation as OperationV1_0_0, Operation_JsonCodec as OperationV1_0_0_JsonCodec } from './v1_0_0/Operation.js';
+import { RawFile as RawFileV1_0_0, RawFile_JsonCodec as RawFileV1_0_0_JsonCodec } from './v1_0_0/RawFile.js';
+import { RawResult as RawResultV1_0_0, RawResult_JsonCodec as RawResultV1_0_0_JsonCodec } from './v1_0_0/RawResult.js';
+import { RelatedResult as RelatedResultV1_0_0, RelatedResult_JsonCodec as RelatedResultV1_0_0_JsonCodec } from './v1_0_0/RelatedResult.js';
+import { Result as ResultV1_0_0, Result_JsonCodec as ResultV1_0_0_JsonCodec } from './v1_0_0/Result.js';
+import { Scope as ScopeV1_0_0, Scope_JsonCodec as ScopeV1_0_0_JsonCodec } from './v1_0_0/Scope.js';
+import { SearchFilter as SearchFilterV1_0_0, SearchFilter_JsonCodec as SearchFilterV1_0_0_JsonCodec } from './v1_0_0/SearchFilter.js';
+import { SearchHit as SearchHitV1_0_0, SearchHit_JsonCodec as SearchHitV1_0_0_JsonCodec } from './v1_0_0/SearchHit.js';
+import { SearchMode as SearchModeV1_0_0, SearchMode_JsonCodec as SearchModeV1_0_0_JsonCodec } from './v1_0_0/SearchMode.js';
+import { SearchQuery as SearchQueryV1_0_0, SearchQuery_JsonCodec as SearchQueryV1_0_0_JsonCodec } from './v1_0_0/SearchQuery.js';
+import { SearchResult as SearchResultV1_0_0, SearchResult_JsonCodec as SearchResultV1_0_0_JsonCodec } from './v1_0_0/SearchResult.js';
+import { ServerEnvelope as ServerEnvelopeV1_0_0, ServerEnvelope_JsonCodec as ServerEnvelopeV1_0_0_JsonCodec } from './v1_0_0/ServerEnvelope.js';
+import { SessionInfo as SessionInfoV1_0_0, SessionInfo_JsonCodec as SessionInfoV1_0_0_JsonCodec } from './v1_0_0/SessionInfo.js';
+import { SessionResult as SessionResultV1_0_0, SessionResult_JsonCodec as SessionResultV1_0_0_JsonCodec } from './v1_0_0/SessionResult.js';
+import { SourceFormat as SourceFormatV1_0_0, SourceFormat_JsonCodec as SourceFormatV1_0_0_JsonCodec } from './v1_0_0/SourceFormat.js';
+import { SourceIdentity as SourceIdentityV1_0_0, SourceIdentity_JsonCodec as SourceIdentityV1_0_0_JsonCodec } from './v1_0_0/SourceIdentity.js';
+import { Span as SpanV1_0_0, Span_JsonCodec as SpanV1_0_0_JsonCodec } from './v1_0_0/Span.js';
+import { StatusResult as StatusResultV1_0_0, StatusResult_JsonCodec as StatusResultV1_0_0_JsonCodec } from './v1_0_0/StatusResult.js';
+import { TokenInfo as TokenInfoV1_0_0, TokenInfo_JsonCodec as TokenInfoV1_0_0_JsonCodec } from './v1_0_0/TokenInfo.js';
+import { TokenResult as TokenResultV1_0_0, TokenResult_JsonCodec as TokenResultV1_0_0_JsonCodec } from './v1_0_0/TokenResult.js';
+import { TokensResult as TokensResultV1_0_0, TokensResult_JsonCodec as TokensResultV1_0_0_JsonCodec } from './v1_0_0/TokensResult.js';
+import { UserInfo as UserInfoV1_0_0, UserInfo_JsonCodec as UserInfoV1_0_0_JsonCodec } from './v1_0_0/UserInfo.js';
+import { VersionInfo as VersionInfoV1_0_0, VersionInfo_JsonCodec as VersionInfoV1_0_0_JsonCodec } from './v1_0_0/VersionInfo.js';
+import { Chunk, Chunk_JsonCodec } from './Chunk.js';
+import { ChunksResult, ChunksResult_JsonCodec } from './ChunksResult.js';
+import { ClientEnvelope, ClientEnvelope_JsonCodec } from './ClientEnvelope.js';
+import { Completion, Completion_JsonCodec } from './Completion.js';
+import { ContentView, ContentView_JsonCodec } from './ContentView.js';
+import { Facet, Facet_JsonCodec } from './Facet.js';
+import { FacetsResult, FacetsResult_JsonCodec } from './FacetsResult.js';
+import { Failure, Failure_JsonCodec } from './Failure.js';
+import { GroupInfo, GroupInfo_JsonCodec } from './GroupInfo.js';
+import { GroupsResult, GroupsResult_JsonCodec } from './GroupsResult.js';
+import { IngestReceipt, IngestReceipt_JsonCodec } from './IngestReceipt.js';
+import { IngestRequest, IngestRequest_JsonCodec } from './IngestRequest.js';
+import { InviteInfo, InviteInfo_JsonCodec } from './InviteInfo.js';
+import { JobInfo, JobInfo_JsonCodec } from './JobInfo.js';
+import { JobState, JobState_JsonCodec } from './JobState.js';
+import { LoginRequest, LoginRequest_JsonCodec } from './LoginRequest.js';
+import { LoginResponse, LoginResponse_JsonCodec } from './LoginResponse.js';
+import { Message, Message_JsonCodec } from './Message.js';
+import { MessagesResult, MessagesResult_JsonCodec } from './MessagesResult.js';
+import { Metadata, Metadata_JsonCodec } from './Metadata.js';
+import { MutationReceipt, MutationReceipt_JsonCodec } from './MutationReceipt.js';
+import { Operation, Operation_JsonCodec } from './Operation.js';
+import { RawFile, RawFile_JsonCodec } from './RawFile.js';
+import { RawResult, RawResult_JsonCodec } from './RawResult.js';
+import { RelatedResult, RelatedResult_JsonCodec } from './RelatedResult.js';
+import { Result, Result_JsonCodec } from './Result.js';
+import { Scope, Scope_JsonCodec } from './Scope.js';
+import { SearchCountScope, SearchCountScope_JsonCodec } from './SearchCountScope.js';
+import { SearchFilter, SearchFilter_JsonCodec } from './SearchFilter.js';
+import { SearchHit, SearchHit_JsonCodec } from './SearchHit.js';
+import { SearchMode, SearchMode_JsonCodec } from './SearchMode.js';
+import { SearchQuery, SearchQuery_JsonCodec } from './SearchQuery.js';
+import { SearchResult, SearchResult_JsonCodec } from './SearchResult.js';
+import { ServerEnvelope, ServerEnvelope_JsonCodec } from './ServerEnvelope.js';
+import { SessionInfo, SessionInfo_JsonCodec } from './SessionInfo.js';
+import { SessionResult, SessionResult_JsonCodec } from './SessionResult.js';
+import { SourceFormat, SourceFormat_JsonCodec } from './SourceFormat.js';
+import { SourceIdentity, SourceIdentity_JsonCodec } from './SourceIdentity.js';
+import { Span, Span_JsonCodec } from './Span.js';
+import { StatusResult, StatusResult_JsonCodec } from './StatusResult.js';
+import { TokenInfo, TokenInfo_JsonCodec } from './TokenInfo.js';
+import { TokenResult, TokenResult_JsonCodec } from './TokenResult.js';
+import { TokensResult, TokensResult_JsonCodec } from './TokensResult.js';
+import { UserInfo, UserInfo_JsonCodec } from './UserInfo.js';
+import { VersionInfo, VersionInfo_JsonCodec } from './VersionInfo.js';
+
+class DomainChronicleApiV1_0_0JsonCodecs extends AbstractBaboonJsonCodecs {
+    constructor() {
+        super();
+        this.register(ChunkV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ChunkV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ChunksResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ChunksResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ClientEnvelopeV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ClientEnvelopeV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CompletionV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CompletionV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ContentViewV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ContentViewV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(FacetV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => FacetV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(FacetsResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => FacetsResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(FailureV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => FailureV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(GroupInfoV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GroupInfoV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(GroupsResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GroupsResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(IngestReceiptV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => IngestReceiptV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(IngestRequestV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => IngestRequestV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(InviteInfoV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => InviteInfoV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(JobInfoV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => JobInfoV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(JobStateV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => JobStateV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(LoginRequestV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => LoginRequestV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(LoginResponseV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => LoginResponseV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(MessageV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => MessageV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(MessagesResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => MessagesResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(MetadataV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => MetadataV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(MutationReceiptV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => MutationReceiptV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(OperationV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => OperationV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RawFileV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RawFileV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RawResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RawResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RelatedResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RelatedResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ScopeV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ScopeV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchFilterV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchFilterV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchHitV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchHitV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchModeV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchModeV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchQueryV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchQueryV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ServerEnvelopeV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ServerEnvelopeV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SessionInfoV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SessionInfoV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SessionResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SessionResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SourceFormatV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SourceFormatV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SourceIdentityV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SourceIdentityV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SpanV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SpanV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(StatusResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => StatusResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(TokenInfoV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => TokenInfoV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(TokenResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => TokenResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(TokensResultV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => TokensResultV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(UserInfoV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => UserInfoV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(VersionInfoV1_0_0_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => VersionInfoV1_0_0_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+    }
+}
+
+class DomainChronicleApiV1_0_0UebaCodecs extends AbstractBaboonUebaCodecs {
+    constructor() {
+        super();
+        
+    }
+}
+
+class DomainChronicleApiV1_0_0Conversions implements AbstractBaboonConversions {
+    public versionsFrom(): string[] { return []; }
+    public versionTo(): string { return '1.0.0'; }
+}
+
+class DomainChronicleApiV1_0_0Meta implements BaboonMeta {
+    private static readonly SAME_IN: { readonly [typeId: string]: readonly string[] } = {
+        "chronicle.api/:#Chunk": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#ChunksResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#ClientEnvelope": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Completion": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#ContentView": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Facet": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#FacetsResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Failure": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#GroupInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#GroupsResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#IngestReceipt": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#IngestRequest": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#InviteInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#JobInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#JobState": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#LoginRequest": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#LoginResponse": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Message": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#MessagesResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Metadata": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#MutationReceipt": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Operation": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#RawFile": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#RawResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#RelatedResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Result": ['1.0.0'],
+        "chronicle.api/:#Scope": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SearchFilter": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SearchHit": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SearchMode": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SearchQuery": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SearchResult": ['1.0.0'],
+        "chronicle.api/:#ServerEnvelope": ['1.0.0'],
+        "chronicle.api/:#SessionInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SessionResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SourceFormat": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SourceIdentity": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Span": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#StatusResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#TokenInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#TokenResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#TokensResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#UserInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#VersionInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#AcceptInvite": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#CreateGroup": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#DeleteGroup": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Facets": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#GetChunks": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#GetMessages": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#GetRaw": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#GetSession": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Hello": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#IngestStatus": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Invite": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#LeaveGroup": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#ListGroups": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#ListTokens": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Logout": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#MintToken": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Ping": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Pong": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Purge": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Receipt": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Related": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#RemoveMember": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#RetryJob": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#RevokeToken": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Search": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Whoami": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Chunks": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Error": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Facets": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Groups": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Hello": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Messages": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Mutation": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Ping": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Pong": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Raw": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Related": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Search": ['1.0.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Session": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Status": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Token": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Tokens": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Whoami": ['1.0.0', '1.1.0'],
+    };
+    private static readonly FORWARD: { readonly [typeId: string]: { readonly [version: string]: string } } = {
+        "chronicle.api/:#Chunk": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#ChunksResult": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#ClientEnvelope": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#Completion": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#ContentView": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#Facet": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#FacetsResult": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#Failure": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#GroupInfo": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#GroupsResult": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#IngestReceipt": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#IngestRequest": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#InviteInfo": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#JobInfo": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#JobState": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#LoginRequest": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#LoginResponse": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#Message": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#MessagesResult": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#Metadata": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#MutationReceipt": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#Operation": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#RawFile": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#RawResult": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#RelatedResult": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#Result": { '1.0.0': 'identical', '1.1.0': 'json-additive' },
+        "chronicle.api/:#Scope": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#SearchFilter": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#SearchHit": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#SearchMode": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#SearchQuery": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#SearchResult": { '1.0.0': 'identical', '1.1.0': 'prefix-compact' },
+        "chronicle.api/:#ServerEnvelope": { '1.0.0': 'identical', '1.1.0': 'json-additive' },
+        "chronicle.api/:#SessionInfo": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#SessionResult": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#SourceFormat": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#SourceIdentity": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#Span": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#StatusResult": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#TokenInfo": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#TokenResult": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#TokensResult": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#UserInfo": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/:#VersionInfo": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#AcceptInvite": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#CreateGroup": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#DeleteGroup": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Facets": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#GetChunks": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#GetMessages": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#GetRaw": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#GetSession": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Hello": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#IngestStatus": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Invite": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#LeaveGroup": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#ListGroups": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#ListTokens": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Logout": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#MintToken": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Ping": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Pong": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Purge": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Receipt": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Related": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#RemoveMember": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#RetryJob": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#RevokeToken": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Search": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Whoami": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Chunks": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Error": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Facets": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Groups": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Hello": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Messages": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Mutation": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Ping": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Pong": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Raw": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Related": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Search": { '1.0.0': 'identical', '1.1.0': 'json-additive' },
+        "chronicle.api/[chronicle.api/:#Result]#Session": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Status": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Token": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Tokens": { '1.0.0': 'identical', '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Whoami": { '1.0.0': 'identical', '1.1.0': 'identical' },
+    };
+    public sameInVersions(typeId: string): string[] { return [...(DomainChronicleApiV1_0_0Meta.SAME_IN[typeId] ?? [])]; }
+    public forwardReadableVersions(typeId: string): { readonly [version: string]: string } { return DomainChronicleApiV1_0_0Meta.FORWARD[typeId] ?? {}; }
+}
+
+class DomainChronicleApiV1_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
+    constructor() {
+        super();
+        this.register(Chunk_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Chunk_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ChunksResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ChunksResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ClientEnvelope_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ClientEnvelope_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(Completion_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Completion_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ContentView_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ContentView_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(Facet_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Facet_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(FacetsResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => FacetsResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(Failure_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Failure_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(GroupInfo_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GroupInfo_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(GroupsResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GroupsResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(IngestReceipt_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => IngestReceipt_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(IngestRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => IngestRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(InviteInfo_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => InviteInfo_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(JobInfo_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => JobInfo_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(JobState_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => JobState_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(LoginRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => LoginRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(LoginResponse_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => LoginResponse_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(Message_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Message_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(MessagesResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => MessagesResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(Metadata_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Metadata_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(MutationReceipt_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => MutationReceipt_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(Operation_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Operation_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RawFile_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RawFile_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RawResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RawResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RelatedResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RelatedResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(Result_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Result_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(Scope_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Scope_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchCountScope_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchCountScope_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchFilter_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchFilter_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchHit_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchHit_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchMode_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchMode_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchQuery_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchQuery_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SearchResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ServerEnvelope_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ServerEnvelope_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SessionInfo_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SessionInfo_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SessionResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SessionResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SourceFormat_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SourceFormat_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SourceIdentity_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SourceIdentity_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(Span_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Span_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(StatusResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => StatusResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(TokenInfo_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => TokenInfo_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(TokenResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => TokenResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(TokensResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => TokensResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(UserInfo_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => UserInfo_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(VersionInfo_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => VersionInfo_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+    }
+}
+
+class DomainChronicleApiV1_1_0UebaCodecs extends AbstractBaboonUebaCodecs {
+    constructor() {
+        super();
+        
+    }
+}
+
+class DomainChronicleApiV1_1_0Conversions implements AbstractBaboonConversions {
+    public versionsFrom(): string[] { return []; }
+    public versionTo(): string { return '1.1.0'; }
+}
+
+class DomainChronicleApiV1_1_0Meta implements BaboonMeta {
+    private static readonly SAME_IN: { readonly [typeId: string]: readonly string[] } = {
+        "chronicle.api/:#Chunk": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#ChunksResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#ClientEnvelope": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Completion": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#ContentView": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Facet": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#FacetsResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Failure": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#GroupInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#GroupsResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#IngestReceipt": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#IngestRequest": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#InviteInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#JobInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#JobState": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#LoginRequest": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#LoginResponse": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Message": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#MessagesResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Metadata": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#MutationReceipt": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Operation": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#RawFile": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#RawResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#RelatedResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Result": ['1.1.0'],
+        "chronicle.api/:#Scope": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SearchCountScope": ['1.1.0'],
+        "chronicle.api/:#SearchFilter": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SearchHit": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SearchMode": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SearchQuery": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SearchResult": ['1.1.0'],
+        "chronicle.api/:#ServerEnvelope": ['1.1.0'],
+        "chronicle.api/:#SessionInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SessionResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SourceFormat": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#SourceIdentity": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#Span": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#StatusResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#TokenInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#TokenResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#TokensResult": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#UserInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/:#VersionInfo": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#AcceptInvite": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#CreateGroup": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#DeleteGroup": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Facets": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#GetChunks": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#GetMessages": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#GetRaw": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#GetSession": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Hello": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#IngestStatus": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Invite": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#LeaveGroup": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#ListGroups": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#ListTokens": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Logout": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#MintToken": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Ping": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Pong": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Purge": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Receipt": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Related": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#RemoveMember": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#RetryJob": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#RevokeToken": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Search": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#Whoami": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Chunks": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Error": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Facets": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Groups": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Hello": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Messages": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Mutation": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Ping": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Pong": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Raw": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Related": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Search": ['1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Session": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Status": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Token": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Tokens": ['1.0.0', '1.1.0'],
+        "chronicle.api/[chronicle.api/:#Result]#Whoami": ['1.0.0', '1.1.0'],
+    };
+    private static readonly FORWARD: { readonly [typeId: string]: { readonly [version: string]: string } } = {
+        "chronicle.api/:#Chunk": { '1.1.0': 'identical' },
+        "chronicle.api/:#ChunksResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#ClientEnvelope": { '1.1.0': 'identical' },
+        "chronicle.api/:#Completion": { '1.1.0': 'identical' },
+        "chronicle.api/:#ContentView": { '1.1.0': 'identical' },
+        "chronicle.api/:#Facet": { '1.1.0': 'identical' },
+        "chronicle.api/:#FacetsResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#Failure": { '1.1.0': 'identical' },
+        "chronicle.api/:#GroupInfo": { '1.1.0': 'identical' },
+        "chronicle.api/:#GroupsResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#IngestReceipt": { '1.1.0': 'identical' },
+        "chronicle.api/:#IngestRequest": { '1.1.0': 'identical' },
+        "chronicle.api/:#InviteInfo": { '1.1.0': 'identical' },
+        "chronicle.api/:#JobInfo": { '1.1.0': 'identical' },
+        "chronicle.api/:#JobState": { '1.1.0': 'identical' },
+        "chronicle.api/:#LoginRequest": { '1.1.0': 'identical' },
+        "chronicle.api/:#LoginResponse": { '1.1.0': 'identical' },
+        "chronicle.api/:#Message": { '1.1.0': 'identical' },
+        "chronicle.api/:#MessagesResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#Metadata": { '1.1.0': 'identical' },
+        "chronicle.api/:#MutationReceipt": { '1.1.0': 'identical' },
+        "chronicle.api/:#Operation": { '1.1.0': 'identical' },
+        "chronicle.api/:#RawFile": { '1.1.0': 'identical' },
+        "chronicle.api/:#RawResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#RelatedResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#Result": { '1.1.0': 'identical' },
+        "chronicle.api/:#Scope": { '1.1.0': 'identical' },
+        "chronicle.api/:#SearchCountScope": { '1.1.0': 'identical' },
+        "chronicle.api/:#SearchFilter": { '1.1.0': 'identical' },
+        "chronicle.api/:#SearchHit": { '1.1.0': 'identical' },
+        "chronicle.api/:#SearchMode": { '1.1.0': 'identical' },
+        "chronicle.api/:#SearchQuery": { '1.1.0': 'identical' },
+        "chronicle.api/:#SearchResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#ServerEnvelope": { '1.1.0': 'identical' },
+        "chronicle.api/:#SessionInfo": { '1.1.0': 'identical' },
+        "chronicle.api/:#SessionResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#SourceFormat": { '1.1.0': 'identical' },
+        "chronicle.api/:#SourceIdentity": { '1.1.0': 'identical' },
+        "chronicle.api/:#Span": { '1.1.0': 'identical' },
+        "chronicle.api/:#StatusResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#TokenInfo": { '1.1.0': 'identical' },
+        "chronicle.api/:#TokenResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#TokensResult": { '1.1.0': 'identical' },
+        "chronicle.api/:#UserInfo": { '1.1.0': 'identical' },
+        "chronicle.api/:#VersionInfo": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#AcceptInvite": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#CreateGroup": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#DeleteGroup": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Facets": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#GetChunks": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#GetMessages": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#GetRaw": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#GetSession": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Hello": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#IngestStatus": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Invite": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#LeaveGroup": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#ListGroups": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#ListTokens": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Logout": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#MintToken": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Ping": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Pong": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Purge": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Receipt": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Related": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#RemoveMember": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#RetryJob": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#RevokeToken": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Search": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#Whoami": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Chunks": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Error": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Facets": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Groups": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Hello": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Messages": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Mutation": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Ping": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Pong": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Raw": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Related": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Search": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Session": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Status": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Token": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Tokens": { '1.1.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#Whoami": { '1.1.0': 'identical' },
+    };
+    public sameInVersions(typeId: string): string[] { return [...(DomainChronicleApiV1_1_0Meta.SAME_IN[typeId] ?? [])]; }
+    public forwardReadableVersions(typeId: string): { readonly [version: string]: string } { return DomainChronicleApiV1_1_0Meta.FORWARD[typeId] ?? {}; }
+}
+
+export class DomainChronicleApiFacade extends BaboonCodecsFacade {
+    constructor() {
+        super();
+        this.register(
+            new BaboonDomainVersion('chronicle.api', '1.0.0'),
+            () => new DomainChronicleApiV1_0_0JsonCodecs(),
+            () => new DomainChronicleApiV1_0_0UebaCodecs(),
+            () => new DomainChronicleApiV1_0_0Conversions(),
+            () => new DomainChronicleApiV1_0_0Meta(),
+        );
+        this.register(
+            new BaboonDomainVersion('chronicle.api', '1.1.0'),
+            () => new DomainChronicleApiV1_1_0JsonCodecs(),
+            () => new DomainChronicleApiV1_1_0UebaCodecs(),
+            () => new DomainChronicleApiV1_1_0Conversions(),
+            () => new DomainChronicleApiV1_1_0Meta(),
+        );
+    }
+}

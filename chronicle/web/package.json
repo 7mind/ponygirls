@@ -1,0 +1,26 @@
+{
+  "name": "@chronicle/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-transform-types --import ./tests/resolve-generated.mjs --test tests/*.test.ts",
+    "test:browser": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/run.mjs"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "playwright-core": "1.64.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}

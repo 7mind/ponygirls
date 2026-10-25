@@ -1,0 +1,123 @@
+[info] welcome to sbt 1.13.0 (Ubuntu Java 21.0.12.1)
+[info] loading settings for project chronicle-build from plugins.sbt...
+[info] loading project definition from <WORKTREE>/chronicle/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to chronicle-server (in build file:<WORKTREE>/chronicle/)
+[info] Executing in batch mode. For better performance use sbt's shell
+[info] compiling 10 Scala sources to <WORKTREE>/chronicle/target/scala-3.10.0/classes ...
+[error] -- [E172] Type Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:8:40 
+[error] 8 |object ChroniclePlugin extends PluginDef {
+[error]   |                                        ^
+[error]   |Could not find implicit for `izumi.distage.plugins.ForcedRecompilationToken[T]`.
+[error]   |This is supposed to be impossible, but is sometimes observed under mdoc & scaladoc,
+[error]   |in which case you'll have to put a dummy implicit in scope, such as by using:
+[error]   |
+[error]   |  import izumi.distage.plugins.ForcedRecompilationToken.disabled._.
+[error]   |I found:
+[error]   |
+[error]   |    izumi.distage.plugins.ForcedRecompilationToken.materialize[Any]
+[error]   |
+[error]   |But Macro expansion has type izumi.distage.plugins.ForcedRecompilationToken[
+[error]   |  ("c410967b-5a28-4dbe-b724-debca654ed00" : String)], which does not conform to the expected type izumi.distage.plugins.ForcedRecompilationToken[Any].
+[error]   |
+[error]   |where:    T is a type variable
+[error]   |
+[error]   |
+[error]   |The following import might fix the problem:
+[error]   |
+[error]   |  import izumi.distage.plugins.ForcedRecompilationToken.disabled.disable
+[error]   |
+[error] -- [E007] Type Mismatch Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/Main.scala:24:45 
+[error] 24 |            include(_root_.chronicle.plugins.ChroniclePlugin)
+[error]    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |                    Found:    chronicle.plugins.ChroniclePlugin.type
+[error]    |                    Required: izumi.distage.model.definition.ModuleBase
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:9:2 
+[error] 9 |  make[logstage.IzLogger].fromValue(logstage.IzLogger())
+[error]   |  ^^^^
+[error]   |  Not found: make
+[error]   |
+[error]   | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:10:2 
+[error] 10 |  make[Database]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:11:2 
+[error] 11 |  make[Auth]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:12:2 
+[error] 12 |  make[PostgresArchive]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:13:2 
+[error] 13 |  make[SessionArchive].from[PostgresArchive]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:14:2 
+[error] 14 |  make[SearchIndex].from[PostgresSearch]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:15:2 
+[error] 15 |  make[ModelHttp]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:16:2 
+[error] 16 |  make[Annotator].from[OpenAIAnnotator]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:17:2 
+[error] 17 |  make[Embedder].from[OpenAIEmbedder]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:18:2 
+[error] 18 |  make[Worker]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:19:2 
+[error] 19 |  make[Application]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:20:2 
+[error] 20 |  make[Mcp]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:21:2 
+[error] 21 |  make[Http]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: <WORKTREE>/chronicle/server/src/main/scala/chronicle/plugins/ChroniclePlugin.scala:22:2 
+[error] 22 |  make[RuntimeServices]
+[error]    |  ^^^^
+[error]    |  Not found: make
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] 16 errors found
+[error] (Compile / compileIncremental) Compilation failed
+[error] Total time: 7 s, completed Oct 25, 2026, 12:24:07 AM

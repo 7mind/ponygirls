@@ -1,0 +1,1 @@
+{"requestId":"019a1234-5678-7123-8123-123456789abc","operation":{"Search":{"query":{"query":"λ🐎 café","mode":"Hybrid","filter":{"project":null,"gitBranch":"main","after":"2026-10-24T00:00:00Z","before":null,"tags":["synthetic"]},"limit":20,"offset":100}}}}

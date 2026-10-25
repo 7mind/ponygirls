@@ -1,0 +1,2 @@
+{"type":"user","uuid":"child-user","parentUuid":null,"sessionId":"claude-synthetic","agentId":"worker","isSidechain":true,"message":{"role":"user","content":"synthetic child"}}
+{"type":"assistant","uuid":"child-answer","parentUuid":"child-user","sessionId":"claude-synthetic","agentId":"worker","message":{"role":"assistant","content":[{"type":"text","text":"child answer"}]}}

@@ -1,0 +1,14 @@
+{
+  "name": "@ponygirls/chronicle-collector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.0.0 <25" },
+  "bin": { "chronicle-collector": "dist/collector/src/cli.js" },
+  "scripts": {
+    "test": "npm run build && node --test dist/collector/test/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc && node -e \"require('node:fs').cpSync('test/fixtures','dist/collector/test/fixtures',{recursive:true})\""
+  },
+  "devDependencies": { "@types/node": "24.19.2", "typescript": "7.0.2" }
+}

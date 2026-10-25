@@ -1,0 +1,11 @@
+{
+  "listenHost":"127.0.0.1", "listenPort":8448,
+  "allowedOrigin":"http://127.0.0.1:8448", "secureCookies":false,
+  "jdbcUrl":"jdbc:postgresql://127.0.0.1:5432/chronicle",
+  "databaseUser":"chronicle", "databasePasswordFile":"/run/credentials/chronicle/database",
+  "users":[{"id":"operator","login":"operator","passwordHashFile":"/run/credentials/chronicle/operator","enabled":true}],
+  "maxBodyBytes":8388608, "maxFiles":16, "maxFileBytes":4194304, "maxMessages":10000,
+  "sessionTtlSeconds":43200,
+  "annotation":{"endpoint":"http://127.0.0.1:8000/v1/chat/completions","model":"annotation-model","revision":"deployment-1","credentialFile":"/run/credentials/chronicle/annotation","timeoutSeconds":60,"maxResponseBytes":65536},
+  "embedding":{"endpoint":"http://127.0.0.1:8001/v1/embeddings","model":"embedding-model","revision":"deployment-1","credentialFile":"/run/credentials/chronicle/embedding","timeoutSeconds":60,"maxResponseBytes":1048576,"dimensions":1024,"sendDimensions":false,"queryPrefix":"query: ","documentPrefix":"passage: "}
+}

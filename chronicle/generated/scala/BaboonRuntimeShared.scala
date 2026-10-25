@@ -1,0 +1,624 @@
+package baboon.runtime.shared {
+
+  import baboon.runtime.shared.BaboonTypeMetaCodec.META_VERSION
+  import io.circe.{DecodingFailure, Json}
+
+  import java.util.concurrent.atomic.AtomicReference
+  import scala.reflect.ClassTag
+  import scala.util.{Success, Try}
+
+  trait BaboonGenerated {
+    def baboonDomainVersion: String
+    def baboonDomainIdentifier: String
+    def baboonSameInVersions: List[String]
+
+    /** Forward-readability: newer domain versions whose encoded data THIS
+      * version's codec can decode, mapped to the guarantee tier
+      * ("identical" | "prefix-any-mode" | "prefix-compact" | "json-additive").
+      * The prefix-* tiers hold only for top-level framed UEBA reads where the
+      * caller discards the cursor after decoding.
+      */
+    def baboonForwardReadable: Map[String, String]
+
+    /** Writer-side inverse of [[baboonForwardReadable]]: guarantee tier -> oldest
+      * domain version whose codec can decode THIS version's encoding of this type.
+      * The "identical" bound equals `baboonSameInVersions.head`; the "json-additive"
+      * bound is what the JSON envelope publishes as `$rv`.
+      */
+    def baboonMinReaderVersions: Map[String, String]
+    def baboonTypeIdentifier: String
+
+    final def domainVersion: BaboonDomainVersion = BaboonDomainVersion(baboonDomainIdentifier, baboonDomainVersion)
+  }
+
+  trait BaboonGeneratedLatest extends BaboonGenerated
+
+  trait BaboonAdtMemberMeta {
+    def baboonAdtTypeIdentifier: String
+    def baboonAdtType: Class[?]
+  }
+
+  trait BaboonMeta {
+    def sameInVersions(typeId: String): List[String]
+
+    /** Forward-readability per type: newer version -> guarantee tier
+      * (see [[BaboonGenerated.baboonForwardReadable]]).
+      */
+    def forwardReadableVersions(typeId: String): Map[String, String]
+  }
+
+  trait BaboonEnum[T] {
+    def parse(s: String): Option[T]
+    def all: List[T]
+  }
+
+  /** Runtime helpers for the `id` toString / parseRepr machinery defined in
+    * `docs/spec/identifier-repr.md`. The Scala backend (PR-56) uses these
+    * helpers from emitted code; other backends MUST implement an equivalent
+    * helper surface conforming to the spec.
+    *
+    * Two copies live in the source tree:
+    *   - `src/main/resources/baboon-runtime/scala/BaboonRuntimeShared.scala`
+    *     (shipped to user code)
+    *   - `src/main/scala/baboon/runtime/shared/BaboonRuntimeShared.scala`
+    *     (compile-side mirror used by the property test)
+    * They MUST stay byte-equal inside `object IdentifierRepr { ... }` so the
+    * code emitted by the compiler matches what runs in user code.
+    */
+  object IdentifierRepr {
+
+    // Defensive: numeric Char constant rather than a quoted-character literal.
+    // The resource preprocessor in ScBaboonTranslator.scala mangles the literal
+    // dot-escape sequence (used by Version.from below). Not strictly required
+    // for code in this object today but maintained for consistency.
+    private val BS: Char  = 92.toChar // ASCII backslash
+    private val HSH: Char = '#'
+    private val COL: Char = ':'
+    private val OBR: Char = '{'
+    private val CBR: Char = '}'
+
+    /** Backslash-escape the 5 metacharacters per spec §4.2. */
+    def escapeStr(s: String): String = {
+      val sb = new java.lang.StringBuilder(s.length)
+      var i  = 0
+      while (i < s.length) {
+        val c = s.charAt(i)
+        if (c == BS || c == HSH || c == COL || c == OBR || c == CBR) {
+          sb.append(BS); sb.append(c)
+        } else {
+          sb.append(c)
+        }
+        i += 1
+      }
+      sb.toString
+    }
+
+    /** Lowercase hex, no separators, per spec §3 / §4.4. */
+    def bytesToHex(bs: ByteString): String = {
+      val arr = bs.underlyingUnsafe
+      val sb  = new java.lang.StringBuilder(arr.length * 2)
+      var i   = 0
+      while (i < arr.length) {
+        val b = arr(i) & 0xFF
+        sb.append(Character.forDigit((b >>> 4) & 0xF, 16))
+        sb.append(Character.forDigit(b & 0xF, 16))
+        i += 1
+      }
+      sb.toString
+    }
+
+    // Identifier repr mandates 24-char tsu (always UTC `Z`) and 29-char tso
+    // (always `±HH:MM` offset, never `Z` shorthand). These dedicated formats
+    // enforce the widths the schema-directed parser depends on (spec §3 / §5.4).
+    private val tsuReprFormat: java.time.format.DateTimeFormatter =
+      java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+    private val tsoReprFormat: java.time.format.DateTimeFormatter =
+      java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSxxx")
+
+    /** Render a `tsu` per spec §3: RFC 3339 UTC, milliseconds, trailing `Z`,
+      * exactly 24 characters. Normalises the input to UTC if it carries a
+      * non-UTC offset.
+      */
+    def tsuToString(dt: java.time.OffsetDateTime): String = {
+      val utc = dt.withOffsetSameInstant(java.time.ZoneOffset.UTC)
+      utc.format(tsuReprFormat)
+    }
+
+    /** Render a `tso` per spec §3: RFC 3339 with explicit `±HH:MM` offset,
+      * milliseconds, exactly 29 characters. Never emits `Z` shorthand.
+      */
+    def tsoToString(dt: java.time.OffsetDateTime): String = dt.format(tsoReprFormat)
+
+    private val tsuLocalFormat: java.time.format.DateTimeFormatter =
+      java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS")
+
+    def parseTsuRepr(s: String): Either[String, java.time.OffsetDateTime] = {
+      if (s.length != 24) Left(s"tsu repr must be 24 chars, got ${s.length}")
+      else if (s.charAt(23) != 'Z') Left(s"tsu repr must end with 'Z', got: $s")
+      else
+        try {
+          val ldt = java.time.LocalDateTime.parse(s.substring(0, 23), tsuLocalFormat)
+          Right(ldt.atOffset(java.time.ZoneOffset.UTC))
+        } catch { case _: java.time.format.DateTimeParseException => Left(s"could not parse tsu: $s") }
+    }
+    def parseTsoRepr(s: String): Either[String, java.time.OffsetDateTime] = {
+      if (s.length != 29) Left(s"tso repr must be 29 chars, got ${s.length}")
+      else
+        try Right(java.time.OffsetDateTime.parse(s, tsoReprFormat))
+        catch { case _: java.time.format.DateTimeParseException => Left(s"could not parse tso: $s") }
+    }
+
+    /** Render an unsigned-i64 (carried as signed Long) as decimal. */
+    def u64ToString(v: Long): String = java.lang.Long.toUnsignedString(v)
+
+    /** Render a `bit` per spec §3 — exact lowercase ASCII. */
+    def bitToString(v: Boolean): String = if (v) "true" else "false"
+
+    /** Cursor-based parser for `parseRepr` decoders. Schema-directed; the
+      * caller (the emitted `<TypeName>Codec.parseRepr`) drives the field
+      * sequence per declared type and order.
+      */
+    final class Cursor(val source: String) {
+      private var pos: Int = 0
+
+      def position: Int   = pos
+      def atEnd: Boolean  = pos >= source.length
+      def peek: Char      = source.charAt(pos)
+      def advance(): Char = { val c = source.charAt(pos); pos += 1; c }
+
+      def expect(c: Char): Either[String, Unit] = {
+        if (atEnd) Left(s"expected '$c' at $pos but reached end of input")
+        else if (peek != c) Left(s"expected '$c' at $pos but found '$peek'")
+        else { pos += 1; Right(()) }
+      }
+
+      def expectLiteral(lit: String): Either[String, Unit] = {
+        if (pos + lit.length > source.length) Left(s"expected literal '$lit' at $pos but reached end of input")
+        else if (source.regionMatches(pos, lit, 0, lit.length)) { pos += lit.length; Right(()) }
+        else Left(s"expected literal '$lit' at $pos")
+      }
+
+      /** Read until the next bare metachar in `:#{}`. Backslash escapes are
+        * NOT processed here — see [[readStrField]] for that. Used for
+        * primitive consumption (numbers, uuids, timestamps, hex bytes).
+        */
+      def readUntilStructural(): String = {
+        val start = pos
+        while (pos < source.length) {
+          val c = source.charAt(pos)
+          if (c == ':' || c == '#' || c == '{' || c == '}') return source.substring(start, pos)
+          pos += 1
+        }
+        source.substring(start, pos)
+      }
+
+      /** Consume exactly `n` characters as a fixed-width lexeme. Used for
+        * tsu/tso (which contain `:` characters inside the lexeme).
+        */
+      def readFixed(n: Int): Either[String, String] = {
+        if (pos + n > source.length) Left(s"expected $n chars at $pos but only ${source.length - pos} remain")
+        else {
+          val s = source.substring(pos, pos + n)
+          pos += n
+          Right(s)
+        }
+      }
+
+      /** Read a `str` field value with backslash-unescaping per spec §5.5. */
+      def readStrField(): Either[String, String] = {
+        val sb = new java.lang.StringBuilder()
+        while (pos < source.length) {
+          val c = source.charAt(pos)
+          if (c == COL || c == HSH || c == OBR || c == CBR) {
+            return Right(sb.toString)
+          } else if (c == BS) {
+            if (pos + 1 >= source.length) return Left(s"trailing backslash at $pos")
+            val nxt = source.charAt(pos + 1)
+            if (nxt == BS || nxt == HSH || nxt == COL || nxt == OBR || nxt == CBR) {
+              sb.append(nxt); pos += 2
+            } else {
+              return Left(s"invalid escape at $pos")
+            }
+          } else {
+            sb.append(c); pos += 1
+          }
+        }
+        Right(sb.toString)
+      }
+    }
+
+    /** Validate header of an identifier-repr: `<simpleName>:<version>#`.
+      * Returns the cursor advanced past the `#`, or an error.
+      */
+    def parseHeader(cursor: Cursor, expectedSimpleName: String, expectedVersion: String): Either[String, Unit] = {
+      val nameLit = cursor.readUntilStructural()
+      if (nameLit != expectedSimpleName) return Left(s"expected name '$expectedSimpleName' but found '$nameLit'")
+      cursor.expect(':') match {
+        case Left(e)  => return Left(e)
+        case Right(_) => ()
+      }
+      val verLit = cursor.readUntilStructural()
+      if (verLit != expectedVersion) return Left(s"expected version '$expectedVersion' but found '$verLit'")
+      cursor.expect('#')
+    }
+
+    /** Validate field-name segment: `<expectedFieldName>:`. */
+    def parseFieldName(cursor: Cursor, expectedFieldName: String): Either[String, Unit] = {
+      val name = cursor.readUntilStructural()
+      if (name != expectedFieldName) return Left(s"expected field name '$expectedFieldName' but found '$name'")
+      cursor.expect(':')
+    }
+
+    /** Decode `bytes` from lowercase hex. Empty string is legal (empty bytes). */
+    def parseBytesHex(s: String): Either[String, ByteString] = {
+      if (s.isEmpty) return Right(ByteString.empty)
+      if ((s.length & 1) != 0) return Left(s"odd-length hex sequence: $s")
+      val out = new Array[Byte](s.length / 2)
+      var i   = 0
+      while (i < s.length) {
+        val hi = Character.digit(s.charAt(i), 16)
+        val lo = Character.digit(s.charAt(i + 1), 16)
+        if (hi < 0 || lo < 0) return Left(s"non-hex character in $s at $i")
+        // Spec mandates lowercase; reject uppercase to keep exactly one canonical form.
+        if (s.charAt(i).isUpper || s.charAt(i + 1).isUpper) return Left(s"uppercase hex not allowed: $s at $i")
+        out(i / 2) = ((hi << 4) | lo).toByte
+        i += 2
+      }
+      Right(ByteString(out))
+    }
+
+    /** Decode a `bit` literal. */
+    def parseBit(s: String): Either[String, Boolean] = s match {
+      case "true"  => Right(true)
+      case "false" => Right(false)
+      case other   => Left(s"expected 'true' or 'false' but found '$other'")
+    }
+  }
+
+  final class Lazy[T](private val initializer: () => T) {
+    private val valueRef = new AtomicReference[Option[T]](None)
+
+    def value: T = valueRef.get() match {
+      case Some(existing) => existing
+      case None =>
+        val computed = initializer()
+        if (valueRef.compareAndSet(None, Some(computed))) computed
+        else valueRef.get().get
+    }
+
+    def isValueCreated: Boolean = valueRef.get().isDefined
+  }
+
+  object Lazy {
+    def apply[T](initializer: => T): Lazy[T] =
+      new Lazy(() => initializer)
+  }
+
+  trait BaboonSingleton[T] {
+    protected def LazyInstance: Lazy[T]
+    def instance: T = LazyInstance.value
+  }
+
+  // MFACADE-PR-5: extension helpers wrapped in an object so the synthetic methods Scala
+  // generates for implicit classes don't collide with the implicit classes themselves at
+  // package scope under `-Xsource:3-cross`. Users opt in via
+  // `import baboon.runtime.shared.BaboonExt._`.
+  object BaboonExt {
+    implicit class BaboonGeneratedExt(private val g: BaboonGenerated) extends AnyVal {
+      def baboonUnmodifiedSinceVersion: String = g.baboonSameInVersions.head
+    }
+
+    implicit class BaboonMetaExt(private val meta: BaboonMeta) extends AnyVal {
+      def unmodifiedSinceVersion(typeId: String): String = meta.sameInVersions(typeId).head
+    }
+  }
+
+  final case class BaboonDomainVersion(domainIdentifier: String, domainVersion: String) {
+    private val LazyVersion = Lazy(Version.from(domainVersion))
+    def version: Version    = LazyVersion.value
+  }
+
+  final case class Version(major: Int, minor: Int, patch: Int) extends Ordered[Version] {
+    override def compare(that: Version): Int = Version.ordering.compare(this, that)
+  }
+  object Version {
+    def from(version: String): Version = {
+      val chunks = version.split("\\.")
+      if (chunks.size <= 0) {
+        throw new Exception(s"Expected to have version in format x.[y].[z], got $version");
+      }
+
+      val major = Try(chunks(0).trim.toInt) match {
+        case Success(value) => value
+        case _              => throw new Exception(s"Expected to have version in format x.[y].[z], got $version. Invalid major value.");
+      }
+
+      val minor = Try(chunks(1).trim.toInt) match {
+        case Success(value) => value
+        case _              => throw new Exception(s"Expected to have version in format x.[y].[z], got $version. Invalid minor value.");
+      }
+
+      val patch = Try(chunks(2).trim.toInt) match {
+        case Success(value) => value
+        case _              => throw new Exception(s"Expected to have version in format x.[y].[z], got $version. Invalid patch value.");
+      }
+
+      new Version(major, minor, patch)
+    }
+
+    implicit val ordering: Ordering[Version] = Ordering.by(v => (v.major, v.minor, v.patch))
+  }
+
+  final case class BaboonTypeMeta(
+    metaVersion: Byte,
+    domainIdentifier: String,
+    domainVersion: String,
+    domainVersionMinCompat: String,
+    typeIdentifier: String,
+    /** Oldest domain version whose JSON codec can decode the payload under the
+      * json-additive contract (tolerant key lookup; fields unknown to that version
+      * are dropped). Always <= domainVersionMinCompat. Published as `$rv` when it
+      * differs from the (effective) minCompat; the binary v1 envelope does not carry it.
+      */
+    domainVersionReadableMin: String,
+  ) {
+    def version: BaboonDomainVersion = BaboonDomainVersion(domainIdentifier, domainVersion)
+    def versionMinCompat: Option[BaboonDomainVersion] = {
+      domainVersionMinCompat match {
+        case v if v.isEmpty          => None
+        case v if v == domainVersion => None
+        case _                       => Some(BaboonDomainVersion(domainIdentifier, domainVersionMinCompat))
+      }
+    }
+    def versionReadableMin: Option[BaboonDomainVersion] = {
+      domainVersionReadableMin match {
+        case v if v.isEmpty          => versionMinCompat
+        case v if v == domainVersion => None
+        case _                       => Some(BaboonDomainVersion(domainIdentifier, domainVersionReadableMin))
+      }
+    }
+
+    def writeBin(writer: LEDataOutputStream): Unit = {
+      BaboonTypeMetaCodec.writeBin(this, writer)
+    }
+
+    def writeJson: Json = {
+      BaboonTypeMetaCodec.writeJson(this)
+    }
+  }
+
+  object BaboonTypeMeta {
+    /** Tier key of the JSON envelope's readable-min bound in `baboonMinReaderVersions`. */
+    final val JSON_READABLE_TIER: String = "json-additive"
+    /** Tier keys of the UEBA prefix bounds in `baboonMinReaderVersions`, per index mode. */
+    final val UEBA_PREFIX_COMPACT_TIER: String  = "prefix-compact"
+    final val UEBA_PREFIX_ANY_MODE_TIER: String = "prefix-any-mode"
+
+    /** Five-field form: readable-min defaults to minCompat (no forward-read beyond byte-identity). */
+    def apply(
+      metaVersion: Byte,
+      domainIdentifier: String,
+      domainVersion: String,
+      domainVersionMinCompat: String,
+      typeIdentifier: String,
+    ): BaboonTypeMeta = {
+      BaboonTypeMeta(metaVersion, domainIdentifier, domainVersion, domainVersionMinCompat, typeIdentifier, domainVersionMinCompat)
+    }
+
+    /* Codecs discovery with ADTs check to ensure that ADTs is encoded with a codec type desired by the user.
+     *
+     * - If user is trying to encode ADT branch with the base type we should encode it with ADT meta header:
+     *      `Encode<ADT>(new ADT.A())` -> {"A": {<encoded A>}}
+     * - If user is trying to encode ADT branch with its own type we should encode only branch, without any meta:
+     *      `Encode<ADT.A>(new ADT.A())` -> {<encoded A>}
+     */
+    def from[T <: BaboonGenerated: ClassTag](value: T): BaboonTypeMeta = {
+      val typeIdentifier = value match {
+        case adt: BaboonAdtMemberMeta if typeIsTrait[T] => adt.baboonAdtTypeIdentifier
+        case _                                          => value.baboonTypeIdentifier
+      }
+
+      val readableMin = value.baboonMinReaderVersions.getOrElse(
+        JSON_READABLE_TIER,
+        throw BaboonCodecException.EncoderFailure(s"baboonMinReaderVersions lacks '$JSON_READABLE_TIER' for type ${value.baboonTypeIdentifier}"),
+      )
+      new BaboonTypeMeta(
+        META_VERSION,
+        value.baboonDomainIdentifier,
+        value.baboonDomainVersion,
+        value.baboonSameInVersions.head,
+        typeIdentifier,
+        readableMin,
+      )
+    }
+
+    /** Envelope for a UEBA payload written under `ctx`.
+      *   - V1 layout: `from(value)`, with `domainVersionMinCompat` lowered to the prefix bound of the
+      *     context's index mode when the writer policy is Tolerant (the single slot must carry it).
+      *   - V2 layout: both bounds travel — `domainVersionMinCompat` stays byte-identical and
+      *     `domainVersionReadableMin` carries the prefix bound; the writer policy is irrelevant.
+      */
+    def forBin[T <: BaboonGenerated: ClassTag](value: T, ctx: BaboonCodecContext): BaboonTypeMeta = {
+      val meta = from(value)
+      val tier = if (ctx.useIndices) UEBA_PREFIX_ANY_MODE_TIER else UEBA_PREFIX_COMPACT_TIER
+      def prefixBound: String = value.baboonMinReaderVersions.getOrElse(
+        tier,
+        throw BaboonCodecException.EncoderFailure(s"baboonMinReaderVersions lacks '$tier' for type ${value.baboonTypeIdentifier}"),
+      )
+      ctx.envelopeVersion match {
+        case BaboonEnvelopeVersion.V2 =>
+          meta.copy(metaVersion = BaboonTypeMetaCodec.META_VERSION_2, domainVersionReadableMin = prefixBound)
+        case BaboonEnvelopeVersion.V1 =>
+          ctx.forwardWritePolicy match {
+            case ForwardWritePolicy.Strict   => meta
+            case ForwardWritePolicy.Tolerant => meta.copy(domainVersionMinCompat = prefixBound)
+          }
+      }
+    }
+
+    private def typeIsTrait[T](implicit ct: ClassTag[T]): Boolean = {
+      ct.runtimeClass.isInterface
+    }
+
+    def readMeta(reader: LEDataInputStream): Option[BaboonTypeMeta] = {
+      BaboonTypeMetaCodec.readMeta(reader)
+    }
+
+    def readMeta(json: Json): Option[BaboonTypeMeta] = {
+      BaboonTypeMetaCodec.readMeta(json)
+    }
+  }
+
+  object BaboonTypeMetaCodec {
+    val META_VERSION_1: Byte = 1
+    val META_VERSION_2: Byte = 2
+    /** Layout written by default (binary) and always (JSON `$mv`). */
+    val META_VERSION: Byte = META_VERSION_1
+
+    /** v2 flags byte (codec-envelope.md §2.1.3): bit 0 — minCompat follows; bit 1 — readableMin follows. */
+    private val V2_FLAG_MIN_COMPAT: Int   = 0x01
+    private val V2_FLAG_READABLE_MIN: Int = 0x02
+    private val V2_FLAGS_MASK: Int        = V2_FLAG_MIN_COMPAT | V2_FLAG_READABLE_MIN
+
+    private val META_VERSION_KEY              = "$mv"
+    private val DOMAIN_IDENTIFIER_KEY         = "$d"
+    private val DOMAIN_VERSION_KEY            = "$v"
+    private val DOMAIN_VERSION_MIN_COMPAT_KEY = "$uv"
+    private val DOMAIN_VERSION_READABLE_KEY   = "$rv"
+    private val TYPE_IDENTIFIER_KEY           = "$t"
+
+    def writeBin(meta: BaboonTypeMeta, writer: LEDataOutputStream): Unit = {
+      meta.metaVersion match {
+        case META_VERSION_1 => writeBinV1(meta, writer)
+        case META_VERSION_2 => writeBinV2(meta, writer)
+        case other          => throw BaboonCodecException.EncoderFailure(s"Unsupported binary envelope metaVersion $other")
+      }
+    }
+
+    private def writeBinV1(meta: BaboonTypeMeta, writer: LEDataOutputStream): Unit = {
+      writer.write(META_VERSION_1.toInt)
+      BaboonBinTools.writeString(writer, meta.domainIdentifier)
+      BaboonBinTools.writeString(writer, meta.domainVersion)
+      if (meta.domainVersion == meta.domainVersionMinCompat) {
+        writer.write(0)
+      } else {
+        writer.write(1)
+        BaboonBinTools.writeString(writer, meta.domainVersionMinCompat)
+      }
+      BaboonBinTools.writeString(writer, meta.typeIdentifier)
+    }
+
+    // v2: `02 | domainId | domainVersion | flags | [minCompat] | [readableMin] | typeId`; each bound is
+    // elided exactly as in JSON (minCompat when == domainVersion, readableMin when == effective minCompat)
+    private def writeBinV2(meta: BaboonTypeMeta, writer: LEDataOutputStream): Unit = {
+      val minCompat      = if (meta.domainVersionMinCompat.isEmpty) meta.domainVersion else meta.domainVersionMinCompat
+      val readableMin    = if (meta.domainVersionReadableMin.isEmpty) minCompat else meta.domainVersionReadableMin
+      val hasMinCompat   = minCompat != meta.domainVersion
+      val hasReadableMin = readableMin != minCompat
+      writer.write(META_VERSION_2.toInt)
+      BaboonBinTools.writeString(writer, meta.domainIdentifier)
+      BaboonBinTools.writeString(writer, meta.domainVersion)
+      writer.write((if (hasMinCompat) V2_FLAG_MIN_COMPAT else 0) | (if (hasReadableMin) V2_FLAG_READABLE_MIN else 0))
+      if (hasMinCompat) BaboonBinTools.writeString(writer, minCompat)
+      if (hasReadableMin) BaboonBinTools.writeString(writer, readableMin)
+      BaboonBinTools.writeString(writer, meta.typeIdentifier)
+    }
+
+    def writeJson(meta: BaboonTypeMeta): Json = {
+      // MFACADE-PR-3: always emit `$mv` as a JSON number so envelopes are
+      // self-identifying without out-of-band knowledge (proposal §10.6 (a)).
+      val json = Json.obj(
+        META_VERSION_KEY      -> Json.fromInt(META_VERSION.toInt),
+        DOMAIN_IDENTIFIER_KEY -> Json.fromString(meta.domainIdentifier),
+        DOMAIN_VERSION_KEY    -> Json.fromString(meta.domainVersion),
+        TYPE_IDENTIFIER_KEY   -> Json.fromString(meta.typeIdentifier),
+      )
+      val withMinCompat = if (meta.domainVersion != meta.domainVersionMinCompat) {
+        json.mapObject(_.add(DOMAIN_VERSION_MIN_COMPAT_KEY, Json.fromString(meta.domainVersionMinCompat)))
+      } else json
+      // `$rv` is elided when it equals the effective `$uv`: unchanged types emit no new bytes
+      if (meta.domainVersionReadableMin.nonEmpty && meta.domainVersionReadableMin != meta.domainVersionMinCompat) {
+        withMinCompat.mapObject(_.add(DOMAIN_VERSION_READABLE_KEY, Json.fromString(meta.domainVersionReadableMin)))
+      } else withMinCompat
+    }
+
+    def readMeta(reader: LEDataInputStream): Option[BaboonTypeMeta] = {
+      reader.readByte() match {
+        case META_VERSION_1 => readMetaV1(reader)
+        case META_VERSION_2 => readMetaV2(reader)
+        case _              => None
+      }
+    }
+
+    private def readMetaV2(reader: LEDataInputStream): Option[BaboonTypeMeta] = {
+      val domainIdentifier = BaboonBinTools.readString(reader)
+      val domainVersion    = BaboonBinTools.readString(reader)
+      val flags            = reader.readByte().toInt
+      // unknown flag bits are illegal; a lenient reader would misparse the strings that follow
+      if ((flags & ~V2_FLAGS_MASK) != 0) return None
+      val minCompat      = if ((flags & V2_FLAG_MIN_COMPAT) != 0) BaboonBinTools.readString(reader) else domainVersion
+      val readableMin    = if ((flags & V2_FLAG_READABLE_MIN) != 0) BaboonBinTools.readString(reader) else minCompat
+      val typeIdentifier = BaboonBinTools.readString(reader)
+      Some(BaboonTypeMeta(META_VERSION_2, domainIdentifier, domainVersion, minCompat, typeIdentifier, readableMin))
+    }
+
+    def readMeta(json: Json): Option[BaboonTypeMeta] = {
+      if (!json.isObject) return None
+
+      // MFACADE-PR-3: accept $mv as either a JSON number or a string (back-compat with
+      // M28-vintage fixtures); both must equal META_VERSION_1. Absent $mv falls through.
+      val mvField = json.hcursor.downField(META_VERSION_KEY)
+      val mvByte: Option[Option[Byte]] = mvField.focus.map { value =>
+        value.asNumber.flatMap(_.toByte)
+          .orElse(value.asString.flatMap(s => scala.util.Try(s.toByte).toOption))
+      }
+      mvByte match {
+        case Some(Some(b)) if b == META_VERSION_1 => readMetaV1(json)
+        case Some(_)                              => None  // $mv present but malformed or wrong version
+        case None                                 => readMetaV1(json)  // $mv absent
+      }
+    }
+
+    private def readMetaV1(reader: LEDataInputStream): Option[BaboonTypeMeta] = {
+      val domainIdentifier       = BaboonBinTools.readString(reader)
+      val domainVersion          = BaboonBinTools.readString(reader)
+      val hasMinCompat = reader.readByte()
+      // codec-envelope.md §2.1: only 0x00 (elided) and 0x01 (present) are legal; anything else is rejected
+      if (hasMinCompat != 0 && hasMinCompat != 1) return None
+      val domainVersionMinCompat = if (hasMinCompat == 1) BaboonBinTools.readString(reader) else domainVersion
+      val typeIdentifier         = BaboonBinTools.readString(reader)
+
+      Some(
+        BaboonTypeMeta(
+          META_VERSION_1,
+          domainIdentifier,
+          domainVersion,
+          domainVersionMinCompat,
+          typeIdentifier,
+        )
+      )
+    }
+
+    private def readMetaV1(json: Json): Option[BaboonTypeMeta] = {
+      val cursor = json.hcursor
+      (for {
+        domainIdentifier <- cursor.downField(DOMAIN_IDENTIFIER_KEY).as[String]
+        domainVersion    <- cursor.downField(DOMAIN_VERSION_KEY).as[String]
+        typeIdentifier   <- cursor.downField(TYPE_IDENTIFIER_KEY).as[String]
+        domainVersionMinCompat <- cursor
+          .downField(DOMAIN_VERSION_MIN_COMPAT_KEY)
+          .focus.fold[Either[DecodingFailure, String]](Right(domainVersion))(_.as[String])
+        domainVersionReadableMin <- cursor
+          .downField(DOMAIN_VERSION_READABLE_KEY)
+          .focus.fold[Either[DecodingFailure, String]](Right(domainVersionMinCompat))(_.as[String])
+      } yield BaboonTypeMeta(
+        META_VERSION_1,
+        domainIdentifier,
+        domainVersion,
+        domainVersionMinCompat,
+        typeIdentifier,
+        domainVersionReadableMin,
+      )).toOption
+    }
+  }
+}

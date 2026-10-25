@@ -1,0 +1,10 @@
+{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"id":"codex-thread","session_id":"codex-root","parent_thread_id":"codex-parent","cwd":"/synthetic/project","cli_version":"synthetic","git":{"repository_url":"https://credential@example.invalid/repo.git?token=secret","branch":"fixture","commit_hash":"abc"}}}
+{"timestamp":"2026-01-01T00:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"你好 🦄","images":[]}}
+{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"你好 🦄"}]}}
+{"timestamp":"2026-01-01T00:00:02Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"command\":\"synthetic-command\"}","call_id":"call"}}
+{"timestamp":"2026-01-01T00:00:03Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call","output":"tool output"}}
+{"timestamp":"2026-01-01T00:00:04Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"synthetic reasoning"}],"encrypted_content":"BINARY_PAYLOAD"}}
+{"timestamp":"2026-01-01T00:00:05Z","type":"turn_context","payload":{"cwd":"/synthetic/project","model":"codex-synthetic-model"}}
+{"timestamp":"2026-01-01T00:00:06Z","type":"compacted","payload":{"message":"synthetic summary"}}
+{"timestamp":"2026-01-01T00:00:07Z","type":"event_msg","payload":{"type":"agent_message","message":"event-only unique"}}
+{"timestamp":"2026-01-01T00:00:08Z","type":"event_msg","payload":{"type":"task_complete","last_agent_message":"event-only unique"}}

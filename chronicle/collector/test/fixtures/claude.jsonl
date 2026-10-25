@@ -1,0 +1,5 @@
+{"type":"user","uuid":"cu","parentUuid":null,"sessionId":"claude-synthetic","timestamp":"2026-01-01T00:00:00Z","cwd":"/synthetic/project","gitBranch":"fixture","message":{"role":"user","content":"你好 🦄"}}
+{"type":"assistant","uuid":"ca","parentUuid":"cu","sessionId":"claude-synthetic","message":{"role":"assistant","model":"claude-synthetic","content":[{"type":"tool_use","id":"ct","name":"bash","input":{"command":"synthetic-command"}}]},"unknownFuture":{"kept":true}}
+{"type":"assistant","uuid":"branch","parentUuid":"cu","sessionId":"claude-synthetic","message":{"role":"assistant","content":[{"type":"text","text":"alternative branch"}]}}
+{"type":"user","uuid":"result","parentUuid":"ca","sessionId":"claude-synthetic","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"ct","content":"tool result"}]}}
+{"type":"summary","summary":"synthetic summary","leafUuid":"result"}

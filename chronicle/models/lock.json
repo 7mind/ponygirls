@@ -1,0 +1,11 @@
+{
+  "scheme" : 3,
+  "locks" : {
+    "chronicle.api" : [
+      {
+        "version" : "1.0.0",
+        "sigId" : "0eb324def9dca582720ded43eb94de6146bed5c82c7fd3c87011f4b20987f191"
+      }
+    ]
+  }
+}

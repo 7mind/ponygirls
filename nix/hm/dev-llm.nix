@@ -39,5 +39,7 @@
     # It self-enables only when fully resolvable (url + tokenFile);
     # otherwise it contributes nothing.
     ./manure.nix
+    # Session collection remains explicitly opt-in, independently of MCP access.
+    ./chronicle.nix
   ];
 }

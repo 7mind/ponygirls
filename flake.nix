@@ -25,6 +25,7 @@
         pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
         skills = pkgs.callPackage ./nix/pkg/llm-skills/default.nix { };
         contexts = pkgs.callPackage ./nix/pkg/llm-contexts/default.nix { };
+        chronicleTools = pkgs.callPackage ./nix/pkg/chronicle/toolchain.nix { };
         podmanModuleConfig = (nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [
@@ -249,6 +250,19 @@
           pkgs.runCommandLocal "subagents-policy-shape-test" { } "touch $out";
       in
       {
+        devShells.chronicle = pkgs.mkShell {
+          packages = [ chronicleTools.graal chronicleTools.baboon chronicleTools.sbt chronicleTools.postgres pkgs.nodejs_24 pkgs.git pkgs.pkg-config pkgs.zlib pkgs.openssl pkgs.stdenv.cc ];
+          JAVA_HOME = chronicleTools.graal.home;
+          GRAALVM_HOME = chronicleTools.graal.home;
+          CHRONICLE_NATIVE_IMAGE_FLAGS = pkgs.lib.concatStringsSep " " chronicleTools.nativeImageFlags;
+          SBT_LAUNCH_JAR = chronicleTools.launcher;
+          SBT_JAVA_OPTS = "-Dsbt.override.build.repos=true -Dsbt.repository.config=${chronicleTools.repositories}";
+          PG_BIN = "${chronicleTools.postgres}/bin";
+          POSTGRES_HOME = chronicleTools.postgres;
+          BABOON = "${chronicleTools.baboon}/bin/baboon";
+          PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
+        };
         packages = {
           llm-skills = skills.package;
           llm-contexts = contexts.package;
@@ -266,7 +280,10 @@
           tui-tmux = pkgs.callPackage ./nix/pkg/tui-tmux/default.nix { };
           haystack = pkgs.callPackage ./nix/pkg/haystack/package.nix { };
           manure = pkgs.callPackage ./nix/pkg/manure/package.nix { };
+          chronicle-collector = pkgs.callPackage ./nix/pkg/chronicle/collector.nix { };
+          chronicle-web = pkgs.callPackage ./nix/pkg/chronicle/web.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          chronicle = pkgs.callPackage ./nix/pkg/chronicle/server.nix { };
           crawl4ai = pkgs.callPackage ./nix/pkg/crawl4ai/package.nix { src = inputs.crawl4ai; };
           reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
           yolo = pkgs.callPackage ./nix/pkg/yolo/default.nix { };
@@ -277,6 +294,8 @@
           yolo = self.packages.${system}.yolo-darwin;
         };
         checks = {
+          chronicle-web = self.packages.${system}.chronicle-web;
+          chronicle-collector = self.packages.${system}.chronicle-collector;
           default-models = defaultModelsCheck;
           notify-module = pkgs.callPackage ./nix/tests/notify-module.nix { };
           atlassian-hm-eval = import ./nix/tests/atlassian-hm-eval.nix { inherit pkgs nixpkgs inputs; };
@@ -793,6 +812,9 @@
             yoloHmModule = import ./nix/hm/yolo.nix { inherit inputs; };
           };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          chronicle = self.packages.${system}.chronicle;
+          chronicle-modules = import ./nix/tests/chronicle-modules.nix { inherit pkgs nixpkgs; };
+          chronicle-models = import ./nix/tests/chronicle-models.nix { inherit pkgs nixpkgs; };
           # The full suite requires Linux /proc process identity and bubblewrap.
           ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.bubblewrap ];
@@ -891,8 +913,10 @@
         };
       })) // {
         homeManagerModules.dev-llm = import ./nix/hm/dev-llm.nix { inherit inputs; };
+        homeManagerModules.chronicle = import ./nix/hm/chronicle.nix;
         homeManagerModules.haystack = import ./nix/hm/haystack.nix;
         homeManagerModules.manure = import ./nix/hm/manure.nix;
+        nixosModules.chronicle = import ./nix/nixos/chronicle.nix;
         nixosModules.haystack = import ./nix/nixos/haystack.nix;
         nixosModules.manure = import ./nix/nixos/manure.nix;
         nixosModules.podman = import ./nix/nixos/podman.nix;

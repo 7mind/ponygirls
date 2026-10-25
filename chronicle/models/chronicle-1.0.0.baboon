@@ -1,0 +1,92 @@
+model chronicle.api
+version "1.0.0"
+
+enum SearchMode { Lexical Semantic Hybrid }
+enum SourceFormat { Claude Codex Pi }
+enum Completion { Quiescent Closed }
+enum Scope { Ingest Read Raw }
+enum JobState { Queued Running Failed Complete }
+data SourceIdentity { collectorNamespace: str discoveryRootId: str format: SourceFormat producerSessionId: str subagentId: opt[str] }
+data Metadata { title: str project: opt[str] workdir: opt[str] gitRemote: opt[str] gitBranch: opt[str] gitCommit: opt[str] producer: str model: opt[str] startedAt: opt[str] endedAt: opt[str] tags: lst[str] }
+data Message { id: str parentId: opt[str] role: str text: str timestamp: opt[str] recordIndex: i32 }
+data RawFile { path: str sha256: str content: str }
+root data IngestRequest { requestId: uid source: SourceIdentity expectedRevision: i32 digest: str completion: Completion redacted: bit metadata: Metadata messages: lst[Message] files: lst[RawFile] }
+root data IngestReceipt { requestId: uid sessionId: uid revision: i32 jobId: uid }
+root data LoginRequest { login: str password: str }
+root data LoginResponse { user: UserInfo versions: VersionInfo }
+data VersionInfo { current: str minimum: str supported: lst[str] }
+data UserInfo { id: str login: str scopes: lst[Scope] }
+data SearchFilter { project: opt[str] gitBranch: opt[str] after: opt[str] before: opt[str] tags: lst[str] }
+data SearchQuery { query: str mode: SearchMode filter: SearchFilter limit: i32 offset: i32 }
+data ContentView { revision: i32 generationId: opt[uid] }
+data SessionInfo { view: ContentView id: uid ownerId: str revision: i32 indexedRevision: opt[i32] metadata: Metadata source: SourceIdentity completion: Completion redacted: bit }
+data Span { messageId: str start: i32 end: i32 }
+data Chunk { id: uid sessionId: uid text: str summary: str tags: lst[str] spans: lst[Span] score: f64 }
+data SearchHit { session: SessionInfo chunks: lst[Chunk] score: f64 }
+data SearchResult { hits: lst[SearchHit] total: i32 }
+data SessionResult { session: SessionInfo chunks: lst[Chunk] }
+data ChunksResult { chunks: lst[Chunk] total: i32 offset: i32 view: ContentView }
+data MessagesResult { messages: lst[Message] total: i32 offset: i32 view: ContentView }
+data RawResult { files: lst[RawFile] revision: i32 }
+data RelatedResult { sessions: lst[SearchHit] }
+data Facet { value: str count: i32 }
+data FacetsResult { projects: lst[Facet] branches: lst[Facet] tags: lst[Facet] }
+data JobInfo { id: uid sessionId: uid revision: i32 state: JobState attempts: i32 error: opt[str] }
+data StatusResult { jobs: lst[JobInfo] total: i32 }
+data TokenInfo { id: uid name: str scopes: lst[Scope] createdAt: str revoked: bit }
+data TokenResult { token: TokenInfo secret: opt[str] }
+data TokensResult { tokens: lst[TokenInfo] }
+data GroupInfo { id: uid name: str ownerId: str members: lst[str] }
+data InviteInfo { id: uid groupId: uid targetId: str expiresAt: str }
+data GroupsResult { groups: lst[GroupInfo] invitations: lst[InviteInfo] }
+data MutationReceipt { requestId: uid operation: str entityId: opt[uid] }
+data Failure { code: str message: str }
+root adt Operation {
+  data Hello { versions: lst[str] }
+  data Ping { nonce: str }
+  data Pong { nonce: str }
+  data Whoami {}
+  data Search { query: SearchQuery }
+  data GetSession { sessionId: uid view: opt[ContentView] }
+  data GetChunks { sessionId: uid offset: i32 limit: i32 view: opt[ContentView] }
+  data GetMessages { sessionId: uid offset: i32 limit: i32 view: opt[ContentView] }
+  data GetRaw { sessionId: uid revision: opt[i32] }
+  data Related { sessionId: uid limit: i32 }
+  data Facets { filter: SearchFilter }
+  data IngestStatus { offset: i32 limit: i32 }
+  data RetryJob { jobId: uid }
+  data ListTokens {}
+  data MintToken { name: str scopes: lst[Scope] }
+  data RevokeToken { tokenId: uid }
+  data ListGroups {}
+  data CreateGroup { name: str }
+  data Invite { groupId: uid targetId: str }
+  data AcceptInvite { invitationId: uid confirmSharing: bit }
+  data RemoveMember { groupId: uid userId: str }
+  data LeaveGroup { groupId: uid }
+  data DeleteGroup { groupId: uid }
+  data Receipt { mutationId: uid }
+  data Purge { sessionId: uid }
+  data Logout {}
+}
+root data ClientEnvelope { requestId: uid operation: Operation }
+root adt Result {
+  data Hello { versions: VersionInfo user: UserInfo }
+  data Pong { nonce: str }
+  data Whoami { user: UserInfo }
+  data Search { result: SearchResult }
+  data Session { result: SessionResult }
+  data Chunks { result: ChunksResult }
+  data Messages { result: MessagesResult }
+  data Raw { result: RawResult }
+  data Related { result: RelatedResult }
+  data Facets { result: FacetsResult }
+  data Status { result: StatusResult }
+  data Tokens { result: TokensResult }
+  data Token { result: TokenResult }
+  data Groups { result: GroupsResult }
+  data Mutation { receipt: MutationReceipt }
+  data Error { failure: Failure }
+  data Ping { nonce: str }
+}
+root data ServerEnvelope { requestId: uid result: Result }

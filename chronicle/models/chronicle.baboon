@@ -1,0 +1,12 @@
+model chronicle.api
+version "1.1.0"
+
+import "1.0.0" { * } without { SearchResult }
+
+enum SearchCountScope { ExactMatches CandidateWindow }
+data SearchResult {
+  hits: lst[SearchHit]
+  total: i32
+  countScope: SearchCountScope
+  rankingLimit: opt[i32]
+}

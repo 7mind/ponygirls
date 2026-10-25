@@ -12,7 +12,7 @@ sandboxing; macOS uses Seatbelt through `claude-code-sandbox`.
 
 ## The big picture
 
-Four kinds of thing live here, and they build on each other:
+Five kinds of thing live here, and they build on each other:
 
 1. **Agents and tools** — packaged CLIs you can run on their own: Pi, Codex,
    Claude Code, the pi-search-hub web-search package, the CodeGraph MCP server.
@@ -25,6 +25,8 @@ Four kinds of thing live here, and they build on each other:
 4. **The configuration** — Home Manager and NixOS modules that install and
    configure all of the above declaratively, including the shared skills and
    context documents each agent reads.
+5. **Shared services** — Haystack memory, Manure artifacts, and Chronicle's
+   searchable archive of harness sessions.
 
 Every package is under `packages.<system>` and can be built or run standalone
 (`nix build .#pi-coding-agent`, `nix run .#tokemon`, …) — the modules are
@@ -85,6 +87,20 @@ with Seatbelt (via `claude-code-sandbox`) — per-profile isolation of Claude
 Code, Codex, and Pi configuration and credentials on a single user account.
 Its subcommands (`claude`, `codex`, `pi`, `shell`, `cmd`) and profile
 management match the Linux tool; the bubblewrap-only capabilities do not apply.
+
+### Session history: Chronicle
+
+| Package | What it is |
+|---|---|
+| `chronicle` (Linux) | Scala 3/distage/logstage **native** server: authenticated MCP search, durable session ingestion, LLM-guided source-backed chunks, PostgreSQL full-text + pgvector search, and a Baboon/WebSocket dashboard. Static users mint scoped agent tokens and share through groups. |
+| `chronicle-collector` | Opt-in TypeScript user daemon/CLI for Claude, Codex and Pi histories, including yolo profiles and subagents. Private durable spool, pre-upload redaction, exact retries and honest quiescent-snapshot evidence. |
+| `chronicle-web` | Responsive TypeScript dashboard with transcript/source navigation, access management and visible heartbeat-based connection recovery. |
+
+Start with the [reviewed plan](docs/drafts/20261024-2340-chronicle-plan.md),
+[server README](chronicle/README.md), and [deployment runbook](chronicle/docs/operations.md).
+`nix develop .#chronicle` provides the pinned toolchain. MCP access and collection
+are separate Home Manager opt-ins; neither deployment nor real-history uploads
+happen during builds/tests.
 
 ### Agent content
 
@@ -293,6 +309,11 @@ Repository names, agent responses, and other free-form hook text are omitted.
 
 ### NixOS modules
 
+- **`nixosModules.chronicle`** — the native archive/search server, local
+  PostgreSQL/pgvector setup, runtime credentials and optional reverse proxy.
+  `homeManagerModules.chronicle` configures MCP access and the opt-in Linux
+  systemd user collector; it is also included in `dev-llm`.
+
 - **`nixosModules.podman`** — a dedicated rootless Podman service account
   (`podsvc-llm`) with a group-restricted Docker-compatible socket at
   `/run/podman-llm/podman.sock` (mode `0660`). Agents get container access
@@ -335,7 +356,8 @@ Repository names, agent responses, and other free-form hook text are omitted.
 - `x86_64-linux`: everything, including `yolo` (bubblewrap), containers, and
   the VM capability.
 - `aarch64-darwin`: the agents, Pi extensions, tokemon, content packages, and
-  `yolo` (= `yolo-darwin`, Seatbelt).
+  `yolo` (= `yolo-darwin`, Seatbelt), plus Chronicle's collector CLI/dashboard.
+  The Chronicle native server and managed collector daemon are Linux-only.
 
 ## Runtime credentials: Haystack and Manure
 

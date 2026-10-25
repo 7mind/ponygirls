@@ -1,0 +1,8 @@
+[
+ {"name":"org.postgresql.Driver","allPublicConstructors":true},
+ {"name":"org.postgresql.ssl.LibPQFactory","allPublicConstructors":true},
+ {"name":"org.postgresql.ssl.DefaultJavaSSLFactory","allPublicConstructors":true},
+ {"name":"org.postgresql.util.PGobject","allPublicConstructors":true},
+ {"name":"org.postgresql.util.PGInterval","allPublicConstructors":true},
+ {"name":"org.postgresql.util.PGmoney","allPublicConstructors":true}
+]
