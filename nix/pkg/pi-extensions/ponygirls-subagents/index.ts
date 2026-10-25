@@ -16,6 +16,7 @@ import { Supervisor, TOOL_RESULT_MAX, type CallerId } from "./src/supervisor.ts"
 import type { GateSpecInput, ReviewSpecInput } from "./src/gate.ts";
 import { instructionsFromPromptOptions, parseSelection } from "./src/instructions.ts";
 import { defaultSupervisorPolicy, validateAllowedTools, validateWorktreeRoot, type SupervisorPolicy } from "./src/policy.ts";
+import { GoverningModels } from "./src/parent-models.ts";
 import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/governing-runtime.ts";
 import { gateParameters, readParameters, reviewParameters, spawnParameters, waitParameters } from "./src/tools.ts";
 import type { InstructionSet, Isolation, ResolvedModel } from "./src/types.ts";
@@ -108,6 +109,7 @@ interface SessionBinding {
   governingActive: boolean;
   /** The governing session's model at its latest tool call (what children inherit). */
   model: ResolvedModel | null;
+  modelRegistry: ExtensionContext["modelRegistry"];
   /** The governing session's working directory (host-isolated children start here). */
   cwd: string;
   /** Skills and context files pi loaded for the current run (what children can receive). */
@@ -179,7 +181,7 @@ export default function (pi: ExtensionAPI): void {
     const rootDir = join(agentBaseDir(), "subagents", sessionId);
     const store = new FileRunStore(rootDir, sessionId);
     const binding: SessionBinding = {
-      sessionId, supervisor: null as unknown as Supervisor, model: null, cwd: ctx.cwd, instructions: null,
+      sessionId, supervisor: null as unknown as Supervisor, model: null, modelRegistry: ctx.modelRegistry, cwd: ctx.cwd, instructions: null,
       ui: ctx.ui, statusTimer: null, governingBaseCtx: null, governingActive: true,
       // Start at the journal end: history from an earlier attachment is not redelivered.
       notices: new NoticeDelivery(
@@ -197,6 +199,10 @@ export default function (pi: ExtensionAPI): void {
       store,
       policy: loadPolicy(),
       governor: () => ({ model: binding.model, cwd: binding.cwd, instructions: binding.instructions }),
+      parentModels: new GoverningModels(() => {
+        if (!binding.governingActive) throw new Error("STALE_GENERATION: governing model registry is no longer active");
+        return binding.modelRegistry;
+      }),
       governingRegistry: () => {
         if (!binding.governingActive || !binding.governingBaseCtx) return null;
         const base = binding.governingBaseCtx;
@@ -250,6 +256,7 @@ export default function (pi: ExtensionAPI): void {
   function governing(ctx: ExtensionContext): SessionBinding {
     const binding = bindingFor(ctx);
     binding.model = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id, thinkingLevel: pi.getThinkingLevel() } : null;
+    binding.modelRegistry = ctx.modelRegistry;
     // Capture the live tool context for external delegation (prototype-
     // preserved scoped contexts keep getters/revocation; spawn return is NOT
     // inactivity — dispatch uses broker-owned IDs/signals after return).

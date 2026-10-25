@@ -19,6 +19,8 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ToolBroker, type BrokerCaller, type CallerSandbox, type ToolExecutors } from "./broker.ts";
 import { err } from "./errors.ts";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { parseParentModel, parseProviderRequestAuth, type ParentModels } from "./parent-models.ts";
 import { GateController, fingerprintSummary, restoreGateSpec, type CandidateRecord, type GateDecisionInput, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type NormalizedReviewerSpec, type ReviewFeedback, type ReviewSpecInput, type WorkspaceFingerprint } from "./gate.ts";
 import { EMPTY_INSTRUCTIONS, instructionHash, parseSelection, selectInstructions } from "./instructions.ts";
 import { ISOLATION_LEVELS } from "./types.ts";
@@ -258,6 +260,7 @@ interface ActiveRun {
 
 interface AgentRuntime {
   record: AgentRecord;
+  parentModel: Model<Api> | null;
   worker: WorkerPort | null;
   runnableLease: LeaseTicket | null;
   residentLease: LeaseTicket | null;
@@ -337,6 +340,7 @@ export interface SupervisorOptions {
   policy: SupervisorPolicy;
   /** The governing session at the current call: what top-level children start from. */
   governor: () => GovernorContext;
+  parentModels?: ParentModels;
   schedulerLimits?: { maxRunnable?: number; maxResidentWorkers?: number; maxOpenAgents?: number; maxDepth?: number };
   executors?: ToolExecutors;
   workspace?: WorkspaceManager;
@@ -389,6 +393,7 @@ const MATERIAL_EVENTS: ReadonlySet<string> = new Set(["task.terminal", "generati
 function newRuntime(record: AgentRecord): AgentRuntime {
   return {
     record,
+    parentModel: null,
     worker: null,
     runnableLease: null,
     residentLease: null,
@@ -1377,6 +1382,7 @@ export class Supervisor implements GateHost {
         throw err("CONFLICT", "owner workspace is locked for review; writers excluded until review ends");
       }
       const model = this.resolveChildModel(parentRt, params.model ?? null);
+      if (this.opts.parentModels !== undefined) this.opts.parentModels.describe(model);
       const gateSpec = params.gate ? this.gate.validateSpec(params.gate) : params.review ? this.gate.validateSpec(params.review, "review") : null;
       if (gateSpec) assertGateFits(gateSpec, params.profile === "writer");
       const path = PathRegistry.childPath(parentRt ? parentRt.record.path : "/root", params.taskName);
@@ -2343,6 +2349,12 @@ export class Supervisor implements GateHost {
 
   /** Launch a worker process bound to this runtime (no work accepted yet). */
   private async launchWorker(rt: AgentRuntime): Promise<WorkerPort> {
+    const model = rt.record.model;
+    rt.parentModel = null;
+    if (this.opts.parentModels !== undefined && model !== null) {
+      const descriptor = this.opts.parentModels.describe(model);
+      if (descriptor !== null) rt.parentModel = parseParentModel(descriptor, model);
+    }
     const worker = this.makeWorker(rt.record.id);
     rt.worker = worker;
     rt.record.residency = "loaded";
@@ -2408,6 +2420,7 @@ export class Supervisor implements GateHost {
       instructionHash: rt.record.instructionHash,
       instructions: rt.record.instructions,
       model: rt.record.model,
+      ...(rt.parentModel !== null ? { providerModel: rt.parentModel } : {}),
       taskRunId: rt.record.currentTaskRunId,
       executionGeneration: rt.record.executionGeneration,
       workdir,
@@ -2748,12 +2761,31 @@ export class Supervisor implements GateHost {
    * retry/new prompt requires genuine successful recovery (no transparent
    * parking, no auto-resume on healed storage, nothing swallowed).
    */
-  private async onProviderAdmission(
+  private async onProviderAdmission(rt: AgentRuntime, worker: WorkerPort, payload: ProviderAdmissionPayload, envelope: IpcEnvelope): Promise<ProviderAdmissionResponse> {
+    const admission = this.checkProviderAdmission(rt, worker, payload, envelope);
+    if (!admission.ok || rt.parentModel === null || payload.reason !== "auth") return admission;
+    const source = this.opts.parentModels;
+    if (source === undefined) return { ok: false, code: "MODEL_UNAVAILABLE", error: "parent model authentication source is unavailable" };
+    try {
+      const result = await source.resolveAuth(rt.parentModel);
+      // Auth can refresh asynchronously; close/recovery/reuse must fence the reply too.
+      const current = this.checkProviderAdmission(rt, worker, payload, envelope);
+      if (!current.ok) return current;
+      if (!result.ok) return { ok: false, code: "MODEL_UNAVAILABLE", error: "governing provider authentication is unavailable" };
+      const { ok: _ok, ...auth } = result;
+      return { ok: true, auth: parseProviderRequestAuth(auth) };
+    } catch {
+      const current = this.checkProviderAdmission(rt, worker, payload, envelope);
+      return current.ok ? { ok: false, code: "MODEL_UNAVAILABLE", error: "governing provider authentication failed" } : current;
+    }
+  }
+
+  private checkProviderAdmission(
     rt: AgentRuntime,
     worker: WorkerPort,
     payload: ProviderAdmissionPayload,
     envelope: IpcEnvelope,
-  ): Promise<ProviderAdmissionResponse> {
+  ): ProviderAdmissionResponse {
     const record = rt.record;
     if (rt.worker !== worker || !rt.activeRun) {
       return { ok: false, code: "STALE_INSTANCE", error: "STALE_INSTANCE: no admitted execution for this worker" };

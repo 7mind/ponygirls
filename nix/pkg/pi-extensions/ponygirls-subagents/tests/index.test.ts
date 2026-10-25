@@ -42,6 +42,10 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
     sessionManager: { getSessionId: () => "sess-1" },
     cwd: agentDir,
     model: { provider: "test", id: "model" },
+    modelRegistry: {
+      getRegisteredProviderConfig: () => undefined,
+      getRegisteredNativeProvider: () => undefined,
+    },
     ui: { notify: () => {}, setWidget: () => {}, theme: { bg: (_color: string, text: string) => text } },
   };
   return { tools, schemas, descriptions, handlers, sent, ctx };

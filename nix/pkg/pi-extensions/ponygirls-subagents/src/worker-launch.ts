@@ -458,7 +458,7 @@ export class WorkerHandle {
       operation: "provider.admission",
       taskRunId: env.taskRunId,
       executionGeneration: env.executionGeneration,
-      payload: { ok: result.ok, ...(result.code !== undefined ? { code: result.code } : {}), ...(result.error !== undefined ? { error: result.error } : {}) },
+      payload: { ok: result.ok, ...(result.code !== undefined ? { code: result.code } : {}), ...(result.error !== undefined ? { error: result.error } : {}), ...(result.ok && result.auth !== undefined ? { auth: result.auth } : {}) },
     };
     this.send(response);
   }

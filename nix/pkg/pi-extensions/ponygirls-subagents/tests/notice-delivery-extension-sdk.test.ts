@@ -23,7 +23,7 @@ interface NoticeEvent {
 // Regression #25: release a successful real child only after the parent settles;
 // neither a startup failure nor polling list_agents establishes idle delivery.
 for (const persistent of [true, false]) {
-  test(`real child completion autonomously resumes an idle ${persistent ? "file" : "memory"} governor without input or polling`, { timeout: 20_000 }, async (t) => {
+  test(`real ${persistent ? "parent-registered" : "file-configured"} child completion autonomously resumes an idle ${persistent ? "file" : "memory"} governor without input or polling`, { timeout: 20_000 }, async (t) => {
     if (!process.env["PI_SUBAGENTS_SDK_ROOT"]) {
       t.skip("PI_SUBAGENTS_SDK_ROOT is required for the real worker");
       return;
@@ -75,10 +75,12 @@ for (const persistent of [true, false]) {
       api: "openai-completions" as const, baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: "fixture-only",
       models: [{ id: "scripted", name: "Scripted", reasoning: false, input: ["text" as const], contextWindow: 100_000, maxTokens: 1000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
     };
-    writeFileSync(join(dir, "models.json"), JSON.stringify({ providers: { "notice-fixture": provider } }));
+    if (!persistent) writeFileSync(join(dir, "models.json"), JSON.stringify({ providers: { "notice-fixture": provider } }));
+    writeFileSync(join(dir, "subagents-policy.json"), JSON.stringify({ allowedModels: [{ provider: "notice-fixture", id: "scripted" }] }));
     const modelRuntime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: join(dir, "models.json"), refreshOnCreate: false });
+    if (persistent) modelRuntime.registerProvider("notice-fixture", provider);
     let requests = 0;
-    modelRuntime.registerProvider("notice-fixture", {
+    modelRuntime.registerProvider("notice-governor", {
       ...provider,
       streamSimple(model, context) {
         requests++;
@@ -87,7 +89,7 @@ for (const persistent of [true, false]) {
           governorResumed.resolve();
         }
         const content = requests === 1
-          ? [{ type: "toolCall" as const, id: "spawn-child", name: "spawn_agent", arguments: { task_name: "idle-child", message: "finish when released", profile: "reader", isolation: "none" } }]
+          ? [{ type: "toolCall" as const, id: "spawn-child", name: "spawn_agent", arguments: { task_name: "idle-child", message: "finish when released", profile: "reader", isolation: "none", model: { provider: "notice-fixture", id: "scripted" } } }]
           : [{ type: "text" as const, text: "parent finished" }];
         const reason = requests === 1 ? "toolUse" : "stop";
         const stream = createAssistantMessageEventStream();
@@ -108,7 +110,7 @@ for (const persistent of [true, false]) {
     });
     await resourceLoader.reload();
     assert.deepEqual(resourceLoader.getExtensions().errors, []);
-    const model = modelRuntime.getModel("notice-fixture", "scripted");
+    const model = modelRuntime.getModel("notice-governor", "scripted");
     assert.ok(model);
     ({ session } = await createAgentSession({
       cwd: dir, agentDir: dir, modelRuntime, model, settingsManager, resourceLoader, thinkingLevel: "off", tools: ["spawn_agent"],

@@ -25,9 +25,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
-import type { InitializePayload, IpcEnvelope, WorkerEvent } from "./protocol.ts";
+import type { InitializePayload, IpcEnvelope, ProviderAdmissionResponse, WorkerEvent } from "./protocol.ts";
 import { bindChannel, taskHeader, validateEnvelope, validateInitializePayload } from "./protocol.ts";
-import type { Api, AssistantMessage, AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext, Usage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, AssistantMessageEventStream, CredentialStore, Model, Provider, ProviderStreams, SimpleStreamOptions, TranscriptContext, Usage } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, RESULT_TEXT_MAX, childToolSpec, type TypeBuilder } from "./tools.ts";
 import { MAX_PAYLOAD_BYTES } from "./protocol.ts";
@@ -35,6 +35,7 @@ import { PROTOCOL_VERSION, type InstructionSet } from "./types.ts";
 import type { ChannelBinding } from "./protocol.ts";
 import type { DeterministicEntryObserver, InvocationScope } from "./deterministic.ts";
 import { adaptStream, isFacadeLocalCompletion } from "./stream-facade.ts";
+import { parentModelProvider, parseParentModel, parseProviderRequestAuth, type ParentModelProvider } from "./parent-models.ts";
 
 const PI_VERSION = "1.0.0";
 const CAPABILITIES = ["proxy-tools", "sequential", "checkpoint", "gate-decision", "control-tools"];
@@ -136,6 +137,7 @@ function snapshotResourceLoader(base: ResourceLoaderLike, set: InstructionSet): 
 }
 
 interface WorkerModelRuntime {
+  registerNativeProvider: (provider: Provider) => void;
   registerProvider: (id: string, config: Record<string, unknown>) => void;
   getModel: (provider: string, id: string) => Record<string, unknown> | undefined;
 }
@@ -227,7 +229,7 @@ interface PendingPreparation {
 }
 
 interface PendingAdmission {
-  resolve: (result: { ok: boolean; code?: string; error?: string }) => void;
+  resolve: (result: ProviderAdmissionResponse) => void;
   timer: ReturnType<typeof setTimeout> | undefined;
   onAbort?: () => void;
   signal?: AbortSignal | undefined;
@@ -671,10 +673,14 @@ async function loadTypeBox(): Promise<TypeBuilder<unknown>> {
 }
 
 async function loadCompat(): Promise<{
+  InMemoryCredentialStore: new () => CredentialStore;
+  getApiProvider: (api: string) => ProviderStreams | undefined;
   EventStream: new (isTerminal: (e: { type: string }) => boolean, getResult: (e: { type: string; message?: unknown; error?: unknown }) => unknown) => { push: (e: unknown) => void };
   createAssistantMessageEventStream: () => import("@earendil-works/pi-ai").AssistantMessageEventStream;
 }> {
   return (await import(`file://${sdkRoot()}/node_modules/@earendil-works/pi-ai/dist/compat.js`)) as {
+    InMemoryCredentialStore: new () => CredentialStore;
+    getApiProvider: (api: string) => ProviderStreams | undefined;
     EventStream: new (isTerminal: (e: { type: string }) => boolean, getResult: (e: { type: string; message?: unknown; error?: unknown }) => unknown) => { push: (e: unknown) => void };
     createAssistantMessageEventStream: () => import("@earendil-works/pi-ai").AssistantMessageEventStream;
   };
@@ -699,7 +705,7 @@ const ENVELOPE_HEADROOM_BYTES = 8 * 1024;
 const PREPARE_TIMEOUT_MS = 10_000;
 /** Provider-admission query must never hang a provider request: fail closed
  * with a visible routing error on timeout (never an indefinitely unresolved
- * RPC, never silent allow). Supervisor answers synchronously (no chain). */
+ * RPC, never silent allow). Parent credential resolution stays outside the controller chain. */
 const ADMISSION_TIMEOUT_MS = 10_000;
 
 /**
@@ -758,10 +764,10 @@ function requestProviderAdmission(
   modelId: string,
   thinkingLevel: string,
   signal?: AbortSignal,
-): Promise<{ ok: boolean; code?: string; error?: string }> {
+): Promise<ProviderAdmissionResponse> {
   return new Promise((resolve) => {
     const requestId = randomUUID();
-    const finish = (result: { ok: boolean; code?: string; error?: string }): void => {
+    const finish = (result: ProviderAdmissionResponse): void => {
       const pending = state.pendingAdmission.get(requestId);
       if (!pending) return;
       if (pending.timer) clearTimeout(pending.timer);
@@ -1207,6 +1213,7 @@ async function installOriginalFaultWrapper(session: WorkerSession): Promise<void
 async function decorateProviderGuard(
   session: WorkerSession,
   admitted: { provider: string; id: string; thinkingLevel: string },
+  parentProvider: ParentModelProvider | null,
 ): Promise<void> {
   const original: StreamFn = session.agent.streamFunction;
   if (typeof original !== "function") {
@@ -1224,9 +1231,13 @@ async function decorateProviderGuard(
     options?: SimpleStreamOptions,
   ): Promise<AssistantMessageEventStream> {
     const signal: AbortSignal | undefined = options?.signal;
-    let admission: { ok: boolean; code?: string; error?: string };
+    let admission: ProviderAdmissionResponse;
     try {
-      admission = await requestProviderAdmission("stream", admitted.provider, admitted.id, admitted.thinkingLevel, signal);
+      if (parentProvider !== null && !parentProvider.matchesRequest(model)) {
+        admission = { ok: false, code: "POLICY_DENIED", error: "provider request does not match the approved parent model" };
+      } else {
+        admission = await requestProviderAdmission("stream", admitted.provider, admitted.id, admitted.thinkingLevel, signal);
+      }
     } catch (e: unknown) {
       const detail = e instanceof Error ? e.message : String(e);
       admission = { ok: false, code: "INVALID", error: `INVALID: ${detail}` };
@@ -1237,7 +1248,8 @@ async function decorateProviderGuard(
       const capturedGeneration: unknown = capturedGen.generation;
       let raw: AssistantMessageEventStream;
       try {
-        const streamOrPromise: ReturnType<StreamFn> = Reflect.apply(original, this, [model, context, options]) as ReturnType<StreamFn>;
+        const request = parentProvider === null ? { model, options } : parentProvider.prepareRequest(model, options);
+        const streamOrPromise: ReturnType<StreamFn> = Reflect.apply(original, this, [request.model, context, request.options]) as ReturnType<StreamFn>;
         raw = await streamOrPromise;
       } catch (invokeError: unknown) {
         capturedGen.usage.unknown = true;
@@ -1403,7 +1415,7 @@ function makeProxyExecute(toolName: string): (toolCallId: string, params: unknow
   };
 }
 
-async function resolveModel(sdk: SdkModules, init: InitializePayload, agentDir: string): Promise<{ modelRuntime: WorkerModelRuntime; model: Record<string, unknown> }> {
+async function resolveModel(sdk: SdkModules, init: InitializePayload, agentDir: string): Promise<{ modelRuntime: WorkerModelRuntime; model: Record<string, unknown>; parentProvider: ParentModelProvider | null }> {
   if (process.env["PI_SUBAGENTS_DETERMINISTIC"] === "1") {
     // Provider-free integration: scripted provider through the real
     // ModelRuntime extension path (no network, no credentials).
@@ -1509,19 +1521,36 @@ async function resolveModel(sdk: SdkModules, init: InitializePayload, agentDir: 
     registerDeterministicProvider(modelRuntime, compat.EventStream, parseScriptSteps(), observer);
     const model = modelRuntime.getModel(SIM_PROVIDER, SIM_MODEL);
     if (!model) throw new Error("MODEL_UNAVAILABLE: deterministic provider model unavailable");
-    return { modelRuntime, model };
+    return { modelRuntime, model, parentProvider: null };
   }
   // Provider credentials stay in the approved host store, opened live (no
   // auth.json copies into worktrees or tool envs). Declarative custom
-  // models come from the host models.json; extension-registered providers
-  // cannot be serialized into a worker and are rejected as unavailable.
+  // models come from the host models.json or a public parent descriptor.
+  // Parent-only credentials are resolved privately for each provider request.
   const hostAgentDir = process.env["PI_SUBAGENTS_HOST_AGENT_DIR"];
   if (!hostAgentDir) throw new Error("MODEL_UNAVAILABLE: no approved credential store (PI_SUBAGENTS_HOST_AGENT_DIR unset)");
   const modelsPath = join(hostAgentDir, "models.json");
-  const modelRuntime = await sdk.ModelRuntime.create({ authPath: join(hostAgentDir, "auth.json"), modelsPath: existsSync(modelsPath) ? modelsPath : null });
+  let parentProvider: ParentModelProvider | null = null;
+  const parentCredentials = init.providerModel === undefined ? null : new (await loadCompat()).InMemoryCredentialStore();
+  const modelRuntime = await sdk.ModelRuntime.create(parentCredentials === null
+    ? { authPath: join(hostAgentDir, "auth.json"), modelsPath: existsSync(modelsPath) ? modelsPath : null }
+    : { credentials: parentCredentials, modelsPath: null });
+  if (init.providerModel !== undefined) {
+    const descriptor = parseParentModel(init.providerModel, init.model);
+    const compat = await loadCompat();
+    const api = compat.getApiProvider(descriptor.api);
+    if (api === undefined) throw new Error("MODEL_UNAVAILABLE: parent model uses an API unavailable in the worker");
+    parentProvider = parentModelProvider(descriptor, api, async (signal) => {
+      const admission = await requestProviderAdmission("auth", init.model.provider, init.model.id, init.model.thinkingLevel, signal);
+      if (!admission.ok) throw new Error(`${admission.code ?? "MODEL_UNAVAILABLE"}: ${admission.error ?? "parent provider authentication denied"}`);
+      if (admission.auth === undefined) throw new Error("MODEL_UNAVAILABLE: parent provider authentication was not supplied");
+      return admission.auth;
+    });
+    modelRuntime.registerNativeProvider(parentProvider);
+  }
   const model = modelRuntime.getModel(init.model.provider, init.model.id);
   if (!model) throw new Error(`MODEL_UNAVAILABLE: ${init.model.provider}/${init.model.id} is not resolvable from the approved store`);
-  return { modelRuntime, model };
+  return { modelRuntime, model, parentProvider };
 }
 
 async function handleInitialize(env: IpcEnvelope): Promise<void> {
@@ -1540,6 +1569,7 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
   setRequestIdentityEnv(init.taskRunId, init.executionGeneration);
 
   let session: WorkerSession;
+  let parentProvider: ParentModelProvider | null = null;
   try {
     const sdk = await loadSdk();
     const agentDir = process.env["PI_SUBAGENTS_AGENT_DIR"];
@@ -1591,7 +1621,9 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
       const spec = childToolSpec(Type, name);
       return sdk.defineTool({ name, label: name, description: spec.description, parameters: spec.parameters, executionMode: "sequential", execute: makeProxyExecute(name) });
     });
-    const { modelRuntime, model } = await resolveModel(sdk, init, agentDir);
+    const resolved = await resolveModel(sdk, init, agentDir);
+    const { modelRuntime, model } = resolved;
+    parentProvider = resolved.parentProvider;
     // Native sessions are file-backed and supervisor-owned (under the root
     // store, outside tool views). A gate reviewer gets a fresh file for each
     // evaluation (it is never restored), kept for its transcript.
@@ -1662,7 +1694,7 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
   // session agent streamFunction BEFORE accepting work, so the first
   // provider request already traverses the guard. Missing field fails
   // loudly via the initialize failure path below (never optional skip).
-  await decorateProviderGuard(session, { provider: init.model.provider, id: init.model.id, thinkingLevel: init.model.thinkingLevel });
+  await decorateProviderGuard(session, { provider: init.model.provider, id: init.model.id, thinkingLevel: init.model.thinkingLevel }, parentProvider);
   ack(env.requestId, {
     sessionId: session.sessionId,
     sessionFile: session.sessionManager.getSessionFile() ?? null,
@@ -1966,9 +1998,13 @@ function handlePrepareResponse(envelope: IpcEnvelope): void {
 function handleAdmissionResponse(envelope: IpcEnvelope): void {
   const pending = envelope.requestId ? state.pendingAdmission.get(envelope.requestId) : undefined;
   if (!pending) return;
-  const payload = envelope.payload as { ok?: boolean; code?: string; error?: string };
+  const payload = envelope.payload as { ok?: boolean; code?: string; error?: string; auth?: unknown };
   if (payload?.ok === true) {
-    pending.resolve({ ok: true });
+    try {
+      pending.resolve({ ok: true, ...(payload.auth === undefined ? {} : { auth: parseProviderRequestAuth(payload.auth) }) });
+    } catch {
+      pending.resolve({ ok: false, code: "INVALID", error: "invalid parent provider authentication response" });
+    }
   } else {
     // Explicit denials (hold/fence/timeout/unsupported) stay hard and never
     // downgrade to an unticketed allow; failures are visible routing errors.

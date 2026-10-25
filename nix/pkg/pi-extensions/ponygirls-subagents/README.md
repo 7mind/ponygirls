@@ -46,6 +46,7 @@ genuine limitations.
 - `src/supervisor.ts` — tree, policy, scheduler, journal, recovery, gates host
 - `src/worker.ts` — SDK worker process (native child session, proxy tools)
 - `src/worker-launch.ts` — supervisor-side transport (fork, handshake, guard)
+- `src/parent-models.ts` — selected parent provider metadata and private request-auth bridge
 - `src/gate.ts` — optional validation gate controller + decision schema
 - `src/ui.ts` — border badge, headless projection, the `/agents` screen
   (tree inspector, transcript view with chat)
@@ -232,10 +233,17 @@ the home layout; an absolute path pools writer worktrees per session as
 above; setting it manages the file), `...WorkspaceRoots`,
 `...WorkspaceOwnerCheckoutAllowed`.
 
-Provider credentials stay in `~/.pi/agent/auth.json` (declarative custom
-models in `models.json`). Workers open that store live through
-`PI_SUBAGENTS_HOST_AGENT_DIR` (set by the extension); `auth.json` is never
-copied and is hidden from sandboxed tool views. Workers import pi's built
+Built-in and declarative `models.json` providers retain live access to the
+approved `~/.pi/agent/auth.json` through `PI_SUBAGENTS_HOST_AGENT_DIR`;
+`auth.json` is never copied and is hidden from sandboxed tool views.
+For a parent extension's legacy registration using a stock SDK API, only the
+selected model's public metadata is transferred. The parent resolves fresh
+request credentials and headers over private, generation-fenced IPC; workers
+use an empty in-memory credential store, not inherited environment variables.
+Native extension providers and custom streaming functions fail explicitly.
+Parent request hooks are not replayed, so their sampling/payload overrides
+are not inherited. No parent extensions or unrelated registrations are loaded.
+Workers import pi's built
 package tree from `PI_SUBAGENTS_SDK_ROOT`, which the home-manager pi wrapper
 sets to the exact pi derivation (`nix/hm/pi.nix`); without it spawning fails
 explicitly.

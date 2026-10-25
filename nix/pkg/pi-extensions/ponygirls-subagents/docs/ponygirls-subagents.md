@@ -352,11 +352,19 @@ is not replayed. There is no crash-durable exactly-once governing-notice receipt
   not prevented transactionally — tasks needing stronger isolation must
   say so; no snapshot backend exists in v1.
 - **Cross-process credential-refresh serialization is best-effort.**
-  Workers share the host `auth.json` live; concurrent OAuth refresh from
-  two processes may double-refresh. `auth.json` is never copied.
-- **Extension-registered providers are unavailable to children.** Workers
-  load built-in providers plus declarative `models.json` entries; a model
-  only an extension provides fails with `MODEL_UNAVAILABLE`.
+  Built-in/file-configured workers share the host `auth.json` live;
+  concurrent OAuth refresh from two processes may double-refresh. `auth.json`
+  is never copied. Parent-registered models instead resolve credentials in
+  the governing session through private, request-scoped IPC.
+- **Only portable parent provider registrations are supported.** A legacy
+  registration using a stock SDK API transfers just the selected model's
+  public metadata, without headers or credentials. Authentication, including
+  headers and provider-scoped credential values, is resolved afresh in the
+  parent and fenced by worker instance, task, generation, and execution holds.
+  Native extension providers and custom streaming implementations fail with
+  `MODEL_UNAVAILABLE`; children never load the parent extensions or inherit
+  their ambient environment. Parent `before_provider_request` hooks and
+  their sampling/payload overrides are not replayed.
 - **The sandboxed tool `PATH` is the host's.** Sandboxed commands see the
   host runtime `PATH` directories read-only. An explicitly selected executable
   alias can expose its runtime directory under `$HOME` and synthesize ancestor

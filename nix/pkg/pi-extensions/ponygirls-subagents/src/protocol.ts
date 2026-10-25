@@ -12,6 +12,8 @@
  */
 
 import { err, type ErrorCode } from "./errors.ts";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { parseParentModel, type ProviderRequestAuth } from "./parent-models.ts";
 import { parseInstructionSet } from "./instructions.ts";
 import { RESULT_TEXT_HARD_MAX, RESULT_TEXT_MAX } from "./tools.ts";
 import { PROTOCOL_VERSION, type InstructionSet } from "./types.ts";
@@ -213,7 +215,8 @@ export interface ExternalToolDefinition {
  * Narrow worker -> supervisor provider-admission query (one NEW provider
  * request). Public, channel-owned, fenced by envelope ids; carries the
  * operative selected original model identity and SDK request reason. Never
- * a generic capability: the supervisor answers allow/deny only.
+ * a generic capability: only an admitted parent-registered model can receive
+ * private request authentication alongside permission.
  */
 export interface ProviderAdmissionPayload {
   /** SDK request reason (user/continuation/retry/direct). */
@@ -224,9 +227,10 @@ export interface ProviderAdmissionPayload {
   thinkingLevel: string;
 }
 
-/** Supervisor answer to a `provider.admission` request. */
+/** Supervisor answer to a `provider.admission` request; never a journal/tool result. */
 export interface ProviderAdmissionResponse {
   ok: boolean;
+  auth?: ProviderRequestAuth;
   /** Visible denial code on ok:false (hold/fence errors). */
   code?: string;
   /** Visible denial message on ok:false. */
@@ -242,6 +246,8 @@ export interface InitializePayload {
   /** Skills and context files the child's session lists (its loader discovers none). */
   instructions: InstructionSet;
   model: { provider: string; id: string; thinkingLevel: string };
+  /** Public selected model metadata from the parent registry, without headers/credentials. */
+  providerModel?: Model<Api>;
   taskRunId: string;
   executionGeneration: number;
   workdir: string;
@@ -322,6 +328,13 @@ export function validateInitializePayload(raw: unknown): { ok: true; value: Init
   const model = p["model"] as Record<string, unknown> | undefined;
   if (!model || !isNonEmptyString(model["provider"]) || !isNonEmptyString(model["id"])) {
     return { ok: false, error: err("INVALID", "initialize.model must carry provider/id") };
+  }
+  if (p["providerModel"] !== undefined) {
+    try {
+      parseParentModel(p["providerModel"], { provider: model["provider"] as string, id: model["id"] as string });
+    } catch (e) {
+      return { ok: false, error: e as ReturnType<typeof err> };
+    }
   }
   if (!isNonEmptyString(p["taskRunId"])) {
     return { ok: false, error: err("INVALID", "initialize.taskRunId required") };
