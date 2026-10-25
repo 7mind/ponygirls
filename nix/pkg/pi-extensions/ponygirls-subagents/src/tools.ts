@@ -150,7 +150,7 @@ export function childToolSpec<S>(T: TypeBuilder<S>, name: string): ToolSpec<S> {
     }
     case "send_message":
       return {
-        description: "Send a durable attributed message. target is 'parent' or an agent id in your own subtree. mode note persists without starting work; steer affects a running generation; task schedules a new task run for a descendant. request_reply asks a question (then call wait_agent for the answer); reply_to answers one. Reuse settled open agents at the lifetime spawn cap (closing cannot refund it). Optional model explicitly switches a settled non-gated descendant for its task; requires root allowlist approval and current checkpoint, rejects busy/queued/closed targets. Root model changes never update retained children automatically.",
+        description: "Send a durable attributed message. target is 'parent' or an agent id in your own subtree. mode note persists without starting work; steer affects a running generation; task schedules a new task run for a descendant. request_reply asks a question (then call wait_agent for the answer); reply_to answers one. Reuse any settled ordinary open descendant at the open-agent cap, not just direct children. Closing an unneeded descendant subtree instead releases its open-agent admission slots without erasing history or usage. Optional model explicitly switches a settled non-gated descendant for its task; requires root allowlist approval and current checkpoint, rejects busy/queued/closed targets. Root model changes never update retained children automatically.",
         parameters: T.Object({
           target: T.String({ description: "'parent' or a descendant agent id" }),
           message: T.String(),
@@ -171,13 +171,13 @@ export function childToolSpec<S>(T: TypeBuilder<S>, name: string): ToolSpec<S> {
       return { description: "Read status, a result, all reviewer feedback (view=reviews after task settlement), or bounded events. Result/review text is paged with offset and nextOffset.", parameters: readParameters(T) };
     case "spawn_agent":
       return {
-        description: "Delegate a task to a new child agent in your subtree. Returns immediately with its id and task-run id; use wait_agent to join it. You must wait for (or close) your children before finishing. A child is never less isolated than you; it can receive only skills and context files you have.",
+        description: "Delegate a task to a new child agent in your subtree. Returns immediately with its id and task-run id; use wait_agent to join it. You must wait for (or close) your children before finishing. The default 32-agent cap counts open identities, including nested agents and reviewers; close_agent releases slots. A child is never less isolated than you; it can receive only skills and context files you have.",
         parameters: spawnParameters(T, {}),
       };
     case "interrupt_agent":
       return { description: "Interrupt a descendant's active task run (and its descendants).", parameters: T.Object({ target: T.String() }) };
     case "close_agent":
-      return { description: "Permanently close a descendant subtree; sessions and worktrees are preserved.", parameters: T.Object({ target: T.String() }) };
+      return { description: "Permanently close any descendant subtree after interruption/cleanup and release each closed identity's open-agent admission slot. Closed identities cannot resume. Sessions, results, worktrees, and cumulative usage are preserved; closing does not resolve uncertain external effects.", parameters: T.Object({ target: T.String() }) };
     default:
       throw err("INVALID", `no child tool named ${name}`);
   }

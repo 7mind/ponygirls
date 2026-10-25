@@ -2,7 +2,7 @@
  * ponygirls-subagents — supervisor: tree, policy, scheduler, journal.
  *
  * One supervisor owns one root session UUID. All descendants share atomic
- * runnable leases, worker capacity, cumulative spawn limits, and budgets.
+ * runnable leases, worker capacity, open-agent limits, and budgets.
  * Model tools (governing and child), UI actions, and gate controls call the
  * same methods here; they never touch processes or files directly.
  *
@@ -26,7 +26,7 @@ import { authorizeWorkspace, intersectGrants, pathWithin, resolveAllowedConcrete
 import { GoverningToolDispatcher, type GoverningRegistry } from "./external-dispatcher.ts";
 import { snapshotGoverningHandles } from "./governing-runtime.ts";
 import { killAndConfirm, readProcessIdentity, verifyOwnership, type OwnershipVerdict, type ProcessIdentity } from "./process-identity.ts";
-import { AdmissionScheduler, PathRegistry, type LeaseTicket } from "./scheduler.ts";
+import { AdmissionScheduler, PathRegistry, type AgentCreationReservation, type LeaseTicket } from "./scheduler.ts";
 import { BwrapToolExecutor, HostToolExecutor, sandboxRuntimePath } from "./sandbox.ts";
 import { InMemoryRunStore, RootLock, checkpointSha256, fsyncDir, fsyncFile, type JournalKind, type JournalRecord, type ResultRef, type RunStore } from "./store.ts";
 import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, FILE_TOOLS, GATE_DECISION_TOOL, RESULT_TEXT_HARD_MAX, RESULT_TEXT_MAX, SHELL_TOOL, WRITE_TOOLS } from "./tools.ts";
@@ -337,7 +337,7 @@ export interface SupervisorOptions {
   policy: SupervisorPolicy;
   /** The governing session at the current call: what top-level children start from. */
   governor: () => GovernorContext;
-  schedulerLimits?: { maxRunnable?: number; maxResidentWorkers?: number; maxAgentsCreated?: number; maxDepth?: number };
+  schedulerLimits?: { maxRunnable?: number; maxResidentWorkers?: number; maxOpenAgents?: number; maxDepth?: number };
   executors?: ToolExecutors;
   workspace?: WorkspaceManager;
   workerPath?: string;
@@ -595,7 +595,7 @@ export class Supervisor implements GateHost {
     let spawned = 0;
     const started = new Map<TaskRunId, { agentId: AgentId; generation: number; workerPid: number | null; workerBoot: ProcessIdentity | null }>();
     const settledGen = new Set<string>();
-    const reviewerLinks: Array<{ reviewerId: AgentId; taskRunId: TaskRunId }> = [];
+    const reviewerLinks: Array<{ reviewerId: AgentId; taskRunId: TaskRunId; mainAgentId: AgentId | null }> = [];
     const settledRuns = new Map<TaskRunId, { agentId: AgentId; outcome: string; error: string }>();
     interface GateDraft {
       agentId: AgentId;
@@ -669,7 +669,7 @@ export class Supervisor implements GateHost {
             record.taskPhase = "terminal";
             record.observed = "settled";
             record.detail = "managed gate reviewer (idle)";
-            reviewerLinks.push({ reviewerId: agentId, taskRunId: (b["taskRunId"] as string) ?? "" });
+            reviewerLinks.push({ reviewerId: agentId, taskRunId: (b["taskRunId"] as string) ?? "", mainAgentId: typeof b["mainAgentId"] === "string" ? b["mainAgentId"] : null });
           }
           if (b["gated"] === true) this.agents.get(agentId)!.gateTaskRunId = record.currentTaskRunId;
           spawned++;
@@ -979,7 +979,11 @@ export class Supervisor implements GateHost {
     }
     // Journals that predate reviewer ids in gate.registered link reviewers
     // through their spawn record.
-    for (const link of reviewerLinks) this.gate.linkReviewer(link.reviewerId, link.taskRunId);
+    for (const link of reviewerLinks) {
+      const mainAgentId = link.mainAgentId ?? this.gate.inspect(link.taskRunId)?.agentId
+        ?? [...this.agents.values()].find((rt) => rt.gateTaskRunId === link.taskRunId)?.record.id ?? null;
+      this.gate.linkReviewer(link.reviewerId, link.taskRunId, mainAgentId);
+    }
     for (const [taskRunId, draft] of gates) if (draft.reviewerIds.length === 0) this.gate.restoreReview(taskRunId);
     // Unfinished runs (started, never settled/terminal, agent open) become
     // pending-lost for recover(): old joins settle, replacements wait.
@@ -1012,7 +1016,7 @@ export class Supervisor implements GateHost {
         this.pendingSettle.set(taskRunId, { agentId: draft.agentId, outcome: "interrupted", error: "PROCESS_LOST: linked review stopped before candidate publication" });
       }
     }
-    this.scheduler.restoreSnapshot({ created: spawned });
+    this.scheduler.restoreSnapshot({ created: spawned, openAgentIds: [...this.agents.values()].filter((rt) => rt.record.desiredLifecycle === "open").map((rt) => rt.record.id) });
     // A discarded uncommitted tail means a previous owner may have acted on
     // appends that never committed: require one explicit recover() before
     // healthy continuation, reusing the attach flag (cleared by a completed
@@ -1393,9 +1397,9 @@ export class Supervisor implements GateHost {
 
       // Reserve the complete panel before creating any workspace or identity.
       const identities = 1 + (gateSpec ? gateSpec.reviewers.length : 0);
-      const charged = this.scheduler.chargeAgentCreation(identities);
+      const charged = this.scheduler.reserveAgentCreation(identities);
       if (!charged.ok) {
-        const reusable = [...this.agents.values()].filter((rt) => rt.record.parentId === (parentRt ? parentRt.record.id : null) && this.canReuseSettled(rt));
+        const reusable = [...this.agents.values()].filter((rt) => (isGovernor(caller) || (rt.record.id !== caller && this.isDescendant(caller, rt.record.id))) && this.canReuseSettled(rt));
         const switchable = reusable.filter((rt) => this.hasCurrentCheckpoint(rt));
         const switchAdvice = switchable.length > 0
           ? `Explicit model switching requires root allowlist approval; checkpoint-ready ids: ${switchable.map((rt) => rt.record.id).join(", ")}.`
@@ -1405,97 +1409,94 @@ export class Supervisor implements GateHost {
           : reusable.length > 0
             ? `Reuse a settled open agent with send_message mode=task using the same retained model (ids: ${reusable.map((rt) => rt.record.id).join(", ")}). ${switchAdvice}`
             : "Delegation unavailable now: no safely reusable settled open agent; wait for owned work to settle and inspect list_agents, otherwise report delegation unavailable before solo fallback.";
-        throw err(charged.code, `${charged.message}. ${recovery} close_agent does not refund lifetime identities; closed agents cannot resume. Do not retire uncertain or background-owned effects to recover capacity.`, { capacity: "lifetime", ...this.scheduler.snapshot(), reusableAgentIds: gateSpec ? [] : reusable.map((rt) => rt.record.id), modelSwitchAgentIds: gateSpec ? [] : switchable.map((rt) => rt.record.id) });
+        throw err(charged.code, `${charged.message}. ${recovery} close_agent releases open-agent capacity after subtree cleanup; the governor may close any descendant, including nested agents. Closed identities cannot resume; history, worktrees, and cumulative usage remain. Closing does not resolve uncertain or background-owned effects.`, { capacity: "open_agents", ...this.scheduler.snapshot(), reusableAgentIds: gateSpec ? [] : reusable.map((rt) => rt.record.id), modelSwitchAgentIds: gateSpec ? [] : switchable.map((rt) => rt.record.id) });
       }
       const agentId = randomUUID();
-      const resident = this.acquireResident(agentId);
-      if (!resident) {
-        this.scheduler.refundAgentCreation(identities);
-        throw err("CAPACITY_EXCEEDED", "resident worker capacity saturated (not lifetime exhaustion); wait for running workers/checkpoints to settle so idle workers can be evicted automatically; do not close uncertain or background-owned work");
-      }
-      const rollbackCapacity = (): void => {
-        this.scheduler.release(resident);
-        this.scheduler.refundAgentCreation(identities);
-      };
-
-      // Bind the concrete workspace after grant intersection. A nested
-      // writer gets its own worktree; parent mounts are never an allowlist.
-      let allocation: WorkspaceAllocation;
+      let resident: LeaseTicket | null = null;
       try {
-        allocation = this.bindWorkspace(agentId, params.profile, isolation, { ownerWorkdir, checkout, prepared, reg: reg ?? null, baseCommit: params.baseCommit ?? null, instructions });
-      } catch (e) {
-        rollbackCapacity();
-        throw e;
+        resident = this.acquireResident(agentId);
+        if (!resident) {
+          throw err("CAPACITY_EXCEEDED", "resident worker capacity saturated (not open-agent exhaustion); wait for running workers/checkpoints to settle so idle workers can be evicted automatically; closing an agent also releases its capacity but does not resolve uncertain or background-owned effects");
+        }
+        // Bind the concrete workspace after grant intersection. A nested
+        // writer gets its own worktree; parent mounts are never an allowlist.
+        const allocation = this.bindWorkspace(agentId, params.profile, isolation, { ownerWorkdir, checkout, prepared, reg: reg ?? null, baseCommit: params.baseCommit ?? null, instructions });
+        this.paths.reserve(path);
+        const taskRunId = randomUUID();
+        const record: AgentRecord = {
+          id: agentId,
+          path,
+          rootId: this.rootId,
+          parentId: parentRt ? parentRt.record.id : null,
+          depth,
+          profile: params.profile,
+          createdEntryId: requestId,
+          nativeSessionPath: null,
+          grants: granted.grants,
+          allocation,
+          instructions,
+          instructionHash: instructionHash(instructions),
+          policyRevision: this.policy.revision,
+          model,
+          resultLimit,
+          currentTaskRunId: taskRunId,
+          executionGeneration: 1,
+          pendingTaskIds: [],
+          pendingMessageIds: [],
+          lastEventSeq: 0,
+          desiredLifecycle: "open",
+          observed: "queued",
+          outcome: null,
+          taskPhase: "working",
+          taskOutcome: null,
+          residency: "unloaded",
+          detail: "spawn accepted",
+          lastActivityAt: this.now(),
+          activeDescendants: 0,
+        };
+        const spawnedRecord = this.store.append("agent.spawned", {
+          agentId,
+          path,
+          parentId: record.parentId,
+          depth,
+          profile: params.profile,
+          taskRunId,
+          requestId,
+          digest,
+          grants: granted.grants,
+          allocation,
+          instructions,
+          model,
+          resultLimit,
+          gated: gateSpec !== null,
+        });
+        this.scheduler.commitAgentCreation(charged.reservation, agentId);
+        const rt = newRuntime(record);
+        rt.residentLease = resident;
+        this.agents.set(agentId, rt);
+        if (parentRt) parentRt.record.activeDescendants++;
+        this.store.recordCommand(requestId, spawnedRecord);
+        record.lastEventSeq = spawnedRecord.seq;
+        if (gateSpec) {
+          // Every panel identity exists before the main agent is dispatched.
+          rt.gateTaskRunId = taskRunId;
+          const reviewerIds = gateSpec.reviewers.map((spec, index) => this.createManagedReviewer(agentId, taskRunId, spec, index, charged.reservation));
+          this.gate.register(agentId, taskRunId, gateSpec, params.message, reviewerIds);
+        }
+        try {
+          await this.startWorker(rt, params.message);
+        } catch (e) {
+          this.startupFailed(rt, taskRunId, e as Error);
+          throw e;
+        }
+        return { agentId, path, taskRunId, generation: 1, profile: params.profile, isolation, workdir: allocation.workdir, status: record.observed };
+      } finally {
+        this.scheduler.cancelAgentCreation(charged.reservation);
+        if (!this.scheduler.isAgentOpen(agentId)) {
+          if (resident !== null) this.scheduler.release(resident);
+          this.paths.release(path);
+        }
       }
-
-      this.paths.reserve(path);
-      const taskRunId = randomUUID();
-      const record: AgentRecord = {
-        id: agentId,
-        path,
-        rootId: this.rootId,
-        parentId: parentRt ? parentRt.record.id : null,
-        depth,
-        profile: params.profile,
-        createdEntryId: requestId,
-        nativeSessionPath: null,
-        grants: granted.grants,
-        allocation,
-        instructions,
-        instructionHash: instructionHash(instructions),
-        policyRevision: this.policy.revision,
-        model,
-        resultLimit,
-        currentTaskRunId: taskRunId,
-        executionGeneration: 1,
-        pendingTaskIds: [],
-        pendingMessageIds: [],
-        lastEventSeq: 0,
-        desiredLifecycle: "open",
-        observed: "queued",
-        outcome: null,
-        taskPhase: "working",
-        taskOutcome: null,
-        residency: "unloaded",
-        detail: "spawn accepted",
-        lastActivityAt: this.now(),
-        activeDescendants: 0,
-      };
-      const rt = newRuntime(record);
-      rt.residentLease = resident;
-      this.agents.set(agentId, rt);
-      if (parentRt) parentRt.record.activeDescendants++;
-      const spawnedRecord = this.store.append("agent.spawned", {
-        agentId,
-        path,
-        parentId: record.parentId,
-        depth,
-        profile: params.profile,
-        taskRunId,
-        requestId,
-        digest,
-        grants: granted.grants,
-        allocation,
-        instructions,
-        model,
-        resultLimit,
-        gated: gateSpec !== null,
-      });
-      this.store.recordCommand(requestId, spawnedRecord);
-      record.lastEventSeq = spawnedRecord.seq;
-      if (gateSpec) {
-        // Every panel identity exists before the main agent is dispatched.
-        rt.gateTaskRunId = taskRunId;
-        const reviewerIds = gateSpec.reviewers.map((spec, index) => this.createManagedReviewer(agentId, taskRunId, spec, index));
-        this.gate.register(agentId, taskRunId, gateSpec, params.message, reviewerIds);
-      }
-      try {
-        await this.startWorker(rt, params.message);
-      } catch (e) {
-        this.startupFailed(rt, taskRunId, e as Error);
-        throw e;
-      }
-      return { agentId, path, taskRunId, generation: 1, profile: params.profile, isolation, workdir: allocation.workdir, status: record.observed };
     });
   }
 
@@ -4192,6 +4193,7 @@ export class Supervisor implements GateHost {
   }
 
   private retire(rt: AgentRuntime): void {
+    if (!this.scheduler.isAgentOpen(rt.record.id)) return;
     this.purgePreparedTickets(rt.record.id);
     rt.record.desiredLifecycle = "closed";
     rt.pendingReview = null;
@@ -4221,11 +4223,12 @@ export class Supervisor implements GateHost {
     this.releaseRunnable(rt);
     this.releaseResident(rt);
     rt.record.residency = "unloaded";
-    const parent = rt.record.parentId ? this.agents.get(rt.record.parentId) : undefined;
-    if (parent) parent.record.activeDescendants = Math.max(0, parent.record.activeDescendants - 1);
     // Sessions, results, and dirty worktrees are preserved; retained-file
     // cleanup is a separate explicit user action.
     this.publish("agent.closed", { agentId: rt.record.id, path: rt.record.path });
+    this.scheduler.releaseAgent(rt.record.id);
+    const parent = rt.record.parentId ? this.agents.get(rt.record.parentId) : undefined;
+    if (parent) parent.record.activeDescendants = Math.max(0, parent.record.activeDescendants - 1);
   }
 
   // -- resume / reload -------------------------------------------------------------------
@@ -4707,6 +4710,7 @@ export class Supervisor implements GateHost {
       if (!state) throw err("NOT_FOUND", `no gated task ${action.taskRunId}`);
       const main = this.agents.get(state.agentId);
       if (!main) throw err("NOT_FOUND", `gated agent ${state.agentId} unknown`);
+      if (main.record.desiredLifecycle === "closed") throw err("CLOSED", "gated agent is permanently closed");
       // The task's governor is whoever owns the main agent; the main actor
       // and its reviewer never control their own validation.
       if (!isGovernor(caller) && caller !== main.record.parentId) throw err("FORBIDDEN", "only the task's governor manages its gate");
@@ -4779,13 +4783,17 @@ export class Supervisor implements GateHost {
 
   /** A replacement gate specification gets fresh, correctly configured reviewer identities. */
   createReviewerPanel(mainAgentId: AgentId, taskRunId: TaskRunId, spec: NormalizedGateSpec): AgentId[] {
-    const charged = this.scheduler.chargeAgentCreation(spec.reviewers.length);
-    if (!charged.ok) throw err(charged.code, `${charged.message}. A replacement reviewer panel requires fresh identities; settled ordinary-agent reuse cannot replace a managed panel. Review delegation unavailable; closing cannot refund lifetime identities.`);
-    return spec.reviewers.map((reviewer, index) => this.createManagedReviewer(mainAgentId, taskRunId, reviewer, index));
+    const charged = this.scheduler.reserveAgentCreation(spec.reviewers.length);
+    if (!charged.ok) throw err(charged.code, `${charged.message}. A replacement reviewer panel requires open-agent slots; settled ordinary-agent reuse cannot replace a managed panel. Close an unneeded subtree to reclaim capacity; do not bypass the requested review.`);
+    try {
+      return spec.reviewers.map((reviewer, index) => this.createManagedReviewer(mainAgentId, taskRunId, reviewer, index, charged.reservation));
+    } finally {
+      this.scheduler.cancelAgentCreation(charged.reservation);
+    }
   }
 
   /** One protected sibling identity per panel slot, reused across candidate rounds. */
-  private createManagedReviewer(mainAgentId: AgentId, taskRunId: TaskRunId, spec: NormalizedReviewerSpec, index: number): AgentId {
+  private createManagedReviewer(mainAgentId: AgentId, taskRunId: TaskRunId, spec: NormalizedReviewerSpec, index: number, reservation: AgentCreationReservation): AgentId {
     const main = this.agents.get(mainAgentId)!;
     const reviewerId = randomUUID();
     const mainAlloc = main.record.allocation;
@@ -4824,8 +4832,15 @@ export class Supervisor implements GateHost {
       lastActivityAt: this.now(),
       activeDescendants: 0,
     };
+    try {
+      this.store.append("agent.spawned", { agentId: reviewerId, path, parentId: record.parentId, depth: record.depth, profile: "reader", taskRunId, managedGate: true, mainAgentId, grants: record.grants, allocation: record.allocation, instructions: record.instructions, model: record.model });
+    } catch (e) {
+      this.paths.release(path);
+      throw e;
+    }
+    this.scheduler.commitAgentCreation(reservation, reviewerId);
     this.agents.set(reviewerId, newRuntime(record));
-    this.store.append("agent.spawned", { agentId: reviewerId, path, parentId: record.parentId, depth: record.depth, profile: "reader", taskRunId, managedGate: true, grants: record.grants, allocation: record.allocation, instructions: record.instructions, model: record.model });
+    this.gate.linkReviewer(reviewerId, taskRunId, mainAgentId);
     return reviewerId;
   }
 

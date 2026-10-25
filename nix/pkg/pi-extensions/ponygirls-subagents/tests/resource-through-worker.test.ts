@@ -122,7 +122,7 @@ test("selected resources read through native host adapter (ordinary none)", asyn
       return p;
     })(),
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: governorInstructions }),
-    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxAgentsCreated: 8, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8, maxDepth: 1 },
     executors: { sandbox: new DummyToolExecutor(), host: new HostToolExecutor() },
     workspace: new DummyWorkspaceManager(),
     workerFactory: (o) => {

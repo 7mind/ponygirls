@@ -65,7 +65,7 @@ test("W1 oversize prepare settles promptly with error, zero effects (real worker
   const sup = new Supervisor({
     rootId: "root-w1r", rootDir: join(dir, "root"), store: new InMemoryRunStore("root-w1r"), policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxAgentsCreated: 8, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8, maxDepth: 1 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
     workspace: new DummyWorkspaceManager(),
     workerFactory: (o) => {
@@ -266,7 +266,7 @@ async function realPrepareHarness(t: TestContext, opts: { schema: unknown; prepa
   const sup = new Supervisor({
     rootId: "root-ar", rootDir: join(dir, "root"), store: new InMemoryRunStore("root-ar"), policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxAgentsCreated: 8, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8, maxDepth: 1 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
     workspace: new DummyWorkspaceManager(),
     workerFactory: (o) => {
@@ -600,7 +600,7 @@ test("delayed prepare errors once, no fallback; late ignored (real worker, delay
     rootId: "root-dr2", rootDir: join(dir, "root"), store: new InMemoryRunStore("root-dr2"),
     policy: (() => { const p = defaultSupervisorPolicy(); p.allowedModels = [{ provider: "p", id: "m" }]; p.allowedTools = [CG]; return p; })(),
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxAgentsCreated: 8, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8, maxDepth: 1 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
     workspace: new DummyWorkspaceManager(),
     workerFactory: (o) => {
@@ -989,7 +989,7 @@ test("recover window: cooperative abort-resolved 5/7 stays durable (same + retry
     const store = new FileRunStore(dir, "root-rwin");
     const built = mkSup({
       dir, store: store as never, policy: (p) => { p.allowedTools = [CG]; },
-      limits: { maxRunnable: 64, maxResidentWorkers: 64, maxAgentsCreated: 128, maxDepth: 3 },
+      limits: { maxRunnable: 64, maxResidentWorkers: 64, maxOpenAgents: 128, maxDepth: 3 },
     });
     setRegistry(built.sup, reg as never);
     const g = await built.sup.spawn("governor", { taskName: "w", message: "m", profile: "reader" }, "rwin-1");
@@ -1080,7 +1080,7 @@ test("owner chain: revoked owner denies grandchild; restore is sticky; nested sa
   const { randomUUID: uuid } = await import("node:crypto");
   const built = mkSup({
     policy: (p) => { p.allowedTools = [B, O]; p.nesting = true; p.maxDepth = 3; },
-    limits: { maxRunnable: 8, maxResidentWorkers: 8, maxAgentsCreated: 16, maxDepth: 3 },
+    limits: { maxRunnable: 8, maxResidentWorkers: 8, maxOpenAgents: 16, maxDepth: 3 },
   });
   setRegistry(built.sup, reg as never);
   const p = await built.sup.spawn("governor", { taskName: "parent", message: "own", profile: "reader" }, "own-p-1");
@@ -1270,7 +1270,7 @@ test("broker per-op abort marks before backend await (real host close order)", a
       rootDir: dir,
       store: new InMemoryRunStore("root-nclin"),
       policy,
-      schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
+      schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
       executors: { sandbox: new DummyToolExecutor(), host: new HostToolExecutor() },
       workspace: new DummyWorkspaceManager(),
       workerFactory: (o) => {
@@ -1500,7 +1500,7 @@ test("broker cancel backend-throws (and backend-less) stays uncertain, single ou
         rootDir: dir,
         store: new InMemoryRunStore("root-ncu"),
         policy,
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
         executors: { sandbox: noCancel as never, host: noCancel as never },
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -1640,7 +1640,7 @@ test("global pause: mid-recover NEW admissions denied before intent/effects", as
   };
   const built = mkSup({
     policy: (p) => { p.allowedTools = [OUTER, B2]; p.nesting = true; p.maxDepth = 3; },
-    limits: { maxRunnable: 64, maxResidentWorkers: 64, maxAgentsCreated: 128, maxDepth: 3 },
+    limits: { maxRunnable: 64, maxResidentWorkers: 64, maxOpenAgents: 128, maxDepth: 3 },
   });
   setRegistry(built.sup, () => ({ isActive: () => true, listHandles: () => [outerCap as never, toolB2 as never], getHandle: (n: string) => (n === OUTER ? outerCap : toolB2) as never, baseCtx: () => ({}) }));
   const a = await built.sup.spawn("governor", { taskName: "nativeA", message: "m", profile: "writer", isolation: "none" }, "rpg-a-1");
@@ -1755,7 +1755,7 @@ test("tickets: oversize prepare fails visibly without minting (real worker)", as
   const sup = new Supervisor({
     rootId: "root-tov", rootDir: join(dir, "root"), store: new InMemoryRunStore("root-tov"), policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxAgentsCreated: 8, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8, maxDepth: 1 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
     workspace: new DummyWorkspaceManager(),
     workerFactory: (o) => {
@@ -1877,7 +1877,7 @@ test("grants: narrowed authority survives FileRunStore restart (+fault visible)"
     dir,
     store: store as unknown as Parameters<typeof mkSup>[0] extends { store?: infer S } ? S : never,
     policy: (p) => { p.allowedTools = [B]; p.nesting = true; p.maxDepth = 3; },
-    limits: { maxRunnable: 8, maxResidentWorkers: 8, maxAgentsCreated: 16, maxDepth: 3 },
+    limits: { maxRunnable: 8, maxResidentWorkers: 8, maxOpenAgents: 16, maxDepth: 3 },
   });
   try {
     const store1 = new FileRunStore(dir, "root-grpd");
@@ -1957,7 +1957,7 @@ test("grants: narrowing persistence fault fails the reload visibly", async () =>
     const first = mkSup({
       dir, store: store1 as never,
       policy: (p) => { p.allowedTools = [B]; p.nesting = true; p.maxDepth = 3; },
-      limits: { maxRunnable: 8, maxResidentWorkers: 8, maxAgentsCreated: 16, maxDepth: 3 },
+      limits: { maxRunnable: 8, maxResidentWorkers: 8, maxOpenAgents: 16, maxDepth: 3 },
     });
     setRegistry(first.sup, () => ({ isActive: () => true, listHandles: () => [tool as never], getHandle: () => tool as never, baseCtx: () => ({}) }));
     const p = await first.sup.spawn("governor", { taskName: "parent", message: "own", profile: "reader" }, "grpf-p-1");
@@ -2013,7 +2013,7 @@ test("catch-up: post-snapshot receipt bills on FIRST recover (no second call)", 
     const store = new FileRunStore(dir, "root-c1r");
     const built = mkSup({
       dir, store: store as never, policy: (p) => { p.allowedTools = [CG]; },
-      limits: { maxRunnable: 64, maxResidentWorkers: 64, maxAgentsCreated: 128, maxDepth: 3 },
+      limits: { maxRunnable: 64, maxResidentWorkers: 64, maxOpenAgents: 128, maxDepth: 3 },
     });
     setRegistry(built.sup, reg as never);
     for (let i = 0; i < 25; i++) {
@@ -2458,7 +2458,7 @@ test("transfer: old disposed owner cannot append behind the new owner", async ()
       rootDir,
       store: store as never,
       policy: (() => { const p = defaultSupervisorPolicy(); p.allowedModels = [{ provider: "p", id: "m" }]; return p; })(),
-      schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1 },
+      schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
       executors: { sandbox: new DummyToolExecutor(), host: executor as never },
       workspace: new DummyWorkspaceManager(),
     });

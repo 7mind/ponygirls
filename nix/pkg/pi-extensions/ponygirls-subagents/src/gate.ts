@@ -377,6 +377,7 @@ export class GateController {
   private reviewers = new Set<AgentId>();
   /** Reviewer -> the newest gated task run it reviews for. */
   private reviewerToTask = new Map<AgentId, TaskRunId>();
+  private reviewerOwners = new Map<AgentId, AgentId>();
   private commandIds = new Map<string, { action: string; taskRunId: TaskRunId }>();
 
   constructor(host: GateHost) {
@@ -431,7 +432,7 @@ export class GateController {
       stagnationWarning: null,
       linkedFrom: null,
     });
-    for (const id of reviewerIds) this.linkReviewer(id, taskRunId);
+    for (const id of reviewerIds) this.linkReviewer(id, taskRunId, agentId);
   }
 
   /** Called by the supervisor when an eligible gated main execution settles. */
@@ -832,6 +833,7 @@ export class GateController {
   /** Reviewer identities owned by gated tasks of a main agent. */
   reviewersOf(agentId: AgentId): AgentId[] {
     const out = new Set<AgentId>();
+    for (const [reviewerId, owner] of this.reviewerOwners) if (owner === agentId) out.add(reviewerId);
     for (const task of this.tasks.values()) {
       if (task.agentId === agentId) for (const reviewerId of task.reviewerIds) out.add(reviewerId);
     }
@@ -932,7 +934,7 @@ export class GateController {
       stagnationWarning: null,
       linkedFrom: priorTaskRunId,
     });
-    for (const reviewerId of reviewerIds) this.linkReviewer(reviewerId, taskRunId);
+    for (const reviewerId of reviewerIds) this.linkReviewer(reviewerId, taskRunId, prior.agentId);
     this.host.beginLinkedRun(prior.agentId, taskRunId);
     // Assign the verified content as the new run's candidate without rerunning main work.
     const task = this.tasks.get(taskRunId)!;
@@ -1055,14 +1057,18 @@ export class GateController {
     if (this.tasks.has(restored.taskRunId)) return;
     this.tasks.set(restored.taskRunId, { ...restored, review: null, repairReserved: false });
     // Imported in journal order: a later (linked) run takes the reviewer.
-    for (const reviewerId of restored.reviewerIds) this.linkReviewer(reviewerId, restored.taskRunId);
+    for (const reviewerId of restored.reviewerIds) this.linkReviewer(reviewerId, restored.taskRunId, restored.agentId);
   }
 
-  /** Link a restored reviewer identity to its task (recovery only). */
-  linkReviewer(reviewerId: AgentId, taskRunId: TaskRunId): void {
+  /** Retain ownership even if panel creation fails before gate registration. */
+  linkReviewer(reviewerId: AgentId, taskRunId: TaskRunId, mainAgentId: AgentId | null): void {
     this.reviewers.add(reviewerId);
+    if (mainAgentId !== null) this.reviewerOwners.set(reviewerId, mainAgentId);
     const task = this.tasks.get(taskRunId);
-    if (!task) return;
+    if (!task) {
+      this.reviewerToTask.set(reviewerId, taskRunId);
+      return;
+    }
     task.reviewerId ??= reviewerId;
     if (!task.reviewerIds.includes(reviewerId)) task.reviewerIds.push(reviewerId);
     if (!task.terminal || !this.reviewerToTask.has(reviewerId)) this.reviewerToTask.set(reviewerId, taskRunId);

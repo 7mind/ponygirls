@@ -49,7 +49,7 @@ let agentDir;
 const sup = new Supervisor({
   rootId, rootDir: join(dir, 'root'), store, policy,
   governor: () => ({ model: { provider: 'p', id: 'm', thinkingLevel: 'off' }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-  schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+  schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
   executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() }, workspace: new DummyWorkspaceManager(),
   workerFactory: (o) => {
     agentDir = join(dir, 'worker-home', o.agentId);

@@ -16,17 +16,19 @@ type Handler = (event: unknown, ctx: unknown) => Promise<void>;
 
 type Schema = { properties?: Record<string, Schema>; items?: Schema; anyOf?: Schema[] };
 
-async function loadExtension(agentDir: string): Promise<{ tools: Map<string, ToolExecute>; schemas: Map<string, Schema>; handlers: Map<string, Handler>; sent: Submission[]; ctx: unknown }> {
+async function loadExtension(agentDir: string): Promise<{ tools: Map<string, ToolExecute>; schemas: Map<string, Schema>; descriptions: Map<string, string>; handlers: Map<string, Handler>; sent: Submission[]; ctx: unknown }> {
   process.env["PI_CODING_AGENT_DIR"] = agentDir;
   process.env["PI_SUBAGENTS_SDK_ROOT"] = process.env["PI_SUBAGENTS_SDK_ROOT"] ?? "/nonexistent-sdk";
   const tools = new Map<string, ToolExecute>();
   const schemas = new Map<string, Schema>();
+  const descriptions = new Map<string, string>();
   const handlers = new Map<string, Handler>();
   const sent: Submission[] = [];
   const pi = {
-    registerTool: (t: { name: string; execute: ToolExecute; parameters: Schema }) => {
+    registerTool: (t: { name: string; execute: ToolExecute; parameters: Schema; description: string }) => {
       tools.set(t.name, t.execute);
       schemas.set(t.name, t.parameters);
+      descriptions.set(t.name, t.description);
     },
     registerCommand: () => {},
     on: (event: string, h: Handler) => handlers.set(event, h),
@@ -42,8 +44,21 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
     model: { provider: "test", id: "model" },
     ui: { notify: () => {}, setWidget: () => {}, theme: { bg: (_color: string, text: string) => text } },
   };
-  return { tools, schemas, handlers, sent, ctx };
+  return { tools, schemas, descriptions, handlers, sent, ctx };
 }
+
+test("capacity tool descriptions explain descendant authority and reclaimable open slots", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-capacity-tools-"));
+  try {
+    const { descriptions } = await loadExtension(agentDir);
+    assert.match(descriptions.get("spawn_agent")!, /32-agent cap counts open identities/);
+    assert.match(descriptions.get("send_message")!, /any ordinary open descendant, including nested agents/);
+    assert.match(descriptions.get("close_agent")!, /governing session may target any descendant/);
+    assert.match(descriptions.get("close_agent")!, /releases one open-agent admission slot/);
+    assert.match(descriptions.get("close_agent")!, /cumulative usage.*preserved/);
+    for (const name of ["spawn_agent", "send_message", "close_agent"]) assert.doesNotMatch(descriptions.get(name)!, /lifetime.*cap|cannot refund/);
+  } finally { rmSync(agentDir, { recursive: true, force: true }); }
+});
 
 test("an SDK without retained ingress is rejected before delegation or legacy fallback", async () => {
   const mod = await import("../index.ts");

@@ -8,21 +8,25 @@
  * turn never reset cumulative counters.
  */
 
-import type { ErrorCode } from "./errors.ts";
+import { err, type ErrorCode } from "./errors.ts";
 
 export interface SchedulerLimits {
   maxRunnable: number;
   maxResidentWorkers: number;
-  maxAgentsCreated: number;
+  maxOpenAgents: number;
   maxDepth: number;
 }
 
 export const DEFAULT_LIMITS: SchedulerLimits = {
   maxRunnable: 4,
   maxResidentWorkers: 8,
-  maxAgentsCreated: 32,
+  maxOpenAgents: 32,
   maxDepth: 1,
 };
+
+export interface AgentCreationReservation {
+  readonly id: number;
+}
 
 export interface LeaseTicket {
   leaseId: string;
@@ -41,6 +45,9 @@ export class AdmissionScheduler {
   private runnableHeld = 0;
   private residentHeld = 0;
   private agentsCreated = 0;
+  private openAgents = new Set<string>();
+  private reservations = new Map<number, number>();
+  private nextReservation = 1;
   private leases = new Map<string, LeaseTicket>();
   private queue: Waiter[] = [];
   private nextLease = 1;
@@ -105,18 +112,44 @@ export class AdmissionScheduler {
     return ticket;
   }
 
-  /** Charge created identities against the cumulative spawn budget (all or none). */
-  chargeAgentCreation(count: number): { ok: true } | { ok: false; code: ErrorCode; message: string } {
-    if (this.agentsCreated + count > this.limits.maxAgentsCreated) {
-      return { ok: false, code: "CAPACITY_EXCEEDED", message: `lifetime maxAgentsCreated (${this.limits.maxAgentsCreated}) exhausted (${this.agentsCreated} created, ${count} requested); waiting or closing cannot refund created identities` };
+  /** Reserve a complete spawn/panel atomically; only durable identities count as created. */
+  reserveAgentCreation(count: number): { ok: true; reservation: AgentCreationReservation } | { ok: false; code: ErrorCode; message: string } {
+    if (!Number.isSafeInteger(count) || count <= 0) throw err("INVALID", "agent reservation requires a positive safe integer");
+    const reserved = this.reservedAgentCount();
+    if (this.openAgents.size + reserved + count > this.limits.maxOpenAgents) {
+      return { ok: false, code: "CAPACITY_EXCEEDED", message: `open maxOpenAgents (${this.limits.maxOpenAgents}) exhausted (${this.openAgents.size} open, ${reserved} reserved, ${count} requested)` };
     }
-    this.agentsCreated += count;
-    return { ok: true };
+    const reservation = { id: this.nextReservation++ };
+    this.reservations.set(reservation.id, count);
+    return { ok: true, reservation };
   }
 
-  /** Undo a charge whose identities were never created (rollback before creation). */
-  refundAgentCreation(count: number): void {
-    this.agentsCreated = Math.max(0, this.agentsCreated - count);
+  commitAgentCreation(reservation: AgentCreationReservation, agentId: string): void {
+    const remaining = this.reservations.get(reservation.id);
+    if (remaining === undefined || remaining === 0 || this.openAgents.has(agentId)) throw err("CONFLICT", "agent creation requires an unused reservation and a fresh identity");
+    if (remaining === 1) this.reservations.delete(reservation.id);
+    else this.reservations.set(reservation.id, remaining - 1);
+    this.openAgents.add(agentId);
+    this.agentsCreated++;
+  }
+
+  cancelAgentCreation(reservation: AgentCreationReservation): void {
+    this.reservations.delete(reservation.id);
+  }
+
+  isAgentOpen(agentId: string): boolean {
+    return this.openAgents.has(agentId);
+  }
+
+  /** Called only after the identity's durable close fact; idempotent per identity. */
+  releaseAgent(agentId: string): void {
+    this.openAgents.delete(agentId);
+  }
+
+  private reservedAgentCount(): number {
+    let count = 0;
+    for (const remaining of this.reservations.values()) count += remaining;
+    return count;
   }
 
   get agentsCreatedCount(): number {
@@ -139,18 +172,22 @@ export class AdmissionScheduler {
     this.limits = { ...this.limits, ...next };
   }
 
-  snapshot(): { runnable: number; resident: number; queued: number; created: number; limits: SchedulerLimits } {
+  snapshot(): { runnable: number; resident: number; queued: number; created: number; open: number; reserved: number; limits: SchedulerLimits } {
     return {
       runnable: this.runnableHeld,
       resident: this.residentHeld,
       queued: this.queue.length,
       created: this.agentsCreated,
+      open: this.openAgents.size,
+      reserved: this.reservedAgentCount(),
       limits: this.getLimits(),
     };
   }
 
-  restoreSnapshot(s: { created: number }): void {
+  restoreSnapshot(s: { created: number; openAgentIds: string[] }): void {
     this.agentsCreated = s.created;
+    this.openAgents = new Set(s.openAgentIds);
+    this.reservations.clear();
   }
 
   private pumpQueue(): void {

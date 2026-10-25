@@ -337,19 +337,24 @@ rebuild duplicate fencing and never re-account.
 Before falling back to working alone, inspect `list_agents` and the capacity
 feedback. The three limits are independent:
 
-- **Lifetime identities** (`maxAgentsCreated`, default 32) accumulate across
-  tasks, compaction, root turns, and recovery. Waiting, eviction, interruption,
-  and `close_agent` do not refund them. Closed agents cannot resume.
+- **Open identities** (`maxOpenAgents`, default 32) include ordinary agents,
+  nested agents, and managed reviewers, even when idle or unloaded. A complete
+  main/reviewer panel is reserved atomically. `close_agent` releases each newly
+  closed identity's slot after cleanup and durable closure; waiting, eviction,
+  interruption, and task completion do not. Closed identities cannot resume.
 - **Runnable slots** (default 4) park accepted work until a slot is free.
   Wait for owned runs to settle; do not create replacement identities.
 - **Resident workers** (default 8) are evicted automatically when eligible idle
   workers become available. Wait for running work/checkpoint capture to finish.
-  Resident saturation is not lifetime exhaustion.
+  Resident saturation is not open-agent exhaustion.
 
-At the lifetime cap, reuse a settled, open, ordinary agent with
+At the open-agent cap, reuse a settled, open, ordinary agent with
 `send_message(target="<id>", mode="task", message="...")`. This starts a new
 run under the same identity, history, workspace, grants, and retained model.
-A governing-session model/provider change **does not** switch retained children.
+The governing session may reuse any eligible descendant, not just direct
+children; a child may reuse only its own descendants. Capacity feedback lists
+all eligible descendants within that authority. A governing-session
+model/provider change **does not** switch retained children.
 The capacity response separates same-model reusable IDs from checkpoint-ready
 model-switch IDs. A fresh gated/reviewed spawn still needs its reserved managed
 reviewer identities; ordinary-agent reuse is not a substitute for that panel.
@@ -379,27 +384,28 @@ the worker reloads the selected native branch and appends model/thinking metadat
 without rewriting earlier messages or their billing attribution. Unavailable
 models fail visibly at reload; they are not silently replaced by the root model.
 
-Do not close or retire uncertain/background-owned effects as a capacity tactic.
-A settled invocation is not proof that an external background job has stopped;
-inspect that backend's ownership/status and join or manage it explicitly. If no
-safe reusable agent or required panel is available, report **delegation
-unavailable** before solo fallback. Do not reset counters, reopen tombstones,
-weaken reviews, or silently bypass the lifetime cap.
+Alternatively, close an unneeded subtree with `close_agent(target="<id>")`.
+The governing session may target **any subordinate**, including a nested agent;
+children may close only their own descendants. Closure includes associated managed
+reviewers, releases one slot per newly closed identity, and never releases the same
+slot twice. A replacement spawn uses a fresh identity and task path. No extra kill
+or budget-reset tool is needed.
 
-`close_agent` irreversibly tombstones an identity but preserves its sessions,
-results, and worktree. Automatic resident-worker eviction only releases a process;
-it leaves an open identity eligible for later reuse. Neither operation deletes
-retained files or replenishes lifetime admission. Retained-file cleanup is a
-separate operator action, not a capacity-recovery operation.
+`close_agent` irreversibly tombstones identities while preserving sessions,
+results, worktrees, and cumulative usage/creation accounting. Capacity is restored
+from the final open/closed journal state on recovery, including sessions written
+under the former lifetime-cap policy. Automatic resident-worker eviction releases
+only a process: the identity stays open, consumes an identity slot, and remains
+eligible for later reuse. Retained-file cleanup is a separate operator action.
 
-When no eligible child remains on an available model (including an authorized,
-checkpoint-ready switch), there is no supported in-place identity-budget reset.
-A new governing Pi session with a new session ID creates a separate supervisor
-root and budget; resuming the old session does not. This does not transfer child
-history/worktrees or resolve old ownership, recovery holds, or billing uncertainty.
-Preserve the old root and manage its outstanding effects explicitly. If independent
-delegated review cannot be obtained, state that it was **not performed**; self-review
-is not independent review.
+Reclaiming admission is not proof that external effects have stopped. A settled
+invocation or a closed identity may still have uncertain/background-owned effects;
+inspect that backend's ownership/status and join or manage it explicitly. Closure
+does not clear billing uncertainty, recovery holds, or required reviews. If safe
+reuse or enough open slots for a required panel remain unavailable, report
+**delegation unavailable** before solo fallback; never reopen tombstones or bypass
+reviews. If independent delegated review cannot be obtained, state that it was
+**not performed**; self-review is not independent review.
 
 ## Ungated example
 

@@ -146,7 +146,7 @@ export function mkSup(opts: {
     rootDir: dir,
     store: opts.store ?? new InMemoryRunStore("root-1"),
     policy,
-    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 32, maxDepth: 1, ...(opts.limits ?? {}) },
+    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1, ...(opts.limits ?? {}) },
     executors,
     workspace: opts.workspace ?? new DummyWorkspaceManager(),
     governingRegistry: opts.governingRegistry,

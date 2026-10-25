@@ -818,7 +818,7 @@ test("restored worker records the explicitly admitted replacement model without 
   } finally { handle.kill(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("real settled worker reuses its identity at the lifetime cap with an explicit model and retained history/billing", async (t) => {
+test("real settled worker reuses its identity at the open-agent cap with an explicit model and retained history/billing", async (t) => {
   if (!SDK_ROOT) { t.skip("PI_SUBAGENTS_SDK_ROOT unset"); return; }
   const { Supervisor } = await import("../src/supervisor.ts");
   const { InMemoryRunStore } = await import("../src/store.ts");
@@ -835,7 +835,7 @@ test("real settled worker reuses its identity at the lifetime cap with an explic
   let launches = 0;
   const sup = new Supervisor({
     rootId: "cap-reuse", rootDir: dir, store, policy, governor: testGovernor,
-    schedulerLimits: { maxAgentsCreated: 1 },
+    schedulerLimits: { maxOpenAgents: 1 },
     executors: bothExecutors(new DummyToolExecutor()), workspace: new DummyWorkspaceManager(),
     workerFactory: ({ agentId, rootEpoch }) => new WorkerHandle({
       workerPath: WORKER_PATH, rootEpoch, agentId, sdkRoot: SDK_ROOT, deterministic: true,
@@ -847,7 +847,7 @@ test("real settled worker reuses its identity at the lifetime cap with an explic
     const a = await sup.spawn("governor", { taskName: "retained", message: "first-history", profile: "reader" }, "first");
     await until(() => sup.list("governor")[0]?.taskOutcome === "succeeded" && store.loadCheckpoint(a.agentId) !== null, 30_000);
     const usageBefore = sup.list("governor")[0]!.usage;
-    await assert.rejects(() => sup.spawn("governor", { taskName: "excess", message: "no", profile: "reader" }, "excess"), /lifetime/);
+    await assert.rejects(() => sup.spawn("governor", { taskName: "excess", message: "no", profile: "reader" }, "excess"), /open maxOpenAgents/);
     const next = await sup.sendMessage("governor", a.agentId, "task", "second-history", { model }, "reuse");
     await until(() => sup.list("governor")[0]?.taskOutcome === "succeeded" && store.loadCheckpoint(a.agentId)?.ref.generation === 2, 30_000);
     assert.equal(launches, 2);
@@ -862,5 +862,13 @@ test("real settled worker reuses its identity at the lifetime cap with an explic
     assert.ok(history.includes("second-history"));
     assert.ok(history.includes("run-1"));
     assert.ok(history.includes("run-2"));
+    await sup.close("governor", a.agentId, "close-retained");
+    const fresh = await sup.spawn("governor", { taskName: "fresh", message: "new-identity", profile: "reader" }, "fresh");
+    await until(() => sup.list("governor").some((agent) => agent.id === fresh.agentId && agent.taskOutcome === "succeeded"), 30_000);
+    assert.notEqual(fresh.agentId, a.agentId);
+    assert.equal(launches, 3);
+    assert.equal(sup.admissionScheduler.agentsCreatedCount, 2);
+    assert.equal(sup.admissionScheduler.snapshot().open, 1);
+    assert.equal(sup.read("governor", a.agentId, "result", 0, 100, next.taskRunId).result?.text, "run-2");
   } finally { await sup.shutdown(); rmSync(dir, { recursive: true, force: true }); }
 });

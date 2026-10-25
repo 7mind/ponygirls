@@ -27,11 +27,14 @@
 
 ## Supervisor recovery procedure
 
-1. Inspect `list_agents` and capacity feedback before solo fallback. Lifetime
-   `maxAgentsCreated` is cumulative; closing never refunds identities and closed
-   agents cannot resume. Runnable saturation parks work; resident saturation can
-   clear when eligible idle workers are evicted. Wait/join rather than respawn.
+1. Inspect `list_agents` and capacity feedback before solo fallback. The default
+   `maxOpenAgents` cap is 32 open identities, including idle/nested agents and
+   managed reviewers. Closing a subtree reclaims its slots after cleanup and
+   durable closure; closed identities cannot resume. Runnable saturation parks
+   work; resident saturation can clear when eligible idle workers are evicted.
 2. Reuse settled open ordinary agents with `send_message(mode="task")`. The
+   governor may reuse any eligible descendant, including nested agents; capacity
+   feedback lists all eligible descendants within the caller's authority. The
    retained model does not follow governing-session provider/model changes.
    For an explicit change, pass `model: {provider, id, thinkingLevel?}` on that
    task. Only an owner/governor can do this, and root `allowedModels` applies.
@@ -47,21 +50,22 @@
    replace it. Unresolvable models and failed checkpoints are visible failures,
    never an implicit provider fallback. Unknown usage remains sticky; switching
    does not reconcile it or make outstanding billing disappear.
-5. Never retire uncertain or background-owned effects merely to free capacity.
-   Backend background ownership can outlive an invocation's settlement; check and
-   join/manage it explicitly. If safe reuse or a required panel is unavailable,
-   report **delegation unavailable** before solo fallback. No counter reset,
-   tombstone reopening, or review bypass is authorized.
-6. Closing irreversibly tombstones an identity while retaining sessions, results,
-   and worktrees. Automatic worker eviction releases only resident resources and
-   permits later reuse. Retained-file cleanup is separate; it never refunds the
-   cumulative budget. If no eligible child remains on an available model, there
-   is no supported in-place budget reset: start a new governing Pi session with a
-   new session ID for a separate supervisor root. Resuming the old session retains
-   its budget. A new root neither transfers child state nor resolves old effects,
-   recovery holds, or billing uncertainty; preserve and manage the old root.
-   Report independent delegated review as **not performed** when unavailable;
-   do not relabel self-review as independent review.
+5. Use `close_agent` on an unneeded subtree to reclaim open-agent slots. The
+   governor may close any subordinate, including nested agents; a child controls
+   only its own descendants. Associated managed reviewers are included. Repeated
+   or overlapping closes release each identity once, only after its durable close
+   fact. Historical identities, paths, sessions, results, worktrees, and cumulative
+   creation/usage accounting remain; no extra kill/reset tool is required.
+6. Recovery reconstructs open capacity from final journal lifecycle states,
+   including journals written under the former lifetime cap. Eviction frees only
+   resident resources, not an open identity slot. Retained-file cleanup is separate.
+   Closing does not establish that uncertain/background-owned effects stopped,
+   reconcile billing, or clear recovery holds; inspect and join/manage backend
+   effects explicitly. If safe reuse or enough open slots for a required panel
+   remain unavailable, report **delegation unavailable** before solo fallback.
+   Never reopen tombstones or bypass reviews. Report independent delegated review
+   as **not performed** when unavailable; do not relabel self-review as independent
+   review.
 
 See [Capacity recovery and retained models](../README.md#capacity-recovery-and-retained-models)
 for the tool example and limit defaults.

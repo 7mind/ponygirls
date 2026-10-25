@@ -22,7 +22,7 @@ function setup(script: "settle-text" | "hang" = "settle-text", limits = {}) {
   const initialized: Array<Record<string, unknown>> = [];
   const options = {
     rootId: "reuse", rootDir: dir, store, policy, governor: testGovernor,
-    schedulerLimits: { maxAgentsCreated: 1, ...limits },
+    schedulerLimits: { maxOpenAgents: 1, ...limits },
     executors: bothExecutors(new DummyToolExecutor()), workspace: new DummyWorkspaceManager(),
     workerFactory: () => {
       const worker = new FakeWorker(script);
@@ -50,18 +50,19 @@ function setup(script: "settle-text" | "hang" = "settle-text", limits = {}) {
 }
 
 // Regression #29: Behavioral-Active, Blackbox-Group (fake workers, real controller/store).
-test("lifetime exhaustion explains safe reuse and that closing cannot refund identities", async () => {
+test("open-agent exhaustion explains reuse and closing reclaims capacity", async () => {
   const f = setup();
   try {
     const a = await f.spawn();
     await until(() => f.sup.list("governor")[0]?.taskOutcome === "succeeded");
-    await assert.rejects(() => f.sup.spawn("governor", { taskName: "another", message: "work", profile: "reader" }, "another"), /lifetime.*send_message.*close.*not.*refund/i);
+    await assert.rejects(() => f.sup.spawn("governor", { taskName: "another", message: "work", profile: "reader" }, "another"), /open.*send_message.*close_agent releases open-agent capacity/i);
     await f.sup.close("governor", a.agentId, "close");
-    await assert.rejects(() => f.sup.spawn("governor", { taskName: "last", message: "work", profile: "reader" }, "last"), /delegation unavailable/i);
+    await f.sup.spawn("governor", { taskName: "last", message: "work", profile: "reader" }, "last");
+    assert.equal(f.sup.admissionScheduler.agentsCreatedCount, 2);
   } finally { await f.cleanup(); }
 });
 
-test("explicit settled model reuse at lifetime cap reloads history and survives journal replay", async () => {
+test("explicit settled model reuse at open-agent cap reloads history and survives journal replay", async () => {
   const f = setup();
   try {
     const a = await f.spawn();
@@ -117,14 +118,14 @@ test("settled model switch rejects unapproved models and missing current checkpo
 });
 
 
-test("resident and runnable saturation are distinct from lifetime exhaustion", async () => {
-  const f = setup("hang", { maxAgentsCreated: 3, maxResidentWorkers: 1 });
+test("resident and runnable saturation are distinct from open-agent exhaustion", async () => {
+  const f = setup("hang", { maxOpenAgents: 3, maxResidentWorkers: 1 });
   try {
     await f.spawn();
-    await assert.rejects(() => f.sup.spawn("governor", { taskName: "second", message: "next", profile: "reader" }, "second"), /resident.*not lifetime.*wait.*evicted automatically/i);
+    await assert.rejects(() => f.sup.spawn("governor", { taskName: "second", message: "next", profile: "reader" }, "second"), /resident.*not open-agent.*wait.*evicted automatically/i);
     assert.equal(f.sup.admissionScheduler.agentsCreatedCount, 1);
   } finally { await f.cleanup(); }
-  const q = setup("hang", { maxAgentsCreated: 2, maxResidentWorkers: 2, maxRunnable: 1 });
+  const q = setup("hang", { maxOpenAgents: 2, maxResidentWorkers: 2, maxRunnable: 1 });
   try {
     await q.spawn();
     const parked = await q.sup.spawn("governor", { taskName: "parked", message: "next", profile: "reader" }, "parked");
@@ -168,7 +169,7 @@ test("unknown provider usage is not retired by model-switch recovery", async () 
 });
 
 
-test("lifetime advice distinguishes same-model reuse from checkpoint-ready switches and required panels", async () => {
+test("open-agent advice distinguishes same-model reuse from checkpoint-ready switches and required panels", async () => {
   const f = setup();
   try {
     const a = await f.spawn();
@@ -180,7 +181,7 @@ test("lifetime advice distinguishes same-model reuse from checkpoint-ready switc
 });
 
 test("message routing to a parent or sibling does not authorize changing its model", async () => {
-  const f = setup("settle-text", { maxAgentsCreated: 3, maxDepth: 2 });
+  const f = setup("settle-text", { maxOpenAgents: 3, maxDepth: 2 });
   f.options.policy.nesting = true;
   f.options.policy.maxDepth = 2;
   try {

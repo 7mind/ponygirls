@@ -63,7 +63,7 @@ const sup = new Supervisor({
   store,
   policy,
   governor: () => ({ model: { provider: 'p', id: 'm', thinkingLevel: 'off' }, cwd: markerDir, instructions: { contextFiles: [], skills: [] } }),
-  schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+  schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
   executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
   workspace: new DummyWorkspaceManager(),
   workerFactory: (o) => {

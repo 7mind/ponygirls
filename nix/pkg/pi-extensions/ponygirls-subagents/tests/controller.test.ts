@@ -141,7 +141,7 @@ test("retry_review and bypass runs publish their own outcomes; results keep the 
 
 test("a gated spawn charges both identities up front; an exhausted budget rejects it cleanly", async () => {
   await noUnhandled(async () => {
-    const { sup } = mkSup({ limits: { maxAgentsCreated: 1 } });
+    const { sup } = mkSup({ limits: { maxOpenAgents: 1 } });
     await assert.rejects(() => sup.spawn("governor", { taskName: "g", message: "m", profile: "reader", gate: gateSpec(3) }, "rg"), /CAPACITY_EXCEEDED/);
     assert.equal(sup.list("governor").length, 0);
     assert.equal(sup.admissionScheduler.residentCount, 0);
@@ -255,7 +255,7 @@ test("a cap decrease that would orphan a running repair is rejected", async () =
 });
 
 test("gated spawns without maxRounds use the named default; rejected ones allocate nothing", async () => {
-  const { sup } = mkSup({ limits: { maxResidentWorkers: 2, maxAgentsCreated: 4 } });
+  const { sup } = mkSup({ limits: { maxResidentWorkers: 2, maxOpenAgents: 4 } });
   const g = await sup.spawn("governor", { taskName: "g", message: "m", profile: "reader", gate: gateSpec() }, "rg");
   assert.equal(sup.gateController.inspect(g.taskRunId)?.spec.maxRounds, 3);
   for (const n of ["x1", "x2", "x3"]) {

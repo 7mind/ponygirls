@@ -122,7 +122,7 @@ test("a panel can drain with one runnable and one resident slot", async () => {
 });
 
 test("panel creation is atomically capacity-checked and gate/review are mutually exclusive", async () => {
-  const h = setup({ maxAgentsCreated: 2 });
+  const h = setup({ maxOpenAgents: 2 });
   try {
     await assert.rejects(h.sup.spawn("governor", { taskName: "large", message: "work", profile: "reader", gate: panel() }, "a"), /CAPACITY_EXCEEDED/);
     assert.deepEqual(h.sup.list("governor"), []);

@@ -648,7 +648,7 @@ test("provider-start hold: worker continuation ASK denied BEFORE entry while hel
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -765,7 +765,7 @@ test("provider-start hold: healthy two-turn enters (control, passes)", () => {
         store: new InMemoryRunStore("root-provholdfixh"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -839,7 +839,7 @@ test("provider-start hold: healthy retryable-error retries through guard (contro
         store: new InMemoryRunStore("root-provholdretry"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -922,7 +922,7 @@ test("provider-start hold: managed reviewer continuation ASK denied BEFORE entry
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -1066,7 +1066,7 @@ test("provider-start hold: healthy reviewer two-turn enters (control, passes)", 
         store: new InMemoryRunStore("root-provholdrevh"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -1255,7 +1255,7 @@ test("provider-start hold: continuation-specific unavailable denies next ENTRY (
         store: new InMemoryRunStore("root-provholdnext"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -1365,7 +1365,7 @@ test("provider-start hold: held retry denied during backoff window (fixed)", () 
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -1469,7 +1469,7 @@ test("provider-start hold: healthy overflow turn admitted, no hold (control, pas
         store: new InMemoryRunStore("root-provholdcompact"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -1560,7 +1560,7 @@ test("provider-start hold: held overflow turn denied with zero ENTRY (fixed)", (
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -1644,7 +1644,7 @@ test("provider-start hold: admission requires task-run/generation identity (fixe
         store: new InMemoryRunStore("root-provholdids"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -1791,7 +1791,7 @@ test("provider-start hold: healthy split compaction enters twice via guard (fixe
         store: new InMemoryRunStore("root-provholdcompact2"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -1964,7 +1964,7 @@ test("provider-start hold: held split compaction denies second summary (fixed)",
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -2247,7 +2247,7 @@ test("provider-start hold: compaction cancellation aborts pending summary (fixed
         store: new InMemoryRunStore("root-provholdcompactcancel"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -2460,7 +2460,7 @@ test("provider-start hold: collision literals keep script semantics (fixed)", ()
         store: new InMemoryRunStore("root-provholdcollide"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -2567,7 +2567,7 @@ test("provider-start hold: original seam faults mark unknown and join settlement
         store: new InMemoryRunStore("root-provholdfault-" + tag),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -2777,7 +2777,7 @@ test("provider-start hold: external 5/7 billed once across OS process restart (f
         store: new FileRunStore(storeDir, "root-restart"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -2961,7 +2961,7 @@ test("provider-start hold: mid-run collector append and read faults fail loudly 
         store: new InMemoryRunStore("root-provholdfaults"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -3071,7 +3071,7 @@ test("provider-start hold: malformed returned usage marks unknown without fabric
         store: new InMemoryRunStore("root-provholdmalformed-" + tag),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -3164,7 +3164,7 @@ test("provider-start hold: observer record fault fails terminal with cause, usag
         store: new InMemoryRunStore("root-provholdobsfault"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -3272,7 +3272,7 @@ test("provider-start hold: end-without-message fails explicitly without interrup
         store: new InMemoryRunStore("root-provholdendbare"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -3369,7 +3369,7 @@ test("provider-start hold: lifecycle append fault fails terminal with cause, usa
         store: new InMemoryRunStore("root-provholdcyclefault"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -3474,7 +3474,7 @@ test("supervisor ledger bills late ORIGINAL receipt under captured identity exac
         store: new InMemoryRunStore("root-latereceipt"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors: { sandbox: new DummyToolExecutor(), host: new HostToolExecutor() },
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -3583,7 +3583,7 @@ test("supervisor ledger attributes late ORIGINAL to its captured generation acro
         store: new InMemoryRunStore("root-latenewgen"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors: { sandbox: new DummyToolExecutor(), host: new HostToolExecutor() },
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -3719,7 +3719,7 @@ test("failed late-report append holds admission until recovery bills exactly onc
         store: store as any,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors: { sandbox: new DummyToolExecutor(), host: new HostToolExecutor() },
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -3852,7 +3852,7 @@ test("reviewer late ORIGINAL receipt bills under reviewer identity (boundary)", 
         store: new InMemoryRunStore("root-provholdrevlate"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -4006,7 +4006,7 @@ test("failed late receipt survives OS-process restart via durable outbox (bounda
         store: new FileRunStore(storeDir, "root-latereboot"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxAgentsCreated: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
