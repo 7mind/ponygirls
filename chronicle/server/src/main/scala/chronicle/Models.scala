@@ -161,6 +161,8 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
 final class Worker(archive: SessionArchive,annotator: Annotator,embedder: Embedder,db: Database,config: Config,logger: logstage.IzLogger) {
   private val annotationAttemptLimit = 5
   private val truncatedAnnotationCode = "model-output/truncated"
+  private def failureCode(error: Throwable): String = error match { case d: DomainError => d.code; case _ => "worker-fault" }
+  private def failureOrigin(error: Throwable): String = error.getStackTrace.headOption.map(frame => s"${frame.getClassName}.${frame.getMethodName}:${frame.getLineNumber}").getOrElse("unavailable")
   def once: IO[Boolean] = IO.blocking(archive.claim(config.profile,300)).flatMap {
     case None => IO.pure(false)
     case Some(claim) =>
@@ -168,22 +170,30 @@ final class Worker(archive: SessionArchive,annotator: Annotator,embedder: Embedd
       def report(completed: Int): IO[Unit] = IO.blocking {
         Check(archive.progress(claim,completed,windows.size),"stale-claim","indexing claim is no longer current")
       }
-      def annotate(batch: List[Chunk],index: Int,attempt: Int): IO[List[Chunk]] = IO.defer(annotator.annotate(batch,claim.snapshot.messages)).handleErrorWith {
+      def windowFailure(error: Throwable,index: Int,stage: String,attempt: Int): IO[Nothing] = {
+        val code=failureCode(error)
+        val exceptionClass=error.getClass.getName
+        val origin=failureOrigin(error)
+        IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=${windows.size} stage=$stage annotationAttempt=$attempt annotationAttemptLimit=$annotationAttemptLimit code=$code exceptionClass=$exceptionClass origin=$origin")) *> IO.raiseError(error)
+      }
+      def annotate(batch: List[Chunk],index: Int,attempt: Int): IO[(List[Chunk],Int)] = IO.defer(annotator.annotate(batch,claim.snapshot.messages)).map(chunks => (chunks,attempt)).handleErrorWith {
         case error: DomainError if error.code==truncatedAnnotationCode =>
           val retry = attempt<annotationAttemptLimit
           val outcome = if(retry) "retry" else "exhaust"
           IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=${windows.size} attempt=$attempt attemptLimit=$annotationAttemptLimit code=$truncatedAnnotationCode outcome=$outcome")) *>
-            (if(retry) annotate(batch,index,attempt+1) else IO.raiseError(error))
-        case error => IO.raiseError(error)
+            (if(retry) annotate(batch,index,attempt+1) else windowFailure(error,index,"annotation",attempt))
+        case error => windowFailure(error,index,"annotation",attempt)
       }
       val work = (report(0) *> windows.zipWithIndex.traverse { case (batch,index) =>
-        annotate(batch,index,1).flatMap(chunks => embedder.documents(chunks.map(_.text)).map(vectors => chunks.zip(vectors).map(IndexedChunk.apply.tupled))).flatTap(_ => report(index+1))
+        annotate(batch,index,1).flatMap { case (chunks,attempt) =>
+          IO.defer(embedder.documents(chunks.map(_.text))).map(vectors => chunks.zip(vectors).map(IndexedChunk.apply.tupled)).handleErrorWith(error => windowFailure(error,index,"embedding",attempt))
+        }.flatTap(_ => report(index+1))
       }).flatMap(x => IO.blocking(archive.publish(claim,x.flatten))).void
       val renew = (IO.sleep(30.seconds) *> IO.blocking { db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=now()+interval '300 seconds' WHERE id=? AND fence=? AND state='Running' AND lease_until>now()",claim.jobId,claim.fence)) }).foreverM
       IO.race(work,renew).void.handleErrorWith { e =>
-        val code = e match { case d: DomainError => d.code; case _ => "worker-fault" }
+        val code = failureCode(e)
         val exceptionClass=e.getClass.getName
-        val origin=e.getStackTrace.headOption.map(frame => s"${frame.getClassName}.${frame.getMethodName}:${frame.getLineNumber}").getOrElse("unavailable")
+        val origin=failureOrigin(e)
         IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass origin=$origin")) *> IO.blocking(archive.fail(claim,code)) *> IO.sleep(2.seconds)
       }.as(true)
   }

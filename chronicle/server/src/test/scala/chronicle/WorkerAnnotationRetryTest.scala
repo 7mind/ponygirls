@@ -7,17 +7,34 @@ import org.http4s.{Message as _,*}
 import org.http4s.client.Client
 import io.circe.Json
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
+import scala.jdk.CollectionConverters.*
+import izumi.logstage.api.Log
+import izumi.logstage.api.logger.{LogQueue,LogRouter,LogSink}
+import izumi.logstage.api.rendering.{RenderingOptions,StringRenderingPolicy}
 
 abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
   def withArchive(f: (Config,Database,SessionArchive) => Unit): Unit
+  private final class CapturedLogs extends LogSink {
+    private val captured=new ConcurrentLinkedQueue[Log.Entry]
+    val logger=new logstage.IzLogger(LogRouter(Log.Level.Trace,this,Map.empty,LogQueue.Immediate),Log.CustomContext.empty)
+    def flush(entry: Log.Entry): Unit = { captured.add(entry); () }
+    def entries: List[Log.Entry] = captured.iterator().asScala.toList
+    def messages: List[String] = entries.map(entry => entry.message.template.s(entry.message.args.map(_.value)*))
+    def rendered: String = {
+      val renderer=new StringRenderingPolicy(RenderingOptions.colorless,None)
+      entries.map(renderer.render).mkString("\n")
+    }
+  }
   private final class RecordingArchive(delegate: SessionArchive) extends SessionArchive {
     val completed=scala.collection.mutable.ListBuffer.empty[Int]
     val failures=scala.collection.mutable.ListBuffer.empty[String]
+    val claimed=scala.collection.mutable.ListBuffer.empty[Claim]
     var claims=0; var publications=0
     def ingest(owner: String,r: IngestRequest,profile: String): IngestReceipt = delegate.ingest(owner,r,profile)
     def headSnapshot(reader: String,id: UUID): IngestRequest = delegate.headSnapshot(reader,id)
     def session(reader: String,id: UUID): SessionInfo = delegate.session(reader,id)
-    def claim(profile: String,seconds: Int): Option[Claim] = { claims+=1; delegate.claim(profile,seconds) }
+    def claim(profile: String,seconds: Int): Option[Claim] = { claims+=1; val result=delegate.claim(profile,seconds); claimed++=result; result }
     def progress(c: Claim,count: Int,total: Int): Boolean = { completed += count; delegate.progress(c,count,total) }
     def publish(c: Claim,chunks: List[IndexedChunk]): Boolean = { publications+=1; delegate.publish(c,chunks) }
     def fail(c: Claim,code: String): Unit = { failures += code; delegate.fail(c,code) }
@@ -58,7 +75,9 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     val archive=new RecordingArchive(delegate); val receipt=archive.ingest("a",source,config.profile)
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
     val model=annotator(config,calls,(fragments,attempt) => IO.pure(response(fragments,if(attempt==2) "length" else "stop")))
-    assert(new Worker(archive,model,embedder,db,config,logstage.IzLogger()).once.unsafeRunSync())
+    val logs=new CapturedLogs
+    assert(new Worker(archive,model,embedder,db,config,logs.logger).once.unsafeRunSync())
+    assertEquals(logs.messages.size,1); assert(logs.messages.head.startsWith("annotation attempt failed "))
     assertEquals(labels(calls),List('a','b','b','c'))
     assertEquals(calls(1),calls(2))
     assertEquals(embedder.calls.toList.map(_.head),List('a','b','c'))
@@ -70,7 +89,13 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     val archive=new RecordingArchive(delegate); val receipt=archive.ingest("a",source,config.profile)
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
     val model=annotator(config,calls,(fragments,attempt) => IO.pure(response(fragments,if(attempt==1) "stop" else "length")))
-    assert(new Worker(archive,model,embedder,db,config,logstage.IzLogger()).once.unsafeRunSync())
+    val logs=new CapturedLogs
+    assert(new Worker(archive,model,embedder,db,config,logs.logger).once.unsafeRunSync())
+    val retries=logs.messages.filter(_.startsWith("annotation attempt failed "))
+    assertEquals(retries.size,5); assertEquals(retries.count(_.endsWith("outcome=retry")),4); assert(retries.last.endsWith("attempt=5 attemptLimit=5 code=model-output/truncated outcome=exhaust"))
+    val terminal=logs.messages.filter(_.startsWith("window failed "))
+    assertEquals(terminal.size,1); assert(terminal.head.contains("stage=annotation annotationAttempt=5 annotationAttemptLimit=5 code=model-output/truncated"))
+    assertEquals(logs.messages.count(_.startsWith("job failed ")),1); assertEquals(logs.messages.size,7)
     assertEquals(labels(calls),List('a','b','b','b','b','b'))
     assert(calls.drop(1).forall(_==calls(1)))
     assertEquals(embedder.calls.toList.map(_.head),List('a'))
@@ -110,21 +135,73 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       def query(text: String): IO[List[Double]] = IO.pure(Nil)
       def documents(text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1 }.flatMap(_ => IO.raiseError(DomainError("model-output/truncated","synthetic")))
     }
-    assert(new Worker(archive,model,embedder,db,config,logstage.IzLogger()).once.unsafeRunSync())
+    val logs=new CapturedLogs
+    assert(new Worker(archive,model,embedder,db,config,logs.logger).once.unsafeRunSync())
+    assertEquals(logs.messages.count(_.startsWith("annotation attempt failed ")),0)
+    assertEquals(logs.messages.count(_.contains("stage=embedding annotationAttempt=1 annotationAttemptLimit=5 code=model-output/truncated")),1)
+    assertEquals(logs.messages.size,2)
     assertEquals(calls.size,1); assertEquals(embeddings,1)
     assertEquals(archive.completed.toList,List(0)); assertEquals(archive.publications,0)
     assertEquals(archive.failures.toList,List("model-output/truncated"))
   }}
+  List("annotation","embedding").foreach { stage => List(false,true).foreach { unexpected =>
+    test(s"BG/GoodCommunication regression: terminal $stage ${if(unexpected) "worker fault" else "model output"} records private-free window context without extra attempts") { withArchive { (config,db,delegate) =>
+      val archive=new RecordingArchive(delegate); val receipt=archive.ingest("a",source,config.profile)
+      val logs=new CapturedLogs
+      val poison="PRIVATE_EXCEPTION_DETAIL_AUTHORIZATION_BEARER_SYNTHETIC_SECRET"
+      var messageReads=0
+      val error=if(unexpected) new IllegalStateException(poison) {
+        override def getMessage(): String = { messageReads+=1; super.getMessage() }
+      } else DomainError("model-output",poison)
+      error.setStackTrace(Array(new StackTraceElement("chronicle.SyntheticModel","respond",poison,321)))
+      var annotations=0; var embeddings=0
+      val model=new Annotator {
+        def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO { annotations+=1 }.flatMap { _ =>
+          if(annotations==2) IO.raiseError(DomainError("model-output/truncated",poison))
+          else if(stage=="annotation" && annotations==3) IO.raiseError(error)
+          else IO.pure(window.map(_.copy(summary=poison,tags=List(poison))))
+        }
+      }
+      val embedder=new Embedder {
+        def query(text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query"))
+        def documents(text: List[String]): IO[List[List[Double]]] = {
+          embeddings+=1
+          if(stage=="embedding" && embeddings==2) throw error
+          IO.pure(text.map(_ => List(0.1234567898765432,0.5,1.0)))
+        }
+      }
+      assert(new Worker(archive,model,embedder,db,config,logs.logger).once.unsafeRunSync())
+      val claim=archive.claimed.head
+      val code=if(unexpected) "worker-fault" else "model-output"
+      assertEquals(annotations,3); assertEquals(embeddings,if(stage=="annotation") 1 else 2)
+      assertEquals(archive.claims,1); assertEquals(archive.completed.toList,List(0,1))
+      assertEquals(archive.failures.toList,List(code)); assertEquals(archive.publications,0)
+      assertEquals(archive.session("a",receipt.sessionId).indexedRevision,None)
+      val messages=logs.messages
+      val terminal=messages.filter(_.startsWith("window failed "))
+      assertEquals(terminal.size,1,"missing terminal stage/window diagnostic")
+      assertEquals(terminal.head,s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=1 totalWindows=3 stage=$stage annotationAttempt=2 annotationAttemptLimit=5 code=$code exceptionClass=${error.getClass.getName} origin=chronicle.SyntheticModel.respond:321")
+      assertEquals(messages.filter(_.startsWith("annotation attempt failed ")),List(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=1 totalWindows=3 attempt=1 attemptLimit=5 code=model-output/truncated outcome=retry"))
+      assertEquals(messages.filter(_.startsWith("job failed ")),List(s"job failed jobId=${claim.jobId} code=$code exceptionClass=${error.getClass.getName} origin=chronicle.SyntheticModel.respond:321"))
+      assertEquals(messages.size,3); assertEquals(messageReads,0)
+      val recorded=logs.rendered+logs.entries.mkString
+      List(poison,"a"*128,"b"*128,"0.1234567898765432").foreach(secret => assert(!recorded.contains(secret),"private content reached log entry"))
+      assert(logs.entries.forall(_.firstThrowable.isEmpty))
+      val next=archive.claim(config.profile,300).get
+      assertEquals(next.fence,claim.fence+1)
+    }}
+  }}
   test("BG/GoodCommunication: cancellation during a retried annotation does not retry or fail the job") { withArchive { (config,db,delegate) =>
     val archive=new RecordingArchive(delegate); archive.ingest("a",source,config.profile)
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
+    val logs=new CapturedLogs
     val program=for {
       started <- Deferred[IO,Unit]
       cancelled <- Deferred[IO,Unit]
       model=annotator(config,calls,(fragments,attempt) =>
         if(attempt==1) IO.pure(response(fragments,"length"))
         else started.complete(()).flatMap(_ => IO.never[Json]).onCancel(cancelled.complete(()).void))
-      fiber <- new Worker(archive,model,embedder,db,config,logstage.IzLogger()).once.start
+      fiber <- new Worker(archive,model,embedder,db,config,logs.logger).once.start
       _ <- started.get
       _ <- fiber.cancel
       _ <- cancelled.get
@@ -134,6 +211,34 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     assertEquals(calls.size,2); assertEquals(calls(0),calls(1))
     assertEquals(embedder.calls.toList,Nil); assertEquals(archive.completed.toList,List(0))
     assertEquals(archive.failures.toList,Nil); assertEquals(archive.publications,0)
+    assertEquals(logs.messages.size,1); assert(logs.messages.head.startsWith("annotation attempt failed "))
+  }}
+  test("BG/GoodCommunication: cancellation during embedding emits no terminal diagnostic or job failure") { withArchive { (config,db,delegate) =>
+    val archive=new RecordingArchive(delegate); archive.ingest("a",source,config.profile)
+    val logs=new CapturedLogs
+    var annotations=0; var embeddings=0
+    val model=new Annotator {
+      def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO { annotations+=1 }.flatMap { _ =>
+        if(annotations==1) IO.raiseError(DomainError("model-output/truncated","synthetic")) else IO.pure(window)
+      }
+    }
+    val program=for {
+      started <- Deferred[IO,Unit]
+      cancelled <- Deferred[IO,Unit]
+      embedder=new Embedder {
+        def query(text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query"))
+        def documents(text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1 } *> started.complete(()) *> IO.never[List[List[Double]]].onCancel(cancelled.complete(()).void)
+      }
+      fiber <- new Worker(archive,model,embedder,db,config,logs.logger).once.start
+      _ <- started.get
+      _ <- fiber.cancel
+      _ <- cancelled.get
+      outcome <- fiber.join
+    } yield outcome
+    assert(program.unsafeRunSync().isCanceled)
+    assertEquals(annotations,2); assertEquals(embeddings,1)
+    assertEquals(archive.completed.toList,List(0)); assertEquals(archive.failures.toList,Nil); assertEquals(archive.publications,0)
+    assertEquals(logs.messages.size,1); assert(logs.messages.head.startsWith("annotation attempt failed "))
   }}
 }
 class DummyWorkerAnnotationRetryTest extends WorkerAnnotationRetryContract {
