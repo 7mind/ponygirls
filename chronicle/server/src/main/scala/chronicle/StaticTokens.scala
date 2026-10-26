@@ -28,6 +28,10 @@ object StaticTokens {
     Check(entries.map(_._2).distinct.size==entries.size,"config","duplicate static token values")
     // Serializes startup reconciliation with mint/revoke, including identities not yet present.
     Sql.exec(c,"LOCK TABLE ch_tokens IN SHARE ROW EXCLUSIVE MODE")
+    entries.groupBy(_._1.userId).foreach { case (owner,tokens) =>
+      val issued=Sql.one(c,"SELECT count(*) FROM ch_tokens WHERE owner=? AND NOT static_config AND NOT revoked",owner)(_.getInt(1)).get
+      Check(issued+tokens.size<=TokenPolicy.maximumPerOwner,"config","active issued and configured token owner limit")
+    }
     entries.foreach { case (t,h) =>
       Sql.one(c,"SELECT owner,static_config FROM ch_tokens WHERE id=?",t.id) { r =>
         Check(r.getString(1)==t.userId && r.getBoolean(2),"config","static token ID collision")

@@ -28,6 +28,7 @@ object Wire {
   def secret(): String = { val b = new Array[Byte](32); new SecureRandom().nextBytes(b); Base64.getUrlEncoder.withoutPadding.encodeToString(b) }
 }
 final case class UserConfig(id: String, login: String, passwordHashFile: String, enabled: Boolean)
+object TokenPolicy { val maximumPerOwner = 100 }
 final case class StaticTokenConfig(id: UUID, userId: String, name: String, scopes: List[Scope], tokenFile: String)
 final case class ModelConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int)
 final case class EmbeddingConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, dimensions: Int, queryPrefix: String, documentPrefix: String, sendDimensions: Boolean)
@@ -36,6 +37,7 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
   def validate(): Unit = {
     Check(users.map(_.id).distinct.size == users.size && users.map(_.login).distinct.size == users.size, "config", "duplicate users")
     Check(staticTokens.map(_.id).distinct.size==staticTokens.size,"config","duplicate static token IDs")
+    Check(staticTokens.groupBy(_.userId).values.forall(_.size<=TokenPolicy.maximumPerOwner),"config","static token owner limit")
     staticTokens.foreach { t =>
       Check(users.exists(_.id==t.userId),"config","static token owner must be configured")
       Check(t.name.nonEmpty && t.name.length<=128,"config","invalid static token name")
