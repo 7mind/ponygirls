@@ -24,10 +24,10 @@ export function Dialog({ title, close, children }: { title: string; close: () =>
   }, []);
   return <dialog className="conversation-dialog" aria-labelledby={titleId} ref={ref} tabIndex={-1} onCancel={event => { event.preventDefault(); close(); }} onKeyDown={event => {
     if (event.key !== 'Tab') return;
-    const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(element => element.getClientRects().length > 0 && element.closest('[hidden],[inert]') === null);
+    const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not(:disabled):not([type="hidden"]),select:not(:disabled),textarea:not(:disabled),summary,[tabindex]')].filter(element => element.tabIndex >= 0 && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden' && element.closest('[hidden],[inert]') === null);
     const first = focusable[0], last = focusable.at(-1);
     if (first === undefined || last === undefined) { event.preventDefault(); event.currentTarget.focus({ preventScroll: true }); return; }
-    if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) { event.preventDefault(); last.focus({ preventScroll: true }); }
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus({ preventScroll: true }); }
   }} onClick={event => {
     if (event.target !== event.currentTarget) return;

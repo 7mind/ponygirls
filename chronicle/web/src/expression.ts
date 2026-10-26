@@ -50,10 +50,30 @@ function tokens(expression: string): Token[] {
   return result;
 }
 function operator(token: Token | undefined, value: string): boolean { return token !== undefined && !token.literal && token.text.toUpperCase() === value; }
+function validateStructure(scanned: readonly Token[]) {
+  let needsOperand = true;
+  const invalid = () => { throw new Error('Complete Boolean operands and field values before applying a quick filter.'); };
+  for (let index = 0; index < scanned.length; index++) {
+    const token = scanned[index]!;
+    if (!token.literal && (token.text === '(' || token.text === '{')) { needsOperand = true; continue; }
+    if (!token.literal && (token.text === ')' || token.text === '}')) { if (needsOperand) invalid(); needsOperand = false; continue; }
+    if (operator(token, 'AND') || operator(token, 'OR')) { if (needsOperand) invalid(); needsOperand = true; continue; }
+    if (operator(token, 'NOT')) { needsOperand = true; continue; }
+    if (!token.literal && token.text === ':') invalid();
+    if (scanned[index + 1]?.text === ':') {
+      const value = scanned[index + 2];
+      if (value === undefined || (!value.literal && [':', '(', ')', '{', '}'].includes(value.text))) invalid();
+      index += 2;
+    }
+    needsOperand = false;
+  }
+  if (scanned.length > 0 && needsOperand) invalid();
+}
 
-// This checks directive placement, not the server's field/Boolean search policy.
+// Validate structure before removing a directive; fields and search policy remain server-authoritative.
 export function splitGlobalMode(expression: string): ExpressionParts {
   const scanned = tokens(expression), modes: number[] = [];
+  validateStructure(scanned);
   for (let index = 0; index < scanned.length; index++) {
     const token = scanned[index]!;
     if (!token.literal && token.text.toLowerCase() === 'mode' && scanned[index + 1]?.text === ':') modes.push(index);
@@ -72,8 +92,8 @@ export function splitGlobalMode(expression: string): ExpressionParts {
   const before = scanned[modeIndex - 1], after = scanned[modeIndex + 3];
   if (operator(before, 'AND')) start = before!.start;
   else if (operator(after, 'AND')) end = after!.end;
-  const body = [expression.slice(0, start).trim(), expression.slice(end).trim()].filter(Boolean).join(' '), remaining = tokens(body);
-  if ((body.length === 0 && (start !== first.start || end !== last.end)) || operator(remaining[0], 'AND') || operator(remaining[0], 'OR') || ['AND', 'OR', 'NOT'].some(value => operator(remaining.at(-1), value))) throw new Error('Complete the expression around the mode directive before applying a quick filter.');
+  const body = [expression.slice(0, start).trim(), expression.slice(end).trim()].filter(Boolean).join(' ');
+  validateStructure(tokens(body));
   return { body, modeDirective: expression.slice(first.start, last.end), mode };
 }
 export function addExpressionFilter(expression: string, attribute: string, value: string): string {

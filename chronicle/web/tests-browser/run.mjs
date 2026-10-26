@@ -166,7 +166,9 @@ try {
     await collector.getByText('Failed · Stale report (>120s)', { exact: true }).waitFor({ timeout: 7000 });
     await collector.getByText('Collector error: progress-upload-failed', { exact: true }).waitFor();
     assert.match(await collector.innerText(), /Last known snapshot only; current collection progress is unknown/);
-    assert.match(await page.locator('.activity-snapshot-note').innerText(), /not collector or worker health/);
+    await page.locator('.activity-about > summary').click();
+    assert.match(await page.locator('.activity-about-content').innerText(), /not collector or worker health/);
+    await page.locator('.activity-about > summary').click();
     fixture.collectionDenied = true;
     await page.getByRole('button', { name: 'Refresh snapshots ↻' }).click();
     await page.getByRole('alert').filter({ hasText: 'Collection status denied' }).waitFor();

@@ -43,3 +43,10 @@ test('BG specified: shared server/editor mode fixtures retain global scope and r
     assert.equal(splitGlobalMode(composed).mode, item.mode, item.input);
   }
 });
+
+// Regression: removing a mode's AND must not turn malformed syntax into a different valid query.
+test('BA: invalid structural syntax cannot be repaired by directive extraction', () => {
+  for (const expression of ['NOT AND mode:lexical A', 'A AND AND mode:lexical B', 'tag:mode:lexical AND A', '(NOT AND A) mode:lexical']) {
+    assert.throws(() => addExpressionFilter(expression, 'tag', 'review'), Error, expression);
+  }
+});

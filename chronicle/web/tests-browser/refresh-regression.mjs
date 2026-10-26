@@ -137,7 +137,8 @@ try {
     assert.ok(bounds !== null && Math.abs(bounds.width - viewport.width * .9) <= 1 && Math.abs(bounds.height - viewport.height * .9) <= 1, 'dialog occupies 90vw by 90vh');
     assert.equal(await page.getByRole('button', { name: 'Close conversation', exact: true }).evaluate(element => element === document.activeElement), true);
     await page.keyboard.press('Shift+Tab');
-    assert.equal(await page.getByRole('button', { name: 'Last dialog action', exact: true }).evaluate(element => element === document.activeElement), true, 'native modal traps reverse keyboard traversal');
+    assert.equal(await page.getByText('Last dialog details', { exact: true }).evaluate(element => element === document.activeElement), true, 'reverse keyboard traversal includes native summary controls');
+    assert.ok(await page.getByText('Last dialog details', { exact: true }).evaluate(element => { const target = element.getBoundingClientRect(), pane = element.closest('.conversation-source').getBoundingClientRect(); return target.top >= pane.top - 1 && target.bottom <= pane.bottom + 1; }), 'wrapped keyboard focus is visible inside its own pane');
     await page.keyboard.press('Tab');
     assert.equal(await page.getByRole('button', { name: 'Close conversation', exact: true }).evaluate(element => element === document.activeElement), true, 'native modal traps forward keyboard traversal');
     const scrolling = await page.evaluate(() => {

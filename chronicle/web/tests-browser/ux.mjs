@@ -10,6 +10,20 @@ const address = server.httpServer.address();
 if (address === null || typeof address === 'string') throw new Error('No fixture HTTP address');
 const browser = await chromium.launch({ headless: true });
 const errors = [];
+const MIN_TEXT_CONTRAST_RATIO = 4.5;
+async function textContrast(locator) {
+  return locator.evaluate(async element => {
+    await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {})));
+    const rgba = value => { const parts = value.match(/[\d.]+/g).map(Number); return [parts[0], parts[1], parts[2], parts[3] === undefined ? 1 : parts[3]]; };
+    const ancestors = []; for (let node = element; node !== null; node = node.parentElement) ancestors.push(node);
+    let background = [255, 255, 255];
+    for (const node of ancestors.reverse()) { const value = rgba(getComputedStyle(node).backgroundColor); background = background.map((channel, index) => value[index] * value[3] + channel * (1 - value[3])); }
+    const color = rgba(getComputedStyle(element).color), foreground = background.map((channel, index) => color[index] * color[3] + channel * (1 - color[3]));
+    const luminance = channels => channels.map(value => { const s = value / 255; return s <= .04045 ? s / 12.92 : ((s + .055) / 1.055) ** 2.4; }).reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
+    const front = luminance(foreground), back = luminance(background);
+    return { color: getComputedStyle(element).color, background, ratio: (Math.max(front, back) + .05) / (Math.min(front, back) + .05) };
+  });
+}
 async function scene(configure) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } }), page = await context.newPage(), fixture = new ChronicleFixture();
   page.on('pageerror', error => errors.push(error.message));
@@ -139,7 +153,7 @@ try {
       fixture.activityCollectors = Array.from({ length: 120 }, (_, index) => new api.ActivityCollector(`collector-${String(index).padStart(3, '0')}`, undefined, BigInt(index), 0n, zero, zero));
       const job = (id, revision, state, error) => new api.JobInfo(id, fixture.session.id, revision, state, 1, error, 0, undefined);
       const failed = new api.ActivityJob(job(currentFailedId, 2, api.JobState.Failed, 'Current failed work'), 'target-profile', api.ActivityJobClass.Current, undefined, false, true);
-      const running = ['active', 'expired', 'unleased'].map((kind, index) => new api.ActivityJob(job(`00000000-0000-4000-8000-${String(90002 + index).padStart(12, '0')}`, 2, api.JobState.Running, undefined), 'target-profile', api.ActivityJobClass.Current, kind === 'unleased' ? undefined : kind === 'active' ? '2030-01-01T00:00:00Z' : '2020-01-01T00:00:00Z', kind === 'active', false));
+      const running = ['active', 'expired', 'unleased'].map((kind, index) => new api.ActivityJob(job(`00000000-0000-4000-8000-${String(90002 + index).padStart(12, '0')}`, 2, api.JobState.Running, kind === 'active' ? 'Previous-attempt synthetic failure' : undefined).with({ attempts: kind === 'active' ? 4 : 1 }), 'target-profile', api.ActivityJobClass.Current, kind === 'unleased' ? undefined : kind === 'active' ? '2030-01-01T00:00:00Z' : '2020-01-01T00:00:00Z', kind === 'active', false));
       const history = Array.from({ length: 58 }, (_, index) => new api.ActivityJob(job(`00000000-0000-4000-8000-${String(91000 + index).padStart(12, '0')}`, index % 3 === 1 ? 2 : 1, api.JobState.Failed, `Historical failure ${index + 1}`), index % 3 === 0 ? 'target-profile' : 'obsolete-profile', index % 3 === 0 ? api.ActivityJobClass.SupersededRevision : index % 3 === 1 ? api.ActivityJobClass.ObsoleteProfile : api.ActivityJobClass.SupersededRevisionAndProfile, undefined, false, false));
       fixture.activityJobs = [failed, ...running, ...history];
     });
@@ -151,20 +165,54 @@ try {
     assert.match(await page.locator('.activity-overview').innerText(), /1 active · 1 expired · 1 unleased/);
     await page.getByText('Active lease at snapshot', { exact: false }).waitFor(); await page.getByText('Expired lease at snapshot', { exact: false }).waitFor(); await page.getByText('Unleased · no lease expiry', { exact: true }).first().waitFor();
     assert.equal(await page.getByRole('button', { name: 'Retry job', exact: true }).count(), 1);
+    assert.equal(await page.getByText('Prior-attempt error: Previous-attempt synthetic failure', { exact: true }).count(), 1, 'Running retains prior failure provenance without claiming the current attempt has Failed');
+    assert.match(await page.locator('.activity-job-row').filter({ hasText: 'Previous-attempt synthetic failure' }).innerText(), /attempt 4/);
     assert.match(await page.locator('.activity-collector-card').first().innerText(), /No stored report · collection progress unknown/);
     await appendUntil(page, '.activity-collector-scroll', '.activity-collector-card', 120);
     assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_Activity && call.operation.query.cursor === '100' && call.operation.query.limit === 50));
     fixture.activityJobs = fixture.activityJobs.map(item => item.job.id === currentFailedId ? item.with({ classification: api.ActivityJobClass.SupersededRevision, retryable: false }) : item);
     await page.getByRole('button', { name: 'Refresh snapshots ↻', exact: true }).click();
     await page.locator(`.activity-job-row[data-scroll-anchor="${currentFailedId}"]`).waitFor({ state: 'detached' });
+    await until(async () => await totals.locator('tbody tr').first().locator('td').first().innerText() === '3', 'Independent collector-summary chain did not finish refreshing');
     assert.deepEqual(await totals.locator('tbody tr').first().locator('td').allTextContents(), ['3', '0', '3', '0', '0']);
     assert.equal(await page.getByRole('button', { name: 'Retry job', exact: true }).count(), 0, 'a job that became historical does not silently remain actionable in Current');
+    assert.equal(await page.getByText('Prior-attempt error: Previous-attempt synthetic failure', { exact: true }).count(), 1, 'zero current Failed jobs does not erase a Running job\'s prior-attempt error');
     await page.getByRole('button', { name: 'History', exact: true }).click();
     await appendUntil(page, '.activity-job-scroll', '.activity-job-row', 59);
     assert.equal(await page.getByRole('button', { name: 'Retry job', exact: true }).count(), 0, 'historical failures are retained for accounting, never presented as retryable current work');
     assert.match(await page.getByRole('region', { name: 'Historical indexing jobs', exact: true }).innerText(), /Obsolete profile/); assert.match(await page.getByRole('region', { name: 'Historical indexing jobs', exact: true }).innerText(), /Both: superseded revision/);
     assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.scope === api.ActivityJobScope.Historical && call.operation.query.cursor === '50'));
     assert.equal(await page.getByRole('navigation', { name: /pages/i }).count(), 0);
+    await context.close();
+  });
+  await run('Activity scope text contrast meets WCAG AA in selected/unselected normal and hover states', async () => {
+    const { context, page } = await scene(); await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole('button', { name: 'activity', exact: true }).click();
+    const group = page.getByRole('group', { name: 'Indexing job scope', exact: true });
+    for (const selected of ['Current', 'History']) {
+      await group.getByRole('button', { name: selected, exact: true }).click();
+      for (const label of ['Current', 'History']) {
+        const button = group.getByRole('button', { name: label, exact: true });
+        await page.mouse.move(0, 0); const normal = await textContrast(button); assert.ok(normal.ratio >= MIN_TEXT_CONTRAST_RATIO, `${selected} selected / ${label} normal contrast: ${JSON.stringify(normal)}`);
+        await button.hover(); const hover = await textContrast(button); assert.ok(hover.ratio >= MIN_TEXT_CONTRAST_RATIO, `${selected} selected / ${label} hover contrast: ${JSON.stringify(hover)}`);
+      }
+    }
+    await context.close();
+  });
+  await run('Activity first collector identity, phase/freshness and Current totals are visible at 1440x900', async () => {
+    const { context, page } = await scene(fixture => {
+      const report = new api.CollectorProgressUpdate(fixture.source.collectorNamespace, 1n, '00000000-0000-4000-8000-000000000090', api.CollectorPhase.Idle, '2026-10-26T11:00:00Z', new api.CollectorCounters(0,0,0,0,0,0,0,0,0,0,0,0,0n), 0n, 0n, undefined, undefined);
+      fixture.collectors = [new api.CollectorStatus(report, '2026-10-26T11:59:00Z', false)];
+    });
+    await page.setViewportSize({ width: 1440, height: 900 }); await page.getByRole('button', { name: 'activity', exact: true }).click();
+    const collector = page.locator('.activity-collector-card').first(); await collector.waitFor();
+    for (const [label, locator] of [['collector ID', collector.locator('h3')], ['phase/freshness', collector.locator('.activity-last-report .badge')], ['Current totals/done/failed', collector.locator('.activity-counts tbody tr').first()]]) {
+      const visible = await locator.evaluate(element => { const rect = element.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, height: innerHeight }; });
+      assert.ok(visible.top >= 0 && visible.bottom <= visible.height, `${label} must be visible without scrolling: ${JSON.stringify(visible)}`);
+    }
+    await page.locator('.activity-about > summary').click();
+    assert.match(await page.locator('.activity-about-content').innerText(), /Browser HTTP\/socket availability is not collector or worker health/);
+    assert.match(await page.locator('.activity-about-content').innerText(), /in-flight page chains finish/);
     await context.close();
   });
   assert.deepEqual(errors, [], 'no uncaught browser application errors');
