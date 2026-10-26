@@ -1,6 +1,6 @@
 package chronicle
 import chronicle.api.*
-import cats.effect.{IO,Ref}
+import cats.effect.{IO,Ref,Deferred,Resource}
 import cats.effect.std.{Queue,Semaphore}
 import cats.syntax.all.*
 import fs2.{Stream,Pipe}
@@ -13,9 +13,10 @@ import java.util.UUID
 import java.nio.file.{Files,Path}
 import scala.concurrent.duration.*
 
-final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire) {
+final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission) {
   private val socketQueueCapacity = 32
   private val livenessTimeoutCloseCode = 1013
+  private val normalCloseCode = 1000
   private def header(r: Request[IO],key: String): Option[String] = r.headers.get(CIString(key)).map(_.head.value)
   private def origin(r: Request[IO],required: Boolean): Unit = Check(header(r,"Origin").contains(config.allowedOrigin) || (!required && header(r,"Origin").isEmpty),"forbidden","Origin not allowed")
   private def cookie(r: Request[IO]): String = r.cookies.find(_.name=="chronicle_session").map(_.content).getOrElse("")
@@ -90,69 +91,127 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
         }
     }
   }
+  private def connectionLease(id: UUID,cleanup: Ref[IO,IO[Unit]],closed: Ref[IO,Boolean]): Resource[IO,(McpRunConnection,IO[Unit])] = Resource.make {
+    rpc.connection(id).allocated.flatMap { case (connection,release) => Ref.of[IO,Boolean](false).flatMap { released =>
+      val releaseOnce=IO.uncancelable(_ => released.getAndSet(true).flatMap(done => if(done) IO.unit else release))
+      cleanup.set(releaseOnce) *> closed.get.ifM(releaseOnce,IO.unit).as(connection -> releaseOnce)
+    }}
+  }(_._2)
+
   private def socket(r: Request[IO],ws: WebSocketBuilder2[IO]): IO[Response[IO]] = for {
-    queue <- Queue.bounded[IO,WebSocketFrame](socketQueueCapacity)
+    queue <- Queue.bounded[IO,Http.SocketOutput](socketQueueCapacity)
     operations <- Queue.bounded[IO,ClientEnvelope](socketQueueCapacity)
+    controlQueue <- Queue.bounded[IO,ClientEnvelope](BrowserControlAdmission.socketQueueCapacity)
     negotiated <- Ref.of[IO,Option[String]](None)
     closed <- Ref.of[IO,Boolean](false)
+    cleanup <- Ref.of[IO,IO[Unit]](IO.unit)
+    ending <- Deferred[IO,Http.SocketClose]
     heartbeat <- Ref.of[IO,Option[(UUID,String,FiniteDuration)]](None)
+    connectionId <- IO(UUID.randomUUID())
     opened <- IO.monotonic
-    send = (e: ServerEnvelope) => closed.get.ifM(IO.unit,negotiated.get.flatMap(version => queue.offer(WebSocketFrame.Text(protocol.encodeServer(version.getOrElse(Wire.versions.current),e).noSpaces))))
-    close = (code: Int) => closed.set(true) *> queue.offer(WebSocketFrame.Close(code,"chronicle").fold(throw _,identity))
-    error = (id: UUID,d: DomainError) => send(ServerEnvelope(id,Result.Error(Failure(d.code,d.detail)))) *> (d.code match { case "unauthorized" => close(4401); case "version-mismatch" => close(4406); case "protocol-error" => close(4400); case _ => IO.unit })
-    execute = (e: ClientEnvelope) => closed.get.ifM(IO.unit,
-      negotiated.get.flatMap(version => IO.blocking(auth.browser(cookie(r))).flatMap(i => app.operationVersion(i,e,version.getOrElse(throw DomainError("protocol-error","Hello required"))))).flatMap(result => send(ServerEnvelope(e.requestId,result))).handleErrorWith {
-        case d: DomainError => error(e.requestId,d)
-        case _ => error(e.requestId,DomainError("unavailable","operation failed"))
+    close = (code: Int,failure: Option[ServerEnvelope]) => IO.uncancelable(_ => closed.set(true) *> cleanup.get.flatten *> ending.complete(Http.SocketClose(code,failure)).void)
+    enqueue = (output: Http.SocketOutput) => closed.get.ifM(IO.unit,queue.tryOffer(output).flatMap { accepted =>
+      if(accepted) IO.unit else close(livenessTimeoutCloseCode,None)
+    })
+    send = (envelope: ServerEnvelope) => enqueue(Http.SocketOutput.Reply(BrowserReply.Ordinary(envelope)))
+    error = (id: UUID,d: DomainError) => {
+      val envelope=ServerEnvelope(id,Result.Error(Failure(d.code,d.detail)))
+      d.code match {
+        case "unauthorized" => close(4401,Some(envelope))
+        case "version-mismatch" => close(4406,Some(envelope))
+        case "protocol-error" => close(4400,Some(envelope))
+        case _ => send(envelope)
+      }
+    }
+    execute = (envelope: ClientEnvelope,connection: McpRunConnection,control: Boolean) => closed.get.ifM(IO.unit,
+      negotiated.get.flatMap { version =>
+        val action=IO.blocking(auth.browser(cookie(r))).flatMap { identity =>
+          rpc.execute(identity,envelope,version.getOrElse(throw DomainError("protocol-error","Hello required")),connection)
+        }
+        (if(control) controls.run(action) else action).flatMap(reply => enqueue(Http.SocketOutput.Reply(reply)))
+      }.handleErrorWith {
+        case d: DomainError => error(envelope.requestId,d)
+        case _ => error(envelope.requestId,DomainError("unavailable","operation failed"))
       })
-    work = Stream.fromQueueUnterminated(operations).evalMap(execute).drain
     receive = (frame: WebSocketFrame) => closed.get.ifM(IO.unit,IO.defer {
       frame match {
         case WebSocketFrame.Text(text,true) =>
           if(text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>math.min(config.maxBodyBytes,Http.socketFrameBytes)) error(new UUID(0,0),DomainError("protocol-error","frame too large"))
           else negotiated.get.flatMap { version => scala.util.Try(protocol.decodeClient(version.getOrElse(Wire.versions.current),Wire.parse(text))).toEither match {
             case Left(_) => error(new UUID(0,0),DomainError("protocol-error","invalid frame"))
-            case Right(e) =>
-              (IO.blocking(auth.browser(cookie(r))).flatMap { i =>
+            case Right(envelope) =>
+              (IO.blocking(auth.browser(cookie(r))).flatMap { identity =>
                 negotiated.get.flatMap { ready =>
-                  if(ready.isEmpty && !e.operation.isInstanceOf[Operation.Hello]) IO.raiseError(DomainError("protocol-error","Hello required"))
-                  else e.operation match {
+                  if(ready.isEmpty && !envelope.operation.isInstanceOf[Operation.Hello]) IO.raiseError(DomainError("protocol-error","Hello required"))
+                  else envelope.operation match {
                     case Operation.Pong(nonce) => heartbeat.get.flatMap {
-                      case Some((id,expected,_)) if nonce==expected && id==e.requestId => heartbeat.set(None)
+                      case Some((id,expected,_)) if nonce==expected && id==envelope.requestId => heartbeat.set(None)
                       case _ => IO.raiseError(DomainError("protocol-error","unexpected Pong"))
                     }
                     case Operation.Hello(versions) =>
                       Check(ready.isEmpty,"protocol-error","Hello already negotiated")
                       val selected=Wire.negotiate(versions)
-                      app.operation(i,e).flatMap(result => negotiated.set(Some(selected)) *> send(ServerEnvelope(e.requestId,result)))
-                    case _: Operation.Ping => app.operation(i,e).flatMap(result => send(ServerEnvelope(e.requestId,result)))
-                    case _ => operations.tryOffer(e).flatMap(accepted => if(accepted) IO.unit else error(e.requestId,DomainError("unavailable","socket operation queue is full")))
+                      rpc.ordinary(identity,envelope,selected).flatMap(result => negotiated.set(Some(selected)) *> send(ServerEnvelope(envelope.requestId,result)))
+                    case _: Operation.Ping => rpc.ordinary(identity,envelope,ready.get).flatMap(result => send(ServerEnvelope(envelope.requestId,result)))
+                    case operation =>
+                      val selected=if(rpc.isControl(operation)) controlQueue else operations
+                      selected.tryOffer(envelope).flatMap(accepted => if(accepted) IO.unit else error(envelope.requestId,DomainError("unavailable","socket operation queue is full")))
                   }
                 }
-              }).handleErrorWith { case d: DomainError => error(e.requestId,d); case _ => error(e.requestId,DomainError("unavailable","operation failed")) }
+              }).handleErrorWith { case d: DomainError => error(envelope.requestId,d); case _ => error(envelope.requestId,DomainError("unavailable","operation failed")) }
           }}
-        case _: WebSocketFrame.Close => closed.set(true)
-        case _: WebSocketFrame.Ping => queue.offer(WebSocketFrame.Pong())
+        case _: WebSocketFrame.Close => close(normalCloseCode,None)
+        case _: WebSocketFrame.Ping => enqueue(Http.SocketOutput.Frame(WebSocketFrame.Pong()))
         case _: WebSocketFrame.Pong => IO.unit
         case _ => error(new UUID(0,0),DomainError("protocol-error","text JSON frames required"))
       }
     })
-    tick = (Stream.awakeEvery[IO](1.second).evalMap { _ => closed.get.ifM(IO.unit,IO.monotonic.flatMap { now =>
+    tick = Stream.awakeEvery[IO](1.second).evalMap { _ => closed.get.ifM(IO.unit,IO.monotonic.flatMap { now =>
       IO.blocking(auth.browser(cookie(r))).attempt.flatMap {
         case Left(_) => error(new UUID(0,0),DomainError("unauthorized","session expired or revoked"))
         case Right(_) => negotiated.get.flatMap { ready =>
-          if(ready.isEmpty && now-opened>10.seconds) close(livenessTimeoutCloseCode)
+          if(ready.isEmpty && now-opened>10.seconds) close(livenessTimeoutCloseCode,None)
           else if(ready.isEmpty) IO.unit
           else heartbeat.get.flatMap {
-            case Some((_,_,deadline)) if now>deadline => close(livenessTimeoutCloseCode)
+            case Some((_,_,deadline)) if now>deadline => close(livenessTimeoutCloseCode,None)
             case Some(_) => IO.unit
             case None => if((now-opened).toSeconds%20==0) { val id=UUID.randomUUID(); val nonce=Wire.secret(); heartbeat.set(Some((id,nonce,now+10.seconds))) *> send(ServerEnvelope(id,Result.Ping(nonce))) } else IO.unit
           }
         }
       }
-    }) }).drain
-    response <- ws.withOnClose(closed.set(true)).build(Stream.fromQueueUnterminated(queue).mergeHaltL(tick).mergeHaltL(work),_.evalMap(receive))
+    }) }.drain
+    outgoing = Stream.resource(connectionLease(connectionId,cleanup,closed)).flatMap { case (connection,_) =>
+      val ordinary=Stream.fromQueueUnterminated(operations).evalMap(envelope => execute(envelope,connection,false)).drain
+      val control=Stream.fromQueueUnterminated(controlQueue).evalMap(envelope => execute(envelope,connection,true)).drain
+      val workers=Stream.emits(List.fill(BrowserControlAdmission.socketWorkers)(control)).parJoin(BrowserControlAdmission.socketWorkers)
+      val frames=Stream.fromQueueUnterminated(queue).evalMap {
+        case Http.SocketOutput.Frame(frame) => IO.pure(Some(frame))
+        case Http.SocketOutput.Reply(reply) =>
+          val id=reply match {
+            case BrowserReply.Ordinary(envelope) => envelope.requestId
+            case BrowserReply.McpRead(handle) => handle.requestId
+            case BrowserReply.McpCatalog(id) => id
+          }
+          val render=negotiated.get.flatMap { version => rpc.materialize(reply,IO.blocking(auth.browser(cookie(r))),version.getOrElse(Wire.versions.current),protocol) }
+          val admitted=reply match {
+            case _: BrowserReply.Ordinary => render
+            case _ => controls.run(render)
+          }
+          admitted.map(json => Some(WebSocketFrame.Text(json.noSpaces): WebSocketFrame)).handleErrorWith {
+              case d: DomainError => error(id,d).as(None)
+              case _ => error(id,DomainError("unavailable","operation failed")).as(None)
+            }
+      }.unNone.interruptWhen(ending.get.as(Right(()): Either[Throwable,Unit]))
+      val terminal=Stream.eval(ending.get).flatMap { ending =>
+        val failure=Stream.emits(ending.failure.toList).evalMap(envelope => negotiated.get.map(version => WebSocketFrame.Text(protocol.encodeServer(version.getOrElse(Wire.versions.current),envelope).noSpaces): WebSocketFrame))
+        failure ++ Stream.emit(WebSocketFrame.Close(ending.code,"chronicle").fold(throw _,identity))
+      }
+      // Erase runs before awaiting a JDBC-backed ordinary worker's cancellation.
+      (frames ++ terminal).onFinalize(close(normalCloseCode,None)).concurrently(ordinary).concurrently(workers).concurrently(tick)
+    }.onFinalize(closed.set(true))
+    response <- ws.withOnClose(close(normalCloseCode,None)).build(outgoing,_.evalMap(receive))
   } yield response
+
 }
 
 object Http {
@@ -160,4 +219,9 @@ object Http {
   val mcpBodyBytes = 64*1024
   val socketFrameBytes = 64*1024
   final case class WebRoot(path: Option[String])
+  private enum SocketOutput {
+    case Reply(value: BrowserReply)
+    case Frame(value: WebSocketFrame)
+  }
+  private final case class SocketClose(code: Int,failure: Option[ServerEnvelope])
 }
