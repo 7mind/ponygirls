@@ -39,6 +39,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     def renew(c: Claim,seconds: Int): Boolean = delegate.renew(c,seconds)
     def progress(c: Claim,count: Int,total: Int): Boolean = { completed += count; delegate.progress(c,count,total) }
     def publish(c: Claim,chunks: List[IndexedChunk]): Boolean = { publications+=1; delegate.publish(c,chunks) }
+    def publishProblems(c: Claim,publication: ProblemsPublication): Boolean = { publications+=1; delegate.publishProblems(c,publication) }
     def fail(c: Claim,code: String): Unit = { failures += code; delegate.fail(c,code) }
   }
   private def source: IngestRequest = {
