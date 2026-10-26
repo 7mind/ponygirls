@@ -17,6 +17,6 @@ class CodecFixtureTest extends munit.FunSuite {
     val hit=SearchHit(SessionInfo(ContentView(1,None),id,"a",1,None,source.metadata,source.source,source.completion,false),Fragments.split(source.messages),0.5)
     val latest=SearchResult(List(hit),1,SearchCountScope.ExactMatches,None)
     val old=Wire.decode(chronicle.api.v1_0_0.SearchResult.codecJson,Wire.encode(SearchResult.codecJson,latest))
-    assertEquals(conversions.up1_1_0.convert[chronicle.api.v1_1_0.SearchResult,SearchResult](conversions.up1_0_0.convert[chronicle.api.v1_0_0.SearchResult,chronicle.api.v1_1_0.SearchResult](old)),latest)
+    assertEquals(conversions.up1_2_0.convert[chronicle.api.v1_2_0.SearchResult,SearchResult](conversions.up1_1_0.convert[chronicle.api.v1_1_0.SearchResult,chronicle.api.v1_2_0.SearchResult](conversions.up1_0_0.convert[chronicle.api.v1_0_0.SearchResult,chronicle.api.v1_1_0.SearchResult](old))),latest)
   }
 }

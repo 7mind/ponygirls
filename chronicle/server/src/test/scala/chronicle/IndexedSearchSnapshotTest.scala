@@ -58,13 +58,15 @@ class IndexedSearchSnapshotTest extends munit.FunSuite {
     }
     val snapshot=Wire.encode(IngestRequest.codecJson,Fixtures.snapshot()).noSpaces
     val chunk=Wire.encode(Chunk.codecJson,Fragments.split(Fixtures.snapshot().messages).head).noSpaces
-    def insert(first: Int,last: Int): Unit=db.transaction { c =>
+    def insert(first: Int,last: Int): Unit={ db.transaction { c =>
       Sql.exec(c,s"CREATE TEMP TABLE fixture AS SELECT i,md5('source'||((i-1)/$chunksPerSession))::uuid AS sid,md5('generation'||((i-1)/$chunksPerSession))::uuid AS gid,md5('chunk'||i)::uuid AS cid FROM generate_series($first,$last)i")
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision,published) SELECT DISTINCT sid,'a',sid::text,1,gid FROM fixture ON CONFLICT DO NOTHING")
       Sql.exec(c,"INSERT INTO ch_revisions SELECT DISTINCT sid,1,?::jsonb FROM fixture ON CONFLICT DO NOTHING",snapshot)
       Sql.exec(c,"INSERT INTO ch_generations SELECT DISTINCT gid,sid,1,? FROM fixture ON CONFLICT DO NOTHING",config.profile)
       Sql.exec(c,s"INSERT INTO ch_chunks SELECT cid,gid,?::jsonb || jsonb_build_object('id',cid,'sessionId',sid),to_tsvector('english','synthetic'),(SELECT array_agg(sin(i*d*0.031)+cos(i*d*0.017))::vector FROM generate_series(1,$dimensions)d),0 FROM fixture",chunk)
       Sql.exec(c,"INSERT INTO ch_search_chunks SELECT ch.id,ch.generation,g.session_id,g.revision,g.profile,ch.document,ch.embedding FROM ch_chunks ch JOIN fixture f ON f.cid=ch.id JOIN ch_generations g ON g.id=ch.generation")
+    }
+      ArchiveProjection.backfill(db)
     }
     try {
       insert(1,initialChunks); db.transaction(c => Sql.exec(c,"ANALYZE"))

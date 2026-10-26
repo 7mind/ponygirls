@@ -11,9 +11,10 @@ final class Database(config: Config) {
     c.setAutoCommit(false)
     try { val a = f(c); c.commit(); a } catch { case e: Throwable => c.rollback(); throw e }
   }
-  def initialize(): Unit = transaction { c =>
+  def initialize(): Unit = {
+    transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
-    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql").foreach { migration =>
+    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql").foreach { migration =>
       val stream = getClass.getResourceAsStream(s"/$migration")
       Check(stream != null,"config","missing migration resource")
       val sql = Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
@@ -30,6 +31,8 @@ final class Database(config: Config) {
     StaticTokens.reconcile(c,config)
     Sql.exec(c,"DELETE FROM ch_sessions WHERE owner IN(SELECT id FROM ch_users WHERE NOT enabled) OR expires < now()")
     Sql.exec(c,"INSERT INTO ch_profile(singleton,active,target,maintenance) VALUES(true,?,?,false) ON CONFLICT DO NOTHING",config.profile,config.profile)
+    }
+    ArchiveProjection.backfill(this)
   }
 }
 object Sql {
@@ -72,7 +75,9 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
           Check(!deleted,"gone","source purged; use a new collector namespace to restore")
           Check(head == r.expectedRevision,"conflict",s"expected revision mismatch; current=$head")
           val next = head+1; val job = UUID.randomUUID(); val receipt = IngestReceipt(r.requestId,id,next,job)
-          Sql.exec(c,"INSERT INTO ch_revisions VALUES(?,?,?::jsonb)",id,next,Wire.encode(IngestRequest.codecJson,SnapshotProjection(r)).noSpaces)
+          val snapshot=SnapshotProjection(r)
+          Sql.exec(c,"INSERT INTO ch_revisions VALUES(?,?,?::jsonb)",id,next,Wire.encode(IngestRequest.codecJson,snapshot).noSpaces)
+          ArchiveProjection.persist(c,id,next,snapshot)
           Sql.exec(c,"UPDATE ch_sources SET revision=? WHERE id=?",next,id)
           Sql.exec(c,"UPDATE ch_jobs SET state='Failed',error=?,fence=fence+1,lease_until=NULL WHERE session_id=? AND revision<? AND state<>'Complete'",Jobs.supersededRevision,id,next)
           Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) VALUES(?,?,?,?)",job,id,next,profile)
@@ -104,11 +109,10 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
   }
   def info(c: Connection,reader: String,id: UUID,selector: Option[ContentView]): SessionInfo = {
     val view=selectView(c,reader,id,selector)
-    val r=content(c,id,view.revision)
-    Sql.one(c,"SELECT s.owner,s.revision,g.revision AS indexed FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published WHERE s.id=?",id) { row =>
+    Sql.one(c,"SELECT s.owner,s.revision,g.revision AS indexed,i.metadata,i.source,i.completion,i.redacted FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=? LEFT JOIN ch_generations g ON g.id=s.published WHERE s.id=?",view.revision,id) { row =>
       val idx=row.getInt("indexed"); val indexed=if(row.wasNull()) None else Some(idx)
-      SessionInfo(view,id,row.getString("owner"),row.getInt("revision"),indexed,r.metadata,r.source,r.completion,r.redacted)
-    }.get
+      SessionInfo(view,id,row.getString("owner"),row.getInt("revision"),indexed,Wire.decode(Metadata.codecJson,Sql.json(row,"metadata")),Wire.decode(SourceIdentity.codecJson,Sql.json(row,"source")),Completion.parse(row.getString("completion")).get,row.getBoolean("redacted"))
+    }.getOrElse(throw DomainError("projection","content metadata projection missing"))
   }
   def session(reader: String,id: UUID): SessionInfo = reading(c => info(c,reader,id,None))
   def headSnapshot(reader: String,id: UUID): IngestRequest = reading { c =>
@@ -122,8 +126,15 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
   }
   def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): MessagesResult = reading { c =>
     Check.page(offset,limit)
-    val view=selectView(c,reader,id,selector); val messages=content(c,id,view.revision).messages
-    MessagesResult(messages.slice(offset,offset+limit),messages.size,offset,view)
+    val view=selectView(c,reader,id,selector)
+    val total=Sql.one(c,"SELECT message_count FROM ch_revision_info WHERE session_id=? AND revision=?",id,view.revision)(_.getInt(1)).getOrElse(throw DomainError("projection","message projection missing"))
+    val messages=Sql.rows(c,"SELECT value FROM ch_messages WHERE session_id=? AND revision=? ORDER BY position LIMIT ? OFFSET ?",id,view.revision,limit,offset)(r => Wire.decode(Message.codecJson,Sql.json(r,"value")))
+    MessagesResult(messages,total,offset,view)
+  }
+  def locateMessage(reader: String,id: UUID,selector: ContentView,messageId: String): MessageLocation = reading { c =>
+    Check.text(messageId,256)
+    val view=selectView(c,reader,id,Some(selector))
+    Sql.one(c,"SELECT m.position,i.message_count FROM ch_messages m JOIN ch_revision_info i ON i.session_id=m.session_id AND i.revision=m.revision WHERE m.session_id=? AND m.revision=? AND m.message_id=?",id,view.revision,messageId)(r => MessageLocation(view,r.getInt(1),r.getInt(2))).getOrElse(throw DomainError("not-found","message not found"))
   }
   def raw(reader: String,id: UUID,revision: Option[Int]): RawResult = reading { c =>
     authorized(c,reader,id)
@@ -155,6 +166,7 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
       val generation = UUID.randomUUID()
       Sql.exec(c,"INSERT INTO ch_generations VALUES(?,?,?,?)",generation,claim.sessionId,claim.revision,claim.profile)
       chunks.zipWithIndex.foreach { case (x,ordinal) => Sql.exec(c,"INSERT INTO ch_chunks(id,generation,value,document,embedding,ordinal) VALUES(?,?,?::jsonb,to_tsvector('english',?),?::vector,?)",x.chunk.id,generation,Wire.encode(Chunk.codecJson,x.chunk).noSpaces,s"${x.chunk.text} ${x.chunk.summary} ${x.chunk.tags.mkString(" ")}",x.vector.mkString("[",",","]"),ordinal) }
+      chunks.flatMap(_.chunk.tags).distinct.foreach(tag => Sql.exec(c,"INSERT INTO ch_generation_tags(generation,tag) VALUES(?,?) ON CONFLICT DO NOTHING",generation,tag))
       Sql.exec(c,"DELETE FROM ch_search_chunks WHERE session_id=?",claim.sessionId)
       Sql.exec(c,"INSERT INTO ch_search_chunks(id,generation,session_id,revision,profile,document,embedding) SELECT ch.id,ch.generation,g.session_id,g.revision,g.profile,ch.document,ch.embedding FROM ch_chunks ch JOIN ch_generations g ON g.id=ch.generation WHERE g.id=?",generation)
       Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",generation,claim.sessionId)

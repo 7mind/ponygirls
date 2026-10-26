@@ -3,7 +3,7 @@ import chronicle.api.*
 import cats.effect.IO
 import cats.syntax.all.*
 import java.util.UUID
-final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedder: Embedder,auth: Auth,db: Database,collectors: CollectorProgress) {
+final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedder: Embedder,auth: Auth,db: Database,collectors: CollectorProgress,archiveIndex: ArchiveIndex,activityIndex: ActivityIndex) {
   def collectorProgress(i: Identity,r: CollectorProgressUpdate): CollectorProgressAck = collectors.update(i,r)
   private val emptyFilter = SearchFilter(None,None,None,None,Nil)
   def operationVersion(i: Identity,e: ClientEnvelope,version: String): IO[Result] = {
@@ -24,6 +24,16 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.Pong(nonce) => IO.pure(Result.Pong(nonce))
       case Operation.Whoami() => IO.pure(Result.Whoami(i.user))
       case Operation.Search(q) => i.requireScope(Scope.Read); query(i,q).map(Result.Search.apply)
+      case Operation.Archive(q) =>
+        i.requireScope(Scope.Read)
+        val parsed=ArchiveExpression.parse(q.expression)
+        ArchivePaging.page(q.limit); ArchivePaging.decode(q,uid)
+        val vectors=if(parsed.mode==SearchMode.Lexical || parsed.textOperands.isEmpty) IO.pure(List.empty[ArchiveVector])
+          else parsed.textOperands.traverse(text => embedder.query(text).map(values => ArchiveVector(text,values))).handleErrorWith(_ => IO.raiseError(DomainError("unavailable","query embedding unavailable")))
+        vectors.flatMap(values => IO.blocking(Result.Archive(archiveIndex.browse(uid,q,parsed,values))))
+      case Operation.Activity(q) => i.requireScope(Scope.Read); IO.blocking(Result.Activity(activityIndex.summary(i.user,q)))
+      case Operation.ActivityJobs(q) => i.requireScope(Scope.Read); IO.blocking(Result.ActivityJobs(activityIndex.jobs(uid,q)))
+      case Operation.LocateMessage(id,view,messageId) => i.requireScope(Scope.Read); IO.blocking(Result.LocatedMessage(archive.locateMessage(uid,id,view,messageId)))
       case Operation.GetSession(id,view) => i.requireScope(Scope.Read); IO.blocking(Result.Session(archive.readSession(uid,id,view)))
       case Operation.GetChunks(id,offset,limit,view) => i.requireScope(Scope.Read); IO.blocking(Result.Chunks(archive.pageChunks(uid,id,offset,limit,view)))
       case Operation.GetMessages(id,offset,limit,view) => i.requireScope(Scope.Read); IO.blocking(Result.Messages(archive.messages(uid,id,offset,limit,view)))

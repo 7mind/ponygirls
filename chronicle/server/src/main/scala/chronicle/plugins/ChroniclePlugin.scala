@@ -12,6 +12,8 @@ object ChroniclePlugin extends PluginDef {
   make[PostgresArchive]
   make[SessionArchive].from[PostgresArchive]
   make[SearchIndex].from[PostgresSearch]
+  make[ArchiveIndex].from[PostgresArchiveIndex]
+  make[ActivityIndex].from[PostgresActivity]
   make[ModelHttp]
   make[Annotator].from[OpenAIAnnotator]
   make[Embedder].from[OpenAIEmbedder]

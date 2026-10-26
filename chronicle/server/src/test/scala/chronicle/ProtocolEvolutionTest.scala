@@ -1,6 +1,6 @@
 package chronicle
 import chronicle.api.*
-import chronicle.api.{v1_0_0 as v10, v1_1_0 as v11}
+import chronicle.api.{v1_0_0 as v10, v1_1_0 as v11, v1_2_0 as v12}
 import chronicle.protocol.ProtocolConversions
 import java.util.UUID
 
@@ -35,7 +35,7 @@ class ProtocolEvolutionTest extends munit.FunSuite {
       val json11=protocol.encodeServer("1.1.0",envelope)
       assertEquals(Wire.encode(v10.ServerEnvelope.codecJson,Wire.decode(v10.ServerEnvelope.codecJson,json10)),json10)
       assertEquals(Wire.encode(v11.ServerEnvelope.codecJson,Wire.decode(v11.ServerEnvelope.codecJson,json11)),json11)
-      val upgraded=conversions.up1_1_0.convert[v11.ServerEnvelope,ServerEnvelope](Wire.decode(v11.ServerEnvelope.codecJson,json11))
+      val upgraded=conversions.up1_2_0.convert[v12.ServerEnvelope,ServerEnvelope](conversions.up1_1_0.convert[v11.ServerEnvelope,v12.ServerEnvelope](Wire.decode(v11.ServerEnvelope.codecJson,json11)))
       result match {
         case _: Result.Tokens => assertEquals(upgraded.result.asInstanceOf[Result.Tokens].result.tokens.map(_.source),List(TokenSource.Issued,TokenSource.Issued)); assert(!json11.noSpaces.contains("StaticConfig"))
         case _: Result.Status => val job=upgraded.result.asInstanceOf[Result.Status].result.jobs.head; assertEquals(job.completedWindows,0); assertEquals(job.totalWindows,None); assert(!json10.noSpaces.contains("completedWindows"))
@@ -44,7 +44,7 @@ class ProtocolEvolutionTest extends munit.FunSuite {
       assertEquals(Wire.decode(ServerEnvelope.codecJson,protocol.encodeServer("1.2.0",envelope)),envelope)
     }
     // Persisted issued-token receipts deliberately retain their exact shape.
-    assertEquals(Wire.encode(TokenInfo.codecJson,info),Wire.encode(v11.TokenInfo.codecJson,conversions.down1_1_0.convert[TokenInfo,v11.TokenInfo](info)))
+    assertEquals(Wire.encode(TokenInfo.codecJson,info),Wire.encode(v11.TokenInfo.codecJson,conversions.down1_1_0.convert[v12.TokenInfo,v11.TokenInfo](conversions.down1_2_0.convert[TokenInfo,v12.TokenInfo](info))))
   }
   test("BA specified: collector progress/status and ack retain i64 counters, optional values and UUIDs") {
     val report=CollectorProgressUpdate("collector",9007199254740993L,id,CollectorPhase.Uploading,"2026-10-26T00:00:00Z",CollectorCounters(1,2,3,4,5,6,7,8,9,10,11,12,9007199254740993L),10000000000L,9000000000L,Some(1000000000L),Some("upload-failed"))

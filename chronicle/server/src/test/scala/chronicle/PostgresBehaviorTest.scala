@@ -31,7 +31,7 @@ class PostgresBehaviorTest extends munit.FunSuite {
     val chunks=AnnotationPartition.project(fragments,Wire.parse("""{"chunks":[{"first":0,"last":1,"summary":"unrelated","tags":[]}]}"""))
     assert(a.publish(claim,chunks.map(chunk => IndexedChunk(chunk,List(1.0,0.0,0.0)))))
     val embedder=new Embedder { def query(text: String)=IO.pure(List(1.0,0.0,0.0)); def documents(text: List[String])=IO.pure(text.map(_ => List(1.0,0.0,0.0))) }
-    val app=new Application(a,new PostgresSearch(db,a,c),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC())); val owner=browser(auth,"a")
+    val app=new Application(a,new PostgresSearch(db,a,c),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,a,c),new PostgresActivity(db,java.time.Clock.systemUTC())); val owner=browser(auth,"a")
     List("alpha","beta").foreach { word =>
       val result=app.operation(owner,ClientEnvelope(UUID.randomUUID(),Operation.Search(SearchQuery(word,SearchMode.Lexical,SearchFilter(None,None,None,None,Nil),20,0)))).unsafeRunSync().asInstanceOf[Result.Search].result
       assertEquals(result.total,1,s"original word $word remains searchable")
@@ -124,14 +124,14 @@ class PostgresBehaviorTest extends munit.FunSuite {
   test("BG-GoodCommunication regression: default annotated transcript retains producing message bytes during indexing lag") { database { (c,db,a,auth) =>
     val (out,first)=pendingRevision(c,a)
     val embedder=new Embedder { def query(text: String)=IO.pure(List(1.0,0.0,0.0)); def documents(text: List[String])=IO.pure(text.map(_ => List(1.0,0.0,0.0))) }
-    val app=new Application(a,new PostgresSearch(db,a,c),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()))
+    val app=new Application(a,new PostgresSearch(db,a,c),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,a,c),new PostgresActivity(db,java.time.Clock.systemUTC()))
     val result=app.operation(browser(auth,"a"),ClientEnvelope(UUID.randomUUID(),Operation.GetMessages(out.sessionId,0,100,None))).unsafeRunSync().asInstanceOf[Result.Messages].result
     assertEquals(result.messages.head.text,"message-old")
   }}
   test("BG-GoodCommunication regression: immutable view pins survive later publication for transcript chunks metadata and raw") { database { (c,db,a,auth) =>
     val (out,first)=pendingRevision(c,a)
     val embedder=new Embedder { def query(text: String)=IO.pure(List(1.0,0.0,0.0)); def documents(text: List[String])=IO.pure(text.map(_ => List(1.0,0.0,0.0))) }
-    val app=new Application(a,new PostgresSearch(db,a,c),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()))
+    val app=new Application(a,new PostgresSearch(db,a,c),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,a,c),new PostgresActivity(db,java.time.Clock.systemUTC()))
     val owner=browser(auth,"a"); val unrelated=browser(auth,"c")
     def call(i: Identity,op: Operation): Result = app.operation(i,ClientEnvelope(UUID.randomUUID(),op)).unsafeRunSync()
     val original=call(owner,Operation.GetSession(out.sessionId,None)).asInstanceOf[Result.Session].result

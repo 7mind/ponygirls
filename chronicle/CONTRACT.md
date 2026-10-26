@@ -1,12 +1,12 @@
-# Chronicle v1.2 contract (2026-10-26)
+# Chronicle v1.3 contract (2026-10-26)
 
-Authoritative schema: `models/chronicle.baboon` (`chronicle.api`, `1.2.0`), importing retained `models/chronicle-1.1.0.baboon` and `models/chronicle-1.0.0.baboon`. All three versions' codecs remain generated; Scala generation explicitly enables deprecated encoders. Generated Scala: `generated/scala/chronicle/api/`; TypeScript: `generated/typescript/chronicle/api/`, with runtime at `generated/typescript/BaboonRuntime.ts` and `BaboonSharedRuntime.ts`. Use `Type_JsonCodec.instance.encode/decode(BaboonCodecContext.Default, value)`; do not use plain `JSON.stringify` on generated ADTs. ADTs encode as one-key objects (e.g. `{"Whoami":{}}`); enums encode their named string (`Lexical`, `Pi`, `Read`). UUID strings. Optional fields encode null. Timestamp metadata is ISO8601 string or null. Spans use UTF-8 byte offsets, half-open.
+Authoritative schema: `models/chronicle.baboon` (`chronicle.api`, `1.3.0`), importing retained `models/chronicle-1.2.0.baboon`, `models/chronicle-1.1.0.baboon` and `models/chronicle-1.0.0.baboon`. All four versions' codecs remain generated; Scala generation explicitly enables deprecated encoders. Generated Scala: `generated/scala/chronicle/api/`; TypeScript: `generated/typescript/chronicle/api/`, with runtime at `generated/typescript/BaboonRuntime.ts` and `BaboonSharedRuntime.ts`. Use `Type_JsonCodec.instance.encode/decode(BaboonCodecContext.Default, value)`; do not use plain `JSON.stringify` on generated ADTs. ADTs encode as one-key objects (e.g. `{"Whoami":{}}`); enums encode their named string (`Lexical`, `Pi`, `Read`). UUID strings. Optional fields encode null. Timestamp metadata is ISO8601 string or null. Spans use UTF-8 byte offsets, half-open.
 
 ## HTTP/auth
 - `POST /api/login`: generated `LoginRequest` -> `LoginResponse`; sets `chronicle_session` HttpOnly, SameSite=Strict, Secure (configurable only for local HTTP development).
 - `POST /api/logout`: cookie + exact Origin, expires session.
 - `GET /api/versions`: generated `VersionInfo`, public.
-- `GET /api/ws`: cookie ONLY and exact configured Origin; text JSON `ClientEnvelope` -> `ServerEnvelope`. First operation Hello(versions containing `1.2.0`, `1.1.0` and/or `1.0.0`); select the newest mutual version for the socket's lifetime. Repeated Hello is a protocol error. VersionInfo reports current `1.2.0`, minimum `1.0.0`, supported `[1.2.0,1.1.0,1.0.0]`. No browser HTTP version header is required. Per-request cookie/session/live-user authorization. Ping/Pong nonce heartbeat; server Ping uses a fresh envelope requestId, answer Pong with SAME requestId and nonce. 20s heartbeat / 10s pong deadline. Client Ping -> Result.Pong. Hello/Ping/Pong are consumed independently of serialized application work; its per-socket queue is bounded32 and saturation returns unavailable. Queued operations reauthenticate at execution. No mutation replay on reconnect.
+- `GET /api/ws`: cookie ONLY and exact configured Origin; text JSON `ClientEnvelope` -> `ServerEnvelope`. First operation Hello(versions containing `1.3.0`, `1.2.0`, `1.1.0` and/or `1.0.0`); select the newest mutual version for the socket's lifetime. Repeated Hello is a protocol error. VersionInfo reports current `1.3.0`, minimum `1.0.0`, supported `[1.3.0,1.2.0,1.1.0,1.0.0]`. No browser HTTP version header is required. Per-request cookie/session/live-user authorization. Ping/Pong nonce heartbeat; server Ping uses a fresh envelope requestId, answer Pong with SAME requestId and nonce. 20s heartbeat / 10s pong deadline. Client Ping -> Result.Pong. Hello/Ping/Pong are consumed independently of serialized application work; its per-socket queue is bounded32 and saturation returns unavailable. Queued operations reauthenticate at execution. No mutation replay on reconnect.
 - `POST /api/ingest`: bearer ONLY, Ingest scope; generated `IngestRequest` -> `IngestReceipt`; errors JSON Failure and non-2xx.
 - `POST /mcp`: bearer ONLY, Read scope (Raw additionally for raw, which is deliberately not an MCP tool). Stateless Streamable HTTP; JSON responses. Supported MCP versions 2025-11-25, 2025-06-18, 2025-03-26. GET returns 405; notifications return 202. Origin if present must match configured origin. No URL credentials anywhere.
 
@@ -75,3 +75,49 @@ Run `BABOON=<pinned 0.0.198 executable> scripts/generate.sh`. The executable has
 3. The TypeScript emitter inlines throws for unsupported nested conversions. The helper wires exactly the three known stubs and three call sites to `protocol/typescript/conversions.ts`; semantic implementations remain outside the wiped generated directories. Unknown output fails generation/compilation rather than silently falling back.
 
 Web/current acceptance clients offer 1.2.0. Retained 1.0/1.1 clients use their generated codecs for the whole socket lifetime. The full PostgreSQL suite exercises both retained Hello/Ping/token mint/list/receipt/revoke/status/search flows, including nonempty job status and exact legacy pagination. `ProtocolEvolutionTest` and web `evolution.test.ts` cover typed upgrades/downgrades and exact i64 wire values. `scripts/test-codecs.sh` checks four Scala/TypeScript shared fixtures including collector progress.
+
+
+## Archive and Activity (1.3)
+
+The complete additive wire fields, expression grammar, candidate-domain policy,
+paging and pinning contract are in
+[`docs/drafts/20261026-1106-archive-contract.md`](docs/drafts/20261026-1106-archive-contract.md).
+New operations are Archive(ArchiveQuery), Activity(ActivityQuery),
+ActivityJobs(ActivityJobsQuery), LocateMessage(sessionId,view,messageId); locator
+responds with Result.LocatedMessage(MessageLocation). Every previous operation,
+retained socket version and existing MCP tool remains available unchanged.
+
+Archive is all authorized live raw HEADs, not the published-only Search corpus.
+Empty/metadata-only browsing never requires annotation, embeddings or an available
+semantic profile. Default mode is Hybrid; default UI sort is LastTimestamp Desc.
+Text membership is exact normalized HEAD literal matching in Lexical, bounded
+published ANN membership in Semantic, and the UNBOUNDED exact lexical union with
+bounded ANN in Hybrid. annChunkLimitPerOperand=1000 bounds chunks before session
+deduplication, not Archive rows. NOT excludes the retrieved set, not a proof of
+semantic unrelatedness. Mode directives must be outer conjuncts; operators,
+field names and mode values are case-insensitive. Literal text and metadata
+strings use deterministic Unicode lowercase matching, except opaque owner IDs.
+
+ArchiveRow.head.view is archive-only HEAD; publishedView and matchedView are
+separate immutable pins. A representative matchedView does not prove that every
+Boolean term matches the same revision. Both dialog panes must retain the same
+selected pin, with an explicit latest-HEAD switch. LocateMessage resolves a
+message's position within that required pin without scanning previous pages.
+
+Activity is owner-only. Current HEAD/target-profile jobs and all historical jobs
+are counted separately. Running state is not an active lease: active, expired and
+unleased Running counts remain distinct. retryable is Current AND Failed, while
+the legacy RetryJob fencing behavior is unchanged. Absent collector reports are
+unknown; freshness refers to actual report receipt, not a socket connection.
+All summary totals are i64 decimal strings on JSON / bigint in TypeScript.
+
+Migration006 adds normalized per-revision info, message and bounded literal
+projections plus generation tags. Backfill uses committed batches of4 revisions,
+streamed message reads and transactional projection writes, without loading raw
+files into JVM listing paths or calling models. Source normalization, annotation
+policy and semantic profile identities are unchanged. pg_trgm1.6 is bundled in
+the pinned PostgreSQL18.6 and can be installed by a non-superuser database owner.
+The trigram index is on lower(value COLLATE pg_unicode_fast), not raw ILIKE: the
+observed raw-index Unicode false-negative constraint and differential tests are
+documented in
+[`docs/drafts/20261026-1140-lexical-index-collation.md`](docs/drafts/20261026-1140-lexical-index-collation.md).
