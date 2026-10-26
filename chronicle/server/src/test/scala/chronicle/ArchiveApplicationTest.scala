@@ -9,8 +9,8 @@ import java.util.UUID
 class ArchiveApplicationTest extends munit.FunSuite {
   private final class FailingEmbedder extends Embedder {
     var queries=0
-    def query(text: String): IO[List[Double]] = IO { queries+=1; throw DomainError("model-http","synthetic unavailable model") }
-    def documents(text: List[String]): IO[List[List[Double]]] = IO.raiseError(new AssertionError("archive must not embed source documents"))
+    def query(owner: String,text: String): IO[List[Double]] = IO { queries+=1; throw DomainError("model-http","synthetic unavailable model") }
+    def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.raiseError(new AssertionError("archive must not embed source documents"))
   }
   private def database(f: (Config,Database,PostgresArchive,Application,FailingEmbedder) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }

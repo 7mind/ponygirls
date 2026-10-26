@@ -50,15 +50,15 @@ class NulIngestionTest extends munit.FunSuite {
                 assertEquals(stored.files,request.files); assertEquals(stored.digest,request.digest)
                 assertEquals(stored.messages.head.text,"\\u0000alpha\\u0000beta😀\\u0000")
                 assertEquals(archive.messages("a",receipt.sessionId,0,100,None).messages,stored.messages)
-                val annotator=new Annotator { def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO {
+                val annotator=new Annotator { def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO {
                   assertEquals(messages,stored.messages); assert(!window.exists(_.text.contains('\u0000')))
                   window.map(_.copy(summary="finite NUL projection",tags=List("nul")))
                 } }
                 val embedder=new Embedder {
-                  def query(text: String)=IO.pure(List(1.0,0.0,0.0))
-                  def documents(text: List[String])=IO { assert(!text.exists(_.contains('\u0000'))); text.map(_ => List(1.0,0.0,0.0)) }
+                  def query(owner: String,text: String)=IO.pure(List(1.0,0.0,0.0))
+                  def documents(owner: String,text: List[String])=IO { assert(!text.exists(_.contains('\u0000'))); text.map(_ => List(1.0,0.0,0.0)) }
                 }
-                val worked=new Worker(archive,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync()
+                val worked=ModelFixtures.legacyWorker(archive,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync()
                 assert(worked)
                 assertEquals(archive.statuses("a",0,100).jobs.head.state,JobState.Complete)
                 val chunks=archive.pageChunks("a",receipt.sessionId,0,100,None).chunks

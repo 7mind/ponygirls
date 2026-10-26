@@ -63,12 +63,12 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       calls += payload
       respond(fragments,calls.size).map(result => Response[IO](Status.Ok).withEntity(result.noSpaces))
     }}
-    new OpenAIAnnotator(new ModelHttp(Client.fromHttpApp(app)),config)
+    new OpenAIAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),config)
   }
   private final class RecordingEmbedder extends Embedder {
     val calls=scala.collection.mutable.ListBuffer.empty[String]
-    def query(text: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
-    def documents(text: List[String]): IO[List[List[Double]]] = IO { calls ++= text; text.map(_ => List(1.0,0.0,0.0)) }
+    def query(owner: String,text: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
+    def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO { calls ++= text; text.map(_ => List(1.0,0.0,0.0)) }
   }
   private def labels(calls: scala.collection.mutable.ListBuffer[Json]): List[Char] = calls.toList.map { payload =>
     val source=Wire.parse(payload.hcursor.downField("messages").downN(1).get[String]("content").toOption.get)
@@ -79,7 +79,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
     val model=annotator(config,calls,(fragments,attempt) => IO.pure(response(fragments,if(attempt==2) "length" else "stop")))
     val logs=new CapturedLogs
-    assert(new Worker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
+    assert(ModelFixtures.legacyWorker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
     assertEquals(logs.messages.size,1); assert(logs.messages.head.startsWith("annotation attempt failed "))
     assertEquals(labels(calls),List('a','b','b','c'))
     assertEquals(calls(1),calls(2))
@@ -93,7 +93,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
     val model=annotator(config,calls,(fragments,attempt) => IO.pure(response(fragments,if(attempt==1) "stop" else "length")))
     val logs=new CapturedLogs
-    assert(new Worker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
+    assert(ModelFixtures.legacyWorker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
     val retries=logs.messages.filter(_.startsWith("annotation attempt failed "))
     assertEquals(retries.size,5); assertEquals(retries.count(_.endsWith("outcome=retry")),4); assert(retries.last.endsWith("attempt=5 attemptLimit=5 code=model-output/truncated outcome=exhaust"))
     val terminal=logs.messages.filter(_.startsWith("window failed "))
@@ -112,11 +112,11 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       val archive=new RecordingArchive(delegate); archive.ingest("a",source)
       var calls=0; val embedder=new RecordingEmbedder
       val model=new Annotator {
-        def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO { calls+=1 }.flatMap { _ =>
+        def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO { calls+=1 }.flatMap { _ =>
           IO.raiseError(if(code=="worker-fault") new IllegalStateException("synthetic") else DomainError(code,"synthetic"))
         }
       }
-      assert(new Worker(archive,model,embedder,config,logstage.IzLogger()).once.unsafeRunSync())
+      assert(ModelFixtures.legacyWorker(archive,model,embedder,config,logstage.IzLogger()).once.unsafeRunSync())
       assertEquals(calls,1); assertEquals(embedder.calls.toList,Nil)
       assertEquals(archive.failures.toList,List(code)); assertEquals(archive.publications,0)
     }}
@@ -126,7 +126,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
     val invalid=Json.obj("choices"->Json.arr(Json.obj("finish_reason"->Json.fromString("stop"),"message"->Json.obj("content"->Json.fromString("{}")))))
     val model=annotator(config,calls,(_,_) => IO.pure(invalid))
-    assert(new Worker(archive,model,embedder,config,logstage.IzLogger()).once.unsafeRunSync())
+    assert(ModelFixtures.legacyWorker(archive,model,embedder,config,logstage.IzLogger()).once.unsafeRunSync())
     assertEquals(calls.size,1); assertEquals(embedder.calls.toList,Nil)
     assertEquals(archive.failures.toList,List("model-output")); assertEquals(archive.publications,0)
   }}
@@ -135,11 +135,11 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; var embeddings=0
     val model=annotator(config,calls,(fragments,_) => IO.pure(response(fragments,"stop")))
     val embedder=new Embedder {
-      def query(text: String): IO[List[Double]] = IO.pure(Nil)
-      def documents(text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1 }.flatMap(_ => IO.raiseError(DomainError("model-output/truncated","synthetic")))
+      def query(owner: String,text: String): IO[List[Double]] = IO.pure(Nil)
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1 }.flatMap(_ => IO.raiseError(DomainError("model-output/truncated","synthetic")))
     }
     val logs=new CapturedLogs
-    assert(new Worker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
+    assert(ModelFixtures.legacyWorker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
     assertEquals(logs.messages.count(_.startsWith("annotation attempt failed ")),0)
     assertEquals(logs.messages.count(_.contains("stage=embedding annotationAttempt=1 annotationAttemptLimit=5 code=model-output/truncated")),1)
     assertEquals(logs.messages.size,2)
@@ -159,21 +159,21 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       error.setStackTrace(Array(new StackTraceElement("chronicle.SyntheticModel","respond",poison,321)))
       var annotations=0; var embeddings=0
       val model=new Annotator {
-        def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO { annotations+=1 }.flatMap { _ =>
+        def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO { annotations+=1 }.flatMap { _ =>
           if(annotations==2) IO.raiseError(DomainError("model-output/truncated",poison))
           else if(stage=="annotation" && annotations==3) IO.raiseError(error)
           else IO.pure(window.map(_.copy(summary=poison,tags=List(poison))))
         }
       }
       val embedder=new Embedder {
-        def query(text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query"))
-        def documents(text: List[String]): IO[List[List[Double]]] = {
+        def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query"))
+        def documents(owner: String,text: List[String]): IO[List[List[Double]]] = {
           embeddings+=1
           if(stage=="embedding" && embeddings==2) throw error
           IO.pure(text.map(_ => List(0.1234567898765432,0.5,1.0)))
         }
       }
-      assert(new Worker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
+      assert(ModelFixtures.legacyWorker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
       val claim=archive.claimed.head
       val code=if(unexpected) "worker-fault" else "model-output"
       assertEquals(annotations,3); assertEquals(embeddings,if(stage=="annotation") 1 else 2)
@@ -204,7 +204,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       model=annotator(config,calls,(fragments,attempt) =>
         if(attempt==1) IO.pure(response(fragments,"length"))
         else started.complete(()).flatMap(_ => IO.never[Json]).onCancel(cancelled.complete(()).void))
-      fiber <- new Worker(archive,model,embedder,config,logs.logger).once.start
+      fiber <- ModelFixtures.legacyWorker(archive,model,embedder,config,logs.logger).once.start
       _ <- started.get
       _ <- fiber.cancel
       _ <- cancelled.get
@@ -221,7 +221,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     val logs=new CapturedLogs
     var annotations=0; var embeddings=0
     val model=new Annotator {
-      def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO { annotations+=1 }.flatMap { _ =>
+      def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO { annotations+=1 }.flatMap { _ =>
         if(annotations==1) IO.raiseError(DomainError("model-output/truncated","synthetic")) else IO.pure(window)
       }
     }
@@ -229,10 +229,10 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       started <- Deferred[IO,Unit]
       cancelled <- Deferred[IO,Unit]
       embedder=new Embedder {
-        def query(text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query"))
-        def documents(text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1 } *> started.complete(()) *> IO.never[List[List[Double]]].onCancel(cancelled.complete(()).void)
+        def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query"))
+        def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1 } *> started.complete(()) *> IO.never[List[List[Double]]].onCancel(cancelled.complete(()).void)
       }
-      fiber <- new Worker(archive,model,embedder,config,logs.logger).once.start
+      fiber <- ModelFixtures.legacyWorker(archive,model,embedder,config,logs.logger).once.start
       _ <- started.get
       _ <- fiber.cancel
       _ <- cancelled.get

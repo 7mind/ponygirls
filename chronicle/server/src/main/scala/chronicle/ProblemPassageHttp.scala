@@ -37,9 +37,9 @@ object ProblemPassageHttp {
 }
 
 final class OpenAIProblemPassageAnnotator(http: ModelHttp,config: Config) extends ProblemPassageAnnotator {
-  def annotate(window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.defer {
+  def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.defer {
     val cfg=config.annotation
     val request=ProblemPassageHttp.request(cfg,window,previous)
-    http.post(cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,request).map(ProblemPassageHttp.response(window,previous.nonEmpty,_))
+    http.post(ModelCallContext(owner,ModelWorkload.IndexAnnotation),cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,request).map(ProblemPassageHttp.response(window,previous.nonEmpty,_))
   }
 }

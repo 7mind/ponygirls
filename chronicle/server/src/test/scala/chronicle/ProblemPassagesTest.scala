@@ -41,7 +41,7 @@ object ProblemPassageFixtures {
     Decision(output.result())
   }
   final class Dummy extends ProblemPassageAnnotator {
-    def annotate(window: Window,previous: Option[Carry]): IO[Decision] = IO {
+    def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = IO {
       val decision=plan(window.fragments.map(_.text),previous.flatMap(_.tags.headOption))
       validate(window,previous.nonEmpty,decision); decision
     }
@@ -55,7 +55,7 @@ object ProblemPassageFixtures {
     val source=Source(messages)
     def loop(state: State,deltas: Vector[Delta]): IO[Run] = source.next(state.nextSource) match {
       case None => IO.pure(Run(source,deltas :+ finish(state,source)))
-      case Some(window) => annotator.annotate(window,state.carry).flatMap { decision =>
+      case Some(window) => annotator.annotate("a",window,state.carry).flatMap { decision =>
         val delta=accept(state,window,decision)
         embed(delta) *> loop(delta.state,deltas :+ delta)
       }
@@ -137,7 +137,7 @@ abstract class ProblemPassageContract extends munit.FunSuite {
   }
   test("BG: empty-only transcripts and empty lists do not invoke a model or hallucinate a passage") {
     List(Nil,List(message("empty","","tool",0),message("alsoempty","","user",1))).foreach { messages =>
-      val forbidden=new ProblemPassageAnnotator { def annotate(window: Window,previous: Option[Carry]): IO[Decision] = IO.raiseError(new AssertionError("empty source called model")) }
+      val forbidden=new ProblemPassageAnnotator { def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = IO.raiseError(new AssertionError("empty source called model")) }
       val result=run(messages,forbidden).unsafeRunSync()
       assertEquals(result.passages,Vector.empty); assertEquals(result.pieces,Vector.empty); assert(result.deltas.last.state.finished)
     }
@@ -152,8 +152,8 @@ abstract class ProblemPassageContract extends munit.FunSuite {
         calls <- Ref.of[IO,Int](0)
         embedded <- Ref.of[IO,Vector[RetrievalPiece]](Vector.empty)
         checked=new ProblemPassageAnnotator {
-          def annotate(window: Window,previous: Option[Carry]): IO[Decision] = calls.getAndUpdate(_+1).flatMap { index =>
-            if(index==0) base.annotate(window,previous)
+          def annotate(owner: String,window: Window,previous: Option[Carry]): IO[Decision] = calls.getAndUpdate(_+1).flatMap { index =>
+            if(index==0) base.annotate(owner,window,previous)
             else embedded.get.flatMap { prefix =>
               IO(assert(prefix.nonEmpty && prefix.map(_.chunk.text).mkString.forall(_=='A'))) *> IO.raiseError(DomainError("model-output","synthetic later-window failure"))
             }

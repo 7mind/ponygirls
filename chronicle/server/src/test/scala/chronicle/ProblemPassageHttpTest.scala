@@ -53,12 +53,12 @@ class ProblemPassageHttpTest extends ProblemPassageContract {
       val previous=source.hcursor.downField("previous").get[List[String]]("tags").toOption.flatMap(_.headOption)
       Response[IO](Status.Ok).withEntity(envelope(json(plan(texts,previous)).noSpaces,"stop").noSpaces)
     }}
-    Resource.pure(new OpenAIProblemPassageAnnotator(new ModelHttp(Client.fromHttpApp(app)),config))
+    Resource.pure(new OpenAIProblemPassageAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),config))
   }
   private def window: Window = Source(List(message("u","A🙂\nα","user",13),message("t"," tool result","tool",3))).next(SourceCursor.start).get
   private def runResponse(response: String,status: Status,inspectRequest: Json => Unit): Either[Throwable,Decision] = {
     val app: HttpApp[IO]=cats.data.Kleisli(request => request.as[String].map { body => inspectRequest(Wire.parse(body)); Response[IO](status).withEntity(response) })
-    new OpenAIProblemPassageAnnotator(new ModelHttp(Client.fromHttpApp(app)),config).annotate(window,None).attempt.unsafeRunSync()
+    new OpenAIProblemPassageAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),config).annotate("a",window,None).attempt.unsafeRunSync()
   }
 
   test("BG: strict passage schema remains distinct from unchanged legacy AnnotationPartition") {
@@ -153,7 +153,7 @@ class ProblemPassageHttpTest extends ProblemPassageContract {
     }
     val app: HttpApp[IO]=cats.data.Kleisli(_ => IO.pure(Response[IO](Status.Ok).withEntity(" "*129)))
     val bounded=config.copy(annotation=config.annotation.copy(maxResponseBytes=128))
-    val result=new OpenAIProblemPassageAnnotator(new ModelHttp(Client.fromHttpApp(app)),bounded).annotate(window,None).attempt.unsafeRunSync()
+    val result=new OpenAIProblemPassageAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),bounded).annotate("a",window,None).attempt.unsafeRunSync()
     assertEquals(result.swap.toOption.map(_.asInstanceOf[DomainError].code),Some("model-output"))
   }
   test("BG: cancellation propagates through the model boundary without replaying or yielding a partial decision") {
@@ -162,8 +162,8 @@ class ProblemPassageHttpTest extends ProblemPassageContract {
       cancelled <- Deferred[IO,Unit]
       calls <- Ref.of[IO,Int](0)
       app: HttpApp[IO]=cats.data.Kleisli(_ => calls.update(_+1) *> entered.complete(()).void *> IO.never[Response[IO]].onCancel(cancelled.complete(()).void))
-      service=new OpenAIProblemPassageAnnotator(new ModelHttp(Client.fromHttpApp(app)),config)
-      fiber <- service.annotate(window,None).start
+      service=new OpenAIProblemPassageAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),config)
+      fiber <- service.annotate("a",window,None).start
       _ <- entered.get.timeout(2.seconds)
       _ <- fiber.cancel
       _ <- cancelled.get.timeout(2.seconds)
@@ -178,7 +178,7 @@ class ProblemPassageHttpTest extends ProblemPassageContract {
       calls <- Ref.of[IO,Int](0)
       app: HttpApp[IO]=cats.data.Kleisli(_ => calls.update(_+1) *> IO.never[Response[IO]].onCancel(cancelled.complete(()).void))
       short=config.copy(annotation=config.annotation.copy(timeoutSeconds=1))
-      result <- new OpenAIProblemPassageAnnotator(new ModelHttp(Client.fromHttpApp(app)),short).annotate(window,None).attempt
+      result <- new OpenAIProblemPassageAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),short).annotate("a",window,None).attempt
       _ <- cancelled.get.timeout(2.seconds)
       count <- calls.get
     } yield { assertEquals(result.swap.toOption.map(_.asInstanceOf[DomainError].code),Some("model-timeout")); assertEquals(count,1) }

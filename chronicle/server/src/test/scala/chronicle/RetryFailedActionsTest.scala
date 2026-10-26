@@ -22,8 +22,8 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     val archive=new PostgresArchive(db,config); val auth=new Auth(db,config)
     val (_,cookie)=auth.login(LoginRequest("a","synthetic")); val owner=auth.browser(cookie)
     val forbiddenEmbedder=new Embedder {
-      def query(text: String): IO[List[Double]] = IO.raiseError(new AssertionError("Activity/actions must not invoke embeddings"))
-      def documents(text: List[String]): IO[List[List[Double]]] = IO.raiseError(new AssertionError("Activity/actions must not invoke models"))
+      def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("Activity/actions must not invoke embeddings"))
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.raiseError(new AssertionError("Activity/actions must not invoke models"))
     }
     val app=new Application(archive,new PostgresSearch(db,archive,config),forbiddenEmbedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,Clock.systemUTC()))
     f(Context(config,db,archive,auth,app,owner))

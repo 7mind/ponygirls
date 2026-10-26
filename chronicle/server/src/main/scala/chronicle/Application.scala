@@ -11,7 +11,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
     e.operation match {
       case Operation.Search(q) if version=="1.0.0" =>
         i.requireScope(Scope.Read)
-        val vector=if(q.mode==SearchMode.Lexical) IO.pure(None) else embedder.query(q.query).map(Some(_))
+        val vector=if(q.mode==SearchMode.Lexical) IO.pure(None) else embedder.query(i.user.id,q.query).map(Some(_))
         vector.flatMap(v => IO.blocking(Result.Search(searchIndex.searchLegacy(i.user.id,q,v))))
       case _ => operation(i,e)
     }
@@ -29,7 +29,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
         val parsed=ArchiveExpression.parse(q.expression)
         ArchivePaging.page(q.limit); ArchivePaging.decode(q,uid)
         val vectors=if(parsed.mode==SearchMode.Lexical || parsed.textOperands.isEmpty) IO.pure(List.empty[ArchiveVector])
-          else parsed.textOperands.traverse(text => embedder.query(text).map(values => ArchiveVector(text,values))).handleErrorWith(_ => IO.raiseError(DomainError("unavailable","query embedding unavailable")))
+          else parsed.textOperands.traverse(text => embedder.query(uid,text).map(values => ArchiveVector(text,values))).handleErrorWith(_ => IO.raiseError(DomainError("unavailable","query embedding unavailable")))
         vectors.flatMap(values => IO.blocking(Result.Archive(archiveIndex.browse(uid,q,parsed,values))))
       case Operation.Activity(q) => i.requireScope(Scope.Read); IO.blocking(Result.Activity(activityIndex.summary(i.user,q)))
       case Operation.ActivityJobs(q) => i.requireScope(Scope.Read); IO.blocking(Result.ActivityJobs(activityIndex.jobs(uid,q)))
@@ -56,7 +56,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
     }
   }
   private def query(i: Identity,q: SearchQuery): IO[SearchResult] = {
-    val vector = if(q.mode==SearchMode.Lexical) IO.pure(None) else embedder.query(q.query).map(Some(_))
+    val vector = if(q.mode==SearchMode.Lexical) IO.pure(None) else embedder.query(i.user.id,q.query).map(Some(_))
     vector.flatMap(v => IO.blocking(searchIndex.search(i.user.id,q,v)))
   }
 }

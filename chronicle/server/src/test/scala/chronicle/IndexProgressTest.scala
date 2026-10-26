@@ -60,21 +60,21 @@ class IndexProgressTest extends munit.FunSuite {
     val out=a.ingest("a",request)
     var annotationCalls=0; var embeddingCalls=0
     val annotator=new Annotator {
-      def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO {
+      def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO {
         assertEquals(counters(a,out.jobId),(annotationCalls,Some(3)))
         annotationCalls+=1
         List(window.head.copy(text=window.map(_.text).mkString,spans=window.flatMap(_.spans)))
       }
     }
     val embedder=new Embedder {
-      def query(text: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
-      def documents(text: List[String]): IO[List[List[Double]]] = IO {
+      def query(owner: String,text: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO {
         assertEquals(counters(a,out.jobId),(embeddingCalls,Some(3)))
         embeddingCalls+=1
         text.map(_ => List(1.0,0.0,0.0))
       }
     }
-    assert(new Worker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
+    assert(ModelFixtures.legacyWorker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
     assertEquals(annotationCalls,3); assertEquals(embeddingCalls,3)
     assertEquals(counters(a,out.jobId),(3,Some(3)))
     assertEquals(a.statuses("a",0,100).jobs.head.state,JobState.Complete)
@@ -87,7 +87,7 @@ class IndexProgressTest extends munit.FunSuite {
     val out=a.ingest("a",request)
     val calls=scala.collection.mutable.ListBuffer.empty[Char]; var embeddings=0
     val annotator=new Annotator {
-      def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO {
+      def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO {
         calls += window.head.text.head
         if(calls.size==2) throw DomainError("model-output/truncated","synthetic")
         if(calls.size==3) a.retry("a",out.jobId)
@@ -95,10 +95,10 @@ class IndexProgressTest extends munit.FunSuite {
       }
     }
     val embedder=new Embedder {
-      def query(text: String): IO[List[Double]] = IO.pure(Nil)
-      def documents(text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1; text.map(_ => List(1.0,0.0,0.0)) }
+      def query(owner: String,text: String): IO[List[Double]] = IO.pure(Nil)
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1; text.map(_ => List(1.0,0.0,0.0)) }
     }
-    assert(new Worker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
+    assert(ModelFixtures.legacyWorker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
     assertEquals(calls.toList,List('a','b','b')); assertEquals(embeddings,2)
     val job=a.statuses("a",0,100).jobs.find(_.id==out.jobId).get
     assertEquals(job.state,JobState.Queued); assertEquals(job.attempts,0); assertEquals(job.error,None)
@@ -108,12 +108,12 @@ class IndexProgressTest extends munit.FunSuite {
   test("worker records a known zero total for an empty source") { database { (c,db,a) =>
     val request=Fixtures.snapshot().copy(messages=Nil)
     val out=a.ingest("a",request)
-    val annotator=new Annotator { def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO.raiseError(new Exception("unexpected annotation")) }
+    val annotator=new Annotator { def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO.raiseError(new Exception("unexpected annotation")) }
     val embedder=new Embedder {
-      def query(text: String): IO[List[Double]] = IO.pure(Nil)
-      def documents(text: List[String]): IO[List[List[Double]]] = IO.raiseError(new Exception("unexpected embedding"))
+      def query(owner: String,text: String): IO[List[Double]] = IO.pure(Nil)
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.raiseError(new Exception("unexpected embedding"))
     }
-    assert(new Worker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
+    assert(ModelFixtures.legacyWorker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
     assertEquals(counters(a,out.jobId),(0,Some(0)))
     assertEquals(a.statuses("a",0,100).jobs.head.state,JobState.Complete)
   }}

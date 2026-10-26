@@ -7,7 +7,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.util.UUID
 
 trait ProblemPassageAnnotator {
-  def annotate(window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision]
+  def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision]
 }
 
 object ProblemPassages {
