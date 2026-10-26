@@ -169,7 +169,9 @@ final class Worker(archive: SessionArchive,annotator: Annotator,embedder: Embedd
       val renew = (IO.sleep(30.seconds) *> IO.blocking { db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=now()+interval '300 seconds' WHERE id=? AND fence=? AND state='Running' AND lease_until>now()",claim.jobId,claim.fence)) }).foreverM
       IO.race(work,renew).void.handleErrorWith { e =>
         val code = e match { case d: DomainError => d.code; case _ => "worker-fault" }
-        IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code")) *> IO.blocking(archive.fail(claim,code)) *> IO.sleep(2.seconds)
+        val exceptionClass=e.getClass.getName
+        val origin=e.getStackTrace.headOption.map(frame => s"${frame.getClassName}.${frame.getMethodName}:${frame.getLineNumber}").getOrElse("unavailable")
+        IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass origin=$origin")) *> IO.blocking(archive.fail(claim,code)) *> IO.sleep(2.seconds)
       }.as(true)
   }
   def run: IO[Nothing] = (once.flatMap(found => if(found) IO.unit else IO.sleep(1.second))).foreverM
