@@ -1,10 +1,12 @@
 package chronicle
 import chronicle.api.*
 import chronicle.api.{v1_0_0 as v10, v1_1_0 as v11}
-import chronicle.protocol.ProtocolConversions as conversions
+import chronicle.protocol.ProtocolConversions
 import java.util.UUID
 
 class ProtocolEvolutionTest extends munit.FunSuite {
+  private val conversions=new ProtocolConversions
+  private val protocol=new VersionedWire(conversions)
   private val id=UUID.fromString("00000000-0000-4000-8000-000000000001")
   private val info=TokenInfo(id,"issued",List(Scope.Ingest),"2026-10-26T00:00:00Z",false)
   test("BG specified: both retained versions upgrade every client operation through registered generated conversions") {
@@ -12,8 +14,8 @@ class ProtocolEvolutionTest extends munit.FunSuite {
     examples.foreach { operation =>
       val old=v10.ClientEnvelope(id,operation)
       val middle=conversions.up1_0_0.convert[v10.ClientEnvelope,v11.ClientEnvelope](old)
-      val first=Wire.decodeClient("1.0.0",Wire.encode(v10.ClientEnvelope.codecJson,old))
-      val second=Wire.decodeClient("1.1.0",Wire.encode(v11.ClientEnvelope.codecJson,middle))
+      val first=protocol.decodeClient("1.0.0",Wire.encode(v10.ClientEnvelope.codecJson,old))
+      val second=protocol.decodeClient("1.1.0",Wire.encode(v11.ClientEnvelope.codecJson,middle))
       assertEquals(first,second)
       assertEquals(first.requestId,id)
     }
@@ -29,8 +31,8 @@ class ProtocolEvolutionTest extends munit.FunSuite {
       Result.Search(SearchResult(Nil,0,SearchCountScope.ExactMatches,None)),Result.Error(Failure("forbidden","denied")))
     results.foreach { result =>
       val envelope=ServerEnvelope(id,result)
-      val json10=Wire.encodeServer("1.0.0",envelope)
-      val json11=Wire.encodeServer("1.1.0",envelope)
+      val json10=protocol.encodeServer("1.0.0",envelope)
+      val json11=protocol.encodeServer("1.1.0",envelope)
       assertEquals(Wire.encode(v10.ServerEnvelope.codecJson,Wire.decode(v10.ServerEnvelope.codecJson,json10)),json10)
       assertEquals(Wire.encode(v11.ServerEnvelope.codecJson,Wire.decode(v11.ServerEnvelope.codecJson,json11)),json11)
       val upgraded=conversions.up1_1_0.convert[v11.ServerEnvelope,ServerEnvelope](Wire.decode(v11.ServerEnvelope.codecJson,json11))
@@ -39,7 +41,7 @@ class ProtocolEvolutionTest extends munit.FunSuite {
         case _: Result.Status => val job=upgraded.result.asInstanceOf[Result.Status].result.jobs.head; assertEquals(job.completedWindows,0); assertEquals(job.totalWindows,None); assert(!json10.noSpaces.contains("completedWindows"))
         case _ => assertEquals(upgraded,envelope)
       }
-      assertEquals(Wire.decode(ServerEnvelope.codecJson,Wire.encodeServer("1.2.0",envelope)),envelope)
+      assertEquals(Wire.decode(ServerEnvelope.codecJson,protocol.encodeServer("1.2.0",envelope)),envelope)
     }
     // Persisted issued-token receipts deliberately retain their exact shape.
     assertEquals(Wire.encode(TokenInfo.codecJson,info),Wire.encode(v11.TokenInfo.codecJson,conversions.down1_1_0.convert[TokenInfo,v11.TokenInfo](info)))
@@ -50,7 +52,7 @@ class ProtocolEvolutionTest extends munit.FunSuite {
     val ack=CollectorProgressAck(report.sequence,true)
     assertEquals(Wire.decode(CollectorProgressAck.codecJson,Wire.encode(CollectorProgressAck.codecJson,ack)),ack)
     val envelope=ServerEnvelope(id,Result.CollectionStatus(CollectorStatusResult(List(CollectorStatus(report,"2026-10-26T00:01:00Z",true)))))
-    assertEquals(Wire.decode(ServerEnvelope.codecJson,Wire.encodeServer("1.2.0",envelope)),envelope)
-    assertEquals(Wire.decodeClient("1.2.0",Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(id,Operation.CollectionStatus()))).operation,Operation.CollectionStatus())
+    assertEquals(Wire.decode(ServerEnvelope.codecJson,protocol.encodeServer("1.2.0",envelope)),envelope)
+    assertEquals(protocol.decodeClient("1.2.0",Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(id,Operation.CollectionStatus()))).operation,Operation.CollectionStatus())
   }
 }

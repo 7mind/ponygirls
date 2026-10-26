@@ -31,7 +31,7 @@ for directory, source, target, namespace in [(api/'1.1.0','1.0.0','1.1.0','chron
         reverse.append(namespace+'.'+symbol.replace('From','To'))
     reverse += ['new chronicle.protocol.'+name for name in (['SearchResultToV1'] if source=='1.0.0' else ['JobInfoToV11','TokensResultToV11'])]
     registrations.append((source,target,forward,reverse))
-parts.append('package chronicle.protocol {\nobject ProtocolConversions {\n')
+parts.append('package chronicle.protocol {\nfinal class ProtocolConversions {\n')
 for source,target,forward,reverse in registrations:
     for label,frm,to,regs in [('up',source,target,forward),('down',target,source,reverse)]:
         name=label+source.replace('.','_')

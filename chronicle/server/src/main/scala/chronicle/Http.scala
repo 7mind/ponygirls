@@ -13,7 +13,7 @@ import java.util.UUID
 import java.nio.file.{Files,Path}
 import scala.concurrent.duration.*
 
-final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot) {
+final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire) {
   private val socketQueueCapacity = 32
   private val livenessTimeoutCloseCode = 1013
   private def header(r: Request[IO],key: String): Option[String] = r.headers.get(CIString(key)).map(_.head.value)
@@ -92,7 +92,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     closed <- Ref.of[IO,Boolean](false)
     heartbeat <- Ref.of[IO,Option[(UUID,String,FiniteDuration)]](None)
     opened <- IO.monotonic
-    send = (e: ServerEnvelope) => closed.get.ifM(IO.unit,negotiated.get.flatMap(version => queue.offer(WebSocketFrame.Text(Wire.encodeServer(version.getOrElse(Wire.versions.current),e).noSpaces))))
+    send = (e: ServerEnvelope) => closed.get.ifM(IO.unit,negotiated.get.flatMap(version => queue.offer(WebSocketFrame.Text(protocol.encodeServer(version.getOrElse(Wire.versions.current),e).noSpaces))))
     close = (code: Int) => closed.set(true) *> queue.offer(WebSocketFrame.Close(code,"chronicle").fold(throw _,identity))
     error = (id: UUID,d: DomainError) => send(ServerEnvelope(id,Result.Error(Failure(d.code,d.detail)))) *> (d.code match { case "unauthorized" => close(4401); case "version-mismatch" => close(4406); case "protocol-error" => close(4400); case _ => IO.unit })
     execute = (e: ClientEnvelope) => closed.get.ifM(IO.unit,
@@ -105,7 +105,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
       frame match {
         case WebSocketFrame.Text(text,true) =>
           if(text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>config.maxBodyBytes) error(new UUID(0,0),DomainError("protocol-error","frame too large"))
-          else negotiated.get.flatMap { version => scala.util.Try(Wire.decodeClient(version.getOrElse(Wire.versions.current),Wire.parse(text))).toEither match {
+          else negotiated.get.flatMap { version => scala.util.Try(protocol.decodeClient(version.getOrElse(Wire.versions.current),Wire.parse(text))).toEither match {
             case Left(_) => error(new UUID(0,0),DomainError("protocol-error","invalid frame"))
             case Right(e) =>
               (IO.blocking(auth.browser(cookie(r))).flatMap { i =>

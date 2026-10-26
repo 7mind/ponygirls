@@ -19,20 +19,7 @@ object Check {
 object Wire {
   val ctx = BaboonCodecContext.Default
   val versions = VersionInfo("1.2.0", "1.0.0", List("1.2.0","1.1.0","1.0.0"))
-  private val conversions = chronicle.protocol.ProtocolConversions
   def negotiate(offered: List[String]): String = versions.supported.find(offered.contains).getOrElse(throw DomainError("version-mismatch","unsupported API version"))
-  def decodeClient(version: String,json: Json): ClientEnvelope = version match {
-    case "1.0.0" => conversions.up1_1_0.convert[chronicle.api.v1_1_0.ClientEnvelope,ClientEnvelope](conversions.up1_0_0.convert[chronicle.api.v1_0_0.ClientEnvelope,chronicle.api.v1_1_0.ClientEnvelope](decode(chronicle.api.v1_0_0.ClientEnvelope.codecJson,json)))
-    case "1.1.0" => conversions.up1_1_0.convert[chronicle.api.v1_1_0.ClientEnvelope,ClientEnvelope](decode(chronicle.api.v1_1_0.ClientEnvelope.codecJson,json))
-    case "1.2.0" => decode(ClientEnvelope.codecJson,json)
-    case _ => throw DomainError("version-mismatch","unsupported API version")
-  }
-  def encodeServer(version: String,envelope: ServerEnvelope): Json = version match {
-    case "1.0.0" => encode(chronicle.api.v1_0_0.ServerEnvelope.codecJson,conversions.down1_0_0.convert[chronicle.api.v1_1_0.ServerEnvelope,chronicle.api.v1_0_0.ServerEnvelope](conversions.down1_1_0.convert[ServerEnvelope,chronicle.api.v1_1_0.ServerEnvelope](envelope)))
-    case "1.1.0" => encode(chronicle.api.v1_1_0.ServerEnvelope.codecJson,conversions.down1_1_0.convert[ServerEnvelope,chronicle.api.v1_1_0.ServerEnvelope](envelope))
-    case "1.2.0" => encode(ServerEnvelope.codecJson,envelope)
-    case _ => throw DomainError("version-mismatch","unsupported API version")
-  }
   def encode[A](codec: BaboonJsonCodec[A], value: A): Json = codec.encode(ctx, value)
   def decode[A](codec: BaboonJsonCodec[A], json: Json): A = codec.decode(ctx, json).fold(_ => throw DomainError("invalid", "invalid payload"), identity)
   def parse(s: String): Json = io.circe.parser.parse(s).fold(_ => throw DomainError("invalid", "invalid JSON"), identity)

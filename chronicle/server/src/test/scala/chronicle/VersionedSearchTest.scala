@@ -35,7 +35,9 @@ class VersionedSearchTest extends munit.FunSuite {
     val archive=new PostgresArchive(db,config); val auth=new Auth(db,config)
     val embedder=new Embedder { def query(text: String)=IO.pure(List(1.0,0.0,0.0)); def documents(text: List[String])=IO.pure(text.map(_ => List(1.0,0.0,0.0))) }
     val app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db)
-    val http=new Http(config,auth,app,archive,new Mcp(app),logstage.IzLogger(),Http.WebRoot(None))
+    val conversions=new chronicle.protocol.ProtocolConversions
+    val protocol=new VersionedWire(conversions)
+    val http=new Http(config,auth,app,archive,new Mcp(app),logstage.IzLogger(),Http.WebRoot(None),protocol)
     Semaphore[IO](2).flatMap { gate =>
       EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => http.routes(ws,gate).orNotFound).build.use { server => IO.blocking {
         val (_,secret)=auth.login(LoginRequest("a","synthetic"))
@@ -72,18 +74,18 @@ class VersionedSearchTest extends munit.FunSuite {
             val (socket,inbox)=connection()
             def call(operation: old.Operation,requestId: UUID): Result = {
               val v10=old.ClientEnvelope(requestId,operation)
-              val request=if(version=="1.0.0") Wire.encode(old.ClientEnvelope.codecJson,v10) else Wire.encode(chronicle.api.v1_1_0.ClientEnvelope.codecJson,chronicle.protocol.ProtocolConversions.up1_0_0.convert[old.ClientEnvelope,chronicle.api.v1_1_0.ClientEnvelope](v10))
+              val request=if(version=="1.0.0") Wire.encode(old.ClientEnvelope.codecJson,v10) else Wire.encode(chronicle.api.v1_1_0.ClientEnvelope.codecJson,conversions.up1_0_0.convert[old.ClientEnvelope,chronicle.api.v1_1_0.ClientEnvelope](v10))
               val response=raw(socket,inbox,request)
               val v11=if(version=="1.0.0") {
                 val decoded=Wire.decode(old.ServerEnvelope.codecJson,response)
                 assertEquals(Wire.encode(old.ServerEnvelope.codecJson,decoded),response)
-                chronicle.protocol.ProtocolConversions.up1_0_0.convert[old.ServerEnvelope,chronicle.api.v1_1_0.ServerEnvelope](decoded)
+                conversions.up1_0_0.convert[old.ServerEnvelope,chronicle.api.v1_1_0.ServerEnvelope](decoded)
               } else {
                 val decoded=Wire.decode(chronicle.api.v1_1_0.ServerEnvelope.codecJson,response)
                 assertEquals(Wire.encode(chronicle.api.v1_1_0.ServerEnvelope.codecJson,decoded),response)
                 decoded
               }
-              val current=chronicle.protocol.ProtocolConversions.up1_1_0.convert[chronicle.api.v1_1_0.ServerEnvelope,ServerEnvelope](v11)
+              val current=conversions.up1_1_0.convert[chronicle.api.v1_1_0.ServerEnvelope,ServerEnvelope](v11)
               assertEquals(current.requestId,requestId)
               current.result
             }

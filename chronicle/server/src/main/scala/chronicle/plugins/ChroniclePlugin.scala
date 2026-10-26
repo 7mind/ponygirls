@@ -19,6 +19,8 @@ object ChroniclePlugin extends PluginDef {
   make[Application]
   make[Mcp]
   make[Http.WebRoot].from { () => Http.WebRoot(sys.env.get("CHRONICLE_WEB_ROOT")) }
+  make[chronicle.protocol.ProtocolConversions]
+  make[VersionedWire]
   make[Http]
   make[RuntimeServices]
 }

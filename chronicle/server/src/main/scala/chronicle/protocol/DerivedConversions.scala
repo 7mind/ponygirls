@@ -2483,7 +2483,7 @@ package chronicle.api {
 }
 
 package chronicle.protocol {
-object ProtocolConversions {
+final class ProtocolConversions {
 
   val up1_0_0 = new baboon.runtime.shared.AbstractBaboonConversions { def versionsFrom = List("1.0.0"); def versionTo = "1.1.0" }
 
