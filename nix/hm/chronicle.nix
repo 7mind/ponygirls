@@ -113,6 +113,9 @@ in
         { assertion = lib.all (r: lib.hasPrefix "/" r.path && r.id != "") cfg.collector.roots; message = "Chronicle: each root requires a stable nonempty id and absolute path."; }
       ];
       home.packages = lib.optional cfg.enable runner ++ lib.optional cfg.collector.enable cfg.collector.package;
+      xdg.configFile = lib.mkIf cfg.collector.enable {
+        "chronicle/collector.json".source = collectorConfig;
+      };
     })
     (lib.mkIf cfg.enable {
       programs.mcp.servers.chronicle = {

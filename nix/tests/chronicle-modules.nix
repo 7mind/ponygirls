@@ -10,6 +10,7 @@ let
         options.assertions = lib.mkOption { type = lib.types.listOf lib.types.attrs; default = [ ]; };
         options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
         options.xdg.stateHome = lib.mkOption { type = lib.types.str; default = "/home/alice/.local/state"; };
+        options.xdg.configFile = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
         options.programs.mcp.servers = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
         options.programs.codex.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
         options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
@@ -100,6 +101,11 @@ assert linux.programs.mcp.servers.chronicle.headers.Authorization == "Bearer \${
 assert linux.programs.codex.settings.mcp_servers.chronicle.bearer_token_env_var == "CHRONICLE_TOKEN";
 assert linux.smind.hm.dev.llm.yolo.validatedSessionVariables.CHRONICLE_TOKEN == "/run/secrets/chronicle-agent";
 assert linux.systemd.user.services.chronicle-collector.Service.UMask == "0077";
+assert toString linux.xdg.configFile."chronicle/collector.json".source == lib.last (lib.splitString " " linux.systemd.user.services.chronicle-collector.Service.ExecStart);
+assert toString separate.xdg.configFile."chronicle/collector.json".source == lib.last (lib.splitString " " separate.systemd.user.services.chronicle-collector.Service.ExecStart);
+assert toString collectorOnly.xdg.configFile."chronicle/collector.json".source == lib.last (lib.splitString " " collectorOnly.systemd.user.services.chronicle-collector.Service.ExecStart);
+assert darwin.xdg.configFile == { };
+assert disabled.xdg.configFile == { };
 assert darwin.systemd.user.services == { };
 assert disabled.programs.mcp.servers == { };
 assert disabled.home.packages == [ ];

@@ -10,6 +10,86 @@ import { DaemonLock } from '../src/spool.ts';
 
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 
+function invoke(home: string, configHome: string | undefined, argv: string[], cwd: string) {
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+  if (configHome === undefined) delete env.XDG_CONFIG_HOME;
+  else env.XDG_CONFIG_HOME = configHome;
+  return spawnSync(process.execPath, [cli, ...argv], { encoding: 'utf8', env, cwd });
+}
+
+for (const [name, configHome] of [['unset', undefined], ['empty', ''], ['relative', 'relative-config']] as const) {
+  test(`GoodCommunication CLI uses the home default when XDG_CONFIG_HOME is ${name}`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'chronicle-default-home-'));
+    try {
+      const home = join(dir, 'home'), directory = join(home, '.config', 'chronicle'), state = join(dir, 'state');
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(join(directory, 'collector.json'), JSON.stringify({ enabled: false, stateDir: state }));
+      const result = invoke(home, configHome, ['--status'], dir);
+      assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout) as unknown, { enabled: false });
+      assert.equal(existsSync(state), false);
+    } finally { rmSync(dir, { recursive: true }); }
+  });
+}
+
+test('GoodCommunication CLI uses XDG config for status without credentials, scanning or upload', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-default-xdg-'));
+  try {
+    const home = join(dir, 'home'), configHome = join(dir, 'custom-config'), directory = join(configHome, 'chronicle'), state = join(dir, 'state');
+    mkdirSync(join(home, '.config', 'chronicle'), { recursive: true }); mkdirSync(directory, { recursive: true });
+    writeFileSync(join(home, '.config', 'chronicle', 'collector.json'), 'SYNTHETIC_UNSELECTED_CONFIG');
+    writeFileSync(join(directory, 'collector.json'), JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'missing-token'), redactions: { secretFiles: [join(dir, 'missing-secret')] }, stateDir: state, discoverNative: false, discoverYolo: false }));
+    const result = invoke(home, configHome, ['--status'], dir);
+    assert.equal(result.status, 0, result.stderr);
+    const status = JSON.parse(result.stdout) as { namespace: string; queue: unknown[]; lastRun: unknown };
+    assert.match(status.namespace, /^[0-9a-f-]{36}$/); assert.deepEqual(status.queue, []); assert.equal(status.lastRun, null);
+    assert.equal(existsSync(join(state, 'daemon-lock.sqlite')), false);
+    assert.doesNotMatch(result.stdout + result.stderr, /SYNTHETIC_UNSELECTED_CONFIG|privacy-secret-unavailable/);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication CLI explicit config overrides the default without merging it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-config-override-'));
+  try {
+    const home = join(dir, 'home'), configHome = join(dir, 'config'), directory = join(configHome, 'chronicle'), explicit = join(dir, 'explicit.json');
+    mkdirSync(directory, { recursive: true }); writeFileSync(join(directory, 'collector.json'), 'SYNTHETIC_IGNORED_DEFAULT');
+    writeFileSync(explicit, JSON.stringify({ enabled: false }));
+    const result = invoke(home, configHome, ['--config', explicit, '--status'], dir);
+    assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout) as unknown, { enabled: false });
+    assert.doesNotMatch(result.stdout + result.stderr, /SYNTHETIC_IGNORED_DEFAULT/);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication CLI missing or malformed selected config fails without secondary or cwd fallback', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-config-failure-'));
+  try {
+    const home = join(dir, 'home'), configHome = join(dir, 'config'), directory = join(configHome, 'chronicle'), state = join(dir, 'state');
+    mkdirSync(join(home, '.config', 'chronicle'), { recursive: true }); mkdirSync(directory, { recursive: true });
+    const disabled = JSON.stringify({ enabled: false, stateDir: state });
+    writeFileSync(join(home, '.config', 'chronicle', 'collector.json'), disabled); writeFileSync(join(dir, 'collector.json'), disabled);
+    for (const malformed of [false, true]) {
+      if (malformed) writeFileSync(join(directory, 'collector.json'), 'SYNTHETIC_INVALID_CONFIG');
+      const result = invoke(home, configHome, ['--status'], dir);
+      assert.equal(result.status, 1); assert.match(result.stderr, /"code":"config-read-failed"/); assert.equal(result.stdout, '');
+      assert.doesNotMatch(result.stderr, /SYNTHETIC_INVALID_CONFIG/); assert.equal(existsSync(state), false);
+    }
+    writeFileSync(join(directory, 'collector.json'), disabled);
+    const explicitMissing = invoke(home, configHome, ['--config', join(dir, 'missing.json'), '--status'], dir);
+    assert.equal(explicitMissing.status, 1); assert.match(explicitMissing.stderr, /"code":"config-read-failed"/);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication CLI never uses default config to recover malformed explicit arguments', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-config-arguments-'));
+  try {
+    const home = join(dir, 'home'), configHome = join(dir, 'config'), directory = join(configHome, 'chronicle');
+    mkdirSync(directory, { recursive: true }); writeFileSync(join(directory, 'collector.json'), JSON.stringify({ enabled: false }));
+    for (const argv of [['--config'], ['--config', 'relative.json', '--status'], ['--config', join(directory, 'collector.json'), '--config', join(directory, 'collector.json')], ['--unexpected']]) {
+      const result = invoke(home, configHome, argv, dir);
+      assert.equal(result.status, 1); assert.equal(result.stdout, '');
+    }
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
 test('GoodCommunication CLI disabled has no filesystem/discovery side effects; safe once/status failures', () => {
   const dir = mkdtempSync(join(tmpdir(), 'chronicle-cli-'));
   try {

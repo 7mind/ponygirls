@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, statSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { loadConfig } from './config.ts';
 import { CollectorError } from './domain.ts';
@@ -12,25 +13,32 @@ import { LocalGitMetadata } from './git.ts';
 import { DaemonLock, SqliteSpool } from './spool.ts';
 
 interface Arguments { configPath: string; operation: 'daemon' | 'once' | 'status' | 'retry' | 'drop'; requestId: string | null }
-function args(argv: string[]): Arguments {
+function args(argv: string[], defaultConfigPath: string): Arguments {
   let configPath: string | null = null; let operation: Arguments['operation'] = 'daemon'; let requestId: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const argument = argv[i];
-    if (argument === '--config' && configPath === null) { configPath = argv[++i] ?? null; continue; }
+    if (argument === '--config' && configPath === null) {
+      const explicitConfig = argv[++i];
+      if (explicitConfig === undefined) throw new CollectorError('invalid-arguments');
+      configPath = explicitConfig; continue;
+    }
     if (['--once', '--status', '--retry', '--drop'].includes(argument ?? '') && operation === 'daemon') {
       operation = argument!.slice(2) as Arguments['operation'];
       if (operation === 'retry' || operation === 'drop') requestId = argv[++i] ?? null;
       continue;
     }
-    throw new CollectorError('usage: --config ABSOLUTE_PATH [--once|--status|--retry REQUEST_ID|--drop REQUEST_ID]');
+    throw new CollectorError('usage: [--config ABSOLUTE_PATH] [--once|--status|--retry REQUEST_ID|--drop REQUEST_ID]');
   }
-  if (configPath === null || !isAbsolute(configPath) || ((operation === 'retry' || operation === 'drop') && (requestId === null || !/^[0-9a-f-]{36}$/i.test(requestId)))) throw new CollectorError('invalid-arguments');
+  if (configPath === null) configPath = defaultConfigPath;
+  if (!isAbsolute(configPath) || ((operation === 'retry' || operation === 'drop') && (requestId === null || !/^[0-9a-f-]{36}$/i.test(requestId)))) throw new CollectorError('invalid-arguments');
   return { configPath, operation, requestId };
 }
 const print = (value: unknown): void => { process.stdout.write(JSON.stringify(value) + '\n'); };
 async function main(): Promise<void> {
   process.umask(0o077);
-  const arguments_ = args(process.argv.slice(2));
+  const configHome = process.env.XDG_CONFIG_HOME;
+  const defaultConfigPath = join(configHome !== undefined && isAbsolute(configHome) ? configHome : join(homedir(), '.config'), 'chronicle', 'collector.json');
+  const arguments_ = args(process.argv.slice(2), defaultConfigPath);
   let input: unknown;
   try {
     if (statSync(arguments_.configPath).size > 1_048_576) throw new Error();

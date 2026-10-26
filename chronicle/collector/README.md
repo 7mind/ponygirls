@@ -15,6 +15,16 @@ node dist/collector/src/cli.js --config /absolute/collector.json --status
 node dist/collector/src/cli.js --config /absolute/collector.json
 ```
 
+`--config` is optional: the CLI reads `$XDG_CONFIG_HOME/chronicle/collector.json`, or `~/.config/chronicle/collector.json` when `XDG_CONFIG_HOME` is unset, empty or relative. An explicit `--config /absolute/path.json` overrides that location. A missing or invalid selected file fails; the CLI never searches the working directory or falls back to another config after an error.
+
+Home Manager installs the exact generated daemon configuration at this default location when `collector.enable` is enabled, so the packaged CLI can be used directly:
+
+```bash
+chronicle-collector --status
+```
+
+The daemon retains its explicit generated configuration path. These files contain credential **paths**, never credential values; `--status` still does not read credentials, scan transcripts or upload.
+
 The build emits generated codecs under `dist/generated/` alongside the collector under `dist/collector/`. Keep this layout and a parent `package.json` with `"type":"module"` when packaging. `git` must be available on a trusted PATH (the Nix wrapper supplies it). Tests use synthetic temporary homes, repositories, transcripts and loopback HTTP only; no default home is scanned.
 
 Minimal configuration (all paths absolute; create the token file outside the Nix store with mode 0600/0400):
