@@ -9,9 +9,10 @@ import { TokensResult as TokensResultV11 } from '../../generated/typescript/chro
 import { Result_Status as StatusV11, Result_Tokens as TokensV11 } from '../../generated/typescript/chronicle/api/v1_1_0/Result.ts';
 import { StatusResult as StatusResultV11 } from '../../generated/typescript/chronicle/api/v1_1_0/StatusResult.ts';
 import { convert__result__from__1_1_0 as toV12 } from '../../generated/typescript/chronicle/api/v1_2_0/from_1_1_0_result.ts';
-import { convert__result__from__1_2_0 as toLatest } from '../../generated/typescript/chronicle/api/from_1_2_0_result.ts';
+import { convert__result__from__1_2_0 as toV13 } from '../../generated/typescript/chronicle/api/v1_3_0/from_1_2_0_result.ts';
+import { convert__result__from__1_3_0 as toLatest } from '../../generated/typescript/chronicle/api/from_1_3_0_result.ts';
 import type { Result as ResultV11 } from '../../generated/typescript/chronicle/api/v1_1_0/Result.ts';
-const convert__result__from__1_1_0 = (result: ResultV11) => toLatest(toV12(result));
+const convert__result__from__1_1_0 = (result: ResultV11) => toLatest(toV13(toV12(result)));
 import { SearchResult as SearchV10 } from '../../generated/typescript/chronicle/api/v1_0_0/SearchResult.ts';
 import { Result_Search as ResultSearchV10 } from '../../generated/typescript/chronicle/api/v1_0_0/Result.ts';
 import { convert__result__from__1_0_0 } from '../../generated/typescript/chronicle/api/v1_1_0/from_1_0_0_result.ts';

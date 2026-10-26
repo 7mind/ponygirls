@@ -5,12 +5,20 @@ import {ActivityResult, ActivityResult_JsonCodec} from './ActivityResult.js'
 import {ArchiveResult, ArchiveResult_JsonCodec} from './ArchiveResult.js'
 import {ChunksResult, ChunksResult_JsonCodec} from './ChunksResult.js'
 import {CollectorStatusResult, CollectorStatusResult_JsonCodec} from './CollectorStatusResult.js'
+import {ExpressionHintsResult, ExpressionHintsResult_JsonCodec} from './ExpressionHintsResult.js'
 import {FacetsResult, FacetsResult_JsonCodec} from './FacetsResult.js'
 import {Failure, Failure_JsonCodec} from './Failure.js'
 import {GroupsResult, GroupsResult_JsonCodec} from './GroupsResult.js'
+import {McpTestCatalog, McpTestCatalog_JsonCodec} from './McpTestCatalog.js'
+import {McpTestSnapshot, McpTestSnapshot_JsonCodec} from './McpTestSnapshot.js'
 import {MessageLocation, MessageLocation_JsonCodec} from './MessageLocation.js'
 import {MessagesResult, MessagesResult_JsonCodec} from './MessagesResult.js'
+import {ModelUsageResult, ModelUsageResult_JsonCodec} from './ModelUsageResult.js'
 import {MutationReceipt, MutationReceipt_JsonCodec} from './MutationReceipt.js'
+import {OwnerReindexPlan, OwnerReindexPlan_JsonCodec} from './OwnerReindexPlan.js'
+import {OwnerReindexResult, OwnerReindexResult_JsonCodec} from './OwnerReindexResult.js'
+import {PassageSpansResult, PassageSpansResult_JsonCodec} from './PassageSpansResult.js'
+import {PassagesResult, PassagesResult_JsonCodec} from './PassagesResult.js'
 import {RawResult, RawResult_JsonCodec} from './RawResult.js'
 import {RelatedResult, RelatedResult_JsonCodec} from './RelatedResult.js'
 import {RetryFailedPlan, RetryFailedPlan_JsonCodec} from './RetryFailedPlan.js'
@@ -23,15 +31,15 @@ import {TokensResult, TokensResult_JsonCodec} from './TokensResult.js'
 import {UserInfo, UserInfo_JsonCodec} from './UserInfo.js'
 import {VersionInfo, VersionInfo_JsonCodec} from './VersionInfo.js'
 
-export type Result = Result_Hello | Result_Pong | Result_Whoami | Result_Search | Result_Session | Result_Chunks | Result_Messages | Result_Raw | Result_Related | Result_Facets | Result_CollectionStatus | Result_Status | Result_Tokens | Result_Token | Result_Groups | Result_Mutation | Result_Error | Result_Ping | Result_Archive | Result_Activity | Result_ActivityJobs | Result_LocatedMessage | Result_RetryFailedPreview | Result_RetryFailed
+export type Result = Result_Hello | Result_Pong | Result_Whoami | Result_Search | Result_Session | Result_Chunks | Result_Messages | Result_Raw | Result_Related | Result_Facets | Result_CollectionStatus | Result_Status | Result_Tokens | Result_Token | Result_Groups | Result_Mutation | Result_Error | Result_Ping | Result_Archive | Result_Activity | Result_ActivityJobs | Result_LocatedMessage | Result_RetryFailedPreview | Result_RetryFailed | Result_ExpressionHints | Result_ModelUsage | Result_Passages | Result_PassageSpans | Result_OwnerReindexPreview | Result_OwnerReindexed | Result_McpTestTools | Result_McpTestRun
 
 export const Result = {
-    BaboonDomainVersion: '1.3.0',
+    BaboonDomainVersion: '1.4.0',
     BaboonDomainIdentifier: 'chronicle.api',
     BaboonTypeIdentifier: 'chronicle.api/:#Result',
-    BaboonSameInVersions: ["1.3.0"],
-    BaboonForwardReadable: { "1.3.0": "identical" } as { readonly [version: string]: string },
-    BaboonMinReaderVersions: { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.3.0", "identical": "1.3.0" } as { readonly [tier: string]: string },
+    BaboonSameInVersions: ["1.4.0"],
+    BaboonForwardReadable: { "1.4.0": "identical" } as { readonly [version: string]: string },
+    BaboonMinReaderVersions: { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" } as { readonly [tier: string]: string },
     BaboonAdtTypeIdentifier: 'chronicle.api/:#Result',
     jsonCodec(): Result_JsonCodec {
         return Result_JsonCodec.instance
@@ -76,7 +84,7 @@ export class Result_Hello implements BaboonAdtMemberMeta, BaboonGeneratedLatest 
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Hello.BaboonDomainVersion
     }
@@ -88,11 +96,11 @@ export class Result_Hello implements BaboonAdtMemberMeta, BaboonGeneratedLatest 
     public baboonTypeIdentifier() {
         return Result_Hello.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Hello.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Hello.BaboonForwardReadable
     }
@@ -133,7 +141,7 @@ export class Result_Hello_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Hello_JsonCodec.BaboonDomainVersion
     }
@@ -186,7 +194,7 @@ export class Result_Pong implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Pong.BaboonDomainVersion
     }
@@ -198,11 +206,11 @@ export class Result_Pong implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return Result_Pong.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Pong.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Pong.BaboonForwardReadable
     }
@@ -241,7 +249,7 @@ export class Result_Pong_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Pong_JsonCodec.BaboonDomainVersion
     }
@@ -294,7 +302,7 @@ export class Result_Whoami implements BaboonAdtMemberMeta, BaboonGeneratedLatest
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Whoami.BaboonDomainVersion
     }
@@ -306,11 +314,11 @@ export class Result_Whoami implements BaboonAdtMemberMeta, BaboonGeneratedLatest
     public baboonTypeIdentifier() {
         return Result_Whoami.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Whoami.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Whoami.BaboonForwardReadable
     }
@@ -349,7 +357,7 @@ export class Result_Whoami_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Whoami_JsonCodec.BaboonDomainVersion
     }
@@ -402,7 +410,7 @@ export class Result_Search implements BaboonAdtMemberMeta, BaboonGeneratedLatest
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Search.BaboonDomainVersion
     }
@@ -414,11 +422,11 @@ export class Result_Search implements BaboonAdtMemberMeta, BaboonGeneratedLatest
     public baboonTypeIdentifier() {
         return Result_Search.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Search.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Search.BaboonForwardReadable
     }
@@ -457,7 +465,7 @@ export class Result_Search_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Search_JsonCodec.BaboonDomainVersion
     }
@@ -510,7 +518,7 @@ export class Result_Session implements BaboonAdtMemberMeta, BaboonGeneratedLates
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Session.BaboonDomainVersion
     }
@@ -522,11 +530,11 @@ export class Result_Session implements BaboonAdtMemberMeta, BaboonGeneratedLates
     public baboonTypeIdentifier() {
         return Result_Session.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Session.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Session.BaboonForwardReadable
     }
@@ -565,7 +573,7 @@ export class Result_Session_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Session_JsonCodec.BaboonDomainVersion
     }
@@ -618,7 +626,7 @@ export class Result_Chunks implements BaboonAdtMemberMeta, BaboonGeneratedLatest
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Chunks.BaboonDomainVersion
     }
@@ -630,11 +638,11 @@ export class Result_Chunks implements BaboonAdtMemberMeta, BaboonGeneratedLatest
     public baboonTypeIdentifier() {
         return Result_Chunks.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Chunks.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Chunks.BaboonForwardReadable
     }
@@ -673,7 +681,7 @@ export class Result_Chunks_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Chunks_JsonCodec.BaboonDomainVersion
     }
@@ -726,7 +734,7 @@ export class Result_Messages implements BaboonAdtMemberMeta, BaboonGeneratedLate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Messages.BaboonDomainVersion
     }
@@ -738,11 +746,11 @@ export class Result_Messages implements BaboonAdtMemberMeta, BaboonGeneratedLate
     public baboonTypeIdentifier() {
         return Result_Messages.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Messages.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Messages.BaboonForwardReadable
     }
@@ -781,7 +789,7 @@ export class Result_Messages_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Messages_JsonCodec.BaboonDomainVersion
     }
@@ -834,7 +842,7 @@ export class Result_Raw implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Raw.BaboonDomainVersion
     }
@@ -846,11 +854,11 @@ export class Result_Raw implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return Result_Raw.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Raw.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Raw.BaboonForwardReadable
     }
@@ -889,7 +897,7 @@ export class Result_Raw_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Raw_JsonCodec.BaboonDomainVersion
     }
@@ -942,7 +950,7 @@ export class Result_Related implements BaboonAdtMemberMeta, BaboonGeneratedLates
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Related.BaboonDomainVersion
     }
@@ -954,11 +962,11 @@ export class Result_Related implements BaboonAdtMemberMeta, BaboonGeneratedLates
     public baboonTypeIdentifier() {
         return Result_Related.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Related.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Related.BaboonForwardReadable
     }
@@ -997,7 +1005,7 @@ export class Result_Related_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Related_JsonCodec.BaboonDomainVersion
     }
@@ -1050,7 +1058,7 @@ export class Result_Facets implements BaboonAdtMemberMeta, BaboonGeneratedLatest
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Facets.BaboonDomainVersion
     }
@@ -1062,11 +1070,11 @@ export class Result_Facets implements BaboonAdtMemberMeta, BaboonGeneratedLatest
     public baboonTypeIdentifier() {
         return Result_Facets.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Facets.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Facets.BaboonForwardReadable
     }
@@ -1105,7 +1113,7 @@ export class Result_Facets_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Facets_JsonCodec.BaboonDomainVersion
     }
@@ -1158,7 +1166,7 @@ export class Result_CollectionStatus implements BaboonAdtMemberMeta, BaboonGener
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_CollectionStatus.BaboonDomainVersion
     }
@@ -1170,11 +1178,11 @@ export class Result_CollectionStatus implements BaboonAdtMemberMeta, BaboonGener
     public baboonTypeIdentifier() {
         return Result_CollectionStatus.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_CollectionStatus.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_CollectionStatus.BaboonForwardReadable
     }
@@ -1213,7 +1221,7 @@ export class Result_CollectionStatus_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_CollectionStatus_JsonCodec.BaboonDomainVersion
     }
@@ -1266,7 +1274,7 @@ export class Result_Status implements BaboonAdtMemberMeta, BaboonGeneratedLatest
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Status.BaboonDomainVersion
     }
@@ -1278,11 +1286,11 @@ export class Result_Status implements BaboonAdtMemberMeta, BaboonGeneratedLatest
     public baboonTypeIdentifier() {
         return Result_Status.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Status.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Status.BaboonForwardReadable
     }
@@ -1321,7 +1329,7 @@ export class Result_Status_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Status_JsonCodec.BaboonDomainVersion
     }
@@ -1374,7 +1382,7 @@ export class Result_Tokens implements BaboonAdtMemberMeta, BaboonGeneratedLatest
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Tokens.BaboonDomainVersion
     }
@@ -1386,11 +1394,11 @@ export class Result_Tokens implements BaboonAdtMemberMeta, BaboonGeneratedLatest
     public baboonTypeIdentifier() {
         return Result_Tokens.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Tokens.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Tokens.BaboonForwardReadable
     }
@@ -1429,7 +1437,7 @@ export class Result_Tokens_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Tokens_JsonCodec.BaboonDomainVersion
     }
@@ -1482,7 +1490,7 @@ export class Result_Token implements BaboonAdtMemberMeta, BaboonGeneratedLatest 
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Token.BaboonDomainVersion
     }
@@ -1494,11 +1502,11 @@ export class Result_Token implements BaboonAdtMemberMeta, BaboonGeneratedLatest 
     public baboonTypeIdentifier() {
         return Result_Token.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Token.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Token.BaboonForwardReadable
     }
@@ -1537,7 +1545,7 @@ export class Result_Token_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Token_JsonCodec.BaboonDomainVersion
     }
@@ -1590,7 +1598,7 @@ export class Result_Groups implements BaboonAdtMemberMeta, BaboonGeneratedLatest
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Groups.BaboonDomainVersion
     }
@@ -1602,11 +1610,11 @@ export class Result_Groups implements BaboonAdtMemberMeta, BaboonGeneratedLatest
     public baboonTypeIdentifier() {
         return Result_Groups.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Groups.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Groups.BaboonForwardReadable
     }
@@ -1645,7 +1653,7 @@ export class Result_Groups_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Groups_JsonCodec.BaboonDomainVersion
     }
@@ -1698,7 +1706,7 @@ export class Result_Mutation implements BaboonAdtMemberMeta, BaboonGeneratedLate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Mutation.BaboonDomainVersion
     }
@@ -1710,11 +1718,11 @@ export class Result_Mutation implements BaboonAdtMemberMeta, BaboonGeneratedLate
     public baboonTypeIdentifier() {
         return Result_Mutation.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Mutation.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Mutation.BaboonForwardReadable
     }
@@ -1753,7 +1761,7 @@ export class Result_Mutation_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Mutation_JsonCodec.BaboonDomainVersion
     }
@@ -1806,7 +1814,7 @@ export class Result_Error implements BaboonAdtMemberMeta, BaboonGeneratedLatest 
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Error.BaboonDomainVersion
     }
@@ -1818,11 +1826,11 @@ export class Result_Error implements BaboonAdtMemberMeta, BaboonGeneratedLatest 
     public baboonTypeIdentifier() {
         return Result_Error.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Error.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Error.BaboonForwardReadable
     }
@@ -1861,7 +1869,7 @@ export class Result_Error_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Error_JsonCodec.BaboonDomainVersion
     }
@@ -1914,7 +1922,7 @@ export class Result_Ping implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Ping.BaboonDomainVersion
     }
@@ -1926,11 +1934,11 @@ export class Result_Ping implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return Result_Ping.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Ping.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Ping.BaboonForwardReadable
     }
@@ -1969,7 +1977,7 @@ export class Result_Ping_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Ping_JsonCodec.BaboonDomainVersion
     }
@@ -2022,7 +2030,7 @@ export class Result_Archive implements BaboonAdtMemberMeta, BaboonGeneratedLates
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Archive.BaboonDomainVersion
     }
@@ -2034,11 +2042,11 @@ export class Result_Archive implements BaboonAdtMemberMeta, BaboonGeneratedLates
     public baboonTypeIdentifier() {
         return Result_Archive.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Archive.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Archive.BaboonForwardReadable
     }
@@ -2077,7 +2085,7 @@ export class Result_Archive_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Archive_JsonCodec.BaboonDomainVersion
     }
@@ -2130,7 +2138,7 @@ export class Result_Activity implements BaboonAdtMemberMeta, BaboonGeneratedLate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Activity.BaboonDomainVersion
     }
@@ -2142,11 +2150,11 @@ export class Result_Activity implements BaboonAdtMemberMeta, BaboonGeneratedLate
     public baboonTypeIdentifier() {
         return Result_Activity.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_Activity.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_Activity.BaboonForwardReadable
     }
@@ -2185,7 +2193,7 @@ export class Result_Activity_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_Activity_JsonCodec.BaboonDomainVersion
     }
@@ -2238,7 +2246,7 @@ export class Result_ActivityJobs implements BaboonAdtMemberMeta, BaboonGenerated
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_ActivityJobs.BaboonDomainVersion
     }
@@ -2250,11 +2258,11 @@ export class Result_ActivityJobs implements BaboonAdtMemberMeta, BaboonGenerated
     public baboonTypeIdentifier() {
         return Result_ActivityJobs.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_ActivityJobs.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_ActivityJobs.BaboonForwardReadable
     }
@@ -2293,7 +2301,7 @@ export class Result_ActivityJobs_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_ActivityJobs_JsonCodec.BaboonDomainVersion
     }
@@ -2346,7 +2354,7 @@ export class Result_LocatedMessage implements BaboonAdtMemberMeta, BaboonGenerat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_LocatedMessage.BaboonDomainVersion
     }
@@ -2358,11 +2366,11 @@ export class Result_LocatedMessage implements BaboonAdtMemberMeta, BaboonGenerat
     public baboonTypeIdentifier() {
         return Result_LocatedMessage.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_LocatedMessage.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_LocatedMessage.BaboonForwardReadable
     }
@@ -2401,7 +2409,7 @@ export class Result_LocatedMessage_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_LocatedMessage_JsonCodec.BaboonDomainVersion
     }
@@ -2454,7 +2462,7 @@ export class Result_RetryFailedPreview implements BaboonAdtMemberMeta, BaboonGen
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_RetryFailedPreview.BaboonDomainVersion
     }
@@ -2466,11 +2474,11 @@ export class Result_RetryFailedPreview implements BaboonAdtMemberMeta, BaboonGen
     public baboonTypeIdentifier() {
         return Result_RetryFailedPreview.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_RetryFailedPreview.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_RetryFailedPreview.BaboonForwardReadable
     }
@@ -2509,7 +2517,7 @@ export class Result_RetryFailedPreview_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_RetryFailedPreview_JsonCodec.BaboonDomainVersion
     }
@@ -2562,7 +2570,7 @@ export class Result_RetryFailed implements BaboonAdtMemberMeta, BaboonGeneratedL
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_RetryFailed.BaboonDomainVersion
     }
@@ -2574,11 +2582,11 @@ export class Result_RetryFailed implements BaboonAdtMemberMeta, BaboonGeneratedL
     public baboonTypeIdentifier() {
         return Result_RetryFailed.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return Result_RetryFailed.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return Result_RetryFailed.BaboonForwardReadable
     }
@@ -2617,7 +2625,7 @@ export class Result_RetryFailed_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_RetryFailed_JsonCodec.BaboonDomainVersion
     }
@@ -2637,6 +2645,870 @@ export class Result_RetryFailed_JsonCodec {
     public static lazyInstance = new Lazy(() => new Result_RetryFailed_JsonCodec())
     public static get instance(): Result_RetryFailed_JsonCodec {
         return Result_RetryFailed_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Result_ExpressionHints implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#ExpressionHints' as const;
+    private readonly _result: ExpressionHintsResult;
+
+    constructor(result: ExpressionHintsResult) {
+        this._result = result
+    }
+
+    public get result(): ExpressionHintsResult {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: ExpressionHintsResult}): Result_ExpressionHints {
+        return new Result_ExpressionHints(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: ExpressionHintsResult}): Result_ExpressionHints {
+        return new Result_ExpressionHints(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_ExpressionHints.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_ExpressionHints.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#ExpressionHints'
+    public baboonTypeIdentifier() {
+        return Result_ExpressionHints.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.4.0"]
+    public baboonSameInVersions() {
+        return Result_ExpressionHints.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_ExpressionHints.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public baboonMinReaderVersions() {
+        return Result_ExpressionHints.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_ExpressionHints.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_ExpressionHints_JsonCodec {
+        return Result_ExpressionHints_JsonCodec.instance
+    }
+}
+
+export class Result_ExpressionHints_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_ExpressionHints): unknown {
+        if (this !== Result_ExpressionHints_JsonCodec.lazyInstance.value) {
+          return Result_ExpressionHints_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": ExpressionHintsResult_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_ExpressionHints {
+        if (this !== Result_ExpressionHints_JsonCodec .lazyInstance.value) {
+            return Result_ExpressionHints_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_ExpressionHints (
+            ExpressionHintsResult_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_ExpressionHints_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_ExpressionHints_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#ExpressionHints'
+    public baboonTypeIdentifier() {
+        return Result_ExpressionHints_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_ExpressionHints_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_ExpressionHints_JsonCodec())
+    public static get instance(): Result_ExpressionHints_JsonCodec {
+        return Result_ExpressionHints_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Result_ModelUsage implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#ModelUsage' as const;
+    private readonly _result: ModelUsageResult;
+
+    constructor(result: ModelUsageResult) {
+        this._result = result
+    }
+
+    public get result(): ModelUsageResult {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: ModelUsageResult}): Result_ModelUsage {
+        return new Result_ModelUsage(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: ModelUsageResult}): Result_ModelUsage {
+        return new Result_ModelUsage(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_ModelUsage.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_ModelUsage.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#ModelUsage'
+    public baboonTypeIdentifier() {
+        return Result_ModelUsage.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.4.0"]
+    public baboonSameInVersions() {
+        return Result_ModelUsage.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_ModelUsage.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public baboonMinReaderVersions() {
+        return Result_ModelUsage.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_ModelUsage.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_ModelUsage_JsonCodec {
+        return Result_ModelUsage_JsonCodec.instance
+    }
+}
+
+export class Result_ModelUsage_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_ModelUsage): unknown {
+        if (this !== Result_ModelUsage_JsonCodec.lazyInstance.value) {
+          return Result_ModelUsage_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": ModelUsageResult_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_ModelUsage {
+        if (this !== Result_ModelUsage_JsonCodec .lazyInstance.value) {
+            return Result_ModelUsage_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_ModelUsage (
+            ModelUsageResult_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_ModelUsage_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_ModelUsage_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#ModelUsage'
+    public baboonTypeIdentifier() {
+        return Result_ModelUsage_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_ModelUsage_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_ModelUsage_JsonCodec())
+    public static get instance(): Result_ModelUsage_JsonCodec {
+        return Result_ModelUsage_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Result_Passages implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#Passages' as const;
+    private readonly _result: PassagesResult;
+
+    constructor(result: PassagesResult) {
+        this._result = result
+    }
+
+    public get result(): PassagesResult {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: PassagesResult}): Result_Passages {
+        return new Result_Passages(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: PassagesResult}): Result_Passages {
+        return new Result_Passages(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_Passages.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_Passages.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#Passages'
+    public baboonTypeIdentifier() {
+        return Result_Passages.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.4.0"]
+    public baboonSameInVersions() {
+        return Result_Passages.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_Passages.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public baboonMinReaderVersions() {
+        return Result_Passages.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_Passages.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_Passages_JsonCodec {
+        return Result_Passages_JsonCodec.instance
+    }
+}
+
+export class Result_Passages_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_Passages): unknown {
+        if (this !== Result_Passages_JsonCodec.lazyInstance.value) {
+          return Result_Passages_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": PassagesResult_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_Passages {
+        if (this !== Result_Passages_JsonCodec .lazyInstance.value) {
+            return Result_Passages_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_Passages (
+            PassagesResult_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_Passages_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_Passages_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#Passages'
+    public baboonTypeIdentifier() {
+        return Result_Passages_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_Passages_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_Passages_JsonCodec())
+    public static get instance(): Result_Passages_JsonCodec {
+        return Result_Passages_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Result_PassageSpans implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#PassageSpans' as const;
+    private readonly _result: PassageSpansResult;
+
+    constructor(result: PassageSpansResult) {
+        this._result = result
+    }
+
+    public get result(): PassageSpansResult {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: PassageSpansResult}): Result_PassageSpans {
+        return new Result_PassageSpans(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: PassageSpansResult}): Result_PassageSpans {
+        return new Result_PassageSpans(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_PassageSpans.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_PassageSpans.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#PassageSpans'
+    public baboonTypeIdentifier() {
+        return Result_PassageSpans.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.4.0"]
+    public baboonSameInVersions() {
+        return Result_PassageSpans.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_PassageSpans.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public baboonMinReaderVersions() {
+        return Result_PassageSpans.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_PassageSpans.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_PassageSpans_JsonCodec {
+        return Result_PassageSpans_JsonCodec.instance
+    }
+}
+
+export class Result_PassageSpans_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_PassageSpans): unknown {
+        if (this !== Result_PassageSpans_JsonCodec.lazyInstance.value) {
+          return Result_PassageSpans_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": PassageSpansResult_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_PassageSpans {
+        if (this !== Result_PassageSpans_JsonCodec .lazyInstance.value) {
+            return Result_PassageSpans_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_PassageSpans (
+            PassageSpansResult_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_PassageSpans_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_PassageSpans_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#PassageSpans'
+    public baboonTypeIdentifier() {
+        return Result_PassageSpans_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_PassageSpans_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_PassageSpans_JsonCodec())
+    public static get instance(): Result_PassageSpans_JsonCodec {
+        return Result_PassageSpans_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Result_OwnerReindexPreview implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#OwnerReindexPreview' as const;
+    private readonly _result: OwnerReindexPlan;
+
+    constructor(result: OwnerReindexPlan) {
+        this._result = result
+    }
+
+    public get result(): OwnerReindexPlan {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: OwnerReindexPlan}): Result_OwnerReindexPreview {
+        return new Result_OwnerReindexPreview(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: OwnerReindexPlan}): Result_OwnerReindexPreview {
+        return new Result_OwnerReindexPreview(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_OwnerReindexPreview.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_OwnerReindexPreview.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#OwnerReindexPreview'
+    public baboonTypeIdentifier() {
+        return Result_OwnerReindexPreview.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.4.0"]
+    public baboonSameInVersions() {
+        return Result_OwnerReindexPreview.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_OwnerReindexPreview.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public baboonMinReaderVersions() {
+        return Result_OwnerReindexPreview.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_OwnerReindexPreview.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_OwnerReindexPreview_JsonCodec {
+        return Result_OwnerReindexPreview_JsonCodec.instance
+    }
+}
+
+export class Result_OwnerReindexPreview_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_OwnerReindexPreview): unknown {
+        if (this !== Result_OwnerReindexPreview_JsonCodec.lazyInstance.value) {
+          return Result_OwnerReindexPreview_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": OwnerReindexPlan_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_OwnerReindexPreview {
+        if (this !== Result_OwnerReindexPreview_JsonCodec .lazyInstance.value) {
+            return Result_OwnerReindexPreview_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_OwnerReindexPreview (
+            OwnerReindexPlan_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_OwnerReindexPreview_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_OwnerReindexPreview_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#OwnerReindexPreview'
+    public baboonTypeIdentifier() {
+        return Result_OwnerReindexPreview_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_OwnerReindexPreview_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_OwnerReindexPreview_JsonCodec())
+    public static get instance(): Result_OwnerReindexPreview_JsonCodec {
+        return Result_OwnerReindexPreview_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Result_OwnerReindexed implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#OwnerReindexed' as const;
+    private readonly _result: OwnerReindexResult;
+
+    constructor(result: OwnerReindexResult) {
+        this._result = result
+    }
+
+    public get result(): OwnerReindexResult {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: OwnerReindexResult}): Result_OwnerReindexed {
+        return new Result_OwnerReindexed(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: OwnerReindexResult}): Result_OwnerReindexed {
+        return new Result_OwnerReindexed(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_OwnerReindexed.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_OwnerReindexed.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#OwnerReindexed'
+    public baboonTypeIdentifier() {
+        return Result_OwnerReindexed.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.4.0"]
+    public baboonSameInVersions() {
+        return Result_OwnerReindexed.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_OwnerReindexed.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public baboonMinReaderVersions() {
+        return Result_OwnerReindexed.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_OwnerReindexed.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_OwnerReindexed_JsonCodec {
+        return Result_OwnerReindexed_JsonCodec.instance
+    }
+}
+
+export class Result_OwnerReindexed_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_OwnerReindexed): unknown {
+        if (this !== Result_OwnerReindexed_JsonCodec.lazyInstance.value) {
+          return Result_OwnerReindexed_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": OwnerReindexResult_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_OwnerReindexed {
+        if (this !== Result_OwnerReindexed_JsonCodec .lazyInstance.value) {
+            return Result_OwnerReindexed_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_OwnerReindexed (
+            OwnerReindexResult_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_OwnerReindexed_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_OwnerReindexed_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#OwnerReindexed'
+    public baboonTypeIdentifier() {
+        return Result_OwnerReindexed_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_OwnerReindexed_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_OwnerReindexed_JsonCodec())
+    public static get instance(): Result_OwnerReindexed_JsonCodec {
+        return Result_OwnerReindexed_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Result_McpTestTools implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#McpTestTools' as const;
+    private readonly _result: McpTestCatalog;
+
+    constructor(result: McpTestCatalog) {
+        this._result = result
+    }
+
+    public get result(): McpTestCatalog {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: McpTestCatalog}): Result_McpTestTools {
+        return new Result_McpTestTools(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: McpTestCatalog}): Result_McpTestTools {
+        return new Result_McpTestTools(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_McpTestTools.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_McpTestTools.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#McpTestTools'
+    public baboonTypeIdentifier() {
+        return Result_McpTestTools.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.4.0"]
+    public baboonSameInVersions() {
+        return Result_McpTestTools.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_McpTestTools.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public baboonMinReaderVersions() {
+        return Result_McpTestTools.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_McpTestTools.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_McpTestTools_JsonCodec {
+        return Result_McpTestTools_JsonCodec.instance
+    }
+}
+
+export class Result_McpTestTools_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_McpTestTools): unknown {
+        if (this !== Result_McpTestTools_JsonCodec.lazyInstance.value) {
+          return Result_McpTestTools_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": McpTestCatalog_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_McpTestTools {
+        if (this !== Result_McpTestTools_JsonCodec .lazyInstance.value) {
+            return Result_McpTestTools_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_McpTestTools (
+            McpTestCatalog_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_McpTestTools_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_McpTestTools_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#McpTestTools'
+    public baboonTypeIdentifier() {
+        return Result_McpTestTools_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_McpTestTools_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_McpTestTools_JsonCodec())
+    public static get instance(): Result_McpTestTools_JsonCodec {
+        return Result_McpTestTools_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Result_McpTestRun implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#McpTestRun' as const;
+    private readonly _result: McpTestSnapshot;
+
+    constructor(result: McpTestSnapshot) {
+        this._result = result
+    }
+
+    public get result(): McpTestSnapshot {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: McpTestSnapshot}): Result_McpTestRun {
+        return new Result_McpTestRun(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: McpTestSnapshot}): Result_McpTestRun {
+        return new Result_McpTestRun(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_McpTestRun.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_McpTestRun.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#McpTestRun'
+    public baboonTypeIdentifier() {
+        return Result_McpTestRun.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.4.0"]
+    public baboonSameInVersions() {
+        return Result_McpTestRun.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_McpTestRun.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public baboonMinReaderVersions() {
+        return Result_McpTestRun.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_McpTestRun.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_McpTestRun_JsonCodec {
+        return Result_McpTestRun_JsonCodec.instance
+    }
+}
+
+export class Result_McpTestRun_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_McpTestRun): unknown {
+        if (this !== Result_McpTestRun_JsonCodec.lazyInstance.value) {
+          return Result_McpTestRun_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": McpTestSnapshot_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_McpTestRun {
+        if (this !== Result_McpTestRun_JsonCodec .lazyInstance.value) {
+            return Result_McpTestRun_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_McpTestRun (
+            McpTestSnapshot_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.4.0'
+    public baboonDomainVersion() {
+        return Result_McpTestRun_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_McpTestRun_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#McpTestRun'
+    public baboonTypeIdentifier() {
+        return Result_McpTestRun_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_McpTestRun_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_McpTestRun_JsonCodec())
+    public static get instance(): Result_McpTestRun_JsonCodec {
+        return Result_McpTestRun_JsonCodec.lazyInstance.value
     }
 }
 
@@ -2719,6 +3591,30 @@ export class Result_JsonCodec {
             if (value instanceof Result_RetryFailed) {
                 return { "RetryFailed": Result_RetryFailed_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof Result_ExpressionHints) {
+                return { "ExpressionHints": Result_ExpressionHints_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Result_ModelUsage) {
+                return { "ModelUsage": Result_ModelUsage_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Result_Passages) {
+                return { "Passages": Result_Passages_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Result_PassageSpans) {
+                return { "PassageSpans": Result_PassageSpans_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Result_OwnerReindexPreview) {
+                return { "OwnerReindexPreview": Result_OwnerReindexPreview_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Result_OwnerReindexed) {
+                return { "OwnerReindexed": Result_OwnerReindexed_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Result_McpTestTools) {
+                return { "McpTestTools": Result_McpTestTools_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Result_McpTestRun) {
+                return { "McpTestRun": Result_McpTestRun_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
         throw new Error("Unhandled ADT branch: " + (value as {constructor?: {name?: string}}).constructor?.name);
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Result {
@@ -2753,11 +3649,19 @@ export class Result_JsonCodec {
                 case "LocatedMessage": return Result_LocatedMessage_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "RetryFailedPreview": return Result_RetryFailedPreview_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "RetryFailed": return Result_RetryFailed_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "ExpressionHints": return Result_ExpressionHints_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "ModelUsage": return Result_ModelUsage_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "Passages": return Result_Passages_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "PassageSpans": return Result_PassageSpans_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "OwnerReindexPreview": return Result_OwnerReindexPreview_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "OwnerReindexed": return Result_OwnerReindexed_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "McpTestTools": return Result_McpTestTools_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "McpTestRun": return Result_McpTestRun_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
             default: throw new Error("Unknown ADT branch: " + key);
         }
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return Result_JsonCodec.BaboonDomainVersion
     }

@@ -1,0 +1,32 @@
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__RetryFailedCounts__From__1_3_0
+    extends AbstractConversion[v1_3_0.RetryFailedCounts, RetryFailedCounts] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: v1_3_0.RetryFailedCounts
+      ): RetryFailedCounts = {
+        val eligiblecurrentfailed: Long = _from.eligibleCurrentFailed
+        val supersededrevisionfailed: Long = _from.supersededRevisionFailed
+        val obsoleteprofilefailed: Long = _from.obsoleteProfileFailed
+        val supersededrevisionandprofilefailed: Long = _from.supersededRevisionAndProfileFailed
+        val unchangedqueued: Long = _from.unchangedQueued
+        val unchangedrunning: Long = _from.unchangedRunning
+        val unchangedcomplete: Long = _from.unchangedComplete
+        RetryFailedCounts(
+                eligiblecurrentfailed,
+                supersededrevisionfailed,
+                obsoleteprofilefailed,
+                supersededrevisionandprofilefailed,
+                unchangedqueued,
+                unchangedrunning,
+                unchangedcomplete
+             )
+      }
+      override def versionFrom: String = "1.3.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#RetryFailedCounts"
+  }
+}
