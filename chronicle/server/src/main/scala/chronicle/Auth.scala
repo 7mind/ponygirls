@@ -17,7 +17,7 @@ final class Auth(db: Database, config: Config) {
     (LoginResponse(UserInfo(id,r.login,allScopes),Wire.versions),secret)
   }
   private def browserHash(c: Connection,hash: String): Identity =
-    Sql.one(c,"SELECT u.id,u.login FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND s.expires>now() AND u.enabled",hash)(r => Identity(UserInfo(r.getString(1),r.getString(2),allScopes),true,hash)).getOrElse(throw DomainError("unauthorized","session expired or revoked"))
+    Sql.one(c,"SELECT u.id,u.login FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND s.expires>clock_timestamp() AND u.enabled",hash)(r => Identity(UserInfo(r.getString(1),r.getString(2),allScopes),true,hash)).getOrElse(throw DomainError("unauthorized","session expired or revoked"))
   def browser(secret: String): Identity = db.transaction(c => browserHash(c,Wire.hash(secret)))
   private[chronicle] def currentBrowser(c: Connection,identity: Identity): Identity = {
     identity.requireBrowser()
@@ -42,10 +42,20 @@ final class Auth(db: Database, config: Config) {
     i.requireBrowser(); i.requireScope(Scope.Read)
     db.transaction { c => c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ); RetryFailedJobs.preview(c,i.user.id) }
   }
+  def previewOwnerReindex(i: Identity): OwnerReindexPlan = {
+    i.requireBrowser(); i.requireScope(Scope.Read)
+    db.transaction { c =>
+      c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+      currentBrowser(c,i)
+      val plan=OwnerReindex.preview(c,i.user.id,db.profiles)
+      OwnerReindexPlan(plan.currentTargetProfile,plan.targetProfile,plan.selectionHash,plan.heads,plan.alreadyCurrent,plan.replacements)
+    }
+  }
   def mutate(i: Identity,e: ClientEnvelope): Result = { i.requireBrowser()
-    e.operation match { case _: Operation.ApplyRetryFailed => i.requireScope(Scope.Read); case _ => () }
+    e.operation match { case _: Operation.ApplyRetryFailed | _: Operation.ApplyOwnerReindex => i.requireScope(Scope.Read); case _ => () }
     db.transaction { c =>
     Sql.lock(c,s"mutation:${i.user.id}")
+    e.operation match { case _: Operation.ApplyOwnerReindex => currentBrowser(c,i); case _ => () }
     val digest = Wire.hash(Wire.canonical(Wire.encode(Operation.codecJson,e.operation)))
     Sql.one(c,"SELECT digest,result FROM ch_mutations WHERE owner=? AND request_id=?",i.user.id,e.requestId) { r => Check(r.getString(1)==digest,"conflict","request ID bound to different payload"); Wire.decode(Result.codecJson,Sql.json(r,"result")) } match {
       case Some(r) => r
@@ -57,13 +67,14 @@ final class Auth(db: Database, config: Config) {
     }
   }}
   private def mutationResult(c: Connection,i: Identity,e: ClientEnvelope): Result = e.operation match {
-    case _: Operation.ApplyRetryFailed =>
+    case _: Operation.ApplyRetryFailed | _: Operation.ApplyOwnerReindex =>
       // Eligibility can return A→AB→A; a rejected request ID must never become executable again.
+      val detail=if(e.operation.isInstanceOf[Operation.ApplyRetryFailed]) "retry selection changed; preview again" else "owner reindex selection changed; preview again"
       val savepoint=c.setSavepoint()
       val result=try mutation(c,i,e) catch {
         case failure: DomainError if failure.code=="conflict" =>
           c.rollback(savepoint)
-          Result.Error(Failure("conflict","retry selection changed; preview again"))
+          Result.Error(Failure("conflict",detail))
       }
       c.releaseSavepoint(savepoint)
       result
@@ -107,6 +118,9 @@ final class Auth(db: Database, config: Config) {
       case Operation.DeleteGroup(id) => groupOwner(id); Sql.exec(c,"DELETE FROM ch_groups WHERE id=?",id); receipt("DeleteGroup",Some(id))
       case Operation.ApplyRetryFailed(targetProfile,selectionHash,confirm) =>
         Result.RetryFailed(RetryFailedJobs(c,owner,e.requestId,targetProfile,selectionHash,confirm))
+      case Operation.ApplyOwnerReindex(targetProfile,selectionHash,confirm) =>
+        val result=OwnerReindex(c,owner,e.requestId,targetProfile,selectionHash,confirm,db.profiles)
+        Result.OwnerReindexed(OwnerReindexResult(result.requestId,result.targetProfile,result.heads,result.queued,result.alreadyCurrent,result.invalidatedClaims))
       case Operation.RetryJob(id) =>
         Jobs.retry(c,owner,id); receipt("RetryJob",Some(id))
       case Operation.Purge(id) =>
