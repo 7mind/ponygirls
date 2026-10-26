@@ -1,7 +1,7 @@
 package chronicle
 import chronicle.api.*
 import chronicle.api.{v1_0_0 as old}
-import cats.effect.IO
+import cats.effect.{IO,Resource}
 import cats.effect.std.Semaphore
 import cats.effect.unsafe.implicits.global
 import org.http4s.ember.server.EmberServerBuilder
@@ -38,7 +38,13 @@ class VersionedSearchTest extends munit.FunSuite {
     val app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,java.time.Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,java.time.Clock.systemUTC()),ModelFixtures.usage(config))
     val conversions=new chronicle.protocol.ProtocolConversions
     val protocol=new VersionedWire(conversions)
-    val http=new Http(config,auth,app,archive,new Mcp(app),logstage.IzLogger(),Http.WebRoot(None),protocol)
+    val wire=new McpTestWire(protocol)
+    (for {
+      tools <- Resource.eval(McpTestFixtures.ordinaryTools)
+      model <- Resource.eval(McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("unused by protocol compatibility checks"))))
+      runs <- McpTestRuns.resource(tools,model,new PostgresRunAuthorization(db,auth),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),config.users.map(_.id).toSet,wire,IO(UUID.randomUUID()))
+      controls <- BrowserControlAdmission.resource
+    } yield new Http(config,auth,app,archive,new Mcp(app),logstage.IzLogger(),Http.WebRoot(None),protocol,new BrowserRpc(app,runs,wire),controls)).use { http =>
     Semaphore[IO](2).flatMap { gate =>
       EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => http.routes(ws,gate).orNotFound).build.use { server => IO.blocking {
         val (_,secret)=auth.login(LoginRequest("a","synthetic"))
@@ -198,6 +204,6 @@ class VersionedSearchTest extends munit.FunSuite {
           assertEquals(lexical.total,corpusSize); assertEquals(lexical.countScope,SearchCountScope.ExactMatches); assertEquals(lexical.rankingLimit,None)
         } finally { legacy.abort(); latest.abort(); client.close() }
       }}
-    }.unsafeRunSync()
+    }}.unsafeRunSync()
   }
 }
