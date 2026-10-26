@@ -41,6 +41,43 @@ test('BG dynamic native/Linux/Darwin yolo discovery includes all profiles and on
   } finally { rmSync(root, { recursive: true }); }
 });
 
+// Regression: unrelated harness worktrees exhausted the entry budget before canonical sessions.
+test('GoodCommunication Pi subagent discovery ignores unrelated trees before entry limits and diagnostics', () => {
+  const root = home();
+  try {
+    const subagents = join(root, '.pi/agent/subagents');
+    for (let i = 0; i < 30; i++) file(join(subagents, 'root/worktrees/node_modules', `package-${i}/index.jsonl`), '{}\n');
+    symlinkSync(join(root, 'missing'), join(subagents, 'root/worktrees/node_modules/link'));
+    symlinkSync(join(root, 'missing'), join(subagents, 'root/attachments'));
+    file(join(subagents, 'root/events.jsonl'), '{}\n');
+    file(join(subagents, 'root/sessions/child/session.jsonl'), '{}\n');
+    file(join(subagents, 'root/sessions/child/attachments/deep.jsonl'), '{}\n');
+    symlinkSync(join(root, 'missing'), join(subagents, 'root/sessions/child/attachments/link'));
+    const c = config(root, { discoverYolo: false, maxFiles: 4 });
+    const roots = discoverRoots(c, 'linux').filter(r => r.layout === 'pi-subagents');
+    const scan = scanRoots(roots, c);
+    assert.deepEqual(scan.files.map(f => f.relativePath), ['root/sessions/child/session.jsonl']);
+    assert.deepEqual(scan.diagnostics, []);
+    assert.equal(scan.visited, 4);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test('GoodCommunication Pi subagent supported paths retain symlink rejection and entry/depth bounds', () => {
+  const root = home();
+  try {
+    const subagents = join(root, '.pi/agent/subagents');
+    file(join(subagents, 'root/sessions/child/session.jsonl'), '{}\n');
+    symlinkSync(join(root, 'missing'), join(subagents, 'linked-root'));
+    symlinkSync(join(root, 'missing'), join(subagents, 'root/sessions/linked-child'));
+    symlinkSync(join(root, 'missing'), join(subagents, 'root/sessions/child/linked.jsonl'));
+    const c = config(root, { discoverYolo: false });
+    const roots = discoverRoots(c, 'linux').filter(r => r.layout === 'pi-subagents');
+    assert.equal(scanRoots(roots, c).diagnostics.filter(d => d.code === 'symlink-rejected').length, 3);
+    assert.ok(scanRoots(roots, { ...c, maxFiles: 2 }).diagnostics.some(d => d.code === 'scan-entry-limit'));
+    assert.ok(scanRoots(roots, { ...c, maxDepth: 1 }).diagnostics.some(d => d.code === 'scan-depth-limit'));
+  } finally { rmSync(root, { recursive: true }); }
+});
+
 test('BG symlinks including root ancestors are rejected; regular snapshots are bounded and consistent', () => {
   const root = home();
   try {

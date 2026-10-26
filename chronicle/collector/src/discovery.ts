@@ -87,10 +87,22 @@ export function scanRoots(roots: DiscoveryRoot[], config: Config): Scan {
         const entry = handle.readSync(); if (entry === null) break;
         const path = join(directory, entry.name);
         if (excludedPath(path, config.exclusions.paths)) continue;
+        // Native Pi subagents contain harness worktrees and attachments as well as
+        // transcripts. Only enter <root>/sessions/<agent>/<transcript>.jsonl;
+        // irrelevant entries must not consume the transcript scan budget or emit
+        // diagnostics (including symlinks we will never follow).
+        if (root.layout === 'pi-subagents') {
+          const directoryCandidate = entry.isDirectory() || entry.isSymbolicLink();
+          if (depth === 0 && !directoryCandidate) continue;
+          if (depth === 1 && entry.name !== 'sessions') continue;
+          if (depth === 2 && !directoryCandidate) continue;
+          if (depth === 3 && (!entry.name.endsWith('.jsonl') || entry.isDirectory())) continue;
+          if (depth > 3) continue;
+        }
         if (++result.visited > config.maxFiles) { diagnostic(root, path, 'scan-entry-limit'); stopped = true; return; }
         if (entry.isSymbolicLink()) { diagnostic(root, path, 'symlink-rejected'); continue; }
         if (entry.isDirectory()) {
-          if (['memory', 'file-history', 'fileHistory', 'config', '.git'].includes(entry.name)) continue;
+          if (root.layout !== 'pi-subagents' && ['memory', 'file-history', 'fileHistory', 'config', '.git'].includes(entry.name)) continue;
           if (depth >= config.maxDepth) { diagnostic(root, path, 'scan-depth-limit'); continue; }
           walk(path, depth + 1);
         } else if (entry.isFile()) {
