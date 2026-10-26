@@ -6,7 +6,6 @@ import cats.syntax.all.*
 import scala.concurrent.duration.*
 import chronicle.api.*
 import java.util.UUID
-import scala.util.Using
 
 trait RunAuthorizationFixture {
   def authorization: RunAuthorization
@@ -131,10 +130,6 @@ final class PostgresRunAuthorizationTest extends RunAuthorizationContract {
     val db=new Database(config,IndexProfileCatalog.legacyOnly(config))
     db.initialize()
     db.transaction { c =>
-      val stream=getClass.getResourceAsStream("/009_transient_security_epoch.sql")
-      Check(stream!=null,"test","security epoch migration missing")
-      val sql=Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
-      Using.resource(c.createStatement())(_.execute(sql))
       Sql.exec(c,"TRUNCATE ch_sources,ch_groups,ch_sessions CASCADE")
       Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
       config.users.foreach(user => Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0 WHERE owner=?",config.profile,user.id))
@@ -178,6 +173,13 @@ final class PostgresRunAuthorizationTest extends RunAuthorizationContract {
     }
     f(fixture,db).unsafeRunSync()
   }
+
+  test("GoodCommunication: ordinary database startup registers the authorization epoch migration") { withDatabaseFixture { (_,db) =>
+    IO.blocking(db.transaction { c =>
+      assert(SecurityEpoch.current(c)>=0L)
+      assertEquals(Sql.one(c,"SELECT version FROM ch_schema_migrations WHERE version=9")(_.getInt(1)),Some(9))
+    })
+  }}
 
   test("GoodCommunication: natural session expiry is checked even when the security epoch is unchanged") { withDatabaseFixture { (f,db) =>
     for {

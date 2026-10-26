@@ -14,7 +14,7 @@ final class Database(config: Config,val profiles: IndexProfileCatalog) {
   def initialize(): Unit = {
     transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
-    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql").foreach { migration =>
+    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql","009_transient_security_epoch.sql").foreach { migration =>
       val stream = getClass.getResourceAsStream(s"/$migration")
       Check(stream != null,"config","missing migration resource")
       val sql = Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)

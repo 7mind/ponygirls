@@ -58,3 +58,4 @@ BEGIN
   END LOOP;
 END;
 $$;
+INSERT INTO ch_schema_migrations VALUES(9) ON CONFLICT DO NOTHING;
