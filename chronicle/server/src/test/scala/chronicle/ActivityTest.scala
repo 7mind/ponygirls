@@ -12,6 +12,12 @@ private object ActivityTestData {
   val target="target-profile"
   val old="old-profile"
   val empty=JobCounts(0,0,0,0,0,0,0,0)
+  def collectorQuery(cursor: Option[String],limit: Int): ActivityQuery = ActivityQuery("",ActivityCollectorSort.CollectorId,SortDirection.Asc,cursor,limit)
+  def jobsQuery(collectorId: Option[String],scope: ActivityJobScope,cursor: Option[String],limit: Int): ActivityJobsQuery = ActivityJobsQuery(collectorId,scope,"",ActivityJobSort.JobId,SortDirection.Asc,cursor,limit)
+  def metadata(revision: Int): Metadata = Fixtures.snapshot().metadata.copy(title=s"revision-$revision")
+  def source(head: Head,revision: Int): SourceIdentity = SourceIdentity(if(revision==head.revision) head.namespace else "wrong-old-namespace","native",SourceFormat.Pi,head.id.toString,None)
+  def session(head: Head,revision: Int): SessionInfo = SessionInfo(ContentView(revision,None),head.id,head.owner,head.revision,None,metadata(revision),source(head,revision),Completion.Quiescent,false)
+
   final case class Head(id: UUID,owner: String,revision: Int,namespace: String,tombstone: Boolean)
   final case class Job(info: JobInfo,profile: String,lease: Option[Instant])
   final case class Report(owner: String,value: CollectorProgressUpdate,received: Instant)
@@ -54,23 +60,23 @@ abstract class ActivityContract extends munit.FunSuite {
     var pages=0
     var more=true
     while(more) {
-      val page=index.summary(user,ActivityQuery(cursor,limit))
+      val page=index.summary(user,collectorQuery(cursor,limit))
       out++=page.collectors; cursor=page.nextCursor; more=cursor.nonEmpty; pages+=1
       assert(pages<=300,"collector keyset must make progress")
     }
     out.result()
   }
   test("Behavioral-Blackbox Atomic/GoodCommunication specified: owner totals separate current work, history and missing target jobs") { withIndex(seed) { index =>
-    val result=index.summary(user,ActivityQuery(None,2))
+    val result=index.summary(user,collectorQuery(None,2))
     assertEquals(result.observedAt,now.toString); assertEquals(result.user,user)
     assertEquals(result.archiveHeads,8L); assertEquals(result.headsWithoutTargetJob,2L)
     assertEquals(result.current,JobCounts(6,1,3,1,1,1,1,1))
     assertEquals(result.historical,JobCounts(4,1,2,1,0,1,1,0))
     assertEquals(result.totalCollectors,9L); assertEquals(result.collectors.size,2)
     assert(result.nextCursor.nonEmpty)
-    val other=index.summary(user.copy(id="b"),ActivityQuery(None,100))
+    val other=index.summary(user.copy(id="b"),collectorQuery(None,100))
     assertEquals(other.archiveHeads,1L); assertEquals(other.current,JobCounts(1,0,0,1,0,0,0,0)); assertEquals(other.historical,empty)
-    val without=index.summary(user.copy(id="c"),ActivityQuery(None,100))
+    val without=index.summary(user.copy(id="c"),collectorQuery(None,100))
     assertEquals(without.archiveHeads,0L); assertEquals(without.current,empty); assertEquals(without.historical,empty)
     assertEquals(without.collectors,Nil); assertEquals(without.totalCollectors,0L); assertEquals(without.nextCursor,None)
   }}
@@ -92,7 +98,7 @@ abstract class ActivityContract extends munit.FunSuite {
     assertEquals(collectors.map(_.current.total).sum,6L); assertEquals(collectors.map(_.historical.total).sum,4L)
   }}
   test("Behavioral-Blackbox Atomic/GoodCommunication specified: job pages retain actual state, both historical axes, leases and safe retry flags") { withIndex(seed) { index =>
-    val query=ActivityJobsQuery(None,ActivityJobScope.All,None,3)
+    val query=jobsQuery(None,ActivityJobScope.All,None,3)
     val first=index.jobs("a",query)
     assertEquals(first.observedAt,now.toString); assertEquals(first.total,10L)
     val rows=allJobs(index,query)
@@ -113,8 +119,8 @@ abstract class ActivityContract extends munit.FunSuite {
   }}
   test("Behavioral-Blackbox Atomic/GoodCommunication regression: sub-microsecond observation never rounds a future lease into expiry") {
     withIndex(seed.copy(observedAt=now.minusNanos(400))) { index =>
-      val summary=index.summary(user,ActivityQuery(None,100))
-      val jobs=index.jobs("a",ActivityJobsQuery(None,ActivityJobScope.Current,None,100))
+      val summary=index.summary(user,collectorQuery(None,100))
+      val jobs=index.jobs("a",jobsQuery(None,ActivityJobScope.Current,None,100))
       assertEquals(summary.observedAt,now.minusNanos(400).toString)
       assertEquals(summary.current.activeRunning,2L)
       assertEquals(summary.current.expiredRunning,0L)
@@ -122,7 +128,7 @@ abstract class ActivityContract extends munit.FunSuite {
     }
   }
   test("Behavioral-Blackbox Atomic/GoodCommunication specified: job collector filter selects mapped heads exactly, including report-less namespaces") { withIndex(seed) { index =>
-    val q=ActivityJobsQuery(Some("base/episode"),ActivityJobScope.All,None,2)
+    val q=jobsQuery(Some("base/episode"),ActivityJobScope.All,None,2)
     assertEquals(index.jobs("a",q).total,4L)
     assertEquals(allJobs(index,q).map(_.job.id),(1 to 4).map(id).toList)
     assertEquals(index.jobs("a",q.copy(collectorId=Some("base"))).jobs.map(_.job.id),List(id(5)))
@@ -133,18 +139,18 @@ abstract class ActivityContract extends munit.FunSuite {
     }
   }}
   test("Behavioral-Blackbox Atomic/GoodCommunication specified: cursors validate type, owner and query binding; limits and collector IDs are bounded") { withIndex(seed) { index =>
-    val summary=index.summary(user,ActivityQuery(None,1)).nextCursor.get
-    val query=ActivityJobsQuery(None,ActivityJobScope.All,None,1)
+    val summary=index.summary(user,collectorQuery(None,1)).nextCursor.get
+    val query=jobsQuery(None,ActivityJobScope.All,None,1)
     val cursor=index.jobs("a",query).nextCursor.get
     def invalid(f: => Any): Unit = assertEquals(intercept[DomainError](f).code,"invalid")
-    invalid(index.summary(user.copy(id="b"),ActivityQuery(Some(summary),1)))
+    invalid(index.summary(user.copy(id="b"),collectorQuery(Some(summary),1)))
     invalid(index.jobs("b",query.copy(cursor=Some(cursor))))
     invalid(index.jobs("a",query.copy(scope=ActivityJobScope.Current,cursor=Some(cursor))))
     invalid(index.jobs("a",query.copy(collectorId=Some("base/episode"),cursor=Some(cursor))))
     val selected=query.copy(collectorId=Some("base/episode"))
     val selectedCursor=index.jobs("a",selected).nextCursor.get
     invalid(index.jobs("a",query.copy(cursor=Some(selectedCursor))))
-    invalid(index.summary(user,ActivityQuery(Some(cursor),1)))
+    invalid(index.summary(user,collectorQuery(Some(cursor),1)))
     invalid(index.jobs("a",query.copy(cursor=Some(summary))))
     val fields=Wire.parse(new String(Base64.getUrlDecoder.decode(cursor),UTF_8)).asArray.get
     List(Json.fromString("not-a-uuid"),Json.fromString("1-1-1-1-1"),Json.fromInt(1),Json.Null).foreach { value =>
@@ -153,25 +159,25 @@ abstract class ActivityContract extends munit.FunSuite {
     }
     val malformed=List("","%%%","e30",Base64.getUrlEncoder.encodeToString(Array(0xff.toByte)),"a"*8193)
     malformed.foreach { value =>
-      invalid(index.summary(user,ActivityQuery(Some(value),1)))
+      invalid(index.summary(user,collectorQuery(Some(value),1)))
       invalid(index.jobs("a",query.copy(cursor=Some(value))))
     }
     List(0,-1,101,Int.MaxValue).foreach { limit =>
-      invalid(index.summary(user,ActivityQuery(None,limit)))
+      invalid(index.summary(user,collectorQuery(None,limit)))
       invalid(index.jobs("a",query.copy(limit=limit)))
     }
     List("","a"*257,"nul\u0000","bad"+0xd800.toChar).foreach(value => invalid(index.jobs("a",query.copy(collectorId=Some(value)))))
-    assertEquals(index.summary(user,ActivityQuery(Some(summary),100)).collectors.size,8)
+    assertEquals(index.summary(user,collectorQuery(Some(summary),100)).collectors.size,8)
     assertEquals(index.jobs("a",query.copy(cursor=Some(cursor),limit=100)).jobs.size,9)
   }}
   test("Behavioral-Blackbox Atomic/GoodCommunication specified: collector and UUID keysets continue beyond 100 without truncation") {
     val heads=(1 to 205).map(n => head(n,"a",1,f"namespace-$n%03d/child",false)).toList
     val jobs=(1 to 205).map(n => job(n,n,1,target,JobState.Queued,None)).toList
     withIndex(Seed(heads,jobs,Nil,Set.empty,now)) { index =>
-      val first=index.summary(user,ActivityQuery(None,100))
+      val first=index.summary(user,collectorQuery(None,100))
       assertEquals(first.archiveHeads,205L); assertEquals(first.totalCollectors,205L); assertEquals(first.current.total,205L)
       assertEquals(allCollectors(index,100).map(_.collectorId),heads.map(_.namespace))
-      val query=ActivityJobsQuery(None,ActivityJobScope.All,None,100)
+      val query=jobsQuery(None,ActivityJobScope.All,None,100)
       assertEquals(index.jobs("a",query).total,205L)
       assertEquals(allJobs(index,query).map(_.job.id),jobs.map(_.info.id))
     }
@@ -189,16 +195,16 @@ abstract class ActivityContract extends munit.FunSuite {
       assertEquals(collectors.map(_.collectorId),List("a/\"quoted\"","exact","other-owner/episode","\ue000/child","😀/child"))
       assertEquals(collectors.find(_.collectorId=="exact").get.status.map(_.report.collectorId),Some("exact"))
       assertEquals(collectors.find(_.collectorId=="other-owner/episode").get.status,None)
-      val actual=allJobs(index,ActivityJobsQuery(None,ActivityJobScope.All,None,1))
+      val actual=allJobs(index,jobsQuery(None,ActivityJobScope.All,None,1))
       assertEquals(actual.map(_.job.id.toString),uuidValues.map(_.toString).sorted)
       assert(actual.forall(j => j.job.error.isEmpty && j.job.totalWindows.isEmpty))
     }
   }
   test("Behavioral-Blackbox Atomic/GoodCommunication specified: live enabled ownership is required despite a retained UserInfo") {
     withIndex(seed.copy(disabled=Set("a"))) { index =>
-      assertEquals(intercept[DomainError](index.summary(user,ActivityQuery(None,1))).code,"unauthorized")
-      assertEquals(intercept[DomainError](index.jobs("a",ActivityJobsQuery(None,ActivityJobScope.All,None,1))).code,"unauthorized")
-      assertEquals(index.summary(user.copy(id="b"),ActivityQuery(None,1)).archiveHeads,1L)
+      assertEquals(intercept[DomainError](index.summary(user,collectorQuery(None,1))).code,"unauthorized")
+      assertEquals(intercept[DomainError](index.jobs("a",jobsQuery(None,ActivityJobScope.All,None,1))).code,"unauthorized")
+      assertEquals(index.summary(user.copy(id="b"),collectorQuery(None,1)).archiveHeads,1L)
     }
   }
 }
@@ -224,6 +230,7 @@ final class ActivityPostgresTest extends ActivityContract {
           CREATE TABLE ch_sources(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),source_key text NOT NULL,revision integer NOT NULL,published uuid,tombstone boolean NOT NULL,UNIQUE(owner,source_key));
           CREATE TABLE ch_revisions(session_id uuid REFERENCES ch_sources(id),revision integer,snapshot jsonb NOT NULL,PRIMARY KEY(session_id,revision));
           CREATE TABLE ch_revision_info(session_id uuid,revision integer,metadata jsonb NOT NULL,source jsonb NOT NULL,completion text NOT NULL,redacted boolean NOT NULL,last_timestamp text,last_timestamp_order numeric,message_count integer NOT NULL,PRIMARY KEY(session_id,revision),FOREIGN KEY(session_id,revision) REFERENCES ch_revisions(session_id,revision) ON DELETE CASCADE);
+          CREATE TABLE ch_generations(id uuid PRIMARY KEY,session_id uuid,revision integer,profile text);
           CREATE TABLE ch_jobs(id uuid PRIMARY KEY,session_id uuid REFERENCES ch_sources(id),revision integer NOT NULL,profile text NOT NULL,state text NOT NULL,attempts integer NOT NULL,fence bigint NOT NULL,lease_until timestamptz,error text,completed_windows integer NOT NULL,total_windows integer,UNIQUE(session_id,revision,profile));
           CREATE TABLE ch_profile(singleton boolean PRIMARY KEY CHECK(singleton),active text NOT NULL,target text NOT NULL,maintenance boolean NOT NULL);
           CREATE TABLE ch_collector_progress(owner text REFERENCES ch_users(id),collector_id text,sequence bigint NOT NULL CHECK(sequence>0),report jsonb NOT NULL,received_at timestamptz NOT NULL,PRIMARY KEY(owner,collector_id));
@@ -238,9 +245,9 @@ final class ActivityPostgresTest extends ActivityContract {
           Sql.exec(c,"INSERT INTO ch_sources VALUES(?,?,?,?,NULL,?)",h.id,h.owner,h.id.toString,h.revision,h.tombstone)
           (1 to h.revision).foreach { revision =>
             Sql.exec(c,"INSERT INTO ch_revisions VALUES(?,?,?::jsonb)",h.id,revision,"{\"notAnIngestRequest\":true,\"files\":[\"must not decode snapshots\"]}")
-            val namespace=if(revision==h.revision) h.namespace else "wrong-old-namespace"
-            val source=Json.obj("collectorNamespace"->Json.fromString(namespace)).noSpaces
-            Sql.exec(c,"INSERT INTO ch_revision_info VALUES(?,?, '{}'::jsonb,?::jsonb,'Quiescent',false,NULL,NULL,0)",h.id,revision,source)
+            val metadataJson=Wire.encode(Metadata.codecJson,metadata(revision)).noSpaces
+            val sourceJson=Wire.encode(SourceIdentity.codecJson,source(h,revision)).noSpaces
+            Sql.exec(c,"INSERT INTO ch_revision_info VALUES(?,?,?::jsonb,?::jsonb,'Quiescent',false,NULL,NULL,0)",h.id,revision,metadataJson,sourceJson)
           }
         }
         seed.jobs.foreach { j =>
@@ -276,7 +283,7 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
         case (true,false) => ActivityJobClass.ObsoleteProfile
         case (false,false) => ActivityJobClass.SupersededRevisionAndProfile
       }
-      collector(h)->ActivityJob(j.info,j.profile,classification,j.lease.map(_.toString),j.info.state==JobState.Running && j.lease.exists(_.isAfter(now)),classification==ActivityJobClass.Current && j.info.state==JobState.Failed)
+      collector(h)->ActivityJob(j.info,j.profile,classification,j.lease.map(_.toString),j.info.state==JobState.Running && j.lease.exists(_.isAfter(now)),classification==ActivityJobClass.Current && j.info.state==JobState.Failed,collector(h),session(h,j.info.revision),None)
     }}
   }
   private def counts(rows: List[ActivityJob],now: Instant): JobCounts = {
@@ -311,7 +318,7 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
       ActivityCollector(name,reports.find(_.value.collectorId==name).map(r => CollectorStatus(r.value,r.received.toString,now.isAfter(r.received.plusSeconds(120)))),ownHeads.size.toLong,ownHeads.count(h => !current.exists(_.job.sessionId==h.id)).toLong,counts(ownJobs.filter(_.classification==ActivityJobClass.Current),now),counts(ownJobs.filterNot(_.classification==ActivityJobClass.Current),now))
     }
     val next=if(names.count(n => after.forall(previous => compareCollectors(n,previous)>0))>q.limit) Some(token(List("collectors",user.id,selected.last))) else None
-    ActivityResult(now.toString,user,heads.size.toLong,heads.count(h => !current.exists(_.job.sessionId==h.id)).toLong,counts(current,now),counts(historical,now),collectors,names.size.toLong,next)
+    ActivityResult(now.toString,user,heads.size.toLong,heads.count(h => !current.exists(_.job.sessionId==h.id)).toLong,counts(current,now),counts(historical,now),collectors,names.size.toLong,names.size.toLong,next)
   }
   def jobs(owner: String,q: ActivityJobsQuery): ActivityJobsResult = {
     page(q.limit); q.collectorId.foreach(identifier)

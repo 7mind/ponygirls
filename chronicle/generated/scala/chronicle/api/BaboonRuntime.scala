@@ -114,9 +114,9 @@ package chronicle.api {
   }
   
   object BaboonCodecsJson extends AbstractBaboonJsonCodecs{
-    register("chronicle.api/:#Completion", Lazy(Completion_JsonCodec))
+    register("chronicle.api/:#RetryFailedResult", Lazy(RetryFailedResult_JsonCodec))
+    register("chronicle.api/:#ActivityJobSort", Lazy(ActivityJobSort_JsonCodec))
     register("chronicle.api/:#ActivityResult", Lazy(ActivityResult_JsonCodec))
-    register("chronicle.api/:#MessagesResult", Lazy(MessagesResult_JsonCodec))
     register("chronicle.api/:#SearchHit", Lazy(SearchHit_JsonCodec))
     register("chronicle.api/:#ActivityQuery", Lazy(ActivityQuery_JsonCodec))
     register("chronicle.api/:#LoginRequest", Lazy(LoginRequest_JsonCodec))
@@ -135,6 +135,8 @@ package chronicle.api {
     register("chronicle.api/:#SourceFormat", Lazy(SourceFormat_JsonCodec))
     register("chronicle.api/:#ChunksResult", Lazy(ChunksResult_JsonCodec))
     register("chronicle.api/:#ActivityJobClass", Lazy(ActivityJobClass_JsonCodec))
+    register("chronicle.api/:#Completion", Lazy(Completion_JsonCodec))
+    register("chronicle.api/:#RetryFailedPlan", Lazy(RetryFailedPlan_JsonCodec))
     register("chronicle.api/:#ArchiveResult", Lazy(ArchiveResult_JsonCodec))
     register("chronicle.api/:#Span", Lazy(Span_JsonCodec))
     register("chronicle.api/:#ServerEnvelope", Lazy(ServerEnvelope_JsonCodec))
@@ -158,6 +160,8 @@ package chronicle.api {
     register("chronicle.api/:#UserInfo", Lazy(UserInfo_JsonCodec))
     register("chronicle.api/:#LoginResponse", Lazy(LoginResponse_JsonCodec))
     register("chronicle.api/:#Message", Lazy(Message_JsonCodec))
+    register("chronicle.api/:#MessagesResult", Lazy(MessagesResult_JsonCodec))
+    register("chronicle.api/:#RetryFailedCounts", Lazy(RetryFailedCounts_JsonCodec))
     register("chronicle.api/:#SourceIdentity", Lazy(SourceIdentity_JsonCodec))
     register("chronicle.api/:#ActivityJobsResult", Lazy(ActivityJobsResult_JsonCodec))
     register("chronicle.api/:#Chunk", Lazy(Chunk_JsonCodec))
@@ -181,6 +185,7 @@ package chronicle.api {
     register("chronicle.api/:#ClientEnvelope", Lazy(ClientEnvelope_JsonCodec))
     register("chronicle.api/:#TokenSource", Lazy(TokenSource_JsonCodec))
     register("chronicle.api/:#VersionInfo", Lazy(VersionInfo_JsonCodec))
+    register("chronicle.api/:#ActivityCollectorSort", Lazy(ActivityCollectorSort_JsonCodec))
     register("chronicle.api/:#SessionInfo", Lazy(SessionInfo_JsonCodec))
     register("chronicle.api/:#IngestReceipt", Lazy(IngestReceipt_JsonCodec))
   }

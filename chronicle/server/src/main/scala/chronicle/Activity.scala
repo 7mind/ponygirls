@@ -62,6 +62,7 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
   private final case class Totals(archiveHeads: Long,withoutTarget: Long,current: JobCounts,historical: JobCounts,collectors: Long)
   def summary(user: UserInfo,q: ActivityQuery): ActivityResult = {
     ActivityCursor.page(q.limit)
+    Check(q.expression.isEmpty && q.sort==ActivityCollectorSort.CollectorId && q.direction==SortDirection.Asc,"invalid","table query implementation pending")
     val cursor=q.cursor.map(ActivityCursor.collector(_,user.id))
     reading(user.id) { (c,now) =>
       val params=parameters(user.id,now)
@@ -101,11 +102,12 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
       }
       val page=rows.take(q.limit)
       val next=if(rows.size>q.limit) Some(ActivityCursor.encode(ActivityCursor.Collector(user.id,page.last.collectorId))) else None
-      ActivityResult(now.toString,user,totals.archiveHeads,totals.withoutTarget,totals.current,totals.historical,page,totals.collectors,next)
+      ActivityResult(now.toString,user,totals.archiveHeads,totals.withoutTarget,totals.current,totals.historical,page,totals.collectors,totals.collectors,next)
     }
   }
   def jobs(owner: String,q: ActivityJobsQuery): ActivityJobsResult = {
     ActivityCursor.page(q.limit)
+    Check(q.expression.isEmpty && q.sort==ActivityJobSort.JobId && q.direction==SortDirection.Asc,"invalid","table query implementation pending")
     q.collectorId.foreach(ActivityCursor.collectorId)
     val cursor=q.cursor.map(ActivityCursor.job(_,owner,q.scope,q.collectorId))
     reading(owner) { (c,now) =>
@@ -117,9 +119,10 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
       val filter=scope+q.collectorId.fold("")(_ => " AND collector_id=?")
       val params=parameters(owner,now)++q.collectorId.toList
       val total=Sql.one(c,base+s"SELECT count(*) FROM jobs WHERE $filter",params*)(_.getLong(1)).get
-      val after=cursor.fold("")(_ => " AND id>?")
       val pageParams=params++cursor.map(_.last).toList++List[Sql.Param](q.limit+1)
-      val rows=Sql.rows(c,base+s"SELECT * FROM jobs WHERE $filter$after ORDER BY id LIMIT ?",pageParams*) { r =>
+      val qualifiedFilter=scope.replace("is_current","j.is_current")+q.collectorId.fold("")(_ => " AND j.collector_id=?")
+      val qualifiedAfter=cursor.fold("")(_ => " AND j.id>?")
+      val rows=Sql.rows(c,base+s"SELECT j.*,s.revision AS head_revision,g.revision AS indexed_revision,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp FROM jobs j JOIN ch_sources s ON s.id=j.session_id JOIN ch_revision_info i ON i.session_id=j.session_id AND i.revision=j.revision LEFT JOIN ch_generations g ON g.id=s.published WHERE $qualifiedFilter$qualifiedAfter ORDER BY j.id LIMIT ?",pageParams*) { r =>
         val state=JobState.parse(r.getString("state")).get
         val classification=(r.getBoolean("revision_current"),r.getBoolean("profile_current")) match {
           case (true,true) => ActivityJobClass.Current
@@ -129,7 +132,9 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
         }
         val lease=Option(r.getTimestamp("lease_until")).map(_.toInstant)
         val job=JobInfo(r.getObject("id",classOf[UUID]),r.getObject("session_id",classOf[UUID]),r.getInt("revision"),state,r.getInt("attempts"),Option(r.getString("error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue))
-        ActivityJob(job,r.getString("profile"),classification,lease.map(_.toString),state==JobState.Running && lease.exists(_.isAfter(now)),classification==ActivityJobClass.Current && state==JobState.Failed)
+        val indexed=Option(r.getObject("indexed_revision",classOf[java.lang.Integer])).map(_.intValue)
+        val session=SessionInfo(ContentView(job.revision,None),job.sessionId,owner,r.getInt("head_revision"),indexed,Wire.decode(Metadata.codecJson,Sql.json(r,"metadata")),Wire.decode(SourceIdentity.codecJson,Sql.json(r,"source")),Completion.parse(r.getString("completion")).get,r.getBoolean("redacted"))
+        ActivityJob(job,r.getString("profile"),classification,lease.map(_.toString),state==JobState.Running && lease.exists(_.isAfter(now)),classification==ActivityJobClass.Current && state==JobState.Failed,r.getString("collector_id"),session,Option(r.getString("last_timestamp")))
       }
       val page=rows.take(q.limit)
       val next=if(rows.size>q.limit) Some(ActivityCursor.encode(ActivityCursor.Job(owner,q.scope,q.collectorId,page.last.job.id))) else None

@@ -12,6 +12,7 @@ package chronicle.api {
     historical: JobCounts,
     collectors: List[ActivityCollector],
     totalCollectors: Long,
+    allCollectors: Long,
     nextCursor: Option[String]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ActivityResult.baboonDomainVersion
@@ -50,6 +51,7 @@ package chronicle.api {
         "historical" -> JobCounts_JsonCodec.instance.encode(ctx, value.historical),
         "collectors" -> Json.fromValues(value.collectors.map(e => ActivityCollector_JsonCodec.instance.encode(ctx, e))),
         "totalCollectors" -> Json.fromString(value.totalCollectors.toString),
+        "allCollectors" -> Json.fromString(value.allCollectors.toString),
         "nextCursor" -> value.nextCursor.map(v => Json.fromString(v)).getOrElse(Json.Null)
       )
     }
@@ -69,8 +71,9 @@ package chronicle.api {
             historical <- getField(jsonObject, "historical").flatMap(v => JobCounts_JsonCodec.circeDecoder(v.hcursor))
             collectors <- getField(jsonObject, "collectors").flatMap(v => decodeList(ActivityCollector_JsonCodec.circeDecoder)(v.hcursor))
             totalCollectors <- getField(jsonObject, "totalCollectors").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
+            allCollectors <- getField(jsonObject, "allCollectors").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             nextCursor <- getField(jsonObject, "nextCursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
-          } yield ActivityResult(observedAt,user,archiveHeads,headsWithoutTargetJob,current,historical,collectors,totalCollectors,nextCursor)
+          } yield ActivityResult(observedAt,user,archiveHeads,headsWithoutTargetJob,current,historical,collectors,totalCollectors,allCollectors,nextCursor)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ActivityResult: object expected"))
       }
     }

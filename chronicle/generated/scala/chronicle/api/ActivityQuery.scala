@@ -4,6 +4,9 @@ import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, Baboon
 
 package chronicle.api {
   final case class ActivityQuery(
+    expression: String,
+    sort: ActivityCollectorSort,
+    direction: SortDirection,
     cursor: Option[String],
     limit: Int
   ) extends BaboonGeneratedLatest {
@@ -35,6 +38,9 @@ package chronicle.api {
       }
       
       Json.obj(
+        "expression" -> Json.fromString(value.expression),
+        "sort" -> ActivityCollectorSort_JsonCodec.instance.encode(ctx, value.sort),
+        "direction" -> SortDirection_JsonCodec.instance.encode(ctx, value.direction),
         "cursor" -> value.cursor.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "limit" -> Json.fromInt(value.limit)
       )
@@ -47,9 +53,12 @@ package chronicle.api {
       
       wire.asObject match {
         case Some(jsonObject) => for {
+            expression <- getField(jsonObject, "expression").flatMap(v => decodeString(v.hcursor))
+            sort <- getField(jsonObject, "sort").flatMap(v => ActivityCollectorSort_JsonCodec.circeDecoder(v.hcursor))
+            direction <- getField(jsonObject, "direction").flatMap(v => SortDirection_JsonCodec.circeDecoder(v.hcursor))
             cursor <- getField(jsonObject, "cursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
             limit <- getField(jsonObject, "limit").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))
-          } yield ActivityQuery(cursor,limit)
+          } yield ActivityQuery(expression,sort,direction,cursor,limit)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ActivityQuery: object expected"))
       }
     }

@@ -1,15 +1,32 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {ActivityCollectorSort, ActivityCollectorSort_JsonCodec} from './ActivityCollectorSort.js'
+import {SortDirection, SortDirection_JsonCodec} from './SortDirection.js'
 
 export class ActivityQuery implements BaboonGeneratedLatest {
+    private readonly _expression: string;
+    private readonly _sort: ActivityCollectorSort;
+    private readonly _direction: SortDirection;
     private readonly _cursor: string | undefined;
     private readonly _limit: number;
 
-    constructor(cursor: string | undefined, limit: number) {
+    constructor(expression: string, sort: ActivityCollectorSort, direction: SortDirection, cursor: string | undefined, limit: number) {
+        this._expression = expression
+        this._sort = sort
+        this._direction = direction
         this._cursor = cursor
         this._limit = limit
     }
 
+    public get expression(): string {
+        return this._expression;
+    }
+    public get sort(): ActivityCollectorSort {
+        return this._sort;
+    }
+    public get direction(): SortDirection {
+        return this._direction;
+    }
     public get cursor(): string | undefined {
         return this._cursor;
     }
@@ -19,20 +36,29 @@ export class ActivityQuery implements BaboonGeneratedLatest {
 
     public toJSON(): Record<string, unknown> {
         return {
+            expression: this._expression,
+            sort: this._sort,
+            direction: this._direction,
             cursor: this._cursor !== undefined ? this._cursor : undefined,
             limit: this._limit
         };
     }
 
-    public with(overrides: {cursor?: string | undefined; limit?: number}): ActivityQuery {
+    public with(overrides: {expression?: string; sort?: ActivityCollectorSort; direction?: SortDirection; cursor?: string | undefined; limit?: number}): ActivityQuery {
         return new ActivityQuery(
+            'expression' in overrides ? overrides.expression! : this._expression,
+            'sort' in overrides ? overrides.sort! : this._sort,
+            'direction' in overrides ? overrides.direction! : this._direction,
             'cursor' in overrides ? overrides.cursor! : this._cursor,
             'limit' in overrides ? overrides.limit! : this._limit
         );
     }
 
-    public static fromPlain(obj: {cursor: string | undefined; limit: number}): ActivityQuery {
+    public static fromPlain(obj: {expression: string; sort: ActivityCollectorSort; direction: SortDirection; cursor: string | undefined; limit: number}): ActivityQuery {
         return new ActivityQuery(
+            obj.expression,
+            obj.sort,
+            obj.direction,
             obj.cursor,
             obj.limit
         );
@@ -74,6 +100,9 @@ export class ActivityQuery_JsonCodec {
         }
     
         return {
+            "expression": value.expression,
+            "sort": ActivityCollectorSort_JsonCodec.instance.encode(BaboonCodecContext.Default, value.sort),
+            "direction": SortDirection_JsonCodec.instance.encode(BaboonCodecContext.Default, value.direction),
             "cursor": value.cursor === undefined ? null : value.cursor,
             "limit": value.limit,
         }
@@ -85,6 +114,9 @@ export class ActivityQuery_JsonCodec {
     
         const obj = json as Record<string, unknown>;
         return new ActivityQuery (
+            obj["expression"] as string,
+            ActivityCollectorSort_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["sort"]),
+            SortDirection_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["direction"]),
             obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] as string,
             obj["limit"] as number,
         )

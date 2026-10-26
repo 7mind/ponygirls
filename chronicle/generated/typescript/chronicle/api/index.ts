@@ -1,9 +1,11 @@
 
 
 export * from './ActivityCollector.js';
+export * from './ActivityCollectorSort.js';
 export * from './ActivityJob.js';
 export * from './ActivityJobClass.js';
 export * from './ActivityJobScope.js';
+export * from './ActivityJobSort.js';
 export * from './ActivityJobsQuery.js';
 export * from './ActivityJobsResult.js';
 export * from './ActivityQuery.js';
@@ -49,6 +51,9 @@ export * from './RawFile.js';
 export * from './RawResult.js';
 export * from './RelatedResult.js';
 export * from './Result.js';
+export * from './RetryFailedCounts.js';
+export * from './RetryFailedPlan.js';
+export * from './RetryFailedResult.js';
 export * from './Scope.js';
 export * from './SearchCountScope.js';
 export * from './SearchFilter.js';

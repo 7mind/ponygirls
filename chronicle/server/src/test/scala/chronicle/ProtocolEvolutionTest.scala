@@ -55,7 +55,7 @@ class ProtocolEvolutionTest extends munit.FunSuite {
     val row=ArchiveRow(head,Some(published),Some(published),Some("2026-10-26T00:00:00Z"),3,List("work"),None)
     val values=List[Result](
       Result.Archive(ArchiveResult(List(row),maximum,None,ArchiveTextScope.BoundedCandidateSets,Some(1000))),
-      Result.Activity(ActivityResult("2026-10-26T00:00:00Z",UserInfo("a","a",List(Scope.Read)),maximum,0,counts,counts,List(ActivityCollector("reportless",None,maximum,0,counts,counts)),maximum,None)),
+      Result.Activity(ActivityResult("2026-10-26T00:00:00Z",UserInfo("a","a",List(Scope.Read)),maximum,0,counts,counts,List(ActivityCollector("reportless",None,maximum,0,counts,counts)),maximum,maximum,None)),
       Result.ActivityJobs(ActivityJobsResult("2026-10-26T00:00:00Z",Nil,maximum,None)),
       Result.LocatedMessage(MessageLocation(published,2,3)))
     values.foreach { result =>

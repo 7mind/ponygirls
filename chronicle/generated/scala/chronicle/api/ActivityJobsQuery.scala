@@ -6,6 +6,9 @@ package chronicle.api {
   final case class ActivityJobsQuery(
     collectorId: Option[String],
     scope: ActivityJobScope,
+    expression: String,
+    sort: ActivityJobSort,
+    direction: SortDirection,
     cursor: Option[String],
     limit: Int
   ) extends BaboonGeneratedLatest {
@@ -39,6 +42,9 @@ package chronicle.api {
       Json.obj(
         "collectorId" -> value.collectorId.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "scope" -> ActivityJobScope_JsonCodec.instance.encode(ctx, value.scope),
+        "expression" -> Json.fromString(value.expression),
+        "sort" -> ActivityJobSort_JsonCodec.instance.encode(ctx, value.sort),
+        "direction" -> SortDirection_JsonCodec.instance.encode(ctx, value.direction),
         "cursor" -> value.cursor.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "limit" -> Json.fromInt(value.limit)
       )
@@ -53,9 +59,12 @@ package chronicle.api {
         case Some(jsonObject) => for {
             collectorId <- getField(jsonObject, "collectorId").flatMap(v => decodeOption(decodeString)(v.hcursor))
             scope <- getField(jsonObject, "scope").flatMap(v => ActivityJobScope_JsonCodec.circeDecoder(v.hcursor))
+            expression <- getField(jsonObject, "expression").flatMap(v => decodeString(v.hcursor))
+            sort <- getField(jsonObject, "sort").flatMap(v => ActivityJobSort_JsonCodec.circeDecoder(v.hcursor))
+            direction <- getField(jsonObject, "direction").flatMap(v => SortDirection_JsonCodec.circeDecoder(v.hcursor))
             cursor <- getField(jsonObject, "cursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
             limit <- getField(jsonObject, "limit").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))
-          } yield ActivityJobsQuery(collectorId,scope,cursor,limit)
+          } yield ActivityJobsQuery(collectorId,scope,expression,sort,direction,cursor,limit)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ActivityJobsQuery: object expected"))
       }
     }

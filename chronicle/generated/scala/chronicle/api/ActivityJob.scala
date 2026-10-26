@@ -9,7 +9,10 @@ package chronicle.api {
     classification: ActivityJobClass,
     leaseExpiresAt: Option[String],
     leaseActive: Boolean,
-    retryable: Boolean
+    retryable: Boolean,
+    collectorId: String,
+    session: SessionInfo,
+    lastTimestamp: Option[String]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ActivityJob.baboonDomainVersion
     override def baboonDomainIdentifier: String = ActivityJob.baboonDomainIdentifier
@@ -44,7 +47,10 @@ package chronicle.api {
         "classification" -> ActivityJobClass_JsonCodec.instance.encode(ctx, value.classification),
         "leaseExpiresAt" -> value.leaseExpiresAt.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "leaseActive" -> Json.fromBoolean(value.leaseActive),
-        "retryable" -> Json.fromBoolean(value.retryable)
+        "retryable" -> Json.fromBoolean(value.retryable),
+        "collectorId" -> Json.fromString(value.collectorId),
+        "session" -> SessionInfo_JsonCodec.instance.encode(ctx, value.session),
+        "lastTimestamp" -> value.lastTimestamp.map(v => Json.fromString(v)).getOrElse(Json.Null)
       )
     }
     
@@ -61,7 +67,10 @@ package chronicle.api {
             leaseExpiresAt <- getField(jsonObject, "leaseExpiresAt").flatMap(v => decodeOption(decodeString)(v.hcursor))
             leaseActive <- getField(jsonObject, "leaseActive").flatMap(v => decodeBoolean(v.hcursor))
             retryable <- getField(jsonObject, "retryable").flatMap(v => decodeBoolean(v.hcursor))
-          } yield ActivityJob(job,profile,classification,leaseExpiresAt,leaseActive,retryable)
+            collectorId <- getField(jsonObject, "collectorId").flatMap(v => decodeString(v.hcursor))
+            session <- getField(jsonObject, "session").flatMap(v => SessionInfo_JsonCodec.circeDecoder(v.hcursor))
+            lastTimestamp <- getField(jsonObject, "lastTimestamp").flatMap(v => decodeOption(decodeString)(v.hcursor))
+          } yield ActivityJob(job,profile,classification,leaseExpiresAt,leaseActive,retryable,collectorId,session,lastTimestamp)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ActivityJob: object expected"))
       }
     }

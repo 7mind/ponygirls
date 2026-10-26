@@ -1511,6 +1511,142 @@ package chronicle.api {
       override protected def LazyInstance: Lazy[BaboonJsonCodec[Result.LocatedMessage]] = cachedLazyInstance
       override def instance: BaboonJsonCodec[Result.LocatedMessage] = LazyInstance.value
     }
+    
+    
+    final case class RetryFailedPreview(
+      result: RetryFailedPlan
+    ) extends Result with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = Result.RetryFailedPreview.baboonDomainVersion
+      override def baboonDomainIdentifier: String = Result.RetryFailedPreview.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = Result.RetryFailedPreview.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = Result.RetryFailedPreview.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = Result.RetryFailedPreview.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = Result.RetryFailedPreview.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = Result.RetryFailedPreview.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = Result.RetryFailedPreview.baboonAdtType
+    }
+    
+    object RetryFailedPreview {
+      def baboonDomainVersion: String = "1.3.0"
+      def baboonDomainIdentifier: String = "chronicle.api"
+      def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#RetryFailedPreview"
+      private lazy val _baboonSameInVersions: List[String] = List("1.3.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.3.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.3.0", "identical" -> "1.3.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "chronicle.api/:#Result"
+      def baboonAdtType: _root_.java.lang.Class[?] = Result.getClass
+      def codecJson: BaboonJsonCodec[Result.RetryFailedPreview] = Result.RetryFailedPreview_JsonCodec.instance
+    }
+    
+    object RetryFailedPreview_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.RetryFailedPreview, BaboonJsonCodec[Result.RetryFailedPreview]] {
+      def encode(ctx: BaboonCodecContext, value: Result.RetryFailedPreview): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "result" -> RetryFailedPlan_JsonCodec.instance.encode(ctx, value.result)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, Result.RetryFailedPreview] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              result <- getField(jsonObject, "result").flatMap(v => RetryFailedPlan_JsonCodec.circeDecoder(v.hcursor))
+            } yield Result.RetryFailedPreview(result)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to RetryFailedPreview: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = Result.RetryFailedPreview.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = Result.RetryFailedPreview.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = Result.RetryFailedPreview.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = Result.RetryFailedPreview.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = Result.RetryFailedPreview.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[Result.RetryFailedPreview]] = Lazy(Result.RetryFailedPreview_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[Result.RetryFailedPreview]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[Result.RetryFailedPreview] = LazyInstance.value
+    }
+    
+    
+    final case class RetryFailed(
+      result: RetryFailedResult
+    ) extends Result with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = Result.RetryFailed.baboonDomainVersion
+      override def baboonDomainIdentifier: String = Result.RetryFailed.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = Result.RetryFailed.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = Result.RetryFailed.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = Result.RetryFailed.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = Result.RetryFailed.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = Result.RetryFailed.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = Result.RetryFailed.baboonAdtType
+    }
+    
+    object RetryFailed {
+      def baboonDomainVersion: String = "1.3.0"
+      def baboonDomainIdentifier: String = "chronicle.api"
+      def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#RetryFailed"
+      private lazy val _baboonSameInVersions: List[String] = List("1.3.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.3.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.3.0", "identical" -> "1.3.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "chronicle.api/:#Result"
+      def baboonAdtType: _root_.java.lang.Class[?] = Result.getClass
+      def codecJson: BaboonJsonCodec[Result.RetryFailed] = Result.RetryFailed_JsonCodec.instance
+    }
+    
+    object RetryFailed_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.RetryFailed, BaboonJsonCodec[Result.RetryFailed]] {
+      def encode(ctx: BaboonCodecContext, value: Result.RetryFailed): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "result" -> RetryFailedResult_JsonCodec.instance.encode(ctx, value.result)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, Result.RetryFailed] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              result <- getField(jsonObject, "result").flatMap(v => RetryFailedResult_JsonCodec.circeDecoder(v.hcursor))
+            } yield Result.RetryFailed(result)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to RetryFailed: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = Result.RetryFailed.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = Result.RetryFailed.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = Result.RetryFailed.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = Result.RetryFailed.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = Result.RetryFailed.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[Result.RetryFailed]] = Lazy(Result.RetryFailed_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[Result.RetryFailed]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[Result.RetryFailed] = LazyInstance.value
+    }
     def baboonDomainVersion: String = "1.3.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#Result"
@@ -1573,6 +1709,10 @@ package chronicle.api {
         case activityjobs: Result.ActivityJobs => Json.obj("ActivityJobs" -> Result.ActivityJobs_JsonCodec.instance.encode(ctx, activityjobs))
         
         case locatedmessage: Result.LocatedMessage => Json.obj("LocatedMessage" -> Result.LocatedMessage_JsonCodec.instance.encode(ctx, locatedmessage))
+        
+        case retryfailedpreview: Result.RetryFailedPreview => Json.obj("RetryFailedPreview" -> Result.RetryFailedPreview_JsonCodec.instance.encode(ctx, retryfailedpreview))
+        
+        case retryfailed: Result.RetryFailed => Json.obj("RetryFailed" -> Result.RetryFailed_JsonCodec.instance.encode(ctx, retryfailed))
       
         case _ => throw new IllegalArgumentException(s"Cannot encode $value: unexpected subclass")
       }
@@ -1653,6 +1793,12 @@ package chronicle.api {
                 
                 case "LocatedMessage" =>
                   Result.LocatedMessage_JsonCodec.instance.decode(ctx, json)
+                
+                case "RetryFailedPreview" =>
+                  Result.RetryFailedPreview_JsonCodec.instance.decode(ctx, json)
+                
+                case "RetryFailed" =>
+                  Result.RetryFailed_JsonCodec.instance.decode(ctx, json)
       
                 case _ => Left(new IllegalArgumentException(s"Cannot decode $wire to Result: no matching value"))
               }

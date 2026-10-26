@@ -27,6 +27,17 @@ enum ActivityJobScope { Current Historical All }
 enum ActivityJobClass {
   Current SupersededRevision ObsoleteProfile SupersededRevisionAndProfile
 }
+enum ActivityCollectorSort {
+  CollectorId Phase Freshness ReceivedAt ArchiveHeads HeadsWithoutTargetJob
+  CurrentTotal CurrentQueued CurrentRunning CurrentFailed CurrentComplete
+  CurrentActiveRunning CurrentExpiredRunning CurrentUnleasedRunning
+  HistoricalTotal HistoricalQueued HistoricalRunning HistoricalFailed HistoricalComplete
+  HistoricalActiveRunning HistoricalExpiredRunning HistoricalUnleasedRunning
+}
+enum ActivityJobSort {
+  LastTimestamp Title Collector State Revision Profile Attempts CompletedWindows
+  TotalWindows LeaseExpiresAt LeaseState Reason Classification JobId SessionId
+}
 data JobCounts {
   total: i64 queued: i64 running: i64 failed: i64 complete: i64
   activeRunning: i64 expiredRunning: i64 unleasedRunning: i64
@@ -36,22 +47,30 @@ data ActivityCollector {
   archiveHeads: i64 headsWithoutTargetJob: i64
   current: JobCounts historical: JobCounts
 }
-data ActivityQuery { cursor: opt[str] limit: i32 }
+data ActivityQuery { expression: str sort: ActivityCollectorSort direction: SortDirection cursor: opt[str] limit: i32 }
 data ActivityResult {
   observedAt: str user: UserInfo archiveHeads: i64 headsWithoutTargetJob: i64
   current: JobCounts historical: JobCounts
-  collectors: lst[ActivityCollector] totalCollectors: i64 nextCursor: opt[str]
+  collectors: lst[ActivityCollector] totalCollectors: i64 allCollectors: i64 nextCursor: opt[str]
 }
 data ActivityJobsQuery {
-  collectorId: opt[str] scope: ActivityJobScope cursor: opt[str] limit: i32
+  collectorId: opt[str] scope: ActivityJobScope expression: str sort: ActivityJobSort direction: SortDirection cursor: opt[str] limit: i32
 }
 data ActivityJob {
   job: JobInfo profile: str classification: ActivityJobClass
   leaseExpiresAt: opt[str] leaseActive: bit retryable: bit
+  collectorId: str session: SessionInfo lastTimestamp: opt[str]
 }
 data ActivityJobsResult {
   observedAt: str jobs: lst[ActivityJob] total: i64 nextCursor: opt[str]
 }
+
+data RetryFailedCounts {
+  eligibleCurrentFailed: i64 supersededRevisionFailed: i64 obsoleteProfileFailed: i64
+  supersededRevisionAndProfileFailed: i64 unchangedQueued: i64 unchangedRunning: i64 unchangedComplete: i64
+}
+data RetryFailedPlan { targetProfile: str selectionHash: str counts: RetryFailedCounts }
+data RetryFailedResult { requestId: uid targetProfile: str retried: i64 counts: RetryFailedCounts }
 
 root adt Operation {
   data Hello { versions: lst[str] }
@@ -85,6 +104,8 @@ root adt Operation {
   data Activity { query: ActivityQuery }
   data ActivityJobs { query: ActivityJobsQuery }
   data LocateMessage { sessionId: uid view: ContentView messageId: str }
+  data PreviewRetryFailed {}
+  data ApplyRetryFailed { targetProfile: str selectionHash: str confirm: bit }
 }
 root adt Result {
   data Hello { versions: VersionInfo user: UserInfo }
@@ -109,4 +130,6 @@ root adt Result {
   data Activity { result: ActivityResult }
   data ActivityJobs { result: ActivityJobsResult }
   data LocatedMessage { result: MessageLocation }
+  data RetryFailedPreview { result: RetryFailedPlan }
+  data RetryFailed { result: RetryFailedResult }
 }

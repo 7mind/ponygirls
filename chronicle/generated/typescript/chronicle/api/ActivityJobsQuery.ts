@@ -1,16 +1,24 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 import {ActivityJobScope, ActivityJobScope_JsonCodec} from './ActivityJobScope.js'
+import {ActivityJobSort, ActivityJobSort_JsonCodec} from './ActivityJobSort.js'
+import {SortDirection, SortDirection_JsonCodec} from './SortDirection.js'
 
 export class ActivityJobsQuery implements BaboonGeneratedLatest {
     private readonly _collectorId: string | undefined;
     private readonly _scope: ActivityJobScope;
+    private readonly _expression: string;
+    private readonly _sort: ActivityJobSort;
+    private readonly _direction: SortDirection;
     private readonly _cursor: string | undefined;
     private readonly _limit: number;
 
-    constructor(collectorId: string | undefined, scope: ActivityJobScope, cursor: string | undefined, limit: number) {
+    constructor(collectorId: string | undefined, scope: ActivityJobScope, expression: string, sort: ActivityJobSort, direction: SortDirection, cursor: string | undefined, limit: number) {
         this._collectorId = collectorId
         this._scope = scope
+        this._expression = expression
+        this._sort = sort
+        this._direction = direction
         this._cursor = cursor
         this._limit = limit
     }
@@ -20,6 +28,15 @@ export class ActivityJobsQuery implements BaboonGeneratedLatest {
     }
     public get scope(): ActivityJobScope {
         return this._scope;
+    }
+    public get expression(): string {
+        return this._expression;
+    }
+    public get sort(): ActivityJobSort {
+        return this._sort;
+    }
+    public get direction(): SortDirection {
+        return this._direction;
     }
     public get cursor(): string | undefined {
         return this._cursor;
@@ -32,24 +49,33 @@ export class ActivityJobsQuery implements BaboonGeneratedLatest {
         return {
             collectorId: this._collectorId !== undefined ? this._collectorId : undefined,
             scope: this._scope,
+            expression: this._expression,
+            sort: this._sort,
+            direction: this._direction,
             cursor: this._cursor !== undefined ? this._cursor : undefined,
             limit: this._limit
         };
     }
 
-    public with(overrides: {collectorId?: string | undefined; scope?: ActivityJobScope; cursor?: string | undefined; limit?: number}): ActivityJobsQuery {
+    public with(overrides: {collectorId?: string | undefined; scope?: ActivityJobScope; expression?: string; sort?: ActivityJobSort; direction?: SortDirection; cursor?: string | undefined; limit?: number}): ActivityJobsQuery {
         return new ActivityJobsQuery(
             'collectorId' in overrides ? overrides.collectorId! : this._collectorId,
             'scope' in overrides ? overrides.scope! : this._scope,
+            'expression' in overrides ? overrides.expression! : this._expression,
+            'sort' in overrides ? overrides.sort! : this._sort,
+            'direction' in overrides ? overrides.direction! : this._direction,
             'cursor' in overrides ? overrides.cursor! : this._cursor,
             'limit' in overrides ? overrides.limit! : this._limit
         );
     }
 
-    public static fromPlain(obj: {collectorId: string | undefined; scope: ActivityJobScope; cursor: string | undefined; limit: number}): ActivityJobsQuery {
+    public static fromPlain(obj: {collectorId: string | undefined; scope: ActivityJobScope; expression: string; sort: ActivityJobSort; direction: SortDirection; cursor: string | undefined; limit: number}): ActivityJobsQuery {
         return new ActivityJobsQuery(
             obj.collectorId,
             obj.scope,
+            obj.expression,
+            obj.sort,
+            obj.direction,
             obj.cursor,
             obj.limit
         );
@@ -93,6 +119,9 @@ export class ActivityJobsQuery_JsonCodec {
         return {
             "collectorId": value.collectorId === undefined ? null : value.collectorId,
             "scope": ActivityJobScope_JsonCodec.instance.encode(BaboonCodecContext.Default, value.scope),
+            "expression": value.expression,
+            "sort": ActivityJobSort_JsonCodec.instance.encode(BaboonCodecContext.Default, value.sort),
+            "direction": SortDirection_JsonCodec.instance.encode(BaboonCodecContext.Default, value.direction),
             "cursor": value.cursor === undefined ? null : value.cursor,
             "limit": value.limit,
         }
@@ -106,6 +135,9 @@ export class ActivityJobsQuery_JsonCodec {
         return new ActivityJobsQuery (
             obj["collectorId"] === undefined || obj["collectorId"] === null ? undefined : obj["collectorId"] === undefined || obj["collectorId"] === null ? undefined : obj["collectorId"] as string,
             ActivityJobScope_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["scope"]),
+            obj["expression"] as string,
+            ActivityJobSort_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["sort"]),
+            SortDirection_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["direction"]),
             obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] as string,
             obj["limit"] as number,
         )

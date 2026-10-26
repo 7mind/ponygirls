@@ -2,6 +2,7 @@ import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 import {ActivityJobClass, ActivityJobClass_JsonCodec} from './ActivityJobClass.js'
 import {JobInfo, JobInfo_JsonCodec} from './JobInfo.js'
+import {SessionInfo, SessionInfo_JsonCodec} from './SessionInfo.js'
 
 export class ActivityJob implements BaboonGeneratedLatest {
     private readonly _job: JobInfo;
@@ -10,14 +11,20 @@ export class ActivityJob implements BaboonGeneratedLatest {
     private readonly _leaseExpiresAt: string | undefined;
     private readonly _leaseActive: boolean;
     private readonly _retryable: boolean;
+    private readonly _collectorId: string;
+    private readonly _session: SessionInfo;
+    private readonly _lastTimestamp: string | undefined;
 
-    constructor(job: JobInfo, profile: string, classification: ActivityJobClass, leaseExpiresAt: string | undefined, leaseActive: boolean, retryable: boolean) {
+    constructor(job: JobInfo, profile: string, classification: ActivityJobClass, leaseExpiresAt: string | undefined, leaseActive: boolean, retryable: boolean, collectorId: string, session: SessionInfo, lastTimestamp: string | undefined) {
         this._job = job
         this._profile = profile
         this._classification = classification
         this._leaseExpiresAt = leaseExpiresAt
         this._leaseActive = leaseActive
         this._retryable = retryable
+        this._collectorId = collectorId
+        this._session = session
+        this._lastTimestamp = lastTimestamp
     }
 
     public get job(): JobInfo {
@@ -38,6 +45,15 @@ export class ActivityJob implements BaboonGeneratedLatest {
     public get retryable(): boolean {
         return this._retryable;
     }
+    public get collectorId(): string {
+        return this._collectorId;
+    }
+    public get session(): SessionInfo {
+        return this._session;
+    }
+    public get lastTimestamp(): string | undefined {
+        return this._lastTimestamp;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -46,29 +62,38 @@ export class ActivityJob implements BaboonGeneratedLatest {
             classification: this._classification,
             leaseExpiresAt: this._leaseExpiresAt !== undefined ? this._leaseExpiresAt : undefined,
             leaseActive: this._leaseActive,
-            retryable: this._retryable
+            retryable: this._retryable,
+            collectorId: this._collectorId,
+            session: this._session,
+            lastTimestamp: this._lastTimestamp !== undefined ? this._lastTimestamp : undefined
         };
     }
 
-    public with(overrides: {job?: JobInfo; profile?: string; classification?: ActivityJobClass; leaseExpiresAt?: string | undefined; leaseActive?: boolean; retryable?: boolean}): ActivityJob {
+    public with(overrides: {job?: JobInfo; profile?: string; classification?: ActivityJobClass; leaseExpiresAt?: string | undefined; leaseActive?: boolean; retryable?: boolean; collectorId?: string; session?: SessionInfo; lastTimestamp?: string | undefined}): ActivityJob {
         return new ActivityJob(
             'job' in overrides ? overrides.job! : this._job,
             'profile' in overrides ? overrides.profile! : this._profile,
             'classification' in overrides ? overrides.classification! : this._classification,
             'leaseExpiresAt' in overrides ? overrides.leaseExpiresAt! : this._leaseExpiresAt,
             'leaseActive' in overrides ? overrides.leaseActive! : this._leaseActive,
-            'retryable' in overrides ? overrides.retryable! : this._retryable
+            'retryable' in overrides ? overrides.retryable! : this._retryable,
+            'collectorId' in overrides ? overrides.collectorId! : this._collectorId,
+            'session' in overrides ? overrides.session! : this._session,
+            'lastTimestamp' in overrides ? overrides.lastTimestamp! : this._lastTimestamp
         );
     }
 
-    public static fromPlain(obj: {job: JobInfo; profile: string; classification: ActivityJobClass; leaseExpiresAt: string | undefined; leaseActive: boolean; retryable: boolean}): ActivityJob {
+    public static fromPlain(obj: {job: JobInfo; profile: string; classification: ActivityJobClass; leaseExpiresAt: string | undefined; leaseActive: boolean; retryable: boolean; collectorId: string; session: SessionInfo; lastTimestamp: string | undefined}): ActivityJob {
         return new ActivityJob(
             obj.job,
             obj.profile,
             obj.classification,
             obj.leaseExpiresAt,
             obj.leaseActive,
-            obj.retryable
+            obj.retryable,
+            obj.collectorId,
+            obj.session,
+            obj.lastTimestamp
         );
     }
 
@@ -114,6 +139,9 @@ export class ActivityJob_JsonCodec {
             "leaseExpiresAt": value.leaseExpiresAt === undefined ? null : value.leaseExpiresAt,
             "leaseActive": value.leaseActive,
             "retryable": value.retryable,
+            "collectorId": value.collectorId,
+            "session": SessionInfo_JsonCodec.instance.encode(BaboonCodecContext.Default, value.session),
+            "lastTimestamp": value.lastTimestamp === undefined ? null : value.lastTimestamp,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): ActivityJob {
@@ -129,6 +157,9 @@ export class ActivityJob_JsonCodec {
             obj["leaseExpiresAt"] === undefined || obj["leaseExpiresAt"] === null ? undefined : obj["leaseExpiresAt"] === undefined || obj["leaseExpiresAt"] === null ? undefined : obj["leaseExpiresAt"] as string,
             obj["leaseActive"] as boolean,
             obj["retryable"] as boolean,
+            obj["collectorId"] as string,
+            SessionInfo_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["session"]),
+            obj["lastTimestamp"] === undefined || obj["lastTimestamp"] === null ? undefined : obj["lastTimestamp"] === undefined || obj["lastTimestamp"] === null ? undefined : obj["lastTimestamp"] as string,
         )
     }
 

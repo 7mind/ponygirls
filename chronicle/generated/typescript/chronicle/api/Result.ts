@@ -13,6 +13,8 @@ import {MessagesResult, MessagesResult_JsonCodec} from './MessagesResult.js'
 import {MutationReceipt, MutationReceipt_JsonCodec} from './MutationReceipt.js'
 import {RawResult, RawResult_JsonCodec} from './RawResult.js'
 import {RelatedResult, RelatedResult_JsonCodec} from './RelatedResult.js'
+import {RetryFailedPlan, RetryFailedPlan_JsonCodec} from './RetryFailedPlan.js'
+import {RetryFailedResult, RetryFailedResult_JsonCodec} from './RetryFailedResult.js'
 import {SearchResult, SearchResult_JsonCodec} from './SearchResult.js'
 import {SessionResult, SessionResult_JsonCodec} from './SessionResult.js'
 import {StatusResult, StatusResult_JsonCodec} from './StatusResult.js'
@@ -21,7 +23,7 @@ import {TokensResult, TokensResult_JsonCodec} from './TokensResult.js'
 import {UserInfo, UserInfo_JsonCodec} from './UserInfo.js'
 import {VersionInfo, VersionInfo_JsonCodec} from './VersionInfo.js'
 
-export type Result = Result_Hello | Result_Pong | Result_Whoami | Result_Search | Result_Session | Result_Chunks | Result_Messages | Result_Raw | Result_Related | Result_Facets | Result_CollectionStatus | Result_Status | Result_Tokens | Result_Token | Result_Groups | Result_Mutation | Result_Error | Result_Ping | Result_Archive | Result_Activity | Result_ActivityJobs | Result_LocatedMessage
+export type Result = Result_Hello | Result_Pong | Result_Whoami | Result_Search | Result_Session | Result_Chunks | Result_Messages | Result_Raw | Result_Related | Result_Facets | Result_CollectionStatus | Result_Status | Result_Tokens | Result_Token | Result_Groups | Result_Mutation | Result_Error | Result_Ping | Result_Archive | Result_Activity | Result_ActivityJobs | Result_LocatedMessage | Result_RetryFailedPreview | Result_RetryFailed
 
 export const Result = {
     BaboonDomainVersion: '1.3.0',
@@ -2422,6 +2424,222 @@ export class Result_LocatedMessage_JsonCodec {
     }
 }
 
+export class Result_RetryFailedPreview implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#RetryFailedPreview' as const;
+    private readonly _result: RetryFailedPlan;
+
+    constructor(result: RetryFailedPlan) {
+        this._result = result
+    }
+
+    public get result(): RetryFailedPlan {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: RetryFailedPlan}): Result_RetryFailedPreview {
+        return new Result_RetryFailedPreview(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: RetryFailedPlan}): Result_RetryFailedPreview {
+        return new Result_RetryFailedPreview(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Result_RetryFailedPreview.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_RetryFailedPreview.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#RetryFailedPreview'
+    public baboonTypeIdentifier() {
+        return Result_RetryFailedPreview.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public baboonSameInVersions() {
+        return Result_RetryFailedPreview.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_RetryFailedPreview.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.3.0", "identical": "1.3.0" }
+    public baboonMinReaderVersions() {
+        return Result_RetryFailedPreview.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_RetryFailedPreview.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_RetryFailedPreview_JsonCodec {
+        return Result_RetryFailedPreview_JsonCodec.instance
+    }
+}
+
+export class Result_RetryFailedPreview_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_RetryFailedPreview): unknown {
+        if (this !== Result_RetryFailedPreview_JsonCodec.lazyInstance.value) {
+          return Result_RetryFailedPreview_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": RetryFailedPlan_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_RetryFailedPreview {
+        if (this !== Result_RetryFailedPreview_JsonCodec .lazyInstance.value) {
+            return Result_RetryFailedPreview_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_RetryFailedPreview (
+            RetryFailedPlan_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Result_RetryFailedPreview_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_RetryFailedPreview_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#RetryFailedPreview'
+    public baboonTypeIdentifier() {
+        return Result_RetryFailedPreview_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_RetryFailedPreview_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_RetryFailedPreview_JsonCodec())
+    public static get instance(): Result_RetryFailedPreview_JsonCodec {
+        return Result_RetryFailedPreview_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Result_RetryFailed implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#RetryFailed' as const;
+    private readonly _result: RetryFailedResult;
+
+    constructor(result: RetryFailedResult) {
+        this._result = result
+    }
+
+    public get result(): RetryFailedResult {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: RetryFailedResult}): Result_RetryFailed {
+        return new Result_RetryFailed(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: RetryFailedResult}): Result_RetryFailed {
+        return new Result_RetryFailed(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Result_RetryFailed.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_RetryFailed.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#RetryFailed'
+    public baboonTypeIdentifier() {
+        return Result_RetryFailed.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public baboonSameInVersions() {
+        return Result_RetryFailed.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_RetryFailed.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.3.0", "identical": "1.3.0" }
+    public baboonMinReaderVersions() {
+        return Result_RetryFailed.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_RetryFailed.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_RetryFailed_JsonCodec {
+        return Result_RetryFailed_JsonCodec.instance
+    }
+}
+
+export class Result_RetryFailed_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_RetryFailed): unknown {
+        if (this !== Result_RetryFailed_JsonCodec.lazyInstance.value) {
+          return Result_RetryFailed_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": RetryFailedResult_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_RetryFailed {
+        if (this !== Result_RetryFailed_JsonCodec .lazyInstance.value) {
+            return Result_RetryFailed_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_RetryFailed (
+            RetryFailedResult_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Result_RetryFailed_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_RetryFailed_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#RetryFailed'
+    public baboonTypeIdentifier() {
+        return Result_RetryFailed_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_RetryFailed_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_RetryFailed_JsonCodec())
+    public static get instance(): Result_RetryFailed_JsonCodec {
+        return Result_RetryFailed_JsonCodec.lazyInstance.value
+    }
+}
+
 
 export class Result_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Result): unknown {
@@ -2495,6 +2713,12 @@ export class Result_JsonCodec {
             if (value instanceof Result_LocatedMessage) {
                 return { "LocatedMessage": Result_LocatedMessage_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof Result_RetryFailedPreview) {
+                return { "RetryFailedPreview": Result_RetryFailedPreview_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Result_RetryFailed) {
+                return { "RetryFailed": Result_RetryFailed_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
         throw new Error("Unhandled ADT branch: " + (value as {constructor?: {name?: string}}).constructor?.name);
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Result {
@@ -2527,6 +2751,8 @@ export class Result_JsonCodec {
                 case "Activity": return Result_Activity_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "ActivityJobs": return Result_ActivityJobs_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "LocatedMessage": return Result_LocatedMessage_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "RetryFailedPreview": return Result_RetryFailedPreview_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "RetryFailed": return Result_RetryFailed_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
             default: throw new Error("Unknown ADT branch: " + key);
         }
     }

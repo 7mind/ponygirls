@@ -146,9 +146,11 @@ import { TokensResult as TokensResultV1_2_0, TokensResult_JsonCodec as TokensRes
 import { UserInfo as UserInfoV1_2_0, UserInfo_JsonCodec as UserInfoV1_2_0_JsonCodec } from './v1_2_0/UserInfo.js';
 import { VersionInfo as VersionInfoV1_2_0, VersionInfo_JsonCodec as VersionInfoV1_2_0_JsonCodec } from './v1_2_0/VersionInfo.js';
 import { ActivityCollector, ActivityCollector_JsonCodec } from './ActivityCollector.js';
+import { ActivityCollectorSort, ActivityCollectorSort_JsonCodec } from './ActivityCollectorSort.js';
 import { ActivityJob, ActivityJob_JsonCodec } from './ActivityJob.js';
 import { ActivityJobClass, ActivityJobClass_JsonCodec } from './ActivityJobClass.js';
 import { ActivityJobScope, ActivityJobScope_JsonCodec } from './ActivityJobScope.js';
+import { ActivityJobSort, ActivityJobSort_JsonCodec } from './ActivityJobSort.js';
 import { ActivityJobsQuery, ActivityJobsQuery_JsonCodec } from './ActivityJobsQuery.js';
 import { ActivityJobsResult, ActivityJobsResult_JsonCodec } from './ActivityJobsResult.js';
 import { ActivityQuery, ActivityQuery_JsonCodec } from './ActivityQuery.js';
@@ -193,6 +195,9 @@ import { RawFile, RawFile_JsonCodec } from './RawFile.js';
 import { RawResult, RawResult_JsonCodec } from './RawResult.js';
 import { RelatedResult, RelatedResult_JsonCodec } from './RelatedResult.js';
 import { Result, Result_JsonCodec } from './Result.js';
+import { RetryFailedCounts, RetryFailedCounts_JsonCodec } from './RetryFailedCounts.js';
+import { RetryFailedPlan, RetryFailedPlan_JsonCodec } from './RetryFailedPlan.js';
+import { RetryFailedResult, RetryFailedResult_JsonCodec } from './RetryFailedResult.js';
 import { Scope, Scope_JsonCodec } from './Scope.js';
 import { SearchCountScope, SearchCountScope_JsonCodec } from './SearchCountScope.js';
 import { SearchFilter, SearchFilter_JsonCodec } from './SearchFilter.js';
@@ -988,9 +993,11 @@ class DomainChronicleApiV1_3_0JsonCodecs extends AbstractBaboonJsonCodecs {
     constructor() {
         super();
         this.register(ActivityCollector_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityCollector_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ActivityCollectorSort_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityCollectorSort_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityJob_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJob_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityJobClass_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJobClass_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityJobScope_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJobScope_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ActivityJobSort_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJobSort_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityJobsQuery_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJobsQuery_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityJobsResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJobsResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityQuery_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityQuery_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -1035,6 +1042,9 @@ class DomainChronicleApiV1_3_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(RawResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RawResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RelatedResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RelatedResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Result_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Result_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RetryFailedCounts_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RetryFailedCounts_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RetryFailedPlan_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RetryFailedPlan_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RetryFailedResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RetryFailedResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Scope_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Scope_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(SearchCountScope_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchCountScope_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(SearchFilter_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchFilter_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -1074,9 +1084,11 @@ class DomainChronicleApiV1_3_0Conversions implements AbstractBaboonConversions {
 class DomainChronicleApiV1_3_0Meta implements BaboonMeta {
     private static readonly SAME_IN: { readonly [typeId: string]: readonly string[] } = {
         "chronicle.api/:#ActivityCollector": ['1.3.0'],
+        "chronicle.api/:#ActivityCollectorSort": ['1.3.0'],
         "chronicle.api/:#ActivityJob": ['1.3.0'],
         "chronicle.api/:#ActivityJobClass": ['1.3.0'],
         "chronicle.api/:#ActivityJobScope": ['1.3.0'],
+        "chronicle.api/:#ActivityJobSort": ['1.3.0'],
         "chronicle.api/:#ActivityJobsQuery": ['1.3.0'],
         "chronicle.api/:#ActivityJobsResult": ['1.3.0'],
         "chronicle.api/:#ActivityQuery": ['1.3.0'],
@@ -1121,6 +1133,9 @@ class DomainChronicleApiV1_3_0Meta implements BaboonMeta {
         "chronicle.api/:#RawResult": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/:#RelatedResult": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/:#Result": ['1.3.0'],
+        "chronicle.api/:#RetryFailedCounts": ['1.3.0'],
+        "chronicle.api/:#RetryFailedPlan": ['1.3.0'],
+        "chronicle.api/:#RetryFailedResult": ['1.3.0'],
         "chronicle.api/:#Scope": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/:#SearchCountScope": ['1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/:#SearchFilter": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
@@ -1145,6 +1160,7 @@ class DomainChronicleApiV1_3_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Operation]#AcceptInvite": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/[chronicle.api/:#Operation]#Activity": ['1.3.0'],
         "chronicle.api/[chronicle.api/:#Operation]#ActivityJobs": ['1.3.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#ApplyRetryFailed": ['1.3.0'],
         "chronicle.api/[chronicle.api/:#Operation]#Archive": ['1.3.0'],
         "chronicle.api/[chronicle.api/:#Operation]#CollectionStatus": ['1.2.0', '1.3.0'],
         "chronicle.api/[chronicle.api/:#Operation]#CreateGroup": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
@@ -1165,6 +1181,7 @@ class DomainChronicleApiV1_3_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Operation]#MintToken": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/[chronicle.api/:#Operation]#Ping": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/[chronicle.api/:#Operation]#Pong": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#PreviewRetryFailed": ['1.3.0'],
         "chronicle.api/[chronicle.api/:#Operation]#Purge": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/[chronicle.api/:#Operation]#Receipt": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/[chronicle.api/:#Operation]#Related": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
@@ -1189,6 +1206,8 @@ class DomainChronicleApiV1_3_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Result]#Pong": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/[chronicle.api/:#Result]#Raw": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/[chronicle.api/:#Result]#Related": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
+        "chronicle.api/[chronicle.api/:#Result]#RetryFailed": ['1.3.0'],
+        "chronicle.api/[chronicle.api/:#Result]#RetryFailedPreview": ['1.3.0'],
         "chronicle.api/[chronicle.api/:#Result]#Search": ['1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/[chronicle.api/:#Result]#Session": ['1.0.0', '1.1.0', '1.2.0', '1.3.0'],
         "chronicle.api/[chronicle.api/:#Result]#Status": ['1.2.0', '1.3.0'],
@@ -1198,9 +1217,11 @@ class DomainChronicleApiV1_3_0Meta implements BaboonMeta {
     };
     private static readonly FORWARD: { readonly [typeId: string]: { readonly [version: string]: string } } = {
         "chronicle.api/:#ActivityCollector": { '1.3.0': 'identical' },
+        "chronicle.api/:#ActivityCollectorSort": { '1.3.0': 'identical' },
         "chronicle.api/:#ActivityJob": { '1.3.0': 'identical' },
         "chronicle.api/:#ActivityJobClass": { '1.3.0': 'identical' },
         "chronicle.api/:#ActivityJobScope": { '1.3.0': 'identical' },
+        "chronicle.api/:#ActivityJobSort": { '1.3.0': 'identical' },
         "chronicle.api/:#ActivityJobsQuery": { '1.3.0': 'identical' },
         "chronicle.api/:#ActivityJobsResult": { '1.3.0': 'identical' },
         "chronicle.api/:#ActivityQuery": { '1.3.0': 'identical' },
@@ -1245,6 +1266,9 @@ class DomainChronicleApiV1_3_0Meta implements BaboonMeta {
         "chronicle.api/:#RawResult": { '1.3.0': 'identical' },
         "chronicle.api/:#RelatedResult": { '1.3.0': 'identical' },
         "chronicle.api/:#Result": { '1.3.0': 'identical' },
+        "chronicle.api/:#RetryFailedCounts": { '1.3.0': 'identical' },
+        "chronicle.api/:#RetryFailedPlan": { '1.3.0': 'identical' },
+        "chronicle.api/:#RetryFailedResult": { '1.3.0': 'identical' },
         "chronicle.api/:#Scope": { '1.3.0': 'identical' },
         "chronicle.api/:#SearchCountScope": { '1.3.0': 'identical' },
         "chronicle.api/:#SearchFilter": { '1.3.0': 'identical' },
@@ -1269,6 +1293,7 @@ class DomainChronicleApiV1_3_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Operation]#AcceptInvite": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#Activity": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#ActivityJobs": { '1.3.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#ApplyRetryFailed": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#Archive": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#CollectionStatus": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#CreateGroup": { '1.3.0': 'identical' },
@@ -1289,6 +1314,7 @@ class DomainChronicleApiV1_3_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Operation]#MintToken": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#Ping": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#Pong": { '1.3.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#PreviewRetryFailed": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#Purge": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#Receipt": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#Related": { '1.3.0': 'identical' },
@@ -1313,6 +1339,8 @@ class DomainChronicleApiV1_3_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Result]#Pong": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#Raw": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#Related": { '1.3.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#RetryFailed": { '1.3.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#RetryFailedPreview": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#Search": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#Session": { '1.3.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#Status": { '1.3.0': 'identical' },
