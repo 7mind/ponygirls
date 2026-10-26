@@ -1,6 +1,7 @@
 package chronicle
 import chronicle.api.*
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.Json
 import java.util.UUID
 
@@ -13,8 +14,9 @@ final class Mcp(app: Application) {
   private val contentPaging = List("offset"->integer(0,Int.MaxValue),"limit"->integer(1,Check.maximumContentPageSize))
   private val viewFields = List("revision"->integer(1,Int.MaxValue),"generationId"->str)
   private val filtering = List("project"->str,"gitBranch"->str,"after"->str,"before"->str,"tags"->Json.obj("type"->s("array"),"maxItems"->Json.fromInt(32),"items"->str))
-  private def tool(name: String,description: String,fields: List[(String,Json)],required: List[String]): Json = Json.obj("name"->s(name),"description"->s(description),"inputSchema"->Json.obj("type"->s("object"),"properties"->Json.obj(fields*),"required"->Json.arr(required.map(s)*),"additionalProperties"->Json.False),"annotations"->Json.obj("readOnlyHint"->Json.True,"destructiveHint"->Json.False,"idempotentHint"->Json.True,"openWorldHint"->Json.False))
-  val tools: Json = Json.arr(
+  private def tool(name: String,description: String,fields: List[(String,Json)],required: List[String]): McpRunToolDefinition = McpRunToolDefinition(name,description,
+    Json.obj("type"->s("object"),"properties"->Json.obj(fields*),"required"->Json.arr(required.map(s)*),"additionalProperties"->Json.False),true)
+  val definitions: List[McpRunToolDefinition] = List(
     tool("search_sessions",s"Search authorized archive sessions. Lexical total/countScope=ExactMatches is global. Semantic/hybrid use ANN plus full-vector reranking; total/countScope=CandidateWindow counts only retrieved sessions, not the corpus. rankingLimit bounds candidate chunks (${SearchPolicy.candidatesPerLeg} semantic, ${SearchPolicy.rankingLimit(SearchMode.Hybrid)} hybrid); offsets must be smaller than that bound. Filters and live ACLs apply before each candidate limit.",List("query"->str,"mode"->Json.obj("type"->s("string"),"enum"->Json.arr(s("lexical"),s("semantic"),s("hybrid"))))++paging++filtering,List("query","mode")),
     tool("get_session","Read authorized session metadata and first 100 indexed fragments.",List("sessionId"->str)++viewFields,List("sessionId")),
     tool("get_chunks","Page all authorized annotations in deterministic source order.",List("sessionId"->str)++contentPaging++viewFields,List("sessionId")),
@@ -23,6 +25,15 @@ final class Mcp(app: Application) {
     tool("list_facets","List authorized bounded metadata facets.",filtering,Nil),
     tool("ingest_status","Page authorized ingestion jobs, including failures.",paging,Nil),
     tool("whoami","Show the authenticated user and scopes.",Nil,Nil))
+  val tools: Json = Json.arr(definitions.map(definition => Json.obj("name"->s(definition.name),"description"->s(definition.description),"inputSchema"->definition.inputSchemaJson,
+    "annotations"->Json.obj("readOnlyHint"->Json.fromBoolean(definition.readOnly),"destructiveHint"->Json.False,"idempotentHint"->Json.True,"openWorldHint"->Json.False)))* )
+  private def toolContent(text: String,error: Boolean): Json = Json.obj("content"->Json.arr(Json.obj("type"->s("text"),"text"->s(text))),"isError"->Json.fromBoolean(error))
+  private def toolResult(result: Result): Json = toolContent(Wire.encode(Result.codecJson,result).noSpaces,false)
+  def invoke(access: ReadAccess,name: String,arguments: Json): IO[Json] = IO.defer {
+    Check(definitions.find(_.name==name).exists(_.readOnly),"invalid","tool is not an available read-only tool")
+    val operation=scala.util.Try(toOperation(name,arguments)).fold(_ => throw DomainError("invalid","invalid tool name or arguments"),identity)
+    app.read(access,operation).map(toolResult).flatTap(_ => access.fresh.void)
+  }
   def rpcError(id: Json,code: Int,message: String): Json = Json.obj("jsonrpc"->s("2.0"),"id"->id,"error"->Json.obj("code"->Json.fromInt(code),"message"->s(message)))
   private def success(id: Json,result: Json): Json = Json.obj("jsonrpc"->s("2.0"),"id"->id,"result"->result)
   def handle(i: Identity,j: Json): IO[Option[Json]] = IO.defer {
@@ -48,12 +59,12 @@ final class Mcp(app: Application) {
             case Left(_) => IO.pure(Some(rpcError(rid,-32602,"Invalid tool name or arguments")))
             case Right(operation) =>
               app.operation(i,ClientEnvelope(UUID.randomUUID(),operation)).attempt.map { result =>
-                val (text,error) = result match {
-                  case Right(r) => (Wire.encode(Result.codecJson,r).noSpaces,false)
-                  case Left(d: DomainError) => (Wire.encode(Failure.codecJson,Failure(d.code,d.detail)).noSpaces,true)
-                  case Left(_) => ("{\"code\":\"unavailable\",\"message\":\"operation failed\"}",true)
+                val content=result match {
+                  case Right(value) => toolResult(value)
+                  case Left(d: DomainError) => toolContent(Wire.encode(Failure.codecJson,Failure(d.code,d.detail)).noSpaces,true)
+                  case Left(_) => toolContent("{\"code\":\"unavailable\",\"message\":\"operation failed\"}",true)
                 }
-                Some(success(rid,Json.obj("content"->Json.arr(Json.obj("type"->s("text"),"text"->s(text))),"isError"->Json.fromBoolean(error))))
+                Some(success(rid,content))
               }
           }
         case _ => IO.pure(Some(rpcError(rid,-32601,"Method not found")))
@@ -74,7 +85,8 @@ final class Mcp(app: Application) {
       Check(generation.isEmpty || revision.isDefined,"invalid","generationId requires revision")
       revision.map(r => { Check(r>0,"invalid","revision must be positive"); ContentView(r,generation) })
     }
-    val allowed = name match { case "search_sessions" => Set("query","mode","project","gitBranch","after","before","tags","offset","limit"); case "get_session" => Set("sessionId","revision","generationId"); case "get_chunks" => Set("sessionId","offset","limit","revision","generationId"); case "get_messages" => Set("sessionId","offset","limit","revision","generationId"); case "related_sessions" => Set("sessionId","limit"); case "list_facets" => Set("project","gitBranch","after","before","tags"); case "ingest_status" => Set("offset","limit"); case "whoami" => Set.empty[String]; case _ => throw DomainError("invalid","unknown tool") }
+    val definition=definitions.find(_.name==name).getOrElse(throw DomainError("invalid","unknown tool"))
+    val allowed=definition.inputSchemaJson.hcursor.downField("properties").focus.get.asObject.get.keys.toSet
     Check(args.asObject.get.keys.forall(allowed.contains),"invalid","unknown argument")
     name match {
       case "search_sessions" => Operation.Search(SearchQuery(text("query"),text("mode") match { case "lexical" => SearchMode.Lexical; case "semantic" => SearchMode.Semantic; case "hybrid" => SearchMode.Hybrid; case _ => throw DomainError("invalid","invalid mode") },filter,int("limit",20),int("offset",0)))

@@ -11,8 +11,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
     e.operation match {
       case Operation.Search(q) if version=="1.0.0" =>
         i.requireScope(Scope.Read)
-        val vector=if(q.mode==SearchMode.Lexical) IO.pure(None) else embedder.query(q.query).map(Some(_))
-        vector.flatMap(v => IO.blocking(Result.Search(searchIndex.searchLegacy(i.user.id,q,v))))
+        query(ReadAccess.current(i),q,true).map(Result.Search.apply)
       case _ => operation(i,e)
     }
   }
@@ -22,8 +21,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.Hello(versions) => IO { Wire.negotiate(versions); Result.Hello(Wire.versions,i.user) }
       case Operation.Ping(nonce) => IO { Check.text(nonce,128); Result.Pong(nonce) }
       case Operation.Pong(nonce) => IO.pure(Result.Pong(nonce))
-      case Operation.Whoami() => IO.pure(Result.Whoami(i.user))
-      case Operation.Search(q) => i.requireScope(Scope.Read); query(i,q).map(Result.Search.apply)
+      case Operation.Whoami() | Operation.Search(_) => read(ReadAccess.current(i),e.operation)
       case Operation.Archive(q) =>
         i.requireScope(Scope.Read)
         val parsed=ArchiveExpression.parse(q.expression)
@@ -34,19 +32,9 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.Activity(q) => i.requireScope(Scope.Read); IO.blocking(Result.Activity(activityIndex.summary(i.user,q)))
       case Operation.ActivityJobs(q) => i.requireScope(Scope.Read); IO.blocking(Result.ActivityJobs(activityIndex.jobs(uid,q)))
       case Operation.LocateMessage(id,view,messageId) => i.requireScope(Scope.Read); IO.blocking(Result.LocatedMessage(archive.locateMessage(uid,id,view,messageId)))
-      case Operation.GetSession(id,view) => i.requireScope(Scope.Read); IO.blocking(Result.Session(archive.readSession(uid,id,view)))
-      case Operation.GetChunks(id,offset,limit,view) => i.requireScope(Scope.Read); IO.blocking(Result.Chunks(archive.pageChunks(uid,id,offset,limit,view)))
-      case Operation.GetMessages(id,offset,limit,view) => i.requireScope(Scope.Read); IO.blocking(Result.Messages(archive.messages(uid,id,offset,limit,view)))
+      case Operation.GetSession(_,_) | Operation.GetChunks(_,_,_,_) | Operation.GetMessages(_,_,_,_) => read(ReadAccess.current(i),e.operation)
       case Operation.GetRaw(id,revision) => i.requireScope(Scope.Read); i.requireScope(Scope.Raw); IO.blocking(Result.Raw(archive.raw(uid,id,revision)))
-      case Operation.Related(id,limit) =>
-        i.requireScope(Scope.Read)
-        IO.blocking(archive.pageChunks(uid,id,0,1,None).chunks.headOption.map(_.summary).getOrElse("")).flatMap { text =>
-          Check.page(0,limit)
-          if(text.isEmpty) IO.pure(Result.Related(RelatedResult(Nil)))
-          else query(i,SearchQuery(text.take(2048),SearchMode.Lexical,emptyFilter,math.min(limit+1,100),0)).map(r => Result.Related(RelatedResult(r.hits.filterNot(_.session.id==id).take(limit))))
-        }
-      case Operation.Facets(f) => i.requireScope(Scope.Read); IO.blocking(Result.Facets(searchIndex.facets(uid,f)))
-      case Operation.IngestStatus(offset,limit) => i.requireScope(Scope.Read); IO.blocking(Result.Status(archive.statuses(uid,offset,limit)))
+      case Operation.Related(_,_) | Operation.Facets(_) | Operation.IngestStatus(_,_) => read(ReadAccess.current(i),e.operation)
       case Operation.CollectionStatus() => IO.blocking(Result.CollectionStatus(collectors.status(i)))
       case Operation.ListTokens() => IO.blocking(Result.Tokens(auth.tokens(i)))
       case Operation.ListGroups() => IO.blocking(Result.Groups(auth.groups(i)))
@@ -55,8 +43,33 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case _ => IO.blocking(auth.mutate(i,e))
     }
   }
-  private def query(i: Identity,q: SearchQuery): IO[SearchResult] = {
-    val vector = if(q.mode==SearchMode.Lexical) IO.pure(None) else embedder.query(q.query).map(Some(_))
-    vector.flatMap(v => IO.blocking(searchIndex.search(i.user.id,q,v)))
+  def read(access: ReadAccess,operation: Operation): IO[Result] = IO.defer {
+    val materialization=access.materialization
+    operation match {
+      case Operation.Whoami() => access.fresh.map { identity =>
+        materialization.admit(JsonUtf8Size(Wire.encode(UserInfo.codecJson,identity.user)))
+        Result.Whoami(identity.user)
+      }
+      case Operation.Search(q) => query(access,q,false).map(Result.Search.apply)
+      case Operation.GetSession(id,view) => access.blocking(i => Result.Session(archive.readSession(i.user.id,id,view,materialization)))
+      case Operation.GetChunks(id,offset,limit,view) => access.blocking(i => Result.Chunks(archive.pageChunks(i.user.id,id,offset,limit,view,materialization)))
+      case Operation.GetMessages(id,offset,limit,view) => access.blocking(i => Result.Messages(archive.messages(i.user.id,id,offset,limit,view,materialization)))
+      case Operation.Related(id,limit) =>
+        Check.page(0,limit)
+        access.blocking(i => archive.pageChunks(i.user.id,id,0,1,None,materialization).chunks.headOption.map(_.summary).getOrElse("")).flatMap { text =>
+          if(text.isEmpty) IO.pure(Result.Related(RelatedResult(Nil)))
+          else query(access,SearchQuery(text.take(2048),SearchMode.Lexical,emptyFilter,math.min(limit+1,100),0),false).map(r => Result.Related(RelatedResult(r.hits.filterNot(_.session.id==id).take(limit))))
+        }
+      case Operation.Facets(f) => access.blocking(i => Result.Facets(searchIndex.facets(i.user.id,f,materialization)))
+      case Operation.IngestStatus(offset,limit) => access.blocking(i => Result.Status(archive.statuses(i.user.id,offset,limit,materialization)))
+      case _ => IO.raiseError(DomainError("invalid","operation is not a source read tool"))
+    }
+  }
+  private def query(access: ReadAccess,q: SearchQuery,legacy: Boolean): IO[SearchResult] = IO.defer {
+    SearchPolicy.validateQuery(q,legacy)
+    access.identity.flatMap { identity =>
+      val vector = if(q.mode==SearchMode.Lexical) IO.pure(None) else embedder.query(q.query).map(Some(_))
+      vector.flatMap(v => access.blocking(i => if(legacy) searchIndex.searchLegacy(i.user.id,q,v,access.materialization) else searchIndex.search(i.user.id,q,v,access.materialization)))
+    }
   }
 }

@@ -94,18 +94,22 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     }
   }
   def authorized(c: Connection, reader: String, id: UUID): Unit = Check(Sql.one(c,s"SELECT 1 FROM ch_sources s WHERE s.id=? AND $visible",id,reader,reader,reader)(_ => true).contains(true),"not-found","session not found")
-  private def reading[A](f: Connection => A): A = db.transaction { c =>
+  private def reading[A](f: Connection => A): A = reading(ReadMaterialization.unrestricted)(f)
+  private def reading[A](materialization: ReadMaterialization)(f: Connection => A): A = db.transaction { c =>
     c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+    materialization.begin(c)
     f(c)
   }
   private def content(c: Connection,id: UUID,revision: Int): IngestRequest =
     Sql.one(c,"SELECT snapshot FROM ch_revisions WHERE session_id=? AND revision=?",id,revision)(r => Wire.decode(IngestRequest.codecJson,Sql.json(r,"snapshot"))).getOrElse(throw DomainError("not-found","content view not found"))
-  private def selectView(c: Connection,reader: String,id: UUID,selector: Option[ContentView]): ContentView = {
+  private[chronicle] def selectView(c: Connection,reader: String,id: UUID,selector: Option[ContentView]): ContentView = selectView(c,reader,id,selector,ReadMaterialization.unrestricted)
+  private[chronicle] def selectView(c: Connection,reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): ContentView = {
     authorized(c,reader,id)
     val (head,published,indexed)=Sql.one(c,"SELECT s.revision,s.published,g.revision AS indexed FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published WHERE s.id=?",id) { r =>
       val revision=r.getInt("indexed"); val index=if(r.wasNull()) None else Some(revision)
       (r.getInt("revision"),Option(r.getObject("published",classOf[UUID])),index)
     }.get
+    materialization.admit(JsonUtf8Size(Json.obj("revision"->Json.fromInt(head),"published"->published.map(id => Json.fromString(id.toString)).getOrElse(Json.Null),"indexed"->indexed.map(Json.fromInt).getOrElse(Json.Null))))
     val view=selector.getOrElse(ContentView(indexed.getOrElse(head),published))
     Check(view.revision>0,"invalid","content revision must be positive")
     view.generationId.foreach { generation =>
@@ -114,9 +118,16 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     Check(Sql.one(c,"SELECT 1 FROM ch_revisions WHERE session_id=? AND revision=?",id,view.revision)(_ => true).contains(true),"not-found","content view not found")
     view
   }
-  def info(c: Connection,reader: String,id: UUID,selector: Option[ContentView]): SessionInfo = {
-    val view=selectView(c,reader,id,selector)
-    Sql.one(c,"SELECT s.owner,s.revision,g.revision AS indexed,i.metadata,i.source,i.completion,i.redacted FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=? LEFT JOIN ch_generations g ON g.id=s.published WHERE s.id=?",view.revision,id) { row =>
+  private[chronicle] def infoQuery(id: UUID,view: ContentView): ReadSources.Query = ReadSources.Query("SELECT s.owner,s.revision,g.revision AS indexed,i.metadata,i.source,i.completion,i.redacted FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=? LEFT JOIN ch_generations g ON g.id=s.published WHERE s.id=?",List(view.revision,id))
+  def info(c: Connection,reader: String,id: UUID,selector: Option[ContentView]): SessionInfo = info(c,reader,id,selector,ReadMaterialization.unrestricted)
+  def info(c: Connection,reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): SessionInfo = {
+    val view=selectView(c,reader,id,selector,materialization)
+    materialization.admit(ReadSources.bytes(c,infoQuery(id,view)))
+    infoForView(c,id,view)
+  }
+  private[chronicle] def infoForView(c: Connection,id: UUID,view: ContentView): SessionInfo = {
+    val query=infoQuery(id,view)
+    Sql.one(c,query.sql,query.args*) { row =>
       val idx=row.getInt("indexed"); val indexed=if(row.wasNull()) None else Some(idx)
       SessionInfo(view,id,row.getString("owner"),row.getInt("revision"),indexed,Wire.decode(Metadata.codecJson,Sql.json(row,"metadata")),Wire.decode(SourceIdentity.codecJson,Sql.json(row,"source")),Completion.parse(row.getString("completion")).get,row.getBoolean("redacted"))
     }.getOrElse(throw DomainError("projection","content metadata projection missing"))
@@ -127,15 +138,21 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     val revision=Sql.one(c,"SELECT revision FROM ch_sources WHERE id=?",id)(_.getInt(1)).get
     content(c,id,revision)
   }
-  def readSession(reader: String,id: UUID,selector: Option[ContentView]): SessionResult = reading { c =>
-    val session=info(c,reader,id,selector)
-    SessionResult(session,chunksForView(c,session.view,0,100).chunks)
+  def readSession(reader: String,id: UUID,selector: Option[ContentView]): SessionResult = readSession(reader,id,selector,ReadMaterialization.unrestricted)
+  def readSession(reader: String,id: UUID,selector: Option[ContentView],materialization: ReadMaterialization): SessionResult = reading(materialization) { c =>
+    val view=selectView(c,reader,id,selector,materialization)
+    val total=chunkCount(c,view)
+    materialization.admit(ReadSources.sum(List(ReadSources.bytes(c,infoQuery(id,view)),chunkSourceBytes(c,view,0,100),chunkCountBytes(view,total))))
+    SessionResult(infoForView(c,id,view),chunksForView(c,view,0,100,total).chunks)
   }
-  def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): MessagesResult = reading { c =>
+  def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): MessagesResult = messages(reader,id,offset,limit,selector,ReadMaterialization.unrestricted)
+  def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization): MessagesResult = reading(materialization) { c =>
     Check.contentPage(offset,limit)
-    val view=selectView(c,reader,id,selector)
+    val view=selectView(c,reader,id,selector,materialization)
     val total=Sql.one(c,"SELECT message_count FROM ch_revision_info WHERE session_id=? AND revision=?",id,view.revision)(_.getInt(1)).getOrElse(throw DomainError("projection","message projection missing"))
-    val messages=Sql.rows(c,"SELECT value FROM ch_messages WHERE session_id=? AND revision=? AND position>=? ORDER BY position LIMIT ?",id,view.revision,offset,limit)(r => Wire.decode(Message.codecJson,Sql.json(r,"value")))
+    val query=ReadSources.Query("SELECT value FROM ch_messages WHERE session_id=? AND revision=? AND position>=? ORDER BY position LIMIT ?",List(id,view.revision,offset,limit))
+    materialization.admit(ReadSources.sum(List(JsonUtf8Size(Json.obj("message_count"->Json.fromInt(total))),ReadSources.bytes(c,query))))
+    val messages=Sql.rows(c,query.sql,query.args*)(r => Wire.decode(Message.codecJson,Sql.json(r,"value")))
     MessagesResult(messages,total,offset,view)
   }
   def locateMessage(reader: String,id: UUID,selector: ContentView,messageId: String): MessageLocation = reading { c =>
@@ -233,16 +250,25 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     if(current(c,claim) && lockJob(c,claim)) Sql.exec(c,s"UPDATE ch_jobs SET state=CASE WHEN attempts>=5 THEN 'Failed' ELSE 'Queued' END,error=?,lease_until=NULL,completed_windows=CASE WHEN attempts>=5 THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=5 THEN total_windows ELSE NULL END WHERE $validJob",(List[Sql.Param](code.take(64))++jobArgs(claim))*)
     ()
   }
-  private def chunksForView(c: Connection,view: ContentView,offset: Int,limit: Int): ChunksResult = view.generationId match {
+  private def chunksQuery(generation: UUID,offset: Int,limit: Int): ReadSources.Query = ReadSources.Query("SELECT value FROM ch_chunks WHERE generation=? ORDER BY ordinal,id LIMIT ? OFFSET ?",List(generation,limit,offset))
+  private def chunkSourceBytes(c: Connection,view: ContentView,offset: Int,limit: Int): Long = view.generationId.map(generation => ReadSources.bytes(c,chunksQuery(generation,offset,limit))).getOrElse(0L)
+  private def chunkCount(c: Connection,view: ContentView): Int = view.generationId.map(generation => Sql.one(c,"SELECT count(*) FROM ch_chunks WHERE generation=?",generation)(_.getInt(1)).get).getOrElse(0)
+  private def chunkCountBytes(view: ContentView,total: Int): Long = if(view.generationId.isDefined) JsonUtf8Size(Json.obj("count"->Json.fromInt(total))) else 0L
+  private def chunksForView(c: Connection,view: ContentView,offset: Int,limit: Int): ChunksResult = chunksForView(c,view,offset,limit,chunkCount(c,view))
+  private def chunksForView(c: Connection,view: ContentView,offset: Int,limit: Int,total: Int): ChunksResult = view.generationId match {
     case None => ChunksResult(Nil,0,offset,view)
     case Some(generation) =>
-      val total=Sql.one(c,"SELECT count(*) FROM ch_chunks WHERE generation=?",generation)(_.getInt(1)).get
-      val values=Sql.rows(c,"SELECT value FROM ch_chunks WHERE generation=? ORDER BY ordinal,id LIMIT ? OFFSET ?",generation,limit,offset)(r => Wire.decode(Chunk.codecJson,Sql.json(r,"value")))
+      val query=chunksQuery(generation,offset,limit)
+      val values=Sql.rows(c,query.sql,query.args*)(r => Wire.decode(Chunk.codecJson,Sql.json(r,"value")))
       ChunksResult(values,total,offset,view)
   }
-  def pageChunks(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): ChunksResult = reading { c =>
+  def pageChunks(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): ChunksResult = pageChunks(reader,id,offset,limit,selector,ReadMaterialization.unrestricted)
+  def pageChunks(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView],materialization: ReadMaterialization): ChunksResult = reading(materialization) { c =>
     Check.contentPage(offset,limit)
-    chunksForView(c,selectView(c,reader,id,selector),offset,limit)
+    val view=selectView(c,reader,id,selector,materialization)
+    val total=chunkCount(c,view)
+    materialization.admit(ReadSources.sum(List(chunkSourceBytes(c,view,offset,limit),chunkCountBytes(view,total))))
+    chunksForView(c,view,offset,limit,total)
   }
   def passages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassagesResult = reading { c =>
     Check.contentPage(offset,limit)
@@ -252,11 +278,14 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     Check.contentPage(offset,limit)
     PassageStorage.spans(c,selectView(c,reader,id,selector),passageId,offset,limit)
   }
-  def statuses(reader: String,offset: Int,limit: Int): StatusResult = db.transaction { c =>
+  def statuses(reader: String,offset: Int,limit: Int): StatusResult = statuses(reader,offset,limit,ReadMaterialization.unrestricted)
+  def statuses(reader: String,offset: Int,limit: Int,materialization: ReadMaterialization): StatusResult = reading(materialization) { c =>
     Check.page(offset,limit)
     val from = s"FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE $visible"
     val n = Sql.one(c,s"SELECT count(*) $from",reader,reader,reader)(_.getInt(1)).get
-    val jobs = Sql.rows(c,s"SELECT j.* $from ORDER BY j.id LIMIT ? OFFSET ?",reader,reader,reader,limit,offset)(r => JobInfo(r.getObject("id",classOf[UUID]),r.getObject("session_id",classOf[UUID]),r.getInt("revision"),JobState.parse(r.getString("state")).get,r.getInt("attempts"),Option(r.getString("error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue)))
+    val query=ReadSources.Query(s"SELECT j.id,j.session_id,j.revision,j.state,j.attempts,j.error,j.completed_windows,j.total_windows $from ORDER BY j.id LIMIT ? OFFSET ?",List(reader,reader,reader,limit,offset))
+    materialization.admit(ReadSources.sum(List(JsonUtf8Size(Json.obj("count"->Json.fromInt(n))),ReadSources.bytes(c,query))))
+    val jobs = Sql.rows(c,query.sql,query.args*)(r => JobInfo(r.getObject("id",classOf[UUID]),r.getObject("session_id",classOf[UUID]),r.getInt("revision"),JobState.parse(r.getString("state")).get,r.getInt("attempts"),Option(r.getString("error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue)))
     StatusResult(jobs,n)
   }
   def retry(owner: String,id: UUID): Unit = db.transaction(c => Jobs.retry(c,owner,id))
