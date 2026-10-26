@@ -29,10 +29,10 @@ export function Conversation(props: ConversationProps) {
 function ConversationSnapshot({ connection, stats, user, sessionId, match, select, close, refresh, view, chooseView }: ConversationProps & { view: ContentView | undefined; chooseView: (view: ContentView | undefined) => void }) {
   const [offset, setOffset] = useState(0), [annotationOffset, setAnnotationOffset] = useState(0), [raw, setRaw] = useState(false), [chunk, setChunk] = useState<Chunk | null>(null);
   const [seekError, setSeekError] = useState<string | null>(null), [seeking, setSeeking] = useState(false);
-  const navigation = useRef(0);
+  const navigation = useRef(0), pendingScroll = useRef<string | null>(null);
   useEffect(() => { setOffset(0); setAnnotationOffset(0); setRaw(false); setChunk(null); setSeekError(null); navigation.current++; }, [sessionId]);
-  useEffect(() => connection.onInvalidate(() => { setChunk(null); setRaw(false); navigation.current++; setSeeking(false); setSeekError(null); }), [connection]);
-  const session = useResource(connection, stats, `${sessionId}:${refresh}`, true,
+  useEffect(() => connection.onInvalidate(() => { setChunk(null); setRaw(false); navigation.current++; pendingScroll.current = null; setSeeking(false); setSeekError(null); }), [connection]);
+  const session = useResource(connection, stats, sessionId, `${refresh}`, true,
     async () => {
       const result = await read(connection, new Operation_GetSession(sessionId, view), r => r instanceof Result_Session ? r.result : null);
       if (view !== undefined) requireContentView(view, result.session.view);
@@ -40,7 +40,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, match, selec
     });
   useEffect(() => { if (view === undefined && session.data !== null) chooseView(session.data.session.view); }, [view, session.data, chooseView]);
   const snapshot = view !== undefined ? session.data : null;
-  const annotations = useResource(connection, stats, `${sessionId}:${annotationOffset}:${refresh}`, snapshot !== null,
+  const annotations = useResource(connection, stats, `${sessionId}:${annotationOffset}`, `${refresh}`, snapshot !== null,
     async () => {
       const result = await read(connection, new Operation_GetChunks(sessionId, annotationOffset, ANNOTATION_PAGE_SIZE, view), r => r instanceof Result_Chunks ? r.result : null);
       requireContentView(view!, result.view); return result;
@@ -48,29 +48,35 @@ function ConversationSnapshot({ connection, stats, user, sessionId, match, selec
   useEffect(() => { if (annotations.error !== null) setChunk(null); }, [annotations.error]);
   const matchingChunks = match !== null && view !== undefined && sameContentView(view, match.session.view) ? match.chunks : [];
   const offPageMatches = annotations.error === null ? matchingChunks.filter(item => !annotations.data?.chunks.some(chunk => chunk.id === item.id)) : [];
-  const messages = useResource(connection, stats, `${sessionId}:${offset}:${refresh}`, !raw && snapshot !== null,
+  const messages = useResource(connection, stats, `${sessionId}:${offset}`, `${refresh}`, !raw && snapshot !== null,
     async () => {
       const result = await read(connection, new Operation_GetMessages(sessionId, offset, MESSAGE_PAGE_SIZE, view), r => r instanceof Result_Messages ? r.result : null);
       requireContentView(view!, result.view); return result;
     });
-  const rawSource = useResource(connection, stats, `${sessionId}:${refresh}`, raw && snapshot !== null && user.scopes.includes(Scope.Raw),
+  const rawSource = useResource(connection, stats, sessionId, `${refresh}`, raw && snapshot !== null && user.scopes.includes(Scope.Raw),
     async () => {
       const result = await read(connection, new Operation_GetRaw(sessionId, view!.revision), r => r instanceof Result_Raw ? r.result : null);
       if (result.revision !== view!.revision) throw new Error('Raw source revision changed unexpectedly; no raw records are retained.');
       return result;
     });
-  const related = useResource(connection, stats, `${sessionId}:${refresh}`, snapshot !== null,
+  const related = useResource(connection, stats, sessionId, `${refresh}`, snapshot !== null,
     () => read(connection, new Operation_Related(sessionId, 6), r => r instanceof Result_Related ? r.result : null));
   useEffect(() => {
-    if (chunk === null || messages.data === null) return;
-    const target = document.getElementById(`message-${chunk.spans[0]?.messageId}`);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const messageId = pendingScroll.current;
+    if (messageId === null || messages.data === null) return;
+    const target = document.getElementById(`message-${messageId}`);
+    if (target !== null) { pendingScroll.current = null; target.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
   }, [chunk, messages.data]);
   async function showChunk(selected: Chunk) {
     setRaw(false); setChunk(selected); setSeekError(null);
     const target = selected.spans[0]?.messageId;
     if (!target) { setSeekError('This passage has no source span.'); return; }
-    if (messages.data?.messages.some(m => m.id === target)) return;
+    pendingScroll.current = target;
+    if (messages.data?.messages.some(m => m.id === target)) {
+      const element = document.getElementById(`message-${target}`);
+      if (element !== null) { pendingScroll.current = null; element.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+      return;
+    }
     const operation = ++navigation.current; setSeeking(true);
     try {
       for (let start = 0; start < MAX_SOURCE_MESSAGES; start += SEEK_PAGE_SIZE) {

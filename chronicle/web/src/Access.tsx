@@ -8,8 +8,8 @@ import type { MutationState } from './mutations.ts';
 import type { ManagerStats } from './transport/types.ts';
 export function Access({ connection, stats, user, actions }: { connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; actions: MutationState }) {
   const [scopes, setScopes] = useState<Scope[]>([Scope.Ingest]), [sharing, setSharing] = useState<string[]>([]), [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const tokens = useResource(connection, stats, `tokens:${actions.revision}`, true, () => read(connection, new Operation_ListTokens(), r => r instanceof Result_Tokens ? r.result : null));
-  const groups = useResource(connection, stats, `groups:${actions.revision}`, true, () => read(connection, new Operation_ListGroups(), r => r instanceof Result_Groups ? r.result : null));
+  const tokens = useResource(connection, stats, 'tokens', `${actions.revision}`, true, () => read(connection, new Operation_ListTokens(), r => r instanceof Result_Tokens ? r.result : null));
+  const groups = useResource(connection, stats, 'groups', `${actions.revision}`, true, () => read(connection, new Operation_ListGroups(), r => r instanceof Result_Groups ? r.result : null));
   const blocked = actions.busy || actions.uncertain !== null || stats.activeId === null;
   function named(event: FormEvent<HTMLFormElement>, operation: (name: string) => void) {
     event.preventDefault(); const form = event.currentTarget, data = new FormData(form); operation(String(data.get('name')).trim()); form.reset();

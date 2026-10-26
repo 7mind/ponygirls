@@ -13,9 +13,9 @@ export function Activity({ connection, stats, actions }: { connection: Chronicle
     const timer = window.setInterval(() => setRefresh(n => n + 1), ACTIVITY_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [connection, stats.activeId, stats.generation]);
-  const collectors = useResource(connection, stats, `${refresh}`, true,
+  const collectors = useResource(connection, stats, 'collectors', `${refresh}`, true,
     () => read(connection, new Operation_CollectionStatus(), r => r instanceof Result_CollectionStatus ? r.result : null));
-  const jobs = useResource(connection, stats, `${offset}:${refresh}:${actions.revision}`, true,
+  const jobs = useResource(connection, stats, `jobs:${offset}`, `${refresh}:${actions.revision}`, true,
     () => read(connection, new Operation_IngestStatus(offset, 30), r => r instanceof Result_Status ? r.result : null));
   return <main className="management-page activity-page"><div className="page-heading"><span className="eyebrow">PIPELINE / OWN ACTIVITY</span><h1>Ingestion activity</h1><p>Collection and index publication are separate. Failed annotation does not remove the original source.</p></div><button onClick={() => setRefresh(n => n + 1)}>Refresh status ↻</button><p className="tiny">Authorized snapshots · refreshed every 4 seconds while connected. Missing reports do not establish completion or health.</p>
     <section aria-labelledby="collection-heading" className="management-section"><h2 id="collection-heading">Collection</h2><p className="tiny">Latest report per collector (up to 100). Freshness is server-received time, not a command or proof that a worker is running. Idle does not mean all sources are complete.</p>

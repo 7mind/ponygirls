@@ -61,9 +61,9 @@ function Archive({ connection, stats, user, draft, setDraft, archive, setArchive
     window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key);
   }, []);
   useEffect(() => { const timer = window.setInterval(() => setRefresh(n => n + 1), 20_000); return () => window.clearInterval(timer); }, []);
-  const results = useResource(connection, stats, `${JSON.stringify(submitted)}:${offset}:${refresh}`, submitted !== null,
+  const results = useResource(connection, stats, `${JSON.stringify(submitted)}:${offset}`, `${refresh}`, submitted !== null,
     () => read(connection, new Operation_Search(new SearchQuery(submitted!.query, submitted!.mode, filter(submitted!), 20, offset)), r => r instanceof Result_Search ? r.result : null));
-  const facets = useResource(connection, stats, `${JSON.stringify(submitted)}:${refresh}`, true,
+  const facets = useResource(connection, stats, JSON.stringify(submitted), `${refresh}`, true,
     () => read(connection, new Operation_Facets(filter(submitted ?? draft)), r => r instanceof Result_Facets ? r.result : null));
   const setField = (field: keyof SearchDraft, value: string) => setDraft({ ...draft, [field]: field === 'mode' ? SearchMode_parse(value) : value });
   function submit(event: FormEvent) { event.preventDefault(); setArchive(current => ({ ...current, submitted: { ...draft }, offset: 0 })); setRefresh(n => n + 1); }
@@ -89,7 +89,7 @@ export function App({ connection }: { connection: ChronicleConnection }) {
   const [archive, setArchive] = useState<ArchiveState>(emptyArchive);
   const [draft, setDraft] = useState<SearchDraft>(emptyDraft);
   const [archiveOwner, setArchiveOwner] = useState<string | null>(null);
-  const identity = useResource(connection, stats, 'identity', true, () => read(connection, new Operation_Whoami(), r => r instanceof Result_Whoami ? r.user : null));
+  const identity = useResource(connection, stats, 'identity', '', true, () => read(connection, new Operation_Whoami(), r => r instanceof Result_Whoami ? r.user : null));
   useEffect(() => {
     if (identity.data !== null && identity.data.id !== archiveOwner) {
       setArchive(emptyArchive()); setDraft(emptyDraft()); setTab('archive'); setArchiveOwner(identity.data.id);
