@@ -46,7 +46,7 @@ export class MutationReceipt implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return MutationReceipt.BaboonDomainVersion
     }
@@ -58,11 +58,11 @@ export class MutationReceipt implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return MutationReceipt.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return MutationReceipt.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return MutationReceipt.BaboonForwardReadable
     }
@@ -100,7 +100,7 @@ export class MutationReceipt_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return MutationReceipt_JsonCodec.BaboonDomainVersion
     }

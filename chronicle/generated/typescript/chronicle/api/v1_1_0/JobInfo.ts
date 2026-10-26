@@ -87,7 +87,7 @@ export class JobInfo implements BaboonGenerated {
     public baboonSameInVersions() {
         return JobInfo.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.1.0": "identical", "1.2.0": "prefix-compact" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.1.0": "identical", "1.2.0": "prefix-compact", "1.3.0": "prefix-compact" }
     public baboonForwardReadable() {
         return JobInfo.BaboonForwardReadable
     }
@@ -100,7 +100,7 @@ export class JobInfo implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.1.0 is deprecated, you should migrate to 1.2.0 */
+/** @deprecated Version 1.1.0 is deprecated, you should migrate to 1.3.0 */
 export class JobInfo_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: JobInfo): unknown {
         if (this !== JobInfo_JsonCodec.lazyInstance.value) {

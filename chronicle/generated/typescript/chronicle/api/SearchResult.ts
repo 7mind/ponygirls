@@ -56,7 +56,7 @@ export class SearchResult implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return SearchResult.BaboonDomainVersion
     }
@@ -68,11 +68,11 @@ export class SearchResult implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return SearchResult.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return SearchResult.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return SearchResult.BaboonForwardReadable
     }
@@ -112,7 +112,7 @@ export class SearchResult_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return SearchResult_JsonCodec.BaboonDomainVersion
     }

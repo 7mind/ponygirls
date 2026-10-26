@@ -1,12 +1,12 @@
 // Hand-written evolution semantics; generated codecs/converters remain in generated/.
-import { JobInfo } from '../../generated/typescript/chronicle/api/JobInfo.js';
+import { JobInfo } from '../../generated/typescript/chronicle/api/v1_2_0/JobInfo.js';
 import { JobInfo as JobInfoV11 } from '../../generated/typescript/chronicle/api/v1_1_0/JobInfo.js';
-import { convert__job_state__from__1_1_0 } from '../../generated/typescript/chronicle/api/from_1_1_0_job-state.js';
-import { TokenSource } from '../../generated/typescript/chronicle/api/TokenSource.js';
-import { ListedToken } from '../../generated/typescript/chronicle/api/ListedToken.js';
-import { TokensResult } from '../../generated/typescript/chronicle/api/TokensResult.js';
+import { convert__job_state__from__1_1_0 } from '../../generated/typescript/chronicle/api/v1_2_0/from_1_1_0_job-state.js';
+import { TokenSource } from '../../generated/typescript/chronicle/api/v1_2_0/TokenSource.js';
+import { ListedToken } from '../../generated/typescript/chronicle/api/v1_2_0/ListedToken.js';
+import { TokensResult } from '../../generated/typescript/chronicle/api/v1_2_0/TokensResult.js';
 import { TokensResult as TokensResultV11 } from '../../generated/typescript/chronicle/api/v1_1_0/TokensResult.js';
-import { convert__token_info__from__1_1_0 } from '../../generated/typescript/chronicle/api/from_1_1_0_token-info.js';
+import { convert__token_info__from__1_1_0 } from '../../generated/typescript/chronicle/api/v1_2_0/from_1_1_0_token-info.js';
 import { SearchResult as SearchResultV10 } from '../../generated/typescript/chronicle/api/v1_0_0/SearchResult.js';
 import { SearchResult as SearchResultV11 } from '../../generated/typescript/chronicle/api/v1_1_0/SearchResult.js';
 import { SearchCountScope } from '../../generated/typescript/chronicle/api/v1_1_0/SearchCountScope.js';

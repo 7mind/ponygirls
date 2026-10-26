@@ -1,26 +1,57 @@
 model chronicle.api
-version "1.2.0"
+version "1.3.0"
 
-import "1.1.0" { * } without { JobInfo TokensResult Operation Result }
+import "1.2.0" { * } without { Operation Result }
 
-enum TokenSource { Issued StaticConfig }
-data ListedToken { info: TokenInfo source: TokenSource }
-data TokensResult { tokens: lst[ListedToken] }
-data JobInfo { id: uid sessionId: uid revision: i32 state: JobState attempts: i32 error: opt[str] completedWindows: i32 totalWindows: opt[i32] }
-enum CollectorPhase { Discovering Scanning Uploading Idle Failed }
-data CollectorCounters {
-  discovered: i32 scanned: i32 waiting: i32 excluded: i32 unchanged: i32
-  enqueued: i32 uploaded: i32 uploadFailures: i32 quarantined: i32
-  pending: i32 stopped: i32 conflicts: i32 scannedBytes: i64
+enum SortDirection { Asc Desc }
+enum ArchiveSort {
+  LastTimestamp Title Owner Project Branch Producer Format Model Status
+  MessageCount Tags
 }
-root data CollectorProgressUpdate {
-  collectorId: str sequence: i64 runId: uid phase: CollectorPhase startedAt: str
-  counters: CollectorCounters totalUploadBytes: i64 uploadedBytes: i64
-  currentUploadTotalBytes: opt[i64] error: opt[str]
+enum ArchiveTextScope { ExactLexical BoundedCandidateSets }
+data ArchiveQuery {
+  expression: str sort: ArchiveSort direction: SortDirection
+  cursor: opt[str] limit: i32
 }
-root data CollectorProgressAck { sequence: i64 accepted: bit }
-data CollectorStatus { report: CollectorProgressUpdate receivedAt: str stale: bit }
-data CollectorStatusResult { collectors: lst[CollectorStatus] }
+data ArchiveRow {
+  head: SessionInfo publishedView: opt[ContentView] matchedView: opt[ContentView]
+  lastTimestamp: opt[str] messageCount: i32 tags: lst[str] headJob: opt[JobInfo]
+}
+data ArchiveResult {
+  rows: lst[ArchiveRow] total: i64 nextCursor: opt[str]
+  textScope: ArchiveTextScope annChunkLimitPerOperand: opt[i32]
+}
+data MessageLocation { view: ContentView position: i32 total: i32 }
+
+enum ActivityJobScope { Current Historical All }
+enum ActivityJobClass {
+  Current SupersededRevision ObsoleteProfile SupersededRevisionAndProfile
+}
+data JobCounts {
+  total: i64 queued: i64 running: i64 failed: i64 complete: i64
+  activeRunning: i64 expiredRunning: i64 unleasedRunning: i64
+}
+data ActivityCollector {
+  collectorId: str status: opt[CollectorStatus]
+  archiveHeads: i64 headsWithoutTargetJob: i64
+  current: JobCounts historical: JobCounts
+}
+data ActivityQuery { cursor: opt[str] limit: i32 }
+data ActivityResult {
+  observedAt: str user: UserInfo archiveHeads: i64 headsWithoutTargetJob: i64
+  current: JobCounts historical: JobCounts
+  collectors: lst[ActivityCollector] totalCollectors: i64 nextCursor: opt[str]
+}
+data ActivityJobsQuery {
+  collectorId: opt[str] scope: ActivityJobScope cursor: opt[str] limit: i32
+}
+data ActivityJob {
+  job: JobInfo profile: str classification: ActivityJobClass
+  leaseExpiresAt: opt[str] leaseActive: bit retryable: bit
+}
+data ActivityJobsResult {
+  observedAt: str jobs: lst[ActivityJob] total: i64 nextCursor: opt[str]
+}
 
 root adt Operation {
   data Hello { versions: lst[str] }
@@ -50,6 +81,10 @@ root adt Operation {
   data Receipt { mutationId: uid }
   data Purge { sessionId: uid }
   data Logout {}
+  data Archive { query: ArchiveQuery }
+  data Activity { query: ActivityQuery }
+  data ActivityJobs { query: ActivityJobsQuery }
+  data LocateMessage { sessionId: uid view: ContentView messageId: str }
 }
 root adt Result {
   data Hello { versions: VersionInfo user: UserInfo }
@@ -70,4 +105,8 @@ root adt Result {
   data Mutation { receipt: MutationReceipt }
   data Error { failure: Failure }
   data Ping { nonce: str }
+  data Archive { result: ArchiveResult }
+  data Activity { result: ActivityResult }
+  data ActivityJobs { result: ActivityJobsResult }
+  data LocatedMessage { result: MessageLocation }
 }

@@ -66,11 +66,11 @@ export class IngestReceipt implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return IngestReceipt.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return IngestReceipt.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical", "1.1.0": "identical", "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical", "1.1.0": "identical", "1.2.0": "identical", "1.3.0": "identical" }
     public baboonForwardReadable() {
         return IngestReceipt.BaboonForwardReadable
     }
@@ -83,7 +83,7 @@ export class IngestReceipt implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.2.0 */
+/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.3.0 */
 export class IngestReceipt_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: IngestReceipt): unknown {
         if (this !== IngestReceipt_JsonCodec.lazyInstance.value) {

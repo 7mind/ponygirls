@@ -110,11 +110,11 @@ export class SessionInfo implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return SessionInfo.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return SessionInfo.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical", "1.1.0": "identical", "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical", "1.1.0": "identical", "1.2.0": "identical", "1.3.0": "identical" }
     public baboonForwardReadable() {
         return SessionInfo.BaboonForwardReadable
     }
@@ -127,7 +127,7 @@ export class SessionInfo implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.2.0 */
+/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.3.0 */
 export class SessionInfo_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: SessionInfo): unknown {
         if (this !== SessionInfo_JsonCodec.lazyInstance.value) {

@@ -1,0 +1,26 @@
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__SearchResult__From__1_2_0
+    extends AbstractConversion[v1_2_0.SearchResult, SearchResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: v1_2_0.SearchResult
+      ): SearchResult = {
+        val hits: List[SearchHit] = _from.hits.map(e1 => conversions.convertWithContext[C, v1_2_0.SearchHit, SearchHit](context, e1)).toList
+        val total: Int = _from.total
+        val countscope: SearchCountScope = conversions.convertWithContext[C, v1_2_0.SearchCountScope, SearchCountScope](context, _from.countScope)
+        val rankinglimit: Option[Int] = _from.rankingLimit.map(e1 => e1)
+        SearchResult(
+                hits,
+                total,
+                countscope,
+                rankinglimit
+             )
+      }
+      override def versionFrom: String = "1.2.0"
+      override def versionTo: String = "1.3.0"
+      override def typeId: String = "chronicle.api/:#SearchResult"
+  }
+}

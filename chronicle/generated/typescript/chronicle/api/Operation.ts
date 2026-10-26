@@ -1,19 +1,22 @@
 import {type BaboonAdtMemberMeta, type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {ActivityJobsQuery, ActivityJobsQuery_JsonCodec} from './ActivityJobsQuery.js'
+import {ActivityQuery, ActivityQuery_JsonCodec} from './ActivityQuery.js'
+import {ArchiveQuery, ArchiveQuery_JsonCodec} from './ArchiveQuery.js'
 import {ContentView, ContentView_JsonCodec} from './ContentView.js'
 import {Scope, Scope_JsonCodec} from './Scope.js'
 import {SearchFilter, SearchFilter_JsonCodec} from './SearchFilter.js'
 import {SearchQuery, SearchQuery_JsonCodec} from './SearchQuery.js'
 
-export type Operation = Operation_Hello | Operation_Ping | Operation_Pong | Operation_Whoami | Operation_Search | Operation_GetSession | Operation_GetChunks | Operation_GetMessages | Operation_GetRaw | Operation_Related | Operation_Facets | Operation_CollectionStatus | Operation_IngestStatus | Operation_RetryJob | Operation_ListTokens | Operation_MintToken | Operation_RevokeToken | Operation_ListGroups | Operation_CreateGroup | Operation_Invite | Operation_AcceptInvite | Operation_RemoveMember | Operation_LeaveGroup | Operation_DeleteGroup | Operation_Receipt | Operation_Purge | Operation_Logout
+export type Operation = Operation_Hello | Operation_Ping | Operation_Pong | Operation_Whoami | Operation_Search | Operation_GetSession | Operation_GetChunks | Operation_GetMessages | Operation_GetRaw | Operation_Related | Operation_Facets | Operation_CollectionStatus | Operation_IngestStatus | Operation_RetryJob | Operation_ListTokens | Operation_MintToken | Operation_RevokeToken | Operation_ListGroups | Operation_CreateGroup | Operation_Invite | Operation_AcceptInvite | Operation_RemoveMember | Operation_LeaveGroup | Operation_DeleteGroup | Operation_Receipt | Operation_Purge | Operation_Logout | Operation_Archive | Operation_Activity | Operation_ActivityJobs | Operation_LocateMessage
 
 export const Operation = {
-    BaboonDomainVersion: '1.2.0',
+    BaboonDomainVersion: '1.3.0',
     BaboonDomainIdentifier: 'chronicle.api',
     BaboonTypeIdentifier: 'chronicle.api/:#Operation',
-    BaboonSameInVersions: ["1.2.0"],
-    BaboonForwardReadable: { "1.2.0": "identical" } as { readonly [version: string]: string },
-    BaboonMinReaderVersions: { "json-additive": "1.2.0", "prefix-compact": "1.2.0", "prefix-any-mode": "1.2.0", "identical": "1.2.0" } as { readonly [tier: string]: string },
+    BaboonSameInVersions: ["1.3.0"],
+    BaboonForwardReadable: { "1.3.0": "identical" } as { readonly [version: string]: string },
+    BaboonMinReaderVersions: { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.3.0", "identical": "1.3.0" } as { readonly [tier: string]: string },
     BaboonAdtTypeIdentifier: 'chronicle.api/:#Operation',
     jsonCodec(): Operation_JsonCodec {
         return Operation_JsonCodec.instance
@@ -50,7 +53,7 @@ export class Operation_Hello implements BaboonAdtMemberMeta, BaboonGeneratedLate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Hello.BaboonDomainVersion
     }
@@ -62,11 +65,11 @@ export class Operation_Hello implements BaboonAdtMemberMeta, BaboonGeneratedLate
     public baboonTypeIdentifier() {
         return Operation_Hello.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Hello.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Hello.BaboonForwardReadable
     }
@@ -105,7 +108,7 @@ export class Operation_Hello_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Hello_JsonCodec.BaboonDomainVersion
     }
@@ -158,7 +161,7 @@ export class Operation_Ping implements BaboonAdtMemberMeta, BaboonGeneratedLates
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Ping.BaboonDomainVersion
     }
@@ -170,11 +173,11 @@ export class Operation_Ping implements BaboonAdtMemberMeta, BaboonGeneratedLates
     public baboonTypeIdentifier() {
         return Operation_Ping.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Ping.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Ping.BaboonForwardReadable
     }
@@ -213,7 +216,7 @@ export class Operation_Ping_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Ping_JsonCodec.BaboonDomainVersion
     }
@@ -266,7 +269,7 @@ export class Operation_Pong implements BaboonAdtMemberMeta, BaboonGeneratedLates
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Pong.BaboonDomainVersion
     }
@@ -278,11 +281,11 @@ export class Operation_Pong implements BaboonAdtMemberMeta, BaboonGeneratedLates
     public baboonTypeIdentifier() {
         return Operation_Pong.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Pong.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Pong.BaboonForwardReadable
     }
@@ -321,7 +324,7 @@ export class Operation_Pong_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Pong_JsonCodec.BaboonDomainVersion
     }
@@ -371,7 +374,7 @@ export class Operation_Whoami implements BaboonAdtMemberMeta, BaboonGeneratedLat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Whoami.BaboonDomainVersion
     }
@@ -383,11 +386,11 @@ export class Operation_Whoami implements BaboonAdtMemberMeta, BaboonGeneratedLat
     public baboonTypeIdentifier() {
         return Operation_Whoami.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Whoami.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Whoami.BaboonForwardReadable
     }
@@ -426,7 +429,7 @@ export class Operation_Whoami_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Whoami_JsonCodec.BaboonDomainVersion
     }
@@ -479,7 +482,7 @@ export class Operation_Search implements BaboonAdtMemberMeta, BaboonGeneratedLat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Search.BaboonDomainVersion
     }
@@ -491,11 +494,11 @@ export class Operation_Search implements BaboonAdtMemberMeta, BaboonGeneratedLat
     public baboonTypeIdentifier() {
         return Operation_Search.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Search.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Search.BaboonForwardReadable
     }
@@ -534,7 +537,7 @@ export class Operation_Search_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Search_JsonCodec.BaboonDomainVersion
     }
@@ -595,7 +598,7 @@ export class Operation_GetSession implements BaboonAdtMemberMeta, BaboonGenerate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_GetSession.BaboonDomainVersion
     }
@@ -607,11 +610,11 @@ export class Operation_GetSession implements BaboonAdtMemberMeta, BaboonGenerate
     public baboonTypeIdentifier() {
         return Operation_GetSession.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_GetSession.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_GetSession.BaboonForwardReadable
     }
@@ -652,7 +655,7 @@ export class Operation_GetSession_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_GetSession_JsonCodec.BaboonDomainVersion
     }
@@ -729,7 +732,7 @@ export class Operation_GetChunks implements BaboonAdtMemberMeta, BaboonGenerated
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_GetChunks.BaboonDomainVersion
     }
@@ -741,11 +744,11 @@ export class Operation_GetChunks implements BaboonAdtMemberMeta, BaboonGenerated
     public baboonTypeIdentifier() {
         return Operation_GetChunks.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_GetChunks.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_GetChunks.BaboonForwardReadable
     }
@@ -790,7 +793,7 @@ export class Operation_GetChunks_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_GetChunks_JsonCodec.BaboonDomainVersion
     }
@@ -867,7 +870,7 @@ export class Operation_GetMessages implements BaboonAdtMemberMeta, BaboonGenerat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_GetMessages.BaboonDomainVersion
     }
@@ -879,11 +882,11 @@ export class Operation_GetMessages implements BaboonAdtMemberMeta, BaboonGenerat
     public baboonTypeIdentifier() {
         return Operation_GetMessages.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_GetMessages.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_GetMessages.BaboonForwardReadable
     }
@@ -928,7 +931,7 @@ export class Operation_GetMessages_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_GetMessages_JsonCodec.BaboonDomainVersion
     }
@@ -989,7 +992,7 @@ export class Operation_GetRaw implements BaboonAdtMemberMeta, BaboonGeneratedLat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_GetRaw.BaboonDomainVersion
     }
@@ -1001,11 +1004,11 @@ export class Operation_GetRaw implements BaboonAdtMemberMeta, BaboonGeneratedLat
     public baboonTypeIdentifier() {
         return Operation_GetRaw.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_GetRaw.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_GetRaw.BaboonForwardReadable
     }
@@ -1046,7 +1049,7 @@ export class Operation_GetRaw_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_GetRaw_JsonCodec.BaboonDomainVersion
     }
@@ -1107,7 +1110,7 @@ export class Operation_Related implements BaboonAdtMemberMeta, BaboonGeneratedLa
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Related.BaboonDomainVersion
     }
@@ -1119,11 +1122,11 @@ export class Operation_Related implements BaboonAdtMemberMeta, BaboonGeneratedLa
     public baboonTypeIdentifier() {
         return Operation_Related.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Related.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Related.BaboonForwardReadable
     }
@@ -1164,7 +1167,7 @@ export class Operation_Related_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Related_JsonCodec.BaboonDomainVersion
     }
@@ -1217,7 +1220,7 @@ export class Operation_Facets implements BaboonAdtMemberMeta, BaboonGeneratedLat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Facets.BaboonDomainVersion
     }
@@ -1229,11 +1232,11 @@ export class Operation_Facets implements BaboonAdtMemberMeta, BaboonGeneratedLat
     public baboonTypeIdentifier() {
         return Operation_Facets.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Facets.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Facets.BaboonForwardReadable
     }
@@ -1272,7 +1275,7 @@ export class Operation_Facets_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Facets_JsonCodec.BaboonDomainVersion
     }
@@ -1322,7 +1325,7 @@ export class Operation_CollectionStatus implements BaboonAdtMemberMeta, BaboonGe
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_CollectionStatus.BaboonDomainVersion
     }
@@ -1334,11 +1337,11 @@ export class Operation_CollectionStatus implements BaboonAdtMemberMeta, BaboonGe
     public baboonTypeIdentifier() {
         return Operation_CollectionStatus.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_CollectionStatus.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_CollectionStatus.BaboonForwardReadable
     }
@@ -1377,7 +1380,7 @@ export class Operation_CollectionStatus_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_CollectionStatus_JsonCodec.BaboonDomainVersion
     }
@@ -1438,7 +1441,7 @@ export class Operation_IngestStatus implements BaboonAdtMemberMeta, BaboonGenera
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_IngestStatus.BaboonDomainVersion
     }
@@ -1450,11 +1453,11 @@ export class Operation_IngestStatus implements BaboonAdtMemberMeta, BaboonGenera
     public baboonTypeIdentifier() {
         return Operation_IngestStatus.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_IngestStatus.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_IngestStatus.BaboonForwardReadable
     }
@@ -1495,7 +1498,7 @@ export class Operation_IngestStatus_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_IngestStatus_JsonCodec.BaboonDomainVersion
     }
@@ -1548,7 +1551,7 @@ export class Operation_RetryJob implements BaboonAdtMemberMeta, BaboonGeneratedL
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_RetryJob.BaboonDomainVersion
     }
@@ -1560,11 +1563,11 @@ export class Operation_RetryJob implements BaboonAdtMemberMeta, BaboonGeneratedL
     public baboonTypeIdentifier() {
         return Operation_RetryJob.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_RetryJob.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_RetryJob.BaboonForwardReadable
     }
@@ -1603,7 +1606,7 @@ export class Operation_RetryJob_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_RetryJob_JsonCodec.BaboonDomainVersion
     }
@@ -1653,7 +1656,7 @@ export class Operation_ListTokens implements BaboonAdtMemberMeta, BaboonGenerate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_ListTokens.BaboonDomainVersion
     }
@@ -1665,11 +1668,11 @@ export class Operation_ListTokens implements BaboonAdtMemberMeta, BaboonGenerate
     public baboonTypeIdentifier() {
         return Operation_ListTokens.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_ListTokens.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_ListTokens.BaboonForwardReadable
     }
@@ -1708,7 +1711,7 @@ export class Operation_ListTokens_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_ListTokens_JsonCodec.BaboonDomainVersion
     }
@@ -1769,7 +1772,7 @@ export class Operation_MintToken implements BaboonAdtMemberMeta, BaboonGenerated
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_MintToken.BaboonDomainVersion
     }
@@ -1781,11 +1784,11 @@ export class Operation_MintToken implements BaboonAdtMemberMeta, BaboonGenerated
     public baboonTypeIdentifier() {
         return Operation_MintToken.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_MintToken.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_MintToken.BaboonForwardReadable
     }
@@ -1826,7 +1829,7 @@ export class Operation_MintToken_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_MintToken_JsonCodec.BaboonDomainVersion
     }
@@ -1879,7 +1882,7 @@ export class Operation_RevokeToken implements BaboonAdtMemberMeta, BaboonGenerat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_RevokeToken.BaboonDomainVersion
     }
@@ -1891,11 +1894,11 @@ export class Operation_RevokeToken implements BaboonAdtMemberMeta, BaboonGenerat
     public baboonTypeIdentifier() {
         return Operation_RevokeToken.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_RevokeToken.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_RevokeToken.BaboonForwardReadable
     }
@@ -1934,7 +1937,7 @@ export class Operation_RevokeToken_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_RevokeToken_JsonCodec.BaboonDomainVersion
     }
@@ -1984,7 +1987,7 @@ export class Operation_ListGroups implements BaboonAdtMemberMeta, BaboonGenerate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_ListGroups.BaboonDomainVersion
     }
@@ -1996,11 +1999,11 @@ export class Operation_ListGroups implements BaboonAdtMemberMeta, BaboonGenerate
     public baboonTypeIdentifier() {
         return Operation_ListGroups.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_ListGroups.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_ListGroups.BaboonForwardReadable
     }
@@ -2039,7 +2042,7 @@ export class Operation_ListGroups_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_ListGroups_JsonCodec.BaboonDomainVersion
     }
@@ -2092,7 +2095,7 @@ export class Operation_CreateGroup implements BaboonAdtMemberMeta, BaboonGenerat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_CreateGroup.BaboonDomainVersion
     }
@@ -2104,11 +2107,11 @@ export class Operation_CreateGroup implements BaboonAdtMemberMeta, BaboonGenerat
     public baboonTypeIdentifier() {
         return Operation_CreateGroup.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_CreateGroup.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_CreateGroup.BaboonForwardReadable
     }
@@ -2147,7 +2150,7 @@ export class Operation_CreateGroup_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_CreateGroup_JsonCodec.BaboonDomainVersion
     }
@@ -2208,7 +2211,7 @@ export class Operation_Invite implements BaboonAdtMemberMeta, BaboonGeneratedLat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Invite.BaboonDomainVersion
     }
@@ -2220,11 +2223,11 @@ export class Operation_Invite implements BaboonAdtMemberMeta, BaboonGeneratedLat
     public baboonTypeIdentifier() {
         return Operation_Invite.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Invite.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Invite.BaboonForwardReadable
     }
@@ -2265,7 +2268,7 @@ export class Operation_Invite_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Invite_JsonCodec.BaboonDomainVersion
     }
@@ -2326,7 +2329,7 @@ export class Operation_AcceptInvite implements BaboonAdtMemberMeta, BaboonGenera
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_AcceptInvite.BaboonDomainVersion
     }
@@ -2338,11 +2341,11 @@ export class Operation_AcceptInvite implements BaboonAdtMemberMeta, BaboonGenera
     public baboonTypeIdentifier() {
         return Operation_AcceptInvite.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_AcceptInvite.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_AcceptInvite.BaboonForwardReadable
     }
@@ -2383,7 +2386,7 @@ export class Operation_AcceptInvite_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_AcceptInvite_JsonCodec.BaboonDomainVersion
     }
@@ -2444,7 +2447,7 @@ export class Operation_RemoveMember implements BaboonAdtMemberMeta, BaboonGenera
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_RemoveMember.BaboonDomainVersion
     }
@@ -2456,11 +2459,11 @@ export class Operation_RemoveMember implements BaboonAdtMemberMeta, BaboonGenera
     public baboonTypeIdentifier() {
         return Operation_RemoveMember.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_RemoveMember.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_RemoveMember.BaboonForwardReadable
     }
@@ -2501,7 +2504,7 @@ export class Operation_RemoveMember_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_RemoveMember_JsonCodec.BaboonDomainVersion
     }
@@ -2554,7 +2557,7 @@ export class Operation_LeaveGroup implements BaboonAdtMemberMeta, BaboonGenerate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_LeaveGroup.BaboonDomainVersion
     }
@@ -2566,11 +2569,11 @@ export class Operation_LeaveGroup implements BaboonAdtMemberMeta, BaboonGenerate
     public baboonTypeIdentifier() {
         return Operation_LeaveGroup.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_LeaveGroup.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_LeaveGroup.BaboonForwardReadable
     }
@@ -2609,7 +2612,7 @@ export class Operation_LeaveGroup_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_LeaveGroup_JsonCodec.BaboonDomainVersion
     }
@@ -2662,7 +2665,7 @@ export class Operation_DeleteGroup implements BaboonAdtMemberMeta, BaboonGenerat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_DeleteGroup.BaboonDomainVersion
     }
@@ -2674,11 +2677,11 @@ export class Operation_DeleteGroup implements BaboonAdtMemberMeta, BaboonGenerat
     public baboonTypeIdentifier() {
         return Operation_DeleteGroup.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_DeleteGroup.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_DeleteGroup.BaboonForwardReadable
     }
@@ -2717,7 +2720,7 @@ export class Operation_DeleteGroup_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_DeleteGroup_JsonCodec.BaboonDomainVersion
     }
@@ -2770,7 +2773,7 @@ export class Operation_Receipt implements BaboonAdtMemberMeta, BaboonGeneratedLa
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Receipt.BaboonDomainVersion
     }
@@ -2782,11 +2785,11 @@ export class Operation_Receipt implements BaboonAdtMemberMeta, BaboonGeneratedLa
     public baboonTypeIdentifier() {
         return Operation_Receipt.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Receipt.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Receipt.BaboonForwardReadable
     }
@@ -2825,7 +2828,7 @@ export class Operation_Receipt_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Receipt_JsonCodec.BaboonDomainVersion
     }
@@ -2878,7 +2881,7 @@ export class Operation_Purge implements BaboonAdtMemberMeta, BaboonGeneratedLate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Purge.BaboonDomainVersion
     }
@@ -2890,11 +2893,11 @@ export class Operation_Purge implements BaboonAdtMemberMeta, BaboonGeneratedLate
     public baboonTypeIdentifier() {
         return Operation_Purge.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Purge.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Purge.BaboonForwardReadable
     }
@@ -2933,7 +2936,7 @@ export class Operation_Purge_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Purge_JsonCodec.BaboonDomainVersion
     }
@@ -2983,7 +2986,7 @@ export class Operation_Logout implements BaboonAdtMemberMeta, BaboonGeneratedLat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Logout.BaboonDomainVersion
     }
@@ -2995,11 +2998,11 @@ export class Operation_Logout implements BaboonAdtMemberMeta, BaboonGeneratedLat
     public baboonTypeIdentifier() {
         return Operation_Logout.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0"]
     public baboonSameInVersions() {
         return Operation_Logout.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Logout.BaboonForwardReadable
     }
@@ -3038,7 +3041,7 @@ export class Operation_Logout_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_Logout_JsonCodec.BaboonDomainVersion
     }
@@ -3058,6 +3061,458 @@ export class Operation_Logout_JsonCodec {
     public static lazyInstance = new Lazy(() => new Operation_Logout_JsonCodec())
     public static get instance(): Operation_Logout_JsonCodec {
         return Operation_Logout_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Operation_Archive implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Operation]#Archive' as const;
+    private readonly _query: ArchiveQuery;
+
+    constructor(query: ArchiveQuery) {
+        this._query = query
+    }
+
+    public get query(): ArchiveQuery {
+        return this._query;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            query: this._query
+        };
+    }
+
+    public with(overrides: {query?: ArchiveQuery}): Operation_Archive {
+        return new Operation_Archive(
+            'query' in overrides ? overrides.query! : this._query
+        );
+    }
+
+    public static fromPlain(obj: {query: ArchiveQuery}): Operation_Archive {
+        return new Operation_Archive(
+            obj.query
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Operation_Archive.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_Archive.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#Archive'
+    public baboonTypeIdentifier() {
+        return Operation_Archive.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public baboonSameInVersions() {
+        return Operation_Archive.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public baboonForwardReadable() {
+        return Operation_Archive.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.3.0", "identical": "1.3.0" }
+    public baboonMinReaderVersions() {
+        return Operation_Archive.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_Archive.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Operation_Archive_JsonCodec {
+        return Operation_Archive_JsonCodec.instance
+    }
+}
+
+export class Operation_Archive_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Operation_Archive): unknown {
+        if (this !== Operation_Archive_JsonCodec.lazyInstance.value) {
+          return Operation_Archive_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "query": ArchiveQuery_JsonCodec.instance.encode(BaboonCodecContext.Default, value.query),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Operation_Archive {
+        if (this !== Operation_Archive_JsonCodec .lazyInstance.value) {
+            return Operation_Archive_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Operation_Archive (
+            ArchiveQuery_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["query"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Operation_Archive_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_Archive_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#Archive'
+    public baboonTypeIdentifier() {
+        return Operation_Archive_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_Archive_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Operation_Archive_JsonCodec())
+    public static get instance(): Operation_Archive_JsonCodec {
+        return Operation_Archive_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Operation_Activity implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Operation]#Activity' as const;
+    private readonly _query: ActivityQuery;
+
+    constructor(query: ActivityQuery) {
+        this._query = query
+    }
+
+    public get query(): ActivityQuery {
+        return this._query;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            query: this._query
+        };
+    }
+
+    public with(overrides: {query?: ActivityQuery}): Operation_Activity {
+        return new Operation_Activity(
+            'query' in overrides ? overrides.query! : this._query
+        );
+    }
+
+    public static fromPlain(obj: {query: ActivityQuery}): Operation_Activity {
+        return new Operation_Activity(
+            obj.query
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Operation_Activity.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_Activity.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#Activity'
+    public baboonTypeIdentifier() {
+        return Operation_Activity.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public baboonSameInVersions() {
+        return Operation_Activity.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public baboonForwardReadable() {
+        return Operation_Activity.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.3.0", "identical": "1.3.0" }
+    public baboonMinReaderVersions() {
+        return Operation_Activity.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_Activity.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Operation_Activity_JsonCodec {
+        return Operation_Activity_JsonCodec.instance
+    }
+}
+
+export class Operation_Activity_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Operation_Activity): unknown {
+        if (this !== Operation_Activity_JsonCodec.lazyInstance.value) {
+          return Operation_Activity_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "query": ActivityQuery_JsonCodec.instance.encode(BaboonCodecContext.Default, value.query),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Operation_Activity {
+        if (this !== Operation_Activity_JsonCodec .lazyInstance.value) {
+            return Operation_Activity_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Operation_Activity (
+            ActivityQuery_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["query"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Operation_Activity_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_Activity_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#Activity'
+    public baboonTypeIdentifier() {
+        return Operation_Activity_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_Activity_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Operation_Activity_JsonCodec())
+    public static get instance(): Operation_Activity_JsonCodec {
+        return Operation_Activity_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Operation_ActivityJobs implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Operation]#ActivityJobs' as const;
+    private readonly _query: ActivityJobsQuery;
+
+    constructor(query: ActivityJobsQuery) {
+        this._query = query
+    }
+
+    public get query(): ActivityJobsQuery {
+        return this._query;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            query: this._query
+        };
+    }
+
+    public with(overrides: {query?: ActivityJobsQuery}): Operation_ActivityJobs {
+        return new Operation_ActivityJobs(
+            'query' in overrides ? overrides.query! : this._query
+        );
+    }
+
+    public static fromPlain(obj: {query: ActivityJobsQuery}): Operation_ActivityJobs {
+        return new Operation_ActivityJobs(
+            obj.query
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Operation_ActivityJobs.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_ActivityJobs.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#ActivityJobs'
+    public baboonTypeIdentifier() {
+        return Operation_ActivityJobs.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public baboonSameInVersions() {
+        return Operation_ActivityJobs.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public baboonForwardReadable() {
+        return Operation_ActivityJobs.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.3.0", "identical": "1.3.0" }
+    public baboonMinReaderVersions() {
+        return Operation_ActivityJobs.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_ActivityJobs.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Operation_ActivityJobs_JsonCodec {
+        return Operation_ActivityJobs_JsonCodec.instance
+    }
+}
+
+export class Operation_ActivityJobs_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Operation_ActivityJobs): unknown {
+        if (this !== Operation_ActivityJobs_JsonCodec.lazyInstance.value) {
+          return Operation_ActivityJobs_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "query": ActivityJobsQuery_JsonCodec.instance.encode(BaboonCodecContext.Default, value.query),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Operation_ActivityJobs {
+        if (this !== Operation_ActivityJobs_JsonCodec .lazyInstance.value) {
+            return Operation_ActivityJobs_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Operation_ActivityJobs (
+            ActivityJobsQuery_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["query"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Operation_ActivityJobs_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_ActivityJobs_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#ActivityJobs'
+    public baboonTypeIdentifier() {
+        return Operation_ActivityJobs_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_ActivityJobs_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Operation_ActivityJobs_JsonCodec())
+    public static get instance(): Operation_ActivityJobs_JsonCodec {
+        return Operation_ActivityJobs_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Operation_LocateMessage implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Operation]#LocateMessage' as const;
+    private readonly _sessionId: string;
+    private readonly _view: ContentView;
+    private readonly _messageId: string;
+
+    constructor(sessionId: string, view: ContentView, messageId: string) {
+        this._sessionId = sessionId
+        this._view = view
+        this._messageId = messageId
+    }
+
+    public get sessionId(): string {
+        return this._sessionId;
+    }
+    public get view(): ContentView {
+        return this._view;
+    }
+    public get messageId(): string {
+        return this._messageId;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            sessionId: this._sessionId,
+            view: this._view,
+            messageId: this._messageId
+        };
+    }
+
+    public with(overrides: {sessionId?: string; view?: ContentView; messageId?: string}): Operation_LocateMessage {
+        return new Operation_LocateMessage(
+            'sessionId' in overrides ? overrides.sessionId! : this._sessionId,
+            'view' in overrides ? overrides.view! : this._view,
+            'messageId' in overrides ? overrides.messageId! : this._messageId
+        );
+    }
+
+    public static fromPlain(obj: {sessionId: string; view: ContentView; messageId: string}): Operation_LocateMessage {
+        return new Operation_LocateMessage(
+            obj.sessionId,
+            obj.view,
+            obj.messageId
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Operation_LocateMessage.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_LocateMessage.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#LocateMessage'
+    public baboonTypeIdentifier() {
+        return Operation_LocateMessage.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public baboonSameInVersions() {
+        return Operation_LocateMessage.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public baboonForwardReadable() {
+        return Operation_LocateMessage.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.3.0", "identical": "1.3.0" }
+    public baboonMinReaderVersions() {
+        return Operation_LocateMessage.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_LocateMessage.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Operation_LocateMessage_JsonCodec {
+        return Operation_LocateMessage_JsonCodec.instance
+    }
+}
+
+export class Operation_LocateMessage_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Operation_LocateMessage): unknown {
+        if (this !== Operation_LocateMessage_JsonCodec.lazyInstance.value) {
+          return Operation_LocateMessage_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "sessionId": value.sessionId,
+            "view": ContentView_JsonCodec.instance.encode(BaboonCodecContext.Default, value.view),
+            "messageId": value.messageId,
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Operation_LocateMessage {
+        if (this !== Operation_LocateMessage_JsonCodec .lazyInstance.value) {
+            return Operation_LocateMessage_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Operation_LocateMessage (
+            obj["sessionId"] as string,
+            ContentView_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["view"]),
+            obj["messageId"] as string,
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.3.0'
+    public baboonDomainVersion() {
+        return Operation_LocateMessage_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_LocateMessage_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#LocateMessage'
+    public baboonTypeIdentifier() {
+        return Operation_LocateMessage_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_LocateMessage_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Operation_LocateMessage_JsonCodec())
+    public static get instance(): Operation_LocateMessage_JsonCodec {
+        return Operation_LocateMessage_JsonCodec.lazyInstance.value
     }
 }
 
@@ -3149,6 +3604,18 @@ export class Operation_JsonCodec {
             if (value instanceof Operation_Logout) {
                 return { "Logout": Operation_Logout_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof Operation_Archive) {
+                return { "Archive": Operation_Archive_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Operation_Activity) {
+                return { "Activity": Operation_Activity_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Operation_ActivityJobs) {
+                return { "ActivityJobs": Operation_ActivityJobs_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof Operation_LocateMessage) {
+                return { "LocateMessage": Operation_LocateMessage_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
         throw new Error("Unhandled ADT branch: " + (value as {constructor?: {name?: string}}).constructor?.name);
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Operation {
@@ -3186,11 +3653,15 @@ export class Operation_JsonCodec {
                 case "Receipt": return Operation_Receipt_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Purge": return Operation_Purge_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Logout": return Operation_Logout_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "Archive": return Operation_Archive_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "Activity": return Operation_Activity_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "ActivityJobs": return Operation_ActivityJobs_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "LocateMessage": return Operation_LocateMessage_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
             default: throw new Error("Unknown ADT branch: " + key);
         }
     }
 
-    public static readonly BaboonDomainVersion = '1.2.0'
+    public static readonly BaboonDomainVersion = '1.3.0'
     public baboonDomainVersion() {
         return Operation_JsonCodec.BaboonDomainVersion
     }
