@@ -12,7 +12,7 @@
 
 import { adapterFor, hasQuotaAdapter } from "./adapters/index.ts";
 import type { Target } from "./discovery.ts";
-import { parseRetryAfter, type Http } from "./http.ts";
+import { parseRetryAfter, type Http, type QuotaCache } from "./http.ts";
 import { RateLimitedError, type Credential, type QuotaSnapshot } from "./quota.ts";
 
 const MAX_CONCURRENT_QUERIES = 8;
@@ -27,6 +27,7 @@ export interface QueryResult {
   snapshot: QuotaSnapshot | null;
   error: string | null;
   fetchedAt: Date;
+  quotaCache?: QuotaCache;
   rateLimited: boolean;
   /** When a rate-limited endpoint said to retry; null when it named no time. */
   retryAt: Date | null;
@@ -111,7 +112,7 @@ export class QuotaService {
     const held: QueryResult[] = [];
     for (const target of this.deps.discover()) {
       const previous = this.previous.get(targetKey(target));
-      if (previous?.rateLimited && previous.retryAt && previous.retryAt > now) held.push(previous);
+      if (target.provider !== "anthropic" && previous?.rateLimited && previous.retryAt && previous.retryAt > now) held.push(previous);
       else due.push(target);
     }
     const results = [...(await inPool(due, MAX_CONCURRENT_QUERIES, (target) => this.query(target, auth))), ...held];
@@ -122,7 +123,15 @@ export class QuotaService {
 
   private async query(target: Target, auth: ProviderAuth): Promise<QueryResult> {
     const fetchedAt = this.deps.now();
-    const done = (snapshot: QuotaSnapshot | null, error: string | null): QueryResult => ({ target, snapshot, error, fetchedAt, rateLimited: false, retryAt: null });
+    let quotaCache: QuotaCache | undefined;
+    const http: Http = {
+      request: async (method, url, headers, body) => {
+        const response = await this.deps.http.request(method, url, headers, body);
+        if (url === "https://api.anthropic.com/api/oauth/usage") quotaCache = response.quotaCache;
+        return response;
+      },
+    };
+    const done = (snapshot: QuotaSnapshot | null, error: string | null): QueryResult => ({ target, snapshot, error, fetchedAt: quotaCache?.fetchedAt ?? fetchedAt, ...(quotaCache === undefined ? {} : { quotaCache }), rateLimited: false, retryAt: null });
     try {
       const adapter = adapterFor(target.provider);
       let credential: Credential;
@@ -140,7 +149,7 @@ export class QuotaService {
       } else {
         credential = { ...target.credential };
       }
-      return done(await adapter.fetch(credential, this.deps.http), null);
+      return done(await adapter.fetch(credential, http), null);
     } catch (e) {
       if (e instanceof RateLimitedError) return { target, snapshot: null, error: e.message, fetchedAt, rateLimited: true, retryAt: parseRetryAfter(e.retryAfter, fetchedAt) };
       return done(null, `${(e as Error).name}: ${(e as Error).message}`);

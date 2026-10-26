@@ -52,9 +52,34 @@ No organization-admin key or browser cookie is used. Anthropic requires a usable
 OAuth login configured in pi; this extension does not import or refresh Claude
 Code profiles. API-key usage cannot reveal enterprise subscription spend.
 
-Each target fails independently. An HTTP 429 holds that target's last result
-until `Retry-After` passes. Targets that resolve to the same account are
-merged into one row.
+Each target fails independently. Except for shared Anthropic responses below,
+an HTTP 429 holds that target's last result until `Retry-After` passes.
+Targets that resolve to the same account are merged into one row.
+
+## Shared Anthropic cache
+
+All pi instances and the standalone Python dashboard coordinate through one
+SQLite file: `$XDG_CACHE_HOME/tokemon/state.sqlite`, or
+`~/Library/Caches/tokemon/state.sqlite` on macOS and
+`~/.cache/tokemon/state.sqlite` elsewhere. The directory/file modes are
+0700/0600. It contains endpoint URLs, SHA-256 hashes of Authorization values,
+last successful response bodies (including account metadata), and timestamps;
+it never stores the credentials themselves. Different credentials are isolated.
+
+`BEGIN IMMEDIATE` reserves each endpoint/credential's next request before
+network access. Only the reservation owner records its response; a timestamp
+fence rejects late completions after a newer reservation. Minimum spacing is
+five minutes, including after a process exits mid-request. A 429 backs off for
+at least 30 minutes, or longer if Retry-After requests it. Manual refreshes do
+not bypass these limits. Other clients such as Claude Code do not participate
+in this coordination, so rate limits remain possible.
+
+Readers keep displaying the last successful body after failed refreshes.
+Its success timestamp is never replaced with the cache-read or failed-attempt
+time. Values at least five minutes old show `stale Nm`; migrated cache entries
+with no known success timestamp show `stale (age unknown)`. A cold cache with
+an in-flight request or failed request has no quota values to display yet.
+Storage failures fail closed rather than issuing uncoordinated requests.
 
 ## Tool
 
@@ -85,7 +110,10 @@ them at) is present only with `include_models: true`. `include_quotas: false`
 drops the quota `windows` (plan, login, notes, and errors stay). `context` is
 the calling session's context size and usage; it is present unless
 `include_context: false` or the usage is unknown. Answers are cached for a
-minute; `fetchedAt` says when they were fetched.
+minute. Top-level `fetchedAt` is report assembly time; each provider exposes
+`fetchedAt`, `ageSeconds`, `stale`, and `nextRefreshAt`. Anthropic values may
+be older during backoff/failures. An unknown legacy success timestamp is null,
+not the current time.
 
 ## Command
 
@@ -114,8 +142,10 @@ command emits the table once as a notification.
 On the editor's top-right border pi shows the current provider's limited
 windows (`── ⠙ Working ────────────────── zai {5h/1:30 [██░░░ 30%]} {7d/3d:05:40 [█░░░░ 10%]} ──`: each window's
 trailing duration, reset countdown, and usage bar), refreshed
-at each turn end and on model switches; providers without quota rows,
-errors, and rate limits clear it instead of parking stale text there.
+on session start, at each turn end, on model switches, and every five minutes
+while idle. Age/reset countdowns redraw every 30 seconds without network
+requests. Last known Anthropic bars stay visible with a `⚠ stale Nm` marker;
+providers without quota rows clear the badge. Timers stop on session shutdown.
 Border placements need pi with earendil-works/pi#10602; this flake's
 pi-coding-agent carries it as a patch.
 
@@ -127,4 +157,8 @@ nix build .#checks.x86_64-linux.ponygirls-tokemon
 
 The adapters are tested against tokemon's recorded fixtures
 (`tests/fixtures`) through a scripted HTTP stand-in; no test touches the
-network.
+network. Real-filesystem/process tests cover competing Node writers, legacy
+migration, late-writer fencing, failures/backoff, and Python/Node cache
+interoperability. For direct Node runs, set `TOKEMON_PYTHON_SOURCE` to the
+absolute `nix/pkg/tokemon/src` path to enable the cross-language contract;
+the Nix check always enables it.

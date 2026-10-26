@@ -98,3 +98,45 @@ class QueryLedgerTests(unittest.TestCase):
             thread.join()
         self.assertEqual(errors, [])
         self.assertEqual(sum(claim.proceed for claim in claims), 1)
+
+class FreshnessRegressionTests(unittest.TestCase):
+    def test_success_age_survives_failed_query_and_claim(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = QueryLedger(Path(directory) / 'state.sqlite', INTERVAL)
+            ledger.try_claim(ENDPOINT, KEY, NOW)
+            ledger.record(ENDPOINT, KEY, 200, b'old success', NOW + INTERVAL, NOW)
+            later = NOW + INTERVAL
+            ledger.try_claim(ENDPOINT, KEY, later)
+            ledger.record(ENDPOINT, KEY, 500, b'failure', later + INTERVAL, later)
+            held = ledger.try_claim(ENDPOINT, KEY, later + timedelta(seconds=1))
+            self.assertEqual(held.body, b'old success')
+            self.assertEqual(held.fetched_at, NOW)
+
+    def test_late_writer_cannot_replace_new_claim(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'state.sqlite'
+            first = QueryLedger(path, INTERVAL)
+            second = QueryLedger(path, INTERVAL)
+            first.try_claim(ENDPOINT, KEY, NOW)
+            later = NOW + INTERVAL
+            second.try_claim(ENDPOINT, KEY, later)
+            second.record(ENDPOINT, KEY, 200, b'new', later + INTERVAL, later)
+            first.record(ENDPOINT, KEY, 200, b'late old', NOW + INTERVAL, NOW)
+            held = first.try_claim(ENDPOINT, KEY, later + timedelta(seconds=1))
+            self.assertEqual(held.body, b'new')
+            self.assertEqual(held.fetched_at, later)
+
+    def test_legacy_schema_migrates_without_guessing_success_age(self):
+        import sqlite3
+        from contextlib import closing
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'state.sqlite'
+            with closing(sqlite3.connect(path)) as db:
+                db.execute('CREATE TABLE endpoint_queries (endpoint TEXT NOT NULL, credential_key TEXT NOT NULL, queried_at REAL NOT NULL, next_allowed_at REAL NOT NULL, status INTEGER, body BLOB, PRIMARY KEY (endpoint, credential_key))')
+                db.execute('INSERT INTO endpoint_queries VALUES (?, ?, ?, ?, ?, ?)',
+                           (ENDPOINT, KEY, NOW.timestamp(), (NOW + INTERVAL).timestamp(), 429, b'old'))
+                db.commit()
+            ledger = QueryLedger(path, INTERVAL)
+            held = ledger.try_claim(ENDPOINT, KEY, NOW)
+            self.assertEqual(held.body, b'old')
+            self.assertIsNone(held.fetched_at)

@@ -2,11 +2,11 @@
  * ponygirls-tokemon — one-line quota summary for the editor's top-right
  * border: the current provider's limited windows with short bars. Published
  * through setWidget under the "tokemon" key (borderTopRight, one line).
- * Errors, rate limits, and providers without quota rows clear the widget
- * instead of parking stale text there.
+ * Last known shared quota values remain visible with an explicit stale age.
  */
 
 import { formatUsedLimit, sortResults } from "./format.ts";
+import { staleLabel } from "./freshness.ts";
 import type { QuotaWindow } from "./quota.ts";
 import type { QueryResult } from "./service.ts";
 
@@ -51,6 +51,8 @@ export function quotaLine(provider: string, results: QueryResult[], now: Date): 
   const windows = row.snapshot?.windows ?? [];
   if (windows.length === 0) return null;
   const segments = windows.map((w) => windowSegment(w, now)).filter((s): s is string => s !== null);
-  if (segments.length === 0) return `${provider} unlimited`;
-  return `${provider} ${segments.join(" ")}`;
+  const stale = staleLabel(row, now);
+  const suffix = stale === null ? "" : ` ⚠ ${stale}`;
+  if (segments.length === 0) return `${provider} unlimited${suffix}`;
+  return `${provider} ${segments.join(" ")}${suffix}`;
 }

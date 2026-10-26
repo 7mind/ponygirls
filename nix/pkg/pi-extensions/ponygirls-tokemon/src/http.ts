@@ -11,7 +11,14 @@ const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 export const HTTP_TOO_MANY_REQUESTS = 429;
 
+export interface QuotaCache {
+  fetchedAt: Date | null;
+  retryAt: Date;
+}
+
 export interface HttpResponse {
+  /** Present for coordinated Anthropic responses; null timestamp means legacy/unknown age. */
+  quotaCache?: QuotaCache;
   status: number;
   body: string;
   /** Raw Retry-After header, if the server sent one. */

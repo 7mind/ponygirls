@@ -8,7 +8,7 @@
  *   provider's available models with effort levels. Quota windows are
  *   included unless `include_quotas` is false; the calling session's
  *   context size and usage ride along unless `include_context` is false.
- *   Answers are cached for a minute.
+ *   Answers are cached for a minute; Anthropic quotas are shared across processes.
  * - Command `/tokemon`: the same data as a bottom panel replacing the editor
  *   (like /usage and /perf), auto-refreshing.
  * - Quota widget: the current provider's quota windows as short bars on the
@@ -27,8 +27,9 @@ import { providerColor } from "./src/colors.ts";
 import { discoverTargets } from "./src/discovery.ts";
 import { FetchHttp } from "./src/http.ts";
 import { secretOf } from "./src/pi-auth.ts";
+import { PacedHttp, stateDbPath } from "./src/pacing.ts";
 import { toolReport, type ModelReport } from "./src/report.ts";
-import { QuotaService, type ProviderAuth } from "./src/service.ts";
+import { QuotaService, type ProviderAuth, type QuotaReport } from "./src/service.ts";
 import { quotaLine } from "./src/status.ts";
 import { buildTable, PLAIN_TABLE_STYLE, type TableStyle } from "./src/table.ts";
 import { TokemonView } from "./src/view.ts";
@@ -40,6 +41,7 @@ const STATUS_KEY = "tokemon";
 /** The pane's auto-refresh interval (tokemon's default). */
 const PANE_REFRESH_MS = 300_000;
 const HTTP_TIMEOUT_MS = 15_000;
+const STATUS_REDRAW_MS = 30_000;
 
 /** Resolution failures (e.g. a failed OAuth refresh) propagate into the provider's row. */
 function authOf(ctx: ExtensionContext): ProviderAuth {
@@ -82,35 +84,64 @@ function tableStyle(theme: ThemeColors): TableStyle {
 export default function (pi: ExtensionAPI): void {
   const service = new QuotaService({
     discover: () => discoverTargets(getAgentDir(), homedir(), process.env),
-    http: new FetchHttp(HTTP_TIMEOUT_MS),
+    http: new PacedHttp(new FetchHttp(HTTP_TIMEOUT_MS), stateDbPath(homedir(), process.platform, process.env), () => new Date()),
     now: () => new Date(),
   });
 
   /**
    * Quota line on the editor's top-right border: the current provider's
    * windows as short bars. Published through setWidget as a one-line border
-   * widget; errors, rate limits, and providers without quota rows clear it
-   * instead of parking stale text there.
+   * widget. Shared Anthropic values retain their original timestamp and show
+   * a stale marker when refreshes fail or another process holds the lease.
    */
+  let statusContext: ExtensionContext | null = null;
+  let statusReport: QuotaReport | null = null;
+  let statusGeneration = 0;
+  let redrawTimer: ReturnType<typeof setInterval> | null = null;
+  let refreshTimer: ReturnType<typeof setInterval> | null = null;
+  const drawStatus = (ctx: ExtensionContext): void => {
+    const provider = ctx.model?.provider;
+    const line = provider && statusReport !== null ? quotaLine(provider, statusReport.results, new Date()) : null;
+    if (line === null) ctx.ui.setWidget(STATUS_KEY, undefined);
+    else ctx.ui.setWidget(STATUS_KEY, [line], { placement: "borderTopRight" });
+  };
   const refreshStatus = (ctx: ExtensionContext): void => {
     if (ctx.mode !== "tui") return;
-    const provider = ctx.model?.provider;
-    if (!provider) {
-      ctx.ui.setWidget(STATUS_KEY, undefined);
+    statusContext = ctx;
+    const generation = ++statusGeneration;
+    if (!ctx.model) {
+      drawStatus(ctx);
       return;
     }
     service.report(authOf(ctx), TOOL_MAX_AGE_MS).then(
       (report) => {
-        const line = quotaLine(provider, report.results, new Date());
-        if (line === null) {
-          ctx.ui.setWidget(STATUS_KEY, undefined);
-          return;
-        }
-        ctx.ui.setWidget(STATUS_KEY, [line], { placement: "borderTopRight" });
+        if (generation !== statusGeneration) return;
+        statusReport = report;
+        drawStatus(ctx);
       },
-      () => ctx.ui.setWidget(STATUS_KEY, undefined),
+      () => {
+        if (generation === statusGeneration) drawStatus(ctx);
+      },
     );
   };
+  const stopStatus = (): void => {
+    ++statusGeneration;
+    if (redrawTimer !== null) clearInterval(redrawTimer);
+    if (refreshTimer !== null) clearInterval(refreshTimer);
+    redrawTimer = null;
+    refreshTimer = null;
+    statusContext = null;
+    statusReport = null;
+  };
+  pi.on("session_start", (_event, ctx) => {
+    stopStatus();
+    if (ctx.mode !== "tui") return;
+    refreshStatus(ctx);
+    // Age/countdowns advance without network traffic; shared values refresh at the normal cadence.
+    redrawTimer = setInterval(() => { if (statusContext !== null) drawStatus(statusContext); }, STATUS_REDRAW_MS);
+    refreshTimer = setInterval(() => { if (statusContext !== null) refreshStatus(statusContext); }, PANE_REFRESH_MS);
+  });
+  pi.on("session_shutdown", () => stopStatus());
   pi.on("turn_end", (_event, ctx) => refreshStatus(ctx));
   pi.on("model_select", (_event, ctx) => refreshStatus(ctx));
 
@@ -119,7 +150,7 @@ export default function (pi: ExtensionAPI): void {
       name: "tokemon",
       label: "Provider quotas",
       description:
-        "List the model providers this pi is configured for (auth.json logins and keys, API-key environment variables, models.json providers) with each account's plan, login, and quota windows: used and limit with their unit, state (ok, low at 90%+, EXHAUSTED, unlimited), and reset time. Providers without a quota endpoint or whose query failed are listed with a note or error. Set include_models to also get each provider's available models with their effort levels; set include_quotas to false to drop the quota windows; the calling session's context size and usage ride along unless include_context is false. Answers may be up to a minute old (see fetchedAt).",
+        "List the model providers this pi is configured for (auth.json logins and keys, API-key environment variables, models.json providers) with each account's plan, login, and quota windows: used and limit with their unit, state (ok, low at 90%+, EXHAUSTED, unlimited), and reset time. Providers without a quota endpoint or whose query failed are listed with a note or error. Set include_models to also get each provider's available models with their effort levels; set include_quotas to false to drop the quota windows; the calling session's context size and usage ride along unless include_context is false. Anthropic quotas share a cross-process cache (five-minute refresh, at least 30-minute backoff after rate limits). Last known values remain visible when stale; see each provider's fetchedAt, ageSeconds, stale, and nextRefreshAt. The top-level fetchedAt is the report assembly time.",
       parameters: Type.Object({
         include_models: Type.Optional(Type.Boolean({ description: "Also list each provider's available models with effort levels (default false)" })),
         include_quotas: Type.Optional(Type.Boolean({ description: "Include the quota windows (default true)" })),

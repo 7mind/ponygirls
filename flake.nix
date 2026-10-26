@@ -724,7 +724,7 @@
             touch $out
           '';
           ponygirls-tokemon = pkgs.runCommand "ponygirls-tokemon-test" {
-            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.python3 ];
             PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
             PI_OFFLINE = "1";
             PI_TELEMETRY = "0";
@@ -732,6 +732,7 @@
             cp -r ${./nix/pkg/pi-extensions/ponygirls-tokemon} ponygirls-tokemon
             chmod -R u+w ponygirls-tokemon
             cd ponygirls-tokemon
+            export TOKEMON_PYTHON_SOURCE=${./nix/pkg/tokemon/src}
             mkdir -p node_modules/@earendil-works
             ln -s "$PI_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
             ln -s "$PI_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui

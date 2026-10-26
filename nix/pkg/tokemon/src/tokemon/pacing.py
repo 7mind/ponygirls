@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import math
 from datetime import datetime, timedelta
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Mapping
 
@@ -45,8 +46,8 @@ def _wait_response(next_allowed_at: datetime, now: datetime) -> HttpResponse:
     return HttpResponse(status=HTTP_TOO_MANY_REQUESTS, body=RATE_LIMITED_BODY, retry_after=str(seconds))
 
 
-def _cached(body: bytes) -> HttpResponse:
-    return HttpResponse(status=HTTP_OK, body=body, retry_after=None)
+def _cached(body: bytes, fetched_at: datetime | None) -> HttpResponse:
+    return HttpResponse(status=HTTP_OK, body=body, retry_after=None, fetched_at=fetched_at, cached=True)
 
 
 class PacedTransport:
@@ -65,21 +66,23 @@ class PacedTransport:
         claim = self._ledger.try_claim(url, key, now)
         if not claim.proceed:
             if claim.body is not None:
-                return _cached(claim.body)
+                return _cached(claim.body, claim.fetched_at)
             return _wait_response(claim.next_allowed_at, now)
         try:
             response = self._inner.request(method, url, headers, body)
         except TransportError:
             if claim.body is not None:
-                return _cached(claim.body)
+                return _cached(claim.body, claim.fetched_at)
             raise
         next_allowed = self._next_allowed(response, now)
         self._ledger.record(url, key, response.status, response.body, next_allowed, now)
-        if response.status != HTTP_TOO_MANY_REQUESTS:
-            return response
+        if response.status == HTTP_OK:
+            return replace(response, fetched_at=now)
         if claim.body is not None:
-            return _cached(claim.body)
-        return _wait_response(next_allowed, now)
+            return _cached(claim.body, claim.fetched_at)
+        if response.status == HTTP_TOO_MANY_REQUESTS:
+            return _wait_response(next_allowed, now)
+        return response
 
     def _next_allowed(self, response: HttpResponse, now: datetime) -> datetime:
         if response.status != HTTP_TOO_MANY_REQUESTS:

@@ -15,6 +15,7 @@ from rich.text import Text
 
 from tokemon.discovery import DEFAULT_PROFILE, YOLO_CONFIG_ROOT, Target
 from tokemon.quota import QueryResult, QuotaWindow
+from tokemon.pacing import CLAUDE_MIN_QUERY_INTERVAL
 
 LOW_WATER_FRACTION = 0.9
 CURRENCY_SYMBOLS: Mapping[str, str] = {"USD": "$", "EUR": "€", "GBP": "£"}
@@ -164,6 +165,18 @@ def _window_state(window: QuotaWindow) -> tuple[str, str]:
     return "ok", "green"
 
 
+def _stale_status(result: QueryResult, now: datetime) -> str | None:
+    if not result.cached and (result.snapshot is None or result.snapshot.fetched_at is None):
+        return None
+    if result.fetched_at is None:
+        return "stale · age unknown"
+    seconds = max(0, int((now - result.fetched_at).total_seconds()))
+    if seconds < CLAUDE_MIN_QUERY_INTERVAL.total_seconds():
+        return None
+    minutes = seconds // 60
+    return f"stale · {minutes}m old"
+
+
 def _status(result: QueryResult, window: QuotaWindow | None, now: datetime) -> tuple[str, str]:
     """Return (text, style)."""
     if result.rate_limit is not None:
@@ -182,6 +195,10 @@ def _status(result: QueryResult, window: QuotaWindow | None, now: datetime) -> t
         style = "dim"
     else:
         parts.append("ok")
+    stale = _stale_status(result, now)
+    if stale:
+        parts.append(stale)
+        style = "yellow"
     credential = result.target.credential
     if credential is not None and credential.is_expired(now):
         parts.append("auth expired")
@@ -202,6 +219,9 @@ def _status_column(result: QueryResult, windows: list[QuotaWindow | None], now: 
             text.append(mask.text(status_text), style=status_style)
         return text
     suffixes: list[str] = []
+    stale = _stale_status(result, now)
+    if stale:
+        suffixes.append(stale)
     if result.snapshot is not None and result.snapshot.note is not None:
         suffixes.append(mask.text(result.snapshot.note))
     expired = result.target.credential is not None and result.target.credential.is_expired(now)
@@ -224,6 +244,8 @@ def _status_column(result: QueryResult, windows: list[QuotaWindow | None], now: 
         label, style = _window_state(window)
         if index == 0 and suffixes:
             label = " · ".join([label, *suffixes])
+            if stale:
+                style = "yellow"
             if expired:
                 style = "bold red"
         text.append(label, style=style)
@@ -457,6 +479,9 @@ def build_table(
         dropped.append(_COLUMNS[droppable.pop(0)][0])
         visible = [index for index in visible if _COLUMNS[index][0] not in dropped]
     notes: list[str] = []
+    stale_rows = sum(_stale_status(result, now) is not None for result in shown)
+    if "Status" in dropped and stale_rows:
+        notes.append(f"⚠ {stale_rows} stale quota row(s)")
     if caption:
         notes.append(caption)
     if compact and "Provider" not in dropped:

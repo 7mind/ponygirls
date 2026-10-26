@@ -61,6 +61,7 @@ class Claim:
     proceed: bool
     body: bytes | None
     next_allowed_at: datetime
+    fetched_at: datetime | None = None
 
 
 class QueryLedger:
@@ -81,12 +82,13 @@ class QueryLedger:
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT next_allowed_at, body FROM endpoint_queries WHERE endpoint = ? AND credential_key = ?",
+                "SELECT next_allowed_at, body, fetched_at FROM endpoint_queries WHERE endpoint = ? AND credential_key = ?",
                 (endpoint, credential_key),
             ).fetchone()
             if row is not None and _utc(row["next_allowed_at"]) > now:
                 connection.execute("COMMIT")
-                return Claim(proceed=False, body=row["body"], next_allowed_at=_utc(row["next_allowed_at"]))
+                return Claim(proceed=False, body=row["body"], next_allowed_at=_utc(row["next_allowed_at"]),
+                             fetched_at=_utc(row["fetched_at"]) if row["fetched_at"] is not None else None)
             previous = row["body"] if row is not None else None
             connection.execute(
                 """
@@ -104,7 +106,8 @@ class QueryLedger:
             raise
         finally:
             connection.close()
-        return Claim(proceed=True, body=previous, next_allowed_at=next_allowed)
+        return Claim(proceed=True, body=previous, next_allowed_at=next_allowed,
+                     fetched_at=_utc(row["fetched_at"]) if row is not None and row["fetched_at"] is not None else None)
 
     def record(
         self,
@@ -115,26 +118,23 @@ class QueryLedger:
         next_allowed_at: datetime,
         now: datetime,
     ) -> None:
-        """Store the outcome. A non-200 does not replace a previously stored 200 body."""
+        """Store an outcome only for this claim (``now`` is the claim time).
+
+        Failures preserve both the last successful body and its timestamp.
+        """
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
-            previous = connection.execute(
-                "SELECT body FROM endpoint_queries WHERE endpoint = ? AND credential_key = ?",
-                (endpoint, credential_key),
-            ).fetchone()
-            kept = body if status == 200 and body else (previous["body"] if previous is not None else None)
             connection.execute(
                 """
-                INSERT INTO endpoint_queries (endpoint, credential_key, queried_at, next_allowed_at, status, body)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT (endpoint, credential_key) DO UPDATE SET
-                    queried_at = excluded.queried_at,
-                    next_allowed_at = excluded.next_allowed_at,
-                    status = excluded.status,
-                    body = excluded.body
+                UPDATE endpoint_queries SET
+                    next_allowed_at = ?, status = ?,
+                    body = CASE WHEN ? = 200 THEN ? ELSE body END,
+                    fetched_at = CASE WHEN ? = 200 THEN ? ELSE fetched_at END
+                WHERE endpoint = ? AND credential_key = ? AND queried_at = ?
                 """,
-                (endpoint, credential_key, now.timestamp(), next_allowed_at.timestamp(), status, kept),
+                (next_allowed_at.timestamp(), status, status, body, status, now.timestamp(),
+                 endpoint, credential_key, now.timestamp()),
             )
             connection.execute("COMMIT")
         except BaseException:
@@ -162,5 +162,16 @@ class QueryLedger:
             )
             """
         )
+        # Serialize migration with other Python/TypeScript initializers.
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(endpoint_queries)")}
+            if "fetched_at" not in columns:
+                connection.execute("ALTER TABLE endpoint_queries ADD COLUMN fetched_at REAL")
+            connection.execute("COMMIT")
+        except BaseException:
+            _rollback(connection)
+            connection.close()
+            raise
         os.chmod(self._path, STATE_FILE_MODE)
         return connection

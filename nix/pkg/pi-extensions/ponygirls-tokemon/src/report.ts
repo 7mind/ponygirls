@@ -5,6 +5,7 @@
  */
 
 import type { TargetOrigin } from "./discovery.ts";
+import { freshness, type Freshness } from "./freshness.ts";
 import { formatResets, rateLimitedStatus, sortResults, windowState, type WindowState } from "./format.ts";
 import type { QuotaReport } from "./service.ts";
 
@@ -20,7 +21,7 @@ export interface WindowReport {
   resetsIn: string | null;
 }
 
-export interface ProviderReport {
+export interface ProviderReport extends Freshness {
   provider: string;
   source: TargetOrigin;
   /** Where the credential was found: a file path or an environment variable. */
@@ -66,6 +67,7 @@ export interface ReportOptions {
 
 export function toolReport(report: QuotaReport, now: Date, options: ReportOptions): ToolReport {
   const providers = sortResults(report.results).map((r): ProviderReport => ({
+    ...freshness(r, now),
     provider: r.target.provider,
     source: r.target.origin,
     location: r.target.label,

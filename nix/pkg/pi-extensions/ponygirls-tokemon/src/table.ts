@@ -11,6 +11,7 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { formatResets, formatUsedLimit, hiddenCaption, isShownByDefault, rateLimitedStatus, sortResults, usageBar, windowState, type WindowState } from "./format.ts";
 import type { QuotaWindow } from "./quota.ts";
+import { staleLabel } from "./freshness.ts";
 import type { QueryResult } from "./service.ts";
 
 export interface TableStyle {
@@ -76,11 +77,12 @@ function stateStyle(style: TableStyle, state: WindowState): (s: string) => strin
 function statusLines(result: QueryResult, windows: Array<QuotaWindow | null>, now: Date, style: TableStyle): CellLine[] {
   if (result.rateLimited) return windows.map(() => ({ text: rateLimitedStatus(result.retryAt, now), style: style.warning }));
   if (result.error !== null) return windows.map(() => ({ text: result.error!, style: (s) => style.error(style.bold(s)) }));
-  const note = result.snapshot?.note ?? null;
+  const stale = staleLabel(result, now);
+  const note = [result.snapshot?.note, stale].filter((s): s is string => typeof s === "string").join(" · ") || null;
   return windows.map((window, index) => {
     if (window === null) return note !== null ? { text: index === 0 ? note : "—", style: style.dim } : { text: "ok", style: style.success };
     const state = windowState(window);
-    return { text: index === 0 && note !== null ? `${state} · ${note}` : state, style: stateStyle(style, state) };
+    return { text: index === 0 && note !== null ? `${state} · ${note}` : state, style: stale === null ? stateStyle(style, state) : style.warning };
   });
 }
 
@@ -169,7 +171,8 @@ export function buildTable(results: QueryResult[], now: Date, options: TableOpti
       })));
     }
   }
-  const notes = [hiddenCaption(hidden)];
+  const staleRows = ordered.filter((result) => staleLabel(result, now) !== null).length;
+  const notes = [dropped.includes("Status") && staleRows > 0 ? `⚠ ${staleRows} stale quota row(s)` : null, hiddenCaption(hidden)];
   if (compact && !dropped.includes("Provider")) notes.push("provider locations hidden");
   if (dropped.length > 0) notes.push(`columns hidden: ${dropped.join(", ")}`);
   const caption = notes.filter((n): n is string => n !== null).join(" · ") || null;

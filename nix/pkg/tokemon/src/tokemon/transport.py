@@ -5,6 +5,7 @@ from __future__ import annotations
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Mapping, Protocol
 
 USER_AGENT = "tokemon/0.1"
@@ -19,6 +20,9 @@ class HttpResponse:
     status: int
     body: bytes
     retry_after: str | None  # raw Retry-After header, if the server sent one
+
+    fetched_at: datetime | None = None
+    cached: bool = False
 
     def json(self) -> object:
         import json

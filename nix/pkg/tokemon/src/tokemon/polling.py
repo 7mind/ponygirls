@@ -35,7 +35,9 @@ def query_target(target: Target, transport: Transport, tokens: ExpiredTokenPolic
         return QueryResult(
             target=target, snapshot=None, error=f"{type(exc).__name__}: {exc}", fetched_at=now, rate_limit=None
         )
-    return QueryResult(target=target, snapshot=snapshot, error=None, fetched_at=now, rate_limit=None)
+    return QueryResult(target=target, snapshot=snapshot, error=None,
+                       fetched_at=snapshot.fetched_at if snapshot.cached else (snapshot.fetched_at or now),
+                       rate_limit=None, cached=snapshot.cached)
 
 
 def coalesce_by_identity(results: list[QueryResult]) -> list[QueryResult]:
@@ -70,6 +72,7 @@ def coalesce_by_identity(results: list[QueryResult]) -> list[QueryResult]:
             error=None,
             fetched_at=prior.fetched_at,
             rate_limit=None,
+            cached=prior.cached,
         )
     return out
 
@@ -117,7 +120,7 @@ class RetryAwareQuery:
         for target in discover_targets(self._home, self._environ):
             previous = self._previous.get(_target_key(target))
             retry_at = previous.rate_limit.retry_at if previous is not None and previous.rate_limit else None
-            if previous is not None and retry_at is not None and retry_at > now:
+            if target.provider != "anthropic" and previous is not None and retry_at is not None and retry_at > now:
                 held.append(previous)
             else:
                 due.append(target)

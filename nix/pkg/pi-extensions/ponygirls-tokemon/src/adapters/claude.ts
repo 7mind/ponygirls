@@ -1,6 +1,6 @@
 /** Claude personal OAuth quota/spend. API keys cannot query subscription usage. */
-import { bearer, getJson, type Http } from "../http.ts";
-import { QuotaFetchError, quotaWindow, type Credential, type QuotaAdapter, type QuotaSnapshot, type QuotaWindow } from "../quota.ts";
+import { bearer, getJson, TransportError, type Http } from "../http.ts";
+import { QuotaFetchError, RateLimitedError, quotaWindow, type Credential, type QuotaAdapter, type QuotaSnapshot, type QuotaWindow } from "../quota.ts";
 import { isObject, optionalNumber, parseDate, requireObject, topLevelKeys } from "../values.ts";
 
 const OAUTH_API = "https://api.anthropic.com/api/oauth";
@@ -65,7 +65,14 @@ export class ClaudeQuota implements QuotaAdapter {
     if (credential.kind !== "oauth") return { plan: null, identity: null, windows: [], note: "API key: no plan quota endpoint" };
     const headers = bearer(credential.secret);
     const usage = requireObject(await getJson(http, `${OAUTH_API}/usage`, headers), "claude usage");
-    const profile = requireObject(await getJson(http, `${OAUTH_API}/profile`, headers), "claude profile");
+    let profile: Record<string, unknown> = {};
+    let profileNote: string | null = null;
+    try {
+      profile = requireObject(await getJson(http, `${OAUTH_API}/profile`, headers), "claude profile");
+    } catch (error) {
+      if (!(error instanceof QuotaFetchError || error instanceof RateLimitedError || error instanceof TransportError)) throw error;
+      profileNote = `profile unavailable: ${error.message}`;
+    }
     const limits = usage["limits"];
     const windows = (Array.isArray(limits) ? limits.map(limitWindow) : []).filter((w): w is QuotaWindow => w !== null);
     if (windows.length === 0) {
@@ -83,6 +90,7 @@ export class ClaudeQuota implements QuotaAdapter {
     const plan = isObject(organization) && typeof organization["organization_type"] === "string" ? organization["organization_type"] : null;
     const enterprise = plan === "enterprise" || plan === "claude_enterprise";
     if (windows.length === 0 && !enterprise) throw new QuotaFetchError(`claude usage: no recognizable quota data (top-level keys: ${topLevelKeys(usage)})`);
-    return { plan, identity, windows, note: enterprise && spend === null ? "enterprise spend unavailable through OAuth" : null };
+    const note = [profileNote, enterprise && spend === null ? "enterprise spend unavailable through OAuth" : null].filter((value) => value !== null).join(" · ") || null;
+    return { plan, identity, windows, note };
   }
 }

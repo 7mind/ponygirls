@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import io
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 
 from rich.console import Console
 
@@ -71,6 +72,35 @@ def _profile_result(profile: str, label: str, window: QuotaWindow | None, error:
 
 
 class RenderTests(unittest.TestCase):
+    def test_cached_values_show_stale_age_at_five_minutes(self):
+        result = _result(QuotaWindow("5h", 50, 100, "%", None), None)
+        for seconds, stale in ((299, False), (300, True), (3600, True)):
+            with self.subTest(seconds=seconds):
+                cached = replace(result, cached=True, fetched_at=NOW - timedelta(seconds=seconds))
+                text = _render([cached])
+                self.assertIn("50%", text)
+                self.assertEqual("stale" in text, stale)
+                if stale:
+                    self.assertIn(f"{seconds // 60}m old", text)
+        # Other providers' existing timestamps do not acquire cache semantics.
+        self.assertNotIn("stale", _render([replace(result, fetched_at=EXPIRED)]))
+
+    def test_network_success_ages_without_another_cache_read(self):
+        result = _result(QuotaWindow("5h", 50, 100, "%", None), None)
+        old = NOW - timedelta(minutes=10)
+        result = replace(result, fetched_at=old, snapshot=replace(result.snapshot, fetched_at=old))
+        self.assertIn("stale", _render([result]))
+
+    def test_narrow_table_retains_stale_warning_when_status_is_hidden(self):
+        result = replace(_result(QuotaWindow("5h", 50, 100, "%", None), None),
+                         cached=True, fetched_at=NOW - timedelta(minutes=10))
+        self.assertIn("1 stale quota row", _render([result], width=40))
+
+    def test_legacy_cached_body_has_explicit_unknown_age(self):
+        result = replace(_result(QuotaWindow("5h", 50, 100, "%", None), None),
+                         cached=True, fetched_at=None)
+        self.assertIn("stale · age unknown", _render([result]))
+
     def test_low_usage_row(self):
         window = QuotaWindow("5h", used=50.0, limit=100.0, unit="%", resets_at=None)
         text = _render([_result(window, None)])

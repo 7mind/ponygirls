@@ -39,7 +39,7 @@ from tokemon.adapters.common import (
     top_level_keys,
 )
 from tokemon.credentials import Credential, CredentialKind
-from tokemon.quota import QuotaFetchError, QuotaSnapshot, QuotaWindow
+from tokemon.quota import QuotaFetchError, QuotaSnapshot, QuotaWindow, RateLimitedError
 from tokemon.token_refresh import RefreshedToken, TokenRefreshError
 from tokemon.transport import Transport, TransportError
 
@@ -162,10 +162,15 @@ class ClaudeQuota:
         if credential.kind is not CredentialKind.OAUTH:
             return QuotaSnapshot(plan_name=None, identity=None, windows=(), note="API key: no plan quota endpoint")
         headers = bearer_headers(credential)
-        _, usage_payload = get_json(transport, f"{ANTHROPIC_OAUTH_API}{USAGE_PATH}", headers)
+        usage_response, usage_payload = get_json(transport, f"{ANTHROPIC_OAUTH_API}{USAGE_PATH}", headers)
         usage = require_object(usage_payload, "claude usage")
-        _, profile_payload = get_json(transport, f"{ANTHROPIC_OAUTH_API}{PROFILE_PATH}", headers)
-        profile = require_object(profile_payload, "claude profile")
+        profile: Mapping[str, Any] = {}
+        profile_note = None
+        try:
+            _, profile_payload = get_json(transport, f"{ANTHROPIC_OAUTH_API}{PROFILE_PATH}", headers)
+            profile = require_object(profile_payload, "claude profile")
+        except (QuotaFetchError, RateLimitedError, TransportError) as exc:
+            profile_note = f"profile unavailable: {exc}"
 
         limits = usage.get("limits")
         parsed = [_limit_window(node) for node in limits] if isinstance(limits, list) else []
@@ -206,7 +211,9 @@ class ClaudeQuota:
             plan_name=plan if isinstance(plan, str) else None,
             identity=email if isinstance(email, str) else None,
             windows=present,
-            note=note,
+            note=" · ".join(part for part in (note, profile_note) if part) or None,
+            fetched_at=usage_response.fetched_at,
+            cached=usage_response.cached,
         )
 
 

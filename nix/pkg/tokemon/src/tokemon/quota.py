@@ -28,6 +28,8 @@ class QuotaSnapshot:
     identity: str | None
     windows: tuple[QuotaWindow, ...]
     note: str | None
+    fetched_at: datetime | None = None
+    cached: bool = False
 
 
 class QuotaFetchError(RuntimeError):
@@ -56,8 +58,9 @@ class QueryResult:
     target: Target
     snapshot: QuotaSnapshot | None
     error: str | None
-    fetched_at: datetime
+    fetched_at: datetime | None
     rate_limit: RateLimit | None
+    cached: bool = False
 
 
 class NoQuotaEndpoint:

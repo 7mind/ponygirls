@@ -58,3 +58,40 @@ class CoalesceByIdentityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CacheFreshnessFlowTests(unittest.TestCase):
+    def test_cached_usage_timestamp_reaches_query_result(self):
+        import tempfile
+        from pathlib import Path
+        from datetime import timedelta
+        from tokemon.pacing import PacedTransport
+        from tokemon.polling import query_target
+        from tokemon.transport import HttpResponse
+
+        class Inner:
+            def request(self, method, url, headers, body):
+                payload = (b'{"five_hour":{"utilization":42}}' if url.endswith('/usage')
+                           else b'{"account":{"email":"a@example.test"}}')
+                return HttpResponse(200, payload, None)
+
+        class Tokens:
+            def current(self, provider, credential, transport, now):
+                return credential
+
+        target = Target('default', 'pi', 'anthropic', '~/.pi/agent', _credential('token-a'), None)
+        clock = [NOW]
+        with tempfile.TemporaryDirectory() as directory:
+            transport = PacedTransport(Inner(), Path(directory) / 'state.sqlite', lambda: clock[0])
+            fresh = query_target(target, transport, Tokens())
+            self.assertEqual(fresh.fetched_at, NOW)
+            self.assertFalse(fresh.cached)
+            clock[0] += timedelta(seconds=30)
+            cached = query_target(target, transport, Tokens())
+            self.assertIsNone(cached.error)
+            self.assertEqual(cached.snapshot.windows[0].used, 42)
+            self.assertTrue(cached.cached)
+            self.assertEqual(cached.fetched_at, NOW)
+            merged = coalesce_by_identity([cached, cached])
+            self.assertTrue(merged[0].cached)
+            self.assertEqual(merged[0].fetched_at, NOW)
