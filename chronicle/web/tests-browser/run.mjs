@@ -139,10 +139,10 @@ try {
     await collector.getByText('Per-run collector counters', { exact: true }).click();
     assert.match(await collector.innerText(), /sequence 9007199254740993/);
     assert.match(await collector.innerText(), /Scanned \/ discovered sessions\n0 \/ 0/);
-    await page.getByText('0 / unknown windows processed · not published by this job', { exact: true }).waitFor();
-    await page.getByText('2 / 3 windows processed · not published by this job', { exact: true }).waitFor();
+    await page.getByText('0 / unknown windows processed · job not Complete at this snapshot', { exact: true }).waitFor();
+    await page.getByText('2 / 3 windows processed · job not Complete at this snapshot', { exact: true }).waitFor();
     fixture.jobs = fixture.jobs.map(job => job.state === api.JobState.Running ? job.with({ completedWindows: 3, totalWindows: 3 }) : job);
-    await page.getByText('3 / 3 windows processed · not published by this job', { exact: true }).waitFor({ timeout: 7000 });
+    await page.getByText('3 / 3 windows processed · job not Complete at this snapshot', { exact: true }).waitFor({ timeout: 7000 });
     fixture.jobs = fixture.jobs.map(job => job.state === api.JobState.Running ? job.with({ state: api.JobState.Complete }) : job);
     await page.getByText('3 / 3 windows processed · job complete', { exact: true }).waitFor({ timeout: 7000 });
     const scanning = report.with({ phase: api.CollectorPhase.Scanning, sequence: report.sequence + 1n, counters: report.counters.with({ discovered: 12, scanned: 7, waiting: 2, pending: 4, quarantined: 1, stopped: 1, conflicts: 1, uploadFailures: 2, scannedBytes: 9007199254740995n }) });

@@ -25,6 +25,14 @@ function largeFixture(fixture) {
     return new api.ActivityCollector(id, status, BigInt(heads.length), BigInt(heads.filter(row => row.headJob === undefined).length), fixture.counts(jobs.filter(row => row.classification === api.ActivityJobClass.Current)), fixture.counts(jobs.filter(row => row.classification !== api.ActivityJobClass.Current)));
   });
 }
+function queuedPublicationFixture(fixture) {
+  fixture.publishedRevision = fixture.headRevision;
+  const queued = fixture.jobs[0].with({ state: api.JobState.Queued, attempts: 0, error: undefined, completedWindows: 0, totalWindows: undefined });
+  const complete = new api.JobInfo('00000000-0000-4000-8000-000000000008', fixture.archiveAt(1).head.id, fixture.headRevision, api.JobState.Complete, 1, undefined, 2, 2);
+  fixture.jobs = [queued, complete];
+  fixture.activityJobs = [new api.ActivityJob(queued, fixture.targetProfile, api.ActivityJobClass.Current, undefined, false, false, fixture.source.collectorNamespace, fixture.jobSession(queued), '2026-10-23T09:31:00Z'), new api.ActivityJob(complete, fixture.targetProfile, api.ActivityJobClass.Current, '2020-01-01T00:00:00Z', false, false, fixture.source.collectorNamespace, fixture.jobSession(complete), '2026-10-23T09:31:00Z')];
+  fixture.jobExpressions.set('lease:unleased', [queued.id]);
+}
 async function appendUntil(page, scroller, rows, count) {
   await until(async () => { if (await page.locator(rows).count() >= count) return true; await page.locator(scroller).evaluate(element => { element.scrollTop = element.scrollHeight; }); return false; }, `Expected ${count} rows in ${scroller}`);
 }
@@ -253,6 +261,24 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.getByRole('alert').filter({ hasText: 'Read scope is required to view your activity' }).waitFor();
     assert.equal(await page.locator('.activity-table').count(), 0); assert.equal(await page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).count(), 0);
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Activity || call.operation instanceof api.Operation_ActivityJobs || call.operation instanceof api.Operation_PreviewRetryFailed || call.operation instanceof api.Operation_ApplyRetryFailed).length, 0); await context.close();
+  });
+  await run('activity truth lease cells agree with details and lease-unleased metadata filtering', async () => {
+    const { context, page, fixture } = await scene(queuedPublicationFixture), id = fixture.jobs[0].id;
+    const row = page.locator(`.activity-job-row[data-scroll-anchor="${id}"]`); await row.waitFor();
+    const before = await row.locator('[data-column="LeaseState"]').innerText(); await row.locator('.activity-row-details > summary').click();
+    const details = await row.locator('.activity-job-lease').innerText(); await row.locator('.activity-row-details > summary').click();
+    const retained = await page.locator('.activity-job-row[data-scroll-anchor="00000000-0000-4000-8000-000000000008"] [data-column="LeaseState"]').innerText();
+    await filter(page, 'Indexing job', 'lease:unleased'); await until(async () => await page.locator('.activity-job-row').count() === 1, 'unleased metadata filter did not return the queued row');
+    await page.locator('.activity-job-table th[data-sort="LeaseState"] button').click(); await until(() => fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.expression === 'lease:unleased' && call.operation.query.sort === api.ActivityJobSort.LeaseState), 'lease sort did not keep the metadata predicate');
+    assert.deepEqual({ cellBefore: before, detailsUnleased: details.startsWith('Unleased'), retainedNonRunningLease: retained, filteredIds: await rowIds(page, '.activity-job-row'), cellAfter: await row.locator('[data-column="LeaseState"]').innerText() }, { cellBefore: 'Unleased', detailsUnleased: true, retainedNonRunningLease: 'Inactive', filteredIds: [id], cellAfter: 'Unleased' });
+    await context.close();
+  });
+  await run('activity truth queued progress cannot attribute absence of an existing publication', async () => {
+    const { context, page, fixture } = await scene(queuedPublicationFixture), queued = fixture.jobRows[0];
+    assert.equal(queued.job.state, api.JobState.Queued); assert.equal(queued.session.indexedRevision, queued.job.revision, 'the fixture retains publication at the queued job revision');
+    const row = page.locator(`.activity-job-row[data-scroll-anchor="${queued.job.id}"]`); await row.locator('.activity-row-details > summary').click(); const progress = await row.locator('.activity-window-progress').innerText();
+    assert.doesNotMatch(progress, /not published by this job/i, 'the Activity DTO cannot attribute publication or its absence to this logical job'); assert.match(progress, /job not Complete at this snapshot/);
+    await context.close();
   });
   await run('activity tables expose dense globally sortable metadata tables', async () => {
     const { context, page } = await scene(null);

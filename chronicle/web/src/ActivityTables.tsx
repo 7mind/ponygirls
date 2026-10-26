@@ -22,7 +22,7 @@ export const Time = memo(function Time({ value }: { value: string | undefined })
   return <time dateTime={value}>{Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time>;
 });
 export function freshness(row: ActivityCollector): string { return row.status === undefined ? 'Unknown' : row.status.stale ? 'Stale' : 'Recent'; }
-function leaseState(row: ActivityJob): string { return row.job.state !== JobState.Running ? 'Inactive' : row.leaseActive ? 'Active' : row.leaseExpiresAt === undefined ? 'Unleased' : 'Expired'; }
+function leaseState(row: ActivityJob): string { return row.leaseExpiresAt === undefined ? 'Unleased' : row.job.state !== JobState.Running ? 'Inactive' : row.leaseActive ? 'Active' : 'Expired'; }
 export const collectorColumns: readonly Column<ActivityCollector, ActivityCollectorSort>[] = [
   { sort: ActivityCollectorSort.CollectorId, label: 'Collector', title: 'Collector ID', render: row => <code title={row.collectorId}>{row.collectorId}</code> },
   { sort: ActivityCollectorSort.Phase, label: 'Phase', title: 'Last reported phase', render: row => row.status === undefined ? 'Unknown' : <span className={`badge ${row.status.report.phase === CollectorPhase.Failed ? 'activity-warning' : ''}`}>{row.status.report.phase}</span> },
@@ -107,7 +107,7 @@ export function JobDetails({ item }: { item: ActivityJob }) {
     <div><dt>Owner ID</dt><dd><code>{session.ownerId}</code></dd></div><div><dt>Project / branch</dt><dd>{metadata.project === undefined ? 'Unknown' : metadata.project} / {metadata.gitBranch === undefined ? 'Unknown' : metadata.gitBranch}</dd></div>
     <div><dt>Producer / source format</dt><dd>{metadata.producer} / {session.source.format}</dd></div><div><dt>Source model</dt><dd>{metadata.model === undefined ? 'Unknown' : metadata.model}</dd></div>
     <div><dt>Tags</dt><dd>{metadata.tags.length === 0 ? 'None' : metadata.tags.join(', ')}</dd></div><div><dt>Collector namespace / root</dt><dd>{session.source.collectorNamespace} / {session.source.discoveryRootId}</dd></div>
-  </dl><p className="activity-window-progress">{windowProgress(job)}{job.state === JobState.Complete ? ' · job complete' : ' · not published by this job'}</p><JobLease item={item}/>
+  </dl><p className="activity-window-progress">{windowProgress(job)}{job.state === JobState.Complete ? ' · job complete' : ' · job not Complete at this snapshot'}</p><JobLease item={item}/>
     {job.error !== undefined && <p className="activity-failure">{job.state === JobState.Running ? 'Prior-attempt error' : 'Job error'}: {job.error}</p>}
     {item.classification !== ActivityJobClass.Current && <p className="tiny">Historical job · not actionable here. This does not describe the current published view.</p>}
   </div></details>;

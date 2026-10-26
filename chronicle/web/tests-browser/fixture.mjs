@@ -16,7 +16,7 @@ function fixturePage(rows, cursor, limit, key) {
   if (cursor !== undefined) { const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString()); if (decoded[0] !== key) throw new Error('Fixture cursor binding mismatch'); offset = decoded[1]; }
   return { rows: rows.slice(offset, offset + limit), next: offset + limit < rows.length ? Buffer.from(JSON.stringify([key, offset + limit])).toString('base64url') : undefined };
 }
-function leaseState(item) { return item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : item.leaseExpiresAt === undefined ? 'unleased' : 'expired'; }
+function leaseState(item) { return item.leaseExpiresAt === undefined ? 'unleased' : item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : 'expired'; }
 export class ChronicleFixture {
   user = new api.UserInfo('alice', 'alice', [api.Scope.Read, api.Scope.Raw]);
   version = new api.VersionInfo('1.3.0', '1.0.0', ['1.3.0', '1.2.0', '1.1.0', '1.0.0']);
