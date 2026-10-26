@@ -98,7 +98,15 @@ object Config {
     documentPrefix <- cursor.get[String]("documentPrefix")
     sendDimensions <- if(cursor.downField("sendDimensions").focus.isEmpty) Right(omittedSendDimensions) else cursor.get[Boolean]("sendDimensions")
   } yield EmbeddingConfig(endpoint,model,revision,credential,timeout,bound,dimensions,queryPrefix,documentPrefix,sendDimensions) }
-  given Decoder[IndexingCapacity] = Decoder.forProduct3("annotationSessions","embeddingRequests","embeddingBatchSize")(IndexingCapacity.apply)
+  given Decoder[IndexingCapacity] = Decoder.instance { cursor =>
+    def integer(field: String): Decoder.Result[Int] = cursor.downField(field).focus.flatMap(_.asNumber).flatMap(_.toInt)
+      .toRight(io.circe.DecodingFailure("expected capacity integer",cursor.downField(field).history))
+    for {
+      annotation <- integer("annotationSessions")
+      embedding <- integer("embeddingRequests")
+      batch <- integer("embeddingBatchSize")
+    } yield IndexingCapacity(annotation,embedding,batch)
+  }
   given Decoder[Config] = Decoder.instance { cursor => for {
     listenHost <- cursor.get[String]("listenHost")
     listenPort <- cursor.get[Int]("listenPort")

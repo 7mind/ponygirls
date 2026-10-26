@@ -14,7 +14,7 @@ class ModelAdmissionTest extends munit.FunSuite {
     val capacity=Json.obj("annotationSessions"->Json.fromInt(2),"embeddingRequests"->Json.fromInt(3),"embeddingBatchSize"->Json.fromInt(5))
     assertEquals(json.mapObject(_.add("indexing",capacity)).as[Config].toOption.get.indexing,IndexingCapacity(2,3,5))
     List(Json.Null,Json.obj(),Json.fromString("invalid"),capacity.mapObject(_.add("embeddingRequests",Json.fromString("3")))).foreach { value =>
-      assert(json.mapObject(_.add("indexing",value)).as[Config].isLeft)
+      assert(json.mapObject(_.add("indexing",value)).as[Config].isLeft,s"malformed capacity accepted: ${value.noSpaces}")
     }
   }
   test("BA specified: execution knobs validate independently and never alter either semantic profile") {

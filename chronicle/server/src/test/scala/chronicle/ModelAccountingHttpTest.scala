@@ -84,7 +84,7 @@ abstract class ModelAccountingContract extends munit.FunSuite {
   }
   test("BG/GoodCommunication: shared gates bound index/query embedding requests and annotation/MCP-shaped HTTP calls") {
     val config=configured
-    final case class Counts(annotation: Int,embedding: Int,maximumAnnotation: Int,maximumEmbedding: Int)
+    final case class Counts(annotation: Int,embedding: Int,maximumAnnotation: Int,maximumEmbedding: Int);
     (for {
       counts <- Ref.of[IO,Counts](Counts(0,0,0,0))
       app: HttpApp[IO]=cats.data.Kleisli(request => request.as[String].flatMap { body =>
@@ -145,6 +145,38 @@ abstract class ModelAccountingContract extends munit.FunSuite {
         } yield ()
       }
     } yield ()).unsafeRunSync()
+  }
+  test("BG/GoodCommunication: cancellation and whole-request deadlines release actual HTTP attempts with unknown usage") {
+    val config=configured
+    List(false,true).traverse_ { cancel =>
+      for {
+        entered <- Deferred[IO,Unit]
+        release <- Deferred[IO,Unit]
+        calls <- Ref.of[IO,Int](0)
+        app: HttpApp[IO]=cats.data.Kleisli(_ => calls.getAndUpdate(_+1).flatMap { index =>
+          (if(index==0) entered.complete(()).void *> release.get else IO.unit).as(Response[IO](Status.Ok).withEntity("{}"))
+        })
+        store <- telemetry(config)
+        admission <- ModelAdmission.make(config.indexing)
+        _ <- connection(app,config).use { (client,url) =>
+          val http=new ModelHttp(client,store,admission)
+          val context=ModelCallContext("a",ModelWorkload.McpTest)
+          for {
+            fiber <- post(http,config,url,context).attempt.start
+            _ <- entered.get.timeout(2.seconds)
+            _ <- if(cancel) fiber.cancel else fiber.joinWithNever.flatMap(value => IO(assertEquals(value.swap.toOption.get.asInstanceOf[DomainError].code,"model-timeout")))
+            _ <- release.complete(())
+            _ <- post(http,config,url,context)
+            snapshot <- store.snapshot("a")
+            _ <- IO {
+              val value=row(snapshot,context.purpose)
+              assertEquals(value.inFlight,0); assertEquals(value.finishedCalls,2L); assertEquals(value.input.unknownCalls,2L)
+              assertEquals(value.cancelledCalls,if(cancel) 1L else 0L); assertEquals(value.failedCalls,if(cancel) 0L else 1L)
+            }
+          } yield ()
+        }
+      } yield ()
+    }.unsafeRunSync()
   }
   test("BG/GoodCommunication: transport errors, invalid JSON and body bounds finish as unknown failures") {
     val config=configured
