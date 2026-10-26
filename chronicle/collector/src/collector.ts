@@ -141,7 +141,7 @@ export class Collector {
         if (this.config.exclusions.sessions.includes(transcript.producerId) || (transcript.subagentId !== null && this.config.exclusions.sessions.includes(transcript.subagentId))) { counters.excluded++; continue; }
         if (transcript.messages.length > this.config.maxMessages) { diagnose(file, 'message-limit'); continue; }
         if (now - since < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
-        const key = sourceKey(sourceIdentity(this.spool.namespace, file.root.id, file.root.format, transcript));
+        const key = sourceKey(sourceIdentity(this.spool.namespace, file.root.id, file.root.format, transcript, file.path));
         const candidate = { file, transcript, key, digest: hash(transcript.raw) };
         const existing = candidates.get(key) ?? []; existing.push(candidate); candidates.set(key, existing);
       } catch (error) { diagnose(file, error instanceof CollectorError ? error.code : 'parse-failed'); }
@@ -169,7 +169,7 @@ export class Collector {
           candidate.transcript.redacted ||= cleaned.changed;
         }
       }
-      const source = sourceIdentity(this.spool.namespace, candidate.file.root.id, candidate.file.root.format, candidate.transcript);
+      const source = sourceIdentity(this.spool.namespace, candidate.file.root.id, candidate.file.root.format, candidate.transcript, candidate.file.path);
       const requestId = randomUUID();
       const payload = encodeSnapshot(requestId, source, head.revision, candidate.transcript, candidate.file.relativePath);
       if (Buffer.byteLength(payload) > this.config.maxPayloadBytes) { diagnose(candidate.file, 'payload-too-large'); continue; }

@@ -127,3 +127,43 @@ test('BG session exclusions match producer/subagent identity, not an arbitrary m
     assert.equal((await new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(1)).uploaded, 1);
   } finally { spool.close(); rmSync(dir, { recursive: true }); }
 });
+
+test('BG Pi restoration episodes preserve divergent histories and stable CAS across restart', async () => {
+  const { dir, config } = setup({ quietMs: 0, discoverNative: true, roots: [] });
+  let spool = new SqliteSpool(config.stateDir); const ingester = new DummyIngester();
+  const agent = '11111111-1111-4111-8111-111111111111';
+  const path = join(dir, '.pi/agent/subagents/root/sessions', agent); mkdirSync(path, { recursive: true });
+  const restoredName = 'restored-12345678-abcdef01.jsonl';
+  const decode = (payload: string) => IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(payload) as unknown);
+  const collect = (now: number) => new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(now);
+  try {
+    const raw = fixture('pi'); writeFileSync(join(path, '2026-01-01_original.jsonl'), raw);
+    assert.equal((await collect(1)).uploaded, 1);
+    const canonical = decode(ingester.payloads[0]!);
+    assert.equal(canonical.source.collectorNamespace, spool.namespace);
+    writeFileSync(join(path, restoredName), raw.replace('left branch', 'restored divergent branch'));
+    writeFileSync(join(path, 'restored-87654321-abcdef02.jsonl'), raw.replace('left branch', 'second restored branch'));
+    const result = await collect(2);
+    assert.deepEqual(spool.diagnostics().filter(d => d.code !== 'root-missing'), []);
+    assert.equal(result.quarantined, 0);
+    assert.equal(result.unchanged, 1);
+    assert.equal(result.enqueued, 2); assert.equal(result.uploaded, 2);
+    const requests = ingester.payloads.map(decode);
+    assert.equal(new Set(requests.map(r => r.source.collectorNamespace)).size, 3);
+    for (const request of requests) {
+      assert.equal(request.source.producerSessionId, canonical.source.producerSessionId);
+      assert.equal(request.source.subagentId, agent); assert.equal(request.expectedRevision, 0);
+    }
+    const sanitized = canonical.files[0]!.content;
+    assert.deepEqual(new Set(requests.map(r => r.files[0]!.content)), new Set([sanitized, sanitized.replace('left branch', 'restored divergent branch'), sanitized.replace('left branch', 'second restored branch')]));
+    assert.doesNotMatch(ingester.payloads.join(''), /SYNTHETIC_SECRET|BINARY_PAYLOAD/);
+    const restored = requests.find(r => r.files[0]!.path.endsWith(restoredName))!;
+    spool.close(); spool = new SqliteSpool(config.stateDir);
+    assert.equal((await collect(3)).unchanged, 3);
+    writeFileSync(join(path, restoredName), raw.replace('left branch', 'edited restored branch'));
+    const changed = await collect(4); assert.equal(changed.uploaded, 1); assert.equal(changed.unchanged, 2);
+    const revision = decode(ingester.payloads.at(-1)!);
+    assert.deepEqual(revision.source, restored.source); assert.equal(revision.expectedRevision, 1);
+    assert.equal(spool.dropped().length, 0); assert.equal(spool.queue().length, 0);
+  } finally { spool.close(); rmSync(dir, { recursive: true }); }
+});

@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { HttpIngester, endpointURL, UploadError, encodeSnapshot, sourceIdentity } from '../src/ingest.ts';
+import { HttpIngester, endpointURL, UploadError, encodeSnapshot, sourceIdentity, sourceKey } from '../src/ingest.ts';
 import { loadConfig } from '../src/config.ts';
 import { parseTranscript } from '../src/parsers.ts';
 import { privacyPolicy } from '../src/privacy.ts';
@@ -31,7 +31,7 @@ test('GoodCommunication generated JSON boundary, UTF8/file digests and runtime t
   });
   try {
     const transcript = parseTranscript('pi', Buffer.from('{"type":"session","version":3,"id":"synthetic"}\n{"type":"message","id":"m","parentId":null,"message":{"role":"user","content":"你好 🦄"}}\n'), '/synthetic/s.jsonl', privacyPolicy({ fieldNames: [], textPatterns: [] }));
-    const payload = encodeSnapshot(requestId, sourceIdentity('namespace', 'fixture', 'pi', transcript), 0, transcript, 's.jsonl');
+    const payload = encodeSnapshot(requestId, sourceIdentity('namespace', 'fixture', 'pi', transcript, '/synthetic/s.jsonl'), 0, transcript, 's.jsonl');
     const adapter = new HttpIngester(h.config);
     assert.equal((await adapter.send(payload)).requestId, requestId);
     writeFileSync(h.tokenFile, 'rotated-synthetic-token'); await adapter.send(payload);
@@ -67,4 +67,23 @@ test('BA URL policy rejects credential/query endpoints and plaintext outside loo
   assert.throws(() => endpointURL('https://example.invalid/?token=secret', false), /endpoint-credentials-forbidden/);
   assert.equal(endpointURL('http://example.invalid', true).pathname, '/api/ingest');
   assert.equal(endpointURL('https://example.invalid', false).pathname, '/api/ingest');
+});
+
+test('BA Pi restoration namespace scopes stable episodes without inventing producer or agent IDs', () => {
+  const transcript = parseTranscript('pi', Buffer.from('{"type":"session","version":3,"id":"origin"}\n'), '/synthetic/subagents/root/sessions/agent/canonical.jsonl', privacyPolicy({ fieldNames: [], textPatterns: [] }));
+  const identity = (format: 'pi' | 'claude' | 'codex', path: string) => sourceIdentity('namespace', 'native', format, transcript, path);
+  const canonical = identity('pi', '/original/2026-01-01_origin.jsonl');
+  assert.equal(sourceKey(canonical), hash(JSON.stringify(['namespace', 'native', 'Pi', 'origin', 'agent'])));
+  assert.deepEqual(identity('pi', '/moved/another.jsonl'), canonical);
+  const restored = identity('pi', '/original/restored-12345678-abcdef01.jsonl');
+  assert.equal(restored.collectorNamespace, `namespace/pi-restored/${hash('restored-12345678-abcdef01')}`);
+  assert.equal(restored.producerSessionId, 'origin'); assert.equal(restored.subagentId, 'agent');
+  assert.notEqual(sourceKey(restored), sourceKey(canonical));
+  assert.deepEqual(identity('pi', '/copied/restored-12345678-abcdef01.jsonl'), restored);
+  assert.deepEqual(identity('pi', 'C:\\copied\\restored-12345678-abcdef01.jsonl'), restored);
+  assert.equal(sourceIdentity('namespace', 'native', 'pi', { ...transcript, subagentId: null }, '/original/restored-12345678-abcdef01.jsonl').subagentId, undefined);
+  assert.notEqual(sourceKey(identity('pi', '/original/restored-12345678-abcdef02.jsonl')), sourceKey(restored));
+  assert.notEqual(sourceKey(sourceIdentity('namespace', 'native', 'pi', { ...transcript, subagentId: 'other-agent' }, '/original/restored-12345678-abcdef01.jsonl')), sourceKey(restored));
+  for (const path of ['/original/not-restored-12345678-abcdef01.jsonl', '/original/restored-invalid.jsonl', '/original/restored-1234567-abcdef01.jsonl', '/original/restored-12345678-ABCDEF01.jsonl', '/restored-12345678-abcdef01.jsonl/canonical.jsonl']) assert.deepEqual(identity('pi', path), canonical);
+  for (const format of ['claude', 'codex'] as const) assert.equal(identity(format, '/original/restored-12345678-abcdef01.jsonl').collectorNamespace, 'namespace');
 });

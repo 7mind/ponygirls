@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { FileSecretReader } from './runtime-privacy.ts';
 import { IngestRequest, IngestRequest_JsonCodec } from '../../generated/typescript/chronicle/api/IngestRequest.js';
 import { IngestReceipt, IngestReceipt_JsonCodec } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
@@ -17,8 +18,12 @@ export class UploadError extends CollectorError {
   constructor(code: string, retryable: boolean, conflict: boolean) { super(code); this.retryable = retryable; this.conflict = conflict; }
 }
 const FORMATS: Record<Format, SourceFormat> = { pi: SourceFormat.Pi, claude: SourceFormat.Claude, codex: SourceFormat.Codex };
-export function sourceIdentity(namespace: string, rootId: string, format: Format, transcript: ParsedTranscript): SourceIdentity {
-  return new SourceIdentity(namespace, rootId, FORMATS[format], transcript.producerId, transcript.subagentId ?? undefined);
+const PI_RESTORATION_FILE = /^restored-[0-9a-f]{8}-[0-9a-f]{8}\.jsonl$/;
+export function sourceIdentity(namespace: string, rootId: string, format: Format, transcript: ParsedTranscript, sourcePath: string): SourceIdentity {
+  const filename = basename(sourcePath.replaceAll('\\', '/'));
+  const episodeNamespace = format === 'pi' && PI_RESTORATION_FILE.test(filename)
+    ? `${namespace}/pi-restored/${hash(filename.slice(0, -'.jsonl'.length))}` : namespace;
+  return new SourceIdentity(episodeNamespace, rootId, FORMATS[format], transcript.producerId, transcript.subagentId ?? undefined);
 }
 export function sourceKey(source: SourceIdentity): string {
   return hash(JSON.stringify([source.collectorNamespace, source.discoveryRootId, source.format, source.producerSessionId, source.subagentId ?? null]));
