@@ -41,7 +41,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     }
     case r @ POST -> Root / "api" / "logout" => handle { IO.blocking { noUrlSecrets(r); origin(r,true); val i = auth.browser(cookie(r)); auth.logout(i); json(Status.Ok,io.circe.Json.obj()).addCookie(sessionCookie("",0)) } }
     case r @ POST -> Root / "api" / "ingest" => handle {
-      IO.blocking { noUrlSecrets(r); origin(r,false); val i = bearer(r); i.requireScope(Scope.Ingest); i }.flatMap(i => boundedBody(r,config.maxBodyBytes).flatMap(raw => IO.blocking(archive.ingest(i.user.id,Wire.decode(IngestRequest.codecJson,Wire.parse(raw)),config.profile)))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
+      IO.blocking { noUrlSecrets(r); origin(r,false); val i = bearer(r); i.requireScope(Scope.Ingest); i }.flatMap(i => boundedBody(r,config.maxBodyBytes).flatMap(raw => IO.blocking(archive.ingest(i.user.id,Wire.decode(IngestRequest.codecJson,Wire.parse(raw)))))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
     }
     case r @ POST -> Root / "api" / "collector" / "progress" => handle {
       IO.blocking { noUrlSecrets(r); origin(r,false); val i=bearer(r); i.requireScope(Scope.Ingest); i }.flatMap { i =>

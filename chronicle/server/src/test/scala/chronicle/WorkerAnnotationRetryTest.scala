@@ -31,10 +31,12 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     val failures=scala.collection.mutable.ListBuffer.empty[String]
     val claimed=scala.collection.mutable.ListBuffer.empty[Claim]
     var claims=0; var publications=0
-    def ingest(owner: String,r: IngestRequest,profile: String): IngestReceipt = delegate.ingest(owner,r,profile)
+    def ingest(owner: String,r: IngestRequest): IngestReceipt = delegate.ingest(owner,r)
     def headSnapshot(reader: String,id: UUID): IngestRequest = delegate.headSnapshot(reader,id)
     def session(reader: String,id: UUID): SessionInfo = delegate.session(reader,id)
-    def claim(profile: String,seconds: Int): Option[Claim] = { claims+=1; val result=delegate.claim(profile,seconds); claimed++=result; result }
+    def knownProfiles: Set[String] = delegate.knownProfiles
+    def claim(profiles: Set[String],scope: ClaimScope,seconds: Int): Option[Claim] = { claims+=1; val result=delegate.claim(profiles,scope,seconds); claimed++=result; result }
+    def renew(c: Claim,seconds: Int): Boolean = delegate.renew(c,seconds)
     def progress(c: Claim,count: Int,total: Int): Boolean = { completed += count; delegate.progress(c,count,total) }
     def publish(c: Claim,chunks: List[IndexedChunk]): Boolean = { publications+=1; delegate.publish(c,chunks) }
     def fail(c: Claim,code: String): Unit = { failures += code; delegate.fail(c,code) }
@@ -72,11 +74,11 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     source.hcursor.downField("fragments").downN(0).get[String]("text").toOption.get.head
   }
   test("BG/GoodCommunication: one truncation retries only the same window and preserves validated embedded prefix") { withArchive { (config,db,delegate) =>
-    val archive=new RecordingArchive(delegate); val receipt=archive.ingest("a",source,config.profile)
+    val archive=new RecordingArchive(delegate); val receipt=archive.ingest("a",source)
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
     val model=annotator(config,calls,(fragments,attempt) => IO.pure(response(fragments,if(attempt==2) "length" else "stop")))
     val logs=new CapturedLogs
-    assert(new Worker(archive,model,embedder,db,config,logs.logger).once.unsafeRunSync())
+    assert(new Worker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
     assertEquals(logs.messages.size,1); assert(logs.messages.head.startsWith("annotation attempt failed "))
     assertEquals(labels(calls),List('a','b','b','c'))
     assertEquals(calls(1),calls(2))
@@ -86,11 +88,11 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     assertEquals(archive.session("a",receipt.sessionId).indexedRevision,Some(1))
   }}
   test("BG/GoodCommunication: five total truncations exhaust into existing job failure without publication") { withArchive { (config,db,delegate) =>
-    val archive=new RecordingArchive(delegate); val receipt=archive.ingest("a",source,config.profile)
+    val archive=new RecordingArchive(delegate); val receipt=archive.ingest("a",source)
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
     val model=annotator(config,calls,(fragments,attempt) => IO.pure(response(fragments,if(attempt==1) "stop" else "length")))
     val logs=new CapturedLogs
-    assert(new Worker(archive,model,embedder,db,config,logs.logger).once.unsafeRunSync())
+    assert(new Worker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
     val retries=logs.messages.filter(_.startsWith("annotation attempt failed "))
     assertEquals(retries.size,5); assertEquals(retries.count(_.endsWith("outcome=retry")),4); assert(retries.last.endsWith("attempt=5 attemptLimit=5 code=model-output/truncated outcome=exhaust"))
     val terminal=logs.messages.filter(_.startsWith("window failed "))
@@ -102,33 +104,33 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     assertEquals(archive.completed.toList,List(0,1)); assertEquals(archive.claims,1)
     assertEquals(archive.failures.toList,List("model-output/truncated")); assertEquals(archive.publications,0)
     assertEquals(archive.session("a",receipt.sessionId).indexedRevision,None)
-    assert(archive.claim(config.profile,300).nonEmpty)
+    assert(archive.claim(Set(config.profile),ClaimScope.AllOwners,300).nonEmpty)
   }}
   List("model-output","model-http","model-timeout","stale-claim","worker-fault").foreach { code =>
     test(s"BG/GoodCommunication: annotation $code is not retried") { withArchive { (config,db,delegate) =>
-      val archive=new RecordingArchive(delegate); archive.ingest("a",source,config.profile)
+      val archive=new RecordingArchive(delegate); archive.ingest("a",source)
       var calls=0; val embedder=new RecordingEmbedder
       val model=new Annotator {
         def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO { calls+=1 }.flatMap { _ =>
           IO.raiseError(if(code=="worker-fault") new IllegalStateException("synthetic") else DomainError(code,"synthetic"))
         }
       }
-      assert(new Worker(archive,model,embedder,db,config,logstage.IzLogger()).once.unsafeRunSync())
+      assert(new Worker(archive,model,embedder,config,logstage.IzLogger()).once.unsafeRunSync())
       assertEquals(calls,1); assertEquals(embedder.calls.toList,Nil)
       assertEquals(archive.failures.toList,List(code)); assertEquals(archive.publications,0)
     }}
   }
   test("BG/GoodCommunication: invalid structured output is not retried") { withArchive { (config,db,delegate) =>
-    val archive=new RecordingArchive(delegate); archive.ingest("a",source,config.profile)
+    val archive=new RecordingArchive(delegate); archive.ingest("a",source)
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
     val invalid=Json.obj("choices"->Json.arr(Json.obj("finish_reason"->Json.fromString("stop"),"message"->Json.obj("content"->Json.fromString("{}")))))
     val model=annotator(config,calls,(_,_) => IO.pure(invalid))
-    assert(new Worker(archive,model,embedder,db,config,logstage.IzLogger()).once.unsafeRunSync())
+    assert(new Worker(archive,model,embedder,config,logstage.IzLogger()).once.unsafeRunSync())
     assertEquals(calls.size,1); assertEquals(embedder.calls.toList,Nil)
     assertEquals(archive.failures.toList,List("model-output")); assertEquals(archive.publications,0)
   }}
   test("BG/GoodCommunication: even a truncation code from embedding does not retry annotation or embedding") { withArchive { (config,db,delegate) =>
-    val archive=new RecordingArchive(delegate); archive.ingest("a",source,config.profile)
+    val archive=new RecordingArchive(delegate); archive.ingest("a",source)
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; var embeddings=0
     val model=annotator(config,calls,(fragments,_) => IO.pure(response(fragments,"stop")))
     val embedder=new Embedder {
@@ -136,7 +138,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       def documents(text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1 }.flatMap(_ => IO.raiseError(DomainError("model-output/truncated","synthetic")))
     }
     val logs=new CapturedLogs
-    assert(new Worker(archive,model,embedder,db,config,logs.logger).once.unsafeRunSync())
+    assert(new Worker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
     assertEquals(logs.messages.count(_.startsWith("annotation attempt failed ")),0)
     assertEquals(logs.messages.count(_.contains("stage=embedding annotationAttempt=1 annotationAttemptLimit=5 code=model-output/truncated")),1)
     assertEquals(logs.messages.size,2)
@@ -146,7 +148,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
   }}
   List("annotation","embedding").foreach { stage => List(false,true).foreach { unexpected =>
     test(s"BG/GoodCommunication regression: terminal $stage ${if(unexpected) "worker fault" else "model output"} records private-free window context without extra attempts") { withArchive { (config,db,delegate) =>
-      val archive=new RecordingArchive(delegate); val receipt=archive.ingest("a",source,config.profile)
+      val archive=new RecordingArchive(delegate); val receipt=archive.ingest("a",source)
       val logs=new CapturedLogs
       val poison="PRIVATE_EXCEPTION_DETAIL_AUTHORIZATION_BEARER_SYNTHETIC_SECRET"
       var messageReads=0
@@ -170,7 +172,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
           IO.pure(text.map(_ => List(0.1234567898765432,0.5,1.0)))
         }
       }
-      assert(new Worker(archive,model,embedder,db,config,logs.logger).once.unsafeRunSync())
+      assert(new Worker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
       val claim=archive.claimed.head
       val code=if(unexpected) "worker-fault" else "model-output"
       assertEquals(annotations,3); assertEquals(embeddings,if(stage=="annotation") 1 else 2)
@@ -187,12 +189,12 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       val recorded=logs.rendered+logs.entries.mkString
       List(poison,"a"*128,"b"*128,"0.1234567898765432").foreach(secret => assert(!recorded.contains(secret),"private content reached log entry"))
       assert(logs.entries.forall(_.firstThrowable.isEmpty))
-      val next=archive.claim(config.profile,300).get
+      val next=archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get
       assertEquals(next.fence,claim.fence+1)
     }}
   }}
   test("BG/GoodCommunication: cancellation during a retried annotation does not retry or fail the job") { withArchive { (config,db,delegate) =>
-    val archive=new RecordingArchive(delegate); archive.ingest("a",source,config.profile)
+    val archive=new RecordingArchive(delegate); archive.ingest("a",source)
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
     val logs=new CapturedLogs
     val program=for {
@@ -201,7 +203,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       model=annotator(config,calls,(fragments,attempt) =>
         if(attempt==1) IO.pure(response(fragments,"length"))
         else started.complete(()).flatMap(_ => IO.never[Json]).onCancel(cancelled.complete(()).void))
-      fiber <- new Worker(archive,model,embedder,db,config,logs.logger).once.start
+      fiber <- new Worker(archive,model,embedder,config,logs.logger).once.start
       _ <- started.get
       _ <- fiber.cancel
       _ <- cancelled.get
@@ -214,7 +216,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     assertEquals(logs.messages.size,1); assert(logs.messages.head.startsWith("annotation attempt failed "))
   }}
   test("BG/GoodCommunication: cancellation during embedding emits no terminal diagnostic or job failure") { withArchive { (config,db,delegate) =>
-    val archive=new RecordingArchive(delegate); archive.ingest("a",source,config.profile)
+    val archive=new RecordingArchive(delegate); archive.ingest("a",source)
     val logs=new CapturedLogs
     var annotations=0; var embeddings=0
     val model=new Annotator {
@@ -229,7 +231,7 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
         def query(text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query"))
         def documents(text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1 } *> started.complete(()) *> IO.never[List[List[Double]]].onCancel(cancelled.complete(()).void)
       }
-      fiber <- new Worker(archive,model,embedder,db,config,logs.logger).once.start
+      fiber <- new Worker(archive,model,embedder,config,logs.logger).once.start
       _ <- started.get
       _ <- fiber.cancel
       _ <- cancelled.get
@@ -244,15 +246,15 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
 class DummyWorkerAnnotationRetryTest extends WorkerAnnotationRetryContract {
   def withArchive(f: (Config,Database,SessionArchive) => Unit): Unit = {
     val base=Fixtures.config(); val config=base.copy(annotation=base.annotation.copy(requestPolicy=AnnotationRequestPolicy.GlmMaxReasoning))
-    f(config,new Database(config),new DummyArchive(config))
+    f(config,new Database(config,IndexProfileCatalog.legacyOnly(config)),new DummyArchive(config,IndexProfileCatalog.legacyOnly(config)))
   }
 }
 class PostgresWorkerAnnotationRetryTest extends WorkerAnnotationRetryContract {
   def withArchive(f: (Config,Database,SessionArchive) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val base=Fixtures.config(); val config=base.copy(annotation=base.annotation.copy(requestPolicy=AnnotationRequestPolicy.GlmMaxReasoning))
-    val db=new Database(config); db.initialize()
-    db.transaction(c => { Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile) })
+    val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
+    db.transaction(c => { Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile) })
     f(config,db,new PostgresArchive(db,config))
   }
 }

@@ -17,7 +17,7 @@ class CollectorProgressHttpTest extends munit.FunSuite {
     EmberClientBuilder.default[IO].build.use { client =>
       val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client) }
       Injector().produceGet[RuntimeServices](module).toEffect[IO].use { s => for {
-        _ <- IO.blocking { s.database.initialize(); s.database.transaction(x => { Sql.exec(x,"TRUNCATE ch_collector_progress,ch_tokens,ch_mutations CASCADE"); () }) }
+        _ <- IO.blocking { s.database.initialize(); s.database.transaction(x => { Sql.exec(x,"TRUNCATE ch_collector_progress,ch_tokens,ch_mutations CASCADE"); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile); () }) }
         ws <- WebSocketBuilder2[IO]
         gate <- Semaphore[IO](2)
         _ <- IO.defer {

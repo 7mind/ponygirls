@@ -48,14 +48,14 @@ class CollectorProgressPostgresTest extends CollectorProgressContract {
       }) }
       assertEquals(attempts.count(_.get(10,java.util.concurrent.TimeUnit.SECONDS)),2)
       assertEquals(s.status("a").size,100)
-      val db=new Database(Fixtures.config()); db.initialize()
+      val db=new Database(Fixtures.config(),IndexProfileCatalog.legacyOnly(Fixtures.config())); db.initialize()
       assertEquals(new PostgresCollectorProgressStore(db).status("a"),s.status("a"))
     } finally executor.shutdownNow()
   }
 
   def store(): CollectorProgressStore = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped") }
-    val db=new Database(Fixtures.config()); db.initialize()
+    val db=new Database(Fixtures.config(),IndexProfileCatalog.legacyOnly(Fixtures.config())); db.initialize()
     db.transaction(c => { Sql.exec(c,"TRUNCATE ch_collector_progress"); () })
     new PostgresCollectorProgressStore(db)
   }

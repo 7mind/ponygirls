@@ -35,11 +35,11 @@ final class CursorWebSocketTest extends munit.FunSuite {
           services.database.initialize()
           services.database.transaction { c =>
             Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations,ch_collector_progress CASCADE")
-            Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
+            Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
           }
           (1 to 2).foreach { n =>
             val request=Fixtures.snapshot()
-            services.archive.ingest("a",request.copy(metadata=request.metadata.copy(title="x"*50000+n)),config.profile)
+            services.archive.ingest("a",request.copy(metadata=request.metadata.copy(title="x"*50000+n)))
           }
         } *> Semaphore[IO](2).flatMap { gate =>
           EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get)

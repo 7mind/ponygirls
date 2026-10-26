@@ -17,10 +17,10 @@ class IndexedSearchTest extends munit.FunSuite {
   private def database(dimensions: Int)(f: (Config,Database,PostgresArchive,PostgresSearch) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val original=Fixtures.config(); val config=original.copy(embedding=original.embedding.copy(dimensions=dimensions))
-    val db=new Database(config); db.initialize()
+    val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
+      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config)
     try f(config,db,archive,new PostgresSearch(db,archive,config))
@@ -114,13 +114,13 @@ class IndexedSearchTest extends munit.FunSuite {
     assertEquals(privateOnly.total,corpusSize/100); assert(privateOnly.hits.forall(_.session.ownerId=="a"))
   }}
   test("Effectual-GoodCommunication: projection replaces complete generations, backfills idempotently and purges without deleting pinned history early") { database(3) { (config,db,archive,index) =>
-    val request=Fixtures.snapshot(); val out=archive.ingest("a",request,config.profile)
-    val first=archive.claim(config.profile,300).get
+    val request=Fixtures.snapshot(); val out=archive.ingest("a",request)
+    val first=archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get
     def chunk()=IndexedChunk(Fragments.split(request.messages).head.copy(sessionId=out.sessionId),List(1.0,0.0,0.0))
     assert(archive.publish(first,List(chunk(),chunk())))
     val old=archive.session("a",out.sessionId).view
-    archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1),config.profile)
-    assert(archive.publish(archive.claim(config.profile,300).get,List(chunk())))
+    archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
+    assert(archive.publish(archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get,List(chunk())))
     db.initialize(); db.initialize()
     db.transaction { c =>
       assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks")(_.getInt(1)),Some(1))
@@ -146,9 +146,9 @@ class IndexedSearchTest extends munit.FunSuite {
     val recall=approximate.hits.count(h => truth.contains(h.session.id)).toDouble/truth.size
     println(s"RECALL dimensions=2048 corpus=$highDimensionCorpusSize recall@$resultSize=$recall")
     assert(recall>=minimumRecall)
-    val request=Fixtures.snapshot(); val out=archive.ingest("a",request,config.profile)
+    val request=Fixtures.snapshot(); val out=archive.ingest("a",request)
     val values=vector(17,2048); val chunk=Fragments.split(request.messages).head.copy(sessionId=out.sessionId)
-    assert(archive.publish(archive.claim(config.profile,300).get,List(IndexedChunk(chunk,values))))
+    assert(archive.publish(archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get,List(IndexedChunk(chunk,values))))
     val result=index.search("a",query(SearchMode.Semantic),Some(values))
     assertEquals(result.hits.head.session.id,out.sessionId); assert(math.abs(result.hits.head.score-1.0)<0.000001)
     db.transaction { c =>

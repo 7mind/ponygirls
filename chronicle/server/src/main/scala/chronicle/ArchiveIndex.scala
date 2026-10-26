@@ -119,8 +119,8 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.completed_windows,j.total_windows,
       ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT tag FROM ch_generation_tags WHERE generation=s.published) tag_values ORDER BY lower(tag $unicode),tag) AS tags
       FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision
-      JOIN ch_profile profile ON profile.singleton LEFT JOIN ch_generations g ON g.id=s.published
-      LEFT JOIN ch_jobs j ON j.session_id=s.id AND j.revision=s.revision AND j.profile=profile.target WHERE ${archive.visible})"""
+      JOIN ch_owner_targets profile ON profile.owner=s.owner LEFT JOIN ch_generations g ON g.id=s.published
+      LEFT JOIN ch_jobs j ON j.session_id=s.id AND j.revision=s.revision AND j.profile=profile.profile WHERE ${archive.visible})"""
     val ctes=List.newBuilder[String]; ctes+=corpus
     val args=List.newBuilder[Sql.Param]; args++=List(reader,reader,reader)
     val semantic=parsed.mode!=SearchMode.Lexical
@@ -134,8 +134,8 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       if(semantic) {
         val dimensions=SearchPolicy.dimensions(config)
         val vector=vectors.find(_.operand==operand).getOrElse(throw DomainError("unavailable","query embedding unavailable"))
-        ctes+=s"a$index AS MATERIALIZED(SELECT ch.session_id,ch.revision,ch.generation FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ch.profile=? AND (SELECT true FROM corpus c WHERE c.id=ch.session_id AND c.published=ch.generation AND (${restrictions.text}) OFFSET 0) ORDER BY l2_normalize(ch.embedding)::halfvec($dimensions) <=> l2_normalize(?::vector)::halfvec($dimensions) LIMIT ${SearchPolicy.candidatesPerLeg})"
-        args+=config.profile; args++=restrictions.args; args+=SearchPolicy.vector(vector.values,config)
+        ctes+=s"a$index AS MATERIALIZED(SELECT ch.session_id,ch.revision,ch.generation FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (SELECT true FROM corpus c WHERE c.id=ch.session_id AND c.published=ch.generation AND (${restrictions.text}) OFFSET 0) ORDER BY l2_normalize(ch.embedding)::halfvec($dimensions) <=> l2_normalize(?::vector)::halfvec($dimensions) LIMIT ${SearchPolicy.candidatesPerLeg})"
+        args+=EmbeddingSpaceDescriptor.from(config.embedding).id; args++=restrictions.args; args+=SearchPolicy.vector(vector.values,config)
       }
     }
     def membership(operand: String): ArchiveSql = {
@@ -171,7 +171,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     ArchivePaging.page(query.limit)
     val bounded=parsed.mode!=SearchMode.Lexical && parsed.textOperands.nonEmpty
     if(bounded) {
-      Check(Sql.one(c,"SELECT 1 FROM ch_profile WHERE NOT maintenance AND active=?",config.profile)(_ => true).contains(true),"unavailable","semantic profile requires maintenance reindex")
+      IndexProfiles.semantic(c,reader,archive.visible,EmbeddingSpaceDescriptor.from(config.embedding))
       SearchPolicy.configure(c)
     }
     val position=ArchivePaging.decode(query,reader).map(resolve(c,reader,query,_))

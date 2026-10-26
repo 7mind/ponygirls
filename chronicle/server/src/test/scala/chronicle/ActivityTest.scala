@@ -8,7 +8,7 @@ import java.util.{Base64,UUID}
 private object ActivityTestData {
   val now=Instant.parse("2026-10-26T10:00:00Z")
   val user=UserInfo("a","owner",List(Scope.Read))
-  val target="target-profile"
+  val target=Fixtures.config().profile
   val old="old-profile"
   val empty=JobCounts(0,0,0,0,0,0,0,0)
   def collectorQuery(cursor: Option[String],limit: Int): ActivityQuery = ActivityQuery("",ActivityCollectorSort.CollectorId,SortDirection.Asc,cursor,limit)
@@ -222,7 +222,7 @@ abstract class ActivityContract extends munit.FunSuite {
     val query=jobsQuery(None,ActivityJobScope.All,None,1)
     def selected(expression: String): List[Int] = allJobs(index,query.copy(expression=expression)).map(_.job.id.getLeastSignificantBits.toInt)
     assertEquals(selected("collector:base/episode AND classification:superseded-revision AND lease:active AND status:running"),List(2))
-    assertEquals(selected("profile:target-profile AND status:failed"),List(1))
+    assertEquals(selected(s"profile:$target AND status:failed"),List(1))
     assertEquals(selected("classification:obsolete-profile"),List(3,10))
     assertEquals(selected("classification:superseded-revision-and-profile"),List(4))
     assertEquals(selected("user:a AND tag:SYNTHETIC AND project:PROJECT AND branch:MAIN AND producer:PI AND format:pi"),(1 to 10).toList)
@@ -271,7 +271,7 @@ abstract class ActivityContract extends munit.FunSuite {
       ExpectedJobSort(ActivityJobSort.Collector,List(List(5),List(1,2,3,4),List(6),List(10),List(9),List(7),List(8)),Nil),
       ExpectedJobSort(ActivityJobSort.State,List(List(9),List(1,3),List(5,10),List(2,4,6,7,8)),Nil),
       ExpectedJobSort(ActivityJobSort.Revision,List(List(2,4,5,6,7,8,9,10),List(1,3)),Nil),
-      ExpectedJobSort(ActivityJobSort.Profile,List(List(3,4,10),List(1,2,5,6,7,8,9)),Nil),
+      ExpectedJobSort(ActivityJobSort.Profile,List(List(1,2,5,6,7,8,9),List(3,4,10)),Nil),
       ExpectedJobSort(ActivityJobSort.Attempts,List(List(3,6,9),List(1,4,7,10),List(2,5,8)),Nil),
       ExpectedJobSort(ActivityJobSort.CompletedWindows,List(List(2,4,6,8,10),List(1,3,5,7,9)),Nil),
       ExpectedJobSort(ActivityJobSort.TotalWindows,List(List(4,8),List(1,5),List(2,10),List(7)),List(3,6,9)),
@@ -393,12 +393,12 @@ final class ActivityPostgresTest extends ActivityContract {
       Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required")
       assume(false,"PostgreSQL explicitly skipped: set CHRONICLE_TEST_JDBC for Activity adapter verification")
     }
-    val config=Fixtures.config(); val admin=new Database(config)
+    val config=Fixtures.config(); val admin=new Database(config,IndexProfileCatalog.legacyOnly(config))
     val schema="activity_test_"+UUID.randomUUID().toString.replace("-","")
     admin.transaction(c => Sql.exec(c,s"CREATE SCHEMA $schema"))
     try {
       val separator=if(config.jdbcUrl.contains("?")) "&" else "?"
-      val db=new Database(config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema))
+      val db=new Database(config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema),IndexProfileCatalog.legacyOnly(config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema)))
       db.transaction { c =>
         val ddl="""CREATE TABLE ch_users(id text PRIMARY KEY,login text UNIQUE NOT NULL,enabled boolean NOT NULL,credential text NOT NULL);
           CREATE TABLE ch_sources(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),source_key text NOT NULL,revision integer NOT NULL,published uuid,tombstone boolean NOT NULL,UNIQUE(owner,source_key));
@@ -411,8 +411,14 @@ final class ActivityPostgresTest extends ActivityContract {
           CREATE TABLE ch_groups(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),name text NOT NULL);
           CREATE TABLE ch_members(group_id uuid REFERENCES ch_groups(id),user_id text REFERENCES ch_users(id),PRIMARY KEY(group_id,user_id));"""
         scala.util.Using.resource(c.createStatement())(_.execute(ddl))
+        scala.util.Using.resource(getClass.getResourceAsStream("/007_owner_profiles.sql")) { stream =>
+          val sql=scala.util.Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
+          scala.util.Using.resource(c.createStatement())(_.execute(sql))
+        }
+        db.profiles.register(c)
         List("a","b","c").foreach(owner => Sql.exec(c,"INSERT INTO ch_users VALUES(?,?,?,'synthetic')",owner,owner,!seed.disabled.contains(owner)))
         Sql.exec(c,"INSERT INTO ch_profile VALUES(true,?,?,false)",old,target)
+        Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) SELECT id,? FROM ch_users",target)
         Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','shared')",id(1000))
         List("a","b").foreach(owner => Sql.exec(c,"INSERT INTO ch_members VALUES(?,?)",id(1000),owner))
         seed.heads.foreach { h =>

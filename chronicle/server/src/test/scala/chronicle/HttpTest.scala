@@ -24,7 +24,7 @@ class HttpTest extends munit.FunSuite {
       EmberClientBuilder.default[IO].build.use { client =>
         val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client) }
         Injector().produceGet[RuntimeServices](module).toEffect[IO].use { s =>
-          IO.blocking { s.database.initialize(); s.database.transaction(x => Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile)) } *> Semaphore[IO](2).flatMap { gate =>
+          IO.blocking { s.database.initialize(); s.database.transaction { x => Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) } } *> Semaphore[IO](2).flatMap { gate =>
             EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => s.http.routes(ws,gate).orNotFound).build.use { server => IO.blocking {
               val (_,secret)=new Auth(s.database,c).login(LoginRequest("a","synthetic"))
               val jclient=JClient.newHttpClient(); val inbox=new LinkedBlockingQueue[ServerEnvelope]()

@@ -34,12 +34,12 @@ class ArchiveProjectionTest extends munit.FunSuite {
   }
   private def database(f: (Config,Database,PostgresArchive) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val config=Fixtures.config(); val db=new Database(config); db.initialize()
-    db.transaction { c => Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile) }
+    val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
+    db.transaction { c => Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile) }
     f(config,db,new PostgresArchive(db,config))
   }
   test("BG GoodCommunication specified: metadata/message pages and locator use pinned projection independent of raw files") { database { (config,db,archive) =>
-    val original=Fixtures.snapshot(); val out=archive.ingest("a",original,config.profile)
+    val original=Fixtures.snapshot(); val out=archive.ingest("a",original)
     val view=ContentView(1,None)
     assertEquals(archive.locateMessage("a",out.sessionId,view,"u"),MessageLocation(view,0,1))
     db.transaction(c => Sql.exec(c,"UPDATE ch_revisions SET snapshot=jsonb_set(snapshot,'{files}',?::jsonb) WHERE session_id=?", "null",out.sessionId))
@@ -52,7 +52,7 @@ class ArchiveProjectionTest extends munit.FunSuite {
   test("BG GoodCommunication regression: obsolete lexical projections rebuild whole-field folding without changing normalized content") { database { (config,db,archive) =>
     val original=Fixtures.snapshot(); val text="aΣ"+"\u0301"*5000+"b"
     val request=original.copy(metadata=original.metadata.copy(title=text),messages=original.messages.map(_.copy(text=text)))
-    val receipt=archive.ingest("a",request,config.profile)
+    val receipt=archive.ingest("a",request)
     db.transaction { c =>
       Sql.exec(c,"UPDATE ch_revision_info SET lexical_version=0 WHERE session_id=?",receipt.sessionId)
       Sql.exec(c,"DELETE FROM ch_archive_fragments WHERE session_id=?",receipt.sessionId)
@@ -93,7 +93,7 @@ class ArchiveProjectionTest extends munit.FunSuite {
   test("Effectual GoodCommunication specified: failed ingest rolls back every projection and receipt") { database { (config,db,archive) =>
     db.transaction(c => Sql.exec(c,"ALTER TABLE ch_archive_fragments ADD CONSTRAINT projection_reject CHECK(value<>'projection-reject')"))
     val original=Fixtures.snapshot(); val request=original.copy(messages=original.messages.map(_.copy(text="projection-reject")))
-    try intercept[java.sql.SQLException](archive.ingest("a",request,config.profile))
+    try intercept[java.sql.SQLException](archive.ingest("a",request))
     finally db.transaction(c => Sql.exec(c,"ALTER TABLE ch_archive_fragments DROP CONSTRAINT projection_reject"))
     db.transaction { c =>
       List("ch_sources","ch_revisions","ch_revision_info","ch_messages","ch_archive_fragments","ch_ingest_receipts","ch_jobs").foreach { table =>
@@ -102,11 +102,11 @@ class ArchiveProjectionTest extends munit.FunSuite {
     }
   }}
   test("BG GoodCommunication specified: concurrent backfill, ingest and purge leave no missing or orphan projection") { database { (config,db,archive) =>
-    val old=(1 to 6).map(_ => archive.ingest("a",Fixtures.snapshot(),config.profile)).toList
+    val old=(1 to 6).map(_ => archive.ingest("a",Fixtures.snapshot())).toList
     db.transaction { c => Sql.exec(c,"DELETE FROM ch_revision_info"); Sql.exec(c,"DELETE FROM ch_messages"); Sql.exec(c,"DELETE FROM ch_archive_fragments") }
     val backfill=IO.blocking(ArchiveProjection.backfill(db))
     val mutate=IO.blocking {
-      val next=archive.ingest("a",Fixtures.snapshot(),config.profile)
+      val next=archive.ingest("a",Fixtures.snapshot())
       db.transaction { c =>
         Sql.exec(c,"UPDATE ch_sources SET tombstone=true,published=NULL WHERE id=?",old.head.sessionId)
         Sql.exec(c,"DELETE FROM ch_jobs WHERE session_id=?",old.head.sessionId)
@@ -148,7 +148,7 @@ class ArchiveProjectionTest extends munit.FunSuite {
     }
   }
   test("BG GoodCommunication specified: bounded idempotent backfill skips historic invalid timestamps and cascades purge") { database { (config,db,archive) =>
-    val original=Fixtures.snapshot(); val out=archive.ingest("a",original.copy(messages=original.messages.map(_.copy(timestamp=Some("historically accepted")))),config.profile)
+    val original=Fixtures.snapshot(); val out=archive.ingest("a",original.copy(messages=original.messages.map(_.copy(timestamp=Some("historically accepted")))))
     db.transaction { c => Sql.exec(c,"DELETE FROM ch_revision_info"); Sql.exec(c,"DELETE FROM ch_messages"); Sql.exec(c,"DELETE FROM ch_archive_fragments") }
     ArchiveProjection.backfill(db); ArchiveProjection.backfill(db)
     assertEquals(archive.messages("a",out.sessionId,0,100,Some(ContentView(1,None))).messages.head.timestamp,Some("historically accepted"))

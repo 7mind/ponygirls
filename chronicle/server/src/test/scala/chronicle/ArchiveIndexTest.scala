@@ -8,10 +8,10 @@ import java.nio.charset.StandardCharsets.UTF_8
 class ArchiveIndexTest extends munit.FunSuite {
   private def database(f: (Config,Database,PostgresArchive,PostgresArchiveIndex) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val config=Fixtures.config(); val db=new Database(config); db.initialize()
+    val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
+      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config)
     f(config,db,archive,new PostgresArchiveIndex(db,archive,config))
@@ -41,7 +41,7 @@ class ArchiveIndexTest extends munit.FunSuite {
   test("BG GoodCommunication specified: all raw HEAD rows browse by actual message time without publication/profile availability") { database { (config,db,archive,index) =>
     val first=snapshot(List("older conversation")); val older=first.copy(messages=first.messages.map(_.copy(timestamp=Some("2026-01-01T00:00:00Z"))),metadata=first.metadata.copy(endedAt=Some("2026-10-26T00:00:00Z")))
     val newer=snapshot(List("newer conversation")).copy(messages=List(Message("m0",None,"user","newer conversation",Some("2026-02-01T00:00:00Z"),0)))
-    val newest=archive.ingest("a",newer,config.profile); val oldest=archive.ingest("a",older,config.profile)
+    val newest=archive.ingest("a",newer); val oldest=archive.ingest("a",older)
     db.transaction(c => Sql.exec(c,"UPDATE ch_profile SET maintenance=true,active='unavailable'"))
     val page=browse(index,"a",query("",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100))
     assertEquals(page.total,2L); assertEquals(page.rows.map(_.head.id),List(newest.sessionId,oldest.sessionId))
@@ -51,7 +51,7 @@ class ArchiveIndexTest extends munit.FunSuite {
   }}
   test("BG GoodCommunication specified: exact literals preserve phrase/message boundaries, long words, wildcard characters and Unicode overlap") { database { (config,db,archive,index) =>
     val request=snapshot(List("alpha","beta","x"*4090+"Needle Boundary"+"z"*5000,"j"*20000+"longwordneedle"+"j"*1000,"literal %_\\.*","x"*3500+"K"*512+"z"*4000))
-    val out=archive.ingest("a",request,config.profile)
+    val out=archive.ingest("a",request)
     def matches(expression: String): Long = browse(index,"a",query("mode:lexical "+expression,ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)).total
     assertEquals(matches("alpha AND beta"),1L)
     assertEquals(matches("\"alpha beta\""),0L)
@@ -66,8 +66,8 @@ class ArchiveIndexTest extends munit.FunSuite {
   }}
   test("BG GoodCommunication specified: full Boolean metadata predicates and user filters never broaden live ACL") { database { (config,db,archive,index) =>
     val first=snapshot(List("needlealpha")).copy(metadata=snapshot(List("unused")).metadata.copy(project=Some("ProjectA"),gitBranch=Some("Main"),model=Some("ModelA"),tags=List("work")))
-    val visible=archive.ingest("a",first,config.profile)
-    archive.ingest("b",snapshot(List("needlebeta")),config.profile)
+    val visible=archive.ingest("a",first)
+    archive.ingest("b",snapshot(List("needlebeta")))
     def count(expression: String): Long = browse(index,"a",query(expression,ArchiveSort.Title,SortDirection.Asc,None,100)).total
     assertEquals(count("mode:lexical (user:b OR user:a) project:projecta branch:main model:modela tag:WORK"),1L)
     assertEquals(count("mode:lexical (user:b OR needlebeta)"),0L)
@@ -85,7 +85,7 @@ class ArchiveIndexTest extends munit.FunSuite {
   test("BG GoodCommunication specified: every global header sort pages with stable UUID ties and nulls last") { database { (config,db,archive,index) =>
     (0 until 7).foreach { number =>
       val base=snapshot(List.fill(number+1)("message"))
-      archive.ingest("a",base.copy(metadata=base.metadata.copy(title=if(number<3) "tie" else s"title-$number",project=if(number%2==0) Some(s"project-$number") else None,gitBranch=Some(s"branch-${7-number}"),model=if(number%3==0) None else Some(s"model-$number"),tags=if(number%3==0) Nil else List(s"tag-$number"))),config.profile)
+      archive.ingest("a",base.copy(metadata=base.metadata.copy(title=if(number<3) "tie" else s"title-$number",project=if(number%2==0) Some(s"project-$number") else None,gitBranch=Some(s"branch-${7-number}"),model=if(number%3==0) None else Some(s"model-$number"),tags=if(number%3==0) Nil else List(s"tag-$number"))))
     }
     ArchiveSort.all.foreach { sort => List(SortDirection.Asc,SortDirection.Desc).foreach { direction =>
       val complete=browse(index,"a",query("",sort,direction,None,100)).rows
@@ -109,7 +109,7 @@ class ArchiveIndexTest extends munit.FunSuite {
       }
       (0 until 2).foreach { _ =>
         val request=snapshot(List("small message"))
-        archive.ingest("a",request.copy(metadata=metadata(request.metadata,longKey)),config.profile)
+        archive.ingest("a",request.copy(metadata=metadata(request.metadata,longKey)))
       }
       List(SortDirection.Asc,SortDirection.Desc).foreach { direction =>
         val first=query("",sort,direction,None,1)
@@ -127,18 +127,18 @@ class ArchiveIndexTest extends munit.FunSuite {
 
   test("BG GoodCommunication specified: referenced archive keys retain their original revision and reject drift, missing anchors and foreign rows") { database { (config,db,archive,index) =>
     val original=snapshot(List("first")).copy(metadata=Fixtures.snapshot().metadata.copy(title="a"))
-    val first=archive.ingest("a",original,config.profile)
-    val secondRequest=snapshot(List("second")); val second=archive.ingest("a",secondRequest.copy(metadata=secondRequest.metadata.copy(title="b")),config.profile)
+    val first=archive.ingest("a",original)
+    val secondRequest=snapshot(List("second")); val second=archive.ingest("a",secondRequest.copy(metadata=secondRequest.metadata.copy(title="b")))
     val q=query("",ArchiveSort.Title,SortDirection.Asc,None,1)
     val cursor=browse(index,"a",q).nextCursor.get
-    archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1,metadata=original.metadata.copy(title="z")),config.profile)
+    archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1,metadata=original.metadata.copy(title="z")))
     assertEquals(browse(index,"a",q.copy(cursor=Some(cursor))).rows.head.head.id,second.sessionId)
     def altered(revision: Int,hash: String): String = changeCursor(cursor)(_.mapObject(_.add("last",Json.arr(Json.fromInt(revision),Json.fromString(hash)))))
     val hash=Wire.parse(new String(Base64.getUrlDecoder.decode(cursor),UTF_8)).hcursor.downField("last").as[List[Json]].toOption.get(1).asString.get
     assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(altered(2,hash))))).code,"conflict")
     assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(altered(99,hash))))).code,"conflict")
     assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(altered(1,"0"*64))))).code,"conflict")
-    val foreign=archive.ingest("b",original.copy(requestId=UUID.randomUUID()),config.profile)
+    val foreign=archive.ingest("b",original.copy(requestId=UUID.randomUUID()))
     val forged=changeCursor(cursor)(_.mapObject(_.add("id",Json.fromString(foreign.sessionId.toString))))
     assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(forged)))).code,"conflict")
     db.transaction(c => Sql.exec(c,"UPDATE ch_sources SET tombstone=true WHERE id=?",first.sessionId))
@@ -146,8 +146,8 @@ class ArchiveIndexTest extends munit.FunSuite {
   }}
   test("BG GoodCommunication specified: referenced cursor resolution rechecks live group visibility") { database { (config,db,archive,index) =>
     val request=snapshot(List("shared"))
-    archive.ingest("b",request.copy(metadata=request.metadata.copy(title="a")),config.profile)
-    archive.ingest("a",snapshot(List("owned")).copy(metadata=request.metadata.copy(title="b")),config.profile)
+    archive.ingest("b",request.copy(metadata=request.metadata.copy(title="a")))
+    archive.ingest("a",snapshot(List("owned")).copy(metadata=request.metadata.copy(title="b")))
     val group=UUID.randomUUID()
     db.transaction { c =>
       Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','shared')",group)
@@ -161,7 +161,7 @@ class ArchiveIndexTest extends munit.FunSuite {
   test("BG GoodCommunication regression: oversized numeric cursor positions are rejected before SQL execution") { database { (config,db,archive,index) =>
     (1 to 2).foreach { _ =>
       val request=snapshot(List("timestamp"))
-      archive.ingest("a",request.copy(metadata=request.metadata.copy(startedAt=Some("2026-01-01T00:00:00Z"))),config.profile)
+      archive.ingest("a",request.copy(metadata=request.metadata.copy(startedAt=Some("2026-01-01T00:00:00Z"))))
     }
     val q=query("",ArchiveSort.LastTimestamp,SortDirection.Asc,None,1)
     val cursor=browse(index,"a",q).nextCursor.get
@@ -197,13 +197,13 @@ class ArchiveIndexTest extends munit.FunSuite {
     assertEquals(complement.total,1105L); assert(complement.rows.forall(_.matchedView.isEmpty))
   }}
   test("BG GoodCommunication specified: stale published ANN and current literal provenance stay separate and immutable") { database { (config,db,archive,index) =>
-    val original=snapshot(List("antecedent")); val out=archive.ingest("a",original,config.profile)
-    val claim=archive.claim(config.profile,300).get
+    val original=snapshot(List("antecedent")); val out=archive.ingest("a",original)
+    val claim=archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get
     val chunk=Fragments.split(original.messages).head.copy(sessionId=out.sessionId,tags=List("annotation-work"))
     assert(archive.publish(claim,List(IndexedChunk(chunk,List(1.0,0.0,0.0)))))
     val published=archive.session("a",out.sessionId).view
     val next=snapshot(List("successor")).copy(source=original.source,expectedRevision=1)
-    archive.ingest("a",next,config.profile)
+    archive.ingest("a",next)
     val semantic=browse(index,"a",query("mode:semantic unrelated",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)).rows.head
     assertEquals(semantic.head.revision,2); assertEquals(semantic.head.metadata,next.metadata)
     assertEquals(semantic.head.view,ContentView(2,None)); assertEquals(semantic.publishedView,Some(published)); assertEquals(semantic.matchedView,Some(published))
@@ -216,12 +216,12 @@ class ArchiveIndexTest extends munit.FunSuite {
   test("BG GoodCommunication specified: required metadata-only subtrees restrict candidate SQL before limit under exact scan control; mixed Boolean syntax does not") { database { (config,db,archive,index) =>
     seed(config,db,1100,true)
     val target=snapshot(List("far candidate")).copy(metadata=snapshot(List("unused")).metadata.copy(project=Some("target"),tags=List("keep")))
-    val out=archive.ingest("a",target,config.profile); val claim=archive.claim(config.profile,300).get
+    val out=archive.ingest("a",target); val claim=archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get
     assert(archive.publish(claim,List(IndexedChunk(Fragments.split(target.messages).head.copy(sessionId=out.sessionId),List(0.0,1.0,0.0)))))
     val separator=if(config.jdbcUrl.contains("?")) "&" else "?"
     val options=java.net.URLEncoder.encode("-c enable_indexscan=off -c enable_bitmapscan=off",java.nio.charset.StandardCharsets.UTF_8)
     val exactConfig=config.copy(jdbcUrl=config.jdbcUrl+separator+"options="+options)
-    val exactDb=new Database(exactConfig)
+    val exactDb=new Database(exactConfig,IndexProfileCatalog.legacyOnly(exactConfig))
     val exactIndex=new PostgresArchiveIndex(exactDb,new PostgresArchive(exactDb,exactConfig),exactConfig)
     def count(body: String): Long = browse(exactIndex,"a",query("mode:semantic ("+body+")",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)).total
     assertEquals(count("project:target (foo OR bar)"),1L)
@@ -232,7 +232,7 @@ class ArchiveIndexTest extends munit.FunSuite {
     assertEquals(count("foo AND NOT foo"),0L)
   }}
   test("Perf GoodCommunication: empty metadata projection does not touch100MiB raw snapshot or message payloads") { database { (config,db,archive,index) =>
-    val out=archive.ingest("a",snapshot(List("tiny visible message")),config.profile)
+    val out=archive.ingest("a",snapshot(List("tiny visible message")))
     db.transaction(c => Sql.exec(c,"UPDATE ch_revisions SET snapshot=jsonb_set(snapshot,'{files,0,content}',to_jsonb(repeat('r',100*1024*1024))) WHERE session_id=?",out.sessionId))
     val q=query("",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)
     val statement=index.statement("a",q,ArchiveExpression.parse(""),Nil,None)
