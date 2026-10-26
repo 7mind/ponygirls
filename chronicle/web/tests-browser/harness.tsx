@@ -1,3 +1,4 @@
+import { browserTheme } from '../src/theme.ts';
 import { createRoot } from 'react-dom/client';
 import { App } from '../src/App.tsx';
 import { createBrowserManager, connectionConfig } from '../src/transport/browser.ts';
@@ -9,4 +10,4 @@ const connection = createBrowserManager(window, document, {
   staleGrace: 900, requestTimeout: 700, retryBase: 50, retryCap: 200, maxAttempts: 3,
   tickInterval: 100, pauseThreshold: 300,
 });
-createRoot(root).render(<App connection={connection}/>);
+createRoot(root).render(<App connection={connection} theme={browserTheme(window, document)}/>);

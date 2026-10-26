@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { ThemeControl } from './ThemeControl.tsx';
+import type { ThemeController } from './theme.ts';
 import type { FormEvent } from 'react';
 import { Operation_Whoami, Operation_Logout, Result_Whoami, type SessionInfo } from './api.ts';
 import type { ChronicleConnection } from './client.ts';
@@ -34,7 +36,7 @@ function LoginPanel({ connection, stats }: { connection: ChronicleConnection; st
       {stats.activeId === null && stats.terminal === null && <p className="tiny" role="status">Checking for an existing session…</p>}
     </section></main>;
 }
-export function App({ connection }: { connection: ChronicleConnection }) {
+export function App({ connection, theme }: { connection: ChronicleConnection; theme: ThemeController }) {
   const stats = useConnection(connection), [tab, setTab] = useState<'archive' | 'activity' | 'access'>('archive');
   const [archive, setArchive] = useState<ArchiveState>(emptyArchive);
   const [draft, setDraft] = useState('');
@@ -52,7 +54,7 @@ export function App({ connection }: { connection: ChronicleConnection }) {
     setArchive(emptyArchive()); setDraft(''); setTab('archive'); setArchiveOwner(null);
     if (await actions.run(new Operation_Logout(), 'Sign out')) connection.retry();
   }
-  return <><a className="skip-link" href="#main-content">Skip to content</a><header className="masthead"><a href="/" className="brand" aria-label="Chronicle home"><span className="brand-mark" aria-hidden="true">C<span>·</span></span>chronicle</a>{user && <><nav aria-label="Main navigation">{(['archive', 'activity', 'access'] as const).map(item => <button className={tab === item ? 'nav-active' : ''} onClick={() => setTab(item)} key={item} aria-current={tab === item ? 'page' : undefined}>{item}</button>)}</nav><div className="identity"><span>{user.login}</span><button className="text-button" disabled={actions.busy || actions.uncertain !== null} onClick={() => void logout()}>Sign out</button></div></>}</header>
+  return <><a className="skip-link" href="#main-content">Skip to content</a><header className="masthead"><a href="/" className="brand" aria-label="Chronicle home"><span className="brand-mark" aria-hidden="true">C<span>·</span></span>chronicle</a>{user && <><nav aria-label="Main navigation">{(['archive', 'activity', 'access'] as const).map(item => <button className={tab === item ? 'nav-active' : ''} onClick={() => setTab(item)} key={item} aria-current={tab === item ? 'page' : undefined}>{item}</button>)}</nav><div className="identity"><span>{user.login}</span><button className="text-button" disabled={actions.busy || actions.uncertain !== null} onClick={() => void logout()}>Sign out</button></div></>}<ThemeControl controller={theme}/></header>
     <div id="main-content" tabIndex={-1}><div className="global-mutation-notices"><MutationNotice actions={actions}/></div>{identity.error && stats.terminal !== 'unauthorized' && <ErrorNotice>{identity.error}</ErrorNotice>}
       {identity.data === null ? <LoginPanel connection={connection} stats={stats}/> : user === null ? <div className="loading-line" role="status">Preparing an account-scoped archive…</div> : tab === 'archive' ? <Archive connection={connection} stats={stats} user={user} draft={draft} setDraft={setDraft} archive={archive} setArchive={setArchive}/> : tab === 'activity' ? <Activity connection={connection} stats={stats} user={user} actions={actions}/> : <Access connection={connection} stats={stats} user={user} actions={actions}/>}</div>
     <footer className="app-footer"><span>Chronicle</span></footer><ConnectionHealth connection={connection} stats={stats}/>

@@ -1,6 +1,13 @@
-.retry-failed-action{min-width:0;margin:12px 0}
-.retry-failed-action>p{margin:6px 0}
-.retry-failed-preview{max-width:720px}
+.retry-failed-action{display:contents}
+.retry-failed-toolbar{grid-column:2;grid-row:1;justify-self:end;display:flex;align-items:center;gap:9px;min-width:0}
+.retry-failed-trigger{padding:6px 10px;font-size:11px;white-space:nowrap}
+.retry-failed-help{position:relative;margin-left:auto;font-size:11px}
+.retry-failed-help>summary{list-style:none;border:1px solid var(--control-border);border-radius:50%;width:23px;height:23px;text-align:center;line-height:21px;color:var(--muted)}
+.retry-failed-help>summary::-webkit-details-marker{display:none}
+.retry-failed-help-content{position:absolute;right:0;top:calc(100% + 8px);z-index:5;width:min(380px,calc(100vw - 68px));max-height:50dvh;overflow:auto;padding:12px;background:var(--paper);color:var(--ink);border:1px solid var(--control-border);border-radius:3px;box-shadow:0 6px 20px var(--shadow-soft);line-height:1.7}
+.retry-failed-scope{grid-column:1/-1;grid-row:2;margin:0}
+.retry-failed-preview{grid-column:1/-1;grid-row:4;width:100%;max-width:100%;min-width:0;margin:0}
+.retry-failed-preview>p,.retry-failed-preview form{max-width:80ch}
 .retry-failed-preview h3:focus{outline:2px solid var(--accent);outline-offset:4px}
 .retry-failed-preview code,.retry-failed-result code{overflow-wrap:anywhere}
 .retry-failed-counts{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px}
