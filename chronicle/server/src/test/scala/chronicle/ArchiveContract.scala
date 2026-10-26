@@ -21,8 +21,8 @@ final class DummyArchive(config: Config) extends SessionArchive {
       case None =>
         val h=sources.getOrElseUpdate((owner,k),Head(UUID.randomUUID(),owner,r,0,None))
         Check(h.revision==r.expectedRevision,"conflict","revision mismatch")
-        h.request=r; h.revision+=1
-        val claim=Claim(UUID.randomUUID(),h.id,h.revision,1L,profile,r); jobs.enqueue(claim)
+        h.request=SnapshotProjection(r); h.revision+=1
+        val claim=Claim(UUID.randomUUID(),h.id,h.revision,1L,profile,h.request); jobs.enqueue(claim)
         val out=IngestReceipt(r.requestId,h.id,h.revision,claim.jobId); receipts((owner,k,r.requestId))=(digest,out); out
     }
   }
@@ -45,6 +45,64 @@ final class DummyArchive(config: Config) extends SessionArchive {
 }
 abstract class ArchiveContract extends munit.FunSuite {
   def withArchive(f: (SessionArchive,Config) => Unit): Unit
+  test("B-Atomic/GoodCommunication regression: display NUL projection preserves raw fidelity and binds the original request") { withArchive { (a,c) =>
+    val original=Fixtures.snapshot(); val value="\u0000start\u0000middle\u0000\t\nend\u0000😀"
+    val raw=io.circe.Json.obj("id"->io.circe.Json.fromString("u"),"text"->io.circe.Json.fromString(value)).noSpaces+"\n"
+    val metadata=original.metadata.copy(title=value,project=Some(value),gitRemote=Some(value),gitBranch=Some(value),gitCommit=Some(value),producer=value,model=Some(value),tags=List(value))
+    val request=original.copy(metadata=metadata,messages=List(Message("u",None,"user",value,None,0)),files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
+    val receipt=a.ingest("a",request,c.profile); val stored=a.headSnapshot("a",receipt.sessionId)
+    val display=value.replace("\u0000","\\u0000")
+    assertEquals(stored.messages.head.text,display)
+    assertEquals(stored.metadata,metadata.copy(title=display,project=Some(display),gitRemote=Some(display),gitBranch=Some(display),gitCommit=Some(display),producer=display,model=Some(display),tags=List(display)))
+    assertEquals(stored.files,request.files); assertEquals(stored.digest,request.digest)
+    assertEquals(a.ingest("a",request,c.profile),receipt)
+    assertEquals(intercept[DomainError](a.ingest("a",request.copy(messages=stored.messages,metadata=stored.metadata),c.profile)).code,"conflict")
+    val claim=a.claim(c.profile,300).get
+    assertEquals(claim.snapshot,stored); assert(a.publish(claim,Nil))
+    assertEquals(a.session("a",receipt.sessionId).metadata,stored.metadata)
+  }}
+  test("B-Atomic/GoodCommunication regression: scalar and repeated display NULs terminate fragment derivation") { withArchive { (a,c) =>
+    List("\u0000","\u0000\u0000","\u0000start","end\u0000","mid\u0000dle").foreach { text =>
+      val original=Fixtures.snapshot()
+      val raw=io.circe.Json.obj("id"->io.circe.Json.fromString("u"),"text"->io.circe.Json.fromString(text)).noSpaces+"\n"
+      val request=original.copy(messages=List(Message("u",None,"user",text,None,0)),files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
+      val receipt=a.ingest("a",request,c.profile); val stored=a.headSnapshot("a",receipt.sessionId)
+      val fragments=Fragments.split(stored.messages)
+      assertEquals(fragments.map(_.text).mkString,text.replace("\u0000","\\u0000"))
+      assertEquals(fragments.last.spans.last.end,stored.messages.head.text.length)
+      assertEquals(stored.files,request.files)
+    }
+  }}
+  test("B-Atomic/GoodCommunication regression: unsupported structured NUL and non-scalar Unicode are domain errors") { withArchive { (a,c) =>
+    val r=Fixtures.snapshot()
+    val invalid: List[IngestRequest => IngestRequest]=List(
+      r => r.copy(source=r.source.copy(collectorNamespace="bad\u0000")),
+      r => r.copy(source=r.source.copy(discoveryRootId="bad\u0000")),
+      r => r.copy(source=r.source.copy(producerSessionId="bad\u0000")),
+      r => r.copy(source=r.source.copy(subagentId=Some("bad\u0000"))),
+      r => r.copy(files=r.files.map(_.copy(path="bad\u0000"))),
+      r => r.copy(files=r.files.map(_.copy(sha256="bad\u0000"))),
+      r => r.copy(digest="bad\u0000"),
+      r => r.copy(metadata=r.metadata.copy(workdir=Some("bad\u0000"))),
+      r => r.copy(metadata=r.metadata.copy(startedAt=Some("bad\u0000"))),
+      r => r.copy(metadata=r.metadata.copy(endedAt=Some("bad\u0000"))),
+      r => r.copy(messages=r.messages.map(_.copy(id="bad\u0000"))),
+      r => r.copy(messages=r.messages.map(_.copy(parentId=Some("bad\u0000")))),
+      r => r.copy(messages=r.messages.map(_.copy(role="bad\u0000"))),
+      r => r.copy(messages=r.messages.map(_.copy(timestamp=Some("bad\u0000")))),
+      r => r.copy(messages=r.messages.map(_.copy(text="bad"+0xd800.toChar))),
+      r => r.copy(metadata=r.metadata.copy(title="bad"+0xdc00.toChar)),
+      r => r.copy(files=r.files.map(_.copy(path="bad"+0xd800.toChar))),
+      r => r.copy(source=r.source.copy(collectorNamespace="bad"+0xdc00.toChar))
+    )
+    invalid.foreach(change => assertEquals(intercept[DomainError](a.ingest("a",change(r),c.profile)).code,"invalid"))
+  }}
+  test("B-Atomic/GoodCommunication: supported non-NUL controls in opaque IDs paths and display text remain unchanged") { withArchive { (a,c) =>
+    val original=Fixtures.snapshot(); val value="tab\tline\ncarriage\r"
+    val r=original.copy(source=original.source.copy(collectorNamespace=value,discoveryRootId=value,producerSessionId=value,subagentId=Some(value)),files=original.files.map(_.copy(path=value)),metadata=original.metadata.copy(title=value,workdir=Some(value)),messages=original.messages.map(_.copy(id=value,parentId=None,role=value,text=value,timestamp=Some(value))))
+    val receipt=a.ingest("a",r,c.profile)
+    assertEquals(a.headSnapshot("a",receipt.sessionId),r)
+  }}
   test("B-Atomic/GoodCommunication: durable replay binding CAS and raw retention") { withArchive { (a,c) =>
     val r=Fixtures.snapshot(); val out=a.ingest("a",r,c.profile)
     assertEquals(a.ingest("a",r,c.profile),out)

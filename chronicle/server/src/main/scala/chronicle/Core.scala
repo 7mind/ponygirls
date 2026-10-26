@@ -134,13 +134,42 @@ trait SessionArchive {
   def publish(claim: Claim, chunks: List[IndexedChunk]): Boolean
   def fail(claim: Claim, code: String): Unit
 }
+object SnapshotProjection {
+  def text(value: String): String = value.replace("\u0000", "\\u0000")
+  def apply(r: IngestRequest): IngestRequest = {
+    val m=r.metadata
+    r.copy(metadata=m.copy(title=text(m.title),project=m.project.map(text),gitRemote=m.gitRemote.map(text),gitBranch=m.gitBranch.map(text),gitCommit=m.gitCommit.map(text),producer=text(m.producer),model=m.model.map(text),tags=m.tags.map(text)),messages=r.messages.map(m => m.copy(text=text(m.text))))
+  }
+}
 object SnapshotValidation {
+  private def scalar(value: String): Unit = {
+    var index=0
+    while(index<value.length) {
+      val char=value.charAt(index)
+      if(Character.isHighSurrogate(char)) {
+        Check(index+1<value.length && Character.isLowSurrogate(value.charAt(index+1)),"invalid","unpaired Unicode surrogate")
+        index+=2
+      } else {
+        Check(!Character.isLowSurrogate(char),"invalid","unpaired Unicode surrogate")
+        index+=1
+      }
+    }
+  }
+  private def structured(value: String): Unit = {
+    scalar(value)
+    Check(!value.contains('\u0000'),"invalid","NUL in structured field")
+  }
   def validate(r: IngestRequest, c: Config): Unit = {
     Check(r.expectedRevision >= 0 && r.files.nonEmpty && r.files.size <= c.maxFiles && r.messages.size <= c.maxMessages, "invalid", "snapshot limits")
     List(r.source.collectorNamespace,r.source.discoveryRootId,r.source.producerSessionId).foreach(Check.text(_,256))
     r.source.subagentId.foreach(Check.text(_,256))
+    (List(r.source.collectorNamespace,r.source.discoveryRootId,r.source.producerSessionId,r.digest)++r.source.subagentId).foreach(structured)
+    val metadata=r.metadata
+    (List(metadata.title,metadata.producer)++metadata.project++metadata.gitRemote++metadata.gitBranch++metadata.gitCommit++metadata.model++metadata.tags).foreach(scalar)
+    metadata.workdir.foreach(structured)
     Check(r.files.map(_.path).distinct.size == r.files.size, "invalid", "duplicate files")
     r.files.foreach { f =>
+      structured(f.path); structured(f.sha256); scalar(f.content)
       Check(f.content.getBytes(UTF_8).length <= c.maxFileBytes && !f.path.startsWith("/") && !f.path.split('/').contains(".."), "invalid", "invalid file")
       Check(Wire.hash(f.content) == f.sha256 && f.content.linesIterator.filter(_.nonEmpty).forall(l => io.circe.parser.parse(l).isRight), "invalid", "invalid file digest or JSONL")
     }
@@ -149,7 +178,10 @@ object SnapshotValidation {
     val records = r.files.flatMap(_.content.linesIterator.filter(_.nonEmpty).map(Wire.parse))
     val rawIds = records.flatMap(j => List(j.hcursor.get[String]("id").toOption,j.hcursor.get[String]("uuid").toOption).flatten).toSet
     val ids = r.messages.map(_.id).toSet ++ rawIds
-    r.messages.foreach { m => Check.text(m.id,256); Check.text(m.role,64); Check(m.recordIndex >= 0 && m.recordIndex < records.size && m.parentId.forall(ids.contains),"invalid","invalid message provenance") }
+    r.messages.foreach { m =>
+      (List(m.id,m.role)++m.parentId++m.timestamp).foreach(structured); scalar(m.text)
+      Check.text(m.id,256); Check.text(m.role,64); Check(m.recordIndex >= 0 && m.recordIndex < records.size && m.parentId.forall(ids.contains),"invalid","invalid message provenance")
+    }
     Check(r.metadata.tags.size <= 32 && r.metadata.tags.forall(_.length <= 128), "invalid", "invalid tags")
     List(r.metadata.startedAt,r.metadata.endedAt).flatten.foreach(t => Check(scala.util.Try(java.time.Instant.parse(t)).isSuccess,"invalid","invalid timestamp"))
   }

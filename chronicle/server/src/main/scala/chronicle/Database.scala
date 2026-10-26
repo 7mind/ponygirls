@@ -72,7 +72,7 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
           Check(!deleted,"gone","source purged; use a new collector namespace to restore")
           Check(head == r.expectedRevision,"conflict",s"expected revision mismatch; current=$head")
           val next = head+1; val job = UUID.randomUUID(); val receipt = IngestReceipt(r.requestId,id,next,job)
-          Sql.exec(c,"INSERT INTO ch_revisions VALUES(?,?,?::jsonb)",id,next,payload.noSpaces)
+          Sql.exec(c,"INSERT INTO ch_revisions VALUES(?,?,?::jsonb)",id,next,Wire.encode(IngestRequest.codecJson,SnapshotProjection(r)).noSpaces)
           Sql.exec(c,"UPDATE ch_sources SET revision=? WHERE id=?",next,id)
           Sql.exec(c,"UPDATE ch_jobs SET state='Failed',error=?,fence=fence+1,lease_until=NULL WHERE session_id=? AND revision<? AND state<>'Complete'",Jobs.supersededRevision,id,next)
           Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile) VALUES(?,?,?,?)",job,id,next,profile)
