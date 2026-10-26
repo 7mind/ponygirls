@@ -128,7 +128,7 @@ final class PostgresRunAuthorizationTest extends RunAuthorizationContract {
       assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh")
     }
     val config=Fixtures.config()
-    val db=new Database(config)
+    val db=new Database(config,IndexProfileCatalog.legacyOnly(config))
     db.initialize()
     db.transaction { c =>
       val stream=getClass.getResourceAsStream("/009_transient_security_epoch.sql")
@@ -140,8 +140,8 @@ final class PostgresRunAuthorizationTest extends RunAuthorizationContract {
     val auth=new Auth(db,config)
     val archive=new PostgresArchive(db,config)
     val original=Fixtures.snapshot()
-    val source=archive.ingest("a",original,config.profile)
-    assert(archive.publish(archive.claim(config.profile,300).get,Nil))
+    val source=archive.ingest("a",original)
+    assert(archive.publish(archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get,Nil))
     val group=UUID.randomUUID()
     db.transaction { c =>
       Sql.exec(c,"INSERT INTO ch_groups VALUES(?,?,?)",group,"a","synthetic sharing")
@@ -171,7 +171,7 @@ final class PostgresRunAuthorizationTest extends RunAuthorizationContract {
         auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.Purge(source.sessionId))); ()
       }
       def updateSource(): IO[Unit] = IO.blocking {
-        archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1,metadata=original.metadata.copy(title="new synthetic head")),config.profile); ()
+        archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1,metadata=original.metadata.copy(title="new synthetic head"))); ()
       }
     }
     f(fixture,db).unsafeRunSync()

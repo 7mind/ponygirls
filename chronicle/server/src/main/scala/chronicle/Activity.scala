@@ -18,9 +18,8 @@ private[chronicle] enum ActivityPositionKind { case Text,RevisionText,Count,Time
 private[chronicle] final case class ActivityOrder(column: String,kind: ActivityPositionKind,nullable: Boolean)
 private[chronicle] final case class ActivityPosition(value: Option[String],id: String)
 
-final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
-  private val unicode="COLLATE pg_unicode_fast"
-  private val base = """WITH observed AS (SELECT ?::timestamptz AS at,?::timestamptz AS stale_at),
+private[chronicle] object ActivityMetadataCorpus {
+  val base = """WITH observed AS (SELECT ?::timestamptz AS at,?::timestamptz AS stale_at),
     reports AS (SELECT collector_id,report,received_at FROM ch_collector_progress WHERE owner=?),
     heads AS (
       SELECT s.id,s.owner,s.revision,g.revision AS indexed_revision,COALESCE((
@@ -41,6 +40,16 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
     ),
     collectors AS (SELECT collector_id FROM reports UNION SELECT collector_id FROM heads)
     """
+  def parameters(owner: String,now: Instant): List[Sql.Param] = {
+    val floor=now.truncatedTo(ChronoUnit.MICROS)
+    val ceiling=if(floor==now) now else floor.plus(1,ChronoUnit.MICROS)
+    List[Sql.Param](floor.toString,ceiling.toString,owner,owner)
+  }
+}
+
+final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
+  import ActivityMetadataCorpus.{base,parameters}
+  private val unicode="COLLATE pg_unicode_fast"
   private val aggregate = """count(*) AS total,
     count(*) FILTER (WHERE state='Queued') AS queued,
     count(*) FILTER (WHERE state='Running') AS running,
@@ -62,11 +71,6 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
     val target=OwnerTargets.read(c,owner,false)
     db.profiles.resolve(target.profile)
     f(c,clock.instant())
-  }
-  private def parameters(owner: String,now: Instant): List[Sql.Param] = {
-    val floor=now.truncatedTo(ChronoUnit.MICROS)
-    val ceiling=if(floor==now) now else floor.plus(1,ChronoUnit.MICROS)
-    List[Sql.Param](floor.toString,ceiling.toString,owner,owner)
   }
   private def literal(value: String): String = "%"+value.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"
   private def insensitive(column: String,value: String): ActivitySql = ActivitySql(s"COALESCE(lower(($column) $unicode)=lower(? $unicode),false)",List(value))
