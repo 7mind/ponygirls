@@ -3,10 +3,11 @@ import type { FormEvent, ReactNode } from 'react';
 import { addMetadataFilter } from './expression.ts';
 import type { QuickFilterField } from './ExpressionEditor.tsx';
 import './expression.css';
+import { ExpressionInput, type CompletionContext } from './ExpressionInput.tsx';
 
 const MAX_EXPRESSION_CHARACTERS = 4096;
-interface Props { name: string; value: string; change(value: string): void; submit(value: string): void; fields: readonly QuickFilterField[]; disabled: boolean; shortcut: boolean; help: ReactNode }
-export function MetadataEditor({ name, value, change, submit, fields, disabled, shortcut, help }: Props) {
+interface Props { completion: CompletionContext; name: string; value: string; change(value: string): void; submit(value: string): void; fields: readonly QuickFilterField[]; disabled: boolean; shortcut: boolean; help: ReactNode }
+export function MetadataEditor({ name, value, change, submit, fields, disabled, shortcut, help, completion }: Props) {
   const input = useRef<HTMLInputElement>(null), menu = useRef<HTMLDetailsElement>(null), id = useId();
   const [field, setField] = useState(fields[0]!.attribute), [literal, setLiteral] = useState(''), [error, setError] = useState<string | null>(null);
   const selected = fields.find(item => item.attribute === field);
@@ -24,7 +25,7 @@ export function MetadataEditor({ name, value, change, submit, fields, disabled, 
   return <section className="expression-editor metadata-editor" aria-label={`${name} metadata search`}>
     <form role="search" aria-label={`${name} metadata search`} className="search-form search-line" onSubmit={event => { event.preventDefault(); setError(null); submit(value); }}>
       <label className="sr-only" htmlFor={`${id}-expression`}>Search {name.toLowerCase()} metadata</label>
-      <input id={`${id}-expression`} ref={input} maxLength={MAX_EXPRESSION_CHARACTERS} autoComplete="off" spellCheck={false} value={value} onChange={event => { change(event.target.value); setError(null); }} placeholder="Metadata expression · AND / OR / NOT"/>
+      <ExpressionInput context={completion} id={`${id}-expression`} inputRef={input} maxLength={MAX_EXPRESSION_CHARACTERS} value={value} change={next => { change(next); setError(null); }} label={`Search ${name.toLowerCase()} metadata`} placeholder="Metadata expression · AND / OR / NOT"/>
       <button className="primary" disabled={disabled}>Filter</button>
     </form>
     <div className="expression-tools"><details ref={menu} className="quick-filters"><summary>Quick filter</summary><form className="quick-filter-menu" onSubmit={apply}>

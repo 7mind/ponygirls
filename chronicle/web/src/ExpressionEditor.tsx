@@ -2,9 +2,10 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { addExpressionFilter } from './expression.ts';
 import './expression.css';
+import { ExpressionInput, type CompletionContext } from './ExpressionInput.tsx';
 
 export interface QuickFilterField { attribute: string; label: string; values: readonly string[] }
-export function ExpressionEditor({ value, change, submit, disabled, fields, help }: { value: string; change: (value: string) => void; submit: (value: string) => void; disabled: boolean; fields: readonly QuickFilterField[]; help: ReactNode }) {
+export function ExpressionEditor({ value, change, submit, disabled, fields, help, completion }: { completion: CompletionContext; value: string; change: (value: string) => void; submit: (value: string) => void; disabled: boolean; fields: readonly QuickFilterField[]; help: ReactNode }) {
   const input = useRef<HTMLInputElement>(null), filters = useRef<HTMLDetailsElement>(null), valuesId = useId();
   const [attribute, setAttribute] = useState(''), [filterValue, setFilterValue] = useState(''), [error, setError] = useState<string | null>(null);
   const field = fields.find(item => item.attribute === attribute) ?? fields[0];
@@ -14,7 +15,7 @@ export function ExpressionEditor({ value, change, submit, disabled, fields, help
     };
     window.addEventListener('keydown', focus); return () => window.removeEventListener('keydown', focus);
   }, []);
-  return <section className="expression-editor" aria-label="Archive search"><form className="search-form" onSubmit={event => { event.preventDefault(); submit(value); }}><div className="search-line"><span aria-hidden="true" className="search-symbol">⌕</span><input ref={input} aria-label="Search conversations" placeholder='Search conversations · project:"chronicle" AND NOT tag:"archived"' value={value} onChange={event => change(event.target.value)} maxLength={4000}/><kbd>⌘ / Ctrl K</kbd><button className="primary" disabled={disabled}>Search</button></div></form>
+  return <section className="expression-editor" aria-label="Archive search"><form className="search-form" onSubmit={event => { event.preventDefault(); submit(value); }}><div className="search-line"><span aria-hidden="true" className="search-symbol">⌕</span><ExpressionInput context={completion} inputRef={input} id={`${valuesId}-expression`} label="Search conversations" placeholder='Search conversations · project:"chronicle" AND NOT tag:"archived"' value={value} change={change} maxLength={4096}/><kbd>⌘ / Ctrl K</kbd><button className="primary" disabled={disabled}>Search</button></div></form>
     <div className="expression-tools"><details className="quick-filters" ref={filters}><summary>Quick filter</summary><form className="quick-filter-menu" onSubmit={event => {
       event.preventDefault(); if (field === undefined) return;
       try {

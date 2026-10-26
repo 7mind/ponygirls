@@ -141,3 +141,19 @@ test('BA @regression: heartbeat activity cannot cancel the request-timeout stale
   clock.advance(config.staleGrace); assert.equal(first.readyState, 3);
   assert.equal((await read).outcome, 'failed'); manager.dispose();
 });
+
+test('BA specified: transient one-shot delivery becomes uncertain without a durable receipt or replay', async () => {
+  const { manager, first, clock, sockets } = fixture(); first.alive();
+  const options = { mutation: false, receiptId: null, delivery: 'once' } as const;
+  const request = manager.request('cost-bearing-start', options);
+  const failure = assert.rejects(request, cause => cause instanceof RequestFailure && cause.outcome === 'uncertain' && cause.receiptId === null);
+  first.close(1012, 'restart'); await failure; clock.advance(100); sockets.at(-1)!.alive();
+  assert.equal(sockets.flatMap(socket => socket.sent).filter(value => value.includes('cost-bearing-start')).length, 1);
+  manager.dispose();
+});
+test('BA specified: one-shot deadline uncertainty never directs transient work to durable receipt recovery', async () => {
+  const { manager, first, clock } = fixture(); first.alive();
+  const request = manager.request('transient-start', { mutation: false, receiptId: null, delivery: 'once' });
+  const failure = assert.rejects(request, cause => cause instanceof RequestFailure && cause.outcome === 'uncertain' && cause.receiptId === null && !cause.message.includes('receipt'));
+  clock.advance(config.requestTimeout); await failure; manager.dispose();
+});

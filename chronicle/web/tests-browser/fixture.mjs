@@ -165,6 +165,7 @@ export class ChronicleFixture {
     const selection = [this.user.id, this.targetProfile, ...eligible.map(row => [row.job.id, row.job.revision, this.jobFences.get(row.job.id) ?? 0]).sort((left, right) => left[0].localeCompare(right[0]))];
     return new api.RetryFailedPlan(this.targetProfile, createHash('sha256').update(JSON.stringify(selection)).digest('hex'), counts);
   }
+  goal50Operation = undefined;
   async install(page) {
     await page.route('**/api/login', route => {
       const request = api.LoginRequest_JsonCodec.instance.decode(context, route.request().postDataJSON());
@@ -187,6 +188,10 @@ export class ChronicleFixture {
         if (operation instanceof api.Operation_Ping) { send(new api.Result_Pong(operation.nonce)); return; }
         if (operation instanceof api.Operation_Pong) return;
         if (operation instanceof api.Operation_Whoami) { send(new api.Result_Whoami(this.user)); return; }
+        if (this.goal50Operation !== undefined && this.goal50Operation(operation, envelope, send, entry)) return;
+        if (operation instanceof api.Operation_ExpressionHints) { const hash = createHash('sha256').update(JSON.stringify(operation.query.toJSON())).digest('hex'); send(new api.Result_ExpressionHints(new api.ExpressionHintsResult(hash, '2026-10-26T12:00:00Z', operation.query.caretUtf16, operation.query.caretUtf16, [], false))); return; }
+        if (operation instanceof api.Operation_GetPassages) { send(new api.Result_Passages(new api.PassagesResult(operation.view, operation.view.generationId === undefined ? api.PassageFormat.Unindexed : api.PassageFormat.LegacyAnnotations, [], 0n, operation.offset))); return; }
+
         if (operation instanceof api.Operation_Archive) {
           this.searchCount++;
           if (this.archiveFailure !== null) { send(new api.Result_Error(new api.Failure('invalid', this.archiveFailure))); return; }

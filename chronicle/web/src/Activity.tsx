@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { ActivityCollectorSort, ActivityJobSort, SortDirection, ActivityJobScope, ActivityJobsQuery, ActivityQuery, CollectorPhase, JobState, Operation_Activity, Operation_ActivityJobs, Operation_RetryJob, Result_Activity, Result_ActivityJobs, Scope, type ActivityCollector, type ActivityJob, type ActivityJobsResult, type ActivityResult, type UserInfo } from './api.ts';
+import { ExpressionHintTarget_ActivityCollectors, ExpressionHintTarget_ActivityJobs, ActivityCollectorSort, ActivityJobSort, SortDirection, ActivityJobScope, ActivityJobsQuery, ActivityQuery, CollectorPhase, JobState, Operation_Activity, Operation_ActivityJobs, Operation_RetryJob, Result_Activity, Result_ActivityJobs, Scope, type ActivityCollector, type ActivityJob, type ActivityJobsResult, type ActivityResult, type UserInfo } from './api.ts';
 import { read, type ChronicleConnection } from './client.ts';
 import { useInfiniteResource } from './infinite.ts';
 import { InfiniteTrigger } from './InfiniteTrigger.tsx';
@@ -15,6 +15,9 @@ import { ACTIVITY_POLL_INTERVAL_MS } from './progress.ts';
 import type { MutationState } from './mutations.ts';
 import type { ManagerStats } from './transport/types.ts';
 import './activity.css';
+import './goal50.css';
+import { ModelUsage } from './ModelUsage.tsx';
+import { OwnerReindex } from './OwnerReindex.tsx';
 
 const ACTIVITY_PAGE_SIZE = 50;
 interface ActivityProps { connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; actions: MutationState }
@@ -67,9 +70,11 @@ function OwnerActivity({ connection, stats, user, actions }: ActivityProps) {
         <div className="activity-summary-totals"><dl className="activity-head-counts"><div><dt>Archive HEADs</dt><dd>{summary === null ? '—' : summary.archiveHeads.toString()}</dd></div><div><dt>HEADs without target job</dt><dd>{summary === null ? '—' : summary.headsWithoutTargetJob.toString()} <span>· not Queued</span></dd></div></dl><JobTotals current={summary === null ? null : summary.current} historical={summary === null ? null : summary.historical} caption="All your current and historical indexing jobs"/>
           {summary !== null && <><RunningLeases counts={summary.current} label="Current"/><RunningLeases counts={summary.historical} label="Historical"/></>}</div>
         <RetryFailedIndexing connection={connection} stats={stats} user={user} actions={actions} eligibleFailed={summary === null ? null : summary.current.failed}/>
+        <OwnerReindex connection={connection} stats={stats} user={user} actions={actions}/>
       </section>
+      <ModelUsage connection={connection} stats={stats} user={user}/>
       <div className="activity-workspace"><section className="management-section activity-collectors" aria-labelledby="activity-collectors-heading"><div className="section-heading"><h2 id="activity-collectors-heading">Collectors</h2><span className="eyebrow" role="status">{summary === null ? 'COUNTS UNKNOWN' : `${summary.totalCollectors.toString()} matching / ${summary.allCollectors.toString()} owner collectors · ${collectors.items.length} loaded`}</span></div>
-        <MetadataEditor name="Collector" value={collectorExpression} change={setCollectorExpression} submit={setCollectorQuery} fields={collectorFields} disabled={stats.activeId === null} shortcut={false} help={<p>collector (exact ID), phase, freshness (recent / stale / unknown), after, before. Dates use report received time. Missing reports do not establish collector health.</p>}/>
+        <MetadataEditor completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_ActivityCollectors() }} name="Collector" value={collectorExpression} change={setCollectorExpression} submit={setCollectorQuery} fields={collectorFields} disabled={stats.activeId === null} shortcut={false} help={<p>collector (exact ID), phase, freshness (recent / stale / unknown), after, before. Dates use report received time. Missing reports do not establish collector health.</p>}/>
         {collectors.error !== null && <ErrorNotice>{collectors.error}</ErrorNotice>}{collectors.loading && <p className="activity-loading" role="status">Loading collector metadata…</p>}
         {collectors.updateAvailable && <button className="small-button activity-show-updates" disabled={collectors.refreshing} onClick={collectors.applyUpdates}>Show updated collectors</button>}
         <div className="activity-collector-scroll" ref={collectorScroll} data-scroll-container tabIndex={0} role="region" aria-label="Your collector summaries">
@@ -81,7 +86,7 @@ function OwnerActivity({ connection, stats, user, actions }: ActivityProps) {
         <div className="activity-job-controls"><div className="activity-scope-switch" role="group" aria-label="Indexing job scope"><button aria-pressed={scope === ActivityJobScope.Current} onClick={() => setScope(ActivityJobScope.Current)}>Current</button><button aria-pressed={scope === ActivityJobScope.Historical} onClick={() => setScope(ActivityJobScope.Historical)}>History</button></div>
           <form className="activity-collector-filter" onSubmit={filterJobs}><label>Collector ID<input list="activity-collector-ids" value={collectorDraft} onChange={event => setCollectorDraft(event.target.value)} placeholder="All my collectors"/></label><datalist id="activity-collector-ids">{collectors.items.map(collector => <option key={collector.collectorId} value={collector.collectorId}/>)}</datalist><button type="submit" className="small-button">Apply</button><button type="button" className="small-button" disabled={collectorId === undefined && collectorDraft === ''} onClick={() => selectCollector(undefined)}>All my collectors</button></form>
         </div>
-        <MetadataEditor name="Indexing job" value={jobExpression} change={setJobExpression} submit={setJobQuery} fields={jobFields} disabled={stats.activeId === null} shortcut={true} help={<p>user (opaque owner ID), tag, project, branch, producer, format, model, status, after, before, collector, profile, classification, reason, lease. Metadata and activity dates belong to the job revision. model is the source model; profile is the exact index hash. Job states exclude unscheduled. Lease: active / expired / unleased / inactive.</p>}/>
+        <MetadataEditor completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_ActivityJobs(scope, collectorId) }} name="Indexing job" value={jobExpression} change={setJobExpression} submit={setJobQuery} fields={jobFields} disabled={stats.activeId === null} shortcut={true} help={<p>user (opaque owner ID), tag, project, branch, producer, format, model, status, after, before, collector, profile, classification, reason, lease. Metadata and activity dates belong to the job revision. model is the source model; profile is the exact index hash. Job states exclude unscheduled. Lease: active / expired / unleased / inactive.</p>}/>
         {collectorId !== undefined && <p className="tiny activity-section-note">Collector <code>{collectorId}</code></p>}
         {jobs.meta !== null && <p className="tiny activity-job-observed">Job page observed <Time value={jobs.meta.observedAt}/>{jobs.refreshing ? ' · refreshing…' : ''}.</p>}
         {jobs.error !== null && <ErrorNotice>{jobs.error}</ErrorNotice>}{jobs.loading && <p className="activity-loading" role="status">Loading {scope === ActivityJobScope.Current ? 'current' : 'historical'} job metadata…</p>}

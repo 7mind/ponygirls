@@ -162,7 +162,7 @@ try {
   const fixture = new ChronicleFixture();
   await fixture.install(page);
   await page.goto(`http://127.0.0.1:${address.port}/tests-browser/harness.html`);
-  await page.getByRole('textbox', { name: 'Search conversations' }).fill('original source');
+  await page.getByRole('combobox', { name: 'Search conversations' }).fill('original source');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await page.locator('.archive-row .table-title').first().click();
   await page.locator('#message-m1 pre').waitFor();

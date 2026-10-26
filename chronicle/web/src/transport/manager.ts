@@ -72,7 +72,7 @@ export class ConnectionManager<Operation, Result> {
         const pending = this.pending.get(id);
         if (!pending) return;
         this.pending.delete(id);
-        pending.reject(this.failure('Request deadline exceeded; reload reads or look up the mutation receipt', 'timeout', options));
+        pending.reject(this.failure('delivery' in options && options.delivery === 'once' ? 'Request deadline exceeded; one-shot delivery is unknown and must not be automatically repeated' : 'Request deadline exceeded; reload reads or look up the mutation receipt', 'timeout', options));
         this.stale(channel, 'request timeout');
       }, this.deps.config.requestTimeout);
       this.pending.set(id, { socketId: channel.id, generation: this.generation, timer, options, resolve, reject });
@@ -227,7 +227,7 @@ export class ConnectionManager<Operation, Result> {
     }
   }
   private failure(message: string, code: string, options: RequestOptions): RequestFailure {
-    return new RequestFailure(message, code, options.mutation ? 'uncertain' : 'failed', options.receiptId);
+    return new RequestFailure(message, code, options.mutation || ('delivery' in options && options.delivery === 'once') ? 'uncertain' : 'failed', options.receiptId);
   }
   private failChannel(channel: Channel<Operation, Result>, message: string): void {
     for (const [id, pending] of this.pending) if (pending.socketId === channel.id) {

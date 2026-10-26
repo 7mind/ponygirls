@@ -35,7 +35,7 @@ async function scene(configure) {
   return { context, page, fixture };
 }
 async function until(predicate, message) { for (let index = 0; index < 100; index++) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 50)); } throw new Error(message); }
-async function search(page, expression) { await page.getByRole('textbox', { name: 'Search conversations', exact: true }).fill(expression); await page.getByRole('button', { name: 'Search', exact: true }).click(); }
+async function search(page, expression) { await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill(expression); await page.getByRole('button', { name: 'Search', exact: true }).click(); }
 async function appendUntil(page, scroller, selector, total) {
   for (let index = 0; index < 20 && await page.locator(selector).count() < total; index++) {
     const before = await page.locator(selector).count(); await page.locator(scroller).evaluate(element => { element.scrollTop = element.scrollHeight; });
@@ -86,12 +86,12 @@ try {
   });
   await run('mode-aware quick filters, compact help and query errors never silently fall back', async () => {
     const { context, page, fixture } = await scene();
-    await page.keyboard.press('Control+k'); assert.equal(await page.getByRole('textbox', { name: 'Search conversations' }).evaluate(element => element === document.activeElement), true);
-    await page.getByRole('textbox', { name: 'Search conversations' }).fill('(A OR B) mode : lexical');
+    await page.keyboard.press('Control+k'); assert.equal(await page.getByRole('combobox', { name: 'Search conversations' }).evaluate(element => element === document.activeElement), true);
+    await page.getByRole('combobox', { name: 'Search conversations' }).fill('(A OR B) mode : lexical');
     await page.locator('.quick-filters > summary').click(); await page.getByLabel('Attribute', { exact: true }).selectOption('project'); await page.getByLabel('Value', { exact: true }).fill('chronicle');
     await page.getByRole('button', { name: 'Apply filter', exact: true }).click();
     await until(() => Promise.resolve(fixture.calls.some(call => call.operation instanceof api.Operation_Archive && call.operation.query.expression === 'mode : lexical ((A OR B)) AND project:"chronicle"')), 'Quick filter did not conjoin the complete expression');
-    const before = fixture.searchCount; await page.getByRole('textbox', { name: 'Search conversations' }).fill('A OR B mode:lexical'); await page.locator('.quick-filters > summary').click(); await page.getByLabel('Value', { exact: true }).fill('chronicle'); await page.getByRole('button', { name: 'Apply filter', exact: true }).click();
+    const before = fixture.searchCount; await page.getByRole('combobox', { name: 'Search conversations' }).fill('A OR B mode:lexical'); await page.locator('.quick-filters > summary').click(); await page.getByLabel('Value', { exact: true }).fill('chronicle'); await page.getByRole('button', { name: 'Apply filter', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'outer AND directive' }).waitFor(); assert.equal(fixture.searchCount, before, 'invalid global mode placement is not quietly repaired');
     await page.locator('.quick-filters > summary').click(); await page.locator('.expression-help > summary').click();
     assert.match(await page.locator('.expression-help-content').innerText(), /NOT text/); assert.match(await page.locator('.expression-help-content').innerText(), /literal substring/); assert.match(await page.locator('.expression-help-content').innerText(), /not proof/);

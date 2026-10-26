@@ -10,6 +10,7 @@ import { ConnectionHealth } from './ConnectionHealth.tsx';
 import { Archive, emptyArchive } from './Archive.tsx';
 import type { ArchiveState } from './Archive.tsx';
 import { Access } from './Access.tsx';
+import { McpTester, useMcpTester } from './McpTester.tsx';
 import { Activity } from './Activity.tsx';
 import { useMutations } from './mutations.ts';
 import { MutationNotice } from './MutationNotice.tsx';
@@ -37,7 +38,7 @@ function LoginPanel({ connection, stats }: { connection: ChronicleConnection; st
     </section></main>;
 }
 export function App({ connection, theme }: { connection: ChronicleConnection; theme: ThemeController }) {
-  const stats = useConnection(connection), [tab, setTab] = useState<'archive' | 'activity' | 'access'>('archive');
+  const stats = useConnection(connection), [tab, setTab] = useState<'archive' | 'activity' | 'access' | 'mcp'>('archive');
   const [archive, setArchive] = useState<ArchiveState>(emptyArchive);
   const [draft, setDraft] = useState('');
   const [archiveOwner, setArchiveOwner] = useState<string | null>(null);
@@ -48,15 +49,16 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     }
   }, [identity.data?.id, archiveOwner]);
   const user = identity.data !== null && identity.data.id === archiveOwner ? identity.data : null;
+  const tester = useMcpTester(connection, stats, user === null ? null : user.id, tab === 'mcp');
   const actions = useMutations(connection, identity.data?.id ?? null);
   useEffect(() => { connection.start(); return () => connection.dispose(); }, [connection]);
   async function logout() {
     setArchive(emptyArchive()); setDraft(''); setTab('archive'); setArchiveOwner(null);
     if (await actions.run(new Operation_Logout(), 'Sign out')) connection.retry();
   }
-  return <><a className="skip-link" href="#main-content">Skip to content</a><header className="masthead"><a href="/" className="brand" aria-label="Chronicle home"><span className="brand-mark" aria-hidden="true">C<span>·</span></span>chronicle</a>{user && <><nav aria-label="Main navigation">{(['archive', 'activity', 'access'] as const).map(item => <button className={tab === item ? 'nav-active' : ''} onClick={() => setTab(item)} key={item} aria-current={tab === item ? 'page' : undefined}>{item}</button>)}</nav><div className="identity"><span>{user.login}</span><button className="text-button" disabled={actions.busy || actions.uncertain !== null} onClick={() => void logout()}>Sign out</button></div></>}<ThemeControl controller={theme}/></header>
+  return <><a className="skip-link" href="#main-content">Skip to content</a><header className="masthead"><a href="/" className="brand" aria-label="Chronicle home"><span className="brand-mark" aria-hidden="true">C<span>·</span></span>chronicle</a>{user && <><nav aria-label="Main navigation">{(['archive', 'activity', 'access', 'mcp'] as const).map(item => <button className={tab === item ? 'nav-active' : ''} onClick={() => setTab(item)} key={item} aria-current={tab === item ? 'page' : undefined}>{item}</button>)}</nav><div className="identity"><span>{user.login}</span><button className="text-button" disabled={actions.busy || actions.uncertain !== null} onClick={() => void logout()}>Sign out</button></div></>}<ThemeControl controller={theme}/></header>
     <div id="main-content" tabIndex={-1}><div className="global-mutation-notices"><MutationNotice actions={actions}/></div>{identity.error && stats.terminal !== 'unauthorized' && <ErrorNotice>{identity.error}</ErrorNotice>}
-      {identity.data === null ? <LoginPanel connection={connection} stats={stats}/> : user === null ? <div className="loading-line" role="status">Preparing an account-scoped archive…</div> : tab === 'archive' ? <Archive connection={connection} stats={stats} user={user} draft={draft} setDraft={setDraft} archive={archive} setArchive={setArchive}/> : tab === 'activity' ? <Activity connection={connection} stats={stats} user={user} actions={actions}/> : <Access connection={connection} stats={stats} user={user} actions={actions}/>}</div>
+      {identity.data === null ? <LoginPanel connection={connection} stats={stats}/> : user === null ? <div className="loading-line" role="status">Preparing an account-scoped archive…</div> : tab === 'archive' ? <Archive connection={connection} stats={stats} user={user} draft={draft} setDraft={setDraft} archive={archive} setArchive={setArchive}/> : tab === 'activity' ? <Activity connection={connection} stats={stats} user={user} actions={actions}/> : tab === 'mcp' ? <McpTester tester={tester}/> : <Access connection={connection} stats={stats} user={user} actions={actions}/>}</div>
     <footer className="app-footer"><span>Chronicle</span></footer><ConnectionHealth connection={connection} stats={stats}/>
   </>;
 }
