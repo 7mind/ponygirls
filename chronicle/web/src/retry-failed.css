@@ -1,0 +1,13 @@
+.retry-failed-action{min-width:0;margin:12px 0}
+.retry-failed-action>p{margin:6px 0}
+.retry-failed-preview{max-width:720px}
+.retry-failed-preview h3:focus{outline:2px solid var(--accent);outline-offset:4px}
+.retry-failed-preview code,.retry-failed-result code{overflow-wrap:anywhere}
+.retry-failed-counts{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px}
+.retry-failed-counts caption{text-align:left;font-weight:600;padding-bottom:6px}
+.retry-failed-counts th,.retry-failed-counts td{padding:5px 6px;border-bottom:1px solid var(--rule);vertical-align:top;overflow-wrap:anywhere}
+.retry-failed-counts th{text-align:left;font-weight:400}
+.retry-failed-counts thead th{font-size:10px;color:var(--muted)}
+.retry-failed-counts td,.retry-failed-counts thead th:last-child{text-align:right}
+.retry-failed-counts td{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-variant-numeric:tabular-nums}
+.retry-failed-preview .retry-failed-cancel{margin:12px 0 0}
