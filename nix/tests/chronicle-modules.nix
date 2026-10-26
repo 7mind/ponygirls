@@ -50,7 +50,7 @@ let
       publicUrl = "https://chronicle.example.net";
       users.alice = { login = "alice"; passwordHashFile = "/run/secrets/alice-password-hash"; };
       database.passwordFile = "/run/secrets/chronicle-database-password";
-      annotation = { endpoint = "http://127.0.0.1:8000/v1/chat/completions"; model = "annotation-model"; revision = "test-v1"; credentialFile = "/run/secrets/annotation-key"; };
+      annotation = { requestPolicy = "strict-json-schema"; endpoint = "http://127.0.0.1:8000/v1/chat/completions"; model = "annotation-model"; revision = "test-v1"; credentialFile = "/run/secrets/annotation-key"; };
       embedding = { endpoint = "http://127.0.0.1:8001/v1/embeddings"; model = "embedding-model"; revision = "test-v1"; credentialFile = "/run/secrets/embedding-key"; dimensions = 768; queryPrefix = "query: "; documentPrefix = "document: "; };
     };
   };
@@ -62,6 +62,7 @@ let
   maxBodyServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.limits.maxBodyBytes = 536870912; });
   oversizedBodyServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.limits.maxBodyBytes = 536870913; });
   enabledServer = server serverConfig;
+  glmServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.annotation.requestPolicy = "glm-low-reasoning"; });
   disabledServer = server { };
   sendDimensions = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.embedding.sendDimensions = true; });
   noSsd = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.database.ssdTuning = false; });
@@ -135,6 +136,8 @@ assert !(builtins.elem 47330 enabledServer.networking.firewall.allowedTCPPorts);
 assert enabledServer.services.nginx.virtualHosts."chronicle.example.net".locations."/".proxyWebsockets;
 pkgs.runCommandLocal "chronicle-modules-test" { nativeBuildInputs = [ pkgs.jq ]; } ''
   test -n '${enabledServer.systemd.services.chronicle.serviceConfig.ExecStart}'
+  jq -e '.annotation.requestPolicy == "strict-json-schema" and (.embedding | has("requestPolicy") | not)' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.annotation.requestPolicy == "glm-low-reasoning"' ${lib.last (lib.splitString " " glmServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.embedding.sendDimensions == false' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.embedding.sendDimensions == true' ${lib.last (lib.splitString " " sendDimensions.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.allowInsecureHttp == false and .secureCookies == true' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}

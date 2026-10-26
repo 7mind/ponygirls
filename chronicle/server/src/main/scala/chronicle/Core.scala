@@ -30,10 +30,10 @@ object Wire {
 final case class UserConfig(id: String, login: String, passwordHashFile: String, enabled: Boolean)
 object TokenPolicy { val maximumPerOwner = 100 }
 final case class StaticTokenConfig(id: UUID, userId: String, name: String, scopes: List[Scope], tokenFile: String)
-final case class ModelConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int)
+final case class ModelConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, requestPolicy: AnnotationRequestPolicy)
 final case class EmbeddingConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, dimensions: Int, queryPrefix: String, documentPrefix: String, sendDimensions: Boolean)
 final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig]) {
-  def profile: String = Wire.hash(Json.arr(List(annotation.endpoint,annotation.model,annotation.revision,annotation.maxResponseBytes.toString,embedding.endpoint,embedding.model,embedding.revision,embedding.dimensions.toString,embedding.sendDimensions.toString,embedding.queryPrefix,embedding.documentPrefix,AnnotationPartition.identity,"prompt:v3:fragment-indices-only","schema:v2","cosine").map(Json.fromString)*).noSpaces)
+  def profile: String = Wire.hash(Json.arr(List(annotation.endpoint,annotation.model,annotation.revision,annotation.requestPolicy.identity,annotation.maxResponseBytes.toString,embedding.endpoint,embedding.model,embedding.revision,embedding.dimensions.toString,embedding.sendDimensions.toString,embedding.queryPrefix,embedding.documentPrefix,AnnotationPartition.identity,"prompt:v3:fragment-indices-only","schema:v2","cosine").map(Json.fromString)*).noSpaces)
   def validate(): Unit = {
     Check(users.map(_.id).distinct.size == users.size && users.map(_.login).distinct.size == users.size, "config", "duplicate users")
     Check(staticTokens.map(_.id).distinct.size==staticTokens.size,"config","duplicate static token IDs")
@@ -68,7 +68,12 @@ object Config {
     } yield values :+ scope })
     file <- cursor.get[String]("tokenFile")
   } yield StaticTokenConfig(id,owner,name,scopes,file) }
-  given Decoder[ModelConfig] = Decoder.forProduct6("endpoint","model","revision","credentialFile","timeoutSeconds","maxResponseBytes")(ModelConfig.apply)
+  given Decoder[AnnotationRequestPolicy] = Decoder.decodeString.emap {
+    case "strict-json-schema" => Right(AnnotationRequestPolicy.StrictJsonSchema)
+    case "glm-low-reasoning" => Right(AnnotationRequestPolicy.GlmLowReasoning)
+    case _ => Left("invalid annotation request policy")
+  }
+  given Decoder[ModelConfig] = Decoder.forProduct7("endpoint","model","revision","credentialFile","timeoutSeconds","maxResponseBytes","requestPolicy")(ModelConfig.apply)
   private val omittedSendDimensions = false
   given Decoder[EmbeddingConfig] = Decoder.instance { cursor => for {
     endpoint <- cursor.get[String]("endpoint")

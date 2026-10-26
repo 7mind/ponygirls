@@ -122,7 +122,8 @@ test('Chronicle ingestion → real annotation/embedding → PostgreSQL → seman
       assert.ok(request.headers.authorization === `Bearer ${annotation ? credentials.annotation : credentials.embedding}`, 'native credential-file authentication');
       assert.equal(payload.model, endpoint.model);
       if (annotation) {
-        assert.deepEqual(payload.response_format, { type: 'json_object' }); calls.annotation++;
+        assert.equal((payload.response_format as { type: unknown }).type, 'json_schema');
+        assert.equal((payload.response_format as { json_schema: { strict: unknown } }).json_schema.strict, true); calls.annotation++;
       } else {
         assert.ok(!Object.hasOwn(payload, 'dimensions'), 'expected shape must not become a truncation request');
         assert.ok(Array.isArray(payload.input) && payload.input.length > 0 && payload.input.length <= 16);

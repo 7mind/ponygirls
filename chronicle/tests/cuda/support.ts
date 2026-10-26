@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 export interface ModelEndpoint { endpoint: string; model: string; revision: string; credentialFile: string }
-export interface ModelConfiguration { annotation: ModelEndpoint; embedding: ModelEndpoint & { dimensions: number; sendDimensions: boolean; queryPrefix: string; documentPrefix: string } }
+export interface ModelConfiguration { annotation: ModelEndpoint & { requestPolicy: 'strict-json-schema' | 'glm-low-reasoning' }; embedding: ModelEndpoint & { dimensions: number; sendDimensions: boolean; queryPrefix: string; documentPrefix: string } }
 export async function configuration(): Promise<ModelConfiguration> {
   const path = process.env.CHRONICLE_CUDA_MODELS;
   assert.ok(path !== undefined, 'CHRONICLE_CUDA_MODELS must name a synthetic local model configuration');
@@ -14,6 +14,7 @@ export async function configuration(): Promise<ModelConfiguration> {
     assert.equal(url.username, ''); assert.equal(url.password, '');
     assert.ok(endpoint.model.length > 0 && endpoint.credentialFile.length > 0);
   }
+  assert.equal(result.annotation.requestPolicy, 'strict-json-schema', 'synthetic local endpoint uses strict schema without GLM extensions');
   assert.equal(result.embedding.dimensions, 2048);
   assert.equal(result.embedding.sendDimensions, false, 'natural 2048D output: do not request unsupported truncation');
   assert.equal(result.embedding.queryPrefix, 'query: ');

@@ -19,7 +19,7 @@ class ModelHttpTest extends munit.FunSuite {
     } yield (server,client)).use { case (server,client) => test(new ModelHttp(client),s"http://127.0.0.1:${server.address.getPort}/v1/operation") }.unsafeRunSync()
   }
   test("BG-GoodCommunication: OpenAI annotations partition valid source window") {
-    val reply="""{"choices":[{"message":{"content":"{\"chunks\":[{\"first\":0,\"last\":1,\"summary\":\"both\",\"tags\":[\"synthetic\"]}]}"}}]}"""
+    val reply="""{"choices":[{"finish_reason":"stop","message":{"content":"{\"chunks\":[{\"first\":0,\"last\":1,\"summary\":\"both\",\"tags\":[\"synthetic\"]}]}"}}]}"""
     simulator(Status.Ok,reply,(http,url) => {
       val c=Fixtures.config(); val messages=List(Message("u",None,"user","first",None,0),Message("a",Some("u"),"assistant","second",None,1))
       new OpenAIAnnotator(http,c.copy(annotation=c.annotation.copy(endpoint=url))).annotate(Fragments.split(messages),messages).map { chunks => assertEquals(chunks.size,1); assertEquals(chunks.head.text,"first\nsecond") }
@@ -28,7 +28,7 @@ class ModelHttpTest extends munit.FunSuite {
   test("BG-GoodCommunication regression: annotation envelope exposes fragment indices without competing byte offsets") {
     val messages=List(Message("u",None,"user","first🙂",None,0),Message("a",Some("u"),"assistant","secondé",None,1))
     val fragments=Fragments.split(messages)
-    val reply="""{"choices":[{"message":{"content":"{\"chunks\":[{\"first\":0,\"last\":1,\"summary\":\"both\",\"tags\":[\"synthetic\"]}]}"}}]}"""
+    val reply="""{"choices":[{"finish_reason":"stop","message":{"content":"{\"chunks\":[{\"first\":0,\"last\":1,\"summary\":\"both\",\"tags\":[\"synthetic\"]}]}"}}]}"""
     val endpoint: HttpApp[IO]=cats.data.Kleisli { request => request.as[String].map { body =>
       val payload=Wire.parse(body).hcursor.get[List[Json]]("messages").toOption.get
       val source=Wire.parse(payload(1).hcursor.get[String]("content").toOption.get).hcursor.get[List[Json]]("fragments").toOption.get

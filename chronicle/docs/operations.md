@@ -33,6 +33,7 @@ smind.services.chronicle = {
   };
   database.passwordFile = "/run/secrets/chronicle-db-password";
   annotation = {
+    requestPolicy = "strict-json-schema";
     endpoint = "http://127.0.0.1:8000/v1/chat/completions";
     model = "archive-annotator";
     revision = "your-immutable-deployment-revision";

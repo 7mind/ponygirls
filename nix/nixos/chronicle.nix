@@ -36,7 +36,7 @@ let
       tokenFile = "${credentialDir}/${staticTokenName token.id}";
     }) cfg.staticTokens;
     inherit (cfg.limits) maxBodyBytes maxFiles maxFileBytes maxMessages sessionTtlSeconds;
-    annotation = endpointJson "annotation" cfg.annotation;
+    annotation = endpointJson "annotation" cfg.annotation // { inherit (cfg.annotation) requestPolicy; };
     embedding = endpointJson "embedding" cfg.embedding // {
       inherit (cfg.embedding) dimensions sendDimensions queryPrefix documentPrefix;
     };
@@ -97,7 +97,9 @@ in
         };
       });
     };
-    annotation = lib.mkOption { type = lib.types.submodule { options = endpointOptions; }; description = "Annotation model endpoint and explicit profile identity."; };
+    annotation = lib.mkOption { type = lib.types.submodule { options = endpointOptions // {
+      requestPolicy = lib.mkOption { type = lib.types.enum [ "strict-json-schema" "glm-low-reasoning" ]; description = "Required strict structured-output policy; glm-low-reasoning additionally enables the GLM-specific low reasoning template extension. Changes require explicit maintenance reindex."; };
+    }; }; description = "Annotation model endpoint and explicit profile identity."; };
     embedding = lib.mkOption {
       type = lib.types.submodule {
         options = endpointOptions // {

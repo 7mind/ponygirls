@@ -43,6 +43,7 @@ let
   badDevice = invalid { smind.services.chronicle.models.embedding.cudaVisibleDevices = [ ]; };
   external = invalid {
     smind.services.chronicle.annotation = {
+      requestPolicy = "strict-json-schema";
       endpoint = "https://provider.example/v1/chat/completions";
       model = "external";
       revision = "external-v1";

@@ -7,7 +7,7 @@ object Fixtures {
     val dir = Files.createTempDirectory("chronicle-test-")
     val credential = dir.resolve("secret"); Files.writeString(credential,"")
     val hash = dir.resolve("password"); Files.writeString(hash,Password.hash("synthetic".toCharArray))
-    Config("127.0.0.1",8448,"http://127.0.0.1:8448",false,sys.env.getOrElse("CHRONICLE_TEST_JDBC","jdbc:postgresql://127.0.0.1:55438/postgres"),"postgres",credential.toString,List("a","b","c").map(id => UserConfig(id,id,hash.toString,true)),8388608,16,4194304,10000,43200,ModelConfig("http://127.0.0.1:1/chat","model","v1",credential.toString,1,65536),EmbeddingConfig("http://127.0.0.1:1/embedding","embed","v1",credential.toString,1,65536,3,"query: ","passage: ",false),false,Nil)
+    Config("127.0.0.1",8448,"http://127.0.0.1:8448",false,sys.env.getOrElse("CHRONICLE_TEST_JDBC","jdbc:postgresql://127.0.0.1:55438/postgres"),"postgres",credential.toString,List("a","b","c").map(id => UserConfig(id,id,hash.toString,true)),8388608,16,4194304,10000,43200,ModelConfig("http://127.0.0.1:1/chat","model","v1",credential.toString,1,65536,AnnotationRequestPolicy.StrictJsonSchema),EmbeddingConfig("http://127.0.0.1:1/embedding","embed","v1",credential.toString,1,65536,3,"query: ","passage: ",false),false,Nil)
   }
   def snapshot(): IngestRequest = {
     val raw = """{"type":"session","id":"session","version":3}

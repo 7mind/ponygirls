@@ -19,6 +19,7 @@ The model configuration is not a credential store; it references separate mode-0
 ```json
 {
   "annotation": {
+    "requestPolicy": "strict-json-schema",
     "endpoint": "http://127.0.0.1:18501/v1/chat/completions",
     "model": "Qwen/Qwen3-4B-Instruct-2507",
     "revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
