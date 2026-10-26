@@ -156,6 +156,7 @@ trait SessionArchive {
   def renew(claim: Claim, leaseSeconds: Int): Boolean
   def progress(claim: Claim, completedWindows: Int, totalWindows: Int): Boolean
   def publish(claim: Claim, chunks: List[IndexedChunk]): Boolean
+  def publishProblems(claim: Claim, publication: ProblemsPublication): Boolean
   def fail(claim: Claim, code: String): Unit
 }
 object SnapshotProjection {

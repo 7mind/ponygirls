@@ -141,7 +141,7 @@ final class PostgresRunAuthorizationTest extends RunAuthorizationContract {
     val archive=new PostgresArchive(db,config)
     val original=Fixtures.snapshot()
     val source=archive.ingest("a",original)
-    assert(archive.publish(archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get,Nil))
+    assert(archive.publish(archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get,Nil))
     val group=UUID.randomUUID()
     db.transaction { c =>
       Sql.exec(c,"INSERT INTO ch_groups VALUES(?,?,?)",group,"a","synthetic sharing")
