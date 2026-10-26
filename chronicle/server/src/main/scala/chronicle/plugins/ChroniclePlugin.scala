@@ -1,5 +1,6 @@
 package chronicle.plugins
 import chronicle.*
+import chronicle.api.IndexingSettings
 import distage.*
 import izumi.distage.plugins.PluginDef
 import cats.effect.IO
@@ -7,7 +8,7 @@ import org.http4s.client.Client
 
 object ChroniclePlugin extends PluginDef {
   make[logstage.IzLogger].fromValue(logstage.IzLogger())
-  make[IndexProfileCatalog].from { (config: Config) => IndexProfileCatalog.legacyOnly(config) }
+  make[IndexProfileCatalog].from { (config: Config) => IndexProfileCatalog.passages(config,PassagePolicyIdentity(ProblemPassages.identity)) }
   make[Database]
   make[Auth]
   make[PostgresArchive]
@@ -15,8 +16,19 @@ object ChroniclePlugin extends PluginDef {
   make[SearchIndex].from[PostgresSearch]
   make[ArchiveIndex].from[PostgresArchiveIndex]
   make[ActivityIndex].from[PostgresActivity]
+  make[cats.effect.kernel.Clock[IO]].fromValue(cats.effect.Clock[IO])
+  make[ModelTelemetryClock].from[JavaModelTelemetryClock]
+  make[ModelTelemetry].fromEffect { (clock: ModelTelemetryClock,config: Config) => ModelTelemetry.make(clock,config.users.map(_.id).toSet) }
+  make[ModelAdmission].fromEffect { (config: Config) => ModelAdmission.make(config.indexing) }
+  make[IndexingSettings].from { (config: Config) =>
+    val capacity=config.indexing
+    IndexingSettings(capacity.annotationSessions,capacity.embeddingRequests,capacity.embeddingBatchSize)
+  }
+  make[ModelUsageView]
+  make[ExpressionHintIndex].from[PostgresExpressionHintIndex]
   make[ModelHttp]
   make[Annotator].from[OpenAIAnnotator]
+  make[ProblemPassageAnnotator].from[OpenAIProblemPassageAnnotator]
   make[Embedder].from[OpenAIEmbedder]
   make[Worker]
   make[java.time.Clock].fromValue(java.time.Clock.systemUTC())

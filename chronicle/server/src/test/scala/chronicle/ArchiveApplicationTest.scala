@@ -20,7 +20,7 @@ class ArchiveApplicationTest extends munit.FunSuite {
       Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config); val embedder=new FailingEmbedder
-    val app=new Application(archive,new PostgresSearch(db,archive,config),embedder,new Auth(db,config),db,new CollectorProgress(new PostgresCollectorProgressStore(db),Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,Clock.systemUTC()))
+    val app=new Application(archive,new PostgresSearch(db,archive,config),embedder,new Auth(db,config),db,new CollectorProgress(new PostgresCollectorProgressStore(db),Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,Clock.systemUTC()),ModelFixtures.usage(config))
     f(config,db,archive,app,embedder)
   }
   private val reader=Identity(UserInfo("a","a",List(Scope.Read)),false,"synthetic")

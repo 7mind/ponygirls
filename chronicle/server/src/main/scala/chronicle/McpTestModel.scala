@@ -162,7 +162,7 @@ final class OpenAIMcpTestModel(http: ModelHttp,config: ModelConfig) extends McpT
   def request(messages: Vector[Json],tools: List[McpRunToolDefinition]): Json = McpToolModelCodec.request(config,messages,tools)
   def complete(owner: String,request: Json,tools: List[McpRunToolDefinition]): IO[McpModelReply] = IO.defer {
     McpRunJson.check(request,McpRunLimits.maximumRequestBytes,"mcp-context-limit")
-    http.post(config.endpoint,config.credentialFile,config.timeoutSeconds,config.maxResponseBytes.min(McpRunLimits.maximumProviderBytes),request)
+    http.post(ModelCallContext(owner,ModelWorkload.McpTest),config.endpoint,config.credentialFile,config.timeoutSeconds,config.maxResponseBytes.min(McpRunLimits.maximumProviderBytes),request)
       .map(McpToolModelCodec.reply(_,tools))
   }
 }

@@ -19,7 +19,7 @@ class NulIngestionTest extends munit.FunSuite {
     val c=Fixtures.config()
     EmberClientBuilder.default[IO].build.use { client =>
       val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client) }
-      Injector().produceGet[RuntimeServices](module).toEffect[IO].use { s =>
+      ChronicleInjector().produceGet[RuntimeServices](module).use { s =>
         IO.blocking {
           s.database.initialize()
           s.database.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })

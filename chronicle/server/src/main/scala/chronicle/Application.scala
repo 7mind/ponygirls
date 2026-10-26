@@ -3,7 +3,7 @@ import chronicle.api.*
 import cats.effect.IO
 import cats.syntax.all.*
 import java.util.UUID
-final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedder: Embedder,auth: Auth,db: Database,collectors: CollectorProgress,archiveIndex: ArchiveIndex,activityIndex: ActivityIndex) {
+final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedder: Embedder,auth: Auth,db: Database,collectors: CollectorProgress,archiveIndex: ArchiveIndex,activityIndex: ActivityIndex,hints: ExpressionHintIndex,usage: ModelUsageView) {
   def collectorProgress(i: Identity,r: CollectorProgressUpdate): CollectorProgressAck = collectors.update(i,r)
   private val emptyFilter = SearchFilter(None,None,None,None,Nil)
   def operationVersion(i: Identity,e: ClientEnvelope,version: String): IO[Result] = {
@@ -31,6 +31,10 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
         val vectors=if(parsed.mode==SearchMode.Lexical || parsed.textOperands.isEmpty) IO.pure(List.empty[ArchiveVector])
           else parsed.textOperands.traverse(text => embedder.query(uid,text).map(values => ArchiveVector(text,values))).handleErrorWith(_ => IO.raiseError(DomainError("unavailable","query embedding unavailable")))
         vectors.flatMap(values => IO.blocking(Result.Archive(archiveIndex.browse(uid,q,parsed,values))))
+      case Operation.ExpressionHints(q) => i.requireScope(Scope.Read); IO.blocking(Result.ExpressionHints(hints.hints(uid,q)))
+      case Operation.ModelUsage() => usage.read(i).map(Result.ModelUsage.apply)
+      case Operation.GetPassages(id,view,offset,limit) => i.requireScope(Scope.Read); IO.blocking(Result.Passages(archive.passages(uid,id,offset,limit,Some(view))))
+      case Operation.GetPassageSpans(id,view,passageId,offset,limit) => i.requireScope(Scope.Read); IO.blocking(Result.PassageSpans(archive.passageSpans(uid,id,passageId,offset,limit,Some(view))))
       case Operation.Activity(q) => i.requireScope(Scope.Read); IO.blocking(Result.Activity(activityIndex.summary(i.user,q)))
       case Operation.ActivityJobs(q) => i.requireScope(Scope.Read); IO.blocking(Result.ActivityJobs(activityIndex.jobs(uid,q)))
       case Operation.LocateMessage(id,view,messageId) => i.requireScope(Scope.Read); IO.blocking(Result.LocatedMessage(archive.locateMessage(uid,id,view,messageId)))
@@ -52,6 +56,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.ListGroups() => IO.blocking(Result.Groups(auth.groups(i)))
       case Operation.Receipt(id) => IO.blocking(auth.receipt(i,id))
       case Operation.PreviewRetryFailed() => IO.blocking(Result.RetryFailedPreview(auth.previewRetryFailed(i)))
+      case Operation.PreviewOwnerReindex() => IO.blocking(Result.OwnerReindexPreview(auth.previewOwnerReindex(i)))
       case _ => IO.blocking(auth.mutate(i,e))
     }
   }

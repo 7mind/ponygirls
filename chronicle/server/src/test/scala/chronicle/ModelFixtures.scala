@@ -12,6 +12,12 @@ object ModelFixtures {
       admission <- ModelAdmission.make(config.indexing)
     } yield new ModelHttp(client,telemetry,admission)).unsafeRunSync()
   }
+  def usage(config: Config): ModelUsageView = {
+    val clock=new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO])
+    val capacity=config.indexing
+    ModelTelemetry.make(clock,config.users.map(_.id).toSet).map(store =>
+      new ModelUsageView(store,chronicle.api.IndexingSettings(capacity.annotationSessions,capacity.embeddingRequests,capacity.embeddingBatchSize))).unsafeRunSync()
+  }
   def legacyWorker(archive: SessionArchive,annotator: Annotator,embedder: Embedder,config: Config,logger: logstage.IzLogger): Worker = {
     val forbidden=new ProblemPassageAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(new AssertionError("legacy worker invoked passage annotator"))

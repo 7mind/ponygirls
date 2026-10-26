@@ -21,12 +21,12 @@ object Main extends IOApp {
       IO.blocking(Config.load(path)).flatMap { config =>
         ModelHttp.client(config).use { client =>
           // Explicit graph registration: no classpath scanning in native images.
-          val lifecycle = Injector().produceGet[RuntimeServices](new ModuleDef {
+          val lifecycle = ChronicleInjector().produceGet[RuntimeServices](new ModuleDef {
             include(_root_.chronicle.plugins.ChroniclePlugin)
             make[Config].fromValue(config)
             make[org.http4s.client.Client[IO]].fromValue(client)
           })
-          lifecycle.toEffect[IO].use { services =>
+          lifecycle.use { services =>
             IO.blocking(services.database.initialize()) *> (if(command=="serve") serve(config,services) else maintenance(services))
           }
         }

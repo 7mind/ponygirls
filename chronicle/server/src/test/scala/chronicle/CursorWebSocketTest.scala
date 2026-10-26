@@ -30,7 +30,7 @@ final class CursorWebSocketTest extends munit.FunSuite {
         make[Config].fromValue(config)
         make[org.http4s.client.Client[IO]].fromValue(client)
       }
-      Injector().produceGet[RuntimeServices](module).toEffect[IO].use { services =>
+      ChronicleInjector().produceGet[RuntimeServices](module).use { services =>
         IO.blocking {
           services.database.initialize()
           services.database.transaction { c =>

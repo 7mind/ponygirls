@@ -35,7 +35,7 @@ class VersionedSearchTest extends munit.FunSuite {
     ArchiveProjection.backfill(db)
     val archive=new PostgresArchive(db,config); val auth=new Auth(db,config)
     val embedder=new Embedder { def query(owner: String,text: String)=IO.pure(List(1.0,0.0,0.0)); def documents(owner: String,text: List[String])=IO.pure(text.map(_ => List(1.0,0.0,0.0))) }
-    val app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,java.time.Clock.systemUTC()))
+    val app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,java.time.Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,java.time.Clock.systemUTC()),ModelFixtures.usage(config))
     val conversions=new chronicle.protocol.ProtocolConversions
     val protocol=new VersionedWire(conversions)
     val http=new Http(config,auth,app,archive,new Mcp(app),logstage.IzLogger(),Http.WebRoot(None),protocol)

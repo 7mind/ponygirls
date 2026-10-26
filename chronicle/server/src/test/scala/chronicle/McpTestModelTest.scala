@@ -15,6 +15,10 @@ import scala.concurrent.duration.*
 class McpTestModelTest extends munit.FunSuite {
   import McpTestFixtures.*
   override val munitTimeout = 120.seconds
+  private def http(client: Client[IO]): ModelHttp = {
+    val base=Fixtures.config()
+    ModelFixtures.http(client,base.copy(users=List(base.users.head.copy(id=identity.user.id))))
+  }
   private val initial=Vector(Json.obj("role"->Json.fromString("system"),"content"->Json.fromString(McpToolModelCodec.system)),Json.obj("role"->Json.fromString("user"),"content"->Json.fromString("synthetic tool request")))
   private def code(result: Either[Throwable,?]): String = result.left.toOption match {
     case Some(error: DomainError) => error.code
@@ -58,7 +62,7 @@ class McpTestModelTest extends munit.FunSuite {
         assertEquals(functions.map(_.hcursor.downField("function").downField("parameters").focus.get),definitions.map(_.inputSchemaJson))
         Response[IO](Status.Ok).withEntity(finalReply("valid final").noSpaces)
       }}
-      val adapter=new OpenAIMcpTestModel(new ModelHttp(Client.fromHttpApp(app)),configured)
+      val adapter=new OpenAIMcpTestModel(http(Client.fromHttpApp(app)),configured)
       adapter.complete(identity.user.id,adapter.request(initial,definitions),definitions).map { reply =>
         assertEquals(reply.response,Some("valid final"))
         assertEquals(adapter.metadata,McpRunModel("approved-model","pinned-revision",65536,"max"))
@@ -74,7 +78,7 @@ class McpTestModelTest extends munit.FunSuite {
         client <- ModelHttp.client(Fixtures.config())
       } yield (server,client)).use { case (server,client) =>
         val cfg=config.copy(endpoint=s"http://127.0.0.1:${server.address.getPort}/chat",credentialFile=file)
-        val adapter=new OpenAIMcpTestModel(new ModelHttp(client),cfg)
+        val adapter=new OpenAIMcpTestModel(http(client),cfg)
         adapter.complete(identity.user.id,adapter.request(initial,definitions),definitions).map { reply =>
           assertEquals(reply.calls.map(_.name),List("search"))
           assertEquals(reply.assistant.hcursor.get[String]("reasoning_content").toOption,Some("transient reasoning"))
@@ -117,7 +121,7 @@ class McpTestModelTest extends munit.FunSuite {
       for {
         calls <- Ref.of[IO,Int](0)
         app: HttpApp[IO] = cats.data.Kleisli(_ => calls.update(_+1).as(Response[IO](Status.Ok).withEntity(reply.noSpaces)))
-        adapter = new OpenAIMcpTestModel(new ModelHttp(Client.fromHttpApp(app)),config.copy(credentialFile=file))
+        adapter = new OpenAIMcpTestModel(http(Client.fromHttpApp(app)),config.copy(credentialFile=file))
         result <- adapter.complete(identity.user.id,adapter.request(initial,definitions),definitions).attempt
         count <- calls.get
         _ <- IO { assertEquals(code(result),expected); assertEquals(count,1); assert(!result.left.toOption.get.getMessage.contains("private content")) }
@@ -143,7 +147,7 @@ class McpTestModelTest extends munit.FunSuite {
     credential.use { file => List(32,5*1024*1024).traverse_ { configuredLimit =>
       val bound=configuredLimit.min(McpRunLimits.maximumProviderBytes)
       val app: HttpApp[IO]=cats.data.Kleisli(_ => IO.pure(Response[IO](Status.Ok).withEntity(" "*(bound+1))))
-      val adapter=new OpenAIMcpTestModel(new ModelHttp(Client.fromHttpApp(app)),config.copy(credentialFile=file,maxResponseBytes=configuredLimit))
+      val adapter=new OpenAIMcpTestModel(http(Client.fromHttpApp(app)),config.copy(credentialFile=file,maxResponseBytes=configuredLimit))
       adapter.complete(identity.user.id,adapter.request(initial,definitions),definitions).attempt.map(result => assertEquals(code(result),"model-output"))
     }}.unsafeRunSync()
   }
@@ -161,6 +165,29 @@ class McpTestModelTest extends munit.FunSuite {
     assert(next.noSpaces.contains(McpToolModelCodec.system))
     assertEquals(intercept[DomainError](McpRunJson.check(Json.arr(List.fill(McpRunLimits.maximumJsonElements)(Json.Null)*),Int.MaxValue,"limit")).code,"limit")
     assertEquals(intercept[DomainError](McpRunJson.scalar("\ud800","invalid")).code,"invalid")
+  }
+
+  test("BG: the actual MCP model adapter records provider usage only for its explicit owner and purpose") {
+    credential.use { file =>
+      val usage=Json.obj("prompt_tokens"->Json.fromInt(11),"completion_tokens"->Json.fromInt(7),"completion_tokens_details"->Json.obj("reasoning_tokens"->Json.fromInt(3)))
+      val app: HttpApp[IO]=cats.data.Kleisli(_ => IO.pure(Response[IO](Status.Ok).withEntity(finalReply("synthetic response").mapObject(_.add("usage",usage)).noSpaces)))
+      for {
+        store <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),Set(identity.user.id,"other"))
+        admission <- ModelAdmission.make(IndexingCapacity.defaults)
+        model=new OpenAIMcpTestModel(new ModelHttp(Client.fromHttpApp(app),store,admission),config.copy(credentialFile=file))
+        _ <- model.complete(identity.user.id,model.request(initial,definitions),definitions)
+        owner <- store.snapshot(identity.user.id)
+        other <- store.snapshot("other")
+        _ <- IO {
+          val sample=owner.samples.find(_.purpose==ModelWorkload.McpTest).get
+          assertEquals(sample.finishedCalls,1L); assertEquals(sample.inFlight,0)
+          assertEquals(sample.input.knownTokens,11L); assertEquals(sample.output.get.knownTokens,7L)
+          assertEquals(sample.reasoningSubset.get.knownTokens,3L)
+          assert(owner.samples.filterNot(_.purpose==ModelWorkload.McpTest).forall(_.finishedCalls==0L))
+          assert(other.samples.forall(_.finishedCalls==0L))
+        }
+      } yield ()
+    }.unsafeRunSync()
   }
 
   test("BA: strict-json configured policy is preserved without annotation schema or implicit model substitution") {

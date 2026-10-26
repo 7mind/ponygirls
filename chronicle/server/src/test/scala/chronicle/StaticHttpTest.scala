@@ -43,7 +43,7 @@ class StaticHttpTest extends munit.FunSuite {
           make[org.http4s.client.Client[IO]].fromValue(client)
           make[Http.WebRoot].fromValue(Http.WebRoot(Some(dir.toString)))
         })
-        Injector().produceGet[Http](module).toEffect[IO].use { http =>
+        ChronicleInjector().produceGet[Http](module).use { http =>
           for {
             gate <- Semaphore[IO](2)
             ws <- WebSocketBuilder2[IO]

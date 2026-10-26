@@ -23,7 +23,7 @@ class HttpTest extends munit.FunSuite {
       val original=Fixtures.config(); val c=original.copy(embedding=original.embedding.copy(endpoint=s"http://127.0.0.1:${endpoint.address.getPort}/embedding",timeoutSeconds=25))
       EmberClientBuilder.default[IO].build.use { client =>
         val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client) }
-        Injector().produceGet[RuntimeServices](module).toEffect[IO].use { s =>
+        ChronicleInjector().produceGet[RuntimeServices](module).use { s =>
           IO.blocking { s.database.initialize(); s.database.transaction { x => Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) } } *> Semaphore[IO](2).flatMap { gate =>
             EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => s.http.routes(ws,gate).orNotFound).build.use { server => IO.blocking {
               val (_,secret)=new Auth(s.database,c).login(LoginRequest("a","synthetic"))
@@ -74,7 +74,7 @@ class HttpTest extends munit.FunSuite {
     val c=Fixtures.config().copy(maxBodyBytes=256*1024*1024)
     EmberClientBuilder.default[IO].build.use { client =>
       val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client) }
-      Injector().produceGet[RuntimeServices](module).toEffect[IO].use { s =>
+      ChronicleInjector().produceGet[RuntimeServices](module).use { s =>
         IO.blocking(s.database.initialize()) *> Semaphore[IO](2).flatMap { gate =>
           EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => s.http.routes(ws,gate).orNotFound).build.use { server => IO.blocking {
             val (_,secret)=new Auth(s.database,c).login(LoginRequest("a","synthetic"))
@@ -119,7 +119,7 @@ class HttpTest extends munit.FunSuite {
     c.validate()
     EmberClientBuilder.default[IO].build.use { client =>
       val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client) }
-      Injector().produceGet[RuntimeServices](module).toEffect[IO].use { s =>
+      ChronicleInjector().produceGet[RuntimeServices](module).use { s =>
         IO.blocking(s.database.initialize()) *> Semaphore[IO](2).flatMap { gate =>
           EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => s.http.routes(ws,gate).orNotFound).build.use { server =>
             val base=s"http://127.0.0.1:${server.address.getPort}"
