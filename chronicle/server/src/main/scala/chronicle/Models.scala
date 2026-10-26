@@ -159,6 +159,8 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
   }
 }
 final class Worker(archive: SessionArchive,annotator: Annotator,embedder: Embedder,db: Database,config: Config,logger: logstage.IzLogger) {
+  private val annotationAttemptLimit = 5
+  private val truncatedAnnotationCode = "model-output/truncated"
   def once: IO[Boolean] = IO.blocking(archive.claim(config.profile,300)).flatMap {
     case None => IO.pure(false)
     case Some(claim) =>
@@ -166,8 +168,16 @@ final class Worker(archive: SessionArchive,annotator: Annotator,embedder: Embedd
       def report(completed: Int): IO[Unit] = IO.blocking {
         Check(archive.progress(claim,completed,windows.size),"stale-claim","indexing claim is no longer current")
       }
+      def annotate(batch: List[Chunk],index: Int,attempt: Int): IO[List[Chunk]] = IO.defer(annotator.annotate(batch,claim.snapshot.messages)).handleErrorWith {
+        case error: DomainError if error.code==truncatedAnnotationCode =>
+          val retry = attempt<annotationAttemptLimit
+          val outcome = if(retry) "retry" else "exhaust"
+          IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=${windows.size} attempt=$attempt attemptLimit=$annotationAttemptLimit code=$truncatedAnnotationCode outcome=$outcome")) *>
+            (if(retry) annotate(batch,index,attempt+1) else IO.raiseError(error))
+        case error => IO.raiseError(error)
+      }
       val work = (report(0) *> windows.zipWithIndex.traverse { case (batch,index) =>
-        annotator.annotate(batch,claim.snapshot.messages).flatMap(chunks => embedder.documents(chunks.map(_.text)).map(vectors => chunks.zip(vectors).map(IndexedChunk.apply.tupled))).flatTap(_ => report(index+1))
+        annotate(batch,index,1).flatMap(chunks => embedder.documents(chunks.map(_.text)).map(vectors => chunks.zip(vectors).map(IndexedChunk.apply.tupled))).flatTap(_ => report(index+1))
       }).flatMap(x => IO.blocking(archive.publish(claim,x.flatten))).void
       val renew = (IO.sleep(30.seconds) *> IO.blocking { db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=now()+interval '300 seconds' WHERE id=? AND fence=? AND state='Running' AND lease_until>now()",claim.jobId,claim.fence)) }).foreverM
       IO.race(work,renew).void.handleErrorWith { e =>

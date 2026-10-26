@@ -80,6 +80,31 @@ class IndexProgressTest extends munit.FunSuite {
     assertEquals(a.statuses("a",0,100).jobs.head.state,JobState.Complete)
     assertEquals(a.pageChunks("a",out.sessionId,0,100,None).total,3)
   }}
+  test("worker annotation retry cannot publish after manual retry fences the claim") { database { (c,db,a) =>
+    val text="a"*(Fragments.maxBytes*4)+"b"*(Fragments.maxBytes*4)+"c"
+    val raw=io.circe.Json.obj("id"->io.circe.Json.fromString("u"),"text"->io.circe.Json.fromString(text)).noSpaces+"\n"
+    val request=Fixtures.snapshot().copy(messages=List(Message("u",None,"user",text,None,0)),files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
+    val out=a.ingest("a",request,c.profile)
+    val calls=scala.collection.mutable.ListBuffer.empty[Char]; var embeddings=0
+    val annotator=new Annotator {
+      def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO {
+        calls += window.head.text.head
+        if(calls.size==2) throw DomainError("model-output/truncated","synthetic")
+        if(calls.size==3) a.retry("a",out.jobId)
+        List(window.head.copy(text=window.map(_.text).mkString,spans=window.flatMap(_.spans)))
+      }
+    }
+    val embedder=new Embedder {
+      def query(text: String): IO[List[Double]] = IO.pure(Nil)
+      def documents(text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1; text.map(_ => List(1.0,0.0,0.0)) }
+    }
+    assert(new Worker(a,annotator,embedder,db,c,logstage.IzLogger()).once.unsafeRunSync())
+    assertEquals(calls.toList,List('a','b','b')); assertEquals(embeddings,2)
+    val job=a.statuses("a",0,100).jobs.find(_.id==out.jobId).get
+    assertEquals(job.state,JobState.Queued); assertEquals(job.attempts,0); assertEquals(job.error,None)
+    assertEquals(counters(a,out.jobId),(0,None))
+    assertEquals(a.session("a",out.sessionId).indexedRevision,None)
+  }}
   test("worker records a known zero total for an empty source") { database { (c,db,a) =>
     val request=Fixtures.snapshot().copy(messages=Nil)
     val out=a.ingest("a",request,c.profile)
