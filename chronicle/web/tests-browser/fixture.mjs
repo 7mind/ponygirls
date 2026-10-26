@@ -26,8 +26,9 @@ export class ChronicleFixture {
   jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined)];
   archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchiveCursor = false; pendingArchive = [];
   activityJobs = undefined; activityCollectors = undefined; collectorExpressions = new Map(); jobExpressions = new Map(); activityFailure = null;
+  holdSessions = false; sessionHeadSnapshot = undefined; pendingSessions = [];
   holdCollectorCursor = false; holdJobCursor = false; pendingCollectors = []; pendingJobs = [];
-  targetProfile = 'target-profile'; jobFences = new Map(); bulkPayloads = new Map(); bulkApplyExecutions = 0; bulkDropReply = false; bulkConflictOnce = false; bulkPreviewDenied = false; bulkApplyDenied = false; retryCountsOverride = undefined; messageCount = 87; lateMessageId = 'm65'; holdLocators = false; pendingLocators = [];
+  targetProfile = 'target-profile'; jobFences = new Map(); bulkPayloads = new Map(); bulkApplyExecutions = 0; bulkDropBeforeCommit = false; bulkDropReply = false; bulkConflictOnce = false; bulkPreviewDenied = false; bulkApplyDenied = false; retryCountsOverride = undefined; messageCount = 87; lateMessageId = 'm65'; holdLocators = false; pendingLocators = [];
   annotationCount = 2; winnerBeyondFirstPage = false; resumedSource = false; headRevision = 2; publishedRevision = 1; messageViewOverride = undefined; chunksViewOverride = undefined; rawRevisionOverride = undefined;
   holdMessages = false; pendingMessages = [];
   mode = 'normal'; signedIn = true; mintUncertain = false; dropLogout = false; rawDenied = true; searchCount = 0;
@@ -156,9 +157,10 @@ export class ChronicleFixture {
     const page = fixturePage(rows, query.cursor, query.limit, JSON.stringify(['jobs', this.user.id, query.collectorId, query.scope, query.expression, query.sort, query.direction]));
     return new api.ActivityJobsResult('2026-10-26T12:00:00Z', page.rows, BigInt(rows.length), page.next);
   }
+  refreshActivityCounts() { if (this.activityCollectors !== undefined) this.activityCollectors = this.activityCollectors.map(collector => { const rows = this.jobRows.filter(row => row.collectorId === collector.collectorId); return collector.with({ current: this.counts(rows.filter(row => row.classification === api.ActivityJobClass.Current)), historical: this.counts(rows.filter(row => row.classification !== api.ActivityJobClass.Current)) }); }); }
   retryPlan() {
     const rows = this.jobRows.filter(row => row.session.ownerId === this.user.id), eligible = rows.filter(row => row.classification === api.ActivityJobClass.Current && row.job.revision === row.session.revision && row.profile === this.targetProfile && row.job.state === api.JobState.Failed);
-    const failed = classification => BigInt(rows.filter(row => row.classification === classification && row.job.state === api.JobState.Failed).length), unchanged = state => BigInt(rows.filter(row => row.job.state === state).length);
+    const failed = classification => BigInt(rows.filter(row => row.classification === classification && row.job.state === api.JobState.Failed).length), unchanged = state => BigInt(rows.filter(row => row.classification === api.ActivityJobClass.Current && row.job.state === state).length);
     const counts = this.retryCountsOverride ?? new api.RetryFailedCounts(BigInt(eligible.length), failed(api.ActivityJobClass.SupersededRevision), failed(api.ActivityJobClass.ObsoleteProfile), failed(api.ActivityJobClass.SupersededRevisionAndProfile), unchanged(api.JobState.Queued), unchanged(api.JobState.Running), unchanged(api.JobState.Complete));
     const selection = [this.user.id, this.targetProfile, ...eligible.map(row => [row.job.id, row.job.revision, this.jobFences.get(row.job.id) ?? 0]).sort((left, right) => left[0].localeCompare(right[0]))];
     return new api.RetryFailedPlan(this.targetProfile, createHash('sha256').update(JSON.stringify(selection)).digest('hex'), counts);
@@ -206,14 +208,18 @@ export class ChronicleFixture {
         if (operation instanceof api.Operation_PreviewRetryFailed) { send(this.bulkPreviewDenied ? new api.Result_Error(new api.Failure('forbidden', 'Browser Read scope required for retry preview')) : new api.Result_RetryFailedPreview(this.retryPlan())); return; }
         if (operation instanceof api.Operation_ApplyRetryFailed) {
           if (this.bulkApplyDenied) { send(new api.Result_Error(new api.Failure('forbidden', 'Browser Read scope required for retry'))); return; }
+          if (this.bulkDropBeforeCommit) return;
           const payload = JSON.stringify(api.Operation_JsonCodec.instance.encode(context, operation)), stored = this.receipts.get(envelope.requestId);
           if (stored !== undefined) { send(this.bulkPayloads.get(envelope.requestId) === payload ? stored : new api.Result_Error(new api.Failure('conflict', 'Request payload changed'))); return; }
           if (this.bulkConflictOnce) { this.bulkConflictOnce = false; for (const row of this.jobRows) this.jobFences.set(row.job.id, (this.jobFences.get(row.job.id) ?? 0) + 1); }
           const plan = this.retryPlan();
-          if (!operation.confirm || operation.targetProfile !== plan.targetProfile || operation.selectionHash !== plan.selectionHash) { send(new api.Result_Error(new api.Failure('conflict', 'Indexing selection changed; preview again'))); return; }
+          if (!operation.confirm || !/^[0-9a-f]{64}$/.test(operation.selectionHash)) { send(new api.Result_Error(new api.Failure('invalid', 'Valid retry hash and confirmation required'))); return; }
+          if (operation.targetProfile !== plan.targetProfile || operation.selectionHash !== plan.selectionHash) { const rejection = new api.Result_Error(new api.Failure('conflict', 'Retry selection changed; preview again')); this.receipts.set(envelope.requestId, rejection); this.bulkPayloads.set(envelope.requestId, payload); send(rejection); return; }
           const ids = new Set(this.jobRows.filter(row => row.session.ownerId === this.user.id && row.classification === api.ActivityJobClass.Current && row.job.revision === row.session.revision && row.profile === this.targetProfile && row.job.state === api.JobState.Failed).map(row => row.job.id));
           const retried = job => ids.has(job.id) ? job.with({ state: api.JobState.Queued, attempts: 0, error: undefined, completedWindows: 0, totalWindows: undefined }) : job;
           this.jobs = this.jobs.map(retried); if (this.activityJobs !== undefined) this.activityJobs = this.activityJobs.map(row => ids.has(row.job.id) ? row.with({ job: retried(row.job), retryable: false, leaseActive: false, leaseExpiresAt: undefined }) : row);
+          this.refreshActivityCounts();
+          if (this.archiveRows !== undefined) this.archiveRows = this.archiveRows.map(row => row.headJob !== undefined && ids.has(row.headJob.id) ? row.with({ headJob: retried(row.headJob) }) : row);
           this.bulkApplyExecutions++; const receipt = new api.Result_RetryFailed(new api.RetryFailedResult(envelope.requestId, plan.targetProfile, BigInt(ids.size), plan.counts));
           this.receipts.set(envelope.requestId, receipt); this.bulkPayloads.set(envelope.requestId, payload); if (!this.bulkDropReply) send(receipt); return;
         }
@@ -228,7 +234,7 @@ export class ChronicleFixture {
           send(new api.Result_Search(new api.SearchResult([this.hit], 1, lexical ? api.SearchCountScope.ExactMatches : api.SearchCountScope.CandidateWindow, lexical ? undefined : operation.query.mode === api.SearchMode.Hybrid ? 2000 : 1000))); return;
         }
         if (operation instanceof api.Operation_Facets) { send(new api.Result_Facets(new api.FacetsResult([new api.Facet('chronicle', 1)], [new api.Facet('feature/archive', 1)], [new api.Facet('architecture', 1)]))); return; }
-        if (operation instanceof api.Operation_GetSession) { const view = operation.view ?? this.view, row = this.authorizedRows.find(item => item.head.id === operation.sessionId), session = row === undefined ? this.sessionAt(view) : row.head.with({ view }); send(new api.Result_Session(new api.SessionResult(session, this.chunksAt(view).slice(0, 100)))); return; }
+        if (operation instanceof api.Operation_GetSession) { const view = operation.view ?? this.view, row = this.authorizedRows.find(item => item.head.id === operation.sessionId), current = row === undefined ? this.sessionAt(view) : row.head.with({ view }), session = this.sessionHeadSnapshot === undefined ? current : current.with({ revision: this.sessionHeadSnapshot }), result = new api.Result_Session(new api.SessionResult(session, this.chunksAt(view).slice(0, 100))), reply = () => send(result); if (this.holdSessions) this.pendingSessions.push(reply); else reply(); return; }
         if (operation instanceof api.Operation_GetChunks) { const view = this.chunksViewOverride ?? operation.view ?? this.view, chunks = this.chunksAt(view); send(new api.Result_Chunks(new api.ChunksResult(chunks.slice(operation.offset, operation.offset + operation.limit), chunks.length, operation.offset, view))); return; }
         if (operation instanceof api.Operation_GetMessages) { const view = this.messageViewOverride ?? operation.view ?? this.view, messages = this.messagesAt(view.revision); const reply = () => send(new api.Result_Messages(new api.MessagesResult(messages.slice(operation.offset, operation.offset + operation.limit), messages.length, operation.offset, view))); if (this.holdMessages) this.pendingMessages.push(reply); else reply(); return; }
         if (operation instanceof api.Operation_GetRaw) { const revision = this.rawRevisionOverride ?? operation.revision ?? this.headRevision; send(this.rawDenied ? new api.Result_Error(new api.Failure('forbidden', 'Raw permission denied for this source')) : new api.Result_Raw(new api.RawResult([new api.RawFile('synthetic.jsonl', '0'.repeat(64), this.resumedSource ? JSON.stringify({ revision }) : '{"synthetic":true}')], revision))); return; }
@@ -237,7 +243,7 @@ export class ChronicleFixture {
         if (operation instanceof api.Operation_ListGroups) { send(new api.Result_Groups(new api.GroupsResult(this.groups, this.invitations))); return; }
         if (operation instanceof api.Operation_CollectionStatus) { send(this.collectionDenied ? new api.Result_Error(new api.Failure('forbidden', 'Collection status denied')) : new api.Result_CollectionStatus(new api.CollectorStatusResult(this.collectors))); return; }
         if (operation instanceof api.Operation_IngestStatus) { send(new api.Result_Status(new api.StatusResult(this.jobs, this.jobs.length))); return; }
-        if (operation instanceof api.Operation_Receipt) { const receipt = this.receipts.get(operation.mutationId); send(receipt ? receipt instanceof api.Result_Token || receipt instanceof api.Result_RetryFailed ? receipt : new api.Result_Mutation(receipt) : new api.Result_Error(new api.Failure('not-found', 'Receipt not found'))); return; }
+        if (operation instanceof api.Operation_Receipt) { const receipt = this.receipts.get(operation.mutationId); send(receipt ? receipt instanceof api.Result_Token || receipt instanceof api.Result_RetryFailed || receipt instanceof api.Result_Error ? receipt : new api.Result_Mutation(receipt) : new api.Result_Error(new api.Failure('not-found', 'Receipt not found'))); return; }
         let entityId;
         if (operation instanceof api.Operation_MintToken) {
           entityId = ID.token; const token = new api.TokenInfo(entityId, operation.name, operation.scopes, '2026-10-24T00:00:00Z', false); this.tokens = [token];
@@ -257,6 +263,7 @@ export class ChronicleFixture {
       });
     });
   }
+  releaseSessions() { this.holdSessions = false; for (const reply of this.pendingSessions.splice(0)) reply(); }
   releaseCollectors() { this.holdCollectorCursor = false; for (const reply of this.pendingCollectors.splice(0)) reply(); }
   releaseJobs() { this.holdJobCursor = false; for (const reply of this.pendingJobs.splice(0)) reply(); }
   releaseArchive() { this.holdArchiveCursor = false; for (const reply of this.pendingArchive.splice(0)) reply(); }

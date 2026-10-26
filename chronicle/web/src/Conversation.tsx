@@ -23,11 +23,31 @@ interface ConversationProps {
   connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; sessionId: string;
   initialView: ContentView | undefined; archiveHead: ArchiveRow | null; select: (id: string) => void; refresh: number;
 }
-export function Conversation(props: ConversationProps) {
-  const [view, setView] = useState<ContentView | undefined>(props.initialView);
-  return <ConversationSnapshot key={contentViewKey(view)} {...props} view={view} chooseView={setView}/>;
+interface HeadScope { connection: ChronicleConnection; userId: string; sessionId: string; generation: number; activeId: number | null; invalidation: number }
+interface KnownHead extends HeadScope { ownerId: string; revision: number }
+function sameHeadScope(left: HeadScope, right: HeadScope): boolean {
+  return left.connection === right.connection && left.userId === right.userId && left.sessionId === right.sessionId && left.generation === right.generation && left.activeId === right.activeId && left.invalidation === right.invalidation;
 }
-function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead, select, refresh, view, chooseView }: ConversationProps & { view: ContentView | undefined; chooseView: (view: ContentView | undefined) => void }) {
+export function Conversation(props: ConversationProps) {
+  const [view, setView] = useState<ContentView | undefined>(props.initialView), [knownHead, setKnownHead] = useState<KnownHead | null>(null);
+  const invalidation = useRef(0);
+  const scope: HeadScope = { connection: props.connection, userId: props.user.id, sessionId: props.sessionId, generation: props.stats.generation, activeId: props.stats.activeId, invalidation: invalidation.current };
+  const liveScope = useRef(scope); liveScope.current = scope;
+  useEffect(() => props.connection.onInvalidate(() => {
+    if (liveScope.current.connection !== props.connection) return;
+    invalidation.current++; liveScope.current = { ...liveScope.current, invalidation: invalidation.current }; setKnownHead(null);
+  }), [props.connection]);
+  function rememberHead(ownerId: string, revision: number) {
+    if (scope.activeId === null || !sameHeadScope(scope, liveScope.current)) return;
+    setKnownHead(previous => {
+      if (!sameHeadScope(scope, liveScope.current)) return previous;
+      if (previous !== null && sameHeadScope(previous, scope) && previous.ownerId === ownerId && previous.revision >= revision) return previous;
+      return { ...scope, ownerId, revision };
+    });
+  }
+  return <ConversationSnapshot key={contentViewKey(view)} {...props} view={view} chooseView={setView} knownHead={knownHead !== null && sameHeadScope(knownHead, scope) ? knownHead : null} rememberHead={rememberHead}/>;
+}
+function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead, select, refresh, view, chooseView, knownHead, rememberHead }: ConversationProps & { view: ContentView | undefined; chooseView: (view: ContentView | undefined) => void; knownHead: KnownHead | null; rememberHead: (ownerId: string, revision: number) => void }) {
   const [messageStart, setMessageStart] = useState(0), [raw, setRaw] = useState(false), [chunk, setChunk] = useState<Chunk | null>(null);
   const [seekError, setSeekError] = useState<string | null>(null), [seeking, setSeeking] = useState(false);
   const navigation = useRef(0), pendingScroll = useRef<{ messageId: string; operation: number } | null>(null), sourcePane = useRef<HTMLElement>(null);
@@ -88,7 +108,8 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
     } catch (cause) { if (navigation.current === operation) { pendingScroll.current = null; setSeekError(cause instanceof Error ? cause.message : 'Source navigation failed'); } }
     finally { if (navigation.current === operation) setSeeking(false); }
   }
-  const headRevision = snapshot === null ? archiveHead === null ? undefined : archiveHead.head.revision : snapshot.session.revision;
+  const headRevision = snapshot === null ? undefined : Math.max(snapshot.session.revision, archiveHead !== null && archiveHead.head.id === sessionId && archiveHead.head.ownerId === snapshot.session.ownerId ? archiveHead.head.revision : snapshot.session.revision, knownHead !== null && knownHead.ownerId === snapshot.session.ownerId ? knownHead.revision : snapshot.session.revision);
+  useEffect(() => { if (snapshot !== null && headRevision !== undefined) rememberHead(snapshot.session.ownerId, headRevision); }, [snapshot, headRevision, rememberHead]);
   const publishedView = archiveHead === null ? undefined : archiveHead.publishedView;
   return <>{(session.loading || (snapshot === null && session.error === null)) && <div className="loading-line" role="status">Rechecking source access…</div>}{session.error !== null && <ErrorNotice>{session.error}. Source content has been cleared.</ErrorNotice>}
     {snapshot !== null && <><div className="conversation-intro"><SessionMeta session={snapshot.session}/><h2>{snapshot.session.metadata.title || 'Untitled conversation'}</h2><div className="provenance"><span>Owner <strong>{snapshot.session.ownerId}</strong></span><span>Viewing source r{view!.revision}</span><span>HEAD r{headRevision} / index {snapshot.session.indexedRevision === undefined ? 'pending' : `r${snapshot.session.indexedRevision}`}</span>{headRevision !== undefined && snapshot.session.indexedRevision !== undefined && snapshot.session.indexedRevision < headRevision && <span>Indexing lag: {headRevision - snapshot.session.indexedRevision} source revisions</span>}{view!.generationId === undefined && <span>Archive-only view · no annotations</span>}<span>{snapshot.session.completion === 'Quiescent' ? 'Quiescent snapshot · may resume' : 'Closed source'}</span>{snapshot.session.redacted && <span>Redacted before upload</span>}</div>
