@@ -17,6 +17,10 @@
       {
         "version" : "1.3.0",
         "sigId" : "ae4addb60881f510fb6330aa1aee948b90f2f37e3a7db62c1b0f023f4f57dacc"
+      },
+      {
+        "version" : "1.4.0",
+        "sigId" : "e06415c8d006aa27d7b26d0c2532b40ced9be30d60e108f94a976d6da334cc8c"
       }
     ]
   }

@@ -1,6 +1,6 @@
 package chronicle
 import chronicle.api.*
-import chronicle.api.{v1_0_0 as v10, v1_1_0 as v11, v1_2_0 as v12}
+import chronicle.api.{v1_0_0 as v10, v1_1_0 as v11, v1_2_0 as v12, v1_3_0 as v13}
 import chronicle.protocol.ProtocolConversions
 import java.util.UUID
 
@@ -9,6 +9,10 @@ class ProtocolEvolutionTest extends munit.FunSuite {
   private val protocol=new VersionedWire(conversions)
   private val id=UUID.fromString("00000000-0000-4000-8000-000000000001")
   private val info=TokenInfo(id,"issued",List(Scope.Ingest),"2026-10-26T00:00:00Z",false)
+  test("BA specified: API1.4 negotiation retains every published version") {
+    assertEquals(Wire.versions,VersionInfo("1.4.0","1.0.0",List("1.4.0","1.3.0","1.2.0","1.1.0","1.0.0")))
+    assertEquals(Wire.negotiate(Wire.versions.supported.reverse),"1.4.0")
+  }
   test("BG specified: both retained versions upgrade every client operation through registered generated conversions") {
     val examples=List[v10.Operation](v10.Operation.Hello(List("1.0.0")),v10.Operation.Ping("nonce"),v10.Operation.Pong("heartbeat"),v10.Operation.ListTokens(),v10.Operation.MintToken("name",List(v10.Scope.Ingest)),v10.Operation.RevokeToken(id),v10.Operation.IngestStatus(0,10),v10.Operation.Search(v10.SearchQuery("archive",v10.SearchMode.Lexical,v10.SearchFilter(None,None,None,None,Nil),10,0)))
     examples.foreach { operation =>
@@ -35,7 +39,7 @@ class ProtocolEvolutionTest extends munit.FunSuite {
       val json11=protocol.encodeServer("1.1.0",envelope)
       assertEquals(Wire.encode(v10.ServerEnvelope.codecJson,Wire.decode(v10.ServerEnvelope.codecJson,json10)),json10)
       assertEquals(Wire.encode(v11.ServerEnvelope.codecJson,Wire.decode(v11.ServerEnvelope.codecJson,json11)),json11)
-      val upgraded=conversions.up1_2_0.convert[v12.ServerEnvelope,ServerEnvelope](conversions.up1_1_0.convert[v11.ServerEnvelope,v12.ServerEnvelope](Wire.decode(v11.ServerEnvelope.codecJson,json11)))
+      val upgraded=conversions.up1_3_0.convert[v13.ServerEnvelope,ServerEnvelope](conversions.up1_2_0.convert[v12.ServerEnvelope,v13.ServerEnvelope](conversions.up1_1_0.convert[v11.ServerEnvelope,v12.ServerEnvelope](Wire.decode(v11.ServerEnvelope.codecJson,json11))))
       result match {
         case _: Result.Tokens => assertEquals(upgraded.result.asInstanceOf[Result.Tokens].result.tokens.map(_.source),List(TokenSource.Issued,TokenSource.Issued)); assert(!json11.noSpaces.contains("StaticConfig"))
         case _: Result.Status => val job=upgraded.result.asInstanceOf[Result.Status].result.jobs.head; assertEquals(job.completedWindows,0); assertEquals(job.totalWindows,None); assert(!json10.noSpaces.contains("completedWindows"))
@@ -44,7 +48,7 @@ class ProtocolEvolutionTest extends munit.FunSuite {
       assertEquals(Wire.decode(ServerEnvelope.codecJson,protocol.encodeServer("1.2.0",envelope)),envelope)
     }
     // Persisted issued-token receipts deliberately retain their exact shape.
-    assertEquals(Wire.encode(TokenInfo.codecJson,info),Wire.encode(v11.TokenInfo.codecJson,conversions.down1_1_0.convert[v12.TokenInfo,v11.TokenInfo](conversions.down1_2_0.convert[TokenInfo,v12.TokenInfo](info))))
+    assertEquals(Wire.encode(TokenInfo.codecJson,info),Wire.encode(v11.TokenInfo.codecJson,conversions.down1_1_0.convert[v12.TokenInfo,v11.TokenInfo](conversions.down1_2_0.convert[v13.TokenInfo,v12.TokenInfo](conversions.down1_3_0.convert[TokenInfo,v13.TokenInfo](info)))))
   }
   test("BA specified:1.3 archive, activity and locator codecs preserve pins and exact i64 totals") {
     val maximum=9007199254740993L
@@ -65,6 +69,20 @@ class ProtocolEvolutionTest extends munit.FunSuite {
       if(!result.isInstanceOf[Result.LocatedMessage]) assert(encoded.noSpaces.contains("\"9007199254740993\""))
     }
     assertEquals(Wire.negotiate(List("1.3.0","1.2.0","1.1.0","1.0.0")),"1.3.0")
+  }
+  test("BG regression: unsupported result downgrades are explicit and content-free") {
+    val report=CollectorProgressUpdate("PRIVATE_POISON",0,id,CollectorPhase.Idle,"synthetic",CollectorCounters(0,0,0,0,0,0,0,0,0,0,0,0,0),0,0,None,None)
+    val examples=List(
+      (List("1.0.0","1.1.0","1.2.0","1.3.0"),Result.ExpressionHints(ExpressionHintsResult("PRIVATE_POISON","synthetic",0,0,Nil,false))),
+      (List("1.0.0","1.1.0","1.2.0"),Result.ActivityJobs(ActivityJobsResult("PRIVATE_POISON",Nil,0,None))),
+      (List("1.0.0","1.1.0"),Result.CollectionStatus(CollectorStatusResult(List(CollectorStatus(report,"synthetic",false))))))
+    examples.foreach { case (versions,result) => versions.foreach { version =>
+      val failure=intercept[DomainError](protocol.encodeServer(version,ServerEnvelope(id,result)))
+      assertEquals(failure.code,"version-mismatch")
+      assertEquals(failure.detail,"response is not available in negotiated API version")
+      assertEquals(failure.getMessage,"version-mismatch")
+      assert(!failure.toString.contains("PRIVATE_POISON"))
+    }}
   }
   test("BA specified: collector progress/status and ack retain i64 counters, optional values and UUIDs") {
     val report=CollectorProgressUpdate("collector",9007199254740993L,id,CollectorPhase.Uploading,"2026-10-26T00:00:00Z",CollectorCounters(1,2,3,4,5,6,7,8,9,10,11,12,9007199254740993L),10000000000L,9000000000L,Some(1000000000L),Some("upload-failed"))

@@ -1,76 +1,75 @@
 model chronicle.api
-version "1.3.0"
+version "1.4.0"
 
-import "1.2.0" { * } without { Operation Result }
+import "1.3.0" { * } without { Operation Result }
 
-enum SortDirection { Asc Desc }
-enum ArchiveSort {
-  LastTimestamp Title Owner Project Branch Producer Format Model Status
-  MessageCount Tags
+adt ExpressionHintTarget {
+  data Archive {}
+  data ActivityCollectors {}
+  data ActivityJobs { scope: ActivityJobScope collectorId: opt[str] }
 }
-enum ArchiveTextScope { ExactLexical BoundedCandidateSets }
-data ArchiveQuery {
-  expression: str sort: ArchiveSort direction: SortDirection
-  cursor: opt[str] limit: i32
-}
-data ArchiveRow {
-  head: SessionInfo publishedView: opt[ContentView] matchedView: opt[ContentView]
-  lastTimestamp: opt[str] messageCount: i32 tags: lst[str] headJob: opt[JobInfo]
-}
-data ArchiveResult {
-  rows: lst[ArchiveRow] total: i64 nextCursor: opt[str]
-  textScope: ArchiveTextScope annChunkLimitPerOperand: opt[i32]
-}
-data MessageLocation { view: ContentView position: i32 total: i32 }
-
-enum ActivityJobScope { Current Historical All }
-enum ActivityJobClass {
-  Current SupersededRevision ObsoleteProfile SupersededRevisionAndProfile
-}
-enum ActivityCollectorSort {
-  CollectorId Phase Freshness ReceivedAt ArchiveHeads HeadsWithoutTargetJob
-  CurrentTotal CurrentQueued CurrentRunning CurrentFailed CurrentComplete
-  CurrentActiveRunning CurrentExpiredRunning CurrentUnleasedRunning
-  HistoricalTotal HistoricalQueued HistoricalRunning HistoricalFailed HistoricalComplete
-  HistoricalActiveRunning HistoricalExpiredRunning HistoricalUnleasedRunning
-}
-enum ActivityJobSort {
-  LastTimestamp Title Collector State Revision Profile Attempts CompletedWindows
-  TotalWindows LeaseExpiresAt LeaseState Reason Classification JobId SessionId
-}
-data JobCounts {
-  total: i64 queued: i64 running: i64 failed: i64 complete: i64
-  activeRunning: i64 expiredRunning: i64 unleasedRunning: i64
-}
-data ActivityCollector {
-  collectorId: str status: opt[CollectorStatus]
-  archiveHeads: i64 headsWithoutTargetJob: i64
-  current: JobCounts historical: JobCounts
-}
-data ActivityQuery { expression: str sort: ActivityCollectorSort direction: SortDirection cursor: opt[str] limit: i32 }
-data ActivityResult {
-  observedAt: str user: UserInfo archiveHeads: i64 headsWithoutTargetJob: i64
-  current: JobCounts historical: JobCounts
-  collectors: lst[ActivityCollector] totalCollectors: i64 allCollectors: i64 nextCursor: opt[str]
-}
-data ActivityJobsQuery {
-  collectorId: opt[str] scope: ActivityJobScope expression: str sort: ActivityJobSort direction: SortDirection cursor: opt[str] limit: i32
-}
-data ActivityJob {
-  job: JobInfo profile: str classification: ActivityJobClass
-  leaseExpiresAt: opt[str] leaseActive: bit retryable: bit
-  collectorId: str session: SessionInfo lastTimestamp: opt[str]
-}
-data ActivityJobsResult {
-  observedAt: str jobs: lst[ActivityJob] total: i64 nextCursor: opt[str]
+enum ExpressionHintKind { Field Value Operator }
+data ExpressionHintQuery { target: ExpressionHintTarget expression: str caretUtf16: i32 limit: i32 }
+data ExpressionHint { kind: ExpressionHintKind label: str insertText: str caretOffsetUtf16: i32 }
+data ExpressionHintsResult {
+  queryHash: str observedAt: str replaceStartUtf16: i32 replaceEndUtf16: i32
+  hints: lst[ExpressionHint] truncated: bit
 }
 
-data RetryFailedCounts {
-  eligibleCurrentFailed: i64 supersededRevisionFailed: i64 obsoleteProfileFailed: i64
-  supersededRevisionAndProfileFailed: i64 unchangedQueued: i64 unchangedRunning: i64 unchangedComplete: i64
+enum ModelPurpose { Annotation DocumentEmbedding QueryEmbedding McpTest }
+enum ModelRateBasis { ProviderReportedCompletedCalls }
+data TokenRateWindow {
+  knownTokens: i64 reportedCalls: i64 unknownCalls: i64
+  tokensPerSecond: opt[f64] sampleAgeMillis: opt[i64]
 }
-data RetryFailedPlan { targetProfile: str selectionHash: str counts: RetryFailedCounts }
-data RetryFailedResult { requestId: uid targetProfile: str retried: i64 counts: RetryFailedCounts }
+data ModelUsageSlice {
+  purpose: ModelPurpose inFlight: i32 finishedCalls: i64 failedCalls: i64 cancelledCalls: i64 invalidUsageCalls: i64
+  input: TokenRateWindow output: opt[TokenRateWindow] reasoningSubset: opt[TokenRateWindow]
+}
+data IndexingSettings { annotationSessions: i32 embeddingRequests: i32 embeddingBatchSize: i32 }
+data ModelUsageResult {
+  observedAt: str processStartedAt: str windowStartAt: str windowEndAt: str coveredMillis: i32
+  basis: ModelRateBasis settings: IndexingSettings samples: lst[ModelUsageSlice]
+}
+
+enum PassageFormat { Unindexed LegacyAnnotations ContiguousProblems }
+data PassagePoint { messageId: str messagePosition: i32 byteOffset: i32 }
+data PassageInfo {
+  id: uid ordinal: i32 summary: str tags: lst[str] start: PassagePoint end: PassagePoint
+  sourceBytes: i64 spanCount: i64 pieceCount: i64
+}
+data PassageSourceSpan { messageId: str messagePosition: i32 start: i32 end: i32 }
+data PassagesResult { view: ContentView format: PassageFormat passages: lst[PassageInfo] total: i64 offset: i32 }
+data PassageSpansResult { view: ContentView passageId: uid spans: lst[PassageSourceSpan] total: i64 offset: i32 }
+
+data OwnerReindexPlan {
+  currentTargetProfile: str targetProfile: str selectionHash: str heads: i64 alreadyCurrent: i64 replacements: i64
+}
+data OwnerReindexResult {
+  requestId: uid targetProfile: str heads: i64 queued: i64 alreadyCurrent: i64 invalidatedClaims: i64
+}
+
+data McpToolDefinition { name: str description: str inputSchemaJson: str }
+data McpTestLimits {
+  maximumRounds: i32 maximumToolCalls: i32 maximumPromptBytes: i32 maximumSourceBytes: i32
+  maximumResultBytes: i32 maximumRequestBytes: i32 maximumTraceBytes: i32 maximumEvents: i32
+  pageBytes: i32 deadlineSeconds: i32 retentionSeconds: i32
+}
+data McpTestCatalog {
+  instanceId: uid model: str modelRevision: str maximumOutputTokens: i32 reasoningPolicy: str
+  limits: McpTestLimits tools: lst[McpToolDefinition]
+}
+enum McpTestState { Queued Running Complete Failed Cancelled AuthorizationLost Expired }
+adt McpTestItem {
+  data ToolCall { callId: str tool: str partIndex: i32 partCount: i32 argumentsJsonPart: str }
+  data ToolResult { callId: str partIndex: i32 partCount: i32 resultJsonPart: str }
+  data Response { partIndex: i32 partCount: i32 textPart: str }
+}
+data McpTestEvent { sequence: i64 observedAt: str item: McpTestItem }
+data McpTestSnapshot {
+  instanceId: uid runId: uid state: McpTestState observedAt: str events: lst[McpTestEvent]
+  lastSequence: i64 hasMore: bit failure: opt[Failure]
+}
 
 root adt Operation {
   data Hello { versions: lst[str] }
@@ -106,6 +105,16 @@ root adt Operation {
   data LocateMessage { sessionId: uid view: ContentView messageId: str }
   data PreviewRetryFailed {}
   data ApplyRetryFailed { targetProfile: str selectionHash: str confirm: bit }
+  data ExpressionHints { query: ExpressionHintQuery }
+  data ModelUsage {}
+  data GetPassages { sessionId: uid view: ContentView offset: i32 limit: i32 }
+  data GetPassageSpans { sessionId: uid view: ContentView passageId: uid offset: i32 limit: i32 }
+  data PreviewOwnerReindex {}
+  data ApplyOwnerReindex { targetProfile: str selectionHash: str confirm: bit }
+  data McpTestTools {}
+  data StartMcpTest { instanceId: uid runId: uid prompt: str }
+  data ReadMcpTest { instanceId: uid runId: uid afterSequence: i64 limit: i32 }
+  data CancelMcpTest { instanceId: uid runId: uid }
 }
 root adt Result {
   data Hello { versions: VersionInfo user: UserInfo }
@@ -132,4 +141,12 @@ root adt Result {
   data LocatedMessage { result: MessageLocation }
   data RetryFailedPreview { result: RetryFailedPlan }
   data RetryFailed { result: RetryFailedResult }
+  data ExpressionHints { result: ExpressionHintsResult }
+  data ModelUsage { result: ModelUsageResult }
+  data Passages { result: PassagesResult }
+  data PassageSpans { result: PassageSpansResult }
+  data OwnerReindexPreview { result: OwnerReindexPlan }
+  data OwnerReindexed { result: OwnerReindexResult }
+  data McpTestTools { result: McpTestCatalog }
+  data McpTestRun { result: McpTestSnapshot }
 }

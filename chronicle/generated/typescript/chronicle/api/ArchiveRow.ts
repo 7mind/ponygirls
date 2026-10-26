@@ -81,7 +81,7 @@ export class ArchiveRow implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return ArchiveRow.BaboonDomainVersion
     }
@@ -93,11 +93,11 @@ export class ArchiveRow implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return ArchiveRow.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.3.0"]
+    public static readonly BaboonSameInVersions = ["1.3.0", "1.4.0"]
     public baboonSameInVersions() {
         return ArchiveRow.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
     public baboonForwardReadable() {
         return ArchiveRow.BaboonForwardReadable
     }
@@ -143,7 +143,7 @@ export class ArchiveRow_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.3.0'
+    public static readonly BaboonDomainVersion = '1.4.0'
     public baboonDomainVersion() {
         return ArchiveRow_JsonCodec.BaboonDomainVersion
     }
