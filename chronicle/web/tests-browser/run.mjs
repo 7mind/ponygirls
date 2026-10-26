@@ -26,7 +26,7 @@ async function sceneAt(sceneOrigin, waitForArchive, configure) {
   const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   const fixture = new ChronicleFixture(); if (configure) configure(fixture); await fixture.install(page);
   await page.goto(`${sceneOrigin}/tests-browser/harness.html`);
-  if (waitForArchive) await page.getByRole('heading', { name: 'Pick up the thread.' }).waitFor();
+  if (waitForArchive) await page.getByRole('heading', { name: 'Search sessions' }).waitFor();
   return { context, page, fixture };
 }
 async function search(page) {
@@ -35,6 +35,21 @@ async function search(page) {
   await page.locator('.search-hit').getByRole('heading', { name: 'Following the migration thread', exact: true }).waitFor();
 }
 try {
+  // Regression: neutral task labels replace promotional headings and empty-state slogans.
+  // Behavioral-Active Blackbox / Good Communication: rendered UI, controlled API fixture.
+  {
+    const { context, page } = await scene();
+    await page.getByRole('heading', { name: 'Search sessions', exact: true, level: 1 }).waitFor();
+    await page.getByRole('heading', { name: 'No search submitted', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'No session selected', exact: true }).waitFor();
+    assert.equal(await page.getByRole('link', { name: 'Chronicle home', exact: true }).textContent(), 'C·chronicle');
+    assert.equal(await page.locator('footer.app-footer').innerText(), 'Chronicle');
+    await page.getByRole('button', { name: 'access', exact: true }).click();
+    await page.getByRole('heading', { name: 'Access management', exact: true, level: 1 }).waitFor();
+    await page.getByRole('button', { name: 'activity', exact: true }).click();
+    await page.getByRole('heading', { name: 'Indexing jobs', exact: true, level: 1 }).waitFor();
+    await context.close(); console.log('PASS browser: neutral task headings, empty states and branding');
+  }
   // Regression: loopback HTTP is trustworthy; non-loopback HTTP is not.
   // Blackbox / Good Communication: real Chromium origin security + controlled API fixture.
   {
@@ -107,7 +122,7 @@ try {
       fixture.user = new api.UserInfo('bob', 'bob', [api.Scope.Read, api.Scope.Raw]); fixture.restart();
     } else {
       await page.getByRole('button', { name: 'Sign out', exact: true }).click();
-      await page.getByRole('heading', { name: 'Open your archive', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Sign in', exact: true }).waitFor();
       await page.getByRole('textbox', { name: 'Login', exact: true }).fill(nextUser);
       await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
       await page.getByRole('button', { name: 'Sign in →', exact: true }).click();
@@ -301,11 +316,13 @@ try {
     const context = await browser.newContext(); const page = await context.newPage();
     const fixture = new ChronicleFixture(); fixture.signedIn = false; await fixture.install(page);
     await page.goto(`${origin}/tests-browser/harness.html`);
-    await page.getByRole('heading', { name: 'Open your archive' }).waitFor();
+    await page.getByRole('heading', { name: 'Sign in' }).waitFor();
+    await page.getByRole('heading', { name: 'Archive', exact: true, level: 1 }).waitFor();
+    assert.deepEqual(await page.locator('.login-story p').allTextContents(), ['Search archived agent sessions and read their source messages.']);
     await page.getByRole('textbox', { name: 'Login', exact: true }).fill('alice');
     await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
     await page.getByRole('button', { name: 'Sign in →', exact: true }).click();
-    await page.getByRole('heading', { name: 'Pick up the thread.' }).waitFor();
+    await page.getByRole('heading', { name: 'Search sessions' }).waitFor();
     assert.ok((await context.cookies()).some(cookie => cookie.name === 'chronicle_session' && cookie.httpOnly));
     assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
     fixture.dropLogout = true; await page.getByRole('button', { name: 'Sign out', exact: true }).click();

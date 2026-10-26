@@ -60,7 +60,6 @@ mark{background:#f3d792;color:#382c15;border-radius:2px;padding:1px 0}
 .brand{display:flex;align-items:center;position:relative;gap:9px;font-family:Georgia,serif;font-size:26px;letter-spacing:-1px;text-decoration:none}
 .brand-mark{font-size:29px;border-right:1px solid var(--rule);padding-right:14px;line-height:1}
 .brand-mark span{color:var(--rust)}
-.brand-caption{position:absolute;left:52px;top:34px;font-family:ui-sans-serif,sans-serif;font-size:7px;letter-spacing:1.5px;white-space:nowrap}
 .masthead nav{display:flex;gap:28px;height:100%;align-items:stretch}
 .masthead nav button{position:relative;text-transform:capitalize;padding:5px 0;border:0;font-size:12px;border-radius:0;color:var(--muted)}
 .masthead nav button:hover{background:none}
@@ -276,7 +275,6 @@ mark{background:#f3d792;color:#382c15;border-radius:2px;padding:1px 0}
 @media(max-width:640px){.masthead{height:auto;min-height:78px;padding:14px 20px;gap:12px;flex-wrap:wrap}
 .brand{font-size:24px}
 .brand-mark{font-size:27px}
-.brand-caption{font-size:6px;top:31px;left:50px}
 .masthead nav{height:33px;order:3;width:100%;margin-top:8px;gap:26px}
 .masthead nav button{font-size:11px}
 .identity{margin-left:auto}
