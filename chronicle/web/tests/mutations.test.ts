@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Operation_ApplyRetryFailed, Operation_CreateGroup, Operation_MintToken, MutationReceipt, Result_Mutation, Result_RetryFailed, Result_RetryFailedPreview, Result_Token, RetryFailedCounts, RetryFailedPlan, RetryFailedResult, Scope, TokenInfo, TokenResult } from '../src/api.ts';
 import { validateMutationResult } from '../src/mutations.ts';
+import { RequestFailure } from '../src/transport/types.ts';
 
 const REQUEST_ID = '00000000-0000-4000-8000-000000000001';
 const OTHER_REQUEST_ID = '00000000-0000-4000-8000-000000000002';
@@ -24,23 +25,39 @@ test('BA specified: bulk apply accepts only its typed result and preserves exact
   assert.equal(accepted.result.counts.unchangedComplete, 7n);
 });
 
-test('BA specified: a generic mutation, token or read-only preview cannot confirm bulk retry', () => {
+function assertUnverifiedReply(check: () => unknown, message: RegExp, requestId: string) {
+  assert.throws(check, cause => {
+    assert.ok(cause instanceof RequestFailure);
+    assert.match(cause.message, message);
+    assert.equal(cause.code, 'unverified-result');
+    assert.equal(cause.outcome, 'uncertain');
+    assert.equal(cause.receiptId, requestId);
+    return true;
+  });
+}
+
+test('BA regression: a delivered bulk reply with the wrong result type retains uncertain original identity', () => {
   const { operation, generic, token, counts } = fixture();
   for (const reply of [generic, token, new Result_RetryFailedPreview(new RetryFailedPlan(TARGET_PROFILE, 'synthetic-selection-hash', counts))]) {
-    assert.throws(() => validateMutationResult(operation, reply, REQUEST_ID), /Unexpected mutation response/);
+    assertUnverifiedReply(() => validateMutationResult(operation, reply, REQUEST_ID), /Unexpected mutation response/, REQUEST_ID);
   }
 });
 
-test('BA specified: bulk result request identity and target profile must match the original apply', () => {
+test('BA regression: a bulk reply with the wrong request identity or profile retains uncertain original identity', () => {
   const { operation, result } = fixture();
-  assert.throws(() => validateMutationResult(operation, new Result_RetryFailed(result.with({ requestId: OTHER_REQUEST_ID })), REQUEST_ID), /Receipt identity mismatch/);
-  assert.throws(() => validateMutationResult(operation, new Result_RetryFailed(result.with({ targetProfile: 'changed-target-profile' })), REQUEST_ID), /Receipt target profile mismatch/);
+  assertUnverifiedReply(() => validateMutationResult(operation, new Result_RetryFailed(result.with({ requestId: OTHER_REQUEST_ID })), REQUEST_ID), /Receipt identity mismatch/, REQUEST_ID);
+  assertUnverifiedReply(() => validateMutationResult(operation, new Result_RetryFailed(result.with({ targetProfile: 'changed-target-profile' })), REQUEST_ID), /Receipt target profile mismatch/, REQUEST_ID);
 });
 
 test('BA specified: a bulk result cannot confirm another operation or a token mint', () => {
   const { result } = fixture();
   for (const operation of [new Operation_CreateGroup('Synthetic group'), new Operation_MintToken('Synthetic token', [Scope.Read])]) {
-    assert.throws(() => validateMutationResult(operation, new Result_RetryFailed(result), REQUEST_ID), /Unexpected mutation response/);
+    assert.throws(() => validateMutationResult(operation, new Result_RetryFailed(result), REQUEST_ID), cause => {
+      assert.ok(cause instanceof Error);
+      assert.ok(!(cause instanceof RequestFailure));
+      assert.match(cause.message, /Unexpected mutation response/);
+      return true;
+    });
   }
 });
 

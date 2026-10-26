@@ -7,9 +7,10 @@ interface Uncertain { id: string; owner: string; operation: Operation; label: st
 export type MutationConnection = Pick<ChronicleConnection, 'request' | 'onInvalidate'>;
 export function validateMutationResult(operation: Operation, result: Result, requestId: string): Result_Mutation | Result_Token | Result_RetryFailed {
   if (operation instanceof Operation_ApplyRetryFailed) {
-    if (!(result instanceof Result_RetryFailed)) throw new Error('Unexpected mutation response');
-    if (result.result.requestId !== requestId) throw new Error('Receipt identity mismatch');
-    if (result.result.targetProfile !== operation.targetProfile) throw new Error('Receipt target profile mismatch');
+    const unverified = (message: string) => new RequestFailure(message, 'unverified-result', 'uncertain', requestId);
+    if (!(result instanceof Result_RetryFailed)) throw unverified('Unexpected mutation response');
+    if (result.result.requestId !== requestId) throw unverified('Receipt identity mismatch');
+    if (result.result.targetProfile !== operation.targetProfile) throw unverified('Receipt target profile mismatch');
     return result;
   }
   if (!(result instanceof Result_Mutation) && !(result instanceof Result_Token)) throw new Error('Unexpected mutation response');
