@@ -1,6 +1,6 @@
 { lib, stdenv, fetchurl, python312, uv, autoPatchelfHook, makeWrapper
 , zlib, libglvnd, numactl, rdma-core, openssl, libffi, gcc14
-, tbb, openmpi, ucx, libfabric, pmix, libheif }:
+, tbb, openmpi, ucx, libfabric, pmix, libheif, linkFarm, writeText }:
 let
   wheels = builtins.fromJSON (builtins.readFile ./embedding-wheels.json);
   sources = map (wheel: fetchurl {
@@ -9,6 +9,12 @@ let
     sha256 = wheel.sha256;
   }) wheels;
   site = "${python312.sitePackages}";
+  checkScripts = linkFarm "chronicle-embedding-check-scripts" (map (name: {
+    inherit name;
+    path = ./. + "/${name}";
+  }) [ "embedding-elf-audit.py" "embedding-install.py" "embedding-lock.py" "embedding-tests.py" ]);
+  wheelSources = writeText "chronicle-embedding-wheel-sources.json"
+    (builtins.toJSON (map toString sources));
 in
 assert stdenv.hostPlatform.system == "x86_64-linux";
 stdenv.mkDerivation {
@@ -61,6 +67,8 @@ stdenv.mkDerivation {
     export HOME="$TMPDIR" HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
     export CUDA_HOME="$out/${site}/nvidia/cu13" PATH="$out/bin:$out/${site}/nvidia/cu13/bin:$PATH"
     export TRITON_PTXAS_PATH="$CUDA_HOME/bin/ptxas" TRITON_PTXAS_BLACKWELL_PATH="$CUDA_HOME/bin/ptxas"
+    "$out/bin/python" ${checkScripts}/embedding-tests.py
+    "$out/bin/python" ${checkScripts}/embedding-elf-audit.py "$out" ${wheelSources} "$(command -v patchelf)"
     uv pip check --python "$out/bin/python"
     "$out/bin/python" ${./embedding-check.py}
     VLLM_TARGET_DEVICE=cpu "$out/bin/vllm" --help > "$out/share/chronicle-embedding/cli-help.txt"
