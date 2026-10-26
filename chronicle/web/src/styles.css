@@ -349,3 +349,8 @@ mark{background:#f3d792;color:#382c15;border-radius:2px;padding:1px 0}
 .passages>.pagination{padding-bottom:0}
 @media(max-width:850px){.matched-passages{padding:14px 18px}}
 .source-view-actions{margin-top:14px;gap:8px}
+
+.collector-card { border-top: 1px solid var(--line, #ccc); padding: 1rem 0; overflow-wrap: anywhere; }
+.progress-counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1rem; }
+.progress-counters dt { font-size: .8rem; opacity: .8; }
+.progress-counters dd { margin: .25rem 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }

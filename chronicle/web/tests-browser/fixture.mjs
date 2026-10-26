@@ -5,7 +5,7 @@ const ID = { session: '00000000-0000-4000-8000-000000000001', chunk: '00000000-0
 export class ChronicleFixture {
   user = new api.UserInfo('alice', 'alice', [api.Scope.Read, api.Scope.Raw]);
   version = new api.VersionInfo('1.2.0', '1.0.0', ['1.2.0', '1.0.0']);
-  sockets = []; calls = []; requests = []; receipts = new Map(); tokens = [];
+  sockets = []; calls = []; requests = []; receipts = new Map(); tokens = []; staticTokens = []; collectors = []; collectionDenied = false;
   groups = [new api.GroupInfo(ID.group, 'Systems workshop', 'alice', ['alice', 'bob']), new api.GroupInfo(ID.otherGroup, 'Research circle', 'bob', ['bob', 'alice'])];
   invitations = [new api.InviteInfo(ID.invitation, ID.otherGroup, 'alice', '2030-01-01T00:00:00Z')];
   jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined)];
@@ -62,8 +62,9 @@ export class ChronicleFixture {
         if (operation instanceof api.Operation_GetMessages) { const view = this.messageViewOverride ?? operation.view ?? this.view, messages = this.messagesAt(view.revision); send(new api.Result_Messages(new api.MessagesResult(messages.slice(operation.offset, operation.offset + operation.limit), messages.length, operation.offset, view))); return; }
         if (operation instanceof api.Operation_GetRaw) { const revision = this.rawRevisionOverride ?? operation.revision ?? this.headRevision; send(this.rawDenied ? new api.Result_Error(new api.Failure('forbidden', 'Raw permission denied for this source')) : new api.Result_Raw(new api.RawResult([new api.RawFile('synthetic.jsonl', '0'.repeat(64), this.resumedSource ? JSON.stringify({ revision }) : '{"synthetic":true}')], revision))); return; }
         if (operation instanceof api.Operation_Related) { send(new api.Result_Related(new api.RelatedResult([]))); return; }
-        if (operation instanceof api.Operation_ListTokens) { send(new api.Result_Tokens(new api.TokensResult(this.tokens.map(info => new api.ListedToken(info, api.TokenSource.Issued))))); return; }
+        if (operation instanceof api.Operation_ListTokens) { send(new api.Result_Tokens(new api.TokensResult([...this.staticTokens.map(info => new api.ListedToken(info, api.TokenSource.StaticConfig)), ...this.tokens.map(info => new api.ListedToken(info, api.TokenSource.Issued))]))); return; }
         if (operation instanceof api.Operation_ListGroups) { send(new api.Result_Groups(new api.GroupsResult(this.groups, this.invitations))); return; }
+        if (operation instanceof api.Operation_CollectionStatus) { send(this.collectionDenied ? new api.Result_Error(new api.Failure('forbidden', 'Collection status denied')) : new api.Result_CollectionStatus(new api.CollectorStatusResult(this.collectors))); return; }
         if (operation instanceof api.Operation_IngestStatus) { send(new api.Result_Status(new api.StatusResult(this.jobs, this.jobs.length))); return; }
         if (operation instanceof api.Operation_Receipt) { const receipt = this.receipts.get(operation.mutationId); send(receipt ? receipt instanceof api.Result_Token ? receipt : new api.Result_Mutation(receipt) : new api.Result_Error(new api.Failure('not-found', 'Receipt not found'))); return; }
         let entityId;
