@@ -86,6 +86,11 @@ export function useMutations(connection: MutationConnection, userId: string | nu
       setRevision(n => n + 1);
     } catch (cause) {
       if (bulk && (currentUser.current !== uncertain.owner || epoch.current !== requestEpoch)) return;
+      if (bulk && cause instanceof RequestFailure && cause.code === 'conflict' && cause.outcome === 'failed') {
+        // Only the owner-bound Receipt lookup proves rejection; a direct Apply conflict does not.
+        setUncertain(null); setMessage(`Receipt ${uncertain.id} confirms that this indexing retry was rejected. Request a fresh preview and explicitly confirm again before retrying.`);
+        return;
+      }
       setErrorCode(cause instanceof RequestFailure ? cause.code : null);
       if (cause instanceof RequestFailure && cause.code === 'not-found') { setUncertain({ ...uncertain, absent: true }); setMessage('No committed receipt was found. You may explicitly retry the same payload with the same request ID.'); }
       else setError(cause instanceof Error ? cause.message : 'Receipt lookup failed; the outcome is still unknown');
