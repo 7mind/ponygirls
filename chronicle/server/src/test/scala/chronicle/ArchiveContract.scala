@@ -13,13 +13,14 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   private val targets=mutable.Map.empty[String,OwnerTarget]
   private val jobs=mutable.LinkedHashMap.empty[UUID,Job]
   private val published = mutable.Map.empty[UUID,(ContentView,IngestRequest,String)]
-  private final case class Publication(sessionId: UUID,view: ContentView,format: PassageFormat,chunks: List[IndexedChunk],problems: Option[ProblemsPublication])
+  private final case class Publication(sessionId: UUID,view: ContentView,format: Option[PassageFormat],chunks: List[IndexedChunk],problems: Option[ProblemsPublication])
   private val revisions=mutable.Map.empty[(UUID,Int),IngestRequest]
   private val generations=mutable.Map.empty[UUID,Publication]
   private val removed=mutable.Set.empty[UUID]
   private val disabled=mutable.Set.empty[String]
   private val sharing=mutable.Set.empty[(String,String)]
   private def enabled(owner: String): Boolean = config.users.exists(u => u.id==owner && u.enabled) && !disabled(owner)
+  def clearFormat(generation: UUID): Unit = synchronized { generations(generation)=generations(generation).copy(format=None) }
   def share(owner: String,reader: String): Unit = synchronized { sharing+=((owner,reader)); () }
   def revokeSharing(owner: String,reader: String): Unit = synchronized { sharing-=((owner,reader)); () }
   def setEnabled(owner: String,value: Boolean): Unit = synchronized { if(value) disabled-=owner else disabled+=owner; () }
@@ -99,7 +100,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
         val h=head(c.owner,c.sessionId); h.indexed=Some(c.revision)
         val generation=UUID.randomUUID(); val view=ContentView(c.revision,Some(generation))
         published(h.id)=(view,c.snapshot,c.profile)
-        generations(generation)=Publication(c.sessionId,view,format,chunks,problems)
+        generations(generation)=Publication(c.sessionId,view,Some(format),chunks,problems)
         jobs(c.jobId).state=JobState.Complete; true
       }
     }
@@ -110,6 +111,11 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     Check(view.revision>0,"invalid","content revision must be positive")
     Check(revisions.contains((id,view.revision)) && view.generationId.forall(g => generations.get(g).exists(p => p.sessionId==id && p.view==view)),"not-found","content view not found")
     view
+  }
+  def raw(reader: String,id: UUID,revision: Option[Int]): RawResult = synchronized {
+    val h=head(reader,id); val selected=revision.getOrElse(h.revision)
+    Check(selected>0,"invalid","content revision must be positive")
+    RawResult(revisions.getOrElse((id,selected),throw DomainError("not-found","content view not found")).files,selected)
   }
   def pageChunks(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): ChunksResult = synchronized {
     Check.contentPage(offset,limit); val view=selectView(reader,id,selector)
@@ -122,13 +128,15 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
       case None => PassagesResult(view,PassageFormat.Unindexed,Nil,0,offset)
       case Some(generation) =>
         val stored=generations(generation); val values=stored.problems.map(_.passages).getOrElse(Vector.empty)
-        PassagesResult(view,stored.format,values.drop(offset).take(limit).map(ProblemsPublication.info).toList,values.size.toLong,offset)
+        PassagesResult(view,stored.format.getOrElse(throw DomainError("unavailable","generation passage provenance is unknown")),values.drop(offset).take(limit).map(ProblemsPublication.info).toList,values.size.toLong,offset)
     }
   }
   def passageSpans(reader: String,id: UUID,passageId: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassageSpansResult = synchronized {
     Check.contentPage(offset,limit); val view=selectView(reader,id,selector)
     val generation=view.generationId.getOrElse(throw DomainError("invalid","passage spans require an indexed content view"))
-    val publication=generations(generation).problems.getOrElse(throw DomainError("not-found","passage not found"))
+    val stored=generations(generation)
+    Check(stored.format.nonEmpty,"unavailable","generation passage provenance is unknown")
+    val publication=stored.problems.getOrElse(throw DomainError("not-found","passage not found"))
     val passage=publication.passages.find(_.id==passageId).getOrElse(throw DomainError("not-found","passage not found"))
     val spans=publication.spans.iterator.filter(_.passageOrdinal==passage.ordinal).drop(offset).take(limit).map { span =>
       val s=span.source; PassageSourceSpan(s.messageId,s.messagePosition,s.start,s.end)

@@ -57,7 +57,7 @@ final class OwnerTargetConcurrencyTest extends munit.FunSuite {
       assertEquals(rows(db,"b"),untouched)
       assert(!a.renew(old,300)); assert(!a.publish(old,Nil))
       val fresh=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
-      assertEquals(fresh.revision,2); assertEquals(fresh.profile,catalog.preferred.profile); assert(a.publish(fresh,Nil))
+      assertEquals(fresh.revision,2); assertEquals(fresh.profile,catalog.preferred.profile); assert(a.publishProblems(fresh,ProblemPublicationFixtures.oneProblem(fresh)))
     } finally { pool.shutdownNow(); assert(pool.awaitTermination(6,TimeUnit.SECONDS)) }
   }}
   test("Effectual GoodCommunication: claim lease is created after a target lock wait and remains usable") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
@@ -87,7 +87,7 @@ final class OwnerTargetConcurrencyTest extends munit.FunSuite {
     }
     try {
       val claim=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),1).get
-      assert(!a.publish(claim,chunks(claim)))
+      assert(!a.publishProblems(claim,ProblemPublicationFixtures.oneProblem(claim)))
       assertEquals(a.session("a",out.sessionId).view,previous)
       db.transaction { x =>
         assertEquals(Sql.one(x,"SELECT count(*) FROM ch_generations WHERE session_id=?",out.sessionId)(_.getLong(1)).get,1L)

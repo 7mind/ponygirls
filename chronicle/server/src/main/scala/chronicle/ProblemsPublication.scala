@@ -73,6 +73,7 @@ object ProblemsPublication {
     def result: ProblemsPublication = {
       Check(state.exists(_.finished) && metadata.values.forall(_.closed),"invalid","publication requires finished source")
       val passages=metadata.values.map(_.passage).toVector.sortBy(_.ordinal)
+      Check(passages.map(_.ordinal)==passages.indices.toVector && state.get.nextPassageOrdinal==passages.size,"invalid","publication final passage order/count")
       val ordinals=passages.map(p => p.id->p.ordinal).toMap
       def ordinal(id: UUID): Int = ordinals.getOrElse(id,throw DomainError("invalid","publication missing passage"))
       val spans=source.iterator.map((key,span) => ProblemSourceSpan(ordinal(key.passageId),key.ordinal,span)).toVector.sortBy(s => (s.passageOrdinal,s.ordinal))

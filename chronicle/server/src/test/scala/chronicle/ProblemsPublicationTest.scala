@@ -55,6 +55,14 @@ class ProblemsPublicationTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](publication.validate(c.copy(sessionId=UUID.randomUUID()),3)).code,"invalid")
     assertEquals(intercept[DomainError](publication.validate(c,4)).code,"invalid")
   }
+  test("BG: malformed final metadata ordinals fail the builder invariant through DomainError") {
+    val c=claim(request(List("A"))); val source=Source(c.snapshot.messages); val window=source.next(SourceCursor.start).get
+    val delta=accept(State.start(c.sessionId,UUID.randomUUID()),window,Decision(Vector(Part(Point(0,0),window.terminal,false,"goal",Nil))))
+    val builder=ProblemsPublication.empty.append(delta,delta.pieces.map(p => IndexedChunk(p.chunk,vector)).toList)
+    val closed=finish(delta.state,source)
+    val malformed=closed.copy(passages=closed.passages.map(update => update.copy(passage=update.passage.copy(ordinal=9))))
+    assertEquals(intercept[DomainError](builder.append(malformed,Nil).result).code,"invalid")
+  }
   test("BG: source-faithful validation rejects publication from a different transcript and accepts empty projected input") {
     val c=claim(request(List("A🙂BαA🙂"))); val publication=topics(c)
     publication.validate(c,3)

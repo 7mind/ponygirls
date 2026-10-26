@@ -59,12 +59,12 @@ final class OwnerDisabledTest extends munit.FunSuite {
     try {
       val archive=new PostgresArchive(configured,config); val out=archive.ingest("",Fixtures.snapshot())
       val claim=archive.claim(catalog.knownProfiles,ClaimScope.Owner(""),300).get
-      assertEquals(claim.owner,""); assert(archive.progress(claim,1,1)); assert(archive.renew(claim,300)); assert(archive.publish(claim,Nil))
+      assertEquals(claim.owner,""); assert(archive.progress(claim,1,1)); assert(archive.renew(claim,300)); assert(ProblemPublicationFixtures.publish(archive,claim,catalog))
       val service=new PostgresOwnerReindex(configured); val plan=service.preview("")
       val result=service("",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true)
       assertEquals(result.heads,1L); assertEquals(result.alreadyCurrent,plan.alreadyCurrent); assertEquals(result.queued,plan.replacements)
       val replacement=archive.claim(catalog.knownProfiles,ClaimScope.Owner(""),300)
-      assertEquals(replacement.nonEmpty,plan.replacements==1L); replacement.foreach(claim => assert(archive.publish(claim,Nil)))
+      assertEquals(replacement.nonEmpty,plan.replacements==1L); replacement.foreach(claim => assert(ProblemPublicationFixtures.publish(archive,claim,catalog)))
       assert(service.completed(""))
       assertEquals(archive.session("",out.sessionId).ownerId,"")
     } finally new Database(c,catalog).initialize()
