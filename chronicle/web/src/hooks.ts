@@ -7,7 +7,7 @@ export function useConnection(connection: ChronicleConnection): ManagerStats {
   return stats;
 }
 export interface Resource<T> { data: T | null; loading: boolean; refreshing: boolean; error: string | null }
-interface ResourceConnection { onInvalidate(callback: () => void): () => void }
+export interface ResourceConnection { onInvalidate(callback: () => void): () => void }
 interface ResourceState<T> extends Resource<T> { connection: ResourceConnection; generation: number; activeId: number | null; key: string }
 export function useResource<T>(connection: ResourceConnection, stats: ManagerStats, key: string, refresh: string, enabled: boolean, load: () => Promise<T>): Resource<T> {
   const ready = enabled && stats.activeId !== null;

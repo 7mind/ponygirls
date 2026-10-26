@@ -4,12 +4,15 @@ const context = BaboonCodecContext.Default;
 const ID = { session: '00000000-0000-4000-8000-000000000001', chunk: '00000000-0000-4000-8000-000000000002', token: '00000000-0000-4000-8000-000000000003', group: '00000000-0000-4000-8000-000000000004', invitation: '00000000-0000-4000-8000-000000000005', job: '00000000-0000-4000-8000-000000000006', otherGroup: '00000000-0000-4000-8000-000000000007' };
 export class ChronicleFixture {
   user = new api.UserInfo('alice', 'alice', [api.Scope.Read, api.Scope.Raw]);
-  version = new api.VersionInfo('1.2.0', '1.0.0', ['1.2.0', '1.0.0']);
+  version = new api.VersionInfo('1.3.0', '1.0.0', ['1.3.0', '1.2.0', '1.1.0', '1.0.0']);
   sockets = []; calls = []; requests = []; receipts = new Map(); tokens = []; staticTokens = []; collectors = []; collectionDenied = false;
   groups = [new api.GroupInfo(ID.group, 'Systems workshop', 'alice', ['alice', 'bob']), new api.GroupInfo(ID.otherGroup, 'Research circle', 'bob', ['bob', 'alice'])];
   invitations = [new api.InviteInfo(ID.invitation, ID.otherGroup, 'alice', '2030-01-01T00:00:00Z')];
   jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined)];
+  archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchiveCursor = false; pendingArchive = [];
+  activityJobs = undefined; activityCollectors = undefined; messageCount = 87; lateMessageId = 'm65'; holdLocators = false; pendingLocators = [];
   annotationCount = 2; winnerBeyondFirstPage = false; resumedSource = false; headRevision = 2; publishedRevision = 1; messageViewOverride = undefined; chunksViewOverride = undefined; rawRevisionOverride = undefined;
+  holdMessages = false; pendingMessages = [];
   mode = 'normal'; signedIn = true; mintUncertain = false; dropLogout = false; rawDenied = true; searchCount = 0;
   metadata = new api.Metadata('Following the migration thread', 'chronicle', '/synthetic/project', 'https://example.invalid/synthetic.git', 'feature/archive', 'ab12cd34', 'pi', 'synthetic-model', '2026-10-23T09:30:00Z', undefined, ['architecture', 'source-fidelity']);
   source = new api.SourceIdentity('synthetic-collector', 'native', api.SourceFormat.Pi, 'synthetic-session', undefined);
@@ -17,18 +20,73 @@ export class ChronicleFixture {
   get view() { return this.viewAt(this.publishedRevision); }
   sessionAt(view) { return new api.SessionInfo(view, ID.session, 'alice', this.headRevision, this.publishedRevision, this.metadata, this.source, api.Completion.Quiescent, false); }
   get session() { return this.sessionAt(this.view); }
-  messagesAt(revision) { const messages = [new api.Message('m1', undefined, 'user', 'Can we preserve the original 猫🦄 source while the index catches up?', '2026-10-23T09:30:00Z', 0), new api.Message('m2', 'm1', 'assistant', 'Keep immutable source revisions. Publish annotations atomically. A quiescent snapshot does not assert that the process has ended.\n\n<script>alert("untrusted transcript")</script>', '2026-10-23T09:31:00Z', 1), ...Array.from({length: 85}, (_, i) => new api.Message(`m${i + 3}`, 'm2', i % 2 ? 'tool' : 'assistant', `Synthetic source message ${i + 3}. Literal archived text, never executed.`, undefined, i + 2))];
+  messagesAt(revision) { const messages = [new api.Message('m1', undefined, 'user', 'Can we preserve the original 猫🦄 source while the index catches up?', '2026-10-23T09:30:00Z', 0), new api.Message('m2', 'm1', 'assistant', 'Keep immutable source revisions. Publish annotations atomically. A quiescent snapshot does not assert that the process has ended.\n\n<script>alert("untrusted transcript")</script>', '2026-10-23T09:31:00Z', 1), ...Array.from({length: this.messageCount - 2}, (_, i) => new api.Message(`m${i + 3}`, 'm2', i % 2 ? 'tool' : 'assistant', `Synthetic source message ${i + 3}. Literal archived text, never executed.`, undefined, i + 2))];
     return this.resumedSource && revision === 2 ? messages.map(message => message.with({ text: message.id === 'm1' ? 'HEAD r2 changed the original message text completely.' : `Revision 2 changed message ${message.id}.` })) : messages;
   }
   get messages() { return this.messagesAt(this.headRevision); }
   chunksAt(view) {
     if (view.generationId === undefined) return [];
-    const chunks = [new api.Chunk(ID.chunk, ID.session, this.messagesAt(view.revision)[0].text, 'Keep original source independent from publication.', ['source-fidelity'], [new api.Span('m1', 29, 36)], 0.93), new api.Chunk('00000000-0000-4000-8000-000000000008', ID.session, 'Late source page', 'A passage on a later bounded source page.', ['pagination'], [new api.Span('m65', 0, 9)], 0.8)];
-    for (let index = chunks.length; index < this.annotationCount; index++) chunks.push(new api.Chunk(`00000000-0000-4000-8000-${String(index + 100).padStart(12, '0')}`, ID.session, this.messagesAt(view.revision)[64].text, index === 164 ? 'Winning passage beyond the first hundred.' : `Annotated passage ${index + 1}.`, ['pagination'], [new api.Span('m65', 0, 9)], index === 164 ? 0.99 : 0.5));
+    const messages = this.messagesAt(view.revision);
+    const chunks = [new api.Chunk(ID.chunk, ID.session, messages[0].text, 'Keep original source independent from publication.', ['source-fidelity'], [new api.Span('m1', 29, 36)], 0.93), new api.Chunk('00000000-0000-4000-8000-000000000008', ID.session, 'Late source page', 'A passage on a later bounded source page.', ['pagination'], [new api.Span(this.lateMessageId, 0, 9)], 0.8)];
+    for (let index = chunks.length; index < this.annotationCount; index++) chunks.push(new api.Chunk(`00000000-0000-4000-8000-${String(index + 100).padStart(12, '0')}`, ID.session, messages[Number(this.lateMessageId.slice(1)) - 1].text, index === 164 ? 'Winning passage beyond the first hundred.' : `Annotated passage ${index + 1}.`, ['pagination'], [new api.Span(this.lateMessageId, 0, 9)], index === 164 ? 0.99 : 0.5));
     return chunks;
   }
   get chunks() { return this.chunksAt(this.view); }
   get hit() { return new api.SearchHit(this.session, this.winnerBeyondFirstPage ? [this.chunks[164]] : this.chunks.slice(0, 2), .93); }
+  archiveAt(index) {
+    const id = index === 0 ? ID.session : `00000000-0000-4000-8000-${String(10000 + index).padStart(12, '0')}`;
+    const metadata = index === 0 ? this.metadata : this.metadata.with({ title: `Synthetic conversation ${String(index + 1).padStart(3, '0')}`, project: index % 5 === 0 ? undefined : `Project ${index % 5}`, gitBranch: `branch-${index % 4}`, producer: index % 2 ? 'pi' : 'codex', model: index % 6 === 0 ? undefined : `model-${index % 3}` });
+    const head = this.sessionAt(new api.ContentView(this.headRevision, undefined)).with({ id, metadata });
+    const published = index === 0 || index % 3 !== 0 ? this.view : undefined;
+    return new api.ArchiveRow(head, published, undefined, index % 17 === 16 ? undefined : new Date(Date.parse('2026-10-23T09:31:00Z') - Math.floor(index / 2) * 60000).toISOString(), this.messageCount + index, index === 0 ? metadata.tags : [`tag-${index % 4}`], index === 0 ? this.jobs.find(job => job.revision === this.headRevision) : undefined);
+  }
+  get authorizedRows() { return (this.archiveRows ?? Array.from({ length: this.archiveRowCount }, (_, index) => this.archiveAt(index))).filter(row => !this.archiveExcluded.has(row.head.id)); }
+  archiveResult(query) {
+    let rows = [...this.authorizedRows];
+    const value = row => {
+      switch (query.sort) {
+        case api.ArchiveSort.LastTimestamp: return row.lastTimestamp;
+        case api.ArchiveSort.Title: return row.head.metadata.title;
+        case api.ArchiveSort.Owner: return row.head.ownerId;
+        case api.ArchiveSort.Project: return row.head.metadata.project;
+        case api.ArchiveSort.Branch: return row.head.metadata.gitBranch;
+        case api.ArchiveSort.Producer: return row.head.metadata.producer;
+        case api.ArchiveSort.Format: return row.head.source.format;
+        case api.ArchiveSort.Model: return row.head.metadata.model;
+        case api.ArchiveSort.Status: return row.headJob === undefined ? 'unscheduled' : row.headJob.state.toLowerCase();
+        case api.ArchiveSort.MessageCount: return row.messageCount;
+        case api.ArchiveSort.Tags: return [...row.tags].sort()[0];
+        default: throw new Error('Unknown fixture sort');
+      }
+    };
+    rows.sort((left, right) => { const a = value(left), b = value(right); if (a === undefined || b === undefined) return a === b ? left.head.id.localeCompare(right.head.id) : a === undefined ? 1 : -1; const order = typeof a === 'number' ? a - b : a.localeCompare(b); return (query.direction === api.SortDirection.Asc ? order : -order) || left.head.id.localeCompare(right.head.id); });
+    const offset = query.cursor === undefined ? 0 : Number(query.cursor.split(':').at(-1));
+    const lexical = /mode\s*:\s*lexical/i.test(query.expression), text = /original|migration|private-migration|missing-model/.test(query.expression);
+    rows = rows.map(row => row.with({ matchedView: text ? lexical ? row.head.view : row.publishedView : undefined }));
+    const next = offset + query.limit < rows.length ? `${query.sort}:${query.direction}:${offset + query.limit}` : undefined;
+    return new api.ArchiveResult(rows.slice(offset, offset + query.limit), BigInt(rows.length), next, text && !lexical ? api.ArchiveTextScope.BoundedCandidateSets : api.ArchiveTextScope.ExactLexical, text && !lexical ? 1000 : undefined);
+  }
+  get jobRows() { return this.activityJobs ?? this.jobs.map(job => { const current = job.revision === this.headRevision; return new api.ActivityJob(job, 'target-profile', current ? api.ActivityJobClass.Current : api.ActivityJobClass.SupersededRevision, undefined, false, current && job.state === api.JobState.Failed && job.error !== 'superseded-revision'); }); }
+  counts(jobs) {
+    const count = state => BigInt(jobs.filter(item => item.job.state === state).length), running = jobs.filter(item => item.job.state === api.JobState.Running);
+    return new api.JobCounts(BigInt(jobs.length), count(api.JobState.Queued), count(api.JobState.Running), count(api.JobState.Failed), count(api.JobState.Complete), BigInt(running.filter(item => item.leaseActive).length), BigInt(running.filter(item => !item.leaseActive && item.leaseExpiresAt !== undefined).length), BigInt(running.filter(item => item.leaseExpiresAt === undefined).length));
+  }
+  get collectorRows() {
+    if (this.activityCollectors !== undefined) return this.activityCollectors;
+    const reports = this.collectors.map(status => new api.ActivityCollector(status.report.collectorId, status, 0n, 0n, this.counts([]), this.counts([])));
+    const ownRows = this.authorizedRows.filter(row => row.head.ownerId === this.user.id), current = this.jobRows.filter(item => item.classification === api.ActivityJobClass.Current), history = this.jobRows.filter(item => item.classification !== api.ActivityJobClass.Current);
+    const namespace = this.source.collectorNamespace, report = reports.find(item => namespace === item.collectorId || namespace.startsWith(`${item.collectorId}/`));
+    const base = new api.ActivityCollector(report === undefined ? namespace : report.collectorId, report === undefined ? undefined : report.status, BigInt(ownRows.length), BigInt(ownRows.filter(row => row.headJob === undefined).length), this.counts(current), this.counts(history));
+    return [...reports.filter(item => item.collectorId !== base.collectorId), base].sort((a, b) => a.collectorId.localeCompare(b.collectorId));
+  }
+  activityResult(query) {
+    const offset = query.cursor === undefined ? 0 : Number(query.cursor), rows = this.collectorRows, current = this.jobRows.filter(item => item.classification === api.ActivityJobClass.Current), historical = this.jobRows.filter(item => item.classification !== api.ActivityJobClass.Current), owned = this.authorizedRows.filter(row => row.head.ownerId === this.user.id);
+    return new api.ActivityResult('2026-10-26T12:00:00Z', this.user, BigInt(owned.length), BigInt(owned.filter(row => row.headJob === undefined).length), this.counts(current), this.counts(historical), rows.slice(offset, offset + query.limit), BigInt(rows.length), offset + query.limit < rows.length ? String(offset + query.limit) : undefined);
+  }
+  activityJobsResult(query) {
+    const rows = this.jobRows.filter(item => query.scope === api.ActivityJobScope.All || (query.scope === api.ActivityJobScope.Current) === (item.classification === api.ActivityJobClass.Current)), offset = query.cursor === undefined ? 0 : Number(query.cursor);
+    return new api.ActivityJobsResult('2026-10-26T12:00:00Z', rows.slice(offset, offset + query.limit), BigInt(rows.length), offset + query.limit < rows.length ? String(offset + query.limit) : undefined);
+  }
   async install(page) {
     await page.route('**/api/login', route => {
       const request = api.LoginRequest_JsonCodec.instance.decode(context, route.request().postDataJSON());
@@ -51,15 +109,29 @@ export class ChronicleFixture {
         if (operation instanceof api.Operation_Ping) { send(new api.Result_Pong(operation.nonce)); return; }
         if (operation instanceof api.Operation_Pong) return;
         if (operation instanceof api.Operation_Whoami) { send(new api.Result_Whoami(this.user)); return; }
+        if (operation instanceof api.Operation_Archive) {
+          this.searchCount++;
+          if (this.archiveFailure !== null) { send(new api.Result_Error(new api.Failure('invalid', this.archiveFailure))); return; }
+          const result = this.archiveResult(operation.query), reply = () => send(new api.Result_Archive(result));
+          if (this.holdArchiveCursor && operation.query.cursor !== undefined) this.pendingArchive.push(reply); else reply();
+          return;
+        }
+        if (operation instanceof api.Operation_Activity) { send(this.collectionDenied ? new api.Result_Error(new api.Failure('forbidden', 'Collection status denied')) : new api.Result_Activity(this.activityResult(operation.query))); return; }
+        if (operation instanceof api.Operation_ActivityJobs) { send(new api.Result_ActivityJobs(this.activityJobsResult(operation.query))); return; }
+        if (operation instanceof api.Operation_LocateMessage) {
+          const view = operation.view, messages = this.messagesAt(view.revision), position = messages.findIndex(message => message.id === operation.messageId);
+          const reply = () => send(position < 0 ? new api.Result_Error(new api.Failure('not-found', 'Source message not found')) : new api.Result_LocatedMessage(new api.MessageLocation(view, position, messages.length)));
+          if (this.holdLocators) this.pendingLocators.push(reply); else reply(); return;
+        }
         if (operation instanceof api.Operation_Search) {
           this.searchCount++;
           const lexical = operation.query.mode === api.SearchMode.Lexical;
           send(new api.Result_Search(new api.SearchResult([this.hit], 1, lexical ? api.SearchCountScope.ExactMatches : api.SearchCountScope.CandidateWindow, lexical ? undefined : operation.query.mode === api.SearchMode.Hybrid ? 2000 : 1000))); return;
         }
         if (operation instanceof api.Operation_Facets) { send(new api.Result_Facets(new api.FacetsResult([new api.Facet('chronicle', 1)], [new api.Facet('feature/archive', 1)], [new api.Facet('architecture', 1)]))); return; }
-        if (operation instanceof api.Operation_GetSession) { const view = operation.view ?? this.view; send(new api.Result_Session(new api.SessionResult(this.sessionAt(view), this.chunksAt(view).slice(0, 100)))); return; }
+        if (operation instanceof api.Operation_GetSession) { const view = operation.view ?? this.view, row = this.authorizedRows.find(item => item.head.id === operation.sessionId), session = row === undefined ? this.sessionAt(view) : row.head.with({ view }); send(new api.Result_Session(new api.SessionResult(session, this.chunksAt(view).slice(0, 100)))); return; }
         if (operation instanceof api.Operation_GetChunks) { const view = this.chunksViewOverride ?? operation.view ?? this.view, chunks = this.chunksAt(view); send(new api.Result_Chunks(new api.ChunksResult(chunks.slice(operation.offset, operation.offset + operation.limit), chunks.length, operation.offset, view))); return; }
-        if (operation instanceof api.Operation_GetMessages) { const view = this.messageViewOverride ?? operation.view ?? this.view, messages = this.messagesAt(view.revision); send(new api.Result_Messages(new api.MessagesResult(messages.slice(operation.offset, operation.offset + operation.limit), messages.length, operation.offset, view))); return; }
+        if (operation instanceof api.Operation_GetMessages) { const view = this.messageViewOverride ?? operation.view ?? this.view, messages = this.messagesAt(view.revision); const reply = () => send(new api.Result_Messages(new api.MessagesResult(messages.slice(operation.offset, operation.offset + operation.limit), messages.length, operation.offset, view))); if (this.holdMessages) this.pendingMessages.push(reply); else reply(); return; }
         if (operation instanceof api.Operation_GetRaw) { const revision = this.rawRevisionOverride ?? operation.revision ?? this.headRevision; send(this.rawDenied ? new api.Result_Error(new api.Failure('forbidden', 'Raw permission denied for this source')) : new api.Result_Raw(new api.RawResult([new api.RawFile('synthetic.jsonl', '0'.repeat(64), this.resumedSource ? JSON.stringify({ revision }) : '{"synthetic":true}')], revision))); return; }
         if (operation instanceof api.Operation_Related) { send(new api.Result_Related(new api.RelatedResult([]))); return; }
         if (operation instanceof api.Operation_ListTokens) { send(new api.Result_Tokens(new api.TokensResult([...this.staticTokens.map(info => new api.ListedToken(info, api.TokenSource.StaticConfig)), ...this.tokens.map(info => new api.ListedToken(info, api.TokenSource.Issued))]))); return; }
@@ -86,6 +158,9 @@ export class ChronicleFixture {
       });
     });
   }
+  releaseArchive() { this.holdArchiveCursor = false; for (const reply of this.pendingArchive.splice(0)) reply(); }
+  releaseLocators() { this.holdLocators = false; for (const reply of this.pendingLocators.splice(0)) reply(); }
+  releaseMessages() { this.holdMessages = false; for (const reply of this.pendingMessages.splice(0)) reply(); }
   blackholeActive() { const active = this.sockets.filter(s => !s.closed).at(-1); if (!active) throw new Error('No socket'); active.mode = 'blackhole'; }
   restart() { for (const entry of this.sockets.filter(s => !s.closed)) entry.socket.close({ code: 1012, reason: 'Synthetic server restart' }); }
 }

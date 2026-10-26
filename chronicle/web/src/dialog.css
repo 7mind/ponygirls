@@ -1,0 +1,11 @@
+.conversation-dialog{width:90vw;height:90vh;height:90dvh;max-width:90vw;max-height:90dvh;padding:0;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--ink);overflow:hidden;box-shadow:0 18px 70px #17231850}
+.conversation-dialog::backdrop{background:#17231880}
+.dialog-heading{height:46px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 14px;border-bottom:1px solid var(--rule)}
+.dialog-heading h2{font-size:13px}
+.dialog-close{font-size:12px;padding:5px 10px}
+.dialog-content{height:calc(100% - 46px);min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.conversation-panes{display:grid;grid-template-columns:minmax(220px,30%) minmax(0,1fr);min-height:0;flex:1;overflow:hidden}
+.conversation-passages,.conversation-source{min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.conversation-passages{border-right:1px solid var(--rule);background:#f1f2eb}
+.conversation-source{background:var(--paper)}
+@media(max-width:640px){.conversation-panes{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(130px,32%) minmax(0,1fr)}.conversation-passages{border-right:0;border-bottom:1px solid var(--rule)}.dialog-heading{padding:7px 10px}.conversation-dialog{border-radius:3px}}

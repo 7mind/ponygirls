@@ -2,10 +2,11 @@ import { BaboonCodecContext } from '../../../generated/typescript/BaboonSharedRu
 import { ClientEnvelope, ClientEnvelope_JsonCodec } from '../../../generated/typescript/chronicle/api/ClientEnvelope.ts';
 import { ServerEnvelope_JsonCodec } from '../../../generated/typescript/chronicle/api/ServerEnvelope.ts';
 import { Operation_Hello, Operation_Ping, Operation_Pong, type Operation } from '../../../generated/typescript/chronicle/api/Operation.ts';
-import { Result_Hello, Result_Ping, Result_Pong, Result_Error, Result_Search, type Result } from '../../../generated/typescript/chronicle/api/Result.ts';
+import { Result_Hello, Result_Ping, Result_Pong, Result_Error, Result_Search, Result_Archive, type Result } from '../../../generated/typescript/chronicle/api/Result.ts';
 import { SearchCountScope } from '../../../generated/typescript/chronicle/api/SearchCountScope.ts';
+import { ArchiveTextScope } from '../../../generated/typescript/chronicle/api/ArchiveTextScope.ts';
 import type { Protocol } from './types.ts';
-const API_VERSION = '1.2.0';
+const API_VERSION = '1.3.0';
 const MAX_FRAME_CHARACTERS = 8 * 1024 * 1024;
 export function baboonProtocol(nonce: () => string): Protocol<Operation, Result> {
   let helloId: string | null = null;
@@ -48,6 +49,13 @@ export function baboonProtocol(nonce: () => string): Protocol<Operation, Result>
         if (countScope === SearchCountScope.CandidateWindow) {
           if (rankingLimit === undefined || !Number.isInteger(rankingLimit) || rankingLimit <= 0 || total > rankingLimit) throw new Error('Invalid search count metadata');
         } else if (rankingLimit !== undefined) throw new Error('Invalid search count metadata');
+      }
+      if (result instanceof Result_Archive) {
+        const { total, textScope, annChunkLimitPerOperand } = result.result;
+        if (total < 0n) throw new Error('Invalid archive total');
+        if (textScope === ArchiveTextScope.BoundedCandidateSets) {
+          if (annChunkLimitPerOperand === undefined || !Number.isInteger(annChunkLimitPerOperand) || annChunkLimitPerOperand <= 0) throw new Error('Invalid archive candidate-set metadata');
+        } else if (annChunkLimitPerOperand !== undefined) throw new Error('Invalid archive candidate-set metadata');
       }
       return { kind: 'reply', id: envelope.requestId, result };
     },
