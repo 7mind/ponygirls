@@ -32,18 +32,37 @@ final class Auth(db: Database, config: Config) {
     GroupsResult(gs,invites)
   }}
   def receipt(i: Identity,id: UUID): Result = { i.requireBrowser(); db.transaction(c => Sql.one(c,"SELECT result FROM ch_mutations WHERE owner=? AND request_id=?",i.user.id,id)(r => Wire.decode(Result.codecJson,Sql.json(r,"result"))).getOrElse(throw DomainError("not-found","receipt not found"))) }
-  def mutate(i: Identity,e: ClientEnvelope): Result = { i.requireBrowser(); db.transaction { c =>
+  def previewRetryFailed(i: Identity): RetryFailedPlan = {
+    i.requireBrowser(); i.requireScope(Scope.Read)
+    db.transaction { c => c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ); RetryFailedJobs.preview(c,i.user.id) }
+  }
+  def mutate(i: Identity,e: ClientEnvelope): Result = { i.requireBrowser()
+    e.operation match { case _: Operation.ApplyRetryFailed => i.requireScope(Scope.Read); case _ => () }
+    db.transaction { c =>
     Sql.lock(c,s"mutation:${i.user.id}")
     val digest = Wire.hash(Wire.canonical(Wire.encode(Operation.codecJson,e.operation)))
     Sql.one(c,"SELECT digest,result FROM ch_mutations WHERE owner=? AND request_id=?",i.user.id,e.requestId) { r => Check(r.getString(1)==digest,"conflict","request ID bound to different payload"); Wire.decode(Result.codecJson,Sql.json(r,"result")) } match {
       case Some(r) => r
       case None =>
-        val response = mutation(c,i,e)
+        val response = mutationResult(c,i,e)
         val stored = response match { case Result.Token(r) => Result.Token(r.copy(secret=None)); case other => other }
         Sql.exec(c,"INSERT INTO ch_mutations VALUES(?,?,?,?::jsonb)",i.user.id,e.requestId,digest,Wire.encode(Result.codecJson,stored).noSpaces)
         response
     }
   }}
+  private def mutationResult(c: Connection,i: Identity,e: ClientEnvelope): Result = e.operation match {
+    case _: Operation.ApplyRetryFailed =>
+      // Eligibility can return A→AB→A; a rejected request ID must never become executable again.
+      val savepoint=c.setSavepoint()
+      val result=try mutation(c,i,e) catch {
+        case failure: DomainError if failure.code=="conflict" =>
+          c.rollback(savepoint)
+          Result.Error(Failure("conflict","retry selection changed; preview again"))
+      }
+      c.releaseSavepoint(savepoint)
+      result
+    case _ => mutation(c,i,e)
+  }
   private def mutation(c: Connection,i: Identity,e: ClientEnvelope): Result = {
     val owner = i.user.id
     def receipt(op: String,id: Option[UUID]): Result = Result.Mutation(MutationReceipt(e.requestId,op,id))
@@ -80,6 +99,8 @@ final class Auth(db: Database, config: Config) {
         Check(!Sql.one(c,"SELECT 1 FROM ch_groups WHERE id=? AND owner=?",id,owner)(_ => true).contains(true),"invalid","owner must delete group")
         Sql.exec(c,"DELETE FROM ch_members WHERE group_id=? AND user_id=?",id,owner); receipt("LeaveGroup",Some(id))
       case Operation.DeleteGroup(id) => groupOwner(id); Sql.exec(c,"DELETE FROM ch_groups WHERE id=?",id); receipt("DeleteGroup",Some(id))
+      case Operation.ApplyRetryFailed(targetProfile,selectionHash,confirm) =>
+        Result.RetryFailed(RetryFailedJobs(c,owner,e.requestId,targetProfile,selectionHash,confirm))
       case Operation.RetryJob(id) =>
         Jobs.retry(c,owner,id); receipt("RetryJob",Some(id))
       case Operation.Purge(id) =>

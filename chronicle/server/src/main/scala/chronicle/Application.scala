@@ -51,6 +51,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.ListTokens() => IO.blocking(Result.Tokens(auth.tokens(i)))
       case Operation.ListGroups() => IO.blocking(Result.Groups(auth.groups(i)))
       case Operation.Receipt(id) => IO.blocking(auth.receipt(i,id))
+      case Operation.PreviewRetryFailed() => IO.blocking(Result.RetryFailedPreview(auth.previewRetryFailed(i)))
       case _ => IO.blocking(auth.mutate(i,e))
     }
   }
