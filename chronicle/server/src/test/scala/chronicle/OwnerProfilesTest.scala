@@ -24,7 +24,7 @@ abstract class OwnerProfileContract extends munit.FunSuite {
     assert(!reindex.completed("a"),"claimed work is not publication evidence")
     assertEquals(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300),None)
     assert(!reindex.completed("a"),"empty claim cannot establish completion when a parallel worker holds it")
-    assert(a.publish(fresh,Nil)); assert(reindex.completed("a")); assertEquals(a.session("a",own.sessionId).indexedRevision,Some(1))
+    assert(ProblemPublicationFixtures.publish(a,fresh,catalog)); assert(reindex.completed("a")); assertEquals(a.session("a",own.sessionId).indexedRevision,Some(1))
   }}
   test("Behavioral Blackbox Atomic/GoodCommunication: target-resolved ingestion, preview conflicts, and running-target retention") { withOwnerProfiles { (a,reindex,c,catalog) =>
     val original=Fixtures.snapshot(); val out=a.ingest("a",original)
@@ -35,7 +35,7 @@ abstract class OwnerProfileContract extends munit.FunSuite {
     val claimed=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     assertEquals(claimed.revision,2); assertEquals(claimed.profile,catalog.preferred.profile)
     val same=applyPlan(reindex,"a"); assertEquals(same.queued,0L); assertEquals(same.invalidatedClaims,0L)
-    assert(a.renew(claimed,300)); assert(a.publish(claimed,Nil))
+    assert(a.renew(claimed,300)); assert(ProblemPublicationFixtures.publish(a,claimed,catalog))
     val noop=applyPlan(reindex,"a"); assertEquals(noop.alreadyCurrent,1L); assertEquals(noop.queued,0L)
     a.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=2))
     val appended=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
@@ -61,7 +61,7 @@ abstract class OwnerProfileContract extends munit.FunSuite {
     val claim=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     assertEquals(intercept[DomainError](reindex("a",UUID.randomUUID(),stale.targetProfile,stale.selectionHash,true)).code,"conflict")
     assertEquals(a.headSnapshot("a",out.sessionId).files,source.files)
-    assert(a.publish(claim,Nil)); assertNotEquals(a.session("a",out.sessionId).view,published)
+    assert(ProblemPublicationFixtures.publish(a,claim,catalog)); assertNotEquals(a.session("a",out.sessionId).view,published)
   }}
   test("Behavioral Blackbox Atomic/GoodCommunication: failed destination work is retried by an explicit confirmed owner plan") { withOwnerProfiles { (a,reindex,c,catalog) =>
     a.ingest("a",Fixtures.snapshot()); applyPlan(reindex,"a")
@@ -70,7 +70,7 @@ abstract class OwnerProfileContract extends munit.FunSuite {
     val plan=reindex.preview("a")
     assertEquals(intercept[DomainError](reindex("a",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,false)).code,"invalid")
     assertEquals(reindex("a",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true).queued,1L)
-    assert(a.publish(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get,Nil)); assert(reindex.completed("a"))
+    assert(ProblemPublicationFixtures.publish(a,a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get,catalog)); assert(reindex.completed("a"))
   }}
 }
 final class OwnerProfilesDummyTest extends OwnerProfileContract {
@@ -149,7 +149,7 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
   test("Effectual GoodCommunication regression: A/B/A target epochs reject stale progress renew publish and fail even when profile returns") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     a.ingest("a",Fixtures.snapshot()); val old=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     applyPlan(db,"a")
-    val b=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get; assert(a.publish(b,Nil))
+    val b=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get; assert(ProblemPublicationFixtures.publish(a,b,catalog))
     a.beginMaintenance(); assert(!a.finishMaintenance())
     val back=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     assertEquals(back.profile,old.profile); assert(back.targetEpoch>old.targetEpoch)
@@ -169,7 +169,10 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
   }}
   test("Blackbox GoodCommunication: mixed verified legacy/new publication profiles remain semantically readable through every search leg") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     val first=a.ingest("a",Fixtures.snapshot()); val other=a.ingest("b",Fixtures.snapshot())
-    def publish(claim: Claim): Unit = assert(a.publish(claim,List(IndexedChunk(Fragments.split(claim.snapshot.messages).head.copy(sessionId=claim.sessionId),List(1.0,0.0,0.0)))))
+    def publish(claim: Claim): Unit = catalog.resolve(claim.profile).policy match {
+      case IndexPolicy.LegacyV4 => assert(a.publish(claim,List(IndexedChunk(Fragments.split(claim.snapshot.messages).head.copy(sessionId=claim.sessionId),List(1.0,0.0,0.0)))))
+      case IndexPolicy.ContiguousPassagesV1 => assert(a.publishProblems(claim,ProblemPublicationFixtures.oneProblem(claim)))
+    }
     publish(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get)
     publish(a.claim(catalog.knownProfiles,ClaimScope.Owner("b"),300).get)
     db.transaction { x =>

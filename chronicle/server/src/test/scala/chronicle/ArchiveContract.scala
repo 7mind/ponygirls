@@ -5,7 +5,7 @@ import java.time.Instant
 import scala.collection.mutable
 import distage.*
 
-final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends SessionArchive with OwnerReindex {
+final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends SessionArchive with OwnerReindex with PassageReader {
   private final case class Head(id: UUID,owner: String,var request: IngestRequest,var revision: Int,var indexed: Option[Int])
   private final case class Job(var claim: Claim,var state: JobState,var attempts: Int,var lease: Instant,var completed: Int,var total: Option[Int])
   private val sources = mutable.Map.empty[(String,String),Head]
@@ -13,6 +13,22 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   private val targets=mutable.Map.empty[String,OwnerTarget]
   private val jobs=mutable.LinkedHashMap.empty[UUID,Job]
   private val published = mutable.Map.empty[UUID,(ContentView,IngestRequest,String)]
+  private final case class Publication(sessionId: UUID,view: ContentView,format: Option[PassageFormat],chunks: List[IndexedChunk],problems: Option[ProblemsPublication])
+  private val revisions=mutable.Map.empty[(UUID,Int),IngestRequest]
+  private val generations=mutable.Map.empty[UUID,Publication]
+  private val removed=mutable.Set.empty[UUID]
+  private val disabled=mutable.Set.empty[String]
+  private val sharing=mutable.Set.empty[(String,String)]
+  private def enabled(owner: String): Boolean = config.users.exists(u => u.id==owner && u.enabled) && !disabled(owner)
+  def clearFormat(generation: UUID): Unit = synchronized { generations(generation)=generations(generation).copy(format=None) }
+  def share(owner: String,reader: String): Unit = synchronized { sharing+=((owner,reader)); () }
+  def revokeSharing(owner: String,reader: String): Unit = synchronized { sharing-=((owner,reader)); () }
+  def setEnabled(owner: String,value: Boolean): Unit = synchronized { if(value) disabled-=owner else disabled+=owner; () }
+  def purge(id: UUID): Unit = synchronized {
+    removed+=id
+    revisions.keys.filter(_._1==id).toList.foreach(revisions.remove)
+    generations.filter(_._2.sessionId==id).keys.toList.foreach(generations.remove)
+  }
   val knownProfiles: Set[String] = catalog.knownProfiles
   private def target(owner: String): OwnerTarget = targets.getOrElseUpdate(owner,OwnerTarget(catalog.preferred.profile,0))
   def retainTarget(owner: String,profile: String): Unit = synchronized {
@@ -28,15 +44,17 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
       case Some((d,out)) => Check(d==digest,"conflict","request changed"); out
       case None =>
         val h=sources.getOrElseUpdate((owner,k),Head(UUID.randomUUID(),owner,r,0,None))
+        Check(!removed(h.id),"gone","source purged")
         Check(h.revision==r.expectedRevision,"conflict","revision mismatch")
         h.request=SnapshotProjection(r); h.revision+=1
+        revisions((h.id,h.revision))=h.request
         jobs.values.filter(j => j.claim.sessionId==h.id && j.claim.revision<h.revision && j.state!=JobState.Complete).foreach { j => j.state=JobState.Failed; j.claim=j.claim.copy(fence=j.claim.fence+1) }
         val claim=Claim(UUID.randomUUID(),h.id,h.revision,0L,selected.profile,h.request,owner,selected.epoch)
         jobs(claim.jobId)=Job(claim,JobState.Queued,0,Instant.EPOCH,0,None)
         val out=IngestReceipt(r.requestId,h.id,h.revision,claim.jobId); receipts((owner,k,r.requestId))=(digest,out); out
     }
   }
-  private def head(reader: String,id: UUID): Head = sources.values.find(h => h.owner==reader && h.id==id).getOrElse(throw DomainError("not-found","not found"))
+  private def head(reader: String,id: UUID): Head = sources.values.find(h => h.id==id && !removed(id) && enabled(h.owner) && enabled(reader) && (h.owner==reader || sharing((h.owner,reader)))).getOrElse(throw DomainError("not-found","not found"))
   def session(reader: String,id: UUID): SessionInfo = synchronized {
     val h=head(reader,id); val value=published.get(id)
     val (view,r)=value.map(x => (x._1,x._2)).getOrElse((ContentView(h.revision,None),h.request))
@@ -48,7 +66,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     def eligible(j: Job): Boolean = {
       val c=j.claim; val selected=target(c.owner)
       val scoped=scope match { case ClaimScope.AllOwners => true; case ClaimScope.Owner(owner) => c.owner==owner }
-      scoped && profiles(c.profile) && selected.profile==c.profile && sources.values.exists(h => h.id==c.sessionId && h.revision==c.revision)
+      scoped && enabled(c.owner) && !removed(c.sessionId) && profiles(c.profile) && selected.profile==c.profile && sources.values.exists(h => h.id==c.sessionId && h.revision==c.revision)
     }
     jobs.values.filter(j => eligible(j) && j.state==JobState.Running && !j.lease.isAfter(Instant.now()) && j.attempts>=5).foreach { j => j.state=JobState.Failed; j.claim=j.claim.copy(fence=j.claim.fence+1) }
     jobs.values.find(j => eligible(j) && j.attempts<5 && (j.state==JobState.Queued || (j.state==JobState.Running && !j.lease.isAfter(Instant.now())))).map { j =>
@@ -58,7 +76,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   }
   private def valid(c: Claim): Boolean = {
     val selected=target(c.owner)
-    selected==OwnerTarget(c.profile,c.targetEpoch) && sources.values.exists(h => h.id==c.sessionId && h.owner==c.owner && h.revision==c.revision) &&
+    enabled(c.owner) && !removed(c.sessionId) && selected==OwnerTarget(c.profile,c.targetEpoch) && sources.values.exists(h => h.id==c.sessionId && h.owner==c.owner && h.revision==c.revision) &&
       jobs.get(c.jobId).exists(j => j.claim==c && j.state==JobState.Running && j.lease.isAfter(Instant.now()))
   }
   def progress(c: Claim,completedWindows: Int,totalWindows: Int): Boolean = synchronized {
@@ -72,17 +90,63 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     Check(leaseSeconds>0,"invalid","invalid claim lease")
     if(!valid(c)) false else { jobs(c.jobId).lease=Instant.now().plusSeconds(leaseSeconds); true }
   }
-  def publish(c: Claim,chunks: List[IndexedChunk]): Boolean = synchronized {
+  def publish(c: Claim,chunks: List[IndexedChunk]): Boolean = publishGeneration(c,chunks,IndexPolicy.LegacyV4,PassageFormat.LegacyAnnotations,None)
+  def publishProblems(c: Claim,publication: ProblemsPublication): Boolean = publishGeneration(c,publication.chunks,IndexPolicy.ContiguousPassagesV1,PassageFormat.ContiguousProblems,Some(publication))
+  private def publishGeneration(c: Claim,chunks: List[IndexedChunk],policy: IndexPolicy,format: PassageFormat,problems: Option[ProblemsPublication]): Boolean = synchronized {
     if(!valid(c)) false else {
-      val h=head(c.owner,c.sessionId); h.indexed=Some(c.revision)
-      published(h.id)=(ContentView(c.revision,Some(UUID.randomUUID())),c.snapshot,c.profile)
-      jobs(c.jobId).state=JobState.Complete; true
+      Check(catalog.resolve(c.profile).policy==policy,"invalid","publication payload does not match profile policy")
+      problems.foreach(_.validate(c,config.embedding.dimensions))
+      if(!valid(c)) false else {
+        val h=head(c.owner,c.sessionId); h.indexed=Some(c.revision)
+        val generation=UUID.randomUUID(); val view=ContentView(c.revision,Some(generation))
+        published(h.id)=(view,c.snapshot,c.profile)
+        generations(generation)=Publication(c.sessionId,view,Some(format),chunks,problems)
+        jobs(c.jobId).state=JobState.Complete; true
+      }
     }
+  }
+  private def selectView(reader: String,id: UUID,selector: Option[ContentView]): ContentView = {
+    val h=head(reader,id)
+    val view=selector.getOrElse(published.get(id).map(_._1).getOrElse(ContentView(h.revision,None)))
+    Check(view.revision>0,"invalid","content revision must be positive")
+    Check(revisions.contains((id,view.revision)) && view.generationId.forall(g => generations.get(g).exists(p => p.sessionId==id && p.view==view)),"not-found","content view not found")
+    view
+  }
+  def raw(reader: String,id: UUID,revision: Option[Int]): RawResult = synchronized {
+    val h=head(reader,id); val selected=revision.getOrElse(h.revision)
+    Check(selected>0,"invalid","content revision must be positive")
+    RawResult(revisions.getOrElse((id,selected),throw DomainError("not-found","content view not found")).files,selected)
+  }
+  def pageChunks(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): ChunksResult = synchronized {
+    Check.contentPage(offset,limit); val view=selectView(reader,id,selector)
+    val chunks=view.generationId.toList.flatMap(g => generations(g).chunks.map(_.chunk))
+    ChunksResult(chunks.drop(offset).take(limit),chunks.size,offset,view)
+  }
+  def passages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassagesResult = synchronized {
+    Check.contentPage(offset,limit); val view=selectView(reader,id,selector)
+    view.generationId match {
+      case None => PassagesResult(view,PassageFormat.Unindexed,Nil,0,offset)
+      case Some(generation) =>
+        val stored=generations(generation); val values=stored.problems.map(_.passages).getOrElse(Vector.empty)
+        PassagesResult(view,stored.format.getOrElse(throw DomainError("unavailable","generation passage provenance is unknown")),values.drop(offset).take(limit).map(ProblemsPublication.info).toList,values.size.toLong,offset)
+    }
+  }
+  def passageSpans(reader: String,id: UUID,passageId: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassageSpansResult = synchronized {
+    Check.contentPage(offset,limit); val view=selectView(reader,id,selector)
+    val generation=view.generationId.getOrElse(throw DomainError("invalid","passage spans require an indexed content view"))
+    val stored=generations(generation)
+    Check(stored.format.nonEmpty,"unavailable","generation passage provenance is unknown")
+    val publication=stored.problems.getOrElse(throw DomainError("not-found","passage not found"))
+    val passage=publication.passages.find(_.id==passageId).getOrElse(throw DomainError("not-found","passage not found"))
+    val spans=publication.spans.iterator.filter(_.passageOrdinal==passage.ordinal).drop(offset).take(limit).map { span =>
+      val s=span.source; PassageSourceSpan(s.messageId,s.messagePosition,s.start,s.end)
+    }.toList
+    PassageSpansResult(view,passageId,spans,passage.spanCount,offset)
   }
   def fail(c: Claim,code: String): Unit = synchronized {
     if(valid(c)) { val j=jobs(c.jobId); j.state=if(j.attempts>=5) JobState.Failed else JobState.Queued; j.lease=Instant.EPOCH }
   }
-  private def ownerHeads(owner: String): List[Head] = sources.values.filter(_.owner==owner).toList.sortBy(_.id.toString)
+  private def ownerHeads(owner: String): List[Head] = sources.values.filter(h => h.owner==owner && !removed(h.id)).toList.sortBy(_.id.toString)
   private def ready(h: Head,profile: String): Boolean = published.get(h.id).exists(p => p._1.revision==h.revision && p._3==profile)
   def preview(owner: String): OwnerReindexPreview = synchronized {
     val current=target(owner); val destination=catalog.transition(current.profile)

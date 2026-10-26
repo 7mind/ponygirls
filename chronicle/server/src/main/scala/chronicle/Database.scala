@@ -14,7 +14,7 @@ final class Database(config: Config,val profiles: IndexProfileCatalog) {
   def initialize(): Unit = {
     transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
-    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql").foreach { migration =>
+    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql").foreach { migration =>
       val stream = getClass.getResourceAsStream(s"/$migration")
       Check(stream != null,"config","missing migration resource")
       val sql = Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
@@ -24,6 +24,7 @@ final class Database(config: Config,val profiles: IndexProfileCatalog) {
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
     Sql.exec(c,"INSERT INTO ch_profile(singleton,active,target,maintenance) VALUES(true,?,?,false) ON CONFLICT DO NOTHING",config.profile,config.profile)
     profiles.register(c)
+    PassageStorage.initializeFormats(c)
     Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) SELECT u.id,p.target FROM ch_users u CROSS JOIN ch_profile p WHERE p.singleton ON CONFLICT DO NOTHING")
     Sql.exec(c,"UPDATE ch_users SET enabled=false")
     config.users.foreach { u =>
@@ -60,7 +61,7 @@ object Jobs {
     Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,fence=fence+1,error=NULL,completed_windows=0,total_windows=NULL WHERE id=?",id)
   }
 }
-final class PostgresArchive(db: Database, config: Config) extends SessionArchive {
+final class PostgresArchive(db: Database, config: Config) extends SessionArchive with PassageReader {
   val visible = """EXISTS(SELECT 1 FROM ch_users ou WHERE ou.id=s.owner AND ou.enabled) AND EXISTS(SELECT 1 FROM ch_users ru WHERE ru.id=? AND ru.enabled) AND (s.owner=? OR EXISTS(SELECT 1 FROM ch_members a JOIN ch_members b ON a.group_id=b.group_id WHERE a.user_id=? AND b.user_id=s.owner)) AND NOT s.tombstone"""
   def sourceKey(r: IngestRequest): String = Wire.hash(Wire.canonical(Wire.encode(SourceIdentity.codecJson,r.source)))
   val knownProfiles: Set[String] = db.profiles.knownProfiles
@@ -200,13 +201,23 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
       current(c,claim) && lockJob(c,claim) && Sql.exec(c,s"UPDATE ch_jobs SET lease_until=clock_timestamp()+make_interval(secs=>?) WHERE $validJob",(List[Sql.Param](leaseSeconds)++jobArgs(claim))*)==1
     }
   }
-  def publish(claim: Claim,chunks: List[IndexedChunk]): Boolean = db.transaction { c =>
+  def publish(claim: Claim,chunks: List[IndexedChunk]): Boolean = publishGeneration(claim,chunks,IndexPolicy.LegacyV4,PassageFormat.LegacyAnnotations,0L,_ => true,(_,_) => ())
+  def publishProblems(claim: Claim,publication: ProblemsPublication): Boolean =
+    publishGeneration(claim,publication.chunks,IndexPolicy.ContiguousPassagesV1,PassageFormat.ContiguousProblems,publication.passages.size.toLong,
+      c => {
+        val snapshot=content(c,claim.sessionId,claim.revision)
+        if(snapshot!=claim.snapshot) false else { publication.validate(claim.copy(snapshot=snapshot),config.embedding.dimensions); true }
+      },(c,generation) => PassageStorage.persist(c,generation,publication))
+  private def publishGeneration(claim: Claim,chunks: List[IndexedChunk],policy: IndexPolicy,format: PassageFormat,passageCount: Long,validate: Connection => Boolean,persist: (Connection,UUID) => Unit): Boolean = db.transaction { c =>
     val valid=current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT id FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true)
     if (!valid) false else {
+      PassageStorage.requirePolicy(c,claim.profile,policy)
+      if(!validate(c)) false else {
       val publication=c.setSavepoint()
       val generation = UUID.randomUUID()
-      Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile) VALUES(?,?,?,?)",generation,claim.sessionId,claim.revision,claim.profile)
+      Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format,passage_count) VALUES(?,?,?,?,?,?)",generation,claim.sessionId,claim.revision,claim.profile,format.toString,passageCount)
       chunks.zipWithIndex.foreach { case (x,ordinal) => Sql.exec(c,"INSERT INTO ch_chunks(id,generation,value,document,embedding,ordinal) VALUES(?,?,?::jsonb,to_tsvector('english',?),?::vector,?)",x.chunk.id,generation,Wire.encode(Chunk.codecJson,x.chunk).noSpaces,s"${x.chunk.text} ${x.chunk.summary} ${x.chunk.tags.mkString(" ")}",x.vector.mkString("[",",","]"),ordinal) }
+      persist(c,generation)
       chunks.flatMap(_.chunk.tags).distinct.foreach(tag => Sql.exec(c,"INSERT INTO ch_generation_tags(generation,tag) VALUES(?,?) ON CONFLICT DO NOTHING",generation,tag))
       Sql.exec(c,"DELETE FROM ch_search_chunks WHERE session_id=?",claim.sessionId)
       Sql.exec(c,"INSERT INTO ch_search_chunks(id,generation,session_id,revision,profile,document,embedding) SELECT ch.id,ch.generation,g.session_id,g.revision,g.profile,ch.document,ch.embedding FROM ch_chunks ch JOIN ch_generations g ON g.id=ch.generation WHERE g.id=?",generation)
@@ -215,6 +226,7 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
       if(!completed) c.rollback(publication)
       c.releaseSavepoint(publication)
       completed
+      }
     }
   }
   def fail(claim: Claim,code: String): Unit = db.transaction { c =>
@@ -231,6 +243,14 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
   def pageChunks(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): ChunksResult = reading { c =>
     Check.contentPage(offset,limit)
     chunksForView(c,selectView(c,reader,id,selector),offset,limit)
+  }
+  def passages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassagesResult = reading { c =>
+    Check.contentPage(offset,limit)
+    PassageStorage.passages(c,selectView(c,reader,id,selector),offset,limit)
+  }
+  def passageSpans(reader: String,id: UUID,passageId: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassageSpansResult = reading { c =>
+    Check.contentPage(offset,limit)
+    PassageStorage.spans(c,selectView(c,reader,id,selector),passageId,offset,limit)
   }
   def statuses(reader: String,offset: Int,limit: Int): StatusResult = db.transaction { c =>
     Check.page(offset,limit)
