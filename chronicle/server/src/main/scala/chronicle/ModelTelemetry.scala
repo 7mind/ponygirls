@@ -108,6 +108,7 @@ object ProviderUsage {
 
 final case class ModelTokenWindow(knownTokens: Long,reportedCalls: Long,unknownCalls: Long,tokensPerSecond: Option[Double],sampleAgeMillis: Option[Long])
 final case class ModelWorkloadUsage(purpose: ModelWorkload,inFlight: Int,finishedCalls: Long,failedCalls: Long,cancelledCalls: Long,invalidUsageCalls: Long,input: ModelTokenWindow,output: Option[ModelTokenWindow],reasoningSubset: Option[ModelTokenWindow])
+// Snapshot timestamps project monotonic elapsed time from the startup wall-clock anchor; they are not fresh physical wall-clock readings.
 final case class ModelUsageSnapshot(observedAt: Instant,processStartedAt: Instant,windowStartAt: Instant,windowEndAt: Instant,coveredMillis: Long,bucketMillis: Long,samples: List[ModelWorkloadUsage])
 sealed trait ModelCallTicket { def context: ModelCallContext }
 trait ModelTelemetry {
@@ -146,7 +147,6 @@ object ModelTelemetry {
   private final case class State(nextTicket: Long,active: Map[Long,Active],slices: Map[ModelCallContext,Slice],elapsedMillis: Long)
 
   def make(clock: ModelTelemetryClock,owners: Set[String]): IO[ModelTelemetry] = for {
-    _ <- IO(Check(owners.forall(_.nonEmpty),"config","telemetry owners must be nonempty"))
     started <- clock.read
     slices=owners.toList.flatMap(owner => ModelWorkload.values.toList.map(purpose => ModelCallContext(owner,purpose)->Slice(Map.empty,Latest(None,None,None)))).toMap
     state <- Ref.of[IO,State](State(0L,Map.empty,slices,0L))

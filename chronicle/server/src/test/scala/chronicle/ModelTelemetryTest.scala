@@ -6,7 +6,9 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import java.time.{Clock as JavaClock,Instant,ZoneOffset}
+import java.nio.charset.StandardCharsets.UTF_8
 import scala.concurrent.duration.*
+import scala.util.Using
 
 class ModelTelemetryTest extends munit.FunSuite {
   private val anchor=Instant.parse("2026-01-01T00:00:00Z")
@@ -310,6 +312,43 @@ class ModelTelemetryTest extends munit.FunSuite {
         }
       } yield ()).unsafeRunSync()
     }
+  }
+  test("BG regression: accepted opaque owner IDs remain exact and never expand snapshot metadata") {
+    val longOwner="x"*50000
+    val owners=List("",longOwner,longOwner+"y","opaque-🙂é\t\n\u0001\u000b","same-é","same-e\u0301")
+    val base=Fixtures.config()
+    val users=owners.zipWithIndex.map { case (owner,index) => UserConfig(owner,s"opaque-login-$index",base.users.head.passwordHashFile,true) }
+    base.copy(users=users).validate()
+    val migration=getClass.getClassLoader.getResourceAsStream("001.sql")
+    assert(migration!=null,"retained user schema is available")
+    val schema=Using.resource(migration)(stream => new String(stream.readAllBytes(),UTF_8))
+    val userTable=schema.linesIterator.find(_.startsWith("CREATE TABLE IF NOT EXISTS ch_users(")).getOrElse(fail("retained user table is missing"))
+    assertEquals(userTable,"CREATE TABLE IF NOT EXISTS ch_users(id text PRIMARY KEY, login text UNIQUE NOT NULL, enabled boolean NOT NULL, credential text NOT NULL);")
+    (for {
+      manual <- clock()
+      telemetry <- ModelTelemetry.make(manual,owners.toSet).attempt.flatMap {
+        case Right(value) => IO.pure(value)
+        case Left(error: DomainError) => IO(fail(s"Config.validate and retained user DDL accept opaque IDs; telemetry rejected ${error.code}: ${error.detail}"))
+        case Left(error) => IO.raiseError(error)
+      }
+      _ <- owners.traverse_ { owner =>
+        val context=ModelCallContext(owner,ModelWorkload.IndexAnnotation)
+        for {
+          ticket <- telemetry.begin(context)
+          _ <- IO(assertEquals(ticket.context,context))
+          _ <- telemetry.finish(ticket,ModelCallOutcome.Complete,reported(1L,0L,0L))
+        } yield ()
+      }
+      _ <- manual.set(100L)
+      snapshots <- owners.traverse(telemetry.snapshot)
+      _ <- IO {
+        assertEquals(snapshots.distinct.size,1)
+        snapshots.foreach { snapshot =>
+          val value=slice(snapshot,ModelWorkload.IndexAnnotation)
+          assertEquals(value.finishedCalls,1L); assertEquals(value.inFlight,0); assertEquals(value.input.knownTokens,1L)
+        }
+      }
+    } yield ()).unsafeRunSync()
   }
   test("BA specified: configured owners bound the state; invalid contexts fail without allocating an active call") {
     (for {
