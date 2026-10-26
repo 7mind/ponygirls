@@ -73,6 +73,21 @@ abstract class ArchiveContract extends munit.FunSuite {
       assertEquals(stored.files,request.files)
     }
   }}
+  test("B-Atomic/GoodCommunication regression: metadata tags obey the length bound after display projection") { withArchive { (a,c) =>
+    val original=Fixtures.snapshot()
+    List(123,127).foreach { count =>
+      val overflow=original.copy(metadata=original.metadata.copy(tags=List("a"*count+"\u0000")))
+      assertEquals(intercept[DomainError](a.ingest("a",overflow,c.profile)).code,"invalid")
+    }
+    List("a"*128,"a"*122+"\u0000","a"*126+"\t\n").foreach { tag =>
+      val request=Fixtures.snapshot().copy(metadata=original.metadata.copy(tags=List(tag)))
+      val receipt=a.ingest("a",request,c.profile)
+      val stored=a.headSnapshot("a",receipt.sessionId)
+      assertEquals(stored.metadata.tags,List(tag.replace("\u0000","\\u0000")))
+      assertEquals(stored.metadata.tags.head.length,128)
+      assertEquals(stored.files,request.files)
+    }
+  }}
   test("B-Atomic/GoodCommunication regression: unsupported structured NUL and non-scalar Unicode are domain errors") { withArchive { (a,c) =>
     val r=Fixtures.snapshot()
     val invalid: List[IngestRequest => IngestRequest]=List(

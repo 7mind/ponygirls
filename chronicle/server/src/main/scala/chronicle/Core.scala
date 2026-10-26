@@ -182,7 +182,7 @@ object SnapshotValidation {
       (List(m.id,m.role)++m.parentId++m.timestamp).foreach(structured); scalar(m.text)
       Check.text(m.id,256); Check.text(m.role,64); Check(m.recordIndex >= 0 && m.recordIndex < records.size && m.parentId.forall(ids.contains),"invalid","invalid message provenance")
     }
-    Check(r.metadata.tags.size <= 32 && r.metadata.tags.forall(_.length <= 128), "invalid", "invalid tags")
+    Check(r.metadata.tags.size <= 32 && r.metadata.tags.forall(t => SnapshotProjection.text(t).length <= 128), "invalid", "invalid tags")
     List(r.metadata.startedAt,r.metadata.endedAt).flatten.foreach(t => Check(scala.util.Try(java.time.Instant.parse(t)).isSuccess,"invalid","invalid timestamp"))
   }
 }
