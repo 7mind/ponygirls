@@ -215,5 +215,25 @@ try {
     assert.match(await page.locator('.activity-about-content').innerText(), /in-flight page chains finish/);
     await context.close();
   });
+  await run('late HEAD metadata cannot downgrade the pinned source view or explicit latest action', async () => {
+    const { context, page, fixture } = await scene();
+    const captured = fixture.archiveAt(0), originalArchive = fixture.archiveResult.bind(fixture);
+    fixture.headRevision = 3;
+    fixture.archiveResult = query => { const result = originalArchive(query); return result.with({ rows: result.rows.map(row => row.head.id === captured.head.id ? captured : row) }); };
+    await page.locator('.table-title').first().click();
+    await page.getByText('Viewing source r1', { exact: true }).waitFor();
+    assert.equal(await page.getByText('HEAD r3 / index r1', { exact: true }).count(), 1, 'fresh GetSession HEAD wins over the older table row');
+    assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetMessages).every(call => call.operation.view.revision === 1), 'learning a newer HEAD does not automatically navigate the immutable view');
+    const before = fixture.searchCount;
+    await page.getByRole('button', { name: 'Refresh archive', exact: true }).evaluate(element => element.click());
+    await until(() => Promise.resolve(fixture.searchCount > before), 'Expected table revalidation');
+    await page.locator('.archive-table[aria-busy="false"]').waitFor();
+    assert.equal(await page.getByText('HEAD r3 / index r1', { exact: true }).count(), 1, 'a revalidated older row cannot downgrade the fresh session HEAD');
+    await page.getByRole('button', { name: 'View latest archived revision', exact: true }).click();
+    await page.getByText('Viewing source r3', { exact: true }).waitFor();
+    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_GetSession && call.operation.view?.revision === 3 && call.operation.view.generationId === undefined), 'explicit latest action requests the actual current archive-only HEAD');
+    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetSession && call.operation.view?.revision === 2).length, 0, 'the stale table revision is never used as latest');
+    await context.close();
+  });
   assert.deepEqual(errors, [], 'no uncaught browser application errors');
 } finally { await browser.close(); await server.close(); }
