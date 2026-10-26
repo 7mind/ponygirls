@@ -17,3 +17,9 @@
 .expression-help-content{width:min(650px,100%);font-size:12px}
 .expression-help-content p+p{margin-top:8px}
 @media(max-width:640px){.expression-editor .search-line{padding:5px 6px;gap:6px}.expression-editor .search-line input{font-size:12px}.expression-editor .search-line button{padding:7px 10px}.expression-editor .search-symbol{display:none}.quick-filter-menu{grid-template-columns:minmax(0,1fr)}.quick-filter-menu p,.quick-filter-menu button{grid-column:auto}}
+.expression-composer{position:relative;flex:1;min-width:0}
+.expression-composer input{width:100%;min-width:0}
+.expression-hints{position:absolute;z-index:15;left:0;right:0;top:100%;max-height:280px;overflow:auto;background:var(--paper);color:var(--ink);border:1px solid var(--control-border);box-shadow:0 6px 20px var(--shadow-soft)}
+.expression-hints [role=option]{padding:7px 10px;display:flex;justify-content:space-between;gap:8px;cursor:pointer;overflow-wrap:anywhere;font-size:13px}
+.expression-hints [aria-selected=true]{background:var(--soft);outline:1px solid var(--control-border);outline-offset:-1px}
+.expression-hints small{color:var(--muted);flex:none}.expression-hints p{padding:6px 10px}.completion-error{position:absolute;top:100%;left:0;background:var(--paper);z-index:10;max-width:100%;overflow-wrap:anywhere}

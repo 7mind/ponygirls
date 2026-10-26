@@ -38,7 +38,7 @@ async function appendUntil(page, scroller, rows, count) {
 }
 async function filter(page, name, expression) {
   const editor = page.getByRole('region', { name: `${name} metadata search`, exact: true });
-  await editor.getByRole('textbox', { name: `Search ${name.toLowerCase()} metadata`, exact: true }).fill(expression); await editor.getByRole('button', { name: 'Filter', exact: true }).click();
+  await editor.getByRole('combobox', { name: `Search ${name.toLowerCase()} metadata`, exact: true }).fill(expression); await editor.getByRole('button', { name: 'Filter', exact: true }).click();
 }
 async function rowIds(page, selector) { return page.locator(selector).evaluateAll(rows => rows.map(row => row.getAttribute('data-scroll-anchor'))); }
 export async function runActivityTableCases({ browser, origin, run, errors }) {
@@ -138,8 +138,8 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     const body = 'project:"project-1" OR status:failed', expression = `(${body}) AND branch:"branch-1"`;
     fixture.jobExpressions.set(expression, fixture.activityJobs.filter(row => (row.session.metadata.project === 'project-1' || row.job.state === api.JobState.Failed) && row.session.metadata.gitBranch === 'branch-1').map(row => row.job.id));
     const editor = page.getByRole('region', { name: 'Indexing job metadata search', exact: true });
-    await page.keyboard.press('Control+k'); assert.equal(await editor.getByRole('textbox', { name: 'Search indexing job metadata', exact: true }).evaluate(element => element === document.activeElement), true);
-    await editor.getByRole('textbox', { name: 'Search indexing job metadata', exact: true }).fill(body); await editor.locator('.quick-filters > summary').click();
+    await page.keyboard.press('Control+k'); assert.equal(await editor.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).evaluate(element => element === document.activeElement), true);
+    await editor.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).fill(body); await editor.locator('.quick-filters > summary').click();
     await editor.getByRole('combobox', { name: 'Field', exact: true }).selectOption('branch'); await editor.getByRole('combobox', { name: 'Value', exact: true }).fill('branch-1'); await editor.getByRole('button', { name: 'Apply filter', exact: true }).click();
     await until(() => fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.expression === expression), 'quick filter did not conjoin the entire Boolean metadata body');
     const expected = fixture.activityJobs.filter(row => row.classification === api.ActivityJobClass.Current && fixture.jobExpressions.get(expression).includes(row.job.id));

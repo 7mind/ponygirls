@@ -33,7 +33,7 @@ async function archiveReady(page) {
   await page.locator('.archive-row .table-title').first().waitFor();
 }
 async function submitExpression(page, expression) {
-  await page.getByRole('textbox', { name: 'Search conversations' }).fill(expression);
+  await page.getByRole('combobox', { name: 'Search conversations' }).fill(expression);
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await archiveReady(page);
 }
@@ -78,7 +78,7 @@ try {
     const { context, page } = await scene();
     await page.getByRole('table', { name: 'Conversations', exact: true }).waitFor();
     await page.locator('.archive-row .table-title').getByText('Following the migration thread', { exact: true }).waitFor();
-    assert.equal(await page.getByRole('textbox', { name: 'Search conversations' }).inputValue(), '');
+    assert.equal(await page.getByRole('combobox', { name: 'Search conversations' }).inputValue(), '');
     assert.equal(await page.getByRole('dialog').count(), 0, 'the default archive is browsable without an unsolicited source modal');
     assert.equal(await page.getByRole('heading', { name: /Search sessions|No search submitted|No session selected/ }).count(), 0);
     assert.equal(await page.getByRole('link', { name: 'Chronicle home', exact: true }).textContent(), 'C·chronicle');
@@ -228,7 +228,7 @@ try {
     const privateQuery = '(alice-private-migration-phrase) AND project:"alice-private-project" AND branch:"alice-private-branch" AND after:"2026-10-01T10:00:00Z" AND before:"2026-11-01T10:00:00Z" AND tag:"alice-private-tag" mode:semantic';
     const privateDraft = `${privateQuery} AND producer:"alice-private-draft"`;
     await submitExpression(page, privateQuery);
-    await page.getByRole('textbox', { name: 'Search conversations' }).fill(privateDraft);
+    await page.getByRole('combobox', { name: 'Search conversations' }).fill(privateDraft);
     await openConversation(page);
     if (transition === 'observed-bob') {
       const beforeReconnect = fixture.searchCount; fixture.restart();
@@ -255,7 +255,7 @@ try {
     assert.ok(after.some(operation => operation instanceof api.Operation_Archive), `${transition}: the new account receives its own default archive`);
     assert.equal(after.filter(operation => operation instanceof api.Operation_Archive && operation.query.expression !== '').length, 0, `${transition}: prior-session text and metadata must never be reissued`);
     assert.equal(after.filter(operation => operation instanceof api.Operation_GetSession).length, 0, `${transition}: prior source selection must not be read in the new account/session`);
-    assert.equal(await page.getByRole('textbox', { name: 'Search conversations' }).inputValue(), '');
+    assert.equal(await page.getByRole('combobox', { name: 'Search conversations' }).inputValue(), '');
     assert.equal(await page.getByRole('dialog').count(), 0);
     assert.equal(await page.locator('.conversation-intro').count(), 0);
     await context.close(); console.log(`PASS browser: ${transition} clears private expression draft/submitted/selection before any new-session RPC`);
@@ -351,7 +351,7 @@ try {
   const { context, page, fixture } = await scene();
   for (const shortcut of ['Control+k', 'Meta+k']) {
     await page.keyboard.press(shortcut);
-    assert.equal(await page.getByRole('textbox', { name: 'Search conversations' }).evaluate(element => element === document.activeElement), true);
+    assert.equal(await page.getByRole('combobox', { name: 'Search conversations' }).evaluate(element => element === document.activeElement), true);
   }
   await search(page); await openConversation(page);
   await page.locator('.passage-list').getByRole('button', { name: /Keep original source independent/ }).click();
