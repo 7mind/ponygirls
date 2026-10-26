@@ -18,6 +18,22 @@ GRAALVM_HOME=/path/to/graalvm ./scripts/native.sh
 
 Assembly: `target/chronicle-server.jar`; native executable: `target/native/chronicle-server`. sbt/coursier standard caches are used (`~/.sbt`, `~/.ivy2`, `~/.cache/coursier`); Nix integration supplies project-local cache homes and repository override/offline settings. No downloads are performed by the service. Generated sources are checked in and regenerated with pinned executable checksum and model lockfile.
 
+### Nix dependency lock
+
+From the Ponygirls repository root:
+
+```bash
+nix build .#chronicle
+nix build --no-link .#packages.x86_64-linux.chronicle.offlineAssemblyCheck
+nix run .#chronicle-update-sbt-lock -- "$PWD/chronicle/deps.lock.json"
+```
+
+Pinned Squish reconstructs the Coursier cache from `deps.lock.json`, verifying each public artifact separately. The compiler build uses a fresh home, offline Coursier and a file-only Maven repository, including launcher bootstrap; Nix fetches the locked artifacts before that build. The pinned sbt launcher, Graal toolchain, native flags and PostgreSQL-required checks are unchanged. Squish's default sbt/JDK are not used.
+
+The update command runs `lockfile-config.json` only in a disposable filtered source copy, with separate tool/bootstrap and project caches. Never run the upstream generator in a working project: it deletes build targets. Failures before publication leave the selected lock untouched, and failed work is retained. After interruption or a cleanup failure, inspect the destination before retrying: atomic publication may already have completed. Review the lock diff and rerun the offline/native checks after dependency changes.
+
+Consumers with a dedicated package set should use `ponygirls.lib.mkChroniclePackage { pkgs = chroniclePkgs; }`, which supplies the pinned Squish library without changing that package set. Update an existing direct caller and its Ponygirls pin together; an older pin does not expose this factory.
+
 Native metadata is in `server/src/main/resources/META-INF/native-image/chronicle/` and preserved by assembly (JDBC reflection/service loader, SQL resources, TLS/security providers). `scripts/native.sh` consumes explicit `CHRONICLE_NATIVE_IMAGE_FLAGS` as whitespace-separated extra arguments. Nix Linux uses the supported Graal musl toolchain with `--static --libc=musl`: the glibc Graal distribution's static-libm/dynamic-libc combination failed final C linkage against glibc2.44 (`_dl_x86_cpu_features`), also reproduced independently using C `log2()`. This is a toolchain boundary, not a JVM fallback or an application workaround. Standard non-Nix Graal installations may leave extra flags unset. Root integration owns native binary workflow verification; compilation alone does not establish runtime compatibility.
 
 Tests classify cheap blackbox contracts and controlled local communication separately. The same archive contract executes against a hand-written dummy and PostgreSQL through distage; full-verification script requires real PostgreSQL, never silently substitutes the dummy. Additional actual HTTP/WS tests use the production graph; OpenAI simulator tests require no live models. Only synthetic transcripts are used.

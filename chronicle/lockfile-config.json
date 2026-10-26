@@ -1,0 +1,10 @@
+{
+  "sbt_runs": [
+    {
+      "args": ["update", "contracts/compile", "Test/compile", "show scalaInstance", "show scalaCompilerBridgeBinaryJar", "assembly"]
+    }
+  ],
+  "fetch_artifacts": [
+    {"coord": "org.scala-sbt:sbt:1.13.0"}
+  ]
+}

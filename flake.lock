@@ -144,7 +144,32 @@
         "crawl4ai": "crawl4ai",
         "flake-utils": "flake-utils_2",
         "nixpkgs": "nixpkgs_2",
-        "openai-codex-plugin": "openai-codex-plugin"
+        "openai-codex-plugin": "openai-codex-plugin",
+        "squish": "squish"
+      }
+    },
+    "squish": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1774827191,
+        "narHash": "sha256-MkMe0HFg+WtquVKXdTY45x8AxwiIfn9glTJ+Z9OUx84=",
+        "owner": "7mind",
+        "repo": "squish-find-the-brains",
+        "rev": "b731a16d0de7198303d890273249e0136dede902",
+        "type": "github"
+      },
+      "original": {
+        "owner": "7mind",
+        "repo": "squish-find-the-brains",
+        "rev": "b731a16d0de7198303d890273249e0136dede902",
+        "type": "github"
       }
     },
     "systems": {

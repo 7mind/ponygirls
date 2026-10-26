@@ -1,9 +1,9 @@
-{ pkgs, nixpkgs }:
+{ pkgs, nixpkgs, chronicleModule }:
 let
   lib = nixpkgs.lib;
   server = extra: (lib.nixosSystem {
     system = "x86_64-linux";
-    modules = [ ../nixos/chronicle.nix { system.stateVersion = "26.11"; } extra ];
+    modules = [ chronicleModule { system.stateVersion = "26.11"; } extra ];
   }).config;
   stub = pkgs.writeShellScriptBin "vllm" "exit 1";
   files = {

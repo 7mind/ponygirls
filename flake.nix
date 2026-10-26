@@ -4,6 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    squish = {
+      url = "github:7mind/squish-find-the-brains/b731a16d0de7198303d890273249e0136dede902";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
     codegraph = {
       url = "github:colbymchenry/codegraph";
       flake = false;
@@ -283,7 +288,8 @@
           chronicle-collector = pkgs.callPackage ./nix/pkg/chronicle/collector.nix { };
           chronicle-web = pkgs.callPackage ./nix/pkg/chronicle/web.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          chronicle = pkgs.callPackage ./nix/pkg/chronicle/server.nix { };
+          chronicle = self.lib.mkChroniclePackage { inherit pkgs; };
+          chronicle-update-sbt-lock = pkgs.callPackage ./nix/pkg/chronicle/update-lock.nix { lockfileGenerator = inputs.squish.packages.${system}.generate-lockfile; };
           crawl4ai = pkgs.callPackage ./nix/pkg/crawl4ai/package.nix { src = inputs.crawl4ai; };
           reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
           yolo = pkgs.callPackage ./nix/pkg/yolo/default.nix { };
@@ -814,8 +820,9 @@
           };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           chronicle = self.packages.${system}.chronicle;
-          chronicle-modules = import ./nix/tests/chronicle-modules.nix { inherit pkgs nixpkgs; };
-          chronicle-models = import ./nix/tests/chronicle-models.nix { inherit pkgs nixpkgs; };
+          chronicle-modules = import ./nix/tests/chronicle-modules.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
+          chronicle-models = import ./nix/tests/chronicle-models.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
+          chronicle-sbt-lock = import ./nix/tests/chronicle-sbt-lock.nix { inherit pkgs; };
           # The full suite requires Linux /proc process identity and bubblewrap.
           ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.bubblewrap ];
@@ -917,7 +924,8 @@
         homeManagerModules.chronicle = import ./nix/hm/chronicle.nix;
         homeManagerModules.haystack = import ./nix/hm/haystack.nix;
         homeManagerModules.manure = import ./nix/hm/manure.nix;
-        nixosModules.chronicle = import ./nix/nixos/chronicle.nix;
+        lib.mkChroniclePackage = { pkgs }: pkgs.callPackage ./nix/pkg/chronicle/server.nix { squishLib = inputs.squish.lib; };
+        nixosModules.chronicle = import ./nix/nixos/chronicle.nix { mkChroniclePackage = self.lib.mkChroniclePackage; };
         nixosModules.haystack = import ./nix/nixos/haystack.nix;
         nixosModules.manure = import ./nix/nixos/manure.nix;
         nixosModules.podman = import ./nix/nixos/podman.nix;

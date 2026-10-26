@@ -1,3 +1,4 @@
+{ mkChroniclePackage }:
 { config, lib, pkgs, ... }:
 let
   cfg = config.smind.services.chronicle;
@@ -68,7 +69,7 @@ in
   imports = [ ./chronicle-models.nix ];
   options.smind.services.chronicle = {
     enable = lib.mkEnableOption "Chronicle semi-structured agent session archive";
-    package = lib.mkOption { type = lib.types.package; default = pkgs.callPackage ../pkg/chronicle/server.nix { }; };
+    package = lib.mkOption { type = lib.types.package; default = mkChroniclePackage { inherit pkgs; }; };
     listenAddress = lib.mkOption { type = lib.types.str; default = "127.0.0.1"; description = "Backend binds loopback; use the TLS reverse proxy for remote access."; };
     port = lib.mkOption { type = lib.types.port; default = 47330; };
     publicUrl = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; example = "https://chronicle.example.net"; description = "Exact browser Origin (no trailing slash or path)."; };

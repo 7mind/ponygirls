@@ -1,4 +1,4 @@
-{ pkgs, nixpkgs }:
+{ pkgs, nixpkgs, chronicleModule }:
 let
   lib = nixpkgs.lib;
   source = pkgs.callPackage ../pkg/chronicle/source.nix { };
@@ -42,7 +42,7 @@ let
   checked = cfg: lib.all (a: a.assertion) cfg.assertions;
   server = extra: (lib.nixosSystem {
     system = "x86_64-linux";
-    modules = [ ../nixos/chronicle.nix { system.stateVersion = "26.11"; } extra ];
+    modules = [ chronicleModule { system.stateVersion = "26.11"; } extra ];
   }).config;
   serverConfig = {
     smind.services.chronicle = {
@@ -63,6 +63,7 @@ let
   maxBodyServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.limits.maxBodyBytes = 536870912; });
   oversizedBodyServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.limits.maxBodyBytes = 536870913; });
   enabledServer = server serverConfig;
+  defaultPackageServer = server { smind.services.chronicle = builtins.removeAttrs serverConfig.smind.services.chronicle [ "package" ]; };
   glmServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.annotation.requestPolicy = "glm-max-reasoning"; });
   disabledServer = server { };
   sendDimensions = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.embedding.sendDimensions = true; });
@@ -117,6 +118,9 @@ assert ownAssertions optedInHttpsServer == [ ];
 assert privateHttpServer.smind.services.chronicle.listenAddress == "127.0.0.1";
 assert !(builtins.elem 47330 privateHttpServer.networking.firewall.allowedTCPPorts);
 assert !(disabledServer.systemd.services ? chronicle);
+assert defaultPackageServer.smind.services.chronicle.package.pname == "chronicle";
+assert defaultPackageServer.smind.services.chronicle.package.toolchain.nativeImageFlags == [ "--static" "--libc=musl" ];
+assert builtins.isString defaultPackageServer.smind.services.chronicle.package.offlineAssemblyCheck.drvPath;
 assert enabledServer.systemd.services.chronicle.serviceConfig.User == "chronicle";
 assert enabledServer.systemd.services.chronicle.serviceConfig.TimeoutStopSec == 60;
 assert builtins.elem "chronicle-database.service" enabledServer.systemd.services.chronicle.requires;
