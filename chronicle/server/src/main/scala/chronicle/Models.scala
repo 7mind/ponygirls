@@ -191,7 +191,9 @@ final class Worker(archive: SessionArchive,annotator: Annotator,problemAnnotator
         val retry=attempt<annotationAttemptLimit
         val outcome=if(retry) "retry" else "exhaust"
         IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total attempt=$attempt attemptLimit=$annotationAttemptLimit code=$truncatedAnnotationCode outcome=$outcome")) *>
-          (if(retry) annotate(run,index,attempt+1) else failed(error,index,"annotation",attempt))
+          (if(retry) IO.blocking {
+            Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current")
+          } *> annotate(run,index,attempt+1) else failed(error,index,"annotation",attempt))
       case error => failed(error,index,"annotation",attempt)
     }
     def embed(chunks: List[Chunk],index: Int,attempt: Int): IO[List[IndexedChunk]] =

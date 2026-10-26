@@ -107,6 +107,28 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     assertEquals(archive.session("a",receipt.sessionId).indexedRevision,None)
     assert(archive.claim(Set(config.profile),ClaimScope.AllOwners,300).nonEmpty)
   }}
+  List(false,true).foreach { withPrefix =>
+    test(s"BG/GoodCommunication regression: superseding a legacy claim before length prevents a stale retry ${if(withPrefix) "after an embedded prefix" else "on the first window"}") { withArchive { (config,db,delegate) =>
+      val archive=new RecordingArchive(delegate); val original=source; val receipt=archive.ingest("a",original)
+      val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
+      val invalidatingAttempt=if(withPrefix) 2 else 1
+      val model=annotator(config,calls,(fragments,attempt) => IO {
+        if(attempt==invalidatingAttempt) {
+          val replacement=archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1))
+          assertEquals(replacement.revision,2)
+          response(fragments,"length")
+        } else response(fragments,"stop")
+      })
+      val worked=ModelFixtures.legacyWorker(archive,model,embedder,config,new CapturedLogs().logger).once.unsafeRunSync()
+      assert(worked)
+      assertEquals(calls.size,invalidatingAttempt,"an already-superseded claim must not make another HTTP attempt")
+      assertEquals(labels(calls),if(withPrefix) List('a','b') else List('a'))
+      assertEquals(embedder.calls.toList.map(_.head),if(withPrefix) List('a') else Nil)
+      assertEquals(archive.completed.toList,if(withPrefix) List(0,1) else List(0))
+      assertEquals(archive.failures.toList,List("stale-claim")); assertEquals(archive.publications,0)
+      assertEquals(archive.session("a",receipt.sessionId).indexedRevision,None)
+    }}
+  }
   List("model-output","model-http","model-timeout","stale-claim","worker-fault").foreach { code =>
     test(s"BG/GoodCommunication: annotation $code is not retried") { withArchive { (config,db,delegate) =>
       val archive=new RecordingArchive(delegate); archive.ingest("a",source)
