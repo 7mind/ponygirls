@@ -16,8 +16,14 @@ final class Auth(db: Database, config: Config) {
     Sql.exec(c,"INSERT INTO ch_sessions VALUES(?,?,now()+make_interval(secs=>?))",Wire.hash(secret),id,config.sessionTtlSeconds)
     (LoginResponse(UserInfo(id,r.login,allScopes),Wire.versions),secret)
   }
-  def browser(secret: String): Identity = db.transaction { c =>
-    Sql.one(c,"SELECT u.id,u.login FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND s.expires>now() AND u.enabled",Wire.hash(secret))(r => Identity(UserInfo(r.getString(1),r.getString(2),allScopes),true,Wire.hash(secret))).getOrElse(throw DomainError("unauthorized","session expired or revoked"))
+  private def browserHash(c: Connection,hash: String): Identity =
+    Sql.one(c,"SELECT u.id,u.login FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND s.expires>now() AND u.enabled",hash)(r => Identity(UserInfo(r.getString(1),r.getString(2),allScopes),true,hash)).getOrElse(throw DomainError("unauthorized","session expired or revoked"))
+  def browser(secret: String): Identity = db.transaction(c => browserHash(c,Wire.hash(secret)))
+  private[chronicle] def currentBrowser(c: Connection,identity: Identity): Identity = {
+    identity.requireBrowser()
+    val current=browserHash(c,identity.credentialHash)
+    Check(current.user.id==identity.user.id,"unauthorized","session expired or revoked")
+    current
   }
   def bearer(secret: String): Identity = db.transaction { c =>
     Sql.one(c,"SELECT u.id,u.login,t.info FROM ch_tokens t JOIN ch_users u ON u.id=t.owner WHERE t.hash=? AND NOT t.revoked AND u.enabled",Wire.hash(secret)) { r =>
