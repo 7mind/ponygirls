@@ -28,14 +28,23 @@ object Wire {
   def secret(): String = { val b = new Array[Byte](32); new SecureRandom().nextBytes(b); Base64.getUrlEncoder.withoutPadding.encodeToString(b) }
 }
 final case class UserConfig(id: String, login: String, passwordHashFile: String, enabled: Boolean)
+final case class StaticTokenConfig(id: UUID, userId: String, name: String, scopes: List[Scope], tokenFile: String)
 final case class ModelConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int)
 final case class EmbeddingConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, dimensions: Int, queryPrefix: String, documentPrefix: String, sendDimensions: Boolean)
-final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean) {
+final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig]) {
   def profile: String = Wire.hash(Json.arr(List(annotation.endpoint,annotation.model,annotation.revision,annotation.maxResponseBytes.toString,embedding.endpoint,embedding.model,embedding.revision,embedding.dimensions.toString,embedding.sendDimensions.toString,embedding.queryPrefix,embedding.documentPrefix,AnnotationPartition.identity,"prompt:v3:fragment-indices-only","schema:v2","cosine").map(Json.fromString)*).noSpaces)
   def validate(): Unit = {
     Check(users.map(_.id).distinct.size == users.size && users.map(_.login).distinct.size == users.size, "config", "duplicate users")
+    Check(staticTokens.map(_.id).distinct.size==staticTokens.size,"config","duplicate static token IDs")
+    staticTokens.foreach { t =>
+      Check(users.exists(_.id==t.userId),"config","static token owner must be configured")
+      Check(t.name.nonEmpty && t.name.length<=128,"config","invalid static token name")
+      Check(t.scopes.nonEmpty && t.scopes.distinct.size==t.scopes.size && (!t.scopes.contains(Scope.Raw)||t.scopes.contains(Scope.Read)),"config","invalid static token scopes")
+      val path=Path.of(t.tokenFile)
+      Check(path.isAbsolute && !path.normalize().startsWith(Path.of("/nix/store")),"config","static token requires runtime credential file")
+    }
     SearchPolicy.dimensions(this)
-    Check(maxBodyBytes > 0 && maxBodyBytes <= 64*1024*1024 && maxFileBytes > 0 && maxFiles > 0 && maxMessages > 0, "config", "invalid limits")
+    Check(maxBodyBytes > 0 && maxBodyBytes <= Config.maximumBodyBytes && maxFileBytes > 0 && maxFiles > 0 && maxMessages > 0, "config", "invalid limits")
     Check(sessionTtlSeconds > 0 && annotation.timeoutSeconds > 0 && embedding.timeoutSeconds > 0 && annotation.maxResponseBytes > 0 && embedding.maxResponseBytes > 0, "config", "invalid timeouts")
     val origin = java.net.URI.create(allowedOrigin)
     val loopbacks = Set("127.0.0.1","localhost","::1","[::1]")
@@ -45,7 +54,18 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
   }
 }
 object Config {
+  val maximumBodyBytes = 512*1024*1024
   given Decoder[UserConfig] = Decoder.forProduct4("id","login","passwordHashFile","enabled")(UserConfig.apply)
+  given Decoder[StaticTokenConfig] = Decoder.instance { cursor => for {
+    id <- cursor.get[UUID]("id")
+    owner <- cursor.get[String]("userId")
+    name <- cursor.get[String]("name")
+    scopes <- cursor.get[List[String]]("scopes").flatMap(xs => xs.foldLeft[Decoder.Result[List[Scope]]](Right(Nil)) { (acc,s) => for {
+      values <- acc
+      scope <- Scope.parse(s).toRight(io.circe.DecodingFailure("invalid scope",cursor.history))
+    } yield values :+ scope })
+    file <- cursor.get[String]("tokenFile")
+  } yield StaticTokenConfig(id,owner,name,scopes,file) }
   given Decoder[ModelConfig] = Decoder.forProduct6("endpoint","model","revision","credentialFile","timeoutSeconds","maxResponseBytes")(ModelConfig.apply)
   private val omittedSendDimensions = false
   given Decoder[EmbeddingConfig] = Decoder.instance { cursor => for {
@@ -69,6 +89,7 @@ object Config {
     databaseUser <- cursor.get[String]("databaseUser")
     databasePasswordFile <- cursor.get[String]("databasePasswordFile")
     users <- cursor.get[List[UserConfig]]("users")
+    staticTokens <- if(cursor.downField("staticTokens").focus.isEmpty) Right(Nil) else cursor.get[List[StaticTokenConfig]]("staticTokens")
     maxBodyBytes <- cursor.get[Int]("maxBodyBytes")
     maxFiles <- cursor.get[Int]("maxFiles")
     maxFileBytes <- cursor.get[Int]("maxFileBytes")
@@ -77,7 +98,7 @@ object Config {
     annotation <- cursor.get[ModelConfig]("annotation")
     embedding <- cursor.get[EmbeddingConfig]("embedding")
     allowInsecureHttp <- if(cursor.downField("allowInsecureHttp").focus.isEmpty) Right(false) else cursor.get[Boolean]("allowInsecureHttp")
-  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp) }
+  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens) }
   def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(_ => throw DomainError("config", "invalid configuration"), identity); c.validate(); c }
   def credential(path: String): String = Files.readString(Path.of(path)).stripTrailing()
 }
@@ -107,6 +128,7 @@ trait SessionArchive {
   def session(reader: String, id: UUID): SessionInfo
   def headSnapshot(reader: String, id: UUID): IngestRequest
   def claim(profile: String, leaseSeconds: Int): Option[Claim]
+  def progress(claim: Claim, completedWindows: Int, totalWindows: Int): Boolean
   def publish(claim: Claim, chunks: List[IndexedChunk]): Boolean
   def fail(claim: Claim, code: String): Unit
 }

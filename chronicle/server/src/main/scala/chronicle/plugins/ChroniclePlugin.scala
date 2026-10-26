@@ -16,6 +16,9 @@ object ChroniclePlugin extends PluginDef {
   make[Annotator].from[OpenAIAnnotator]
   make[Embedder].from[OpenAIEmbedder]
   make[Worker]
+  make[java.time.Clock].fromValue(java.time.Clock.systemUTC())
+  make[CollectorProgressStore].from[PostgresCollectorProgressStore]
+  make[CollectorProgress]
   make[Application]
   make[Mcp]
   make[Http.WebRoot].from { () => Http.WebRoot(sys.env.get("CHRONICLE_WEB_ROOT")) }

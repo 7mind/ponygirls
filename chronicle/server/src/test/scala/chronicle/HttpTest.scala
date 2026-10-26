@@ -71,7 +71,7 @@ class HttpTest extends munit.FunSuite {
   }
   test("BG-GoodCommunication regression: actual liveness deadlines are retriable but malformed frames and versions remain terminal") {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val c=Fixtures.config()
+    val c=Fixtures.config().copy(maxBodyBytes=256*1024*1024)
     EmberClientBuilder.default[IO].build.use { client =>
       val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client) }
       Injector().produceGet[RuntimeServices](module).toEffect[IO].use { s =>
@@ -79,7 +79,7 @@ class HttpTest extends munit.FunSuite {
           EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => s.http.routes(ws,gate).orNotFound).build.use { server => IO.blocking {
             val (_,secret)=new Auth(s.database,c).login(LoginRequest("a","synthetic"))
             val jclient=JClient.newHttpClient(); val pings=new java.util.concurrent.atomic.AtomicInteger()
-            val sockets=List("hello-timeout","pong-timeout","malformed","version").map { mode =>
+            val sockets=List("hello-timeout","pong-timeout","malformed","version","oversized").map { mode =>
               val closed=new CompletableFuture[Int]()
               val listener=new WebSocket.Listener {
                 private val text=new java.lang.StringBuilder()
@@ -96,14 +96,14 @@ class HttpTest extends munit.FunSuite {
               }
               val ws=jclient.newWebSocketBuilder().header("Origin",c.allowedOrigin).header("Cookie",s"chronicle_session=$secret").buildAsync(URI.create(s"ws://127.0.0.1:${server.address.getPort}/api/ws"),listener).get(10,TimeUnit.SECONDS)
               if(mode!="hello-timeout") {
-                val payload=if(mode=="malformed") "{}" else Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),Operation.Hello(List(if(mode=="version") "unsupported" else "1.0.0")))).noSpaces
+                val payload=if(mode=="malformed") "{}" else if(mode=="oversized") " "*65537+Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),Operation.Hello(List("1.2.0")))).noSpaces else Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),Operation.Hello(List(if(mode=="version") "unsupported" else "1.0.0")))).noSpaces
                 ws.sendText(payload,true).get(10,TimeUnit.SECONDS)
               }
               (mode,ws,closed)
             }
             try {
               val codes=sockets.map { case (mode,_,closed) => mode -> closed.get(40,TimeUnit.SECONDS) }.toMap
-              assertEquals(codes,Map("hello-timeout"->1013,"pong-timeout"->1013,"malformed"->4400,"version"->4406))
+              assertEquals(codes,Map("hello-timeout"->1013,"pong-timeout"->1013,"malformed"->4400,"version"->4406,"oversized"->4400))
               assert(pings.get()>0,"the negotiated client must withhold an actual server Ping until expiry")
             } finally { sockets.foreach(_._2.abort()); jclient.close() }
           }}

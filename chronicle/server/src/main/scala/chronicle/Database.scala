@@ -13,7 +13,7 @@ final class Database(config: Config) {
   }
   def initialize(): Unit = transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
-    List("001.sql","002.sql").foreach { migration =>
+    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql").foreach { migration =>
       val stream = getClass.getResourceAsStream(s"/$migration")
       Check(stream != null,"config","missing migration resource")
       val sql = Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
@@ -27,6 +27,7 @@ final class Database(config: Config) {
       Sql.exec(c,"DELETE FROM ch_sessions WHERE owner=? AND EXISTS(SELECT 1 FROM ch_users WHERE id=? AND credential<>?)",u.id,u.id,credential)
       Sql.exec(c,"INSERT INTO ch_users(id,login,enabled,credential) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET login=excluded.login,enabled=excluded.enabled,credential=excluded.credential",u.id,u.login,u.enabled,credential)
     }
+    StaticTokens.reconcile(c,config)
     Sql.exec(c,"DELETE FROM ch_sessions WHERE owner IN(SELECT id FROM ch_users WHERE NOT enabled) OR expires < now()")
     Sql.exec(c,"INSERT INTO ch_profile(singleton,active,target,maintenance) VALUES(true,?,?,false) ON CONFLICT DO NOTHING",config.profile,config.profile)
   }
@@ -50,7 +51,7 @@ object Jobs {
     val (revision,profile)=Sql.one(c,"SELECT revision,profile FROM ch_jobs WHERE id=? FOR UPDATE",id)(r => (r.getInt(1),r.getString(2))).get
     Check(revision==head,"conflict","job superseded by a newer archive revision")
     Check(profile==target,"conflict","job superseded by the target model profile")
-    Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,fence=fence+1,error=NULL WHERE id=?",id)
+    Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,fence=fence+1,error=NULL,completed_windows=0,total_windows=NULL WHERE id=?",id)
   }
 }
 final class PostgresArchive(db: Database, config: Config) extends SessionArchive {
@@ -132,10 +133,18 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
   }
   def claim(profile: String, leaseSeconds: Int): Option[Claim] = db.transaction { c =>
     Sql.exec(c,"UPDATE ch_jobs SET state='Failed',error='lease-exhausted',lease_until=NULL WHERE state='Running' AND lease_until<now() AND attempts>=5")
-    Sql.one(c,"""WITH candidate AS(SELECT j.id FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id JOIN ch_profile p ON p.singleton WHERE j.profile=? AND p.target=? AND NOT s.tombstone AND j.revision=s.revision AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<now())) ORDER BY j.id FOR UPDATE OF j SKIP LOCKED LIMIT 1) UPDATE ch_jobs j SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=now()+make_interval(secs=>?) FROM candidate WHERE j.id=candidate.id RETURNING j.*""",profile,profile,leaseSeconds) { row =>
+    Sql.one(c,"""WITH candidate AS(SELECT j.id FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id JOIN ch_profile p ON p.singleton WHERE j.profile=? AND p.target=? AND NOT s.tombstone AND j.revision=s.revision AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<now())) ORDER BY j.id FOR UPDATE OF j SKIP LOCKED LIMIT 1) UPDATE ch_jobs j SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=now()+make_interval(secs=>?),completed_windows=0,total_windows=NULL FROM candidate WHERE j.id=candidate.id RETURNING j.*""",profile,profile,leaseSeconds) { row =>
       val sid = row.getObject("session_id",classOf[UUID]); val rev = row.getInt("revision")
       val snap = Sql.one(c,"SELECT snapshot FROM ch_revisions WHERE session_id=? AND revision=?",sid,rev)(r => Wire.decode(IngestRequest.codecJson,Sql.json(r,"snapshot"))).get
       Claim(row.getObject("id",classOf[UUID]),sid,rev,row.getLong("fence"),profile,snap)
+    }
+  }
+  def progress(claim: Claim,completedWindows: Int,totalWindows: Int): Boolean = {
+    Check(completedWindows>=0 && totalWindows>=completedWindows,"invalid","invalid indexing progress")
+    db.transaction { c =>
+      val target=Sql.one(c,"SELECT target FROM ch_profile WHERE singleton FOR SHARE")(_.getString(1)).get
+      val current=target==claim.profile && Sql.one(c,"SELECT id FROM ch_sources WHERE id=? AND revision=? AND NOT tombstone FOR UPDATE",claim.sessionId,claim.revision)(_ => true).contains(true)
+      current && Sql.exec(c,"UPDATE ch_jobs SET completed_windows=?,total_windows=? WHERE id=? AND fence=? AND state='Running' AND lease_until>now() AND completed_windows<=? AND (total_windows IS NULL OR total_windows=?)",completedWindows,totalWindows,claim.jobId,claim.fence,completedWindows,totalWindows)==1
     }
   }
   def publish(claim: Claim,chunks: List[IndexedChunk]): Boolean = db.transaction { c =>
@@ -153,7 +162,12 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
       true
     }
   }
-  def fail(claim: Claim,code: String): Unit = db.transaction(c => { Sql.exec(c,"UPDATE ch_jobs SET state=CASE WHEN attempts>=5 THEN 'Failed' ELSE 'Queued' END,error=?,lease_until=NULL WHERE id=? AND fence=? AND state='Running'",code.take(64),claim.jobId,claim.fence); () })
+  def fail(claim: Claim,code: String): Unit = db.transaction { c =>
+    val target=Sql.one(c,"SELECT target FROM ch_profile WHERE singleton FOR SHARE")(_.getString(1)).get
+    val current=target==claim.profile && Sql.one(c,"SELECT id FROM ch_sources WHERE id=? AND revision=? AND NOT tombstone FOR UPDATE",claim.sessionId,claim.revision)(_ => true).contains(true)
+    if(current) Sql.exec(c,"UPDATE ch_jobs SET state=CASE WHEN attempts>=5 THEN 'Failed' ELSE 'Queued' END,error=?,lease_until=NULL,completed_windows=CASE WHEN attempts>=5 THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=5 THEN total_windows ELSE NULL END WHERE id=? AND fence=? AND state='Running' AND lease_until>now()",code.take(64),claim.jobId,claim.fence)
+    ()
+  }
   private def chunksForView(c: Connection,view: ContentView,offset: Int,limit: Int): ChunksResult = view.generationId match {
     case None => ChunksResult(Nil,0,offset,view)
     case Some(generation) =>
@@ -169,7 +183,7 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     Check.page(offset,limit)
     val from = s"FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE $visible"
     val n = Sql.one(c,s"SELECT count(*) $from",reader,reader,reader)(_.getInt(1)).get
-    val jobs = Sql.rows(c,s"SELECT j.* $from ORDER BY j.id LIMIT ? OFFSET ?",reader,reader,reader,limit,offset)(r => JobInfo(r.getObject("id",classOf[UUID]),r.getObject("session_id",classOf[UUID]),r.getInt("revision"),JobState.parse(r.getString("state")).get,r.getInt("attempts"),Option(r.getString("error")),0,None))
+    val jobs = Sql.rows(c,s"SELECT j.* $from ORDER BY j.id LIMIT ? OFFSET ?",reader,reader,reader,limit,offset)(r => JobInfo(r.getObject("id",classOf[UUID]),r.getObject("session_id",classOf[UUID]),r.getInt("revision"),JobState.parse(r.getString("state")).get,r.getInt("attempts"),Option(r.getString("error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue)))
     StatusResult(jobs,n)
   }
   def retry(owner: String,id: UUID): Unit = db.transaction(c => Jobs.retry(c,owner,id))
@@ -178,7 +192,7 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     val target = Sql.one(c,"SELECT target,maintenance FROM ch_profile FOR UPDATE")(r => (r.getString(1),r.getBoolean(2))).get
     Check(!target._2 || target._1 == config.profile,"conflict","another profile maintenance is active")
     Sql.exec(c,"UPDATE ch_profile SET target=?,maintenance=true",config.profile)
-    Sql.exec(c,"""INSERT INTO ch_jobs(id,session_id,revision,profile) SELECT gen_random_uuid(),s.id,s.revision,? FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published WHERE NOT s.tombstone AND (g.profile IS DISTINCT FROM ? OR g.revision<>s.revision) ON CONFLICT(session_id,revision,profile) DO UPDATE SET state='Queued',attempts=0,fence=ch_jobs.fence+1,lease_until=NULL,error=NULL WHERE ch_jobs.state='Complete'""",config.profile,config.profile)
+    Sql.exec(c,"""INSERT INTO ch_jobs(id,session_id,revision,profile) SELECT gen_random_uuid(),s.id,s.revision,? FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published WHERE NOT s.tombstone AND (g.profile IS DISTINCT FROM ? OR g.revision<>s.revision) ON CONFLICT(session_id,revision,profile) DO UPDATE SET state='Queued',attempts=0,fence=ch_jobs.fence+1,lease_until=NULL,error=NULL,completed_windows=0,total_windows=NULL WHERE ch_jobs.state='Complete'""",config.profile,config.profile)
   }
   def finishMaintenance(): Boolean = db.transaction { c =>
     val left = Sql.one(c,"SELECT count(*) FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published WHERE NOT s.tombstone AND (g.profile IS DISTINCT FROM ? OR g.revision<>s.revision)",config.profile)(_.getInt(1)).get

@@ -3,7 +3,8 @@ import chronicle.api.*
 import cats.effect.IO
 import cats.syntax.all.*
 import java.util.UUID
-final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedder: Embedder,auth: Auth,db: Database) {
+final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedder: Embedder,auth: Auth,db: Database,collectors: CollectorProgress) {
+  def collectorProgress(i: Identity,r: CollectorProgressUpdate): CollectorProgressAck = collectors.update(i,r)
   private val emptyFilter = SearchFilter(None,None,None,None,Nil)
   def operationVersion(i: Identity,e: ClientEnvelope,version: String): IO[Result] = {
     Check(Wire.versions.supported.contains(version),"version-mismatch","unsupported API version")
@@ -36,6 +37,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
         }
       case Operation.Facets(f) => i.requireScope(Scope.Read); IO.blocking(Result.Facets(searchIndex.facets(uid,f)))
       case Operation.IngestStatus(offset,limit) => i.requireScope(Scope.Read); IO.blocking(Result.Status(archive.statuses(uid,offset,limit)))
+      case Operation.CollectionStatus() => IO.blocking(Result.CollectionStatus(collectors.status(i)))
       case Operation.ListTokens() => IO.blocking(Result.Tokens(auth.tokens(i)))
       case Operation.ListGroups() => IO.blocking(Result.Groups(auth.groups(i)))
       case Operation.Receipt(id) => IO.blocking(auth.receipt(i,id))

@@ -117,10 +117,14 @@ final class Worker(archive: SessionArchive,annotator: Annotator,embedder: Embedd
   def once: IO[Boolean] = IO.blocking(archive.claim(config.profile,300)).flatMap {
     case None => IO.pure(false)
     case Some(claim) =>
-      val work = Fragments.split(claim.snapshot.messages).map(_.copy(sessionId=claim.sessionId)).grouped(AnnotationPartition.windowFragments).toList.traverse { batch =>
-        annotator.annotate(batch,claim.snapshot.messages).flatMap(chunks => embedder.documents(chunks.map(_.text)).map(vectors => chunks.zip(vectors).map(IndexedChunk.apply.tupled)))
-      }.flatMap(x => IO.blocking(archive.publish(claim,x.flatten))).void
-      val renew = (IO.sleep(30.seconds) *> IO.blocking { db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=now()+interval '300 seconds' WHERE id=? AND fence=? AND state='Running'",claim.jobId,claim.fence)) }).foreverM
+      val windows = Fragments.split(claim.snapshot.messages).map(_.copy(sessionId=claim.sessionId)).grouped(AnnotationPartition.windowFragments).toList
+      def report(completed: Int): IO[Unit] = IO.blocking {
+        Check(archive.progress(claim,completed,windows.size),"stale-claim","indexing claim is no longer current")
+      }
+      val work = (report(0) *> windows.zipWithIndex.traverse { case (batch,index) =>
+        annotator.annotate(batch,claim.snapshot.messages).flatMap(chunks => embedder.documents(chunks.map(_.text)).map(vectors => chunks.zip(vectors).map(IndexedChunk.apply.tupled))).flatTap(_ => report(index+1))
+      }).flatMap(x => IO.blocking(archive.publish(claim,x.flatten))).void
+      val renew = (IO.sleep(30.seconds) *> IO.blocking { db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=now()+interval '300 seconds' WHERE id=? AND fence=? AND state='Running' AND lease_until>now()",claim.jobId,claim.fence)) }).foreverM
       IO.race(work,renew).void.handleErrorWith { e =>
         val code = e match { case d: DomainError => d.code; case _ => "worker-fault" }
         IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code")) *> IO.blocking(archive.fail(claim,code)) *> IO.sleep(2.seconds)

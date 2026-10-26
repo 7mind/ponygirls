@@ -32,6 +32,9 @@ final class DummyArchive(config: Config) extends SessionArchive {
   def claim(profile: String,leaseSeconds: Int): Option[Claim] = synchronized {
     jobs.dequeueFirst(c => c.profile==profile && sources.values.exists(h => h.id==c.sessionId && h.revision==c.revision)).map { c => claims(c.jobId)=c; c }
   }
+  def progress(c: Claim,completedWindows: Int,totalWindows: Int): Boolean = synchronized {
+    claims.get(c.jobId).contains(c) && sources.values.exists(h => h.id==c.sessionId && h.revision==c.revision)
+  }
   def publish(c: Claim,chunks: List[IndexedChunk]): Boolean = synchronized {
     sources.values.find(h => h.id==c.sessionId && h.revision==c.revision && claims.get(c.jobId).contains(c)) match {
       case Some(h) => h.indexed=Some(c.revision); published(h.id)=(ContentView(c.revision,Some(UUID.randomUUID())),c.snapshot); claims.remove(c.jobId); true

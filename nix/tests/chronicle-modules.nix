@@ -54,6 +54,13 @@ let
       embedding = { endpoint = "http://127.0.0.1:8001/v1/embeddings"; model = "embedding-model"; revision = "test-v1"; credentialFile = "/run/secrets/embedding-key"; dimensions = 768; queryPrefix = "query: "; documentPrefix = "document: "; };
     };
   };
+  staticToken = { id = "71d275ae-570d-4155-b4df-d84521f2043a"; userId = "alice"; name = "collector"; scopes = [ "Ingest" ]; tokenFile = "/run/secrets/synthetic-static-token"; };
+  staticServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.staticTokens = [ staticToken ]; });
+  invalidStaticOwner = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.staticTokens = [ (staticToken // { userId = "missing"; }) ]; });
+  duplicateStaticId = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.staticTokens = [ staticToken staticToken ]; });
+  invalidStaticScopes = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.staticTokens = [ (staticToken // { scopes = [ ]; }) ]; });
+  maxBodyServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.limits.maxBodyBytes = 536870912; });
+  oversizedBodyServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.limits.maxBodyBytes = 536870913; });
   enabledServer = server serverConfig;
   disabledServer = server { };
   sendDimensions = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.embedding.sendDimensions = true; });
@@ -65,6 +72,13 @@ let
   optedInHttpsServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.allowInsecureHttp = true; });
   ownAssertions = cfg: lib.filter (a: !a.assertion && lib.hasPrefix "Chronicle:" a.message) cfg.assertions;
 in
+assert ownAssertions staticServer == [ ];
+assert ownAssertions invalidStaticOwner != [ ];
+assert ownAssertions duplicateStaticId != [ ];
+assert ownAssertions invalidStaticScopes != [ ];
+assert maxBodyServer.smind.services.chronicle.limits.maxBodyBytes == 536870912;
+assert !(builtins.tryEval oversizedBodyServer.smind.services.chronicle.limits.maxBodyBytes).success;
+assert builtins.elem "static-token-${builtins.hashString "sha256" staticToken.id}:/run/secrets/synthetic-static-token" staticServer.systemd.services.chronicle.serviceConfig.LoadCredential;
 assert !(source.filter "${toString source.origSrc}/.local" "directory");
 assert checked linux;
 assert checked separate;
@@ -129,5 +143,7 @@ pkgs.runCommandLocal "chronicle-modules-test" { nativeBuildInputs = [ pkgs.jq ];
   jq -e '.tokenFile == "/run/secrets/chronicle-agent"' ${lib.last (lib.splitString " " linux.systemd.user.services.chronicle-collector.Service.ExecStart)}
   jq -e '.tokenFile == "/run/secrets/chronicle-ingest"' ${lib.last (lib.splitString " " separate.systemd.user.services.chronicle-collector.Service.ExecStart)}
   jq -e '.tokenFile == "/run/secrets/chronicle-ingest" and .redactions.secretFiles == ["/run/secrets/synthetic-other-credential"]' ${lib.last (lib.splitString " " collectorOnly.systemd.user.services.chronicle-collector.Service.ExecStart)}
+  jq -e '.staticTokens == [] and .maxBodyBytes == 8388608' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.staticTokens[0] == {id:"71d275ae-570d-4155-b4df-d84521f2043a",userId:"alice",name:"collector",scopes:["Ingest"],tokenFile:"/run/credentials/chronicle.service/static-token-${builtins.hashString "sha256" staticToken.id}"}' ${lib.last (lib.splitString " " staticServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   touch "$out"
 ''

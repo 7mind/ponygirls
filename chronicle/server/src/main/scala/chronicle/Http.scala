@@ -21,9 +21,9 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
   private def cookie(r: Request[IO]): String = r.cookies.find(_.name=="chronicle_session").map(_.content).getOrElse("")
   private def bearer(r: Request[IO]): Identity = { Check(cookie(r).isEmpty,"forbidden","cookie and bearer transports are separate"); val value = header(r,"Authorization").getOrElse(""); Check(value.startsWith("Bearer "),"unauthorized","bearer credential required"); auth.bearer(value.substring(7)) }
   private def noUrlSecrets(r: Request[IO]): Unit = Check(r.uri.query.isEmpty,"invalid","query parameters are not supported")
-  private def body(r: Request[IO]): IO[String] = {
-    Check(r.contentLength.forall(_<=config.maxBodyBytes),"too-large","request body too large")
-    r.body.take(config.maxBodyBytes.toLong+1).compile.to(Array).timeout(30.seconds).map { bytes => Check(bytes.length<=config.maxBodyBytes,"too-large","request body too large"); new String(bytes,java.nio.charset.StandardCharsets.UTF_8) }
+  private def boundedBody(r: Request[IO],maximum: Int): IO[String] = {
+    Check(r.contentLength.forall(_<=maximum),"too-large","request body too large")
+    r.body.take(maximum.toLong+1).compile.to(Array).timeout(30.seconds).map { bytes => Check(bytes.length<=maximum,"too-large","request body too large"); new String(bytes,java.nio.charset.StandardCharsets.UTF_8) }
   }
   private def json(status: Status,j: io.circe.Json): Response[IO] = Response[IO](status).withEntity(j.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cache-Control"),"no-store"))
   private def sessionCookie(secret: String,maxAge: Long): ResponseCookie = ResponseCookie("chronicle_session",secret,path=Some("/"),maxAge=Some(maxAge),secure=config.secureCookies,httpOnly=true,sameSite=Some(SameSite.Strict))
@@ -36,12 +36,17 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     case r @ GET -> Root / "api" / "versions" => IO(json(Status.Ok,Wire.encode(VersionInfo.codecJson,Wire.versions)))
     case r @ POST -> Root / "api" / "login" => handle {
       IO { noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only") } *> loginGate.permit.use { _ =>
-        body(r).flatMap(raw => IO.blocking(auth.login(Wire.decode(LoginRequest.codecJson,Wire.parse(raw))))).map { case (response,secret) => json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,config.sessionTtlSeconds.toLong)) }
+        boundedBody(r,math.min(config.maxBodyBytes,Http.loginBodyBytes)).flatMap(raw => IO.blocking(auth.login(Wire.decode(LoginRequest.codecJson,Wire.parse(raw))))).map { case (response,secret) => json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,config.sessionTtlSeconds.toLong)) }
       }
     }
     case r @ POST -> Root / "api" / "logout" => handle { IO.blocking { noUrlSecrets(r); origin(r,true); val i = auth.browser(cookie(r)); auth.logout(i); json(Status.Ok,io.circe.Json.obj()).addCookie(sessionCookie("",0)) } }
     case r @ POST -> Root / "api" / "ingest" => handle {
-      IO.blocking { noUrlSecrets(r); origin(r,false); val i = bearer(r); i.requireScope(Scope.Ingest); i }.flatMap(i => body(r).flatMap(raw => IO.blocking(archive.ingest(i.user.id,Wire.decode(IngestRequest.codecJson,Wire.parse(raw)),config.profile)))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
+      IO.blocking { noUrlSecrets(r); origin(r,false); val i = bearer(r); i.requireScope(Scope.Ingest); i }.flatMap(i => boundedBody(r,config.maxBodyBytes).flatMap(raw => IO.blocking(archive.ingest(i.user.id,Wire.decode(IngestRequest.codecJson,Wire.parse(raw)),config.profile)))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
+    }
+    case r @ POST -> Root / "api" / "collector" / "progress" => handle {
+      IO.blocking { noUrlSecrets(r); origin(r,false); val i=bearer(r); i.requireScope(Scope.Ingest); i }.flatMap { i =>
+        boundedBody(r,math.min(config.maxBodyBytes,CollectorProgress.maxBodyBytes)).flatMap(raw => IO.blocking(app.collectorProgress(i,Wire.decode(CollectorProgressUpdate.codecJson,Wire.parse(raw)))))
+      }.map(ack => json(Status.Ok,Wire.encode(CollectorProgressAck.codecJson,ack)))
     }
     case r @ GET -> Root / "api" / "ws" => handle {
       IO { noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only") } *> socket(r,ws)
@@ -51,7 +56,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
         Check(r.contentType.exists(_.mediaType==MediaType.application.json),"invalid","Content-Type application/json required")
         val accept = header(r,"Accept").getOrElse(""); Check(accept.contains("application/json") && accept.contains("text/event-stream"),"invalid","Accept must support application/json and text/event-stream")
         Check(header(r,"MCP-Protocol-Version").forall(mcp.versions.contains),"invalid","unsupported MCP protocol version"); i
-      }.flatMap { i => body(r).flatMap { raw =>
+      }.flatMap { i => boundedBody(r,math.min(config.maxBodyBytes,Http.mcpBodyBytes)).flatMap { raw =>
         io.circe.parser.parse(raw) match {
           case Left(_) => IO.pure(json(Status.BadRequest,mcp.rpcError(io.circe.Json.Null,-32700,"Parse error")))
           case Right(j) => mcp.handle(i,j).map { case None => Response[IO](Status.Accepted); case Some(response) => json(Status.Ok,response) }
@@ -104,7 +109,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     receive = (frame: WebSocketFrame) => closed.get.ifM(IO.unit,IO.defer {
       frame match {
         case WebSocketFrame.Text(text,true) =>
-          if(text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>config.maxBodyBytes) error(new UUID(0,0),DomainError("protocol-error","frame too large"))
+          if(text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>math.min(config.maxBodyBytes,Http.socketFrameBytes)) error(new UUID(0,0),DomainError("protocol-error","frame too large"))
           else negotiated.get.flatMap { version => scala.util.Try(protocol.decodeClient(version.getOrElse(Wire.versions.current),Wire.parse(text))).toEither match {
             case Left(_) => error(new UUID(0,0),DomainError("protocol-error","invalid frame"))
             case Right(e) =>
@@ -151,5 +156,8 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
 }
 
 object Http {
+  val loginBodyBytes = 16*1024
+  val mcpBodyBytes = 64*1024
+  val socketFrameBytes = 64*1024
   final case class WebRoot(path: Option[String])
 }

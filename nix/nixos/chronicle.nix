@@ -2,6 +2,8 @@
 let
   cfg = config.smind.services.chronicle;
   credentialDir = "/run/credentials/chronicle.service";
+  staticTokenName = id: "static-token-${builtins.hashString "sha256" id}";
+  maximumBodyBytes = 512 * 1024 * 1024;
   passwordName = id: "user-password-${builtins.hashString "sha256" id}";
   endpointOptions = {
     endpoint = lib.mkOption { type = lib.types.str; description = "Full OpenAI-compatible operation URL: /v1/chat/completions for annotation, /v1/embeddings for embedding."; };
@@ -29,6 +31,10 @@ let
       inherit (user) login enabled;
       passwordHashFile = "${credentialDir}/${passwordName id}";
     }) cfg.users;
+    staticTokens = map (token: {
+      inherit (token) id userId name scopes;
+      tokenFile = "${credentialDir}/${staticTokenName token.id}";
+    }) cfg.staticTokens;
     inherit (cfg.limits) maxBodyBytes maxFiles maxFileBytes maxMessages sessionTtlSeconds;
     annotation = endpointJson "annotation" cfg.annotation;
     embedding = endpointJson "embedding" cfg.embedding // {
@@ -36,7 +42,8 @@ let
     };
   });
   runtimeFiles = [ cfg.database.passwordFile cfg.annotation.credentialFile cfg.embedding.credentialFile ]
-    ++ map (u: u.passwordHashFile) (builtins.attrValues cfg.users);
+    ++ map (u: u.passwordHashFile) (builtins.attrValues cfg.users)
+    ++ map (t: t.tokenFile) cfg.staticTokens;
   loginList = map (u: u.login) (builtins.attrValues cfg.users);
   host = if cfg.publicUrl == null then "configuration-required" else
     builtins.head (lib.splitString "/" (lib.removePrefix "https://" (lib.removePrefix "http://" cfg.publicUrl)));
@@ -77,6 +84,19 @@ in
       });
       default = { };
     };
+    staticTokens = lib.mkOption {
+      default = [ ];
+      description = "Immutable config-managed bearer mappings. Token values are loaded only from private runtime files; metadata is visible to the owner.";
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          id = lib.mkOption { type = lib.types.strMatching "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"; description = "Stable token UUID."; };
+          userId = lib.mkOption { type = lib.types.str; description = "Existing configured owner ID."; };
+          name = lib.mkOption { type = lib.types.str; };
+          scopes = lib.mkOption { type = lib.types.listOf (lib.types.enum [ "Ingest" "Read" "Raw" ]); };
+          tokenFile = lib.mkOption { type = lib.types.path; description = "Private runtime file containing a random strong bearer token, never a Nix store file."; };
+        };
+      });
+    };
     annotation = lib.mkOption { type = lib.types.submodule { options = endpointOptions; }; description = "Annotation model endpoint and explicit profile identity."; };
     embedding = lib.mkOption {
       type = lib.types.submodule {
@@ -97,7 +117,7 @@ in
       jdbcUrl = lib.mkOption { type = lib.types.str; default = ""; description = "External JDBC URL when manageLocal=false; provision the vector extension there."; };
     };
     limits = {
-      maxBodyBytes = lib.mkOption { type = lib.types.ints.positive; default = 8388608; };
+      maxBodyBytes = lib.mkOption { type = lib.types.ints.between 1 maximumBodyBytes; default = 8388608; description = "Bounded ingest body size (maximum 512MiB); collector progress always has its own 64KiB cap."; };
       maxFiles = lib.mkOption { type = lib.types.ints.positive; default = 16; };
       maxFileBytes = lib.mkOption { type = lib.types.ints.positive; default = 4194304; };
       maxMessages = lib.mkOption { type = lib.types.ints.positive; default = 10000; };
@@ -117,6 +137,8 @@ in
         { assertion = cfg.publicUrl == null || !(lib.hasSuffix "/" cfg.publicUrl); message = "Chronicle: publicUrl must be the exact Origin without trailing slash."; }
         { assertion = !cfg.loopbackDevelopment || (cfg.publicUrl != null && (lib.hasPrefix "http://127.0.0.1:" cfg.publicUrl || lib.hasPrefix "http://localhost:" cfg.publicUrl)); message = "Chronicle: loopbackDevelopment is only valid with a loopback HTTP Origin."; }
         { assertion = lib.any (u: u.enabled) (builtins.attrValues cfg.users); message = "Chronicle: configure at least one enabled static user."; }
+        { assertion = builtins.length (map (t: lib.toLower t.id) cfg.staticTokens) == builtins.length (lib.unique (map (t: lib.toLower t.id) cfg.staticTokens)); message = "Chronicle: static token IDs must be distinct."; }
+        { assertion = lib.all (t: builtins.hasAttr t.userId cfg.users && t.name != "" && builtins.stringLength t.name <= 128 && t.scopes != [ ] && builtins.length t.scopes == builtins.length (lib.unique t.scopes) && (!(builtins.elem "Raw" t.scopes) || builtins.elem "Read" t.scopes)) cfg.staticTokens; message = "Chronicle: static tokens require configured owners, bounded names and nonempty distinct valid scopes (Raw requires Read)."; }
         { assertion = builtins.length loginList == builtins.length (lib.unique loginList); message = "Chronicle: logins must be unique."; }
         { assertion = lib.all (p: !(lib.hasPrefix builtins.storeDir (toString p))) runtimeFiles; message = "Chronicle: all credential files must be runtime paths outside the Nix store."; }
         { assertion = !cfg.database.manageLocal || (cfg.database.name == cfg.database.user && builtins.match "[a-z_][a-z0-9_]*" cfg.database.name != null); message = "Chronicle: managed database name and role must match and use lowercase SQL identifiers."; }
@@ -137,7 +159,8 @@ in
             "database-password:${cfg.database.passwordFile}"
             "annotation-key:${cfg.annotation.credentialFile}"
             "embedding-key:${cfg.embedding.credentialFile}"
-          ] ++ lib.mapAttrsToList (id: u: "${passwordName id}:${u.passwordHashFile}") cfg.users;
+          ] ++ lib.mapAttrsToList (id: u: "${passwordName id}:${u.passwordHashFile}") cfg.users
+            ++ map (t: "${staticTokenName t.id}:${t.tokenFile}") cfg.staticTokens;
           Restart = "on-failure";
           RestartSec = 5;
           TimeoutStopSec = 60;

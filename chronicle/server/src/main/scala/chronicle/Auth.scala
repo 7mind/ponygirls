@@ -25,7 +25,7 @@ final class Auth(db: Database, config: Config) {
     }.getOrElse(throw DomainError("unauthorized","invalid agent credential"))
   }
   def logout(i: Identity): Unit = db.transaction { c => Sql.exec(c,"DELETE FROM ch_sessions WHERE hash=?",i.credentialHash); () }
-  def tokens(i: Identity): TokensResult = { i.requireBrowser(); db.transaction(c => TokensResult(Sql.rows(c,"SELECT info,revoked FROM ch_tokens WHERE owner=? ORDER BY id LIMIT 100",i.user.id)(r => ListedToken(Wire.decode(TokenInfo.codecJson,Sql.json(r,"info")).copy(revoked=r.getBoolean("revoked")),TokenSource.Issued)))) }
+  def tokens(i: Identity): TokensResult = { i.requireBrowser(); db.transaction(c => TokensResult(Sql.rows(c,"SELECT info,revoked,static_config FROM ch_tokens WHERE owner=? ORDER BY id LIMIT 100",i.user.id)(r => ListedToken(Wire.decode(TokenInfo.codecJson,Sql.json(r,"info")).copy(revoked=r.getBoolean("revoked")),if(r.getBoolean("static_config")) TokenSource.StaticConfig else TokenSource.Issued)))) }
   def groups(i: Identity): GroupsResult = { i.requireBrowser(); db.transaction { c =>
     val gs = Sql.rows(c,"SELECT g.* FROM ch_groups g JOIN ch_members m ON m.group_id=g.id WHERE m.user_id=? ORDER BY g.id LIMIT 100",i.user.id) { r => val id = r.getObject("id",classOf[UUID]); GroupInfo(id,r.getString("name"),r.getString("owner"),Sql.rows(c,"SELECT user_id FROM ch_members WHERE group_id=? ORDER BY user_id LIMIT 100",id)(_.getString(1))) }
     val invites = Sql.rows(c,"SELECT id,group_id,target,expires FROM ch_invites WHERE target=? AND NOT accepted AND expires>now() ORDER BY id LIMIT 100",i.user.id)(r => InviteInfo(r.getObject(1,classOf[UUID]),r.getObject(2,classOf[UUID]),r.getString(3),r.getTimestamp(4).toInstant.toString))
@@ -56,6 +56,7 @@ final class Auth(db: Database, config: Config) {
         Sql.exec(c,"INSERT INTO ch_tokens(id,owner,hash,info) VALUES(?,?,?,?::jsonb)",t.id,owner,Wire.hash(secret),Wire.encode(TokenInfo.codecJson,t).noSpaces)
         Result.Token(TokenResult(t,Some(secret)))
       case Operation.RevokeToken(id) =>
+        Sql.one(c,"SELECT static_config FROM ch_tokens WHERE id=? AND owner=? FOR UPDATE",id,owner)(_.getBoolean(1)).foreach(managed => Check(!managed,"forbidden","configuration-managed token is immutable"))
         Check(Sql.exec(c,"UPDATE ch_tokens SET revoked=true WHERE id=? AND owner=?",id,owner)==1,"not-found","token not found"); receipt("RevokeToken",Some(id))
       case Operation.CreateGroup(name) =>
         Check.text(name,128)
