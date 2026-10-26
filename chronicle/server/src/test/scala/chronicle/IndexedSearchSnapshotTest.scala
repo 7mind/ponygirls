@@ -51,10 +51,10 @@ class IndexedSearchSnapshotTest extends munit.FunSuite {
   test("Effectual-GoodCommunication regression: one ANN traversal supplies count and page despite invisible HNSW graph inserts") {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val original=Fixtures.config(); val config=original.copy(embedding=original.embedding.copy(dimensions=dimensions))
-    val db=new Database(config); db.initialize()
+    val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
+      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val snapshot=Wire.encode(IngestRequest.codecJson,Fixtures.snapshot()).noSpaces
     val chunk=Wire.encode(Chunk.codecJson,Fragments.split(Fixtures.snapshot().messages).head).noSpaces
@@ -83,7 +83,7 @@ class IndexedSearchSnapshotTest extends munit.FunSuite {
       })
       DriverManager.registerDriver(driver)
       try {
-        val proxied=config.copy(jdbcUrl=proxyPrefix+config.jdbcUrl); val readerDb=new Database(proxied)
+        val proxied=config.copy(jdbcUrl=proxyPrefix+config.jdbcUrl); val readerDb=new Database(proxied,IndexProfileCatalog.legacyOnly(proxied))
         val result=new PostgresSearch(readerDb,new PostgresArchive(readerDb,proxied),proxied).search("a",query.copy(offset=offset),vector)
         println(s"ANN SNAPSHOT initialTotal=$initialTotal responseTotal=${result.total} offset=$offset hits=${result.hits.size} annStatements=${driver.annStatements.get()}")
         assertEquals(result.hits.size,math.min(pageLimit,math.max(0,result.total-offset)),"response count and tail page must come from the same candidate pool")

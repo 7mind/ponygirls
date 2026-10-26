@@ -35,9 +35,9 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
     ),
     jobs AS (
       SELECT j.*,h.collector_id,h.owner,h.revision AS head_revision,h.indexed_revision,
-        j.revision=h.revision AS revision_current,j.profile=p.target AS profile_current,
-        j.revision=h.revision AND j.profile=p.target AS is_current
-      FROM heads h JOIN ch_jobs j ON j.session_id=h.id CROSS JOIN ch_profile p WHERE p.singleton
+        j.revision=h.revision AS revision_current,j.profile=p.profile AS profile_current,
+        j.revision=h.revision AND j.profile=p.profile AS is_current
+      FROM heads h JOIN ch_jobs j ON j.session_id=h.id JOIN ch_owner_targets p ON p.owner=h.owner
     ),
     collectors AS (SELECT collector_id FROM reports UNION SELECT collector_id FROM heads)
     """
@@ -59,7 +59,8 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
   private def reading[A](owner: String)(f: (Connection,Instant) => A): A = db.transaction { c =>
     c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
     Check(Sql.one(c,"SELECT 1 FROM ch_users WHERE id=? AND enabled",owner)(_ => true).contains(true),"unauthorized","owner disabled")
-    Check(Sql.one(c,"SELECT 1 FROM ch_profile WHERE singleton")(_ => true).contains(true),"internal","missing target profile")
+    val target=OwnerTargets.read(c,owner,false)
+    db.profiles.resolve(target.profile)
     f(c,clock.instant())
   }
   private def parameters(owner: String,now: Instant): List[Sql.Param] = {

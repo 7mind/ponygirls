@@ -56,10 +56,10 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     } else {
       val dimensions=SearchPolicy.dimensions(config)
       val queryVector=SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)
-      val ann=s"ann AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ch.profile=? AND $authorized ORDER BY l2_normalize(ch.embedding)::halfvec($dimensions) <=> l2_normalize(?::vector)::halfvec($dimensions) LIMIT ${SearchPolicy.candidatesPerLeg})"
-      val annArgs: List[Sql.Param]=List(config.profile)++acl++List(queryVector)
+      val ann=s"ann AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $authorized ORDER BY l2_normalize(ch.embedding)::halfvec($dimensions) <=> l2_normalize(?::vector)::halfvec($dimensions) LIMIT ${SearchPolicy.candidatesPerLeg})"
+      val annArgs: List[Sql.Param]=List(EmbeddingSpaceDescriptor.from(config.embedding).id)++acl++List(queryVector)
       val (legs,legArgs)=if(q.mode==SearchMode.Hybrid && q.query.nonEmpty) {
-        (s",lexical AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ch.profile=? AND $lexicalPredicate$authorized ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT ${SearchPolicy.candidatesPerLeg}),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",List(config.profile)++lexicalArgs++List(q.query))
+        (s",lexical AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $lexicalPredicate$authorized ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT ${SearchPolicy.candidatesPerLeg}),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",List(EmbeddingSpaceDescriptor.from(config.embedding).id)++lexicalArgs++List(q.query))
       } else (",candidates AS(SELECT * FROM ann)",Nil)
       val score=if(q.mode==SearchMode.Semantic) "1.0-distance" else s"(CASE WHEN lex>0 THEN 1.0/(${SearchPolicy.reciprocalRankConstant}+lr) ELSE 0 END)+1.0/(${SearchPolicy.reciprocalRankConstant}+vr)"
       SearchStatement(s"WITH $ann$legs,ranked AS(SELECT *,ts_rank_cd(document,websearch_to_tsquery('english',?)) AS lex,embedding <=> ?::vector AS distance FROM candidates),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,id) AS lr,row_number() OVER(ORDER BY distance,id) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,id)",annArgs++legArgs++List(q.query,queryVector))
@@ -75,7 +75,8 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
       case SearchMode.Hybrid => s"(CASE WHEN lex>0 THEN 1.0/(${SearchPolicy.reciprocalRankConstant}+lr) ELSE 0 END)+1.0/(${SearchPolicy.reciprocalRankConstant}+vr)"
     }
     val matches=if(q.mode==SearchMode.Lexical && q.query.nonEmpty) "WHERE lex>0" else ""
-    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT ch.id,ch.value,ch.document,ch.embedding,s.id AS session_id,g.id AS generation,g.revision FROM ch_chunks ch JOIN ch_sources s ON s.published=ch.generation JOIN ch_generations g ON g.id=s.published JOIN ch_revisions r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs),ranked AS(SELECT *,ts_rank_cd(document,websearch_to_tsquery('english',?)) AS lex,$distance AS distance FROM corpus),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,id) AS lr,row_number() OVER(ORDER BY distance,id) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2 $matches),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,id)",List(reader,reader,reader)++fp++List(q.query)++(if(semantic) List(SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)) else Nil))
+    val compatibility=if(semantic) " AND "+IndexProfiles.compatibleSql("g.profile") else ""
+    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT ch.id,ch.value,ch.document,ch.embedding,s.id AS session_id,g.id AS generation,g.revision FROM ch_chunks ch JOIN ch_sources s ON s.published=ch.generation JOIN ch_generations g ON g.id=s.published JOIN ch_revisions r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs$compatibility),ranked AS(SELECT *,ts_rank_cd(document,websearch_to_tsquery('english',?)) AS lex,$distance AS distance FROM corpus),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,id) AS lr,row_number() OVER(ORDER BY distance,id) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2 $matches),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,id)",List(reader,reader,reader)++fp++(if(semantic) List(EmbeddingSpaceDescriptor.from(config.embedding).id) else Nil)++List(q.query)++(if(semantic) List(SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)) else Nil))
   }
   private[chronicle] def pageStatement(plan: SearchStatement,q: SearchQuery): SearchStatement =
     SearchStatement(plan.sql+",result_sessions AS MATERIALIZED(SELECT * FROM sessions) SELECT counted.total,page.* FROM (SELECT count(*) AS total FROM result_sessions) counted LEFT JOIN LATERAL(SELECT result_sessions.*,ch.value AS chunk_value FROM result_sessions JOIN ch_chunks ch ON ch.id=result_sessions.id ORDER BY score DESC,session_id LIMIT ? OFFSET ?) page ON true ORDER BY page.score DESC,page.session_id",plan.args++List(q.limit,q.offset))
@@ -86,7 +87,7 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     Check.page(q.offset,q.limit); Check(q.query.length<=2048,"invalid","query too long")
     if(q.mode!=SearchMode.Lexical) {
       Check(legacy || q.offset<SearchPolicy.rankingLimit(q.mode),"invalid","offset exceeds candidate ranking window")
-      Check(Sql.one(c,"SELECT 1 FROM ch_profile WHERE NOT maintenance AND active=?",config.profile)(_ => true).contains(true),"unavailable","semantic profile requires maintenance reindex")
+      IndexProfiles.semantic(c,reader,archive.visible,EmbeddingSpaceDescriptor.from(config.embedding))
       SearchPolicy.configure(c)
     }
     val plan=if(legacy) legacyStatement(reader,q,vector) else statement(reader,q,vector)

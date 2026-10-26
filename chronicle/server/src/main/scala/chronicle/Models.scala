@@ -158,12 +158,12 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
     }
   }
 }
-final class Worker(archive: SessionArchive,annotator: Annotator,embedder: Embedder,db: Database,config: Config,logger: logstage.IzLogger) {
+final class Worker(archive: SessionArchive,annotator: Annotator,embedder: Embedder,config: Config,logger: logstage.IzLogger) {
   private val annotationAttemptLimit = 5
   private val truncatedAnnotationCode = "model-output/truncated"
   private def failureCode(error: Throwable): String = error match { case d: DomainError => d.code; case _ => "worker-fault" }
   private def failureOrigin(error: Throwable): String = error.getStackTrace.headOption.map(frame => s"${frame.getClassName}.${frame.getMethodName}:${frame.getLineNumber}").getOrElse("unavailable")
-  def once: IO[Boolean] = IO.blocking(archive.claim(config.profile,300)).flatMap {
+  def once: IO[Boolean] = IO.blocking(archive.claim(archive.knownProfiles,ClaimScope.AllOwners,300)).flatMap {
     case None => IO.pure(false)
     case Some(claim) =>
       val windows = Fragments.split(claim.snapshot.messages).map(_.copy(sessionId=claim.sessionId)).grouped(AnnotationPartition.windowFragments).toList
@@ -189,7 +189,7 @@ final class Worker(archive: SessionArchive,annotator: Annotator,embedder: Embedd
           IO.defer(embedder.documents(chunks.map(_.text))).map(vectors => chunks.zip(vectors).map(IndexedChunk.apply.tupled)).handleErrorWith(error => windowFailure(error,index,"embedding",attempt))
         }.flatTap(_ => report(index+1))
       }).flatMap(x => IO.blocking(archive.publish(claim,x.flatten))).void
-      val renew = (IO.sleep(30.seconds) *> IO.blocking { db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET lease_until=now()+interval '300 seconds' WHERE id=? AND fence=? AND state='Running' AND lease_until>now()",claim.jobId,claim.fence)) }).foreverM
+      val renew = (IO.sleep(30.seconds) *> IO.blocking { Check(archive.renew(claim,300),"stale-claim","indexing claim is no longer current") }).foreverM
       IO.race(work,renew).void.handleErrorWith { e =>
         val code = failureCode(e)
         val exceptionClass=e.getClass.getName

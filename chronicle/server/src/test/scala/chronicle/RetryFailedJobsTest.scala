@@ -8,7 +8,9 @@ import java.util.concurrent.{Callable,CountDownLatch,ExecutionException,Executor
 import scala.util.Using
 
 final class RetryFailedJobsTest extends munit.FunSuite {
-  private val target="target-profile"
+  private val target=Fixtures.config().profile
+  private val nextCatalog=IndexProfileCatalog.passages(Fixtures.config(),PassagePolicyIdentity("synthetic-retry-policy"))
+  private val nextTarget=nextCatalog.preferred.profile
   private val old="old-profile"
   private val empty=RetryFailedCounts(0,0,0,0,0,0,0)
   private val expected=RetryFailedCounts(1,1,1,1,1,1,1)
@@ -22,12 +24,12 @@ final class RetryFailedJobsTest extends munit.FunSuite {
       Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required")
       assume(false,"PostgreSQL explicitly skipped: set CHRONICLE_TEST_JDBC for bulk retry verification")
     }
-    val config=Fixtures.config(); val admin=new Database(config)
+    val config=Fixtures.config(); val admin=new Database(config,IndexProfileCatalog.legacyOnly(config))
     val schema="retry_failed_test_"+UUID.randomUUID().toString.replace("-","")
     admin.transaction(c => Sql.exec(c,s"CREATE SCHEMA $schema"))
     try {
       val separator=if(config.jdbcUrl.contains("?")) "&" else "?"
-      val db=new Database(config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema))
+      val db=new Database(config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema),IndexProfileCatalog.legacyOnly(config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema)))
       db.transaction { c =>
         val ddl="""CREATE TABLE ch_users(id text PRIMARY KEY,login text UNIQUE NOT NULL,enabled boolean NOT NULL,credential text NOT NULL);
           CREATE TABLE ch_sources(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),source_key text NOT NULL,revision integer NOT NULL,published uuid,tombstone boolean NOT NULL,UNIQUE(owner,source_key));
@@ -43,9 +45,15 @@ final class RetryFailedJobsTest extends munit.FunSuite {
           CREATE TABLE ch_ingest_receipts(owner text REFERENCES ch_users(id),source_key text,request_id uuid,digest text NOT NULL,result jsonb NOT NULL,PRIMARY KEY(owner,source_key,request_id));
           CREATE TABLE ch_mutations(owner text REFERENCES ch_users(id),request_id uuid,digest text NOT NULL,result jsonb NOT NULL,PRIMARY KEY(owner,request_id));"""
         Using.resource(c.createStatement())(_.execute(ddl))
+        Using.resource(getClass.getResourceAsStream("/007_owner_profiles.sql")) { stream =>
+          val sql=Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
+          Using.resource(c.createStatement())(_.execute(sql))
+        }
+        nextCatalog.register(c)
         List("a","b","c").foreach(owner => Sql.exec(c,"INSERT INTO ch_users VALUES(?,?,true,'synthetic')",owner,owner))
         Sql.exec(c,"INSERT INTO ch_users VALUES('disabled','disabled',false,'synthetic')")
         Sql.exec(c,"INSERT INTO ch_profile VALUES(true,?,?,false)",old,target)
+        Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) SELECT id,? FROM ch_users",target)
         Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','shared')",id(5000))
         List("a","b").foreach(owner => Sql.exec(c,"INSERT INTO ch_members VALUES(?,?)",id(5000),owner))
         (1 to 7).foreach { n =>
@@ -90,7 +98,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
     Sql.rows(c,s"SELECT to_jsonb(t)::text FROM $table t ORDER BY to_jsonb(t)::text")(_.getString(1))
   private def jobs(db: Database): List[String] = db.transaction(c => rows(c,"ch_jobs"))
   private def retained(db: Database): List[(String,List[String])] = db.transaction { c =>
-    List("ch_users","ch_profile","ch_sources","ch_revisions","ch_revision_info","ch_messages","ch_generations","ch_chunks","ch_ingest_receipts","ch_mutations","ch_groups","ch_members").map(table => table->rows(c,table))
+    List("ch_users","ch_profile","ch_owner_targets","ch_index_profiles","ch_embedding_spaces","ch_sources","ch_revisions","ch_revision_info","ch_messages","ch_generations","ch_chunks","ch_ingest_receipts","ch_mutations","ch_groups","ch_members").map(table => table->rows(c,table))
   }
   private def invalid(f: => Any): Unit = assertEquals(intercept[DomainError](f).code,"invalid")
   private def conflict(f: => Any): Unit = assertEquals(intercept[DomainError](f).code,"conflict")
@@ -129,7 +137,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
       assertEquals(preview(db,"c"),plan)
       assertEquals(applyPlan(db,"c",plan,id(9001)),RetryFailedResult(id(9001),target,0,empty))
       assertEquals(jobs(db),before); assertEquals(retained(db),preserved)
-      db.transaction { c => Sql.exec(c,"INSERT INTO ch_users VALUES('other-empty','other-empty',true,'synthetic')"); () }
+      db.transaction { c => Sql.exec(c,"INSERT INTO ch_users VALUES('other-empty','other-empty',true,'synthetic')"); Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) VALUES('other-empty',?)",target); () }
       assertNotEquals(preview(db,"other-empty").selectionHash,plan.selectionHash)
     }
   }
@@ -165,7 +173,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
   }
   test("Behavioral-Effectual-GoodCommunication specified: target head fence state membership and ownership drift conflict without partial retries") {
     val changes: List[(String,Connection => Unit)]=List(
-      "target" -> { c => Sql.exec(c,"UPDATE ch_profile SET target='new-target'"); () },
+      "target" -> { c => Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=epoch+1 WHERE owner='a'",nextTarget); () },
       "head" -> { c => Sql.exec(c,"UPDATE ch_sources SET revision=3 WHERE id=?",id(1)); () },
       "fence" -> { c => Sql.exec(c,"UPDATE ch_jobs SET fence=fence+1 WHERE id=?",id(101)); () },
       "state" -> { c => Sql.exec(c,"UPDATE ch_jobs SET state='Queued' WHERE id=?",id(101)); () },
@@ -200,11 +208,11 @@ final class RetryFailedJobsTest extends munit.FunSuite {
   }
   test("Behavioral-Blackbox-GoodCommunication specified: hash is canonical UTF8 JSON and follows unsigned SQL UUID order") {
     withDatabase { db =>
-      val owner="owner-😀-\"-\n"; val profile="profile-\"-\\-😀"
+      val owner="owner-😀-\"-\n"; val profile=target
       val ids=List("ffffffff-ffff-ffff-ffff-ffffffffffff","80000000-0000-0000-0000-000000000000","00000000-0000-0000-0000-000000000000","7fffffff-ffff-ffff-ffff-ffffffffffff","00000000-0000-0000-8000-000000000000").map(UUID.fromString)
       db.transaction { c =>
         Sql.exec(c,"INSERT INTO ch_users VALUES(?,?,true,'synthetic')",owner,owner)
-        Sql.exec(c,"UPDATE ch_profile SET target=?",profile)
+        Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) VALUES(?,?)",owner,profile)
         ids.zipWithIndex.foreach { case (job,n) =>
           Sql.exec(c,"INSERT INTO ch_sources VALUES(?,?,?,1,NULL,false)",id(20+n),owner,s"unicode-$n")
           addJob(c,job,id(20+n),1,profile,"Failed",9007199254740993L+n)
@@ -285,7 +293,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
   test("Behavioral-Effectual-GoodCommunication specified: concurrent target retarget is serialized before sources and forces repreview") {
     withDatabase { db =>
       val plan=preview(db,"a"); val before=jobs(db)
-      blockedApply(db,plan,"retry-target-race")(c => { Sql.exec(c,"UPDATE ch_profile SET target='concurrent-target'"); () }) {
+      blockedApply(db,plan,"retry-target-race")(c => { Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=epoch+1 WHERE owner='a'",nextTarget); () }) {
         db.transaction(c => Sql.rows(c,"SELECT id FROM ch_sources WHERE id=? FOR UPDATE NOWAIT",id(1))(_ => ()))
         locked(db,"SELECT id FROM ch_users WHERE id='a' FOR UPDATE NOWAIT")
       }
@@ -297,7 +305,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
       db.transaction(c => addJob(c,id(113),id(7),1,target,"Failed",30))
       val plan=preview(db,"a"); val before=jobs(db)
       blockedApply(db,plan,"retry-source-race")(c => { Sql.exec(c,"UPDATE ch_sources SET revision=revision+1 WHERE id=?",id(7)); () }) {
-        locked(db,"SELECT target FROM ch_profile FOR UPDATE NOWAIT")
+        locked(db,"SELECT profile FROM ch_owner_targets WHERE owner='a' FOR UPDATE NOWAIT")
         locked(db,"SELECT id FROM ch_sources WHERE id=? FOR UPDATE NOWAIT",id(1))
         db.transaction(c => Sql.rows(c,"SELECT id FROM ch_jobs WHERE id=? FOR UPDATE NOWAIT",id(101))(_ => ()))
       }
@@ -308,7 +316,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
     withDatabase { db =>
       val plan=preview(db,"a")
       blockedApply(db,plan,"retry-job-race")(c => { Sql.exec(c,"UPDATE ch_jobs SET fence=fence+1 WHERE id=?",id(101)); () }) {
-        locked(db,"SELECT target FROM ch_profile FOR UPDATE NOWAIT")
+        locked(db,"SELECT profile FROM ch_owner_targets WHERE owner='a' FOR UPDATE NOWAIT")
         locked(db,"SELECT id FROM ch_sources WHERE id=? FOR UPDATE NOWAIT",id(1))
         locked(db,"SELECT id FROM ch_sources WHERE id=? FOR UPDATE NOWAIT",id(7))
         db.transaction(c => Sql.rows(c,"SELECT id FROM ch_sources WHERE id=? FOR UPDATE NOWAIT",id(5))(_ => ()))
@@ -370,7 +378,8 @@ final class RetryFailedJobsTest extends munit.FunSuite {
         val start=c.setSavepoint()
         val schema=Sql.one(c,"SELECT quote_ident(current_schema())")(_.getString(1)).get
         Sql.exec(c,s"GRANT USAGE ON SCHEMA $schema TO pg_read_all_settings")
-        Sql.exec(c,"GRANT SELECT,UPDATE ON ch_users,ch_profile,ch_sources,ch_jobs TO pg_read_all_settings")
+        Sql.exec(c,"GRANT SELECT,UPDATE ON ch_users,ch_owner_targets,ch_sources,ch_jobs TO pg_read_all_settings")
+        Sql.exec(c,"GRANT SELECT ON ch_index_profiles,ch_embedding_spaces TO pg_read_all_settings")
         Sql.exec(c,"SET LOCAL ROLE pg_read_all_settings")
         List("ch_revisions","ch_revision_info","ch_messages","ch_generations","ch_chunks","ch_ingest_receipts","ch_mutations","ch_groups","ch_members").foreach { table =>
           assertEquals(Sql.one(c,"SELECT has_table_privilege(current_user,?,'SELECT')",table)(_.getBoolean(1)),Some(false))
@@ -407,7 +416,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
           }
         })
         assert(arrived.await(10,TimeUnit.SECONDS))
-        locked(db,"SELECT target FROM ch_profile FOR UPDATE NOWAIT")
+        locked(db,"SELECT profile FROM ch_owner_targets WHERE owner='a' FOR UPDATE NOWAIT")
         locked(db,"SELECT id FROM ch_sources WHERE id=? FOR UPDATE NOWAIT",id(3))
         db.transaction { c =>
           assertEquals(Sql.exec(c,"UPDATE ch_jobs SET state='Failed',error='lease-exhausted',lease_until=NULL WHERE id=? AND state='Running' AND attempts>=5",id(106)),1)
@@ -439,7 +448,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
         db.transaction { c =>
           Sql.exec(c,"UPDATE ch_sources SET revision=3 WHERE id=?",id(1))
           Sql.exec(c,"UPDATE ch_jobs SET fence=fence+1,state='Queued' WHERE id=?",id(101))
-          Sql.exec(c,"UPDATE ch_profile SET target='changed-during-preview'")
+          Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=epoch+1 WHERE owner='a'",nextTarget)
           ()
         }
         resume.countDown()

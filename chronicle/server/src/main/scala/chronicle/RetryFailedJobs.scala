@@ -30,10 +30,7 @@ object RetryFailedJobs {
     val locking=if(lock) " FOR SHARE" else ""
     Check(Sql.one(c,"SELECT 1 FROM ch_users WHERE id=? AND enabled"+locking,owner)(_ => true).contains(true),"unauthorized","owner disabled")
   }
-  private def target(c: Connection,lock: Boolean): String = {
-    val locking=if(lock) " FOR SHARE" else ""
-    Sql.one(c,"SELECT target FROM ch_profile WHERE singleton"+locking)(_.getString(1)).getOrElse(throw DomainError("internal","missing target profile"))
-  }
+  private def target(c: Connection,owner: String,lock: Boolean): String = OwnerTargets.read(c,owner,lock).profile
   private def each(c: Connection,sql: String,args: Sql.Param*)(f: ResultSet => Unit): Unit =
     Using.resource(c.prepareStatement(sql)) { p =>
       p.setFetchSize(fetchSize)
@@ -58,7 +55,7 @@ object RetryFailedJobs {
     text(owner)
     Check(!c.getAutoCommit && Set(Connection.TRANSACTION_REPEATABLE_READ,Connection.TRANSACTION_SERIALIZABLE).contains(c.getTransactionIsolation),"internal","retry preview requires a repeatable-read transaction")
     ownerEnabled(c,owner,false)
-    val profile=target(c,false)
+    val profile=target(c,owner,false)
     val totals=Sql.one(c,s"SELECT $aggregate FROM ($population) jobs",profile,owner)(counts).get
     val hash=selectionHash(c,owner,profile,s"SELECT j.id,j.fence $eligibleJobs ORDER BY j.id",owner,profile)
     RetryFailedPlan(profile,hash,totals)
@@ -70,7 +67,7 @@ object RetryFailedJobs {
     // Pin enabled ownership before profile/source/job locks so disabling cannot race the mutation.
     ownerEnabled(c,owner,true)
     Check(Sql.one(c,"SELECT has_database_privilege(current_user,current_database(),'TEMP')")(_.getBoolean(1)).contains(true),"unavailable","bulk retry requires database TEMP privilege")
-    val profile=target(c,true)
+    val profile=target(c,owner,true)
     each(c,"SELECT id FROM ch_sources WHERE owner=? AND NOT tombstone ORDER BY id FOR UPDATE",owner)(_ => ())
     // The caller must roll back failures; never issue cleanup SQL in a possibly aborted transaction.
     Sql.exec(c,"CREATE TEMP TABLE ch_retry_failed_selection(id uuid PRIMARY KEY,fence bigint NOT NULL) ON COMMIT DROP")

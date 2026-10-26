@@ -13,10 +13,10 @@ final class RetryFailedActionsTest extends munit.FunSuite {
   private final case class Context(config: Config,db: Database,archive: PostgresArchive,auth: Auth,app: Application,owner: Identity)
   private def database(f: Context => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val config=Fixtures.config(); val db=new Database(config); db.initialize()
+    val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations,ch_collector_progress CASCADE")
-      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
+      Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
       Sql.exec(c,"UPDATE ch_users SET enabled=true")
     }
     val archive=new PostgresArchive(db,config); val auth=new Auth(db,config)
@@ -32,7 +32,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
   private def preview(c: Context): RetryFailedPlan = call(c,c.owner,Operation.PreviewRetryFailed()).asInstanceOf[Result.RetryFailedPreview].result
   private def ingest(c: Context,owner: String,name: String): IngestReceipt = {
     val source=Fixtures.snapshot()
-    c.archive.ingest(owner,source.copy(source=source.source.copy(producerSessionId=name)),c.config.profile)
+    c.archive.ingest(owner,source.copy(source=source.source.copy(producerSessionId=name)))
   }
   private def fail(c: Context,id: UUID): Unit = c.db.transaction { connection =>
     Sql.exec(connection,"UPDATE ch_jobs SET state='Failed',attempts=5,fence=7,lease_until=now()+interval '60 seconds',error='model-http',completed_windows=3,total_windows=5 WHERE id=?",id)
@@ -92,7 +92,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     DriverManager.registerDriver(driver)
     try {
       val config=c.config.copy(jdbcUrl=prefix+c.config.jdbcUrl)
-      val activity=new PostgresActivity(new Database(config),Clock.systemUTC())
+      val activity=new PostgresActivity(new Database(config,IndexProfileCatalog.legacyOnly(config)),Clock.systemUTC())
       List(1,100).foreach { limit =>
         statements.set(0)
         assertEquals(activity.jobs("a",ActivityJobsQuery(None,ActivityJobScope.All,"synthetic",ActivityJobSort.Title,SortDirection.Asc,None,limit)).jobs.size,math.min(limit,3))
@@ -151,7 +151,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     DriverManager.registerDriver(driver)
     try {
       val config=c.config.copy(jdbcUrl=prefix+c.config.jdbcUrl)
-      val auth=new Auth(new Database(config),config)
+      val auth=new Auth(new Database(config,IndexProfileCatalog.legacyOnly(config)),config)
       val delayed=executor.submit(new Callable[Result] { def call(): Result = outcome(auth.mutate(c.owner,request)) })
       assert(entered.await(gateTimeoutSeconds,TimeUnit.SECONDS),"original reached pre-mutex dispatch gate")
       val second=ingest(c,"a","B"); fail(c,second.jobId)
@@ -159,7 +159,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
       assertEquals(rejected.failure.code,"conflict")
       assertEquals(fence(c,first.jobId),7L)
       val source=c.archive.headSnapshot("a",second.sessionId)
-      c.archive.ingest("a",source.copy(requestId=UUID.randomUUID(),expectedRevision=1),c.config.profile)
+      c.archive.ingest("a",source.copy(requestId=UUID.randomUUID(),expectedRevision=1))
       assertEquals(preview(c).selectionHash,plan.selectionHash,"membership returned A→AB→A with A fence unchanged")
       release.countDown()
       val late=delayed.get(gateTimeoutSeconds,TimeUnit.SECONDS)
@@ -203,7 +203,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     DriverManager.registerDriver(driver)
     try {
       val config=c.config.copy(jdbcUrl=prefix+c.config.jdbcUrl)
-      val auth=new Auth(new Database(config),config)
+      val auth=new Auth(new Database(config,IndexProfileCatalog.legacyOnly(config)),config)
       val result=auth.mutate(c.owner,request)
       assert(wrote.get()); assertEquals(result,Result.Error(Failure("conflict","retry selection changed; preview again")))
       assertEquals(fence(c,failed.jobId),7L); assertEquals(c.archive.statuses("a",0,100).jobs.head.state,JobState.Failed)
@@ -223,7 +223,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
       DriverManager.registerDriver(driver)
       try {
         val config=c.config.copy(jdbcUrl=prefix+c.config.jdbcUrl)
-        val auth=new Auth(new Database(config),config)
+        val auth=new Auth(new Database(config,IndexProfileCatalog.legacyOnly(config)),config)
         intercept[SQLException](auth.mutate(c.owner,request))
         assertEquals(receipts(c),0L); assertEquals(fence(c,failed.jobId),7L)
         assertEquals(c.archive.statuses("a",0,100).jobs.head.state,JobState.Failed)
@@ -253,7 +253,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
       Sql.exec(connection,s"REVOKE TEMP ON DATABASE ${quote(database)} FROM PUBLIC")
     }
     try {
-      val config=c.config.copy(databaseUser=role); val db=new Database(config); val auth=new Auth(db,config)
+      val config=c.config.copy(databaseUser=role); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); val auth=new Auth(db,config)
       assert(!db.transaction(connection => Sql.one(connection,"SELECT has_database_privilege(current_user,current_database(),'TEMP')")(_.getBoolean(1)).get))
       assertEquals(auth.mutate(c.owner,request),Result.RetryFailed(result))
       assertEquals(intercept[DomainError](auth.mutate(c.owner,next)).code,"unavailable")
@@ -266,11 +266,11 @@ final class RetryFailedActionsTest extends munit.FunSuite {
 
   test("Behavioral-Blackbox GoodCommunication specified: Activity title references retain job-revision keys across HEAD changes and reject invalid anchors") { database { c =>
     val source=Fixtures.snapshot(); val original=source.copy(metadata=source.metadata.copy(title="a"))
-    val first=c.archive.ingest("a",original,c.config.profile)
-    val secondSource=Fixtures.snapshot(); val second=c.archive.ingest("a",secondSource.copy(metadata=secondSource.metadata.copy(title="b")),c.config.profile)
+    val first=c.archive.ingest("a",original)
+    val secondSource=Fixtures.snapshot(); val second=c.archive.ingest("a",secondSource.copy(metadata=secondSource.metadata.copy(title="b")))
     val query=ActivityJobsQuery(None,ActivityJobScope.Current,"",ActivityJobSort.Title,SortDirection.Asc,None,1)
     val cursor=call(c,c.owner,Operation.ActivityJobs(query)).asInstanceOf[Result.ActivityJobs].result.nextCursor.get
-    c.archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1,metadata=original.metadata.copy(title="z")),c.config.profile)
+    c.archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1,metadata=original.metadata.copy(title="z")))
     def next(value: String): ActivityJobsResult = call(c,c.owner,Operation.ActivityJobs(query.copy(cursor=Some(value)))).asInstanceOf[Result.ActivityJobs].result
     assertEquals(next(cursor).jobs.head.job.sessionId,second.sessionId)
     val fields=Wire.parse(new String(Base64.getUrlDecoder.decode(cursor),java.nio.charset.StandardCharsets.UTF_8)).asArray.get
@@ -279,7 +279,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     List(anchor.copy(revision=2),anchor.copy(keyHash="0"*64)).foreach { changed =>
       assertEquals(intercept[DomainError](next(encoded(fields.updated(position,RevisionSortAnchor.encode(changed))))).code,"conflict")
     }
-    val foreignSource=Fixtures.snapshot(); val foreign=c.archive.ingest("b",foreignSource.copy(metadata=foreignSource.metadata.copy(title="a")),c.config.profile)
+    val foreignSource=Fixtures.snapshot(); val foreign=c.archive.ingest("b",foreignSource.copy(metadata=foreignSource.metadata.copy(title="a")))
     assertEquals(intercept[DomainError](next(encoded(fields.updated(fields.size-1,io.circe.Json.fromString(foreign.jobId.toString))))).code,"conflict")
     assertEquals(intercept[DomainError](next(encoded(fields.updated(position,io.circe.Json.fromString("not-an-anchor"))))).code,"invalid")
     call(c,c.owner,Operation.Purge(first.sessionId))
@@ -298,7 +298,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     test(s"Behavioral-Blackbox GoodCommunication regression: actual valid ${field.sort} ingestion yields an Archive continuation within the WebSocket frame bound") { database { c =>
       (1 to 2).foreach { n =>
         val source=Fixtures.snapshot(); val metadata=field.update(source.metadata,"x"*50000+n)
-        c.archive.ingest("a",source.copy(metadata=metadata),c.config.profile)
+        c.archive.ingest("a",source.copy(metadata=metadata))
       }
       val query=ArchiveQuery("mode:lexical",field.sort,SortDirection.Asc,None,1)
       val first=call(c,c.owner,Operation.Archive(query)).asInstanceOf[Result.Archive].result
@@ -314,7 +314,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
   test("Behavioral-Blackbox GoodCommunication regression: actual valid long Title ingestion yields an Activity continuation within the WebSocket frame bound") { database { c =>
     (1 to 2).foreach { n =>
       val source=Fixtures.snapshot()
-      c.archive.ingest("a",source.copy(metadata=source.metadata.copy(title="x"*50000+n)),c.config.profile)
+      c.archive.ingest("a",source.copy(metadata=source.metadata.copy(title="x"*50000+n)))
     }
     val query=ActivityJobsQuery(None,ActivityJobScope.All,"",ActivityJobSort.Title,SortDirection.Asc,None,1)
     val first=call(c,c.owner,Operation.ActivityJobs(query)).asInstanceOf[Result.ActivityJobs].result
@@ -331,12 +331,12 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     val owner="x"*50000
     val configured=c.config.copy(users=c.config.users:+UserConfig(owner,"long-owner",c.config.users.head.passwordHashFile,true))
     configured.validate()
-    val db=new Database(configured); db.initialize()
+    val db=new Database(configured,IndexProfileCatalog.legacyOnly(configured)); db.initialize()
     val auth=new Auth(db,configured)
     val (_,cookie)=auth.login(LoginRequest("long-owner","synthetic")); val identity=auth.browser(cookie)
     assertEquals(identity.user.id.length,owner.length)
     val archive=new PostgresArchive(db,configured)
-    (1 to 2).foreach { n => val source=Fixtures.snapshot(); archive.ingest(owner,source.copy(metadata=source.metadata.copy(title=s"bounded-$n")),configured.profile) }
+    (1 to 2).foreach { n => val source=Fixtures.snapshot(); archive.ingest(owner,source.copy(metadata=source.metadata.copy(title=s"bounded-$n"))) }
     val activity=new PostgresActivity(db,Clock.systemUTC())
     val jobQuery=ActivityJobsQuery(None,ActivityJobScope.All,"",ActivityJobSort.JobId,SortDirection.Asc,None,1)
     val jobs=activity.jobs(owner,jobQuery)
@@ -355,7 +355,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
   test("Behavioral-Blackbox GoodCommunication regression: admitted mutable failure reasons use bounded guarded cursor positions") { database { c =>
     (1 to 2).foreach { n =>
       ingest(c,"a",s"reason-$n")
-      (1 to 5).foreach { _ => val claim=c.archive.claim(c.config.profile,300).get; c.archive.fail(claim,"x"*50000+n) }
+      (1 to 5).foreach { _ => val claim=c.archive.claim(Set(c.config.profile),ClaimScope.AllOwners,300).get; c.archive.fail(claim,"x"*50000+n) }
     }
     val query=ActivityJobsQuery(None,ActivityJobScope.All,"",ActivityJobSort.Reason,SortDirection.Asc,None,1)
     val first=call(c,c.owner,Operation.ActivityJobs(query)).asInstanceOf[Result.ActivityJobs].result

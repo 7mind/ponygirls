@@ -22,7 +22,7 @@ class NulIngestionTest extends munit.FunSuite {
       Injector().produceGet[RuntimeServices](module).toEffect[IO].use { s =>
         IO.blocking {
           s.database.initialize()
-          s.database.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile) })
+          s.database.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
         } *> Semaphore[IO](2).flatMap { gate =>
           EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => s.http.routes(ws,gate).orNotFound).build.use { server =>
             val base=Fixtures.snapshot()
@@ -58,7 +58,7 @@ class NulIngestionTest extends munit.FunSuite {
                   def query(text: String)=IO.pure(List(1.0,0.0,0.0))
                   def documents(text: List[String])=IO { assert(!text.exists(_.contains('\u0000'))); text.map(_ => List(1.0,0.0,0.0)) }
                 }
-                val worked=new Worker(archive,annotator,embedder,s.database,c,logstage.IzLogger()).once.unsafeRunSync()
+                val worked=new Worker(archive,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync()
                 assert(worked)
                 assertEquals(archive.statuses("a",0,100).jobs.head.state,JobState.Complete)
                 val chunks=archive.pageChunks("a",receipt.sessionId,0,100,None).chunks
@@ -67,7 +67,7 @@ class NulIngestionTest extends munit.FunSuite {
                 val result=new PostgresSearch(s.database,archive,c).search("a",SearchQuery("projection",SearchMode.Lexical,SearchFilter(None,None,None,None,Nil),20,0),None)
                 assertEquals(result.total,1); assert(result.hits.forall(_.score.isFinite))
                 assertEquals(archive.raw("a",receipt.sessionId,None).files,request.files)
-                assertEquals(archive.ingest("a",request,c.profile),receipt)
+                assertEquals(archive.ingest("a",request),receipt)
               }
               invalid <- post(request.copy(requestId=UUID.randomUUID(),source=request.source.copy(discoveryRootId="bad\u0000id")),token)
               _ <- IO { assertEquals(invalid._1,Status.BadRequest); assertEquals(Wire.decode(Failure.codecJson,Wire.parse(invalid._2)).code,"invalid") }

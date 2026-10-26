@@ -130,13 +130,19 @@ final case class Identity(user: UserInfo, browser: Boolean, credentialHash: Stri
   def requireScope(s: Scope): Unit = Check(user.scopes.contains(s), "forbidden", "scope required")
   def requireBrowser(): Unit = Check(browser, "forbidden", "browser session required")
 }
-final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest)
+final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long)
 final case class IndexedChunk(chunk: Chunk, vector: List[Double])
+enum ClaimScope {
+  case AllOwners
+  case Owner(owner: String)
+}
 trait SessionArchive {
-  def ingest(owner: String, request: IngestRequest, profile: String): IngestReceipt
+  def knownProfiles: Set[String]
+  def ingest(owner: String, request: IngestRequest): IngestReceipt
   def session(reader: String, id: UUID): SessionInfo
   def headSnapshot(reader: String, id: UUID): IngestRequest
-  def claim(profile: String, leaseSeconds: Int): Option[Claim]
+  def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int): Option[Claim]
+  def renew(claim: Claim, leaseSeconds: Int): Boolean
   def progress(claim: Claim, completedWindows: Int, totalWindows: Int): Boolean
   def publish(claim: Claim, chunks: List[IndexedChunk]): Boolean
   def fail(claim: Claim, code: String): Unit

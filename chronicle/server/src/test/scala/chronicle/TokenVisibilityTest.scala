@@ -14,7 +14,7 @@ class TokenVisibilityTest extends munit.FunSuite {
   }
   def database(f: (Config,Database,Auth,Identity) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped") }
-    val c=Fixtures.config(); val db=new Database(c); db.initialize()
+    val c=Fixtures.config(); val db=new Database(c,IndexProfileCatalog.legacyOnly(c)); db.initialize()
     db.transaction(x => { Sql.exec(x,"TRUNCATE ch_tokens,ch_mutations,ch_sessions CASCADE"); () })
     val auth=new Auth(db,c); val (_,cookie)=auth.login(LoginRequest("a","synthetic"))
     f(c,db,auth,auth.browser(cookie))
@@ -27,7 +27,7 @@ class TokenVisibilityTest extends munit.FunSuite {
   test("regression: revoked history must not hide active issued or configured token metadata") { database { (c,db,auth,owner) =>
     (1 to 100).foreach(n => issued(db,n,true))
     val static=configured(UUID.fromString("7fffffff-ffff-4fff-bfff-ffffffffffff"))
-    new Database(c.copy(staticTokens=List(static))).initialize()
+    new Database(c.copy(staticTokens=List(static)),IndexProfileCatalog.legacyOnly(c.copy(staticTokens=List(static)))).initialize()
     val active=TokenInfo(UUID.fromString("7fffffff-ffff-4fff-bfff-fffffffffffe"),"active",List(Scope.Read),Instant.now().toString,false)
     db.transaction(x => Sql.exec(x,"INSERT INTO ch_tokens(id,owner,hash,info) VALUES(?,?,?,?::jsonb)",active.id,"a",Wire.hash("synthetic-active"),Wire.encode(TokenInfo.codecJson,active).noSpaces))
     val listed=auth.tokens(owner).tokens
@@ -45,9 +45,9 @@ class TokenVisibilityTest extends munit.FunSuite {
   test("specified: reconciliation rejects configured plus active issued token overflow transactionally") { database { (c,db,auth,owner) =>
     (1 to 99).foreach(n => issued(db,n,false))
     val first=configured(UUID.randomUUID()); val second=configured(UUID.randomUUID())
-    assertEquals(intercept[DomainError](new Database(c.copy(staticTokens=List(first,second))).initialize()).code,"config")
+    assertEquals(intercept[DomainError](new Database(c.copy(staticTokens=List(first,second)),IndexProfileCatalog.legacyOnly(c.copy(staticTokens=List(first,second)))).initialize()).code,"config")
     assertEquals(auth.tokens(owner).tokens.size,99)
-    new Database(c.copy(staticTokens=List(first))).initialize()
+    new Database(c.copy(staticTokens=List(first)),IndexProfileCatalog.legacyOnly(c.copy(staticTokens=List(first)))).initialize()
     assertEquals(auth.tokens(owner).tokens.count(t => !t.info.revoked),100)
     assertEquals(intercept[DomainError](auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.MintToken("overflow",List(Scope.Read))))).code,"invalid")
   }}
