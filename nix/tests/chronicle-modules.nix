@@ -65,6 +65,9 @@ let
   enabledServer = server serverConfig;
   defaultPackageServer = server { smind.services.chronicle = builtins.removeAttrs serverConfig.smind.services.chronicle [ "package" ]; };
   glmServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.annotation.requestPolicy = "glm-max-reasoning"; });
+  capacityServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing = { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; }; });
+  invalidCapacity = field: value: server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing.${field} = value; });
+  rejectedCapacity = field: value: !(builtins.tryEval (builtins.getAttr field (invalidCapacity field value).smind.services.chronicle.indexing)).success;
   disabledServer = server { };
   sendDimensions = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.embedding.sendDimensions = true; });
   noSsd = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.database.ssdTuning = false; });
@@ -123,6 +126,14 @@ assert defaultPackageServer.smind.services.chronicle.package.toolchain.nativeIma
 assert builtins.isString defaultPackageServer.smind.services.chronicle.package.offlineAssemblyCheck.drvPath;
 assert enabledServer.systemd.services.chronicle.serviceConfig.User == "chronicle";
 assert enabledServer.systemd.services.chronicle.serviceConfig.TimeoutStopSec == 60;
+assert enabledServer.smind.services.chronicle.indexing == { annotationSessions = 4; embeddingRequests = 8; embeddingBatchSize = 16; };
+assert capacityServer.smind.services.chronicle.indexing == { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; };
+assert rejectedCapacity "annotationSessions" 0;
+assert rejectedCapacity "annotationSessions" 9;
+assert rejectedCapacity "embeddingRequests" 0;
+assert rejectedCapacity "embeddingRequests" 33;
+assert rejectedCapacity "embeddingBatchSize" 0;
+assert rejectedCapacity "embeddingBatchSize" 17;
 assert builtins.elem "chronicle-database.service" enabledServer.systemd.services.chronicle.requires;
 assert builtins.elem "postgresql-setup.service" enabledServer.systemd.services.chronicle-database.after;
 assert builtins.elem "postgresql-setup.service" enabledServer.systemd.services.chronicle-database.requires;
@@ -148,6 +159,8 @@ pkgs.runCommandLocal "chronicle-modules-test" { nativeBuildInputs = [ pkgs.jq ];
   test -n '${enabledServer.systemd.services.chronicle.serviceConfig.ExecStart}'
   jq -e '.annotation.requestPolicy == "strict-json-schema" and (.embedding | has("requestPolicy") | not)' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.annotation.requestPolicy == "glm-max-reasoning"' ${lib.last (lib.splitString " " glmServer.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.indexing == {annotationSessions:4,embeddingRequests:8,embeddingBatchSize:16}' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.indexing == {annotationSessions:8,embeddingRequests:12,embeddingBatchSize:3}' ${lib.last (lib.splitString " " capacityServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.embedding.sendDimensions == false' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.embedding.sendDimensions == true' ${lib.last (lib.splitString " " sendDimensions.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.allowInsecureHttp == false and .secureCookies == true' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}

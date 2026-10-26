@@ -36,6 +36,7 @@ let
       inherit (token) id userId name scopes;
       tokenFile = "${credentialDir}/${staticTokenName token.id}";
     }) cfg.staticTokens;
+    inherit (cfg) indexing;
     inherit (cfg.limits) maxBodyBytes maxFiles maxFileBytes maxMessages sessionTtlSeconds;
     annotation = endpointJson "annotation" cfg.annotation // { inherit (cfg.annotation) requestPolicy; };
     embedding = endpointJson "embedding" cfg.embedding // {
@@ -97,6 +98,11 @@ in
           tokenFile = lib.mkOption { type = lib.types.path; description = "Private runtime file containing a random strong bearer token, never a Nix store file."; };
         };
       });
+    };
+    indexing = {
+      annotationSessions = lib.mkOption { type = lib.types.ints.between 1 8; default = 4; description = "Concurrent indexing sessions and maximum concurrent annotation-model requests (including MCP testing). Execution capacity does not change semantic profile identity."; };
+      embeddingRequests = lib.mkOption { type = lib.types.ints.between 1 32; default = 8; description = "Shared concurrent embedding requests across indexing and search, independent of annotation-session admission."; };
+      embeddingBatchSize = lib.mkOption { type = lib.types.ints.between 1 16; default = 16; description = "Maximum source pieces in each indexing embedding request."; };
     };
     annotation = lib.mkOption { type = lib.types.submodule { options = endpointOptions // {
       requestPolicy = lib.mkOption { type = lib.types.enum [ "strict-json-schema" "glm-max-reasoning" ]; description = "Required strict structured-output policy; glm-max-reasoning additionally enables the GLM-specific maximum reasoning template extension. Changes require explicit maintenance reindex."; };
