@@ -1,6 +1,6 @@
 package chronicle
 import chronicle.api.*
-import cats.effect.{IO,Resource}
+import cats.effect.{IO,Ref,Resource}
 import cats.syntax.all.*
 import org.http4s.{Request,Method,Uri,Header}
 import org.http4s.client.Client
@@ -27,25 +27,37 @@ object Fragments {
     result.result()
   }
 }
-trait Annotator { def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] }
-trait Embedder { def documents(text: List[String]): IO[List[List[Double]]]; def query(text: String): IO[List[Double]] }
+trait Annotator { def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] }
+trait Embedder { def documents(owner: String,text: List[String]): IO[List[List[Double]]]; def query(owner: String,text: String): IO[List[Double]] }
 object ModelHttp {
   def client(config: Config): Resource[IO,Client[IO]] =
     EmberClientBuilder.default[IO].withTimeout(transportTimeout(config)).withIdleConnectionTime(transportTimeout(config)).withMaxResponseHeaderSize(16384).build
   def transportTimeout(config: Config): FiniteDuration = config.annotation.timeoutSeconds.max(config.embedding.timeoutSeconds).seconds
 }
-final class ModelHttp(client: Client[IO]) {
-  def post(endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json): IO[Json] = IO.defer {
+final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: ModelAdmission) {
+  def post(context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json): IO[Json] = IO.defer {
     val uri = Uri.fromString(endpoint).fold(_ => throw DomainError("config","invalid model endpoint"),identity)
     val credential = Config.credential(credentialFile)
     val base = Request[IO](Method.POST,uri).withEntity(payload.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"))
     val req = if(credential.isEmpty) base else base.putHeaders(Header.Raw(CIString("Authorization"),s"Bearer $credential"))
-    client.run(req).use { response =>
-      if(!response.status.isSuccess) IO.raiseError(DomainError("model-http",s"model returned HTTP ${response.status.code}"))
-      else response.body.take(maxBytes.toLong+1).compile.to(Array).flatMap { bytes =>
-        IO { Check(bytes.length<=maxBytes,"model-output","model response too large"); ModelOutput.parse(new String(bytes,UTF_8)) }
+    admission.request(context.purpose).use { _ => Ref.of[IO,ProviderUsage](ProviderUsage.unknown).flatMap { usage =>
+      Resource.makeCase(telemetry.begin(context)) { (ticket,exit) =>
+        val outcome=exit match {
+          case Resource.ExitCase.Succeeded => ModelCallOutcome.Complete
+          case Resource.ExitCase.Errored(_) => ModelCallOutcome.Failed
+          case Resource.ExitCase.Canceled => ModelCallOutcome.Cancelled
+        }
+        usage.get.flatMap(value => telemetry.finish(ticket,outcome,value))
+      }.use { _ =>
+        client.run(req).use { response =>
+          if(!response.status.isSuccess) IO.raiseError(DomainError("model-http",s"model returned HTTP ${response.status.code}"))
+          else response.body.take(maxBytes.toLong+1).compile.to(Array).flatMap { bytes => IO.uncancelable { _ =>
+            IO { Check(bytes.length<=maxBytes,"model-output","model response too large"); ModelOutput.parse(new String(bytes,UTF_8)) }
+              .flatTap(json => usage.set(ProviderUsage.parse(json,context.purpose)))
+          }}
+        }.timeoutTo(timeout.seconds,IO.raiseError(DomainError("model-timeout","model deadline exceeded")))
       }
-    }.timeoutTo(timeout.seconds,IO.raiseError(DomainError("model-timeout","model deadline exceeded")))
+    }}
   }
 }
 object ModelOutput {
@@ -107,7 +119,7 @@ object AnnotationPartition {
   }
 }
 final class OpenAIAnnotator(http: ModelHttp,config: Config) extends Annotator {
-  def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = {
+  def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = {
     val cfg = config.annotation
     val roles = messages.map(m => m.id -> m.role).toMap
     val source = Json.obj("fragments"->Json.arr(window.zipWithIndex.map { case (chunk,index) =>
@@ -120,7 +132,7 @@ final class OpenAIAnnotator(http: ModelHttp,config: Config) extends Annotator {
       case AnnotationRequestPolicy.StrictJsonSchema => payload
       case AnnotationRequestPolicy.GlmMaxReasoning => payload.mapObject(_.add("chat_template_kwargs",Json.obj("reasoning_effort"->Json.fromString("max"))))
     }
-    http.post(cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,request).map { response =>
+    http.post(ModelCallContext(owner,ModelWorkload.IndexAnnotation),cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,request).map { response =>
       val choices=response.hcursor.get[List[Json]]("choices").fold(_ => throw DomainError("model-output","missing annotation choices"),identity)
       Check(choices.size==1,"model-output","invalid annotation choice count")
       val choice=choices.head.hcursor
@@ -136,15 +148,15 @@ final class OpenAIAnnotator(http: ModelHttp,config: Config) extends Annotator {
   }
 }
 final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
-  def documents(text: List[String]): IO[List[List[Double]]] = embed(text.map(config.embedding.documentPrefix+_))
-  def query(text: String): IO[List[Double]] = embed(List(config.embedding.queryPrefix+text)).map(_.head)
-  private def embed(text: List[String]): IO[List[List[Double]]] = {
+  def documents(owner: String,text: List[String]): IO[List[List[Double]]] = embed(ModelCallContext(owner,ModelWorkload.IndexEmbedding),text.map(config.embedding.documentPrefix+_))
+  def query(owner: String,text: String): IO[List[Double]] = embed(ModelCallContext(owner,ModelWorkload.QueryEmbedding),List(config.embedding.queryPrefix+text)).map(_.head)
+  private def embed(context: ModelCallContext,text: List[String]): IO[List[List[Double]]] = {
     val cfg = config.embedding
     Check(text.forall(_.getBytes(UTF_8).length <= 16384),"invalid","embedding input bound including prefix")
     Check(text.nonEmpty && text.size<=16,"invalid","embedding batch bound")
     val fields=List("model"->Json.fromString(cfg.model),"input"->Json.arr(text.map(Json.fromString)*),"encoding_format"->Json.fromString("float"))
     val payload=Json.obj((fields++(if(cfg.sendDimensions) List("dimensions"->Json.fromInt(cfg.dimensions)) else Nil))*)
-    http.post(cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,payload).map { r =>
+    http.post(context,cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,payload).map { r =>
       val data = r.hcursor.get[List[Json]]("data").fold(_ => throw DomainError("model-output","missing embedding data"),identity)
       Check(data.size==text.size,"model-output","embedding count mismatch")
       val indexed = data.map { j =>
@@ -158,44 +170,103 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
     }
   }
 }
-final class Worker(archive: SessionArchive,annotator: Annotator,embedder: Embedder,config: Config,logger: logstage.IzLogger) {
+final class Worker(archive: SessionArchive,annotator: Annotator,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger) {
   private val annotationAttemptLimit = 5
   private val truncatedAnnotationCode = "model-output/truncated"
+  private val leaseSeconds = 300
   private def failureCode(error: Throwable): String = error match { case d: DomainError => d.code; case _ => "worker-fault" }
   private def failureOrigin(error: Throwable): String = error.getStackTrace.headOption.map(frame => s"${frame.getClassName}.${frame.getMethodName}:${frame.getLineNumber}").getOrElse("unavailable")
-  def once: IO[Boolean] = IO.blocking(archive.claim(archive.knownProfiles,ClaimScope.AllOwners,300)).flatMap {
-    case None => IO.pure(false)
-    case Some(claim) =>
-      val windows = Fragments.split(claim.snapshot.messages).map(_.copy(sessionId=claim.sessionId)).grouped(AnnotationPartition.windowFragments).toList
-      def report(completed: Int): IO[Unit] = IO.blocking {
-        Check(archive.progress(claim,completed,windows.size),"stale-claim","indexing claim is no longer current")
+  private final class Windows(claim: Claim,total: Int) {
+    def report(completed: Int): IO[Unit] = IO.blocking {
+      Check(archive.progress(claim,completed,total),"stale-claim","indexing claim is no longer current")
+    }
+    def failed(error: Throwable,index: Int,stage: String,attempt: Int): IO[Nothing] = {
+      val code=failureCode(error)
+      val exceptionClass=error.getClass.getName
+      val origin=failureOrigin(error)
+      IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=$stage annotationAttempt=$attempt annotationAttemptLimit=$annotationAttemptLimit code=$code exceptionClass=$exceptionClass origin=$origin")) *> IO.raiseError(error)
+    }
+    def annotate[A](run: => IO[A],index: Int,attempt: Int): IO[(A,Int)] = IO.defer(run).map(value => (value,attempt)).handleErrorWith {
+      case error: DomainError if error.code==truncatedAnnotationCode =>
+        val retry=attempt<annotationAttemptLimit
+        val outcome=if(retry) "retry" else "exhaust"
+        IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total attempt=$attempt attemptLimit=$annotationAttemptLimit code=$truncatedAnnotationCode outcome=$outcome")) *>
+          (if(retry) annotate(run,index,attempt+1) else failed(error,index,"annotation",attempt))
+      case error => failed(error,index,"annotation",attempt)
+    }
+    def embed(chunks: List[Chunk],index: Int,attempt: Int): IO[List[IndexedChunk]] =
+      chunks.grouped(config.indexing.embeddingBatchSize).toList.traverse { batch =>
+        IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map { vectors =>
+          Check(vectors.size==batch.size,"model-output","embedding count mismatch")
+          batch.zip(vectors).map(IndexedChunk.apply.tupled)
+        }
+      }.map(_.flatten).handleErrorWith(error => failed(error,index,"embedding",attempt))
+  }
+  private def legacy(claim: Claim): IO[Unit] = IO.defer {
+    val batches=Fragments.split(claim.snapshot.messages).map(_.copy(sessionId=claim.sessionId)).grouped(AnnotationPartition.windowFragments).toList
+    val windows=new Windows(claim,batches.size)
+    (windows.report(0) *> batches.zipWithIndex.traverse { (batch,index) =>
+      windows.annotate(annotator.annotate(claim.owner,batch,claim.snapshot.messages),index,1).flatMap { (chunks,attempt) =>
+        windows.embed(chunks,index,attempt)
+      }.flatTap(_ => windows.report(index+1))
+    }).flatMap(indexed => IO.blocking(Check(archive.publish(claim,indexed.flatten),"stale-claim","indexing claim is no longer current")))
+  }
+  private def count(source: ProblemPassages.Source): Int = {
+    var cursor=ProblemPassages.SourceCursor.start
+    var total=0
+    var next=source.next(cursor)
+    while(next.nonEmpty) {
+      Check(total<Int.MaxValue,"internal","source window count overflow")
+      total+=1; cursor=next.get.next; next=source.next(cursor)
+    }
+    total
+  }
+  private def passages(claim: Claim): IO[Unit] = IO.blocking {
+    val source=ProblemPassages.Source(claim.snapshot.messages)
+    (source,count(source))
+  }.flatMap { (source,total) =>
+    val windows=new Windows(claim,total)
+    def loop(state: ProblemPassages.State,publication: ProblemsPublication.Builder,index: Int): IO[Unit] = IO.defer {
+      source.next(state.nextSource) match {
+        case None => IO.blocking {
+          Check(index==total,"internal","source window count changed")
+          val finished=ProblemPassages.finish(state,source)
+          Check(archive.publishProblems(claim,publication.append(finished,Nil).result),"stale-claim","indexing claim is no longer current")
+        }
+        case Some(window) =>
+          windows.annotate(problemAnnotator.annotate(claim.owner,window,state.carry).flatMap(decision => IO(ProblemPassages.accept(state,window,decision))),index,1).flatMap { (delta,attempt) =>
+            windows.embed(delta.pieces.map(_.chunk).toList,index,attempt).flatMap { indexed =>
+              val next=publication.append(delta,indexed)
+              windows.report(index+1) *> loop(delta.state,next,index+1)
+            }
+          }
       }
-      def windowFailure(error: Throwable,index: Int,stage: String,attempt: Int): IO[Nothing] = {
+    }
+    windows.report(0) *> loop(ProblemPassages.State.start(claim.sessionId,UUID.randomUUID()),ProblemsPublication.empty,0)
+  }
+  private def process(claim: Claim): IO[Unit] = {
+    val work=IO.defer { profiles.resolve(claim.profile).policy match {
+      case IndexPolicy.LegacyV4 => legacy(claim)
+      case IndexPolicy.ContiguousPassagesV1 => passages(claim)
+    }}
+    val renew=(IO.sleep(30.seconds) *> IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current"))).foreverM
+    IO.race(work,renew).void.handleErrorWith {
+      case error: DomainError if Set("model-telemetry-invariant","internal","config").contains(error.code) => IO.raiseError(error)
+      case error =>
         val code=failureCode(error)
         val exceptionClass=error.getClass.getName
         val origin=failureOrigin(error)
-        IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=${windows.size} stage=$stage annotationAttempt=$attempt annotationAttemptLimit=$annotationAttemptLimit code=$code exceptionClass=$exceptionClass origin=$origin")) *> IO.raiseError(error)
-      }
-      def annotate(batch: List[Chunk],index: Int,attempt: Int): IO[(List[Chunk],Int)] = IO.defer(annotator.annotate(batch,claim.snapshot.messages)).map(chunks => (chunks,attempt)).handleErrorWith {
-        case error: DomainError if error.code==truncatedAnnotationCode =>
-          val retry = attempt<annotationAttemptLimit
-          val outcome = if(retry) "retry" else "exhaust"
-          IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=${windows.size} attempt=$attempt attemptLimit=$annotationAttemptLimit code=$truncatedAnnotationCode outcome=$outcome")) *>
-            (if(retry) annotate(batch,index,attempt+1) else windowFailure(error,index,"annotation",attempt))
-        case error => windowFailure(error,index,"annotation",attempt)
-      }
-      val work = (report(0) *> windows.zipWithIndex.traverse { case (batch,index) =>
-        annotate(batch,index,1).flatMap { case (chunks,attempt) =>
-          IO.defer(embedder.documents(chunks.map(_.text))).map(vectors => chunks.zip(vectors).map(IndexedChunk.apply.tupled)).handleErrorWith(error => windowFailure(error,index,"embedding",attempt))
-        }.flatTap(_ => report(index+1))
-      }).flatMap(x => IO.blocking(archive.publish(claim,x.flatten))).void
-      val renew = (IO.sleep(30.seconds) *> IO.blocking { Check(archive.renew(claim,300),"stale-claim","indexing claim is no longer current") }).foreverM
-      IO.race(work,renew).void.handleErrorWith { e =>
-        val code = failureCode(e)
-        val exceptionClass=e.getClass.getName
-        val origin=failureOrigin(e)
         IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass origin=$origin")) *> IO.blocking(archive.fail(claim,code)) *> IO.sleep(2.seconds)
-      }.as(true)
+    }
   }
-  def run: IO[Nothing] = (once.flatMap(found => if(found) IO.unit else IO.sleep(1.second))).foreverM
+  def once: IO[Boolean] = admission.annotationSession.use { _ =>
+    IO.blocking(archive.claim(profiles.knownProfiles,ClaimScope.AllOwners,leaseSeconds)).flatMap {
+      case None => IO.pure(false)
+      case Some(claim) => process(claim).as(true)
+    }
+  }
+  def run: IO[Nothing] = {
+    val lane: IO[Nothing]=(once.flatMap(found => if(found) IO.unit else IO.sleep(1.second))).foreverM
+    List.fill(config.indexing.annotationSessions)(lane).parSequence.map(_.head)
+  }
 }

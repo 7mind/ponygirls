@@ -15,13 +15,13 @@ class ModelHttpTest extends munit.FunSuite {
     (for {
       server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpApp(app).build
       client <- ModelHttp.client(Fixtures.config())
-    } yield (server,client)).use { case (server,client) => test(new ModelHttp(client),s"http://127.0.0.1:${server.address.getPort}/v1/operation") }.unsafeRunSync()
+    } yield (server,client)).use { case (server,client) => test(ModelFixtures.http(client,Fixtures.config()),s"http://127.0.0.1:${server.address.getPort}/v1/operation") }.unsafeRunSync()
   }
   test("BG-GoodCommunication: OpenAI annotations partition valid source window") {
     val reply="""{"choices":[{"finish_reason":"stop","message":{"content":"{\"chunks\":[{\"first\":0,\"last\":1,\"summary\":\"both\",\"tags\":[\"synthetic\"]}]}"}}]}"""
     simulator(Status.Ok,reply,(http,url) => {
       val c=Fixtures.config(); val messages=List(Message("u",None,"user","first",None,0),Message("a",Some("u"),"assistant","second",None,1))
-      new OpenAIAnnotator(http,c.copy(annotation=c.annotation.copy(endpoint=url))).annotate(Fragments.split(messages),messages).map { chunks => assertEquals(chunks.size,1); assertEquals(chunks.head.text,"first\nsecond") }
+      new OpenAIAnnotator(http,c.copy(annotation=c.annotation.copy(endpoint=url))).annotate("a",Fragments.split(messages),messages).map { chunks => assertEquals(chunks.size,1); assertEquals(chunks.head.text,"first\nsecond") }
     })
   }
   test("BG-GoodCommunication regression: annotation envelope exposes fragment indices without competing byte offsets") {
@@ -35,8 +35,8 @@ class ModelHttpTest extends munit.FunSuite {
       assertEquals(source.map(_.hcursor.get[Int]("index").toOption.get),List(0,1))
       Response[IO](Status.Ok).withEntity(reply)
     }}
-    val http=new ModelHttp(org.http4s.client.Client.fromHttpApp(endpoint))
-    new OpenAIAnnotator(http,Fixtures.config()).annotate(fragments,messages).map { chunks =>
+    val http=ModelFixtures.http(org.http4s.client.Client.fromHttpApp(endpoint),Fixtures.config())
+    new OpenAIAnnotator(http,Fixtures.config()).annotate("a",fragments,messages).map { chunks =>
       assertEquals(chunks.head.text,"first🙂\nsecondé")
       assertEquals(chunks.head.spans,fragments.flatMap(_.spans))
     }.unsafeRunSync()
@@ -51,7 +51,7 @@ class ModelHttpTest extends munit.FunSuite {
       """{"data":[{"index":0,"embedding":[null,0,0]}]}""" -> false
     )
     replies.foreach { case (response,valid) => simulator(Status.Ok,response,(http,url) => {
-      val c=Fixtures.config(); new OpenAIEmbedder(http,c.copy(embedding=c.embedding.copy(endpoint=url))).query("synthetic").attempt.map(r => assertEquals(r.isRight,valid))
+      val c=Fixtures.config(); new OpenAIEmbedder(http,c.copy(embedding=c.embedding.copy(endpoint=url))).query("a","synthetic").attempt.map(r => assertEquals(r.isRight,valid))
     }) }
   }
   test("Blackbox-GoodCommunication regression: fixed-dimension endpoints reject truncation parameters; dimensional request is explicit opt-in") {
@@ -69,7 +69,7 @@ class ModelHttpTest extends munit.FunSuite {
         client <- ModelHttp.client(Fixtures.config())
       } yield (server,client)).use { case (server,client) =>
         val original=Fixtures.config(); val config=original.copy(embedding=original.embedding.copy(endpoint=s"http://127.0.0.1:${server.address.getPort}/embedding",sendDimensions=sendDimensions))
-        new OpenAIEmbedder(new ModelHttp(client),config).query("synthetic fixed-dimension request").map { values => assertEquals(values,List(1.0,0.0,0.0)); assertEquals(requests.get(),1) }
+        new OpenAIEmbedder(ModelFixtures.http(client,Fixtures.config()),config).query("a","synthetic fixed-dimension request").map { values => assertEquals(values,List(1.0,0.0,0.0)); assertEquals(requests.get(),1) }
       }.unsafeRunSync()
     }
   }
@@ -84,7 +84,7 @@ class ModelHttpTest extends munit.FunSuite {
   }
   test("BG-GoodCommunication: HTTP429 malformed JSON and bounded response fail observably") {
     List((Status.TooManyRequests,"{}",65536),(Status.Ok,"not-json",65536),(Status.Ok," "*100,10)).foreach { case (status,response,bound) => simulator(status,response,(http,url) => {
-      val c=Fixtures.config(); http.post(url,c.annotation.credentialFile,1,bound,Json.obj()).attempt.map(r => assert(r.isLeft))
+      val c=Fixtures.config(); http.post(ModelCallContext("a",ModelWorkload.IndexAnnotation),url,c.annotation.credentialFile,1,bound,Json.obj()).attempt.map(r => assert(r.isLeft))
     }) }
   }
 }

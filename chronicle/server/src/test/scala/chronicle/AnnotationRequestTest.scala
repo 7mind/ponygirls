@@ -12,7 +12,7 @@ class AnnotationRequestTest extends munit.FunSuite {
   private def run(response: String,inspect: Json => Unit,policy: AnnotationRequestPolicy): Either[Throwable,List[Chunk]] = {
     val app: HttpApp[IO]=cats.data.Kleisli { request => request.as[String].map { body => inspect(Wire.parse(body)); Response[IO](Status.Ok).withEntity(response) }}
     val config=Fixtures.config()
-    new OpenAIAnnotator(new ModelHttp(Client.fromHttpApp(app)),config.copy(annotation=config.annotation.copy(requestPolicy=policy))).annotate(Fragments.split(messages),messages).attempt.unsafeRunSync()
+    new OpenAIAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),config.copy(annotation=config.annotation.copy(requestPolicy=policy))).annotate("a",Fragments.split(messages),messages).attempt.unsafeRunSync()
   }
   test("BG regression: annotation transport requests strict bounded structured output") {
     val response=reply(Json.fromString("stop"),Json.obj("content"->Json.fromString(content)))
