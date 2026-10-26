@@ -8,8 +8,9 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-transform-types --import ./tests/resolve-generated.mjs --test tests/*.test.ts",
-    "test:browser": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/run.mjs && node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/ux.mjs && npm run test:refresh",
-    "test:refresh": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/refresh-regression.mjs"
+    "test:browser": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/run.mjs && node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/ux.mjs && npm run test:refresh && npm run test:theme",
+    "test:refresh": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/refresh-regression.mjs",
+    "test:theme": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/theme-retry.mjs"
   },
   "dependencies": {
     "react": "19.3.1",
