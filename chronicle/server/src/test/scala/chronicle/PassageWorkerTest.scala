@@ -17,6 +17,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
   private final class Recording(delegate: SessionArchive) extends SessionArchive {
     val progressCalls=ListBuffer.empty[(Int,Int)]
     val publications=ListBuffer.empty[ProblemsPublication]
+    val failures=ListBuffer.empty[String]
     var legacyPublications=0
     def knownProfiles: Set[String] = delegate.knownProfiles
     def ingest(owner: String,r: IngestRequest): IngestReceipt = delegate.ingest(owner,r)
@@ -27,7 +28,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def progress(claim: Claim,done: Int,total: Int): Boolean = synchronized { progressCalls+=((done,total)); delegate.progress(claim,done,total) }
     def publish(claim: Claim,chunks: List[IndexedChunk]): Boolean = synchronized { legacyPublications+=1; delegate.publish(claim,chunks) }
     def publishProblems(claim: Claim,publication: ProblemsPublication): Boolean = synchronized { publications+=publication; delegate.publishProblems(claim,publication) }
-    def fail(claim: Claim,code: String): Unit = delegate.fail(claim,code)
+    def fail(claim: Claim,code: String): Unit = synchronized { failures+=code; delegate.fail(claim,code) }
   }
   private def source(texts: List[String]): IngestRequest = {
     val messages=texts.zipWithIndex.map((text,index) => Message(s"m$index",None,"assistant",text,None,index))
@@ -128,6 +129,35 @@ abstract class PassageWorkerContract extends munit.FunSuite {
       }
       val value=store.snapshot("a").unsafeRunSync().samples.find(_.purpose==ModelWorkload.IndexAnnotation).get
       assertEquals(value.inFlight,0); assertEquals(value.finishedCalls,requests.size.toLong); assertEquals(value.input.knownTokens,requests.size.toLong)
+    }}
+  }
+  List(false,true).foreach { withPrefix =>
+    test(s"BG/GoodCommunication regression: superseding a passage claim before length prevents a stale retry ${if(withPrefix) "after an embedded prefix" else "on the first window"}") { withArchive { (config,catalog,delegate,_) =>
+      val archive=new Recording(delegate); val original=source((0 until 160).map(i => s"A substep $i").toList)
+      val receipt=archive.ingest("a",original); val embedding=new Embeddings; val requests=ListBuffer.empty[Json]
+      val invalidatingAttempt=if(withPrefix) 2 else 1
+      val app: HttpApp[IO]=cats.data.Kleisli { req => req.as[String].map { body =>
+        val payload=Wire.parse(body); requests+=payload
+        assertEquals(payload.hcursor.get[Int]("max_tokens").toOption,Some(65536))
+        assertEquals(payload.hcursor.downField("chat_template_kwargs").get[String]("reasoning_effort").toOption,Some("max"))
+        val input=Wire.parse(payload.hcursor.downField("messages").downN(1).get[String]("content").toOption.get)
+        val texts=input.hcursor.get[Vector[Json]]("fragments").toOption.get.map(_.hcursor.get[String]("text").toOption.get)
+        val previous=input.hcursor.downField("previous").get[List[String]]("tags").toOption.flatMap(_.headOption)
+        val finish=if(requests.size==invalidatingAttempt) {
+          val replacement=archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1))
+          assertEquals(replacement.revision,2)
+          "length"
+        } else "stop"
+        Response[IO](Status.Ok).withEntity(ProblemPassageFixtures.envelope(ProblemPassageFixtures.json(ProblemPassageFixtures.plan(texts,previous)).noSpaces,finish).noSpaces)
+      }}
+      val model=new OpenAIProblemPassageAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),config)
+      val worked=worker(archive,config,catalog,model,embedding).once.unsafeRunSync()
+      assert(worked)
+      assertEquals(requests.size,invalidatingAttempt,"an already-superseded claim must not make another HTTP attempt")
+      assertEquals(embedding.batches.flatten.toList,if(withPrefix) original.messages.take(64).map(_.text) else Nil)
+      assertEquals(archive.progressCalls.toList,if(withPrefix) List((0,3),(1,3)) else List((0,3)))
+      assertEquals(archive.failures.toList,List("stale-claim")); assertEquals(archive.publications.size,0)
+      assertEquals(delegate.session("a",receipt.sessionId).indexedRevision,None)
     }}
   }
   test("BG/GoodCommunication: a stale claim after embedding cannot annotate another window or publish") { withArchive { (config,catalog,delegate,_) =>
