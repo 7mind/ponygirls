@@ -13,7 +13,7 @@ import java.util.UUID
 import java.nio.file.{Files,Path}
 import scala.concurrent.duration.*
 
-final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger) {
+final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot) {
   private val socketQueueCapacity = 32
   private val livenessTimeoutCloseCode = 1013
   private def header(r: Request[IO],key: String): Option[String] = r.headers.get(CIString(key)).map(_.head.value)
@@ -66,7 +66,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     case d: DomainError => IO.pure(failure(d))
     case _ => IO(logger.error("request failed")) *> IO.pure(json(Status.InternalServerError,Wire.encode(Failure.codecJson,Failure("unavailable","request failed"))))
   }
-  private def static(r: Request[IO]): IO[Response[IO]] = sys.env.get("CHRONICLE_WEB_ROOT") match {
+  private def static(r: Request[IO]): IO[Response[IO]] = webRoot.path match {
     case None => NotFound()
     case Some(root) => IO.blocking {
       val base = Path.of(root).toRealPath(); val relative = r.uri.path.renderString.stripPrefix("/")
@@ -74,7 +74,15 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
       if(!candidate.startsWith(base) || !Files.isRegularFile(candidate) || !candidate.toRealPath().startsWith(base)) None else Some(candidate)
     }.flatMap {
       case None => NotFound()
-      case Some(file) => StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file),Some(r)).getOrElseF(NotFound()).map(_.putHeaders(Header.Raw(CIString("Content-Security-Policy"),"default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),Header.Raw(CIString("X-Content-Type-Options"),"nosniff"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
+      case Some(file) =>
+        // Nix store mtimes are normalized: equal-length HTML can share metadata validators
+        // across deployments. Never let an old validator hide the current asset references.
+        val name=file.getFileName.toString.toLowerCase(java.util.Locale.ROOT)
+        val html=name.endsWith(".html") || name.endsWith(".htm")
+        StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file),if(html) None else Some(r)).getOrElseF(NotFound()).map { response =>
+          val cached=if(html) response.transformHeaders(h => Headers(h.headers.filterNot(v => v.name==CIString("ETag") || v.name==CIString("Last-Modified")))).putHeaders(Header.Raw(CIString("Cache-Control"),"no-store")) else response
+          cached.putHeaders(Header.Raw(CIString("Content-Security-Policy"),"default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),Header.Raw(CIString("X-Content-Type-Options"),"nosniff"),Header.Raw(CIString("Referrer-Policy"),"no-referrer"))
+        }
     }
   }
   private def socket(r: Request[IO],ws: WebSocketBuilder2[IO]): IO[Response[IO]] = for {
@@ -140,4 +148,8 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     }) }).drain
     response <- ws.withOnClose(closed.set(true)).build(Stream.fromQueueUnterminated(queue).mergeHaltL(tick).mergeHaltL(work),_.evalMap(receive))
   } yield response
+}
+
+object Http {
+  final case class WebRoot(path: Option[String])
 }
