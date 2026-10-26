@@ -1,7 +1,22 @@
 import * as api from '../src/api.ts';
+import { createHash } from 'node:crypto';
 import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.ts';
 const context = BaboonCodecContext.Default;
 const ID = { session: '00000000-0000-4000-8000-000000000001', chunk: '00000000-0000-4000-8000-000000000002', token: '00000000-0000-4000-8000-000000000003', group: '00000000-0000-4000-8000-000000000004', invitation: '00000000-0000-4000-8000-000000000005', job: '00000000-0000-4000-8000-000000000006', otherGroup: '00000000-0000-4000-8000-000000000007' };
+function ordered(rows, value, id, direction) {
+  return [...rows].sort((left, right) => {
+    const a = value(left), b = value(right);
+    if (a === undefined || b === undefined) return a === b ? id(left).localeCompare(id(right)) : a === undefined ? 1 : -1;
+    const order = a < b ? -1 : a > b ? 1 : 0;
+    return (direction === api.SortDirection.Asc ? order : -order) || id(left).localeCompare(id(right));
+  });
+}
+function fixturePage(rows, cursor, limit, key) {
+  let offset = 0;
+  if (cursor !== undefined) { const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString()); if (decoded[0] !== key) throw new Error('Fixture cursor binding mismatch'); offset = decoded[1]; }
+  return { rows: rows.slice(offset, offset + limit), next: offset + limit < rows.length ? Buffer.from(JSON.stringify([key, offset + limit])).toString('base64url') : undefined };
+}
+function leaseState(item) { return item.leaseExpiresAt === undefined ? 'unleased' : item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : 'expired'; }
 export class ChronicleFixture {
   user = new api.UserInfo('alice', 'alice', [api.Scope.Read, api.Scope.Raw]);
   version = new api.VersionInfo('1.3.0', '1.0.0', ['1.3.0', '1.2.0', '1.1.0', '1.0.0']);
@@ -10,7 +25,10 @@ export class ChronicleFixture {
   invitations = [new api.InviteInfo(ID.invitation, ID.otherGroup, 'alice', '2030-01-01T00:00:00Z')];
   jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined)];
   archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchiveCursor = false; pendingArchive = [];
-  activityJobs = undefined; activityCollectors = undefined; messageCount = 87; lateMessageId = 'm65'; holdLocators = false; pendingLocators = [];
+  activityJobs = undefined; activityCollectors = undefined; collectorExpressions = new Map(); jobExpressions = new Map(); activityFailure = null;
+  holdSessions = false; sessionHeadSnapshot = undefined; pendingSessions = [];
+  holdCollectorCursor = false; holdJobCursor = false; pendingCollectors = []; pendingJobs = [];
+  targetProfile = 'target-profile'; jobFences = new Map(); bulkPayloads = new Map(); bulkApplyExecutions = 0; bulkDropBeforeCommit = false; bulkDropReply = false; bulkConflictOnce = false; bulkPreviewDenied = false; bulkApplyDenied = false; retryCountsOverride = undefined; messageCount = 87; lateMessageId = 'm65'; holdLocators = false; pendingLocators = [];
   annotationCount = 2; winnerBeyondFirstPage = false; resumedSource = false; headRevision = 2; publishedRevision = 1; messageViewOverride = undefined; chunksViewOverride = undefined; rawRevisionOverride = undefined;
   holdMessages = false; pendingMessages = [];
   mode = 'normal'; signedIn = true; mintUncertain = false; dropLogout = false; rawDenied = true; searchCount = 0;
@@ -66,7 +84,19 @@ export class ChronicleFixture {
     const next = offset + query.limit < rows.length ? `${query.sort}:${query.direction}:${offset + query.limit}` : undefined;
     return new api.ArchiveResult(rows.slice(offset, offset + query.limit), BigInt(rows.length), next, text && !lexical ? api.ArchiveTextScope.BoundedCandidateSets : api.ArchiveTextScope.ExactLexical, text && !lexical ? 1000 : undefined);
   }
-  get jobRows() { return this.activityJobs ?? this.jobs.map(job => { const current = job.revision === this.headRevision; return new api.ActivityJob(job, 'target-profile', current ? api.ActivityJobClass.Current : api.ActivityJobClass.SupersededRevision, undefined, false, current && job.state === api.JobState.Failed && job.error !== 'superseded-revision'); }); }
+  jobSession(job) {
+    const metadata = job.revision === this.headRevision ? this.metadata : this.metadata.with({ title: `Historical r${job.revision} conversation`, project: `historical-project-${job.revision}`, gitBranch: `historical-branch-${job.revision}` });
+    return this.sessionAt(new api.ContentView(job.revision, undefined)).with({ id: job.sessionId, metadata });
+  }
+  jobAt(index) {
+    const revision = index % 3 === 0 ? this.headRevision - 1 : this.headRevision, profile = index % 5 === 0 ? 'obsolete-profile' : this.targetProfile;
+    const classification = revision === this.headRevision ? profile === this.targetProfile ? api.ActivityJobClass.Current : api.ActivityJobClass.ObsoleteProfile : profile === this.targetProfile ? api.ActivityJobClass.SupersededRevision : api.ActivityJobClass.SupersededRevisionAndProfile;
+    const row = this.archiveAt(index), states = [api.JobState.Complete, api.JobState.Failed, api.JobState.Queued, api.JobState.Running], state = states[index % states.length];
+    const job = new api.JobInfo(`00000000-0000-4000-8000-${String(90000 + index).padStart(12, '0')}`, row.head.id, revision, state, index % 7 + 1, state === api.JobState.Failed ? 'synthetic-failure' : undefined, index, index % 4 === 0 ? undefined : index + 10);
+    const session = this.jobSession(job).with({ metadata: this.jobSession(job).metadata.with({ title: `${revision === this.headRevision ? 'Current' : 'Historical'} metadata ${String(index).padStart(3, '0')}`, project: `project-${index % 7}` }) });
+    return new api.ActivityJob(job, profile, classification, state === api.JobState.Running ? index % 2 === 0 ? '2030-01-01T00:00:00Z' : '2020-01-01T00:00:00Z' : undefined, state === api.JobState.Running && index % 2 === 0, classification === api.ActivityJobClass.Current && state === api.JobState.Failed, `collector-${String(index % 8).padStart(3, '0')}`, session, index % 11 === 0 ? undefined : new Date(Date.parse('2026-10-23T09:31:00Z') - Math.floor(index / 2) * 60000).toISOString());
+  }
+  get jobRows() { return this.activityJobs ?? this.jobs.map(job => { const current = job.revision === this.headRevision; return new api.ActivityJob(job, this.targetProfile, current ? api.ActivityJobClass.Current : api.ActivityJobClass.SupersededRevision, undefined, false, current && job.state === api.JobState.Failed && job.error !== 'superseded-revision', this.source.collectorNamespace, this.jobSession(job), '2026-10-23T09:31:00Z'); }); }
   counts(jobs) {
     const count = state => BigInt(jobs.filter(item => item.job.state === state).length), running = jobs.filter(item => item.job.state === api.JobState.Running);
     return new api.JobCounts(BigInt(jobs.length), count(api.JobState.Queued), count(api.JobState.Running), count(api.JobState.Failed), count(api.JobState.Complete), BigInt(running.filter(item => item.leaseActive).length), BigInt(running.filter(item => !item.leaseActive && item.leaseExpiresAt !== undefined).length), BigInt(running.filter(item => item.leaseExpiresAt === undefined).length));
@@ -79,13 +109,61 @@ export class ChronicleFixture {
     const base = new api.ActivityCollector(report === undefined ? namespace : report.collectorId, report === undefined ? undefined : report.status, BigInt(ownRows.length), BigInt(ownRows.filter(row => row.headJob === undefined).length), this.counts(current), this.counts(history));
     return [...reports.filter(item => item.collectorId !== base.collectorId), base].sort((a, b) => a.collectorId.localeCompare(b.collectorId));
   }
+  collectorValue(row, sort) {
+    const countFields = { Total: 'total', Queued: 'queued', Running: 'running', Failed: 'failed', Complete: 'complete', ActiveRunning: 'activeRunning', ExpiredRunning: 'expiredRunning', UnleasedRunning: 'unleasedRunning' };
+    if (sort.startsWith('Current')) return row.current[countFields[sort.slice('Current'.length)]];
+    if (sort.startsWith('Historical')) return row.historical[countFields[sort.slice('Historical'.length)]];
+    switch (sort) {
+      case api.ActivityCollectorSort.CollectorId: return row.collectorId;
+      case api.ActivityCollectorSort.Phase: return row.status === undefined ? undefined : row.status.report.phase;
+      case api.ActivityCollectorSort.Freshness: return row.status === undefined ? 'unknown' : row.status.stale ? 'stale' : 'recent';
+      case api.ActivityCollectorSort.ReceivedAt: return row.status === undefined ? undefined : Date.parse(row.status.receivedAt);
+      case api.ActivityCollectorSort.ArchiveHeads: return row.archiveHeads;
+      case api.ActivityCollectorSort.HeadsWithoutTargetJob: return row.headsWithoutTargetJob;
+      default: throw new Error('Unknown fixture collector sort');
+    }
+  }
+  jobValue(row, sort) {
+    switch (sort) {
+      case api.ActivityJobSort.LastTimestamp: return row.lastTimestamp === undefined ? undefined : Date.parse(row.lastTimestamp);
+      case api.ActivityJobSort.Title: return row.session.metadata.title;
+      case api.ActivityJobSort.Collector: return row.collectorId;
+      case api.ActivityJobSort.State: return row.job.state;
+      case api.ActivityJobSort.Revision: return row.job.revision;
+      case api.ActivityJobSort.Profile: return row.profile;
+      case api.ActivityJobSort.Attempts: return row.job.attempts;
+      case api.ActivityJobSort.CompletedWindows: return row.job.completedWindows;
+      case api.ActivityJobSort.TotalWindows: return row.job.totalWindows;
+      case api.ActivityJobSort.LeaseExpiresAt: return row.leaseExpiresAt === undefined ? undefined : Date.parse(row.leaseExpiresAt);
+      case api.ActivityJobSort.LeaseState: return leaseState(row);
+      case api.ActivityJobSort.Reason: return row.job.error;
+      case api.ActivityJobSort.Classification: return row.classification;
+      case api.ActivityJobSort.JobId: return row.job.id;
+      case api.ActivityJobSort.SessionId: return row.job.sessionId;
+      default: throw new Error('Unknown fixture job sort');
+    }
+  }
   activityResult(query) {
-    const offset = query.cursor === undefined ? 0 : Number(query.cursor), rows = this.collectorRows, current = this.jobRows.filter(item => item.classification === api.ActivityJobClass.Current), historical = this.jobRows.filter(item => item.classification !== api.ActivityJobClass.Current), owned = this.authorizedRows.filter(row => row.head.ownerId === this.user.id);
-    return new api.ActivityResult('2026-10-26T12:00:00Z', this.user, BigInt(owned.length), BigInt(owned.filter(row => row.headJob === undefined).length), this.counts(current), this.counts(historical), rows.slice(offset, offset + query.limit), BigInt(rows.length), offset + query.limit < rows.length ? String(offset + query.limit) : undefined);
+    const all = this.collectorRows, selected = query.expression === '' ? all : all.filter(row => this.collectorExpressions.get(query.expression).includes(row.collectorId));
+    const rows = ordered(selected, row => this.collectorValue(row, query.sort), row => row.collectorId, query.direction);
+    const page = fixturePage(rows, query.cursor, query.limit, JSON.stringify(['collectors', this.user.id, query.expression, query.sort, query.direction]));
+    const current = this.jobRows.filter(item => item.classification === api.ActivityJobClass.Current), historical = this.jobRows.filter(item => item.classification !== api.ActivityJobClass.Current), owned = this.authorizedRows.filter(row => row.head.ownerId === this.user.id);
+    return new api.ActivityResult('2026-10-26T12:00:00Z', this.user, BigInt(owned.length), BigInt(owned.filter(row => row.headJob === undefined).length), this.counts(current), this.counts(historical), page.rows, BigInt(rows.length), BigInt(all.length), page.next);
   }
   activityJobsResult(query) {
-    const rows = this.jobRows.filter(item => query.scope === api.ActivityJobScope.All || (query.scope === api.ActivityJobScope.Current) === (item.classification === api.ActivityJobClass.Current)), offset = query.cursor === undefined ? 0 : Number(query.cursor);
-    return new api.ActivityJobsResult('2026-10-26T12:00:00Z', rows.slice(offset, offset + query.limit), BigInt(rows.length), offset + query.limit < rows.length ? String(offset + query.limit) : undefined);
+    const scoped = this.jobRows.filter(item => (query.scope === api.ActivityJobScope.All || (query.scope === api.ActivityJobScope.Current) === (item.classification === api.ActivityJobClass.Current)) && (query.collectorId === undefined || item.collectorId === query.collectorId));
+    const selected = query.expression === '' ? scoped : scoped.filter(row => this.jobExpressions.get(query.expression).includes(row.job.id));
+    const rows = ordered(selected, row => this.jobValue(row, query.sort), row => row.job.id, query.direction);
+    const page = fixturePage(rows, query.cursor, query.limit, JSON.stringify(['jobs', this.user.id, query.collectorId, query.scope, query.expression, query.sort, query.direction]));
+    return new api.ActivityJobsResult('2026-10-26T12:00:00Z', page.rows, BigInt(rows.length), page.next);
+  }
+  refreshActivityCounts() { if (this.activityCollectors !== undefined) this.activityCollectors = this.activityCollectors.map(collector => { const rows = this.jobRows.filter(row => row.collectorId === collector.collectorId); return collector.with({ current: this.counts(rows.filter(row => row.classification === api.ActivityJobClass.Current)), historical: this.counts(rows.filter(row => row.classification !== api.ActivityJobClass.Current)) }); }); }
+  retryPlan() {
+    const rows = this.jobRows.filter(row => row.session.ownerId === this.user.id), eligible = rows.filter(row => row.classification === api.ActivityJobClass.Current && row.job.revision === row.session.revision && row.profile === this.targetProfile && row.job.state === api.JobState.Failed);
+    const failed = classification => BigInt(rows.filter(row => row.classification === classification && row.job.state === api.JobState.Failed).length), unchanged = state => BigInt(rows.filter(row => row.classification === api.ActivityJobClass.Current && row.job.state === state).length);
+    const counts = this.retryCountsOverride ?? new api.RetryFailedCounts(BigInt(eligible.length), failed(api.ActivityJobClass.SupersededRevision), failed(api.ActivityJobClass.ObsoleteProfile), failed(api.ActivityJobClass.SupersededRevisionAndProfile), unchanged(api.JobState.Queued), unchanged(api.JobState.Running), unchanged(api.JobState.Complete));
+    const selection = [this.user.id, this.targetProfile, ...eligible.map(row => [row.job.id, row.job.revision, this.jobFences.get(row.job.id) ?? 0]).sort((left, right) => left[0].localeCompare(right[0]))];
+    return new api.RetryFailedPlan(this.targetProfile, createHash('sha256').update(JSON.stringify(selection)).digest('hex'), counts);
   }
   async install(page) {
     await page.route('**/api/login', route => {
@@ -116,8 +194,35 @@ export class ChronicleFixture {
           if (this.holdArchiveCursor && operation.query.cursor !== undefined) this.pendingArchive.push(reply); else reply();
           return;
         }
-        if (operation instanceof api.Operation_Activity) { send(this.collectionDenied ? new api.Result_Error(new api.Failure('forbidden', 'Collection status denied')) : new api.Result_Activity(this.activityResult(operation.query))); return; }
-        if (operation instanceof api.Operation_ActivityJobs) { send(new api.Result_ActivityJobs(this.activityJobsResult(operation.query))); return; }
+        if (operation instanceof api.Operation_Activity) {
+          if (this.collectionDenied) { send(new api.Result_Error(new api.Failure('forbidden', 'Collection status denied'))); return; }
+          if (this.activityFailure !== null || (operation.query.expression !== '' && !this.collectorExpressions.has(operation.query.expression))) { send(new api.Result_Error(new api.Failure('invalid', this.activityFailure ?? 'Unsupported synthetic metadata expression'))); return; }
+          const result = this.activityResult(operation.query), reply = () => send(new api.Result_Activity(result));
+          if (this.holdCollectorCursor && operation.query.cursor !== undefined) this.pendingCollectors.push(reply); else reply(); return;
+        }
+        if (operation instanceof api.Operation_ActivityJobs) {
+          if (this.activityFailure !== null || (operation.query.expression !== '' && !this.jobExpressions.has(operation.query.expression))) { send(new api.Result_Error(new api.Failure('invalid', this.activityFailure ?? 'Unsupported synthetic metadata expression'))); return; }
+          const result = this.activityJobsResult(operation.query), reply = () => send(new api.Result_ActivityJobs(result));
+          if (this.holdJobCursor && operation.query.cursor !== undefined) this.pendingJobs.push(reply); else reply(); return;
+        }
+        if (operation instanceof api.Operation_PreviewRetryFailed) { send(this.bulkPreviewDenied ? new api.Result_Error(new api.Failure('forbidden', 'Browser Read scope required for retry preview')) : new api.Result_RetryFailedPreview(this.retryPlan())); return; }
+        if (operation instanceof api.Operation_ApplyRetryFailed) {
+          if (this.bulkApplyDenied) { send(new api.Result_Error(new api.Failure('forbidden', 'Browser Read scope required for retry'))); return; }
+          if (this.bulkDropBeforeCommit) return;
+          const payload = JSON.stringify(api.Operation_JsonCodec.instance.encode(context, operation)), stored = this.receipts.get(envelope.requestId);
+          if (stored !== undefined) { send(this.bulkPayloads.get(envelope.requestId) === payload ? stored : new api.Result_Error(new api.Failure('conflict', 'Request payload changed'))); return; }
+          if (this.bulkConflictOnce) { this.bulkConflictOnce = false; for (const row of this.jobRows) this.jobFences.set(row.job.id, (this.jobFences.get(row.job.id) ?? 0) + 1); }
+          const plan = this.retryPlan();
+          if (!operation.confirm || !/^[0-9a-f]{64}$/.test(operation.selectionHash)) { send(new api.Result_Error(new api.Failure('invalid', 'Valid retry hash and confirmation required'))); return; }
+          if (operation.targetProfile !== plan.targetProfile || operation.selectionHash !== plan.selectionHash) { const rejection = new api.Result_Error(new api.Failure('conflict', 'Retry selection changed; preview again')); this.receipts.set(envelope.requestId, rejection); this.bulkPayloads.set(envelope.requestId, payload); send(rejection); return; }
+          const ids = new Set(this.jobRows.filter(row => row.session.ownerId === this.user.id && row.classification === api.ActivityJobClass.Current && row.job.revision === row.session.revision && row.profile === this.targetProfile && row.job.state === api.JobState.Failed).map(row => row.job.id));
+          const retried = job => ids.has(job.id) ? job.with({ state: api.JobState.Queued, attempts: 0, error: undefined, completedWindows: 0, totalWindows: undefined }) : job;
+          this.jobs = this.jobs.map(retried); if (this.activityJobs !== undefined) this.activityJobs = this.activityJobs.map(row => ids.has(row.job.id) ? row.with({ job: retried(row.job), retryable: false, leaseActive: false, leaseExpiresAt: undefined }) : row);
+          this.refreshActivityCounts();
+          if (this.archiveRows !== undefined) this.archiveRows = this.archiveRows.map(row => row.headJob !== undefined && ids.has(row.headJob.id) ? row.with({ headJob: retried(row.headJob) }) : row);
+          this.bulkApplyExecutions++; const receipt = new api.Result_RetryFailed(new api.RetryFailedResult(envelope.requestId, plan.targetProfile, BigInt(ids.size), plan.counts));
+          this.receipts.set(envelope.requestId, receipt); this.bulkPayloads.set(envelope.requestId, payload); if (!this.bulkDropReply) send(receipt); return;
+        }
         if (operation instanceof api.Operation_LocateMessage) {
           const view = operation.view, messages = this.messagesAt(view.revision), position = messages.findIndex(message => message.id === operation.messageId);
           const reply = () => send(position < 0 ? new api.Result_Error(new api.Failure('not-found', 'Source message not found')) : new api.Result_LocatedMessage(new api.MessageLocation(view, position, messages.length)));
@@ -129,7 +234,7 @@ export class ChronicleFixture {
           send(new api.Result_Search(new api.SearchResult([this.hit], 1, lexical ? api.SearchCountScope.ExactMatches : api.SearchCountScope.CandidateWindow, lexical ? undefined : operation.query.mode === api.SearchMode.Hybrid ? 2000 : 1000))); return;
         }
         if (operation instanceof api.Operation_Facets) { send(new api.Result_Facets(new api.FacetsResult([new api.Facet('chronicle', 1)], [new api.Facet('feature/archive', 1)], [new api.Facet('architecture', 1)]))); return; }
-        if (operation instanceof api.Operation_GetSession) { const view = operation.view ?? this.view, row = this.authorizedRows.find(item => item.head.id === operation.sessionId), session = row === undefined ? this.sessionAt(view) : row.head.with({ view }); send(new api.Result_Session(new api.SessionResult(session, this.chunksAt(view).slice(0, 100)))); return; }
+        if (operation instanceof api.Operation_GetSession) { const view = operation.view ?? this.view, row = this.authorizedRows.find(item => item.head.id === operation.sessionId), current = row === undefined ? this.sessionAt(view) : row.head.with({ view }), session = this.sessionHeadSnapshot === undefined ? current : current.with({ revision: this.sessionHeadSnapshot }), result = new api.Result_Session(new api.SessionResult(session, this.chunksAt(view).slice(0, 100))), reply = () => send(result); if (this.holdSessions) this.pendingSessions.push(reply); else reply(); return; }
         if (operation instanceof api.Operation_GetChunks) { const view = this.chunksViewOverride ?? operation.view ?? this.view, chunks = this.chunksAt(view); send(new api.Result_Chunks(new api.ChunksResult(chunks.slice(operation.offset, operation.offset + operation.limit), chunks.length, operation.offset, view))); return; }
         if (operation instanceof api.Operation_GetMessages) { const view = this.messageViewOverride ?? operation.view ?? this.view, messages = this.messagesAt(view.revision); const reply = () => send(new api.Result_Messages(new api.MessagesResult(messages.slice(operation.offset, operation.offset + operation.limit), messages.length, operation.offset, view))); if (this.holdMessages) this.pendingMessages.push(reply); else reply(); return; }
         if (operation instanceof api.Operation_GetRaw) { const revision = this.rawRevisionOverride ?? operation.revision ?? this.headRevision; send(this.rawDenied ? new api.Result_Error(new api.Failure('forbidden', 'Raw permission denied for this source')) : new api.Result_Raw(new api.RawResult([new api.RawFile('synthetic.jsonl', '0'.repeat(64), this.resumedSource ? JSON.stringify({ revision }) : '{"synthetic":true}')], revision))); return; }
@@ -138,7 +243,7 @@ export class ChronicleFixture {
         if (operation instanceof api.Operation_ListGroups) { send(new api.Result_Groups(new api.GroupsResult(this.groups, this.invitations))); return; }
         if (operation instanceof api.Operation_CollectionStatus) { send(this.collectionDenied ? new api.Result_Error(new api.Failure('forbidden', 'Collection status denied')) : new api.Result_CollectionStatus(new api.CollectorStatusResult(this.collectors))); return; }
         if (operation instanceof api.Operation_IngestStatus) { send(new api.Result_Status(new api.StatusResult(this.jobs, this.jobs.length))); return; }
-        if (operation instanceof api.Operation_Receipt) { const receipt = this.receipts.get(operation.mutationId); send(receipt ? receipt instanceof api.Result_Token ? receipt : new api.Result_Mutation(receipt) : new api.Result_Error(new api.Failure('not-found', 'Receipt not found'))); return; }
+        if (operation instanceof api.Operation_Receipt) { const receipt = this.receipts.get(operation.mutationId); send(receipt ? receipt instanceof api.Result_Token || receipt instanceof api.Result_RetryFailed || receipt instanceof api.Result_Error ? receipt : new api.Result_Mutation(receipt) : new api.Result_Error(new api.Failure('not-found', 'Receipt not found'))); return; }
         let entityId;
         if (operation instanceof api.Operation_MintToken) {
           entityId = ID.token; const token = new api.TokenInfo(entityId, operation.name, operation.scopes, '2026-10-24T00:00:00Z', false); this.tokens = [token];
@@ -158,6 +263,9 @@ export class ChronicleFixture {
       });
     });
   }
+  releaseSessions() { this.holdSessions = false; for (const reply of this.pendingSessions.splice(0)) reply(); }
+  releaseCollectors() { this.holdCollectorCursor = false; for (const reply of this.pendingCollectors.splice(0)) reply(); }
+  releaseJobs() { this.holdJobCursor = false; for (const reply of this.pendingJobs.splice(0)) reply(); }
   releaseArchive() { this.holdArchiveCursor = false; for (const reply of this.pendingArchive.splice(0)) reply(); }
   releaseLocators() { this.holdLocators = false; for (const reply of this.pendingLocators.splice(0)) reply(); }
   releaseMessages() { this.holdMessages = false; for (const reply of this.pendingMessages.splice(0)) reply(); }

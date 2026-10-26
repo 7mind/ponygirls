@@ -96,9 +96,23 @@ export function splitGlobalMode(expression: string): ExpressionParts {
   validateStructure(tokens(body));
   return { body, modeDirective: expression.slice(first.start, last.end), mode };
 }
-export function addExpressionFilter(expression: string, attribute: string, value: string): string {
+function quickFilterClause(attribute: string, value: string): string {
   if (!/^[a-z][a-z0-9_-]*$/i.test(attribute)) throw new Error('Invalid quick-filter attribute.');
-  scalarText(value);
-  const { body, modeDirective } = splitGlobalMode(expression), clause = `${attribute}:${JSON.stringify(value)}`;
+  scalarText(value); return `${attribute}:${JSON.stringify(value)}`;
+}
+export function addExpressionFilter(expression: string, attribute: string, value: string): string {
+  const { body, modeDirective } = splitGlobalMode(expression), clause = quickFilterClause(attribute, value);
   return [modeDirective, body.length === 0 ? clause : `(${body}) AND ${clause}`].filter(part => part !== null).join(' ');
+}
+export function validateMetadataExpression(expression: string): void {
+  const scanned = tokens(expression); validateStructure(scanned);
+  for (let index = 0; index < scanned.length; index++) {
+    const token = scanned[index]!;
+    if (!token.literal && token.text.toLowerCase() === 'mode' && scanned[index + 1]?.text === ':') throw new Error('Search mode directives are not supported in Activity. Search metadata without a mode.');
+  }
+}
+export function addMetadataFilter(expression: string, attribute: string, value: string): string {
+  validateMetadataExpression(expression);
+  const body = expression.trim(), clause = quickFilterClause(attribute, value);
+  return body.length === 0 ? clause : `(${body}) AND ${clause}`;
 }
