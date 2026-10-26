@@ -34,7 +34,12 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   const extension = loaded.extensions[0] as Extension;
   assert.ok(extension);
   assert.equal(extension.tools.size, 0, "existing MCP tool names must remain untouched");
-  assert.deepEqual([...extension.commands.keys()], ["cg", "cg-status", "cg-sync", "cg-reindex", "cg-cancel"]);
+  const cg = extension.commands.get("cg")!;
+  assert.equal(typeof cg.getArgumentCompletions, "function", "/cg must expose syntax completions");
+  const suggestions = await cg.getArgumentCompletions!("");
+  assert.ok(suggestions);
+  assert.ok(suggestions.some((item) => item.value === "use " && item.label.includes("PATH")));
+  assert.deepEqual([...extension.commands.keys()], ["cg"]);
   await assert.rejects(readFile(marker), { code: "ENOENT" });
   const widgets: { text: string[] | undefined; placement: string | undefined }[] = [];
   const notices: string[] = [];
@@ -78,8 +83,7 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   }
   assert.ok(Number(await readFile(marker, "utf8")), "background CLI must actually start");
   const gate = emit("tool_call", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "query", input: {} });
-  const cancel = extension.commands.get("cg-cancel")!;
-  await cancel.handler("", ctx as never);
+  await cg.handler("cancel", ctx as never);
   assert.equal((await gate as { block: boolean }).block, true);
   assert.match(widgets.at(-1)!.text![0], /cancelled/);
   assert.ok(notices.some((text) => text.includes("MCP watcher unchanged")));
@@ -105,7 +109,7 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   emit("tool_execution_end", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "two" });
   assert.match(widgets.at(-1)!.text![0], /skipped/);
   assert.doesNotMatch(widgets.at(-1)!.text![0], /querying/);
-  await extension.commands.get("cg-sync")!.handler("", ctx as never);
+  await cg.handler("sync", ctx as never);
   for (let n = 0; n < 100; n++) {
     try { await readFile(marker); break; }
     catch { await new Promise((done) => setTimeout(done, 10)); }

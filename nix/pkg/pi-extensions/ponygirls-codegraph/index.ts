@@ -3,7 +3,7 @@ import { localBoundary } from "./runtime.ts";
 import type { State } from "./runtime.ts";
 import { localCatalog } from "./projects.ts";
 import { CodegraphWorkspace } from "./workspace.ts";
-import { CG_HELP, parseCommand } from "./commands.ts";
+import { CG_HELP, completeCommand, parseCommand } from "./commands.ts";
 import type { CgCommand } from "./commands.ts";
 
 const WIDGET = "ponygirls-codegraph";
@@ -117,13 +117,9 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     });
     if (command.name !== "sync" && command.name !== "reindex" && command.name !== "init") await work;
   };
-  pi.registerCommand("cg", { description: "Codegraph projects, status/sizes, selection, indexing and lifecycle; /cg help", handler: handle });
-  for (const [name, action] of [
-    ["cg-status", "status"], ["cg-sync", "sync"], ["cg-reindex", "reindex"], ["cg-cancel", "cancel"],
-  ] as const) {
-    pi.registerCommand(name, {
-      description: `Alias for /cg ${action}; accepts PATH${action === "reindex" ? "" : " or --all"}`,
-      handler: (args, ctx) => handle(`${action} ${args}`, ctx),
-    });
-  }
+  pi.registerCommand("cg", {
+    description: "Codegraph: status, discover, use, sync, reindex, cancel, init, erase, help",
+    getArgumentCompletions: completeCommand,
+    handler: handle,
+  });
 }

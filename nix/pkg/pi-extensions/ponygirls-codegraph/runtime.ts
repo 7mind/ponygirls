@@ -30,7 +30,7 @@ function statusFrom(text: string, root: string): Status {
   if (value.projectPath !== root || value.indexPath !== join(root, ".codegraph")) {
     throw new Error("Refusing a non-local Codegraph index (ancestor or custom index path)");
   }
-  if (value.initialized !== true) throw new Error("Local Codegraph index is not initialized; retry /cg-sync");
+  if (value.initialized !== true) throw new Error("Local Codegraph index is not initialized; retry /cg sync");
   const index = value.index;
   const changes = value.pendingChanges;
   if (!index || !changes || typeof index.reindexRecommended !== "boolean" ||

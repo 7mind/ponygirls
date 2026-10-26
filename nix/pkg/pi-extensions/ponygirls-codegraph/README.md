@@ -48,10 +48,20 @@ guard, not the MCP server itself.
 /cg erase PATH
 ```
 
-`/cg-status`, `/cg-sync`, `/cg-reindex`, `/cg-cancel` remain aliases and accept the
-same arguments. Paths are relative to Pi's cwd. An entire remaining argument is
-one path, so spaces work literally or within single/double quotes. Use `-- PATH`
-for a path beginning with `--`. Unknown options fail rather than being ignored.
+Type `/cg ` to see subcommands with argument syntax and descriptions; type a
+prefix (such as `/cg sy`) to filter, then Tab to complete. Flag suggestions include
+`--all` where supported and the required `init --workspace` opt-in. `/cg help`
+prints the full reference. The former `/cg-*` aliases have been removed; use
+`/cg status`, `/cg sync`, `/cg reindex`, and `/cg cancel` instead.
+
+Every path-taking command accepts absolute paths or paths relative
+to Pi's cwd: with Pi started in `/work/projects`, `/cg use example-app` and
+`/cg use ./example-app` both select `/work/projects/example-app`. `../example-app` and `.`
+also work. Selection does not change the base directory for subsequent paths;
+bare names are filesystem paths, not global repository-name lookups.
+An entire remaining argument is one path, so spaces work literally or within
+single/double quotes. Use `-- PATH` for a path beginning with `--`. Unknown options
+fail rather than being ignored.
 
 - `discover` replaces the inventory with the containing project or shallow
   candidates at PATH. Removed/changed entries are shut down, not deleted from disk;
@@ -142,7 +152,8 @@ Missing local databases use `init ROOT --yes`; existing indexes receive full JSO
 status, then full `index ROOT --quiet` for incomplete/stale/empty graphs or `sync
 ROOT` otherwise. Every mutation is followed by verification. Ready requires exact
 local project/index paths, complete state, no rebuild recommendation, nonzero files
-and symbols, and no pending changes/references, missing symbols or parse errors.
+and symbols, and no pending changes/references or missing symbols. Files with
+parse errors are reported as warnings, not a readiness failure.
 Empty/no-symbol repositories remain visibly not ready. Explicit `reindex` runs
 idempotent init and full rebuild without depending on readable pre-rebuild status,
 allowing recovery after interrupted schema creation. Foreign database files are

@@ -60,6 +60,61 @@ test("parent discovery is non-mutating; ambiguous queries fail, explicit project
   await f.workspace.shutdown();
 });
 
+// Specified Behavioral-Active / Blackbox-Group: all command targets use Pi's cwd, not process.cwd().
+for (const path of ["b", "./b", "a/../b", "/workspace/b"]) {
+  test(`every path-taking workspace operation accepts ${path}`, async (t) => {
+    const f = fixture();
+    t.after(() => f.workspace.shutdown());
+    await f.workspace.start(true);
+    await f.workspace.use(path);
+    assert.match(f.workspace.context(), /"defaultProject":"\/workspace\/b"/);
+    for (const action of ["sync", "status", "reindex"] as const) {
+      await f.workspace.perform(action, path, false);
+      assert.equal(f.workspace.state.phase, "ready", f.workspace.state.detail);
+    }
+    assert.equal(await f.workspace.query(path), "/workspace/b");
+    assert.match(await f.workspace.report(path), /"\/workspace\/b"/);
+    assert.doesNotMatch(await f.workspace.report(path), /"\/workspace\/a"/);
+    await f.workspace.cancel(path, false);
+    await assert.rejects(f.workspace.erase(path), /\/workspace\/b\/\.codegraph\/codegraph\.db/);
+    assert.ok(f.calls.length > 0);
+    assert.ok(f.calls.every((call) => call.startsWith("/workspace/b:")));
+
+    let discovered: string | null = null;
+    const discover = f.catalog.discover;
+    f.catalog.discover = async (target, signal) => {
+      discovered = target;
+      return discover(target, signal);
+    };
+    await f.workspace.discover(path);
+    assert.equal(discovered, "/workspace/b");
+
+  });
+}
+
+for (const path of ["new", "./new", "a/../new", "/workspace/new"]) {
+  test(`workspace initialization resolves ${path} relative to Pi's cwd`, async (t) => {
+    const f = fixture();
+    t.after(() => f.workspace.shutdown());
+    await f.workspace.start(true);
+    await f.workspace.initWorkspace(path);
+    assert.equal(await f.workspace.query(undefined), "/workspace/new");
+    assert.equal(f.workspace.state.phase, "ready", f.workspace.state.detail);
+    assert.ok(f.calls.every((call) => call.startsWith("/workspace/new:")));
+  });
+}
+
+test("dot and parent-relative targets stay anchored to Pi's cwd after selection", async (t) => {
+  const f = fixture();
+  const workspace = new CodegraphWorkspace(f.catalog, f.boundary, "/workspace/a", () => {}, () => "checked");
+  t.after(() => workspace.shutdown());
+  await workspace.start(false);
+  await workspace.use("../b");
+  assert.equal(await workspace.query(undefined), "/workspace/b");
+  assert.equal(await workspace.query("."), "/workspace/a");
+  assert.equal(await workspace.query("../b"), "/workspace/b");
+});
+
 test("disabled startup makes no probes; explicit commands activate discovery", async () => {
   const f = fixture();
   await f.workspace.start(false);

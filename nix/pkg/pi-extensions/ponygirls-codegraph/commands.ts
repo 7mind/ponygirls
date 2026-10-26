@@ -35,15 +35,46 @@ export function parseCommand(args: string): CgCommand {
   throw new Error("Usage: /cg help — workspace creation requires /cg init --workspace PATH");
 }
 
+const CG_COMMANDS = [
+  { name: "status", syntax: "[PATH | --all]", description: "last-checked health and logical index bytes (including WAL/SHM)" },
+  { name: "discover", syntax: "[PATH]", description: "list containing checkout or immediate child checkouts; no indexing" },
+  { name: "use", syntax: "PATH", description: "select default query scope without indexing" },
+  { name: "sync", syntax: "[PATH | --all]", description: "initialize or incrementally synchronize" },
+  { name: "reindex", syntax: "[PATH]", description: "full rebuild" },
+  { name: "cancel", syntax: "[PATH | --all]", description: "stop extension work only; MCP watcher unchanged" },
+  { name: "init", syntax: "--workspace PATH", description: "opt in to one non-Git workspace-wide index" },
+  { name: "erase", syntax: "PATH", description: "explain safe offline removal; online deletion is refused" },
+  { name: "help", syntax: "", description: "show command syntax and path rules" },
+] as const;
+
+interface CommandCompletion {
+  value: string;
+  label: string;
+  description: string;
+}
+
+export function completeCommand(prefix: string): CommandCompletion[] | null {
+  const text = prefix.trimStart();
+  const separator = text.search(/\s/);
+  if (separator === -1) {
+    const items = CG_COMMANDS.filter((command) => command.name.startsWith(text)).map((command) => ({
+      value: `${command.name} `,
+      label: `${command.name} ${command.syntax}`.trimEnd(),
+      description: command.description,
+    }));
+    return items.length === 0 ? null : items;
+  }
+  const name = text.slice(0, separator);
+  const argument = text.slice(separator).trimStart();
+  const flag = name === "init" ? "--workspace" :
+    ["status", "sync", "cancel"].includes(name) ? "--all" : null;
+  if (flag === null || !flag.startsWith(argument)) return null;
+  return [{ value: `${name} ${flag}${name === "init" ? " " : ""}`,
+    label: name === "init" ? "--workspace PATH" : flag,
+    description: name === "init" ? "explicitly opt in to a non-Git workspace" : "target all discovered projects" }];
+}
+
 export const CG_HELP = [
-  "/cg status [PATH | --all] — last-checked health and logical index bytes (including WAL/SHM)",
-  "/cg discover [PATH] — list containing checkout or immediate child checkouts; no indexing",
-  "/cg use PATH — select default query scope without indexing",
-  "/cg sync [PATH | --all] — initialize or incrementally synchronize",
-  "/cg reindex [PATH] — full rebuild",
-  "/cg cancel [PATH | --all] — stop extension work only; MCP watcher unchanged",
-  "/cg init --workspace PATH — opt in to one non-Git workspace-wide index",
-  "/cg erase PATH — explain safe offline removal; online deletion is refused",
+  ...CG_COMMANDS.map((command) => `/cg ${command.name} ${command.syntax}`.trimEnd() + ` — ${command.description}`),
   "Paths are relative to Pi's cwd; quote paths or pass them literally, including spaces.",
-  "The cg-status/sync/reindex/cancel aliases accept the same arguments.",
 ].join("\n");
