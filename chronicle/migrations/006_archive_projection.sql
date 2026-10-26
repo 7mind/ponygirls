@@ -9,9 +9,11 @@ CREATE TABLE IF NOT EXISTS ch_revision_info(
   last_timestamp text,
   last_timestamp_order numeric,
   message_count integer NOT NULL,
+  lexical_version integer NOT NULL DEFAULT 0,
   PRIMARY KEY(session_id,revision),
   FOREIGN KEY(session_id,revision) REFERENCES ch_revisions(session_id,revision) ON DELETE CASCADE
 );
+ALTER TABLE ch_revision_info ADD COLUMN IF NOT EXISTS lexical_version integer NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS ch_revision_info_timestamp ON ch_revision_info(last_timestamp_order,session_id);
 CREATE TABLE IF NOT EXISTS ch_messages(
   session_id uuid NOT NULL,

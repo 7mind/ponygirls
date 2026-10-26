@@ -117,7 +117,11 @@ streamed message reads and transactional projection writes, without loading raw
 files into JVM listing paths or calling models. Source normalization, annotation
 policy and semantic profile identities are unchanged. pg_trgm1.6 is bundled in
 the pinned PostgreSQL18.6 and can be installed by a non-superuser database owner.
-The trigram index is on lower(value COLLATE pg_unicode_fast), not raw ILIKE: the
+Whole fields/messages are lowercased in PostgreSQL before fragmentation; original
+normalized content and spans are unchanged. A lexical-version marker rebuilds
+obsolete fragments transactionally. Content paging has no100000 offset ceiling;
+GetMessages seeks by indexed position. The trigram index is on
+lower(value COLLATE pg_unicode_fast), not raw ILIKE: the
 observed raw-index Unicode false-negative constraint and differential tests are
 documented in
 [`docs/drafts/20261026-1140-lexical-index-collation.md`](docs/drafts/20261026-1140-lexical-index-collation.md).

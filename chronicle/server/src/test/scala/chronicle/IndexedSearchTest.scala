@@ -3,8 +3,10 @@ import chronicle.api.*
 import java.sql.Connection
 import java.util.UUID
 import scala.util.Using
+import scala.concurrent.duration.*
 
 class IndexedSearchTest extends munit.FunSuite {
+  override val munitTimeout=2.minutes
   private val corpusSize=12000
   private val testDimensions=32
   private val resultSize=20

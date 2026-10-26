@@ -103,7 +103,7 @@ class ArchiveIndexTest extends munit.FunSuite {
       Sql.exec(c,s"CREATE TEMP TABLE fixture AS SELECT i,md5('archive-source'||i)::uuid AS sid,md5('archive-generation'||i)::uuid AS gid,md5('archive-chunk'||i)::uuid AS cid FROM generate_series(1,$size)i")
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision) SELECT sid,'a',i::text,1 FROM fixture")
       Sql.exec(c,"INSERT INTO ch_revisions SELECT sid,1,?::jsonb FROM fixture",snapshotJson)
-      Sql.exec(c,"INSERT INTO ch_revision_info SELECT sid,1,?::jsonb,?::jsonb,'Quiescent',false,'2026-01-01T00:00:00Z',1767225600,1 FROM fixture",Wire.encode(Metadata.codecJson,request.metadata).noSpaces,Wire.encode(SourceIdentity.codecJson,request.source).noSpaces)
+      Sql.exec(c,"INSERT INTO ch_revision_info SELECT sid,1,?::jsonb,?::jsonb,'Quiescent',false,'2026-01-01T00:00:00Z',1767225600,1,1 FROM fixture",Wire.encode(Metadata.codecJson,request.metadata).noSpaces,Wire.encode(SourceIdentity.codecJson,request.source).noSpaces)
       Sql.exec(c,"INSERT INTO ch_messages SELECT sid,1,0,'m0',?::jsonb FROM fixture",messageJson)
       Sql.exec(c,"INSERT INTO ch_archive_fragments SELECT sid,1,0,'needlealpha' FROM fixture")
       if(published) {

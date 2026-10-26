@@ -10,14 +10,15 @@ final class Mcp(app: Application) {
   private val str = Json.obj("type"->s("string"),"maxLength"->Json.fromInt(2048))
   private def integer(min: Int,max: Int): Json = Json.obj("type"->s("integer"),"minimum"->Json.fromInt(min),"maximum"->Json.fromInt(max))
   private val paging = List("offset"->integer(0,100000),"limit"->integer(1,100))
+  private val contentPaging = List("offset"->integer(0,Int.MaxValue),"limit"->integer(1,Check.maximumContentPageSize))
   private val viewFields = List("revision"->integer(1,Int.MaxValue),"generationId"->str)
   private val filtering = List("project"->str,"gitBranch"->str,"after"->str,"before"->str,"tags"->Json.obj("type"->s("array"),"maxItems"->Json.fromInt(32),"items"->str))
   private def tool(name: String,description: String,fields: List[(String,Json)],required: List[String]): Json = Json.obj("name"->s(name),"description"->s(description),"inputSchema"->Json.obj("type"->s("object"),"properties"->Json.obj(fields*),"required"->Json.arr(required.map(s)*),"additionalProperties"->Json.False),"annotations"->Json.obj("readOnlyHint"->Json.True,"destructiveHint"->Json.False,"idempotentHint"->Json.True,"openWorldHint"->Json.False))
   val tools: Json = Json.arr(
     tool("search_sessions",s"Search authorized archive sessions. Lexical total/countScope=ExactMatches is global. Semantic/hybrid use ANN plus full-vector reranking; total/countScope=CandidateWindow counts only retrieved sessions, not the corpus. rankingLimit bounds candidate chunks (${SearchPolicy.candidatesPerLeg} semantic, ${SearchPolicy.rankingLimit(SearchMode.Hybrid)} hybrid); offsets must be smaller than that bound. Filters and live ACLs apply before each candidate limit.",List("query"->str,"mode"->Json.obj("type"->s("string"),"enum"->Json.arr(s("lexical"),s("semantic"),s("hybrid"))))++paging++filtering,List("query","mode")),
     tool("get_session","Read authorized session metadata and first 100 indexed fragments.",List("sessionId"->str)++viewFields,List("sessionId")),
-    tool("get_chunks","Page all authorized annotations in deterministic source order.",List("sessionId"->str)++paging++viewFields,List("sessionId")),
-    tool("get_messages","Page original normalized messages; raw agent scope is not required.",List("sessionId"->str)++paging++viewFields,List("sessionId")),
+    tool("get_chunks","Page all authorized annotations in deterministic source order.",List("sessionId"->str)++contentPaging++viewFields,List("sessionId")),
+    tool("get_messages","Page original normalized messages; raw agent scope is not required.",List("sessionId"->str)++contentPaging++viewFields,List("sessionId")),
     tool("related_sessions","Find related sessions through live authorized retrieval.",List("sessionId"->str,"limit"->integer(1,100)),List("sessionId")),
     tool("list_facets","List authorized bounded metadata facets.",filtering,Nil),
     tool("ingest_status","Page authorized ingestion jobs, including failures.",paging,Nil),

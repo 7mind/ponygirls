@@ -46,6 +46,26 @@ class ProtocolEvolutionTest extends munit.FunSuite {
     // Persisted issued-token receipts deliberately retain their exact shape.
     assertEquals(Wire.encode(TokenInfo.codecJson,info),Wire.encode(v11.TokenInfo.codecJson,conversions.down1_1_0.convert[v12.TokenInfo,v11.TokenInfo](conversions.down1_2_0.convert[TokenInfo,v12.TokenInfo](info))))
   }
+  test("BA specified:1.3 archive, activity and locator codecs preserve pins and exact i64 totals") {
+    val maximum=9007199254740993L
+    val counts=JobCounts(maximum,0,0,0,maximum,0,0,0)
+    val source=Fixtures.snapshot()
+    val head=SessionInfo(ContentView(2,None),id,"a",2,Some(1),source.metadata,source.source,source.completion,false)
+    val published=ContentView(1,Some(id))
+    val row=ArchiveRow(head,Some(published),Some(published),Some("2026-10-26T00:00:00Z"),3,List("work"),None)
+    val values=List[Result](
+      Result.Archive(ArchiveResult(List(row),maximum,None,ArchiveTextScope.BoundedCandidateSets,Some(1000))),
+      Result.Activity(ActivityResult("2026-10-26T00:00:00Z",UserInfo("a","a",List(Scope.Read)),maximum,0,counts,counts,List(ActivityCollector("reportless",None,maximum,0,counts,counts)),maximum,None)),
+      Result.ActivityJobs(ActivityJobsResult("2026-10-26T00:00:00Z",Nil,maximum,None)),
+      Result.LocatedMessage(MessageLocation(published,2,3)))
+    values.foreach { result =>
+      val envelope=ServerEnvelope(id,result)
+      val encoded=protocol.encodeServer("1.3.0",envelope)
+      assertEquals(Wire.decode(ServerEnvelope.codecJson,encoded),envelope)
+      if(!result.isInstanceOf[Result.LocatedMessage]) assert(encoded.noSpaces.contains("\"9007199254740993\""))
+    }
+    assertEquals(Wire.negotiate(List("1.3.0","1.2.0","1.1.0","1.0.0")),"1.3.0")
+  }
   test("BA specified: collector progress/status and ack retain i64 counters, optional values and UUIDs") {
     val report=CollectorProgressUpdate("collector",9007199254740993L,id,CollectorPhase.Uploading,"2026-10-26T00:00:00Z",CollectorCounters(1,2,3,4,5,6,7,8,9,10,11,12,9007199254740993L),10000000000L,9000000000L,Some(1000000000L),Some("upload-failed"))
     assertEquals(Wire.decode(CollectorProgressUpdate.codecJson,Wire.encode(CollectorProgressUpdate.codecJson,report)),report)

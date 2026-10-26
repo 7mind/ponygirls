@@ -125,10 +125,10 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     SessionResult(session,chunksForView(c,session.view,0,100).chunks)
   }
   def messages(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): MessagesResult = reading { c =>
-    Check.page(offset,limit)
+    Check.contentPage(offset,limit)
     val view=selectView(c,reader,id,selector)
     val total=Sql.one(c,"SELECT message_count FROM ch_revision_info WHERE session_id=? AND revision=?",id,view.revision)(_.getInt(1)).getOrElse(throw DomainError("projection","message projection missing"))
-    val messages=Sql.rows(c,"SELECT value FROM ch_messages WHERE session_id=? AND revision=? ORDER BY position LIMIT ? OFFSET ?",id,view.revision,limit,offset)(r => Wire.decode(Message.codecJson,Sql.json(r,"value")))
+    val messages=Sql.rows(c,"SELECT value FROM ch_messages WHERE session_id=? AND revision=? AND position>=? ORDER BY position LIMIT ?",id,view.revision,offset,limit)(r => Wire.decode(Message.codecJson,Sql.json(r,"value")))
     MessagesResult(messages,total,offset,view)
   }
   def locateMessage(reader: String,id: UUID,selector: ContentView,messageId: String): MessageLocation = reading { c =>
@@ -188,7 +188,7 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
       ChunksResult(values,total,offset,view)
   }
   def pageChunks(reader: String,id: UUID,offset: Int,limit: Int,selector: Option[ContentView]): ChunksResult = reading { c =>
-    Check.page(offset,limit)
+    Check.contentPage(offset,limit)
     chunksForView(c,selectView(c,reader,id,selector),offset,limit)
   }
   def statuses(reader: String,offset: Int,limit: Int): StatusResult = db.transaction { c =>

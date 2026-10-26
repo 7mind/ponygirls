@@ -35,6 +35,13 @@ class ArchiveLexicalIndexTest extends munit.FunSuite {
     assert(plan.contains("Bitmap Index Scan on literal_folded_gin"),plan)
     assertEquals(Sql.one(c,folded,p)(_.getInt(1)),Some(1))
   }}
+  test("GoodCommunication specified: pinned Unicode lowercase expansion fits the literal-byte/scalar-overlap bound") { database { c =>
+    val violations=Sql.one(c,"WITH scalars AS MATERIALIZED(SELECT CASE WHEN cp BETWEEN 55296 AND 57343 THEN NULL ELSE chr(cp) END AS value FROM generate_series(1,1114111) cp) SELECT count(*) FROM scalars WHERE value IS NOT NULL AND char_length(lower(value COLLATE pg_unicode_fast))>octet_length(value)")(_.getLong(1)).get
+    assertEquals(violations,0L)
+    val expanded=Sql.one(c,"SELECT lower(? COLLATE pg_unicode_fast)","İ"*256)(_.getString(1)).get
+    assert(expanded.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>512)
+    assertEquals(expanded.codePointCount(0,expanded.length),ArchiveProjection.overlapScalars)
+  }}
   test("Effectual GoodCommunication specified: indexed and scan literal membership agree over Unicode case samples and fragment boundaries") { database { c =>
     val generated=(0 to Character.MAX_CODE_POINT).iterator.filter(cp => Character.isValidCodePoint(cp) && (Character.toLowerCase(cp)!=cp || Character.toUpperCase(cp)!=cp)).zipWithIndex.filter(_._2%13==0).map { case (cp,index) =>
       val source=new String(Character.toChars(cp)); val lower=new String(Character.toChars(Character.toLowerCase(cp)))
@@ -42,6 +49,9 @@ class ArchiveLexicalIndexTest extends munit.FunSuite {
     }.toList
     val cases=List(
       ("x"*3500+"K"*512+"z"*4000,"k"*512),
+      ("x"*3500+"i\u0307"*256+"z"*4000,"İ"*256),
+      ("aΣ"+"\u0301"*5000+"b","σ"),
+      ("aΣ"+"\u0301"*5000+"b","ς"),
       ("x"*4090+"Αλφα БЕТА Needle"+"z"*5000,"αλφα бета needle"),
       ("x"*4000+"İstanbul Straße ſong Kelvin 😀 %_\\"+"z"*5000,"İstanbul Straße ſong kelvin 😀 %_\\"),
       ("x"*20000+"longwordNeedle"+"z"*20000,"LONGWORDneedle"),
@@ -54,7 +64,8 @@ class ArchiveLexicalIndexTest extends munit.FunSuite {
     Sql.exec(c,"CREATE TEMP TABLE lexical_fragments(case_id integer,value text COLLATE pg_unicode_fast)")
     cases.zipWithIndex.foreach { case ((source,_),index) =>
       Sql.exec(c,"INSERT INTO lexical_original VALUES(?,?)",index,source)
-      ArchiveProjection.fragments(source).foreach(fragment => Sql.exec(c,"INSERT INTO lexical_fragments VALUES(?,?)",index,fragment))
+      val foldedSource=Sql.one(c,"SELECT lower(? COLLATE pg_unicode_fast)",source)(_.getString(1)).get
+      ArchiveProjection.fragments(foldedSource).foreach(fragment => Sql.exec(c,"INSERT INTO lexical_fragments VALUES(?,?)",index,fragment))
     }
     Sql.exec(c,"CREATE INDEX lexical_folded_gin ON lexical_fragments USING gin((lower(value COLLATE pg_unicode_fast)) gin_trgm_ops)")
     Sql.exec(c,"ANALYZE lexical_fragments")

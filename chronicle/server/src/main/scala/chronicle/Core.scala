@@ -14,6 +14,8 @@ final case class DomainError(code: String, detail: String) extends RuntimeExcept
 object Check {
   def apply(ok: Boolean, code: String, detail: String): Unit = if (!ok) throw DomainError(code, detail)
   def page(offset: Int, limit: Int): Unit = apply(offset >= 0 && offset <= 100000 && limit >= 1 && limit <= 100, "invalid", "invalid page bounds")
+  val maximumContentPageSize = 100
+  def contentPage(offset: Int,limit: Int): Unit = apply(offset >= 0 && limit >= 1 && limit <= maximumContentPageSize,"invalid","invalid content page bounds")
   def text(s: String, max: Int): Unit = apply(s.nonEmpty && s.length <= max, "invalid", "invalid text length")
 }
 object Wire {
@@ -181,11 +183,12 @@ object SnapshotValidation {
     Check(Wire.hash(r.files.map(_.content).mkString) == r.digest, "invalid", "source digest mismatch")
     Check(r.messages.map(_.id).distinct.size == r.messages.size, "invalid", "duplicate message IDs")
     val records = r.files.flatMap(_.content.linesIterator.filter(_.nonEmpty).map(Wire.parse))
+    val recordCount = records.size
     val rawIds = records.flatMap(j => List(j.hcursor.get[String]("id").toOption,j.hcursor.get[String]("uuid").toOption).flatten).toSet
     val ids = r.messages.map(_.id).toSet ++ rawIds
     r.messages.foreach { m =>
       (List(m.id,m.role)++m.parentId++m.timestamp).foreach(structured); scalar(m.text)
-      Check.text(m.id,256); Check.text(m.role,64); Check(m.recordIndex >= 0 && m.recordIndex < records.size && m.parentId.forall(ids.contains),"invalid","invalid message provenance")
+      Check.text(m.id,256); Check.text(m.role,64); Check(m.recordIndex >= 0 && m.recordIndex < recordCount && m.parentId.forall(ids.contains),"invalid","invalid message provenance")
     }
     Check(r.metadata.tags.size <= 32 && r.metadata.tags.forall(t => SnapshotProjection.text(t).length <= 128), "invalid", "invalid tags")
     List(r.metadata.startedAt,r.metadata.endedAt).flatten.foreach(t => Check(scala.util.Try(java.time.Instant.parse(t)).isSuccess,"invalid","invalid timestamp"))

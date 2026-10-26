@@ -49,6 +49,24 @@ class ArchiveProjectionTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](archive.locateMessage("a",out.sessionId,view,"absent")).code,"not-found")
     assertEquals(intercept[DomainError](archive.locateMessage("a",out.sessionId,ContentView(2,None),"u")).code,"not-found")
   }}
+  test("BG GoodCommunication regression: obsolete lexical projections rebuild whole-field folding without changing normalized content") { database { (config,db,archive) =>
+    val original=Fixtures.snapshot(); val text="aΣ"+"\u0301"*5000+"b"
+    val request=original.copy(metadata=original.metadata.copy(title=text),messages=original.messages.map(_.copy(text=text)))
+    val receipt=archive.ingest("a",request,config.profile)
+    db.transaction { c =>
+      Sql.exec(c,"UPDATE ch_revision_info SET lexical_version=0 WHERE session_id=?",receipt.sessionId)
+      Sql.exec(c,"DELETE FROM ch_archive_fragments WHERE session_id=?",receipt.sessionId)
+      ArchiveProjection.fragments(text).zipWithIndex.foreach { case (value,ordinal) => Sql.exec(c,"INSERT INTO ch_archive_fragments VALUES(?,1,?,?)",receipt.sessionId,ordinal,value) }
+    }
+    ArchiveProjection.backfill(db); ArchiveProjection.backfill(db)
+    assertEquals(archive.messages("a",receipt.sessionId,0,100,Some(ContentView(1,None))).messages,request.messages)
+    assertEquals(archive.raw("a",receipt.sessionId,Some(1)).files,request.files)
+    db.transaction { c =>
+      assertEquals(Sql.one(c,"SELECT lexical_version FROM ch_revision_info WHERE session_id=?",receipt.sessionId)(_.getInt(1)),Some(ArchiveProjection.lexicalVersion))
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE session_id=? AND value LIKE '%σ%'",receipt.sessionId)(_.getInt(1)),Some(2))
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE session_id=? AND value LIKE '%ς%'",receipt.sessionId)(_.getInt(1)),Some(0))
+    }
+  }}
   test("Effectual GoodCommunication specified: backfill commits bounded batches, rolls back a failing batch and resumes") { database { (config,db,archive) =>
     val original=Fixtures.snapshot()
     db.transaction { c =>
