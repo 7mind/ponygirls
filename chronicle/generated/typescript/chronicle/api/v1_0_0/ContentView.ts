@@ -50,11 +50,11 @@ export class ContentView implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return ContentView.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
     public baboonSameInVersions() {
         return ContentView.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical", "1.1.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical", "1.1.0": "identical", "1.2.0": "identical" }
     public baboonForwardReadable() {
         return ContentView.BaboonForwardReadable
     }
@@ -67,7 +67,7 @@ export class ContentView implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.1.0 */
+/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.2.0 */
 export class ContentView_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ContentView): unknown {
         if (this !== ContentView_JsonCodec.lazyInstance.value) {

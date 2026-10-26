@@ -95,7 +95,7 @@ class Rpc {
     const socket = new WebSocket(base.replace('http:', 'ws:') + '/api/ws', { headers: { Origin: base, Cookie: cookie } });
     const client = new Rpc(socket);
     await new Promise<void>((done, fail) => { socket.once('open', done); socket.once('error', fail); });
-    assert.ok(await client.call(new A.Operation_Hello(['1.1.0']), randomUUID()) instanceof A.Result_Hello);
+    assert.ok(await client.call(new A.Operation_Hello(['1.2.0']), randomUUID()) instanceof A.Result_Hello);
     return client;
   }
 }
@@ -322,11 +322,11 @@ test('collector → durable archive → annotation/pgvector → generated WS and
   await recoveredHeading.waitFor();
   assert.ok(lostMintId !== undefined); assert.equal(await page.locator('.token-secret').count(), 0);
   const committedMint = await alice.rpc.call(new A.Operation_ListTokens(), randomUUID()); assert.ok(committedMint instanceof A.Result_Tokens);
-  assert.equal(committedMint.result.tokens.filter(token => token.name === 'lost-response-token').length, 1, 'lost mint must not replay');
+  assert.equal(committedMint.result.tokens.filter(token => token.info.name === 'lost-response-token').length, 1, 'lost mint must not replay');
   await page.getByRole('button', { name: 'Revoke unrecoverable token', exact: true }).click();
   await page.getByText('Revoke unrecoverable token completed.', { exact: true }).waitFor();
   const revokedMint = await alice.rpc.call(new A.Operation_ListTokens(), randomUUID()); assert.ok(revokedMint instanceof A.Result_Tokens);
-  assert.equal(revokedMint.result.tokens.find(token => token.id === lostMintId)?.revoked, true);
+  assert.equal(revokedMint.result.tokens.find(token => token.info.id === lostMintId)?.info.revoked, true);
   await page.getByRole('textbox', { name: 'Token name' }).fill('replacement-token');
   await page.getByRole('button', { name: 'Mint token ↗', exact: true }).click();
   await page.getByRole('heading', { name: 'Save your token now.', exact: true }).waitFor();

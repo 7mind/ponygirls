@@ -91,11 +91,11 @@ export class Chunk implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return Chunk.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
     public baboonSameInVersions() {
         return Chunk.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical", "1.1.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical", "1.1.0": "identical", "1.2.0": "identical" }
     public baboonForwardReadable() {
         return Chunk.BaboonForwardReadable
     }
@@ -108,7 +108,7 @@ export class Chunk implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.1.0 */
+/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.2.0 */
 export class Chunk_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Chunk): unknown {
         if (this !== Chunk_JsonCodec.lazyInstance.value) {

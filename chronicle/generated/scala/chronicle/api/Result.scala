@@ -29,12 +29,12 @@ package chronicle.api {
     }
     
     object Hello {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Hello"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -99,12 +99,12 @@ package chronicle.api {
     }
     
     object Pong {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Pong"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -167,12 +167,12 @@ package chronicle.api {
     }
     
     object Whoami {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Whoami"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -235,12 +235,12 @@ package chronicle.api {
     }
     
     object Search {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Search"
-      private lazy val _baboonSameInVersions: List[String] = List("1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.1.0", "prefix-any-mode" -> "1.1.0", "identical" -> "1.1.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -303,12 +303,12 @@ package chronicle.api {
     }
     
     object Session {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Session"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -371,12 +371,12 @@ package chronicle.api {
     }
     
     object Chunks {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Chunks"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -439,12 +439,12 @@ package chronicle.api {
     }
     
     object Messages {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Messages"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -507,12 +507,12 @@ package chronicle.api {
     }
     
     object Raw {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Raw"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -575,12 +575,12 @@ package chronicle.api {
     }
     
     object Related {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Related"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -643,12 +643,12 @@ package chronicle.api {
     }
     
     object Facets {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Facets"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -697,6 +697,74 @@ package chronicle.api {
     }
     
     
+    final case class CollectionStatus(
+      result: CollectorStatusResult
+    ) extends Result with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = Result.CollectionStatus.baboonDomainVersion
+      override def baboonDomainIdentifier: String = Result.CollectionStatus.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = Result.CollectionStatus.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = Result.CollectionStatus.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = Result.CollectionStatus.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = Result.CollectionStatus.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = Result.CollectionStatus.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = Result.CollectionStatus.baboonAdtType
+    }
+    
+    object CollectionStatus {
+      def baboonDomainVersion: String = "1.2.0"
+      def baboonDomainIdentifier: String = "chronicle.api"
+      def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#CollectionStatus"
+      private lazy val _baboonSameInVersions: List[String] = List("1.2.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.2.0", "prefix-compact" -> "1.2.0", "prefix-any-mode" -> "1.2.0", "identical" -> "1.2.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "chronicle.api/:#Result"
+      def baboonAdtType: _root_.java.lang.Class[?] = Result.getClass
+      def codecJson: BaboonJsonCodec[Result.CollectionStatus] = Result.CollectionStatus_JsonCodec.instance
+    }
+    
+    object CollectionStatus_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.CollectionStatus, BaboonJsonCodec[Result.CollectionStatus]] {
+      def encode(ctx: BaboonCodecContext, value: Result.CollectionStatus): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "result" -> CollectorStatusResult_JsonCodec.instance.encode(ctx, value.result)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, Result.CollectionStatus] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              result <- getField(jsonObject, "result").flatMap(v => CollectorStatusResult_JsonCodec.circeDecoder(v.hcursor))
+            } yield Result.CollectionStatus(result)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to CollectionStatus: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = Result.CollectionStatus.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = Result.CollectionStatus.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = Result.CollectionStatus.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = Result.CollectionStatus.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = Result.CollectionStatus.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[Result.CollectionStatus]] = Lazy(Result.CollectionStatus_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[Result.CollectionStatus]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[Result.CollectionStatus] = LazyInstance.value
+    }
+    
+    
     final case class Status(
       result: StatusResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGeneratedLatest {
@@ -711,14 +779,14 @@ package chronicle.api {
     }
     
     object Status {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Status"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.2.0", "prefix-any-mode" -> "1.2.0", "identical" -> "1.2.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
       def baboonAdtTypeIdentifier: String = "chronicle.api/:#Result"
       def baboonAdtType: _root_.java.lang.Class[?] = Result.getClass
@@ -779,14 +847,14 @@ package chronicle.api {
     }
     
     object Tokens {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Tokens"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.2.0", "prefix-compact" -> "1.2.0", "prefix-any-mode" -> "1.2.0", "identical" -> "1.2.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
       def baboonAdtTypeIdentifier: String = "chronicle.api/:#Result"
       def baboonAdtType: _root_.java.lang.Class[?] = Result.getClass
@@ -847,12 +915,12 @@ package chronicle.api {
     }
     
     object Token {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Token"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -915,12 +983,12 @@ package chronicle.api {
     }
     
     object Groups {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Groups"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -983,12 +1051,12 @@ package chronicle.api {
     }
     
     object Mutation {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Mutation"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1051,12 +1119,12 @@ package chronicle.api {
     }
     
     object Error {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Error"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1119,12 +1187,12 @@ package chronicle.api {
     }
     
     object Ping {
-      def baboonDomainVersion: String = "1.1.0"
+      def baboonDomainVersion: String = "1.2.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Ping"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1171,14 +1239,14 @@ package chronicle.api {
       override protected def LazyInstance: Lazy[BaboonJsonCodec[Result.Ping]] = cachedLazyInstance
       override def instance: BaboonJsonCodec[Result.Ping] = LazyInstance.value
     }
-    def baboonDomainVersion: String = "1.1.0"
+    def baboonDomainVersion: String = "1.2.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#Result"
-    private lazy val _baboonSameInVersions: List[String] = List("1.1.0")
+    private lazy val _baboonSameInVersions: List[String] = List("1.2.0")
     def baboonSameInVersions: List[String] = _baboonSameInVersions
-    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
     def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.1.0", "prefix-any-mode" -> "1.1.0", "identical" -> "1.1.0")
+    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.2.0", "prefix-compact" -> "1.2.0", "prefix-any-mode" -> "1.2.0", "identical" -> "1.2.0")
     def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
     def codecJson: BaboonJsonCodec[Result] = Result_JsonCodec.instance
   }
@@ -1209,6 +1277,8 @@ package chronicle.api {
         case related: Result.Related => Json.obj("Related" -> Result.Related_JsonCodec.instance.encode(ctx, related))
         
         case facets: Result.Facets => Json.obj("Facets" -> Result.Facets_JsonCodec.instance.encode(ctx, facets))
+        
+        case collectionstatus: Result.CollectionStatus => Json.obj("CollectionStatus" -> Result.CollectionStatus_JsonCodec.instance.encode(ctx, collectionstatus))
         
         case status: Result.Status => Json.obj("Status" -> Result.Status_JsonCodec.instance.encode(ctx, status))
         
@@ -1267,6 +1337,9 @@ package chronicle.api {
                 
                 case "Facets" =>
                   Result.Facets_JsonCodec.instance.decode(ctx, json)
+                
+                case "CollectionStatus" =>
+                  Result.CollectionStatus_JsonCodec.instance.decode(ctx, json)
                 
                 case "Status" =>
                   Result.Status_JsonCodec.instance.decode(ctx, json)

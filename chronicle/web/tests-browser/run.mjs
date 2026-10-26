@@ -83,7 +83,7 @@ try {
   }
   {
     const { context, page } = await scene(fixture => {
-      fixture.jobs.push(new api.JobInfo('00000000-0000-4000-8000-000000000099', fixture.jobs[0].sessionId, 1, api.JobState.Failed, 1, 'superseded-revision'));
+      fixture.jobs.push(new api.JobInfo('00000000-0000-4000-8000-000000000099', fixture.jobs[0].sessionId, 1, api.JobState.Failed, 1, 'superseded-revision', 0, undefined));
     });
     await page.getByRole('button', { name: 'activity', exact: true }).click();
     const superseded = page.locator('.job-row').filter({ hasText: 'superseded-revision' });

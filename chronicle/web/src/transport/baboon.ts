@@ -5,7 +5,7 @@ import { Operation_Hello, Operation_Ping, Operation_Pong, type Operation } from 
 import { Result_Hello, Result_Ping, Result_Pong, Result_Error, Result_Search, type Result } from '../../../generated/typescript/chronicle/api/Result.ts';
 import { SearchCountScope } from '../../../generated/typescript/chronicle/api/SearchCountScope.ts';
 import type { Protocol } from './types.ts';
-const API_VERSION = '1.1.0';
+const API_VERSION = '1.2.0';
 const MAX_FRAME_CHARACTERS = 8 * 1024 * 1024;
 export function baboonProtocol(nonce: () => string): Protocol<Operation, Result> {
   let helloId: string | null = null;

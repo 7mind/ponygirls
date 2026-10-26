@@ -40,7 +40,7 @@ export class LoginResponse implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.1.0'
+    public static readonly BaboonDomainVersion = '1.2.0'
     public baboonDomainVersion() {
         return LoginResponse.BaboonDomainVersion
     }
@@ -52,11 +52,11 @@ export class LoginResponse implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return LoginResponse.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0"]
     public baboonSameInVersions() {
         return LoginResponse.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.1.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
     public baboonForwardReadable() {
         return LoginResponse.BaboonForwardReadable
     }
@@ -92,7 +92,7 @@ export class LoginResponse_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.1.0'
+    public static readonly BaboonDomainVersion = '1.2.0'
     public baboonDomainVersion() {
         return LoginResponse_JsonCodec.BaboonDomainVersion
     }

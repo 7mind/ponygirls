@@ -34,7 +34,7 @@ export class SearchCountScope_JsonCodec {
         return SearchCountScope_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.1.0'
+    public static readonly BaboonDomainVersion = '1.2.0'
     public baboonDomainVersion() {
         return SearchCountScope_JsonCodec.BaboonDomainVersion
     }

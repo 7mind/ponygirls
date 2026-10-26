@@ -52,7 +52,7 @@ class HttpTest extends munit.FunSuite {
               def send(op: Operation): Unit= { ws.sendText(Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),op)).noSpaces,true).get(10,TimeUnit.SECONDS); () }
               def receive(): Result= { val envelope=inbox.poll(25,TimeUnit.SECONDS); assert(envelope!=null,s"response missing; close=${closed.getNow(0)}"); envelope.result }
               try {
-                send(Operation.Hello(List("1.1.0"))); assert(receive().isInstanceOf[Result.Hello])
+                send(Operation.Hello(List("1.2.0"))); assert(receive().isInstanceOf[Result.Hello])
                 val delay=19.seconds.toNanos-(System.nanoTime()-opened)
                 if(delay>0) TimeUnit.NANOSECONDS.sleep(delay)
                 send(Operation.Search(SearchQuery("slow model",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)))

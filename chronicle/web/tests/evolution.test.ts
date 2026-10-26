@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.ts';
+import { CollectorCounters, CollectorProgressUpdate, CollectorProgressAck, CollectorStatus, CollectorStatusResult, CollectorPhase, CollectorProgressUpdate_JsonCodec, CollectorProgressAck_JsonCodec, Result_CollectionStatus, ServerEnvelope, ServerEnvelope_JsonCodec, JobState, TokenSource } from '../src/api.ts';
+import { JobInfo as JobInfoV11 } from '../../generated/typescript/chronicle/api/v1_1_0/JobInfo.ts';
+import { JobState as JobStateV11 } from '../../generated/typescript/chronicle/api/v1_1_0/JobState.ts';
+import { TokenInfo as TokenInfoV11 } from '../../generated/typescript/chronicle/api/v1_1_0/TokenInfo.ts';
+import { TokensResult as TokensResultV11 } from '../../generated/typescript/chronicle/api/v1_1_0/TokensResult.ts';
+import { Result_Status as StatusV11, Result_Tokens as TokensV11 } from '../../generated/typescript/chronicle/api/v1_1_0/Result.ts';
+import { StatusResult as StatusResultV11 } from '../../generated/typescript/chronicle/api/v1_1_0/StatusResult.ts';
+import { convert__result__from__1_1_0 } from '../../generated/typescript/chronicle/api/from_1_1_0_result.ts';
+import { SearchResult as SearchV10 } from '../../generated/typescript/chronicle/api/v1_0_0/SearchResult.ts';
+import { Result_Search as ResultSearchV10 } from '../../generated/typescript/chronicle/api/v1_0_0/Result.ts';
+import { convert__result__from__1_0_0 } from '../../generated/typescript/chronicle/api/v1_1_0/from_1_0_0_result.ts';
+import { Result_Search, Result_Status, Result_Tokens, SearchCountScope } from '../src/api.ts';
+const ctx = BaboonCodecContext.Default;
+const id = '00000000-0000-4000-8000-000000000001';
+test('BG specified: generated nested evolution calls registered external custom semantics', () => {
+  const tokens = convert__result__from__1_1_0(new TokensV11(new TokensResultV11([new TokenInfoV11(id, 'issued', [], '2026-10-26T00:00:00Z', false)])));
+  assert.ok(tokens instanceof Result_Tokens); assert.equal(tokens.result.tokens[0]?.source, TokenSource.Issued);
+  const jobs = convert__result__from__1_1_0(new StatusV11(new StatusResultV11([new JobInfoV11(id, id, 1, JobStateV11.Running, 1, undefined)], 1)));
+  assert.ok(jobs instanceof Result_Status); assert.equal(jobs.result.jobs[0]?.state, JobState.Running); assert.equal(jobs.result.jobs[0]?.completedWindows, 0); assert.equal(jobs.result.jobs[0]?.totalWindows, undefined);
+  const search = convert__result__from__1_1_0(convert__result__from__1_0_0(new ResultSearchV10(new SearchV10([], 0))));
+  assert.ok(search instanceof Result_Search); assert.equal(search.result.countScope, SearchCountScope.ExactMatches);
+});
+test('BA specified: collector wire codecs preserve i64 and nullable progress, not number-rounded counters', () => {
+  const report = new CollectorProgressUpdate('collector', 9007199254740993n, id, CollectorPhase.Uploading, '2026-10-26T00:00:00Z', new CollectorCounters(1,2,3,4,5,6,7,8,9,10,11,12,9007199254740993n), 10000000000n, 9000000000n, undefined, undefined);
+  const encoded = CollectorProgressUpdate_JsonCodec.instance.encode(ctx, report);
+  const decoded = CollectorProgressUpdate_JsonCodec.instance.decode(ctx, JSON.parse(JSON.stringify(encoded)));
+  assert.equal(decoded.sequence, 9007199254740993n); assert.equal(decoded.counters.scannedBytes, 9007199254740993n); assert.equal(decoded.currentUploadTotalBytes, undefined);
+  assert.deepEqual(CollectorProgressUpdate_JsonCodec.instance.encode(ctx, decoded), encoded);
+  const ack = new CollectorProgressAck(report.sequence, false);
+  assert.equal(CollectorProgressAck_JsonCodec.instance.decode(ctx, CollectorProgressAck_JsonCodec.instance.encode(ctx, ack)).sequence, report.sequence);
+  const envelope = new ServerEnvelope(id, new Result_CollectionStatus(new CollectorStatusResult([new CollectorStatus(report, '2026-10-26T00:01:00Z', true)])));
+  const frame = ServerEnvelope_JsonCodec.instance.encode(ctx, envelope);
+  assert.deepEqual(ServerEnvelope_JsonCodec.instance.encode(ctx, ServerEnvelope_JsonCodec.instance.decode(ctx, frame)), frame);
+});

@@ -5,6 +5,14 @@
       {
         "version" : "1.0.0",
         "sigId" : "0eb324def9dca582720ded43eb94de6146bed5c82c7fd3c87011f4b20987f191"
+      },
+      {
+        "version" : "1.1.0",
+        "sigId" : "642d4391f248dc76eb3f943ca58ac45df95fcdda5b44707990640f4eb68a1ae8"
+      },
+      {
+        "version" : "1.2.0",
+        "sigId" : "aab52a4fd515a1089f37b8c2947ae948bc77e3509584bc9a58405590c76030a2"
       }
     ]
   }

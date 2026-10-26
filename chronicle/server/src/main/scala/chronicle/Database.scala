@@ -169,7 +169,7 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     Check.page(offset,limit)
     val from = s"FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE $visible"
     val n = Sql.one(c,s"SELECT count(*) $from",reader,reader,reader)(_.getInt(1)).get
-    val jobs = Sql.rows(c,s"SELECT j.* $from ORDER BY j.id LIMIT ? OFFSET ?",reader,reader,reader,limit,offset)(r => JobInfo(r.getObject("id",classOf[UUID]),r.getObject("session_id",classOf[UUID]),r.getInt("revision"),JobState.parse(r.getString("state")).get,r.getInt("attempts"),Option(r.getString("error"))))
+    val jobs = Sql.rows(c,s"SELECT j.* $from ORDER BY j.id LIMIT ? OFFSET ?",reader,reader,reader,limit,offset)(r => JobInfo(r.getObject("id",classOf[UUID]),r.getObject("session_id",classOf[UUID]),r.getInt("revision"),JobState.parse(r.getString("state")).get,r.getInt("attempts"),Option(r.getString("error")),0,None))
     StatusResult(jobs,n)
   }
   def retry(owner: String,id: UUID): Unit = db.transaction(c => Jobs.retry(c,owner,id))

@@ -1,0 +1,26 @@
+{
+  "collectorId": "fixture-collector",
+  "sequence": "9007199254740993",
+  "runId": "00000000-0000-4000-8000-000000000001",
+  "phase": "Uploading",
+  "startedAt": "2026-10-26T00:00:00Z",
+  "counters": {
+    "discovered": 1,
+    "scanned": 2,
+    "waiting": 3,
+    "excluded": 4,
+    "unchanged": 5,
+    "enqueued": 6,
+    "uploaded": 7,
+    "uploadFailures": 8,
+    "quarantined": 9,
+    "pending": 10,
+    "stopped": 11,
+    "conflicts": 12,
+    "scannedBytes": "9007199254740993"
+  },
+  "totalUploadBytes": "10000000000",
+  "uploadedBytes": "9000000000",
+  "currentUploadTotalBytes": null,
+  "error": null
+}

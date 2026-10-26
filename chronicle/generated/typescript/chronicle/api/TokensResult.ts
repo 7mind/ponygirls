@@ -1,15 +1,15 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
-import {TokenInfo, TokenInfo_JsonCodec} from './TokenInfo.js'
+import {ListedToken, ListedToken_JsonCodec} from './ListedToken.js'
 
 export class TokensResult implements BaboonGeneratedLatest {
-    private readonly _tokens: Array<TokenInfo>;
+    private readonly _tokens: Array<ListedToken>;
 
-    constructor(tokens: Array<TokenInfo>) {
+    constructor(tokens: Array<ListedToken>) {
         this._tokens = tokens
     }
 
-    public get tokens(): Array<TokenInfo> {
+    public get tokens(): Array<ListedToken> {
         return this._tokens;
     }
 
@@ -19,19 +19,19 @@ export class TokensResult implements BaboonGeneratedLatest {
         };
     }
 
-    public with(overrides: {tokens?: Array<TokenInfo>}): TokensResult {
+    public with(overrides: {tokens?: Array<ListedToken>}): TokensResult {
         return new TokensResult(
             'tokens' in overrides ? overrides.tokens! : this._tokens
         );
     }
 
-    public static fromPlain(obj: {tokens: Array<TokenInfo>}): TokensResult {
+    public static fromPlain(obj: {tokens: Array<ListedToken>}): TokensResult {
         return new TokensResult(
             obj.tokens
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.1.0'
+    public static readonly BaboonDomainVersion = '1.2.0'
     public baboonDomainVersion() {
         return TokensResult.BaboonDomainVersion
     }
@@ -43,15 +43,15 @@ export class TokensResult implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return TokensResult.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0"]
+    public static readonly BaboonSameInVersions = ["1.2.0"]
     public baboonSameInVersions() {
         return TokensResult.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.1.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
     public baboonForwardReadable() {
         return TokensResult.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.0.0", "prefix-compact": "1.0.0", "prefix-any-mode": "1.0.0", "identical": "1.0.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.2.0", "prefix-compact": "1.2.0", "prefix-any-mode": "1.2.0", "identical": "1.2.0" }
     public baboonMinReaderVersions() {
         return TokensResult.BaboonMinReaderVersions
     }
@@ -67,7 +67,7 @@ export class TokensResult_JsonCodec {
         }
     
         return {
-            "tokens": Array.from(value.tokens).map(item => TokenInfo_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+            "tokens": Array.from(value.tokens).map(item => ListedToken_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): TokensResult {
@@ -77,11 +77,11 @@ export class TokensResult_JsonCodec {
     
         const obj = json as Record<string, unknown>;
         return new TokensResult (
-            (obj["tokens"] as unknown[]).map(item => TokenInfo_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+            (obj["tokens"] as unknown[]).map(item => ListedToken_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.1.0'
+    public static readonly BaboonDomainVersion = '1.2.0'
     public baboonDomainVersion() {
         return TokensResult_JsonCodec.BaboonDomainVersion
     }

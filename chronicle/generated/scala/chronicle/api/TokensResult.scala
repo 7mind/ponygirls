@@ -4,7 +4,7 @@ import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, Baboon
 
 package chronicle.api {
   final case class TokensResult(
-    tokens: List[TokenInfo]
+    tokens: List[ListedToken]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = TokensResult.baboonDomainVersion
     override def baboonDomainIdentifier: String = TokensResult.baboonDomainIdentifier
@@ -15,14 +15,14 @@ package chronicle.api {
   }
   
   object TokensResult {
-    def baboonDomainVersion: String = "1.1.0"
+    def baboonDomainVersion: String = "1.2.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#TokensResult"
-    private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0")
+    private lazy val _baboonSameInVersions: List[String] = List("1.2.0")
     def baboonSameInVersions: List[String] = _baboonSameInVersions
-    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.1.0" -> "identical")
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.2.0" -> "identical")
     def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
+    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.2.0", "prefix-compact" -> "1.2.0", "prefix-any-mode" -> "1.2.0", "identical" -> "1.2.0")
     def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
     def codecJson: BaboonJsonCodec[TokensResult] = TokensResult_JsonCodec.instance
   }
@@ -34,7 +34,7 @@ package chronicle.api {
       }
       
       Json.obj(
-        "tokens" -> Json.fromValues(value.tokens.map(e => TokenInfo_JsonCodec.instance.encode(ctx, e)))
+        "tokens" -> Json.fromValues(value.tokens.map(e => ListedToken_JsonCodec.instance.encode(ctx, e)))
       )
     }
     
@@ -45,7 +45,7 @@ package chronicle.api {
       
       wire.asObject match {
         case Some(jsonObject) => for {
-            tokens <- getField(jsonObject, "tokens").flatMap(v => decodeList(TokenInfo_JsonCodec.circeDecoder)(v.hcursor))
+            tokens <- getField(jsonObject, "tokens").flatMap(v => decodeList(ListedToken_JsonCodec.circeDecoder)(v.hcursor))
           } yield TokensResult(tokens)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to TokensResult: object expected"))
       }

@@ -9,14 +9,18 @@ export class JobInfo implements BaboonGeneratedLatest {
     private readonly _state: JobState;
     private readonly _attempts: number;
     private readonly _error: string | undefined;
+    private readonly _completedWindows: number;
+    private readonly _totalWindows: number | undefined;
 
-    constructor(id: string, sessionId: string, revision: number, state: JobState, attempts: number, error: string | undefined) {
+    constructor(id: string, sessionId: string, revision: number, state: JobState, attempts: number, error: string | undefined, completedWindows: number, totalWindows: number | undefined) {
         this._id = id
         this._sessionId = sessionId
         this._revision = revision
         this._state = state
         this._attempts = attempts
         this._error = error
+        this._completedWindows = completedWindows
+        this._totalWindows = totalWindows
     }
 
     public get id(): string {
@@ -37,6 +41,12 @@ export class JobInfo implements BaboonGeneratedLatest {
     public get error(): string | undefined {
         return this._error;
     }
+    public get completedWindows(): number {
+        return this._completedWindows;
+    }
+    public get totalWindows(): number | undefined {
+        return this._totalWindows;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -45,33 +55,39 @@ export class JobInfo implements BaboonGeneratedLatest {
             revision: this._revision,
             state: this._state,
             attempts: this._attempts,
-            error: this._error !== undefined ? this._error : undefined
+            error: this._error !== undefined ? this._error : undefined,
+            completedWindows: this._completedWindows,
+            totalWindows: this._totalWindows !== undefined ? this._totalWindows : undefined
         };
     }
 
-    public with(overrides: {id?: string; sessionId?: string; revision?: number; state?: JobState; attempts?: number; error?: string | undefined}): JobInfo {
+    public with(overrides: {id?: string; sessionId?: string; revision?: number; state?: JobState; attempts?: number; error?: string | undefined; completedWindows?: number; totalWindows?: number | undefined}): JobInfo {
         return new JobInfo(
             'id' in overrides ? overrides.id! : this._id,
             'sessionId' in overrides ? overrides.sessionId! : this._sessionId,
             'revision' in overrides ? overrides.revision! : this._revision,
             'state' in overrides ? overrides.state! : this._state,
             'attempts' in overrides ? overrides.attempts! : this._attempts,
-            'error' in overrides ? overrides.error! : this._error
+            'error' in overrides ? overrides.error! : this._error,
+            'completedWindows' in overrides ? overrides.completedWindows! : this._completedWindows,
+            'totalWindows' in overrides ? overrides.totalWindows! : this._totalWindows
         );
     }
 
-    public static fromPlain(obj: {id: string; sessionId: string; revision: number; state: JobState; attempts: number; error: string | undefined}): JobInfo {
+    public static fromPlain(obj: {id: string; sessionId: string; revision: number; state: JobState; attempts: number; error: string | undefined; completedWindows: number; totalWindows: number | undefined}): JobInfo {
         return new JobInfo(
             obj.id,
             obj.sessionId,
             obj.revision,
             obj.state,
             obj.attempts,
-            obj.error
+            obj.error,
+            obj.completedWindows,
+            obj.totalWindows
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.1.0'
+    public static readonly BaboonDomainVersion = '1.2.0'
     public baboonDomainVersion() {
         return JobInfo.BaboonDomainVersion
     }
@@ -83,15 +99,15 @@ export class JobInfo implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return JobInfo.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0"]
+    public static readonly BaboonSameInVersions = ["1.2.0"]
     public baboonSameInVersions() {
         return JobInfo.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.1.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical" }
     public baboonForwardReadable() {
         return JobInfo.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.0.0", "prefix-compact": "1.0.0", "prefix-any-mode": "1.0.0", "identical": "1.0.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.0.0", "prefix-compact": "1.0.0", "prefix-any-mode": "1.2.0", "identical": "1.2.0" }
     public baboonMinReaderVersions() {
         return JobInfo.BaboonMinReaderVersions
     }
@@ -113,6 +129,8 @@ export class JobInfo_JsonCodec {
             "state": JobState_JsonCodec.instance.encode(BaboonCodecContext.Default, value.state),
             "attempts": value.attempts,
             "error": value.error === undefined ? null : value.error,
+            "completedWindows": value.completedWindows,
+            "totalWindows": value.totalWindows === undefined ? null : value.totalWindows,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): JobInfo {
@@ -128,10 +146,12 @@ export class JobInfo_JsonCodec {
             JobState_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["state"]),
             obj["attempts"] as number,
             obj["error"] === undefined || obj["error"] === null ? undefined : obj["error"] === undefined || obj["error"] === null ? undefined : obj["error"] as string,
+            obj["completedWindows"] as number,
+            obj["totalWindows"] === undefined || obj["totalWindows"] === null ? undefined : obj["totalWindows"] === undefined || obj["totalWindows"] === null ? undefined : obj["totalWindows"] as number,
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.1.0'
+    public static readonly BaboonDomainVersion = '1.2.0'
     public baboonDomainVersion() {
         return JobInfo_JsonCodec.BaboonDomainVersion
     }
