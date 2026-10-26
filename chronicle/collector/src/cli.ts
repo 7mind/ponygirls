@@ -4,6 +4,8 @@ import { isAbsolute } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { loadConfig } from './config.ts';
 import { CollectorError } from './domain.ts';
+import { FileSecretReader } from './runtime-privacy.ts';
+import { HttpProgressReporter } from './progress.ts';
 import { HttpIngester } from './ingest.ts';
 import { Collector } from './collector.ts';
 import { LocalGitMetadata } from './git.ts';
@@ -40,7 +42,7 @@ async function main(): Promise<void> {
   let spool: SqliteSpool | null = null;
   try {
     spool = new SqliteSpool(config.stateDir);
-    const collector = new Collector(config, spool, new HttpIngester(config), Math.random, new LocalGitMetadata('git', 1000, 65536));
+    const collector = new Collector(config, spool, new HttpIngester(config), Math.random, new LocalGitMetadata('git', 1000, 65536), new HttpProgressReporter(config), new FileSecretReader());
     if (arguments_.operation === 'status') { print(collector.status()); return; }
     if (arguments_.operation === 'retry' || arguments_.operation === 'drop') {
       if (arguments_.requestId === null) throw new CollectorError('request-id-required');
@@ -55,7 +57,7 @@ async function main(): Promise<void> {
       do {
         const result = await collector.runOnce(Date.now()); print(result);
         if (arguments_.operation === 'once') {
-          if (result.uploadFailures + result.quarantined + result.pending + result.stopped + result.conflicts > 0) process.exitCode = 1;
+          if (result.uploadFailures + result.quarantined + result.pending + result.stopped + result.conflicts > 0 || spool.diagnostics().some(d => d.rootId === 'reporting')) process.exitCode = 1;
           return;
         }
         try { await sleep(config.pollMs, undefined, { signal: controller.signal }); }

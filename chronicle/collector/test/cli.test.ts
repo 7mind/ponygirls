@@ -18,10 +18,12 @@ test('GoodCommunication CLI disabled has no filesystem/discovery side effects; s
     const disabled = spawnSync(process.execPath, [cli, '--config', config, '--once'], { encoding: 'utf8' });
     assert.equal(disabled.status, 0); assert.deepEqual(JSON.parse(disabled.stdout) as unknown, { enabled: false }); assert.equal(existsSync(state), false);
     const source = join(dir, 'source'); mkdirSync(source); writeFileSync(join(source, 'bad.jsonl'), 'SYNTHETIC_PRIVATE_MALFORMED\n');
+    writeFileSync(join(dir, 'no-token'), 'synthetic-cli-token', { mode: 0o600 });
     writeFileSync(config, JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'no-token'), stateDir: state, discoverNative: false, discoverYolo: false, roots: [{ id: 'fixture', format: 'pi', path: source }], quietMs: 0 }));
     const failed = spawnSync(process.execPath, [cli, '--config', config, '--once'], { encoding: 'utf8' });
     assert.equal(failed.status, 1); assert.equal((JSON.parse(failed.stdout) as { quarantined: number }).quarantined, 1);
     assert.doesNotMatch(failed.stderr + failed.stdout, /SYNTHETIC_PRIVATE_MALFORMED/);
+    rmSync(join(dir, 'no-token')); // Status must not require runtime credential reads.
     const status = spawnSync(process.execPath, [cli, '--config', config, '--status'], { encoding: 'utf8' });
     assert.equal(status.status, 0); assert.match(status.stdout, /invalid-json/);
     assert.equal(statSync(state).mode & 0o077, 0); assert.equal(statSync(join(state, 'spool.sqlite')).mode & 0o077, 0);

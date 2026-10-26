@@ -1,3 +1,4 @@
+import { acceptingProgress, syntheticSecrets } from './helpers.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -48,7 +49,7 @@ test('BG git enrichment is cached per cwd per scan, labeled current, and obeys r
     const sources = join(dir, 'sessions'); mkdirSync(sources);
     for (const id of ['one', 'two']) writeFileSync(join(sources, id + '.jsonl'), JSON.stringify({ type: 'session', version: 3, id, cwd: '/synthetic/cwd' }) + '\n');
     const config = loadConfig({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'token'), stateDir: join(dir, 'state'), discoverNative: false, discoverYolo: false, roots: [{ id: 'fixture', format: 'pi', path: sources }], quietMs: 0 });
-    const collector = new Collector(config, spool, { async send(payload) { const request = IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(payload) as unknown); requests.push(request); return new IngestReceipt(request.requestId, randomUUID(), 1, randomUUID()); } }, () => 0, { async read() { calls++; return { remote: 'https://SYNTHETIC_SECRET@example.invalid/repo.git', diagnostic: null }; } });
+    const collector = new Collector(config, spool, { async send(payload) { const request = IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(payload) as unknown); requests.push(request); return new IngestReceipt(request.requestId, randomUUID(), 1, randomUUID()); } }, () => 0, { async read() { calls++; return { remote: 'https://SYNTHETIC_SECRET@example.invalid/repo.git', diagnostic: null }; } }, acceptingProgress, syntheticSecrets);
     assert.equal((await collector.runOnce(1)).uploaded, 2); assert.equal(calls, 1);
     assert.ok(requests.every(request => request.metadata.gitRemote === 'https://example.invalid/repo.git'));
     assert.ok(requests.every(request => request.metadata.tags.includes('collector-observed-current-git-remote')));

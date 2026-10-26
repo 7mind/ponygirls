@@ -2,16 +2,20 @@ import { randomUUID } from 'node:crypto';
 import { CollectorError, hash, object, string, type CollectorReport, type Counters, type Diagnostic, type ParsedTranscript, type RootCoverage } from './domain.ts';
 import { discoverRoots, excludedPath, readSnapshot, scanRoots, type SourceFile } from './discovery.ts';
 import { parseTranscript } from './parsers.ts';
-import { privacyPolicy } from './privacy.ts';
+import { resolveRuntimePrivacy, type RuntimePrivacy, type SecretReader } from './runtime-privacy.ts';
 import { encodeSnapshot, sourceIdentity, sourceKey, UploadError, type Ingester } from './ingest.ts';
+import { CollectorPhase } from '../../generated/typescript/chronicle/api/CollectorPhase.js';
+import { CollectorCounters } from '../../generated/typescript/chronicle/api/CollectorCounters.js';
+import { CollectorProgressUpdate } from '../../generated/typescript/chronicle/api/CollectorProgressUpdate.js';
+import type { ProgressReporter } from './progress.ts';
 import type { Config } from './config.ts';
 import type { GitMetadata, GitObservation } from './git.ts';
-import type { Dropped, Spool } from './spool.ts';
+import type { Dropped, Spool, Pending } from './spool.ts';
 
 export type { Counters } from './domain.ts';
 interface Candidate { file: SourceFile; transcript: ParsedTranscript; key: string; digest: string }
-export function policyDigest(config: Config): string {
-  return hash(JSON.stringify({ endpoint: config.endpoint, roots: config.roots, homeDir: config.homeDir, yoloDir: config.yoloDir, discoverNative: config.discoverNative, discoverYolo: config.discoverYolo, exclusions: config.exclusions, redactions: config.redactions }));
+export function policyDigest(config: Config, runtimePrivacyIdentity: string): string {
+  return hash(JSON.stringify({ endpoint: config.endpoint, roots: config.roots, homeDir: config.homeDir, yoloDir: config.yoloDir, discoverNative: config.discoverNative, discoverYolo: config.discoverYolo, exclusions: config.exclusions, redactions: config.redactions, runtimePrivacyIdentity }));
 }
 function excludedTranscript(bytes: Buffer, config: Config): boolean {
   for (const line of bytes.toString('utf8').split('\n')) {
@@ -29,28 +33,65 @@ function excludedTranscript(bytes: Buffer, config: Config): boolean {
   }
   return false;
 }
+const SCAN_REPORT_INTERVAL_MS = 5000;
 const empty = (enabled: boolean): Counters => ({ enabled, discovered: 0, scanned: 0, scannedBytes: 0, waiting: 0, excluded: 0, unchanged: 0, enqueued: 0, uploaded: 0, uploadFailures: 0, quarantined: 0, pending: 0, stopped: 0, conflicts: 0 });
 export class Collector {
   private readonly config: Config; private readonly spool: Spool; private readonly ingester: Ingester; private readonly random: () => number; private readonly git: GitMetadata;
-  constructor(config: Config, spool: Spool, ingester: Ingester, random: () => number, git: GitMetadata) { this.config = config; this.spool = spool; this.ingester = ingester; this.random = random; this.git = git; }
+  constructor(config: Config, spool: Spool, ingester: Ingester, random: () => number, git: GitMetadata, private readonly reporter: ProgressReporter, private readonly secrets: SecretReader) { this.config = config; this.spool = spool; this.ingester = ingester; this.random = random; this.git = git; }
   async runOnce(now: number): Promise<Counters> {
     const counters = empty(this.config.enabled);
     if (!this.config.enabled) return counters;
     this.spool.clearDiagnostics();
-    const digest = policyDigest(this.config);
+    // Keep only queue metadata for reporting; reloading all encoded payloads at
+    // every progress checkpoint would multiply memory/IO for large backlogs.
+    const queueState = new Map<string, { sourceKey: string; status: Pending['status'] }>();
+    for (const queued of this.spool.queue()) queueState.set(queued.requestId, { sourceKey: queued.sourceKey, status: queued.status });
+    const runId = randomUUID(); const startedAt = new Date(now).toISOString();
+    let totalUploadBytes = 0n; let uploadedBytes = 0n; let reportFailure = false; let lastReportAt = 0;
+    const queueCounters = (): void => {
+      const queue = [...queueState.values()]; counters.pending = queue.filter(e => e.status === 'pending').length;
+      counters.stopped = queue.filter(e => e.status === 'stopped').length; counters.conflicts = queue.filter(e => e.status === 'conflict').length;
+    };
+    const publish = async (phase: CollectorPhase, current: bigint | undefined, error: string | undefined, force: boolean): Promise<void> => {
+      if (!force && Date.now() - lastReportAt < SCAN_REPORT_INTERVAL_MS) return;
+      lastReportAt = Date.now(); queueCounters();
+      try {
+        const sequence = this.spool.nextReportSequence();
+        const c = counters;
+        const update = new CollectorProgressUpdate(this.spool.namespace, sequence, runId, phase, startedAt,
+          new CollectorCounters(c.discovered, c.scanned, c.waiting, c.excluded, c.unchanged, c.enqueued, c.uploaded, c.uploadFailures, c.quarantined, c.pending, c.stopped, c.conflicts, BigInt(c.scannedBytes)),
+          totalUploadBytes, uploadedBytes, current, error);
+        const ack = await this.reporter.report(update);
+        if (ack.sequence !== sequence || ack.accepted !== true) throw new CollectorError('report-not-accepted');
+        this.spool.reportAccepted(sequence, Date.now());
+      } catch {
+        reportFailure = true; this.spool.reportFailed('report-failed');
+        this.spool.diagnostic({ rootId: 'reporting', pathId: hash('reporting'), code: 'report-failed' });
+      }
+    };
+    let scan; const coverage: RootCoverage[] = [];
+    const finish = async (): Promise<Counters> => {
+      queueCounters();
+      const failed = counters.quarantined + counters.uploadFailures + counters.stopped + counters.conflicts > 0 || reportFailure;
+      await publish(failed ? CollectorPhase.Failed : CollectorPhase.Idle, undefined, failed ? 'collection-incomplete' : undefined, true);
+      this.spool.saveReport({ at: now, counters, roots: coverage }); return counters;
+    };
+    let runtimePrivacy: RuntimePrivacy;
+    try { runtimePrivacy = resolveRuntimePrivacy(this.config, this.secrets); }
+    catch {
+      counters.quarantined++;
+      this.spool.diagnostic({ rootId: 'privacy', pathId: hash('privacy'), code: 'privacy-secret-unavailable' });
+      return finish();
+    }
+    const digest = policyDigest(this.config, runtimePrivacy.identity);
     for (const queued of this.spool.queue()) {
       if (queued.policyDigest !== digest) {
-        this.spool.drop(queued.requestId, 'privacy-or-destination-changed');
+        this.spool.drop(queued.requestId, 'privacy-or-destination-changed'); queueState.delete(queued.requestId);
         this.spool.diagnostic({ rootId: 'spool', pathId: queued.sourceKey, code: 'privacy-or-destination-changed' });
         counters.quarantined++;
       }
     }
-    let scan; const coverage: RootCoverage[] = [];
-    const finish = (): Counters => {
-      const queue = this.spool.queue(); counters.pending = queue.filter(e => e.status === 'pending').length;
-      counters.stopped = queue.filter(e => e.status === 'stopped').length; counters.conflicts = queue.filter(e => e.status === 'conflict').length;
-      this.spool.saveReport({ at: now, counters, roots: coverage }); return counters;
-    };
+    await publish(CollectorPhase.Discovering, undefined, undefined, true);
     try {
       const roots = discoverRoots(this.config, process.platform);
       for (const root of roots) coverage.push({ rootId: root.id, pathId: hash(root.path), format: root.format, discovered: 0, scanned: 0, bytes: 0, waiting: 0, excluded: 0, quarantined: 0 });
@@ -73,9 +114,11 @@ export class Collector {
       this.spool.diagnostic(diagnostic);
       if (diagnostic.code !== 'root-missing') counters.quarantined++;
     }
+    await publish(CollectorPhase.Scanning, undefined, undefined, true);
     const candidates = new Map<string, Candidate[]>();
-    const policy = privacyPolicy(this.config.redactions);
+    const policy = runtimePrivacy.policy;
     for (const file of scan.files) {
+      await publish(CollectorPhase.Scanning, undefined, undefined, false);
       const piParts = file.relativePath.split('/');
       if (file.root.layout === 'pi-subagents' && [piParts[0], piParts[2]].some(id => id !== undefined && this.config.exclusions.sessions.includes(id))) {
         counters.excluded++; rootCoverage(file).excluded++; continue;
@@ -103,9 +146,10 @@ export class Collector {
         const existing = candidates.get(key) ?? []; existing.push(candidate); candidates.set(key, existing);
       } catch (error) { diagnose(file, error instanceof CollectorError ? error.code : 'parse-failed'); }
     }
-    const queuedSources = new Set(this.spool.queue().map(entry => entry.sourceKey));
+    const queuedSources = new Set([...queueState.values()].map(entry => entry.sourceKey));
     const gitCache = new Map<string, Promise<GitObservation>>();
     for (const [key, copies] of candidates) {
+      await publish(CollectorPhase.Scanning, undefined, undefined, false);
       if (new Set(copies.map(copy => copy.digest)).size !== 1) { for (const copy of copies) diagnose(copy.file, 'source-identity-collision'); continue; }
       const candidate = copies[0]; if (candidate === undefined) throw new CollectorError('empty-candidate-group');
       const head = this.spool.head(key);
@@ -130,26 +174,32 @@ export class Collector {
       const payload = encodeSnapshot(requestId, source, head.revision, candidate.transcript, candidate.file.relativePath);
       if (Buffer.byteLength(payload) > this.config.maxPayloadBytes) { diagnose(candidate.file, 'payload-too-large'); continue; }
       this.spool.enqueue({ requestId, sourceKey: key, sourceDigest: candidate.digest, payload, payloadDigest: hash(payload), expectedRevision: head.revision, policyDigest: digest, attempts: 0, nextAt: 0, status: 'pending', error: null });
-      counters.enqueued++;
+      queueState.set(requestId, { sourceKey: key, status: 'pending' }); counters.enqueued++;
     }
-    for (const entry of this.spool.queue()) {
-      if (entry.status !== 'pending' || entry.nextAt > now) continue;
+    const uploads = this.spool.queue().filter(entry => entry.status === 'pending' && entry.nextAt <= now);
+    totalUploadBytes = uploads.reduce((sum, entry) => sum + BigInt(Buffer.byteLength(entry.payload)), 0n);
+    await publish(CollectorPhase.Uploading, undefined, undefined, true);
+    for (const entry of uploads) {
+      const bytes = BigInt(Buffer.byteLength(entry.payload));
+      await publish(CollectorPhase.Uploading, bytes, undefined, true);
       try {
         if (hash(entry.payload) !== entry.payloadDigest) throw new UploadError('payload-digest-mismatch', false, false);
         const receipt = await this.ingester.send(entry.payload);
         if (receipt.requestId !== entry.requestId) throw new UploadError('receipt-request-mismatch', false, false);
-        this.spool.ack(entry.requestId, receipt.revision); counters.uploaded++;
+        this.spool.ack(entry.requestId, receipt.revision); queueState.delete(entry.requestId); counters.uploaded++; uploadedBytes += bytes;
       } catch (error) {
         const failure = error instanceof UploadError ? error : new UploadError(error instanceof CollectorError ? error.code : 'upload-failed', false, false);
         const cap = Math.min(this.config.backoffCapMs, this.config.backoffBaseMs * 2 ** Math.min(entry.attempts, 30));
         const nextAt = now + Math.floor(this.random() * cap);
-        this.spool.fail(entry.requestId, failure.code, nextAt, failure.conflict, failure.retryable ? this.config.maxAttempts : 1);
+        const status = this.spool.fail(entry.requestId, failure.code, nextAt, failure.conflict, failure.retryable ? this.config.maxAttempts : 1);
+        queueState.set(entry.requestId, { sourceKey: entry.sourceKey, status });
         counters.uploadFailures++;
       }
+      await publish(CollectorPhase.Uploading, undefined, undefined, true);
     }
     return finish();
   }
-  status(): { namespace: string; queue: { requestId: string; sourceKey: string; attempts: number; nextAt: number; status: string; error: string | null }[]; diagnostics: Diagnostic[]; dropped: Dropped[]; lastRun: CollectorReport | null } {
-    return { namespace: this.spool.namespace, queue: this.spool.queue().map(({ requestId, sourceKey, attempts, nextAt, status, error }) => ({ requestId, sourceKey, attempts, nextAt, status, error })), diagnostics: this.spool.diagnostics(), dropped: this.spool.dropped(), lastRun: this.spool.report() };
+  status(): { namespace: string; queue: { requestId: string; sourceKey: string; attempts: number; nextAt: number; status: string; error: string | null }[]; diagnostics: Diagnostic[]; dropped: Dropped[]; lastRun: CollectorReport | null; reporting: ReturnType<Spool['reporting']> } {
+    return { namespace: this.spool.namespace, queue: this.spool.queue().map(({ requestId, sourceKey, attempts, nextAt, status, error }) => ({ requestId, sourceKey, attempts, nextAt, status, error })), diagnostics: this.spool.diagnostics(), dropped: this.spool.dropped(), lastRun: this.spool.report(), reporting: this.spool.reporting() };
   }
 }

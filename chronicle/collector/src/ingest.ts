@@ -1,4 +1,4 @@
-import { openSync, closeSync, fstatSync, readSync } from 'node:fs';
+import { FileSecretReader } from './runtime-privacy.ts';
 import { IngestRequest, IngestRequest_JsonCodec } from '../../generated/typescript/chronicle/api/IngestRequest.js';
 import { IngestReceipt, IngestReceipt_JsonCodec } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
 import { SourceIdentity } from '../../generated/typescript/chronicle/api/SourceIdentity.js';
@@ -40,19 +40,12 @@ export function endpointURL(endpoint: string, trustedHTTP: boolean): URL {
   if (url.pathname !== '/' && url.pathname !== '/api/ingest') throw new CollectorError('invalid-endpoint-path');
   url.pathname = '/api/ingest'; return url;
 }
-function tokenFromFile(path: string): string {
-  let fd: number | null = null;
+export function tokenFromFile(path: string): string {
   try {
-    fd = openSync(path, 'r');
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > 8192 || (stat.mode & 0o077) !== 0) throw new CollectorError('invalid-token-file');
-    const buffer = Buffer.alloc(8193); const count = readSync(fd, buffer, 0, buffer.length, null);
-    if (count > 8192) throw new CollectorError('invalid-token-file');
-    const token = buffer.subarray(0, count).toString('utf8').trim();
+    const token = new FileSecretReader().read(path).trim();
     if (token.length === 0 || /\s/.test(token)) throw new CollectorError('invalid-token-file');
     return token;
   } catch { throw new UploadError('token-file-unavailable', false, false); }
-  finally { if (fd !== null) closeSync(fd); }
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export class HttpIngester implements Ingester {

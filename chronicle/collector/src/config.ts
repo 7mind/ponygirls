@@ -3,11 +3,12 @@ import { isAbsolute, join } from 'node:path';
 import { CollectorError, object, type Format, type DiscoveryRoot } from './domain.ts';
 import type { PrivacyRules } from './privacy.ts';
 
+export interface Redactions extends PrivacyRules { secretFiles: string[] }
 export interface Exclusions { roots: string[]; profiles: string[]; projects: string[]; sessions: string[]; paths: string[] }
 export interface Config {
   enabled: boolean; endpoint: string; tokenFile: string; stateDir: string; trustedHTTP: boolean;
   homeDir: string; yoloDir: string; discoverNative: boolean; discoverYolo: boolean;
-  roots: DiscoveryRoot[]; exclusions: Exclusions; redactions: PrivacyRules;
+  roots: DiscoveryRoot[]; exclusions: Exclusions; redactions: Redactions;
   quietMs: number; pollMs: number; maxDepth: number; maxFiles: number; maxScanBytes: number;
   maxFileBytes: number; maxPayloadBytes: number; maxMessages: number; partialLineQuarantineMs: number;
   uploadTimeoutMs: number; maxAttempts: number; backoffBaseMs: number; backoffCapMs: number;
@@ -52,11 +53,12 @@ export function loadConfig(input: unknown): Config {
     keys(input['exclusions'], Object.keys(exclusions));
     for (const key of Object.keys(exclusions) as (keyof Exclusions)[]) exclusions[key] = strings(input['exclusions'][key] ?? []);
   }
-  const redactions: PrivacyRules = { fieldNames: [], textPatterns: [] };
+  const redactions: Redactions = { fieldNames: [], textPatterns: [], secretFiles: [] };
   if (input['redactions'] !== undefined) {
     if (!object(input['redactions'])) return invalid();
     keys(input['redactions'], Object.keys(redactions));
-    for (const key of Object.keys(redactions) as (keyof PrivacyRules)[]) redactions[key] = strings(input['redactions'][key] ?? []);
+    for (const key of Object.keys(redactions) as (keyof Redactions)[]) redactions[key] = strings(input['redactions'][key] ?? []);
+    if (redactions.secretFiles.some(path => !isAbsolute(path))) return invalid();
   }
   const limits = { ...LIMITS };
   for (const key of Object.keys(LIMITS) as (keyof typeof LIMITS)[]) {

@@ -4,6 +4,8 @@ let
   active = cfg.enable || cfg.collector.enable;
   baseUrl = if cfg.url == null then "" else lib.removeSuffix "/" cfg.url;
   runtimeToken = import ../lib/runtime-token.nix { inherit pkgs; };
+  runtimeCredential = path: path != null && lib.hasPrefix "/" (toString path)
+    && toString path != builtins.storeDir && !(lib.hasPrefix "${builtins.storeDir}/" (toString path));
   runner = pkgs.writeShellScriptBin "chronicle-run" ''
     if [[ $# == 0 ]]; then
       echo 'usage: chronicle-run COMMAND [ARG...]' >&2
@@ -14,7 +16,7 @@ let
   collectorConfig = pkgs.writeText "chronicle-collector.json" (builtins.toJSON ({
     enabled = true;
     endpoint = baseUrl;
-    tokenFile = if cfg.tokenFile == null then "" else toString cfg.tokenFile;
+    tokenFile = if cfg.collector.tokenFile == null then "" else toString cfg.collector.tokenFile;
     stateDir = cfg.collector.stateDirectory;
     inherit (cfg.collector) trustedHTTP discoverNative discoverYolo roots exclusions redactions;
   } // cfg.collector.limits));
@@ -32,10 +34,16 @@ in
     tokenFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "Runtime bearer token file, never token contents. Collectors require Ingest; MCP requires Read.";
+      description = "Runtime MCP/agent bearer token file (Read scope), never token contents. Also the compatibility default for collector.tokenFile.";
     };
     collector = {
       enable = lib.mkEnableOption "the Chronicle user collector; opt in only after reviewing roots, exclusions and model destinations";
+      tokenFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = cfg.tokenFile;
+        defaultText = lib.literalExpression "config.smind.hm.dev.llm.chronicle.tokenFile";
+        description = "Runtime Ingest-only bearer token file for ingestion and progress reporting, separate from the MCP/agent Read token. Must be outside the Nix store.";
+      };
       package = lib.mkOption {
         type = lib.types.package;
         default = pkgs.callPackage ../pkg/chronicle/collector.nix { };
@@ -76,13 +84,13 @@ in
       };
       redactions = lib.mkOption {
         type = lib.types.submodule {
-          options = lib.genAttrs [ "fieldNames" "textPatterns" ] (_: lib.mkOption {
+          options = lib.genAttrs [ "fieldNames" "textPatterns" "secretFiles" ] (_: lib.mkOption {
             type = lib.types.listOf lib.types.str;
             default = [ ];
           });
         };
         default = { };
-        description = "Additional field-name and literal-text redactions before spool/upload; inline binary is omitted by the collector.";
+        description = "Additional field-name and literal-text redactions before spool/upload. secretFiles names runtime-only credential files outside the Nix store; contents are loaded each cycle and never embedded in Nix. Missing/invalid files stop collection. The collector's own bearer is always included. Inline binary is omitted.";
       };
       limits = lib.mkOption {
         type = lib.types.attrsOf lib.types.ints.positive;
@@ -97,12 +105,14 @@ in
     (lib.mkIf active {
       assertions = [
         { assertion = cfg.url != null && cfg.url != ""; message = "Chronicle: url is required when MCP or collection is enabled."; }
-        { assertion = cfg.tokenFile != null && !(lib.hasPrefix builtins.storeDir (toString cfg.tokenFile)); message = "Chronicle: tokenFile must name a runtime credential outside the Nix store."; }
+        { assertion = !cfg.enable || runtimeCredential cfg.tokenFile; message = "Chronicle: tokenFile must name an absolute runtime credential outside the Nix store when MCP is enabled."; }
+        { assertion = !cfg.collector.enable || lib.all runtimeCredential cfg.collector.redactions.secretFiles; message = "Chronicle: collector.redactions.secretFiles must name absolute runtime credentials outside the Nix store."; }
+        { assertion = !cfg.collector.enable || runtimeCredential cfg.collector.tokenFile; message = "Chronicle: collector.tokenFile must name an absolute runtime credential outside the Nix store when collection is enabled."; }
         { assertion = !cfg.collector.enable || pkgs.stdenv.hostPlatform.isLinux; message = "Chronicle collector daemon currently supports Linux systemd user services; Darwin CLI/discovery is supported, launchd is deferred."; }
         { assertion = lib.hasPrefix "/" cfg.collector.stateDirectory; message = "Chronicle: collector.stateDirectory must be absolute."; }
         { assertion = lib.all (r: lib.hasPrefix "/" r.path && r.id != "") cfg.collector.roots; message = "Chronicle: each root requires a stable nonempty id and absolute path."; }
       ];
-      home.packages = [ runner ] ++ lib.optional cfg.collector.enable cfg.collector.package;
+      home.packages = lib.optional cfg.enable runner ++ lib.optional cfg.collector.enable cfg.collector.package;
     })
     (lib.mkIf cfg.enable {
       programs.mcp.servers.chronicle = {

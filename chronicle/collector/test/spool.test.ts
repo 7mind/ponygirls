@@ -14,6 +14,15 @@ for (const adapter of ['memory', 'sqlite']) {
     const store: Spool = adapter === 'memory' ? new MemorySpool() : new SqliteSpool(dir);
     try {
       const entry = pending();
+      assert.equal(store.nextReportSequence(), 1n);
+      store.reportAccepted(1n, 10);
+      assert.equal(store.nextReportSequence(), 2n);
+      store.reportFailed('report-failed');
+      assert.deepEqual(store.reporting(), { sequence: '2', acceptedSequence: '1', acceptedAt: 10, error: 'report-failed' });
+      assert.throws(() => store.reportAccepted(3n, 20), /invalid-report-ack/);
+      assert.throws(() => store.reportAccepted(1n, 20), /invalid-report-ack/);
+      store.reportAccepted(2n, 30);
+      assert.deepEqual(store.reporting(), { sequence: '2', acceptedSequence: '2', acceptedAt: 30, error: null });
       assert.equal(store.head('source').revision, 0);
       assert.equal(store.observe('path', 'a', 10), 10);
       assert.equal(store.observe('path', 'a', 20), 10);
@@ -49,10 +58,14 @@ test('SQLite restart preserves namespace, pending exact bytes, attempts and excl
   const dir = mkdtempSync(join(tmpdir(), 'chronicle-spool-'));
   try {
     let store = new SqliteSpool(dir); const namespace = store.namespace;
-    const entry = pending(); store.enqueue(entry); store.close();
+    const entry = pending(); store.enqueue(entry);
+    assert.equal(store.nextReportSequence(), 1n); store.reportAccepted(1n, 10);
+    assert.equal(store.nextReportSequence(), 2n); store.reportFailed('report-failed'); store.close();
     store = new SqliteSpool(dir);
     assert.equal(store.namespace, namespace);
     assert.deepEqual(store.queue(), [entry]);
+    assert.deepEqual(store.reporting(), { sequence: '2', acceptedSequence: '1', acceptedAt: 10, error: 'report-failed' });
+    assert.equal(store.nextReportSequence(), 3n);
     store.close();
     const lock = new DaemonLock(dir);
     assert.throws(() => new DaemonLock(dir), /collector-already-running/);

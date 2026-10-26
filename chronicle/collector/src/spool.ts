@@ -12,17 +12,22 @@ export interface Pending {
 }
 export interface Head { revision: number; digest: string | null; tombstone: boolean }
 export interface Dropped { requestId: string; sourceKey: string; reason: string }
+export interface ReportingState { sequence: string; acceptedSequence: string | null; acceptedAt: number | null; error: string | null }
 export interface Spool {
   readonly namespace: string;
   head(sourceKey: string): Head;
   observe(pathId: string, signature: string, now: number): number;
   enqueue(entry: Pending): void; queue(): Pending[];
   ack(requestId: string, revision: number): void;
-  fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): void;
+  fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): Pending['status'];
   retry(requestId: string): void; drop(requestId: string, reason: string): void;
   diagnostics(): Diagnostic[]; diagnostic(value: Diagnostic): void; clearDiagnostics(): void;
   dropped(): Dropped[];
   report(): CollectorReport | null; saveReport(report: CollectorReport): void;
+  nextReportSequence(): bigint;
+  reporting(): ReportingState;
+  reportAccepted(sequence: bigint, at: number): void;
+  reportFailed(code: string): void;
   close(): void;
 }
 interface Storage {
@@ -109,10 +114,10 @@ class DurableSpool implements Spool {
       this.storage.remove('source-pending', pending.sourceKey);
     });
   }
-  fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): void {
+  fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): Pending['status'] {
     const entry = this.required(requestId); entry.attempts++; entry.error = error; entry.nextAt = nextAt;
     entry.status = conflict ? 'conflict' : entry.attempts >= maxAttempts ? 'stopped' : 'pending';
-    this.storage.set('pending', requestId, entry);
+    this.storage.set('pending', requestId, entry); return entry.status;
   }
   retry(requestId: string): void {
     const entry = this.required(requestId); entry.attempts = 0; entry.nextAt = 0; entry.status = 'pending'; entry.error = null;
@@ -126,6 +131,20 @@ class DurableSpool implements Spool {
       this.storage.set('audit', requestId, { requestId, sourceKey: entry.sourceKey, reason });
     });
   }
+  reporting(): ReportingState { return this.storage.get<ReportingState>('meta', 'reporting') ?? { sequence: '0', acceptedSequence: null, acceptedAt: null, error: null }; }
+  nextReportSequence(): bigint {
+    return this.storage.transaction(() => {
+      const state = this.reporting(); const next = BigInt(state.sequence) + 1n;
+      if (next > 9223372036854775807n) throw new CollectorError('report-sequence-exhausted');
+      state.sequence = next.toString(); this.storage.set('meta', 'reporting', state); return next;
+    });
+  }
+  reportAccepted(sequence: bigint, at: number): void {
+    const state = this.reporting();
+    if (sequence > BigInt(state.sequence) || sequence <= BigInt(state.acceptedSequence ?? '0')) throw new CollectorError('invalid-report-ack');
+    state.acceptedSequence = sequence.toString(); state.acceptedAt = at; state.error = null; this.storage.set('meta', 'reporting', state);
+  }
+  reportFailed(code: string): void { const state = this.reporting(); state.error = code; this.storage.set('meta', 'reporting', state); }
   report(): CollectorReport | null { return this.storage.get<CollectorReport>('meta', 'last-report') ?? null; }
   saveReport(report: CollectorReport): void { this.storage.set('meta', 'last-report', report); }
   dropped(): Dropped[] { return this.storage.list<Dropped>('audit'); }

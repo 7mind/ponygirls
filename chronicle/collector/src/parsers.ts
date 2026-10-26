@@ -164,7 +164,12 @@ export function parseTranscript(format: Format, bytes: Uint8Array, sourcePath: s
       const count = canonical.get(key) ?? 0;
       if (count > 0) { canonical.set(key, count - 1); continue; }
     }
-    messages.push(message);
+    // Normalization joins content blocks and can reconstruct a literal that was
+    // not contiguous in any raw JSON string. Apply the same policy once more.
+    const cleaned = policy.redact(message.text);
+    if (typeof cleaned.value !== 'string') throw new CollectorError('message-redaction-invariant');
+    redacted ||= cleaned.changed;
+    messages.push({ ...message, text: cleaned.value });
   }
   metadata.title ||= messages.find(message => message.role === 'user')?.text.split('\n')[0]?.slice(0, 160) ?? `${format} session`;
   metadata.project = metadata.workdir;
