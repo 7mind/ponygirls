@@ -1,9 +1,10 @@
 package chronicle
 import chronicle.api.*
-import cats.effect.IO
+import cats.effect.{IO,Resource}
 import cats.syntax.all.*
 import org.http4s.{Request,Method,Uri,Header}
 import org.http4s.client.Client
+import org.http4s.ember.client.EmberClientBuilder
 import org.typelevel.ci.CIString
 import io.circe.Json
 import java.util.UUID
@@ -29,6 +30,8 @@ object Fragments {
 trait Annotator { def annotate(window: List[Chunk],messages: List[Message]): IO[List[Chunk]] }
 trait Embedder { def documents(text: List[String]): IO[List[List[Double]]]; def query(text: String): IO[List[Double]] }
 object ModelHttp {
+  def client(config: Config): Resource[IO,Client[IO]] =
+    EmberClientBuilder.default[IO].withTimeout(transportTimeout(config)).withIdleConnectionTime(transportTimeout(config)).withMaxResponseHeaderSize(16384).build
   def transportTimeout(config: Config): FiniteDuration = config.annotation.timeoutSeconds.max(config.embedding.timeoutSeconds).seconds
 }
 final class ModelHttp(client: Client[IO]) {

@@ -4,7 +4,6 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import org.http4s.{Message as _,*}
 import org.http4s.ember.server.EmberServerBuilder
-import org.http4s.ember.client.EmberClientBuilder
 import com.comcast.ip4s.*
 import io.circe.Json
 import scala.concurrent.duration.*
@@ -15,7 +14,7 @@ class ModelHttpTest extends munit.FunSuite {
     }
     (for {
       server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpApp(app).build
-      client <- EmberClientBuilder.default[IO].build
+      client <- ModelHttp.client(Fixtures.config())
     } yield (server,client)).use { case (server,client) => test(new ModelHttp(client),s"http://127.0.0.1:${server.address.getPort}/v1/operation") }.unsafeRunSync()
   }
   test("BG-GoodCommunication: OpenAI annotations partition valid source window") {
@@ -67,7 +66,7 @@ class ModelHttpTest extends munit.FunSuite {
       }}
       (for {
         server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpApp(endpoint).build
-        client <- EmberClientBuilder.default[IO].build
+        client <- ModelHttp.client(Fixtures.config())
       } yield (server,client)).use { case (server,client) =>
         val original=Fixtures.config(); val config=original.copy(embedding=original.embedding.copy(endpoint=s"http://127.0.0.1:${server.address.getPort}/embedding",sendDimensions=sendDimensions))
         new OpenAIEmbedder(new ModelHttp(client),config).query("synthetic fixed-dimension request").map { values => assertEquals(values,List(1.0,0.0,0.0)); assertEquals(requests.get(),1) }

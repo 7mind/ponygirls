@@ -3,7 +3,6 @@ import cats.effect.{IO,IOApp,ExitCode}
 import cats.effect.std.Semaphore
 import cats.syntax.all.*
 import org.http4s.ember.server.EmberServerBuilder
-import org.http4s.ember.client.EmberClientBuilder
 import com.comcast.ip4s.{Host,Port}
 import distage.*
 import izumi.distage.model.definition.Lifecycle
@@ -20,7 +19,7 @@ object Main extends IOApp {
     }.as(ExitCode.Success)
     case List(command,path) if Set("serve","maintenance-reindex").contains(command) =>
       IO.blocking(Config.load(path)).flatMap { config =>
-        EmberClientBuilder.default[IO].withTimeout(ModelHttp.transportTimeout(config)).withMaxResponseHeaderSize(16384).build.use { client =>
+        ModelHttp.client(config).use { client =>
           // Explicit graph registration: no classpath scanning in native images.
           val lifecycle = Injector().produceGet[RuntimeServices](new ModuleDef {
             include(_root_.chronicle.plugins.ChroniclePlugin)
