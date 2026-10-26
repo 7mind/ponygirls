@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { ActivityJobClass, ActivityJobScope, ActivityJobsQuery, ActivityQuery, CollectorPhase, JobState, Operation_Activity, Operation_ActivityJobs, Operation_RetryJob, Result_Activity, Result_ActivityJobs, Scope, type ActivityCollector, type ActivityJob, type ActivityJobsResult, type ActivityResult, type CollectorStatus, type JobCounts, type UserInfo } from './api.ts';
+import { ActivityCollectorSort, ActivityJobSort, SortDirection, ActivityJobClass, ActivityJobScope, ActivityJobsQuery, ActivityQuery, CollectorPhase, JobState, Operation_Activity, Operation_ActivityJobs, Operation_RetryJob, Result_Activity, Result_ActivityJobs, Scope, type ActivityCollector, type ActivityJob, type ActivityJobsResult, type ActivityResult, type CollectorStatus, type JobCounts, type UserInfo } from './api.ts';
 import { read, type ChronicleConnection } from './client.ts';
 import { useInfiniteResource } from './infinite.ts';
 import { InfiniteTrigger } from './InfiniteTrigger.tsx';
@@ -87,12 +87,12 @@ function OwnerActivity({ connection, stats, user, actions }: ActivityProps) {
   }, [connection, stats.activeId, stats.generation, canRead]);
   useEffect(() => { if (jobScroll.current !== null) jobScroll.current.scrollTop = 0; }, [scope, collectorId]);
   const collectors = useInfiniteResource<ActivityCollector, ActivityResult, string>(connection, stats, JSON.stringify(['activity', user.id]), `${refresh}:${actions.revision}`, canRead, undefined, async cursor => {
-    const result = await read(connection, new Operation_Activity(new ActivityQuery(cursor, ACTIVITY_PAGE_SIZE)), r => r instanceof Result_Activity ? r.result : null);
+    const result = await read(connection, new Operation_Activity(new ActivityQuery('', ActivityCollectorSort.CollectorId, SortDirection.Asc, cursor, ACTIVITY_PAGE_SIZE)), r => r instanceof Result_Activity ? r.result : null);
     if (result.user.id !== user.id) throw new Error('Activity response belongs to a different account');
     return { items: result.collectors, next: result.nextCursor, previous: undefined, meta: result };
   }, collector => collector.collectorId);
   const jobs = useInfiniteResource<ActivityJob, ActivityJobsResult, string>(connection, stats, JSON.stringify(['activity-jobs', user.id, scope, collectorId]), `${refresh}:${actions.revision}`, canRead, undefined, async cursor => {
-    const result = await read(connection, new Operation_ActivityJobs(new ActivityJobsQuery(collectorId, scope, cursor, ACTIVITY_PAGE_SIZE)), r => r instanceof Result_ActivityJobs ? r.result : null);
+    const result = await read(connection, new Operation_ActivityJobs(new ActivityJobsQuery(collectorId, scope, '', ActivityJobSort.LastTimestamp, SortDirection.Desc, cursor, ACTIVITY_PAGE_SIZE)), r => r instanceof Result_ActivityJobs ? r.result : null);
     return { items: result.jobs, next: result.nextCursor, previous: undefined, meta: result };
   }, item => item.job.id);
   function selectCollector(id: string | undefined) { setCollectorId(id); setCollectorDraft(id === undefined ? '' : id); }

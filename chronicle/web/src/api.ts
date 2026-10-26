@@ -68,3 +68,8 @@ export * from '../../generated/typescript/chronicle/api/ArchiveTextScope.ts';
 export * from '../../generated/typescript/chronicle/api/JobCounts.ts';
 export * from '../../generated/typescript/chronicle/api/MessageLocation.ts';
 export * from '../../generated/typescript/chronicle/api/SortDirection.ts';
+export * from '../../generated/typescript/chronicle/api/ActivityCollectorSort.ts';
+export * from '../../generated/typescript/chronicle/api/ActivityJobSort.ts';
+export * from '../../generated/typescript/chronicle/api/RetryFailedCounts.ts';
+export * from '../../generated/typescript/chronicle/api/RetryFailedPlan.ts';
+export * from '../../generated/typescript/chronicle/api/RetryFailedResult.ts';
