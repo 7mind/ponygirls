@@ -29,7 +29,8 @@ for directory, source, target, namespace in [(api/'1.1.0','1.0.0','1.1.0','chron
         text = text.replace('def versionFrom: String = "'+source+'"','def versionFrom: String = "'+target+'"').replace('def versionTo: String = "'+target+'"','def versionTo: String = "'+source+'"')
         if p.stem == 'from-'+source+'-Result':
             unsupported = 'case other => throw new IllegalArgumentException(s"Bad input: $other")'
-            assert text.count(unsupported) == 1, p
+            if text.count(unsupported) != 1:
+                raise RuntimeError('unexpected generated Result fallback pattern')
             text = text.replace(unsupported, 'case _ => throw chronicle.DomainError("version-mismatch","response is not available in negotiated API version")')
         parts.append(text+'\n')
         reverse.append(namespace+'.'+symbol.replace('From','To'))
