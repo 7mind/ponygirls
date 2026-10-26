@@ -2,7 +2,8 @@ package chronicle
 
 import chronicle.api.*
 import io.circe.Json
-import java.util.UUID
+import java.util.{Base64,UUID}
+import java.nio.charset.StandardCharsets.UTF_8
 
 class ArchiveIndexTest extends munit.FunSuite {
   private def database(f: (Config,Database,PostgresArchive,PostgresArchiveIndex) => Unit): Unit = {
@@ -95,6 +96,78 @@ class ArchiveIndexTest extends munit.FunSuite {
     val first=browse(index,"a",query("",ArchiveSort.Title,SortDirection.Asc,None,2))
     assertEquals(intercept[DomainError](browse(index,"a",query("project:p",ArchiveSort.Title,SortDirection.Asc,first.nextCursor,2))).code,"invalid")
   }}
+  List(ArchiveSort.Title,ArchiveSort.Project,ArchiveSort.Branch,ArchiveSort.Producer,ArchiveSort.Model).foreach { sort =>
+    test(s"BG GoodCommunication regression: admitted unbounded $sort keys page in transport-sized envelopes in both directions") { database { (config,db,archive,index) =>
+      val longKey="X"*50000
+      def metadata(base: Metadata,value: String): Metadata = sort match {
+        case ArchiveSort.Title => base.copy(title=value)
+        case ArchiveSort.Project => base.copy(project=Some(value))
+        case ArchiveSort.Branch => base.copy(gitBranch=Some(value))
+        case ArchiveSort.Producer => base.copy(producer=value)
+        case ArchiveSort.Model => base.copy(model=Some(value))
+        case _ => throw new AssertionError("unbounded metadata sort required")
+      }
+      (0 until 2).foreach { _ =>
+        val request=snapshot(List("small message"))
+        archive.ingest("a",request.copy(metadata=metadata(request.metadata,longKey)),config.profile)
+      }
+      List(SortDirection.Asc,SortDirection.Desc).foreach { direction =>
+        val first=query("",sort,direction,None,1)
+        val page=browse(index,"a",first)
+        assert(page.nextCursor.nonEmpty)
+        val next=first.copy(cursor=page.nextCursor)
+        val envelope=Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),Operation.Archive(next))).noSpaces.getBytes(UTF_8)
+        assert(envelope.length<=Http.socketFrameBytes,s"sort=$sort direction=$direction envelope=${envelope.length} frame=${Http.socketFrameBytes}")
+        assertEquals(all(index,"",sort,direction,1).map(_.head.id),browse(index,"a",first.copy(limit=100)).rows.map(_.head.id))
+      }
+    }}
+  }
+  private def changeCursor(cursor: String)(f: Json => Json): String =
+    Base64.getUrlEncoder.withoutPadding.encodeToString(f(Wire.parse(new String(Base64.getUrlDecoder.decode(cursor),UTF_8))).noSpaces.getBytes(UTF_8))
+
+  test("BG GoodCommunication specified: referenced archive keys retain their original revision and reject drift, missing anchors and foreign rows") { database { (config,db,archive,index) =>
+    val original=snapshot(List("first")).copy(metadata=Fixtures.snapshot().metadata.copy(title="a"))
+    val first=archive.ingest("a",original,config.profile)
+    val secondRequest=snapshot(List("second")); val second=archive.ingest("a",secondRequest.copy(metadata=secondRequest.metadata.copy(title="b")),config.profile)
+    val q=query("",ArchiveSort.Title,SortDirection.Asc,None,1)
+    val cursor=browse(index,"a",q).nextCursor.get
+    archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1,metadata=original.metadata.copy(title="z")),config.profile)
+    assertEquals(browse(index,"a",q.copy(cursor=Some(cursor))).rows.head.head.id,second.sessionId)
+    def altered(revision: Int,hash: String): String = changeCursor(cursor)(_.mapObject(_.add("last",Json.arr(Json.fromInt(revision),Json.fromString(hash)))))
+    val hash=Wire.parse(new String(Base64.getUrlDecoder.decode(cursor),UTF_8)).hcursor.downField("last").as[List[Json]].toOption.get(1).asString.get
+    assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(altered(2,hash))))).code,"conflict")
+    assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(altered(99,hash))))).code,"conflict")
+    assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(altered(1,"0"*64))))).code,"conflict")
+    val foreign=archive.ingest("b",original.copy(requestId=UUID.randomUUID()),config.profile)
+    val forged=changeCursor(cursor)(_.mapObject(_.add("id",Json.fromString(foreign.sessionId.toString))))
+    assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(forged)))).code,"conflict")
+    db.transaction(c => Sql.exec(c,"UPDATE ch_sources SET tombstone=true WHERE id=?",first.sessionId))
+    assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(cursor)))).code,"conflict")
+  }}
+  test("BG GoodCommunication specified: referenced cursor resolution rechecks live group visibility") { database { (config,db,archive,index) =>
+    val request=snapshot(List("shared"))
+    archive.ingest("b",request.copy(metadata=request.metadata.copy(title="a")),config.profile)
+    archive.ingest("a",snapshot(List("owned")).copy(metadata=request.metadata.copy(title="b")),config.profile)
+    val group=UUID.randomUUID()
+    db.transaction { c =>
+      Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','shared')",group)
+      Sql.exec(c,"INSERT INTO ch_members VALUES(?,'a'),(?,'b')",group,group)
+    }
+    val q=query("",ArchiveSort.Title,SortDirection.Asc,None,1)
+    val cursor=browse(index,"a",q).nextCursor.get
+    db.transaction(c => Sql.exec(c,"DELETE FROM ch_members WHERE group_id=? AND user_id='b'",group))
+    assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(cursor)))).code,"conflict")
+  }}
+  test("BG GoodCommunication regression: oversized numeric cursor positions are rejected before SQL execution") { database { (config,db,archive,index) =>
+    (1 to 2).foreach { _ =>
+      val request=snapshot(List("timestamp"))
+      archive.ingest("a",request.copy(metadata=request.metadata.copy(startedAt=Some("2026-01-01T00:00:00Z"))),config.profile)
+    }
+    val q=query("",ArchiveSort.LastTimestamp,SortDirection.Asc,None,1)
+    val cursor=browse(index,"a",q).nextCursor.get
+    val oversized=changeCursor(cursor)(_.mapObject(_.add("last",Json.fromString("1e1000000"))))
+    assertEquals(intercept[DomainError](browse(index,"a",q.copy(cursor=Some(oversized)))).code,"invalid")
+  }}
   private def seed(config: Config,db: Database,size: Int,published: Boolean): Unit = {
     val request=snapshot(List("needlealpha")); val snapshotJson=Wire.encode(IngestRequest.codecJson,request).noSpaces
     val messageJson=Wire.encode(Message.codecJson,request.messages.head).noSpaces
@@ -162,7 +235,7 @@ class ArchiveIndexTest extends munit.FunSuite {
     val out=archive.ingest("a",snapshot(List("tiny visible message")),config.profile)
     db.transaction(c => Sql.exec(c,"UPDATE ch_revisions SET snapshot=jsonb_set(snapshot,'{files,0,content}',to_jsonb(repeat('r',100*1024*1024))) WHERE session_id=?",out.sessionId))
     val q=query("",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)
-    val statement=index.statement("a",q,ArchiveExpression.parse(""),Nil)
+    val statement=index.statement("a",q,ArchiveExpression.parse(""),Nil,None)
     val plan=db.transaction(c => Sql.rows(c,"EXPLAIN (ANALYZE,BUFFERS) "+statement.text,statement.args*)(_.getString(1)).mkString("\n"))
     println("ARCHIVE100MiB PROJECTION PLAN\n"+plan)
     assert(!plan.contains("ch_revisions"),plan); assert(!plan.contains("ch_messages"),plan); assert(!plan.contains("ch_archive_fragments"),plan)

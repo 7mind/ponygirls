@@ -2,6 +2,7 @@ package chronicle
 
 import chronicle.api.*
 import io.circe.Json
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.{Connection,ResultSet}
 import java.util.{Base64,UUID}
@@ -12,19 +13,34 @@ trait ArchiveIndex {
   def browse(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector]): ArchiveResult
 }
 private[chronicle] final case class ArchiveSql(text: String,args: List[Sql.Param])
-private[chronicle] final case class ArchiveCursor(query: String,sort: String,direction: String,owner: String,last: Option[String],id: UUID)
+private[chronicle] final case class ArchiveCursor(query: String,sort: String,direction: String,owner: String,last: Option[String],id: UUID,anchor: Option[RevisionSortAnchor])
 object ArchivePaging {
+  private val cursorVersion=2
+  private[chronicle] def referenced(sort: ArchiveSort): Boolean = sort match {
+    case ArchiveSort.Title | ArchiveSort.Owner | ArchiveSort.Project | ArchiveSort.Branch | ArchiveSort.Producer | ArchiveSort.Model => true
+    case _ => false
+  }
   def page(limit: Int): Unit = Check(limit >= 1 && limit <= 100,"invalid","invalid page bounds")
-  def cursor(query: ArchiveQuery,owner: String,value: Option[String],id: UUID): String = {
-    val json=Json.obj("query"->Json.fromString(Wire.hash(query.expression)),"owner"->Json.fromString(owner),"sort"->Json.fromString(query.sort.toString),"direction"->Json.fromString(query.direction.toString),"last"->value.fold(Json.Null)(Json.fromString),"id"->Json.fromString(id.toString))
+  def cursor(query: ArchiveQuery,owner: String,value: Option[String],id: UUID,revision: Int): String = {
+    val last=if(referenced(query.sort) && value.nonEmpty) RevisionSortAnchor.encode(RevisionSortAnchor.capture(revision,value)) else value.fold(Json.Null)(Json.fromString)
+    val json=Json.obj("version"->Json.fromInt(cursorVersion),"query"->Json.fromString(Wire.hash(query.expression)),"owner"->Json.fromString(Wire.hash(owner)),"sort"->Json.fromString(query.sort.toString),"direction"->Json.fromString(query.direction.toString),"last"->last,"id"->Json.fromString(id.toString))
     Base64.getUrlEncoder.withoutPadding.encodeToString(json.noSpaces.getBytes(UTF_8))
   }
   def decode(query: ArchiveQuery,owner: String): Option[ArchiveCursor] = query.cursor.map { value =>
     val parsed=Try {
-      val c=Wire.parse(new String(Base64.getUrlDecoder.decode(value),UTF_8)).hcursor
-      ArchiveCursor(c.get[String]("query").toTry.get,c.get[String]("sort").toTry.get,c.get[String]("direction").toTry.get,c.get[String]("owner").toTry.get,c.get[Option[String]]("last").toTry.get,UUID.fromString(c.get[String]("id").toTry.get))
+      val text=UTF_8.newDecoder().decode(ByteBuffer.wrap(Base64.getUrlDecoder.decode(value))).toString
+      val c=Wire.parse(text).hcursor
+      Check(c.get[Int]("version").toTry.get==cursorVersion,"invalid","invalid archive cursor version")
+      val selected=c.get[Json]("last").toTry.get
+      val anchor=if(referenced(query.sort) && !selected.isNull) Some(RevisionSortAnchor.decode(selected)) else None
+      val last=if(selected.isNull || anchor.nonEmpty) None else Some(selected.asString.getOrElse(throw DomainError("invalid","invalid archive cursor value")))
+      val id=c.get[String]("id").toTry.get
+      val uuid=UUID.fromString(id)
+      Check(uuid.toString==id,"invalid","invalid archive cursor ID")
+      last.foreach(v => Check(!v.contains('\u0000') && UTF_8.newEncoder().canEncode(v),"invalid","invalid archive cursor value"))
+      ArchiveCursor(c.get[String]("query").toTry.get,c.get[String]("sort").toTry.get,c.get[String]("direction").toTry.get,c.get[String]("owner").toTry.get,last,uuid,anchor)
     }.getOrElse(throw DomainError("invalid","invalid archive cursor"))
-    Check(parsed.owner==owner && parsed.query==Wire.hash(query.expression) && parsed.sort==query.sort.toString && parsed.direction==query.direction.toString,"invalid","cursor belongs to a different archive query")
+    Check(parsed.owner==Wire.hash(owner) && parsed.query==Wire.hash(query.expression) && parsed.sort==query.sort.toString && parsed.direction==query.direction.toString,"invalid","cursor belongs to a different archive query")
     parsed
   }
 }
@@ -81,13 +97,24 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     case Some(value) => value.last match {
       case None => ArchiveSql("r.sort_key IS NULL AND r.id>?",List(value.id))
       case Some(last) =>
-        if(numeric) Check(Try(new java.math.BigDecimal(last)).isSuccess,"invalid","invalid numeric archive cursor")
+        if(numeric) Check(last.matches("-?[0-9]{1,19}(\\.[0-9]{1,9})?"),"invalid","invalid numeric archive cursor")
         val cast=if(numeric) "::numeric" else ""
         val comparison=if(direction==SortDirection.Asc) ">" else "<"
         ArchiveSql(s"(r.sort_key $comparison ?$cast OR (r.sort_key=?$cast AND r.id>?) OR r.sort_key IS NULL)",List(last,last,value.id))
     }
   }
-  private[chronicle] def statement(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector]): ArchiveSql = {
+  private def resolve(c: Connection,reader: String,query: ArchiveQuery,position: ArchiveCursor): ArchiveCursor = position.anchor match {
+    case None => position
+    case Some(anchor) =>
+      val expression=sort(query)._1
+      val key=Sql.one(c,s"""SELECT $expression FROM (
+        SELECT s.owner,i.metadata FROM ch_sources s
+        JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=?
+        WHERE s.id=? AND ${archive.visible}) c""",anchor.revision,position.id,reader,reader,reader)(r => Option(r.getString(1)))
+        .getOrElse(throw DomainError("conflict","sort cursor anchor unavailable; restart query"))
+      position.copy(last=RevisionSortAnchor.resolve(anchor,key),anchor=None)
+  }
+  private[chronicle] def statement(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],position: Option[ArchiveCursor]): ArchiveSql = {
     val corpus=s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,s.published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,
       j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.completed_windows,j.total_windows,
       ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT tag FROM ch_generation_tags WHERE generation=s.published) tag_values ORDER BY lower(tag $unicode),tag) AS tags
@@ -125,7 +152,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     val (sortKey,numeric)=sort(query)
     ctes+=s"matched AS MATERIALIZED(SELECT $columns,to_json(c.tags) AS tag_values,$sortKey AS sort_key,CASE WHEN $lexicalMatch THEN c.revision WHEN $semanticMatch THEN c.indexed_revision END AS matched_revision,CASE WHEN NOT $lexicalMatch AND $semanticMatch THEN c.generation END AS matched_generation FROM corpus c WHERE (${compiled.text}))"
     args++=compiled.args
-    val cursor=seek(ArchivePaging.decode(query,reader),numeric,query.direction)
+    val cursor=seek(position,numeric,query.direction)
     val direction=if(query.direction==SortDirection.Asc) "ASC" else "DESC"
     ArchiveSql("WITH "+ctes.result().mkString(",")+s" SELECT counted.total,page.*,page.sort_key::text AS sort_value FROM (SELECT count(*) AS total FROM matched) counted LEFT JOIN LATERAL(SELECT r.* FROM matched r WHERE (${cursor.text}) ORDER BY r.sort_key $direction NULLS LAST,r.id LIMIT ?) page ON true ORDER BY page.sort_key $direction NULLS LAST,page.id",args.result()++cursor.args++List(query.limit+1))
   }
@@ -147,14 +174,15 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       Check(Sql.one(c,"SELECT 1 FROM ch_profile WHERE NOT maintenance AND active=?",config.profile)(_ => true).contains(true),"unavailable","semantic profile requires maintenance reindex")
       SearchPolicy.configure(c)
     }
-    val sql=statement(reader,query,parsed,vectors)
+    val position=ArchivePaging.decode(query,reader).map(resolve(c,reader,query,_))
+    val sql=statement(reader,query,parsed,vectors,position)
     val rows=Sql.rows(c,sql.text,sql.args*) { r =>
       val result=Option(r.getObject("id",classOf[UUID])).map(_ => (row(r),Option(r.getString("sort_value"))))
       (r.getLong("total"),result)
     }
     val page=rows.flatMap(_._2)
     val values=page.take(query.limit)
-    val next=if(page.size>query.limit) values.lastOption.map { case (value,key) => ArchivePaging.cursor(query,reader,key,value.head.id) } else None
+    val next=if(page.size>query.limit) values.lastOption.map { case (value,key) => ArchivePaging.cursor(query,reader,key,value.head.id,value.head.view.revision) } else None
     ArchiveResult(values.map(_._1),rows.head._1,next,if(bounded) ArchiveTextScope.BoundedCandidateSets else ArchiveTextScope.ExactLexical,if(bounded) Some(SearchPolicy.candidatesPerLeg) else None)
   }
 }

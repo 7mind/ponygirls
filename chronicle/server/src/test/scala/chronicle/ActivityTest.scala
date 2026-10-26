@@ -363,14 +363,18 @@ abstract class ActivityContract extends munit.FunSuite {
     val encoded=Base64.getUrlEncoder.withoutPadding.encodeToString(surrogate.getBytes(UTF_8))
     assertEquals(intercept[DomainError](index.jobs("a",textQuery.copy(cursor=Some(encoded)))).code,"invalid")
   }}
-  test("Behavioral-Blackbox Atomic/GoodCommunication specified: long metadata keys page without a new cursor length ceiling or serialized-field matching") {
+  test("Behavioral-Blackbox Atomic/GoodCommunication specified: long metadata keys page without truncation or serialized-field matching") {
     val long="x"*10000
     val heads=(1 to 3).map(n => head(n,"a",1,s"long-$n",false)).toList.map(h => h.copy(metadata=h.metadata.copy(title=long+h.id.getLeastSignificantBits,tags=List("first","second"))))
     val jobs=(1 to 3).map(n => job(n,n,1,target,JobState.Queued,None)).toList
     withIndex(Seed(heads,jobs,Nil,Set.empty,now)) { index =>
       val query=jobsQuery(None,ActivityJobScope.All,None,1).copy(sort=ActivityJobSort.Title)
-      assert(index.jobs("a",query).nextCursor.get.length>8192)
-      assertEquals(allJobs(index,query).map(_.job.id),List(id(1),id(2),id(3)))
+      val first=index.jobs("a",query)
+      val continuation=ClientEnvelope(UUID.randomUUID(),Operation.ActivityJobs(query.copy(cursor=first.nextCursor)))
+      assert(Wire.encode(ClientEnvelope.codecJson,continuation).noSpaces.getBytes(UTF_8).length<=Http.socketFrameBytes)
+      val rows=allJobs(index,query)
+      assertEquals(rows.map(_.job.id),List(id(1),id(2),id(3)))
+      assertEquals(rows.map(_.session.metadata.title),heads.map(_.metadata.title))
       assertEquals(index.jobs("a",query.copy(expression="\"first second\"")).total,0L)
       assertEquals(index.jobs("a",query.copy(expression="tag:first AND tag:second")).total,3L)
     }
@@ -451,6 +455,23 @@ final class ActivityPostgresTest extends ActivityContract {
       assertEquals(allJobs(index,query.copy(sort=ActivityJobSort.Title,limit=1)).map(_.job.id),List(id(2),id(5),id(4),id(1),id(3)))
       assertEquals(allJobs(index,query.copy(sort=ActivityJobSort.Title,direction=SortDirection.Desc,limit=1)).map(_.job.id),List(id(3),id(1),id(4),id(5),id(2)))
       assertEquals(index.jobs("a",query.copy(expression=Json.fromString("%_\\").noSpaces)).jobs.map(_.job.id),List(id(3)))
+    }
+  }
+
+  test("Behavioral-Blackbox GoodCommunication regression: valid long titles produce continuation requests within the existing WebSocket frame bound") {
+    val snapshot=Fixtures.snapshot()
+    val title="x"*50000
+    SnapshotValidation.validate(snapshot.copy(metadata=snapshot.metadata.copy(title=title)),Fixtures.config())
+    val heads=(1 to 2).map(n => head(n,"a",1,s"transport-$n",false)).toList.map(h => h.copy(metadata=h.metadata.copy(title=title+h.id.getLeastSignificantBits)))
+    val jobs=(1 to 2).map(n => job(n,n,1,target,JobState.Queued,None)).toList
+    withIndex(Seed(heads,jobs,Nil,Set.empty,now)) { index =>
+      val query=jobsQuery(None,ActivityJobScope.All,None,1).copy(sort=ActivityJobSort.Title)
+      val cursor=index.jobs("a",query).nextCursor.get
+      val request=ClientEnvelope(UUID.randomUUID(),Operation.ActivityJobs(query.copy(cursor=Some(cursor))))
+      val bytes=Wire.encode(ClientEnvelope.codecJson,request).noSpaces.getBytes(UTF_8).length
+      println(s"ACTIVITY TITLE CURSOR transport bytes=$bytes existingFrameLimit=${Http.socketFrameBytes}")
+      assert(bytes<=Http.socketFrameBytes,s"server-produced continuation request $bytes exceeds existing WebSocket input bound ${Http.socketFrameBytes}")
+      assertEquals(index.jobs("a",query.copy(cursor=Some(cursor))).jobs.map(_.job.id),List(id(2)))
     }
   }
 
@@ -580,6 +601,7 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
     case ActivityJobSort.Classification => ActivityOrder("",ActivityPositionKind.Classification,false)
     case ActivityJobSort.JobId | ActivityJobSort.SessionId => ActivityOrder("",ActivityPositionKind.Uuid,false)
     case ActivityJobSort.Reason => ActivityOrder("",ActivityPositionKind.Text,true)
+    case ActivityJobSort.Title => ActivityOrder("",ActivityPositionKind.RevisionText,false)
     case _ => ActivityOrder("",ActivityPositionKind.Text,false)
   }
   private def collectorOrder(sort: ActivityCollectorSort): ActivityOrder = sort match {
@@ -611,8 +633,11 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
   }
   def jobs(owner: String,q: ActivityJobsQuery): ActivityJobsResult = {
     ActivityCursor.page(q.limit); q.collectorId.foreach(ActivityCursor.collectorId)
-    val expression=ActivityExpression.jobs(q.expression); val order=jobOrder(q.sort); val after=ActivityCursor.job(q,owner,order)
+    val expression=ActivityExpression.jobs(q.expression); val order=jobOrder(q.sort)
     val now=clock.instant()
+    val after=ActivityCursor.job(q,owner,order,(id,anchor) => rows(owner,now).find(j => j.job.id==id && j.job.revision==anchor.revision)
+      .map(j => Some(fold(j.session.metadata.title)))
+      .getOrElse(throw DomainError("conflict","sort cursor anchor unavailable; restart query")))
     val filtered=rows(owner,now).filter { j => q.collectorId.forall(_==j.collectorId) && (q.scope match {
       case ActivityJobScope.All => true
       case ActivityJobScope.Current => j.classification==ActivityJobClass.Current
@@ -623,7 +648,7 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
     }
     val remaining=filtered.filter(j => after.forall { p => val compared=compare(jobKey(j,q.sort),position(p,order.kind),q.direction); compared>0 || (compared==0 && j.job.id.toString>p.id) })
     val selected=remaining.take(q.limit)
-    val next=if(remaining.size>q.limit) Some(ActivityCursor.encodeJob(q,owner,order,ActivityPosition(wire(jobKey(selected.last,q.sort)),selected.last.job.id.toString))) else None
+    val next=if(remaining.size>q.limit) Some(ActivityCursor.encodeJob(q,owner,order,ActivityPosition(wire(jobKey(selected.last,q.sort)),selected.last.job.id.toString),selected.last.job.revision)) else None
     ActivityJobsResult(now.toString,selected,filtered.size.toLong,next)
   }
 }

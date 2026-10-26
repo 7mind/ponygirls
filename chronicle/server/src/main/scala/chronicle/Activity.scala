@@ -14,7 +14,7 @@ trait ActivityIndex {
   def jobs(owner: String,q: ActivityJobsQuery): ActivityJobsResult
 }
 private[chronicle] final case class ActivitySql(text: String,args: List[Sql.Param])
-private[chronicle] enum ActivityPositionKind { case Text,Count,Time,Uuid,Phase,Freshness,State,Lease,Classification }
+private[chronicle] enum ActivityPositionKind { case Text,RevisionText,Count,Time,Uuid,Phase,Freshness,State,Lease,Classification }
 private[chronicle] final case class ActivityOrder(column: String,kind: ActivityPositionKind,nullable: Boolean)
 private[chronicle] final case class ActivityPosition(value: Option[String],id: String)
 
@@ -146,7 +146,7 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
   }
   private def jobOrder(sort: ActivityJobSort): ActivityOrder = sort match {
     case ActivityJobSort.LastTimestamp => ActivityOrder("j.last_timestamp_order",ActivityPositionKind.Time,true)
-    case ActivityJobSort.Title => ActivityOrder(s"lower((j.metadata->>'title') $unicode)",ActivityPositionKind.Text,false)
+    case ActivityJobSort.Title => ActivityOrder(s"lower((j.metadata->>'title') $unicode)",ActivityPositionKind.RevisionText,false)
     case ActivityJobSort.Collector => ActivityOrder("j.collector_id COLLATE \"C\"",ActivityPositionKind.Text,false)
     case ActivityJobSort.State => ActivityOrder(s"lower(j.state $unicode)",ActivityPositionKind.State,false)
     case ActivityJobSort.Revision => ActivityOrder("j.revision",ActivityPositionKind.Count,false)
@@ -224,8 +224,13 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
     ActivityCursor.page(q.limit); q.collectorId.foreach(ActivityCursor.collectorId)
     val parsed=ActivityExpression.jobs(q.expression)
     val order=jobOrder(q.sort)
-    val position=ActivityCursor.job(q,owner,order)
     reading(owner) { (c,now) =>
+      val position=ActivityCursor.job(q,owner,order,(id,anchor) =>
+        Sql.one(c,s"""SELECT lower((i.metadata->>'title') $unicode) FROM ch_jobs j
+          JOIN ch_sources s ON s.id=j.session_id
+          JOIN ch_revision_info i ON i.session_id=j.session_id AND i.revision=j.revision
+          WHERE j.id=? AND j.revision=? AND s.owner=? AND NOT s.tombstone""",id,anchor.revision,owner)(r => Option(r.getString(1)))
+          .getOrElse(throw DomainError("conflict","sort cursor anchor unavailable; restart query")))
       val scope=q.scope match {
         case ActivityJobScope.Current => ActivitySql("j.is_current",Nil)
         case ActivityJobScope.Historical => ActivitySql("NOT j.is_current",Nil)
@@ -260,7 +265,7 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
         (r.getLong("total"),row)
       }
       val values=rows.flatMap(_._2); val page=values.take(q.limit)
-      val next=if(values.size>q.limit) Some(ActivityCursor.encodeJob(q,owner,order,ActivityPosition(page.last._2,page.last._1.job.id.toString))) else None
+      val next=if(values.size>q.limit) Some(ActivityCursor.encodeJob(q,owner,order,ActivityPosition(page.last._2,page.last._1.job.id.toString),page.last._1.job.revision)) else None
       ActivityJobsResult(now.toString,page.map(_._1),rows.head._1,next)
     }
   }
@@ -279,15 +284,15 @@ private[chronicle] object ActivityCursor {
     Wire.parse(text).asArray.getOrElse(invalid)
   }
   private def binding(kind: String,owner: String,expression: String,sort: String,direction: SortDirection,order: ActivityOrder,extra: List[Json]): Vector[Json] =
-    Vector(kind,owner,Wire.hash(expression),sort,direction.toString,order.kind.toString).map(Json.fromString)++extra
-  private def collectorBinding(q: ActivityQuery,owner: String,order: ActivityOrder): Vector[Json] = binding("activity-collectors-v2",owner,q.expression,q.sort.toString,q.direction,order,Nil)
-  private def jobBinding(q: ActivityJobsQuery,owner: String,order: ActivityOrder): Vector[Json] = binding("activity-jobs-v2",owner,q.expression,q.sort.toString,q.direction,order,List(Json.fromString(q.scope.toString),q.collectorId.fold(Json.Null)(Json.fromString)))
+    Vector(kind,Wire.hash(owner),Wire.hash(expression),sort,direction.toString,order.kind.toString).map(Json.fromString)++extra
+  private def collectorBinding(q: ActivityQuery,owner: String,order: ActivityOrder): Vector[Json] = binding("activity-collectors-v3",owner,q.expression,q.sort.toString,q.direction,order,Nil)
+  private def jobBinding(q: ActivityJobsQuery,owner: String,order: ActivityOrder): Vector[Json] = binding("activity-jobs-v3",owner,q.expression,q.sort.toString,q.direction,order,List(Json.fromString(q.scope.toString),q.collectorId.fold(Json.Null)(Json.fromString)))
   private def key(value: Option[String],order: ActivityOrder): Unit = {
     Check(order.nullable || value.nonEmpty,"invalid","invalid null activity position")
     value.foreach { value =>
       Check(scalar(value),"invalid","invalid activity position text")
       val valid=order.kind match {
-        case ActivityPositionKind.Text => true
+        case ActivityPositionKind.Text | ActivityPositionKind.RevisionText => true
         case ActivityPositionKind.Count => value.matches("[0-9]{1,19}") && Try(value.toLong).toOption.exists(_>=0)
         case ActivityPositionKind.Time => value.matches("-?[0-9]{1,19}(\\.[0-9]{1,9})?")
         case ActivityPositionKind.Uuid => Try(UUID.fromString(value)).toOption.exists(_.toString==value)
@@ -300,23 +305,31 @@ private[chronicle] object ActivityCursor {
       Check(valid,"invalid","invalid activity position value")
     }
   }
-  private def position(value: String,expected: Vector[Json],order: ActivityOrder,uuid: Boolean): ActivityPosition = {
+  private def position(value: String,expected: Vector[Json],order: ActivityOrder,uuid: Boolean,resolve: (String,RevisionSortAnchor) => Option[String]): ActivityPosition = {
     val fields=decode(value)
     Check(fields.size==expected.size+2 && fields.take(expected.size)==expected,"invalid","activity cursor does not match query")
-    val selected=fields(expected.size)
-    val last=if(selected.isNull) None else Some(selected.asString.getOrElse(invalid))
     val id=fields.last.asString.getOrElse(invalid)
-    key(last,order)
     if(uuid) Check(Try(UUID.fromString(id)).toOption.exists(_.toString==id),"invalid","invalid job cursor ID") else collectorId(id)
+    val selected=fields(expected.size)
+    val last=if(order.kind==ActivityPositionKind.RevisionText) {
+      val anchor=RevisionSortAnchor.decode(selected)
+      RevisionSortAnchor.resolve(anchor,resolve(id,anchor))
+    } else if(selected.isNull) None else Some(selected.asString.getOrElse(invalid))
+    key(last,order)
     ActivityPosition(last,id)
   }
-  private def encode(expected: Vector[Json],order: ActivityOrder,position: ActivityPosition): String = {
+  private def encode(expected: Vector[Json],order: ActivityOrder,position: ActivityPosition,anchor: Option[RevisionSortAnchor]): String = {
     key(position.value,order)
-    val json=Json.fromValues(expected++Vector(position.value.fold(Json.Null)(Json.fromString),Json.fromString(position.id)))
+    val selected=anchor.fold(position.value.fold(Json.Null)(Json.fromString))(RevisionSortAnchor.encode)
+    val json=Json.fromValues(expected++Vector(selected,Json.fromString(position.id)))
     Base64.getUrlEncoder.withoutPadding.encodeToString(json.noSpaces.getBytes(UTF_8))
   }
-  def collector(q: ActivityQuery,owner: String,order: ActivityOrder): Option[ActivityPosition] = q.cursor.map(position(_,collectorBinding(q,owner,order),order,false))
-  def job(q: ActivityJobsQuery,owner: String,order: ActivityOrder): Option[ActivityPosition] = q.cursor.map(position(_,jobBinding(q,owner,order),order,true))
-  def encodeCollector(q: ActivityQuery,owner: String,order: ActivityOrder,position: ActivityPosition): String = encode(collectorBinding(q,owner,order),order,position)
-  def encodeJob(q: ActivityJobsQuery,owner: String,order: ActivityOrder,position: ActivityPosition): String = encode(jobBinding(q,owner,order),order,position)
+  def collector(q: ActivityQuery,owner: String,order: ActivityOrder): Option[ActivityPosition] = q.cursor.map(position(_,collectorBinding(q,owner,order),order,false,(_,_) => invalid))
+  def job(q: ActivityJobsQuery,owner: String,order: ActivityOrder,resolve: (UUID,RevisionSortAnchor) => Option[String]): Option[ActivityPosition] =
+    q.cursor.map(position(_,jobBinding(q,owner,order),order,true,(id,anchor) => resolve(UUID.fromString(id),anchor)))
+  def encodeCollector(q: ActivityQuery,owner: String,order: ActivityOrder,position: ActivityPosition): String = encode(collectorBinding(q,owner,order),order,position,None)
+  def encodeJob(q: ActivityJobsQuery,owner: String,order: ActivityOrder,position: ActivityPosition,revision: Int): String = {
+    val anchor=if(order.kind==ActivityPositionKind.RevisionText) Some(RevisionSortAnchor.capture(revision,position.value)) else None
+    encode(jobBinding(q,owner,order),order,position,anchor)
+  }
 }
