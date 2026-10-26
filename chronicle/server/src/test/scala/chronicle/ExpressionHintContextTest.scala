@@ -87,6 +87,10 @@ class ExpressionHintContextTest extends munit.FunSuite {
       assertEquals(replacement(q,result,result.hints.head),"project:\"new\" "+operator+" tag:keep")
     }
     assertEquals(hints("project:O¦R",archive,List("OR whole")).hints.map(_.label),List("OR whole"))
+    val q=request("project: ¦AND tag:keep",archive,20)
+    val result=index(List("new")).hints("a",q)
+    assertEquals(replacement(q,result,result.hints.head),"project: \"new\" AND tag:keep")
+    ArchiveExpression.parse(replacement(q,result,result.hints.head))
   }
   test("BG specified: a dangling contiguous colon remains part of the incomplete unquoted field value") {
     val q=request("after:2026-10-26T10:¦ AND project:keep",archive,20)

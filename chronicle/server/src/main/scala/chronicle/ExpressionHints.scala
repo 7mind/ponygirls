@@ -73,7 +73,12 @@ private[chronicle] final class CorpusExpressionHintIndex(store: ExpressionHintSt
       case _: HintFocus.Value => selected.toList.flatMap { case (field,prefix) =>
         val values=ExpressionHintVocabulary.fixed(query.target,field).fold(corpus.values)(_.filter(matching(_,prefix)))
         values.flatMap { value => ExpressionHintVocabulary.literal(value) match {
-          case Some(insertion) => Some(hint(ExpressionHintKind.Value,value,insertion))
+          case Some(insertion) =>
+            val separator=if(context.end<query.expression.length && {
+              val next=query.expression.charAt(context.end)
+              !Character.isWhitespace(next) && !Character.isSpaceChar(next) && !":(){}\"".contains(next)
+            }) " " else ""
+            Some(hint(ExpressionHintKind.Value,value,insertion+separator))
           case None => omitted=true; None
         }}
       }
