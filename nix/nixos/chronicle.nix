@@ -98,7 +98,7 @@ in
       });
     };
     annotation = lib.mkOption { type = lib.types.submodule { options = endpointOptions // {
-      requestPolicy = lib.mkOption { type = lib.types.enum [ "strict-json-schema" "glm-low-reasoning" ]; description = "Required strict structured-output policy; glm-low-reasoning additionally enables the GLM-specific low reasoning template extension. Changes require explicit maintenance reindex."; };
+      requestPolicy = lib.mkOption { type = lib.types.enum [ "strict-json-schema" "glm-max-reasoning" ]; description = "Required strict structured-output policy; glm-max-reasoning additionally enables the GLM-specific maximum reasoning template extension. Changes require explicit maintenance reindex."; };
     }; }; description = "Annotation model endpoint and explicit profile identity."; };
     embedding = lib.mkOption {
       type = lib.types.submodule {

@@ -29,19 +29,26 @@ class AnnotationRequestTest extends munit.FunSuite {
   test("BG: policy sends GLM extension only by explicit selection and changes profile") {
     AnnotationRequestPolicy.values.foreach { policy =>
       val result=run(reply(Json.fromString("stop"),Json.obj("content"->Json.fromString(content))).noSpaces,payload => {
-        assertEquals(payload.hcursor.downField("chat_template_kwargs").focus,if(policy==AnnotationRequestPolicy.GlmLowReasoning) Some(Json.obj("reasoning_effort"->Json.fromString("low"))) else None)
+        assertEquals(payload.hcursor.get[Int]("max_tokens").toOption,Some(if(policy==AnnotationRequestPolicy.StrictJsonSchema) 2048 else 65536))
+        assertEquals(payload.hcursor.downField("chat_template_kwargs").focus,if(policy==AnnotationRequestPolicy.GlmMaxReasoning) Some(Json.obj("reasoning_effort"->Json.fromString("max"))) else None)
       },policy)
       assert(result.isRight)
     }
     val config=Fixtures.config()
-    assertNotEquals(config.profile,config.copy(annotation=config.annotation.copy(requestPolicy=AnnotationRequestPolicy.GlmLowReasoning)).profile)
+    assertNotEquals(config.profile,config.copy(annotation=config.annotation.copy(requestPolicy=AnnotationRequestPolicy.GlmMaxReasoning)).profile)
+  }
+  test("BA: transport supports the longest configured model deadline without a 120 second cap") {
+    import scala.concurrent.duration.*
+    val config=Fixtures.config()
+    assertEquals(ModelHttp.transportTimeout(config.copy(annotation=config.annotation.copy(timeoutSeconds=900))),900.seconds)
+    assertEquals(ModelHttp.transportTimeout(config.copy(embedding=config.embedding.copy(timeoutSeconds=1200))),1200.seconds)
   }
   test("BA: annotation config policy is required and typed") {
     import Config.given
     val base=Wire.parse("""{"endpoint":"http://127.0.0.1:1","model":"x","revision":"1","credentialFile":"unused","timeoutSeconds":1,"maxResponseBytes":1024}""")
     assert(base.as[ModelConfig].isLeft)
-    List(Json.Null,Json.fromString("json-object"),Json.fromInt(1)).foreach(value => assert(base.mapObject(_.add("requestPolicy",value)).as[ModelConfig].isLeft))
-    List("strict-json-schema","glm-low-reasoning").foreach(value => assert(base.mapObject(_.add("requestPolicy",Json.fromString(value))).as[ModelConfig].isRight))
+    List(Json.Null,Json.fromString("json-object"),Json.fromString("glm-low-reasoning"),Json.fromInt(1)).foreach(value => assert(base.mapObject(_.add("requestPolicy",value)).as[ModelConfig].isLeft))
+    List("strict-json-schema","glm-max-reasoning").foreach(value => assert(base.mapObject(_.add("requestPolicy",Json.fromString(value))).as[ModelConfig].isRight))
   }
   test("BA: exact bounded schema for every supported window") {
     (1 to 4).foreach { size =>

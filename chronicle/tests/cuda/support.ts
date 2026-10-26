@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 export interface ModelEndpoint { endpoint: string; model: string; revision: string; credentialFile: string }
-export interface ModelConfiguration { annotation: ModelEndpoint & { requestPolicy: 'strict-json-schema' | 'glm-low-reasoning' }; embedding: ModelEndpoint & { dimensions: number; sendDimensions: boolean; queryPrefix: string; documentPrefix: string } }
+export interface ModelConfiguration { annotation: ModelEndpoint & { requestPolicy: 'strict-json-schema' | 'glm-max-reasoning' }; embedding: ModelEndpoint & { dimensions: number; sendDimensions: boolean; queryPrefix: string; documentPrefix: string } }
 export async function configuration(): Promise<ModelConfiguration> {
   const path = process.env.CHRONICLE_CUDA_MODELS;
   assert.ok(path !== undefined, 'CHRONICLE_CUDA_MODELS must name a synthetic local model configuration');

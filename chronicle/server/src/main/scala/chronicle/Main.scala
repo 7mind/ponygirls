@@ -20,7 +20,7 @@ object Main extends IOApp {
     }.as(ExitCode.Success)
     case List(command,path) if Set("serve","maintenance-reindex").contains(command) =>
       IO.blocking(Config.load(path)).flatMap { config =>
-        EmberClientBuilder.default[IO].withTimeout(120.seconds).withMaxResponseHeaderSize(16384).build.use { client =>
+        EmberClientBuilder.default[IO].withTimeout(ModelHttp.transportTimeout(config)).withMaxResponseHeaderSize(16384).build.use { client =>
           // Explicit graph registration: no classpath scanning in native images.
           val lifecycle = Injector().produceGet[RuntimeServices](new ModuleDef {
             include(_root_.chronicle.plugins.ChroniclePlugin)
