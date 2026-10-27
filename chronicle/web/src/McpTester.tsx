@@ -83,7 +83,7 @@ export function useMcpTester(connection: ChronicleConnection, stats: ManagerStat
       if (live.current !== requestKey || authorityEpoch.current !== requestAuthority) return;
       if (scalarUtf8Bytes(text) > catalog.limits.maximumPromptBytes) throw new Error('Prompt exceeds the current catalog limit.');
       const runId = randomUUID(crypto); admitted = { instanceId: catalog.instanceId, runId, catalog, state: 'Uncertain' };
-      handles.current.set(owner, admitted); setVersion(n => n + 1); setDisplay({ key, catalog, events: [], error: null, observedAt: null, state: 'Uncertain' });
+      handles.current.set(owner, admitted); setVersion(n => n + 1); const next: Display = { key, catalog, events: [], error: null, observedAt: null, state: 'Uncertain' }; data.current = next; setDisplay(next);
       const result = await connection.request(new Operation_StartMcpTest(catalog.instanceId, runId, text), { mutation: false, receiptId: null, delivery: 'once' });
       if (live.current !== requestKey || authorityEpoch.current !== requestAuthority) return;
       if (!(result instanceof Result_McpTestRun)) throw new Error('Unverified MCP start response.');
