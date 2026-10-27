@@ -175,7 +175,49 @@ final class Worker(archive: SessionArchive,annotator: Annotator,problemAnnotator
   private val truncatedAnnotationCode = "model-output/truncated"
   private val leaseSeconds = 300
   private def failureCode(error: Throwable): String = error match { case d: DomainError => d.code; case _ => "worker-fault" }
-  private def failureOrigin(error: Throwable): String = error.getStackTrace.headOption.map(frame => s"${frame.getClassName}.${frame.getMethodName}:${frame.getLineNumber}").getOrElse("unavailable")
+  private def failureOrigin(error: Throwable): String = error.getStackTrace.find(frame => !Set("chronicle.DomainError","chronicle.DomainError$","chronicle.Check","chronicle.Check$").contains(frame.getClassName)).map(frame => s"${frame.getClassName}.${frame.getMethodName}:${frame.getLineNumber}").getOrElse("unavailable")
+  private final case class FailureDetails(reason: String,httpStatus: String)
+  private def failureDetails(error: Throwable): FailureDetails = {
+    val status=error match {
+      case DomainError("model-http",s"model returned HTTP $value") if value.matches("(?:1|3|4|5)[0-9]{2}") => Some(value.toInt)
+      case _ => None
+    }
+    val reason=if(status.nonEmpty) "http-status" else error match {
+      case DomainError("model-output","model response too large") => "response-byte-bound"
+      case DomainError("model-output","invalid model JSON") => "model-json-invalid"
+      case DomainError("model-output","missing annotation choices") => "annotation-choices-decode"
+      case DomainError("model-output","invalid annotation choice count") => "annotation-choice-count"
+      case DomainError("model-output","missing annotation finish reason") => "annotation-finish-decode"
+      case DomainError("model-output","annotation did not complete") => "annotation-finish-not-stop"
+      case DomainError("model-output","annotation refused") => "annotation-refusal-field"
+      case DomainError("model-output","missing annotation content") => "annotation-content-decode"
+      case DomainError("model-output","empty annotation content") => "annotation-content-empty"
+      case DomainError("model-output","invalid annotation window") => "annotation-window"
+      case DomainError("model-output","annotation contains non-storable Unicode") => "annotation-unicode"
+      case DomainError("model-output","unexpected annotation fields") => "annotation-fields"
+      case DomainError("model-output","missing chunks") => "annotation-chunks-decode"
+      case DomainError("model-output","invalid chunk count") => "annotation-chunk-count"
+      case DomainError("model-output","unexpected chunk fields") => "annotation-chunk-fields"
+      case DomainError("model-output","invalid first fragment") => "annotation-first-decode"
+      case DomainError("model-output","invalid last fragment") => "annotation-last-decode"
+      case DomainError("model-output","invalid summary") => "annotation-summary-decode"
+      case DomainError("model-output","invalid tags") => "annotation-tags-decode"
+      case DomainError("model-output","partition gap/overlap/range") => "annotation-partition-range"
+      case DomainError("model-output","annotation limits") => "annotation-limits"
+      case DomainError("model-output","incomplete partition") => "annotation-partition-incomplete"
+      case DomainError("model-output","missing embedding data") => "embedding-data-decode"
+      case DomainError("model-output","embedding count mismatch") => "embedding-count"
+      case DomainError("model-output","missing embedding index") => "embedding-index-decode"
+      case DomainError("model-output","invalid embedding") => "embedding-vector-decode"
+      case DomainError("model-output","invalid vector dimension/value") => "embedding-vector-validation"
+      case DomainError("model-output","invalid embedding indices") => "embedding-indices"
+      case DomainError("model-timeout","model deadline exceeded") => "model-deadline"
+      case DomainError("model-output/truncated","annotation token limit reached") => "annotation-token-limit"
+      case DomainError("stale-claim","indexing claim is no longer current") => "stale-claim"
+      case _ => "unknown"
+    }
+    FailureDetails(reason,status.fold("unavailable")(_.toString))
+  }
   private final class Windows(claim: Claim,total: Int) {
     def report(completed: Int): IO[Unit] = IO.blocking {
       Check(archive.progress(claim,completed,total),"stale-claim","indexing claim is no longer current")
@@ -183,8 +225,8 @@ final class Worker(archive: SessionArchive,annotator: Annotator,problemAnnotator
     def failed(error: Throwable,index: Int,stage: String,attempt: Int): IO[Nothing] = {
       val code=failureCode(error)
       val exceptionClass=error.getClass.getName
-      val origin=failureOrigin(error)
-      IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=$stage annotationAttempt=$attempt annotationAttemptLimit=$annotationAttemptLimit code=$code exceptionClass=$exceptionClass origin=$origin")) *> IO.raiseError(error)
+      val origin=failureOrigin(error); val details=failureDetails(error); val reason=details.reason; val httpStatus=details.httpStatus
+      IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=$stage annotationAttempt=$attempt annotationAttemptLimit=$annotationAttemptLimit code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus")) *> IO.raiseError(error)
     }
     def annotate[A](run: => IO[A],index: Int,attempt: Int): IO[(A,Int)] = IO.defer(run).map(value => (value,attempt)).handleErrorWith {
       case error: DomainError if error.code==truncatedAnnotationCode =>
@@ -257,8 +299,8 @@ final class Worker(archive: SessionArchive,annotator: Annotator,problemAnnotator
       case error =>
         val code=failureCode(error)
         val exceptionClass=error.getClass.getName
-        val origin=failureOrigin(error)
-        IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass origin=$origin")) *> IO.blocking(archive.fail(claim,code)) *> IO.sleep(2.seconds)
+        val origin=failureOrigin(error); val details=failureDetails(error); val reason=details.reason; val httpStatus=details.httpStatus
+        IO(logger.warn(s"job failed jobId=${claim.jobId} code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus")) *> IO.blocking(archive.fail(claim,code)) *> IO.sleep(2.seconds)
     }
   }
   def once: IO[Boolean] = admission.annotationSession.use { _ =>

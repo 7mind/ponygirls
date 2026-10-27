@@ -147,11 +147,40 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
     val archive=new RecordingArchive(delegate); archive.ingest("a",source)
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; val embedder=new RecordingEmbedder
     val invalid=Json.obj("choices"->Json.arr(Json.obj("finish_reason"->Json.fromString("stop"),"message"->Json.obj("content"->Json.fromString("{}")))))
-    val model=annotator(config,calls,(_,_) => IO.pure(invalid))
-    assert(ModelFixtures.legacyWorker(archive,model,embedder,config,logstage.IzLogger()).once.unsafeRunSync())
+    val model=annotator(config,calls,(_,_) => IO.pure(invalid)); val logs=new CapturedLogs
+    assert(ModelFixtures.legacyWorker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
     assertEquals(calls.size,1); assertEquals(embedder.calls.toList,Nil)
     assertEquals(archive.failures.toList,List("model-output")); assertEquals(archive.publications,0)
+    val diagnostic=logs.messages.find(_.startsWith("window failed ")).get
+    assert(diagnostic.contains("origin=chronicle.AnnotationPartition$.project:"),diagnostic)
+    assert(diagnostic.contains("reason=annotation-fields"),diagnostic)
   }}
+  List(Status.TooManyRequests,Status.ServiceUnavailable).foreach { status =>
+    test(s"BG/GoodCommunication: HTTP ${status.code} diagnostics retain only the status without changing attempts") { withArchive { (config,db,delegate) =>
+      val archive=new RecordingArchive(delegate); archive.ingest("a",source)
+      val poison="PRIVATE_PROVIDER_BODY_HEADER_AND_CREDENTIAL_SYNTHETIC_SECRET"; var calls=0
+      val app: HttpApp[IO]=cats.data.Kleisli(_ => IO { calls+=1; Response[IO](status).withEntity(poison).putHeaders(Header.Raw(org.typelevel.ci.CIString("X-Private"),poison)) })
+      val model=new OpenAIAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),config)
+      val logs=new CapturedLogs; val embedder=new RecordingEmbedder
+      assert(ModelFixtures.legacyWorker(archive,model,embedder,config,logs.logger).once.unsafeRunSync())
+      assertEquals(calls,1); assertEquals(archive.failures.toList,List("model-http")); assertEquals(archive.publications,0)
+      assertEquals(embedder.calls.toList,Nil)
+      val diagnostics=logs.messages.filter(message => message.startsWith("window failed ") || message.startsWith("job failed "))
+      assertEquals(diagnostics.size,2)
+      assert(diagnostics.forall(_.contains(s"reason=http-status httpStatus=${status.code}")),diagnostics.mkString("\n"))
+      assert(!(logs.rendered+logs.entries.mkString).contains(poison)); assert(logs.entries.forall(_.firstThrowable.isEmpty))
+    }}
+  }
+  List(("model-http","model returned HTTP 429 PRIVATE_SUFFIX"),("model-output","model returned HTTP 429"),("model-http","model returned HTTP 200"),("model-http","model returned HTTP 999")).foreach { (code,detail) =>
+    test(s"BG/GoodCommunication: unrecognized status detail $code/${Wire.hash(detail)} stays private and unknown") { withArchive { (config,db,delegate) =>
+      val archive=new RecordingArchive(delegate); archive.ingest("a",source); val logs=new CapturedLogs
+      val model=new Annotator { def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO.raiseError(DomainError(code,detail)) }
+      assert(ModelFixtures.legacyWorker(archive,model,new RecordingEmbedder,config,logs.logger).once.unsafeRunSync())
+      assertEquals(archive.failures.toList,List(code)); assertEquals(logs.messages.size,2)
+      assert(logs.messages.forall(_.endsWith("reason=unknown httpStatus=unavailable")))
+      assert(!(logs.rendered+logs.entries.mkString).contains(detail)); assert(logs.entries.forall(_.firstThrowable.isEmpty))
+    }}
+  }
   test("BG/GoodCommunication: even a truncation code from embedding does not retry annotation or embedding") { withArchive { (config,db,delegate) =>
     val archive=new RecordingArchive(delegate); archive.ingest("a",source)
     val calls=scala.collection.mutable.ListBuffer.empty[Json]; var embeddings=0
@@ -178,7 +207,8 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       val error=if(unexpected) new IllegalStateException(poison) {
         override def getMessage(): String = { messageReads+=1; super.getMessage() }
       } else DomainError("model-output",poison)
-      error.setStackTrace(Array(new StackTraceElement("chronicle.SyntheticModel","respond",poison,321)))
+      val origin=new StackTraceElement("chronicle.SyntheticModel","respond",poison,321)
+      error.setStackTrace(if(unexpected) Array(origin) else Array(new StackTraceElement("chronicle.DomainError$","apply",poison,13),new StackTraceElement("chronicle.Check$","apply",poison,15),origin))
       var annotations=0; var embeddings=0
       val model=new Annotator {
         def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO { annotations+=1 }.flatMap { _ =>
@@ -205,9 +235,9 @@ abstract class WorkerAnnotationRetryContract extends munit.FunSuite {
       val messages=logs.messages
       val terminal=messages.filter(_.startsWith("window failed "))
       assertEquals(terminal.size,1,"missing terminal stage/window diagnostic")
-      assertEquals(terminal.head,s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=1 totalWindows=3 stage=$stage annotationAttempt=2 annotationAttemptLimit=5 code=$code exceptionClass=${error.getClass.getName} origin=chronicle.SyntheticModel.respond:321")
+      assertEquals(terminal.head,s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=1 totalWindows=3 stage=$stage annotationAttempt=2 annotationAttemptLimit=5 code=$code exceptionClass=${error.getClass.getName} origin=chronicle.SyntheticModel.respond:321 reason=unknown httpStatus=unavailable")
       assertEquals(messages.filter(_.startsWith("annotation attempt failed ")),List(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=1 totalWindows=3 attempt=1 attemptLimit=5 code=model-output/truncated outcome=retry"))
-      assertEquals(messages.filter(_.startsWith("job failed ")),List(s"job failed jobId=${claim.jobId} code=$code exceptionClass=${error.getClass.getName} origin=chronicle.SyntheticModel.respond:321"))
+      assertEquals(messages.filter(_.startsWith("job failed ")),List(s"job failed jobId=${claim.jobId} code=$code exceptionClass=${error.getClass.getName} origin=chronicle.SyntheticModel.respond:321 reason=unknown httpStatus=unavailable"))
       assertEquals(messages.size,3); assertEquals(messageReads,0)
       val recorded=logs.rendered+logs.entries.mkString
       List(poison,"a"*128,"b"*128,"0.1234567898765432").foreach(secret => assert(!recorded.contains(secret),"private content reached log entry"))
