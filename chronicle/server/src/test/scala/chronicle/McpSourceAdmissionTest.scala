@@ -44,7 +44,8 @@ class McpSourceAdmissionTest extends munit.FunSuite {
       assertEquals(http.hcursor.downField("result").focus,Some(actual)); assertEquals(actual.hcursor.get[Boolean]("isError").toOption,Some(false))
     }
     f.probe.observations.collect { case SourceEvent.Query(_,columns) => columns }.foreach { columns =>
-      assert(!columns.exists(Set("snapshot","document","embedding")))
+      assertEquals(columns.distinct,columns)
+      assert(!columns.exists(Set("snapshot","document","embedding","credential")))
     }
     assert(f.probe.observations.collect { case SourceEvent.Closed(_,exhausted) => exhausted }.forall(identity))
   }}
@@ -112,6 +113,21 @@ class McpSourceAdmissionTest extends munit.FunSuite {
     val empty=args(receipt.sessionId).mapObject(_.add("offset",Json.fromInt(Int.MaxValue)))
     budgetFailure(invoke(f,"get_messages",empty,limited(f,0)))
     assertEquals(invoke(f,"get_messages",empty,limited(f,maximum)).hcursor.get[Boolean]("isError").toOption,Some(false))
+  }}
+  test("WG GoodCommunication: selected-row UTF8 accounting matches an independent payload/printer oracle exactly") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
+    val original=Fixtures.snapshot(); val text="\u0001\u007f\u0080\u009f🙂\"\\\n"*2000
+    val receipt=f.archive.ingest("a",original.copy(messages=original.messages.map(_.copy(text=text))))
+    // The fixture oracle deliberately fetches bounded test payload outside the admitted production path.
+    val payloadBytes=f.db.transaction(c => Sql.rows(c,"SELECT to_jsonb(selected_message)::text FROM (SELECT value FROM ch_messages WHERE session_id=? AND revision=1 AND position>=0 ORDER BY position LIMIT 20) selected_message",receipt.sessionId)(_.getString(1))).map(_.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong).sum
+    val refs=Json.obj("revision"->Json.fromInt(1),"published"->Json.Null,"indexed"->Json.Null)
+    val count=Json.obj("message_count"->Json.fromInt(1))
+    val expected=payloadBytes+refs.noSpaces.getBytes(java.nio.charset.StandardCharsets.UTF_8).length+count.noSpaces.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+    val observed=new AtomicLong()
+    val recorder=f.probe.admission(new ReadAdmission { def consume(bytes: Long): Unit={ observed.addAndGet(bytes); () } },_ => ())
+    val result=invoke(f,"get_messages",args(receipt.sessionId),recorder)
+    assertEquals(observed.get(),expected); assert(expected<maximum)
+    assertEquals(invoke(f,"get_messages",args(receipt.sessionId),limited(f,expected)),result)
+    budgetFailure(invoke(f,"get_messages",args(receipt.sessionId),limited(f,expected-1)))
   }}
   test("BG GoodCommunication: oversized already-materialized identity is counted without claiming pre-Auth database protection") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
     val access=new McpRunAccess { def fresh: IO[Identity]=IO.pure(f.identity.copy(user=f.identity.user.copy(login="\u0080"*50000))) }

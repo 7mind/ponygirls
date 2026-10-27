@@ -6,12 +6,14 @@ import java.lang.reflect.{InvocationHandler,InvocationTargetException,Method,Pro
 import java.sql.{Connection,Driver,DriverManager,DriverPropertyInfo,PreparedStatement,ResultSet}
 import java.util.{Properties,UUID}
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.{AtomicInteger,AtomicLong}
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.logging.Logger
 import scala.jdk.CollectionConverters.*
 import java.time.Clock
 
 private[chronicle] enum SourceEvent {
+  case Statement(connection: Int,sql: String)
+  case Isolation(connection: Int,level: Int)
   case Query(sql: String,columns: List[String])
   case Payload(sql: String,column: String)
   case Closed(sql: String,exhausted: Boolean)
@@ -21,6 +23,8 @@ private[chronicle] final class SourceProbe extends Driver {
   private val prefix="jdbc:chronicle-source:"
   private val events=new ConcurrentLinkedQueue[SourceEvent]()
   val activeResults=new AtomicInteger()
+  private val incompleteResults=new AtomicInteger()
+  private val connections=new AtomicInteger()
   def observations: List[SourceEvent]=events.iterator().asScala.toList
   def url(original: String): String=prefix+original
   private def call(target: AnyRef,method: Method,args: Array[AnyRef]): AnyRef =
@@ -29,11 +33,14 @@ private[chronicle] final class SourceProbe extends Driver {
   def connect(url: String,properties: Properties): Connection = {
     if(!acceptsURL(url)) null else {
       val connection=DriverManager.getConnection(url.stripPrefix(prefix),properties)
+      val connectionId=connections.incrementAndGet()
       Proxy.newProxyInstance(getClass.getClassLoader,Array(classOf[Connection]),new InvocationHandler {
         def invoke(proxy: AnyRef,method: Method,args: Array[AnyRef]): AnyRef = {
           val result=call(connection,method,args)
+          if(method.getName=="setTransactionIsolation") events.add(SourceEvent.Isolation(connectionId,args(0).asInstanceOf[Integer].intValue))
           if(method.getName!="prepareStatement") result else {
             val sql=args(0).asInstanceOf[String]
+            events.add(SourceEvent.Statement(connectionId,sql))
             Proxy.newProxyInstance(getClass.getClassLoader,Array(classOf[PreparedStatement]),new InvocationHandler {
               def invoke(proxy: AnyRef,method: Method,args: Array[AnyRef]): AnyRef = {
                 val result=call(resultStatement,method,args)
@@ -47,7 +54,7 @@ private[chronicle] final class SourceProbe extends Driver {
                       if(Set("getString","getBytes","getCharacterStream","getBinaryStream")(method.getName)) events.add(SourceEvent.Payload(sql,args(0).toString))
                       val value=call(rows,method,args)
                       if(method.getName=="next" && value==java.lang.Boolean.FALSE) exhausted=true
-                      if(method.getName=="close" && !closed) { closed=true; activeResults.decrementAndGet(); events.add(SourceEvent.Closed(sql,exhausted)) }
+                      if(method.getName=="close" && !closed) { closed=true; activeResults.decrementAndGet(); if(!exhausted) incompleteResults.incrementAndGet(); events.add(SourceEvent.Closed(sql,exhausted)) }
                       value
                     }
                   })
@@ -62,7 +69,7 @@ private[chronicle] final class SourceProbe extends Driver {
   }
   def admission(delegate: ReadAdmission,after: Long => Unit): ReadAdmission = new ReadAdmission {
     def consume(bytes: Long): Unit = {
-      Check(activeResults.get()==0,"test","admission occurred with a live JDBC result set")
+      Check(activeResults.get()==0 && incompleteResults.get()==0,"test","admission occurred before JDBC result exhaustion/close")
       delegate.consume(bytes); events.add(SourceEvent.Consumed(bytes)); after(bytes)
     }
   }
@@ -79,13 +86,13 @@ private[chronicle] final class ReadSourceFixture(val config: Config,val db: Data
     def query(text: String): IO[List[Double]]=embedding(text)
     def documents(text: List[String]): IO[List[List[Double]]]=IO.raiseError(new AssertionError("source tool embedded documents"))
   }
-  def application(user: String): Application = {
-    val projected=config.copy(jdbcUrl=probe.url(config.jdbcUrl),databaseUser=user)
+  def application(selected: Config): Application = {
+    val projected=selected.copy(jdbcUrl=probe.url(selected.jdbcUrl))
     val readerDb=new Database(projected,catalog); val reader=new PostgresArchive(readerDb,projected)
     new Application(reader,new PostgresSearch(readerDb,reader,projected),embedder,new Auth(db,config),readerDb,
       new CollectorProgress(new PostgresCollectorProgressStore(readerDb),Clock.systemUTC()),new PostgresArchiveIndex(readerDb,reader,projected),new PostgresActivity(readerDb,Clock.systemUTC()))
   }
-  val app: Application=application(config.databaseUser)
+  val app: Application=application(config)
   val mcp=new Mcp(app)
   val tools=new LiveMcpRunTools(mcp)
   def publish(request: IngestRequest,chunkText: String,summary: String,tags: List[String],spans: List[Span]): IngestReceipt = {
