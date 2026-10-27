@@ -61,6 +61,20 @@ test('GoodCommunication blackholed upload and oversized/malformed acknowledgemen
   }
 });
 
+test('BA Pi subagent metadata tags follow trusted source identity, preserving raw digests and existing provenance tags', () => {
+  const raw = '{"type":"session","version":3,"id":"child-producer","parentSession":"/synthetic/parent.jsonl"}\n' + JSON.stringify({ type: 'message', id: 'u', message: { role: 'user', content: '[subagent synthetic-agent task synthetic-task]\nTask title' } }) + '\n';
+  for (const [path, child] of [['/synthetic/subagents/root/sessions/synthetic-agent/session.jsonl', true], ['/synthetic/sessions/session.jsonl', false]] as const) for (const observed of [false, true]) {
+    const transcript = parseTranscript('pi', Buffer.from(raw), path, privacyPolicy({ fieldNames: [], textPatterns: [] }));
+    transcript.metadata.gitRemoteObserved = observed;
+    const source = sourceIdentity('namespace', 'fixture', 'pi', transcript, path), requestId = randomUUID();
+    const request = IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(encodeSnapshot(requestId, source, 0, transcript, 'session.jsonl')) as unknown);
+    assert.deepEqual(request.metadata.tags, [...(observed ? ['collector-observed-current-git-remote'] : []), ...(child ? ['subagent'] : [])]);
+    assert.deepEqual(request.source, source); assert.equal(request.requestId, requestId); assert.equal(request.expectedRevision, 0);
+    assert.equal(request.digest, hash(raw)); assert.equal(request.files[0]!.sha256, hash(raw)); assert.equal(request.files[0]!.content, raw);
+    assert.equal(request.messages[0]!.text, '[subagent synthetic-agent task synthetic-task]\nTask title');
+  }
+});
+
 test('BA URL policy rejects credential/query endpoints and plaintext outside loopback without explicit trust', () => {
   assert.throws(() => endpointURL('http://example.invalid', false), /insecure-endpoint/);
   assert.throws(() => endpointURL('https://user:password@example.invalid', false), /endpoint-credentials-forbidden/);

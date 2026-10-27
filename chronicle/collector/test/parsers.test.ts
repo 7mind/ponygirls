@@ -3,9 +3,52 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseTranscript } from '../src/parsers.ts';
 import { privacyPolicy } from '../src/privacy.ts';
+import type { Json } from '../src/domain.ts';
 
 const policy = privacyPolicy({ fieldNames: ['apiKey'], textPatterns: ['SYNTHETIC_SECRET'] });
 const fixture = (name: string) => readFileSync(new URL(`fixtures/${name}.jsonl`, import.meta.url));
+function piTaskBytes(content: Json, title: string | null): Buffer {
+  const records: Json[] = [{ type: 'session', version: 3, id: 'child-producer', parentSession: '/synthetic/parent.jsonl' }, { type: 'message', id: 'u', parentId: null, message: { role: 'user', content } }];
+  if (title !== null) records.push({ type: 'session_info', name: title });
+  return Buffer.from(records.map(record => JSON.stringify(record)).join('\n') + '\n');
+}
+
+test('BA Pi subagent fallback title skips one matching harness header without altering source or normalized messages', () => {
+  const path = '/synthetic/subagents/root/sessions/synthetic-agent/session.jsonl';
+  const header = '[subagent synthetic-agent task synthetic-task]\n', title = 'Investigate queue order 🦄';
+  const contents: Json[] = [header + title + '\nSecond task line', header + '\n  ' + title, [{ type: 'text', text: header }, { type: 'text', text: title }], header, header + '  \n\t'];
+  for (const [index, content] of contents.entries()) {
+    const bytes = piTaskBytes(content, null), parsed = parseTranscript('pi', bytes, path, policy);
+    assert.equal(parsed.metadata.title, index < 3 ? title : 'pi session');
+    assert.equal(parsed.producerId, 'child-producer'); assert.equal(parsed.subagentId, 'synthetic-agent'); assert.equal(parsed.parentId, '/synthetic/parent.jsonl');
+    assert.equal(parsed.raw, bytes.toString()); assert.equal(parsed.redacted, false);
+    assert.deepEqual(parsed.records.map(record => record.value), bytes.toString().trimEnd().split('\n').map(line => JSON.parse(line) as unknown));
+    assert.equal(parsed.messages[0]!.text, typeof content === 'string' ? content : header + '\n' + title);
+    assert.equal(parsed.messages[0]!.id, 'u'); assert.equal(parsed.messages[0]!.recordIndex, 1);
+  }
+});
+
+test('BA Pi subagent and ordinary fallback title truncation preserves scalar Unicode within the existing UTF-16 bound', () => {
+  const header = '[subagent synthetic-agent task synthetic-task]\n';
+  for (const [prefix, path] of [[header, '/synthetic/subagents/root/sessions/synthetic-agent/session.jsonl'], ['', '/synthetic/session.jsonl']] as const) for (const width of [158, 159, 160]) {
+    const content = prefix + 'a'.repeat(width) + '🦄tail', parsed = parseTranscript('pi', piTaskBytes(content, null), path, policy);
+    assert.equal(parsed.metadata.title, width === 158 ? 'a'.repeat(width) + '🦄' : 'a'.repeat(width));
+    assert.ok(parsed.metadata.title.length <= 160); assert.equal(Buffer.from(parsed.metadata.title).toString('utf8'), parsed.metadata.title);
+    assert.equal(parsed.messages[0]!.text, content);
+  }
+});
+
+test('BA Pi subagent title classification trusts canonical paths, not parentSession or spoofed task text; explicit names win', () => {
+  const header = '[subagent synthetic-agent task synthetic-task]\n', path = '/synthetic/subagents/root/sessions/synthetic-agent/session.jsonl';
+  const ordinary = parseTranscript('pi', piTaskBytes(header + 'Task title', null), '/synthetic/sessions/session.jsonl', policy);
+  assert.equal(ordinary.subagentId, null); assert.equal(ordinary.metadata.title, header.trimEnd());
+  assert.equal(parseTranscript('pi', piTaskBytes(header + 'Task title', 'Explicit reviewed title'), path, policy).metadata.title, 'Explicit reviewed title');
+  for (const content of ['[subagent another-agent task synthetic-task]\nTask title', '[subagent synthetic-agent task synthetic-task] suffix\nTask title', '[subagent synthetic-agent task synthetic-task]\r\nTask title']) {
+    assert.equal(parseTranscript('pi', piTaskBytes(content, null), path, policy).metadata.title, content.split('\n')[0]);
+  }
+  assert.equal(parseTranscript('pi', piTaskBytes(header + header + 'Task title', null), path, policy).metadata.title, header.trimEnd());
+  assert.equal(parseTranscript('pi', piTaskBytes('\nOrdinary title semantics stay unchanged', null), '/synthetic/session.jsonl', policy).metadata.title, '');
+});
 
 test('BA Pi preserves all branches, compaction originals, tree edges, tool arguments and Unicode', () => {
   const parsed = parseTranscript('pi', fixture('pi'), 'session.jsonl', policy);

@@ -4,11 +4,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, utimesSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { Collector } from '../src/collector.ts';
+import { Collector, policyDigest } from '../src/collector.ts';
 import { noGit, acceptingProgress, syntheticSecrets } from './helpers.ts';
 import { loadConfig } from '../src/config.ts';
 import { SqliteSpool, MemorySpool } from '../src/spool.ts';
-import { UploadError, type Ingester } from '../src/ingest.ts';
+import { UploadError, encodeSnapshot, sourceIdentity, sourceKey, type Ingester } from '../src/ingest.ts';
+import { parseTranscript } from '../src/parsers.ts';
+import { resolveRuntimePrivacy } from '../src/runtime-privacy.ts';
+import { hash } from '../src/domain.ts';
 import { IngestReceipt } from '../../generated/typescript/chronicle/api/IngestReceipt.js';
 import { IngestRequest_JsonCodec } from '../../generated/typescript/chronicle/api/IngestRequest.js';
 import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.js';
@@ -72,6 +75,35 @@ test('BG lost ACK survives SQLite restart and retries exact payload/request ID; 
     assert.equal(failed.conflicts, 1); assert.equal(spool.head(queued.sourceKey).revision, 1);
     await new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(103);
     assert.equal(ingester.payloads.length, 3);
+  } finally { spool.close(); rmSync(dir, { recursive: true }); }
+});
+
+test('BG Pi subagent projection preserves pre-upgrade pending bytes and acknowledged raw dedupe across SQLite restart', async () => {
+  const { dir, config } = setup({ quietMs: 0, discoverNative: true, roots: [] }); let spool = new SqliteSpool(config.stateDir); const ingester = new DummyIngester();
+  const agent = 'synthetic-agent', header = `[subagent ${agent} task synthetic-task]\n`;
+  const directory = join(dir, '.pi/agent/subagents/root/sessions', agent); mkdirSync(directory, { recursive: true }); const path = join(directory, 'session.jsonl');
+  const raw = '{"type":"session","version":3,"id":"child-producer"}\n' + JSON.stringify({ type: 'message', id: 'u', message: { role: 'user', content: header + 'Task title' } }) + '\n';
+  const decode = (payload: string) => IngestRequest_JsonCodec.instance.decode(BaboonCodecContext.Default, JSON.parse(payload) as unknown);
+  const collect = (now: number) => new Collector(config, spool, ingester, () => 0, noGit, acceptingProgress, syntheticSecrets).runOnce(now);
+  try {
+    writeFileSync(path, raw); const runtime = resolveRuntimePrivacy(config, syntheticSecrets), parsed = parseTranscript('pi', Buffer.from(raw), path, runtime.policy);
+    const identity = sourceIdentity(spool.namespace, 'native', 'pi', parsed, path), key = sourceKey(identity), requestId = randomUUID();
+    const legacy = JSON.parse(encodeSnapshot(requestId, identity, 0, parsed, 'session.jsonl')) as { metadata: { title: string; tags: string[] } };
+    legacy.metadata.title = header.trimEnd(); legacy.metadata.tags = [];
+    const payload = JSON.stringify(legacy), digest = policyDigest(config, runtime.identity);
+    spool.enqueue({ requestId, sourceKey: key, sourceDigest: hash(raw), payload, payloadDigest: hash(payload), expectedRevision: 0, policyDigest: digest, attempts: 0, nextAt: 0, status: 'pending', error: null });
+    spool.close(); spool = new SqliteSpool(config.stateDir);
+    const resumed = await collect(100); assert.equal(resumed.uploaded, 1); assert.equal(resumed.enqueued, 0);
+    assert.deepEqual(ingester.payloads, [payload]); assert.equal(decode(ingester.payloads[0]!).metadata.title, header.trimEnd()); assert.deepEqual(decode(ingester.payloads[0]!).metadata.tags, []);
+    assert.equal(spool.head(key).revision, 1); assert.equal(spool.dropped().length, 0);
+    spool.close(); spool = new SqliteSpool(config.stateDir);
+    assert.equal((await collect(101)).unchanged, 1); assert.deepEqual(ingester.payloads, [payload]);
+    writeFileSync(path, raw.replace('Task title', 'Changed task title'));
+    assert.equal((await collect(102)).uploaded, 1);
+    const changed = decode(ingester.payloads[1]!);
+    assert.notEqual(changed.requestId, requestId); assert.deepEqual(changed.source, identity); assert.equal(changed.expectedRevision, 1);
+    assert.equal(changed.metadata.title, 'Changed task title'); assert.deepEqual(changed.metadata.tags, ['subagent']);
+    assert.equal(changed.files[0]!.content, raw.replace('Task title', 'Changed task title')); assert.equal(spool.dropped().length, 0);
   } finally { spool.close(); rmSync(dir, { recursive: true }); }
 });
 

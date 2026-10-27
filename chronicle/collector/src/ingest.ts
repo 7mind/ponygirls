@@ -30,8 +30,10 @@ export function sourceKey(source: SourceIdentity): string {
 }
 export function encodeSnapshot(requestId: string, source: SourceIdentity, revision: number, transcript: ParsedTranscript, logicalPath: string): string {
   const meta = transcript.metadata;
+  const tags = meta.gitRemoteObserved ? ['collector-observed-current-git-remote'] : [];
+  if (source.format === SourceFormat.Pi && source.subagentId !== undefined) tags.push('subagent');
   const request = new IngestRequest(requestId, source, revision, hash(transcript.raw), Completion.Quiescent, transcript.redacted,
-    new Metadata(meta.title, meta.project ?? undefined, meta.workdir ?? undefined, meta.gitRemote ?? undefined, meta.gitBranch ?? undefined, meta.gitCommit ?? undefined, source.format, meta.model ?? undefined, meta.startedAt ?? undefined, undefined, meta.gitRemoteObserved ? ['collector-observed-current-git-remote'] : []),
+    new Metadata(meta.title, meta.project ?? undefined, meta.workdir ?? undefined, meta.gitRemote ?? undefined, meta.gitBranch ?? undefined, meta.gitCommit ?? undefined, source.format, meta.model ?? undefined, meta.startedAt ?? undefined, undefined, tags),
     transcript.messages.map(message => new Message(message.id, message.parentId ?? undefined, message.role, message.text, message.timestamp ?? undefined, message.recordIndex)),
     [new RawFile(logicalPath, hash(transcript.raw), transcript.raw)]);
   return JSON.stringify(IngestRequest_JsonCodec.instance.encode(BaboonCodecContext.Default, request));

@@ -2,6 +2,13 @@ import { basename } from 'node:path';
 import { CollectorError, object, string, timestamp, type Format, type Json, type JsonObject, type ParsedMessage, type ParsedMetadata, type ParsedRecord, type ParsedTranscript } from './domain.ts';
 import type { PrivacyPolicy } from './privacy.ts';
 
+const TITLE_PREVIEW_UTF16_UNITS = 160;
+function titlePreview(value: string): string {
+  let units = 0;
+  for (const point of value.split('\n')[0]!) { if (units + point.length > TITLE_PREVIEW_UTF16_UNITS) break; units += point.length; }
+  return value.slice(0, units);
+}
+
 function text(value: Json | undefined): string {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value;
@@ -171,7 +178,14 @@ export function parseTranscript(format: Format, bytes: Uint8Array, sourcePath: s
     redacted ||= cleaned.changed;
     messages.push({ ...message, text: cleaned.value });
   }
-  metadata.title ||= messages.find(message => message.role === 'user')?.text.split('\n')[0]?.slice(0, 160) ?? `${format} session`;
+  if (metadata.title === '') {
+    let title = messages.find(message => message.role === 'user')?.text;
+    if (format === 'pi' && subagentId !== null && title !== undefined) {
+      const header = /^\[subagent (\S+) task \S+\]\n/.exec(title);
+      if (header !== null && header[1] === subagentId) title = title.slice(header[0].length).trimStart() || 'pi session';
+    }
+    metadata.title = title === undefined ? `${format} session` : titlePreview(title);
+  }
   metadata.project = metadata.workdir;
   return { producerId, subagentId, parentId, raw: rawLines.join('\n') + '\n', redacted, records, messages, metadata };
 }
