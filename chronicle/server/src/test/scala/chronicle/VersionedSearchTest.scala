@@ -61,19 +61,10 @@ class VersionedSearchTest extends munit.FunSuite {
           val socket=client.newWebSocketBuilder().header("Origin",config.allowedOrigin).header("Cookie",s"chronicle_session=$secret").buildAsync(URI.create(s"ws://127.0.0.1:${server.address.getPort}/api/ws"),listener).get(timeoutSeconds,TimeUnit.SECONDS)
           (socket,inbox)
         }
-        val (legacy,legacyInbox)=connection(); val (latest,latestInbox)=connection()
         def raw(socket: WebSocket,inbox: LinkedBlockingQueue[String],json: io.circe.Json): io.circe.Json = {
           socket.sendText(json.noSpaces,true).get(timeoutSeconds,TimeUnit.SECONDS)
           val response=inbox.poll(timeoutSeconds,TimeUnit.SECONDS); assert(response!=null,"missing socket response"); Wire.parse(response)
         }
-        def oldCall(operation: old.Operation): old.Result = {
-          val envelope=old.ClientEnvelope(UUID.randomUUID(),operation)
-          val response=raw(legacy,legacyInbox,Wire.encode(old.ClientEnvelope.codecJson,envelope))
-          val decoded=Wire.decode(old.ServerEnvelope.codecJson,response)
-          assertEquals(Wire.encode(old.ServerEnvelope.codecJson,decoded),response,"legacy wire must be produced by its codec, not latest JSON with extra fields")
-          decoded.result
-        }
-        def currentCall(operation: Operation): Result = Wire.decode(ServerEnvelope.codecJson,raw(latest,latestInbox,Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),operation)))).result
         try {
           // Specified BG/GoodCommunication: real browser auth and socket workflows,
           // with each retained version's own client/server codecs on the wire.
@@ -186,23 +177,37 @@ class VersionedSearchTest extends munit.FunSuite {
               }
             } finally socket.abort()
           }
-          val hello=oldCall(old.Operation.Hello(List("1.0.0"))).asInstanceOf[old.Result.Hello]
-          assertEquals(hello.versions.current,"1.4.0"); assertEquals(hello.versions.minimum,"1.0.0")
-          val oldFilter=old.SearchFilter(None,None,None,None,Nil)
-          val pages=(0 until corpusSize by pageSize).map { offset =>
-            val result=oldCall(old.Operation.Search(old.SearchQuery("archive",old.SearchMode.Semantic,oldFilter,pageSize,offset))).asInstanceOf[old.Result.Search].result
-            assertEquals(result.total,corpusSize); result.hits.map(_.session.id)
+          val (legacy,legacyInbox)=connection()
+          def oldCall(operation: old.Operation): old.Result = {
+            val envelope=old.ClientEnvelope(UUID.randomUUID(),operation)
+            val response=raw(legacy,legacyInbox,Wire.encode(old.ClientEnvelope.codecJson,envelope))
+            val decoded=Wire.decode(old.ServerEnvelope.codecJson,response)
+            assertEquals(Wire.encode(old.ServerEnvelope.codecJson,decoded),response,"legacy wire must be produced by its codec, not latest JSON with extra fields")
+            decoded.result
           }
-          assertEquals(pages.flatten.size,corpusSize); assertEquals(pages.flatten.distinct.size,corpusSize)
-          assertEquals(oldCall(old.Operation.Whoami()).asInstanceOf[old.Result.Whoami].user.id,"a")
-          assert(currentCall(Operation.Hello(List("1.4.0"))).isInstanceOf[Result.Hello])
-          val q=SearchQuery("archive",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),pageSize,0)
-          val bounded=currentCall(Operation.Search(q)).asInstanceOf[Result.Search].result
-          assertEquals(bounded.countScope,SearchCountScope.CandidateWindow); assertEquals(bounded.rankingLimit,Some(SearchPolicy.candidatesPerLeg)); assert(bounded.total>=bounded.hits.size && bounded.total<=SearchPolicy.candidatesPerLeg); assertEquals(bounded.hits.size,pageSize)
-          assertEquals(currentCall(Operation.Search(q.copy(offset=SearchPolicy.candidatesPerLeg))).asInstanceOf[Result.Error].failure.code,"invalid")
-          val lexical=currentCall(Operation.Search(q.copy(mode=SearchMode.Lexical))).asInstanceOf[Result.Search].result
-          assertEquals(lexical.total,corpusSize); assertEquals(lexical.countScope,SearchCountScope.ExactMatches); assertEquals(lexical.rankingLimit,None)
-        } finally { legacy.abort(); latest.abort(); client.close() }
+          try {
+            val hello=oldCall(old.Operation.Hello(List("1.0.0"))).asInstanceOf[old.Result.Hello]
+            assertEquals(hello.versions.current,"1.4.0"); assertEquals(hello.versions.minimum,"1.0.0")
+            val oldFilter=old.SearchFilter(None,None,None,None,Nil)
+            val pages=(0 until corpusSize by pageSize).map { offset =>
+              val result=oldCall(old.Operation.Search(old.SearchQuery("archive",old.SearchMode.Semantic,oldFilter,pageSize,offset))).asInstanceOf[old.Result.Search].result
+              assertEquals(result.total,corpusSize); result.hits.map(_.session.id)
+            }
+            assertEquals(pages.flatten.size,corpusSize); assertEquals(pages.flatten.distinct.size,corpusSize)
+            assertEquals(oldCall(old.Operation.Whoami()).asInstanceOf[old.Result.Whoami].user.id,"a")
+          } finally legacy.abort()
+          val (latest,latestInbox)=connection()
+          def currentCall(operation: Operation): Result = Wire.decode(ServerEnvelope.codecJson,raw(latest,latestInbox,Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),operation)))).result
+          try {
+            assert(currentCall(Operation.Hello(List("1.4.0"))).isInstanceOf[Result.Hello])
+            val q=SearchQuery("archive",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),pageSize,0)
+            val bounded=currentCall(Operation.Search(q)).asInstanceOf[Result.Search].result
+            assertEquals(bounded.countScope,SearchCountScope.CandidateWindow); assertEquals(bounded.rankingLimit,Some(SearchPolicy.candidatesPerLeg)); assert(bounded.total>=bounded.hits.size && bounded.total<=SearchPolicy.candidatesPerLeg); assertEquals(bounded.hits.size,pageSize)
+            assertEquals(currentCall(Operation.Search(q.copy(offset=SearchPolicy.candidatesPerLeg))).asInstanceOf[Result.Error].failure.code,"invalid")
+            val lexical=currentCall(Operation.Search(q.copy(mode=SearchMode.Lexical))).asInstanceOf[Result.Search].result
+            assertEquals(lexical.total,corpusSize); assertEquals(lexical.countScope,SearchCountScope.ExactMatches); assertEquals(lexical.rankingLimit,None)
+          } finally latest.abort()
+        } finally client.close()
       }}
     }}.unsafeRunSync()
   }
