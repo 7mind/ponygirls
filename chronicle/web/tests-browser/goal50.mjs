@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
 import { Goal50Fixture, api, NOW, INSTANCE } from './goal50-fixture.mjs';
+import { runActivityLayoutCases } from './activity-layout.mjs';
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set provisioned PLAYWRIGHT_BROWSERS_PATH; no downloads.');
 const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { host: '127.0.0.1', port: 0, watch: null }, logLevel: 'error' }); await server.listen();
 const address = server.httpServer.address(); if (address === null || typeof address === 'string') throw new Error('Missing synthetic origin');
 const browser = await chromium.launch({ headless: true }), errors = [];
-async function scene(configure, viewport) {
-  const context = await browser.newContext({ viewport: viewport === undefined ? { width: 1440, height: 1000 } : viewport }), page = await context.newPage(), fixture = new Goal50Fixture();
+async function scene(configure, viewport, deviceScaleFactor) {
+  const context = await browser.newContext({ viewport: viewport === undefined ? { width: 1440, height: 1000 } : viewport, deviceScaleFactor: deviceScaleFactor === undefined ? 1 : deviceScaleFactor }), page = await context.newPage(), fixture = new Goal50Fixture();
   page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); if (configure !== undefined) configure(fixture);
   await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/goal50.html`); await page.locator('.archive-row').first().waitFor(); return { context, page, fixture };
 }
@@ -158,6 +160,25 @@ try {
   });
   await group('regression pending cancellation cannot overlap a new cost-bearing run admission', async () => {
     const { context, page, fixture } = await scene(); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Complete before cancellation'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor(); fixture.holdCancels = true; await page.getByRole('button', { name: 'Request cancellation', exact: true }).click(); await fixture.waitCall(api.Operation_CancelMcpTest, 1); await page.getByLabel('Fresh prompt', { exact: true }).fill('No new admission while old Cancel is pending'); assert.equal(await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).isDisabled(), true); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1); fixture.cancelPending.shift()(new api.Result_Error(new api.Failure('mcp-run-not-found', 'Original cancel outcome unknown'))); await page.getByRole('heading', { name: 'Run Uncertain', exact: true }).waitFor(); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1); await context.close();
+  });
+  await group('regression expanded Activity usage and owner preview keep the page viewport-contained with internal table scrolling', async () => {
+    await runActivityLayoutCases(scene, activity);
+  });
+  await group('regression immediate MCP Start and Complete retain the freshly validated catalog and declared limits', async () => {
+    const output = fileURLToPath(new URL(`../test-results/goal50-activity-layout/mcp-${new Date().toISOString().replaceAll(':', '-')}/`, import.meta.url)), records = []; await mkdir(output, { recursive: true });
+    for (const held of [false, true]) {
+      const { context, page, fixture } = await scene(fixture => { fixture.mcpHoldReads = held; });
+      try {
+        await page.emulateMedia({ colorScheme: 'dark' }); await tester(page); const initial = fixture.incarnation; fixture.incarnation = '00000000-0000-4000-8000-000000060099'; fixture.tools.push('fresh_registry_tool'); await page.getByLabel('Fresh prompt', { exact: true }).fill('Synthetic fast catalog publication'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click();
+        const catalog = page.getByRole('region', { name: 'Current MCP test catalog', exact: true });
+        async function verifyCatalog(stage) {
+          assert.equal(await catalog.count(), 1, `validated catalog must remain visible after ${stage}`); const content = await catalog.textContent(); for (const value of [fixture.incarnation, 'declared-model', 'declared-revision', '65536', 'MAX', '524288', '131072', '900', '600', 'Actual tool catalog (4)']) assert.ok(content.includes(value)); assert.equal(content.includes(initial), false); records.push({ held, stage, catalogVisible: true, instanceId: fixture.incarnation, tools: fixture.tools.length });
+        }
+        if (held) { await fixture.waitCall(api.Operation_ReadMcpTest, 1); await page.getByRole('heading', { name: 'Run Queued', exact: true }).waitFor(); await verifyCatalog('immediate Start acknowledgement'); fixture.mcpHoldReads = false; for (const reply of fixture.mcpPending.splice(0)) reply(); }
+        await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor(); await verifyCatalog('Complete snapshot'); await page.screenshot({ path: `${output}/dark-1440-${held ? 'read-held' : 'fast'}-catalog.png`, fullPage: true }); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1);
+      } finally { await context.close(); }
+    }
+    await writeFile(`${output}/metrics.json`, JSON.stringify({ syntheticOnly: true, providerCalls: 0, records }, null, 2)); console.log(`MCP catalog evidence: ${output}`);
   });
   assert.deepEqual(errors, []);
 } finally { await browser.close(); await server.close(); }
