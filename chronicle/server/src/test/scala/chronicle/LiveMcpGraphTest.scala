@@ -1,6 +1,6 @@
 package chronicle
 
-import cats.effect.{IO,Ref}
+import cats.effect.{Deferred,IO,Ref,Resource}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import chronicle.api.*
@@ -104,6 +104,44 @@ final class LiveMcpGraphTest extends munit.FunSuite {
       }
     } yield ()).unsafeRunSync()
   }
+  test("Effectual-GoodCommunication: releasing the production graph cancels an active model request before the socket lease is released") {
+    if(!sys.env.contains("CHRONICLE_TEST_JDBC")) {
+      Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required")
+      assume(false,"PostgreSQL explicitly skipped")
+    }
+    val config=Fixtures.config()
+    (for {
+      entered <- Deferred[IO,Unit]
+      cancelled <- Deferred[IO,Unit]
+      telemetry <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),config.users.map(_.id).toSet)
+      provider: HttpApp[IO]=cats.data.Kleisli(_ => entered.complete(()).void *> IO.never[Response[IO]].onCancel(cancelled.complete(()).void))
+      production: Module=_root_.chronicle.plugins.ChroniclePlugin
+      module=production.overriddenBy(new ModuleDef {
+        make[Config].fromValue(config)
+        make[Client[IO]].fromValue(Client.fromHttpApp(provider))
+        make[ModelTelemetry].fromValue(telemetry)
+        make[LiveMcpGraph]
+      })
+      _ <- Resource.make(Ref.of[IO,IO[Unit]](IO.unit))(_.get.flatten).use { socketCleanup =>
+        ChronicleInjector().produceGet[LiveMcpGraph](module).use { graph =>
+          for {
+            owner <- IO.blocking { graph.database.initialize(); graph.auth.browser(graph.auth.login(LoginRequest("a","synthetic"))._2) }
+            lease <- IO.uncancelable(_ => graph.rpc.connection(UUID.randomUUID()).allocated.flatTap(pair => socketCleanup.set(pair._2))).map(_._1)
+            catalog <- graph.runs.catalog(owner)
+            _ <- graph.runs.start(owner,lease,catalog.instanceId,UUID.randomUUID(),"Synthetic active resource release")
+            _ <- entered.get.timeout(3.seconds)
+            before <- telemetry.snapshot(owner.user.id)
+            _ <- IO(assertEquals(before.samples.find(_.purpose==ModelWorkload.McpTest).get.inFlight,1))
+          } yield ()
+        } *> cancelled.get.timeout(3.seconds) *> McpTestFixtures.await(telemetry.snapshot("a"))(_.samples.find(_.purpose==ModelWorkload.McpTest).get.inFlight==0).timeout(3.seconds).flatMap { after => IO {
+          val sample=after.samples.find(_.purpose==ModelWorkload.McpTest).get
+          assertEquals(sample.finishedCalls,1L); assertEquals(sample.cancelledCalls,1L)
+          assertEquals(sample.input.unknownCalls,1L)
+        }}
+      }
+    } yield ()).unsafeRunSync()
+  }
+
   private def toolValue(message: Json): Result = {
     val content=Wire.parse(message.hcursor.get[String]("content").toOption.get)
     assertEquals(content.hcursor.get[Boolean]("isError").toOption,Some(false))
