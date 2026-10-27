@@ -7,9 +7,9 @@ button,input,select{font:inherit}
 button,a,input,summary{touch-action:manipulation}
 button{cursor:pointer;color:var(--ink);border:1px solid var(--control-border);background:transparent;border-radius:3px;padding:9px 15px;line-height:1.35;transition:background .14s,border-color .14s}
 button:hover:not(:disabled){background:var(--control-hover);border-color:var(--control-hover-border)}
-button:disabled{opacity:.48;cursor:not-allowed}
 button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
 button.primary:hover:not(:disabled){background:var(--accent-hover)}
+button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:1;cursor:not-allowed;color:var(--disabled-ink);background:var(--disabled-surface);border-color:var(--disabled-border)}
 a{color:inherit}
 input,select{color:var(--ink);border:1px solid var(--control-border);border-radius:3px;padding:9px 11px;background:var(--paper);min-width:0}
 input::placeholder{color:var(--placeholder);opacity:1}
