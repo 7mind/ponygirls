@@ -19,12 +19,12 @@ function fixturePage(rows, cursor, limit, key) {
 function leaseState(item) { return item.leaseExpiresAt === undefined ? 'unleased' : item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : 'expired'; }
 export class ChronicleFixture {
   user = new api.UserInfo('alice', 'alice', [api.Scope.Read, api.Scope.Raw]);
-  version = new api.VersionInfo('1.4.0', '1.0.0', ['1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']);
+  version = new api.VersionInfo('1.5.0', '1.0.0', ['1.5.0', '1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']);
   sockets = []; calls = []; requests = []; receipts = new Map(); tokens = []; staticTokens = []; collectors = []; collectionDenied = false;
   groups = [new api.GroupInfo(ID.group, 'Systems workshop', 'alice', ['alice', 'bob']), new api.GroupInfo(ID.otherGroup, 'Research circle', 'bob', ['bob', 'alice'])];
   invitations = [new api.InviteInfo(ID.invitation, ID.otherGroup, 'alice', '2030-01-01T00:00:00Z')];
   jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined)];
-  archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchiveCursor = false; pendingArchive = [];
+  archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchive = false; holdArchiveCursor = false; pendingArchive = [];
   activityJobs = undefined; activityCollectors = undefined; collectorExpressions = new Map(); jobExpressions = new Map(); activityFailure = null;
   holdSessions = false; sessionHeadSnapshot = undefined; pendingSessions = [];
   holdCollectorCursor = false; holdJobCursor = false; pendingCollectors = []; pendingJobs = [];
@@ -36,6 +36,7 @@ export class ChronicleFixture {
   source = new api.SourceIdentity('synthetic-collector', 'native', api.SourceFormat.Pi, 'synthetic-session', undefined);
   viewAt(revision) { return new api.ContentView(revision, `00000000-0000-4000-8000-${String(5000 + revision).padStart(12, '0')}`); }
   get view() { return this.viewAt(this.publishedRevision); }
+  get publishedFormat() { return api.PassageFormat.LegacyAnnotations; }
   sessionAt(view) { return new api.SessionInfo(view, ID.session, 'alice', this.headRevision, this.publishedRevision, this.metadata, this.source, api.Completion.Quiescent, false); }
   get session() { return this.sessionAt(this.view); }
   messagesAt(revision) { const messages = [new api.Message('m1', undefined, 'user', 'Can we preserve the original 猫🦄 source while the index catches up?', '2026-10-23T09:30:00Z', 0), new api.Message('m2', 'm1', 'assistant', 'Keep immutable source revisions. Publish annotations atomically. A quiescent snapshot does not assert that the process has ended.\n\n<script>alert("untrusted transcript")</script>', '2026-10-23T09:31:00Z', 1), ...Array.from({length: this.messageCount - 2}, (_, i) => new api.Message(`m${i + 3}`, 'm2', i % 2 ? 'tool' : 'assistant', `Synthetic source message ${i + 3}. Literal archived text, never executed.`, undefined, i + 2))];
@@ -56,7 +57,7 @@ export class ChronicleFixture {
     const metadata = index === 0 ? this.metadata : this.metadata.with({ title: `Synthetic conversation ${String(index + 1).padStart(3, '0')}`, project: index % 5 === 0 ? undefined : `Project ${index % 5}`, gitBranch: `branch-${index % 4}`, producer: index % 2 ? 'pi' : 'codex', model: index % 6 === 0 ? undefined : `model-${index % 3}` });
     const head = this.sessionAt(new api.ContentView(this.headRevision, undefined)).with({ id, metadata });
     const published = index === 0 || index % 3 !== 0 ? this.view : undefined;
-    return new api.ArchiveRow(head, published, undefined, index % 17 === 16 ? undefined : new Date(Date.parse('2026-10-23T09:31:00Z') - Math.floor(index / 2) * 60000).toISOString(), this.messageCount + index, index === 0 ? metadata.tags : [`tag-${index % 4}`], index === 0 ? this.jobs.find(job => job.revision === this.headRevision) : undefined);
+    return new api.ArchiveRow(head, published, undefined, index % 17 === 16 ? undefined : new Date(Date.parse('2026-10-23T09:31:00Z') - Math.floor(index / 2) * 60000).toISOString(), this.messageCount + index, index === 0 ? metadata.tags : [`tag-${index % 4}`], index === 0 ? this.jobs.find(job => job.revision === this.headRevision) : undefined, published === undefined ? undefined : this.publishedFormat);
   }
   get authorizedRows() { return (this.archiveRows ?? Array.from({ length: this.archiveRowCount }, (_, index) => this.archiveAt(index))).filter(row => !this.archiveExcluded.has(row.head.id)); }
   archiveResult(query) {
@@ -196,7 +197,7 @@ export class ChronicleFixture {
           this.searchCount++;
           if (this.archiveFailure !== null) { send(new api.Result_Error(new api.Failure('invalid', this.archiveFailure))); return; }
           const result = this.archiveResult(operation.query), reply = () => send(new api.Result_Archive(result));
-          if (this.holdArchiveCursor && operation.query.cursor !== undefined) this.pendingArchive.push(reply); else reply();
+          if (this.holdArchive || (this.holdArchiveCursor && operation.query.cursor !== undefined)) this.pendingArchive.push(reply); else reply();
           return;
         }
         if (operation instanceof api.Operation_Activity) {

@@ -10,7 +10,8 @@ package chronicle.api {
     lastTimestamp: Option[String],
     messageCount: Int,
     tags: List[String],
-    headJob: Option[JobInfo]
+    headJob: Option[JobInfo],
+    publishedFormat: Option[PassageFormat]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ArchiveRow.baboonDomainVersion
     override def baboonDomainIdentifier: String = ArchiveRow.baboonDomainIdentifier
@@ -21,14 +22,14 @@ package chronicle.api {
   }
   
   object ArchiveRow {
-    def baboonDomainVersion: String = "1.4.0"
+    def baboonDomainVersion: String = "1.5.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#ArchiveRow"
-    private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0")
+    private lazy val _baboonSameInVersions: List[String] = List("1.5.0")
     def baboonSameInVersions: List[String] = _baboonSameInVersions
-    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.4.0" -> "identical")
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.5.0" -> "identical")
     def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.3.0", "identical" -> "1.3.0")
+    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.5.0", "identical" -> "1.5.0")
     def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
     def codecJson: BaboonJsonCodec[ArchiveRow] = ArchiveRow_JsonCodec.instance
   }
@@ -46,7 +47,8 @@ package chronicle.api {
         "lastTimestamp" -> value.lastTimestamp.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "messageCount" -> Json.fromInt(value.messageCount),
         "tags" -> Json.fromValues(value.tags.map(e => Json.fromString(e))),
-        "headJob" -> value.headJob.map(v => JobInfo_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null)
+        "headJob" -> value.headJob.map(v => JobInfo_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
+        "publishedFormat" -> value.publishedFormat.map(v => PassageFormat_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null)
       )
     }
     
@@ -64,7 +66,8 @@ package chronicle.api {
             messageCount <- getField(jsonObject, "messageCount").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))
             tags <- getField(jsonObject, "tags").flatMap(v => decodeList(decodeString)(v.hcursor))
             headJob <- getField(jsonObject, "headJob").flatMap(v => decodeOption(JobInfo_JsonCodec.circeDecoder)(v.hcursor))
-          } yield ArchiveRow(head,publishedView,matchedView,lastTimestamp,messageCount,tags,headJob)
+            publishedFormat <- getField(jsonObject, "publishedFormat").flatMap(v => decodeOption(PassageFormat_JsonCodec.circeDecoder)(v.hcursor))
+          } yield ArchiveRow(head,publishedView,matchedView,lastTimestamp,messageCount,tags,headJob,publishedFormat)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ArchiveRow: object expected"))
       }
     }

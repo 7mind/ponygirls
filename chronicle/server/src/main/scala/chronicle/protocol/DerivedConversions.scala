@@ -4008,7 +4008,7 @@ package chronicle.api.v1_3_0 {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityCollector__To__1_3_0
     extends AbstractConversion[ActivityCollector, chronicle.api.v1_3_0.ActivityCollector] {
       override def doConvert[C](
@@ -4039,7 +4039,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityCollectorSort__To__1_3_0
     extends AbstractConversion[ActivityCollectorSort, chronicle.api.v1_3_0.ActivityCollectorSort] {
       override def doConvert[C](
@@ -4055,7 +4055,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJob__To__1_3_0
     extends AbstractConversion[ActivityJob, chronicle.api.v1_3_0.ActivityJob] {
       override def doConvert[C](
@@ -4092,7 +4092,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJobClass__To__1_3_0
     extends AbstractConversion[ActivityJobClass, chronicle.api.v1_3_0.ActivityJobClass] {
       override def doConvert[C](
@@ -4108,7 +4108,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJobScope__To__1_3_0
     extends AbstractConversion[ActivityJobScope, chronicle.api.v1_3_0.ActivityJobScope] {
       override def doConvert[C](
@@ -4124,7 +4124,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJobSort__To__1_3_0
     extends AbstractConversion[ActivityJobSort, chronicle.api.v1_3_0.ActivityJobSort] {
       override def doConvert[C](
@@ -4140,7 +4140,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJobsQuery__To__1_3_0
     extends AbstractConversion[ActivityJobsQuery, chronicle.api.v1_3_0.ActivityJobsQuery] {
       override def doConvert[C](
@@ -4173,7 +4173,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJobsResult__To__1_3_0
     extends AbstractConversion[ActivityJobsResult, chronicle.api.v1_3_0.ActivityJobsResult] {
       override def doConvert[C](
@@ -4200,7 +4200,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityQuery__To__1_3_0
     extends AbstractConversion[ActivityQuery, chronicle.api.v1_3_0.ActivityQuery] {
       override def doConvert[C](
@@ -4229,7 +4229,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityResult__To__1_3_0
     extends AbstractConversion[ActivityResult, chronicle.api.v1_3_0.ActivityResult] {
       override def doConvert[C](
@@ -4268,7 +4268,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ArchiveQuery__To__1_3_0
     extends AbstractConversion[ArchiveQuery, chronicle.api.v1_3_0.ArchiveQuery] {
       override def doConvert[C](
@@ -4297,7 +4297,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ArchiveResult__To__1_3_0
     extends AbstractConversion[ArchiveResult, chronicle.api.v1_3_0.ArchiveResult] {
       override def doConvert[C](
@@ -4326,7 +4326,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ArchiveRow__To__1_3_0
     extends AbstractConversion[ArchiveRow, chronicle.api.v1_3_0.ArchiveRow] {
       override def doConvert[C](
@@ -4359,7 +4359,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ArchiveSort__To__1_3_0
     extends AbstractConversion[ArchiveSort, chronicle.api.v1_3_0.ArchiveSort] {
       override def doConvert[C](
@@ -4375,7 +4375,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ArchiveTextScope__To__1_3_0
     extends AbstractConversion[ArchiveTextScope, chronicle.api.v1_3_0.ArchiveTextScope] {
       override def doConvert[C](
@@ -4392,7 +4392,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Chunk__To__1_3_0
     extends AbstractConversion[Chunk, chronicle.api.v1_3_0.Chunk] {
       override def doConvert[C](
@@ -4425,7 +4425,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ChunksResult__To__1_3_0
     extends AbstractConversion[ChunksResult, chronicle.api.v1_3_0.ChunksResult] {
       override def doConvert[C](
@@ -4452,7 +4452,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorCounters__To__1_3_0
     extends AbstractConversion[CollectorCounters, chronicle.api.v1_3_0.CollectorCounters] {
       override def doConvert[C](
@@ -4497,7 +4497,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorPhase__To__1_3_0
     extends AbstractConversion[CollectorPhase, chronicle.api.v1_3_0.CollectorPhase] {
       override def doConvert[C](
@@ -4513,7 +4513,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorProgressAck__To__1_3_0
     extends AbstractConversion[CollectorProgressAck, chronicle.api.v1_3_0.CollectorProgressAck] {
       override def doConvert[C](
@@ -4537,7 +4537,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorProgressUpdate__To__1_3_0
     extends AbstractConversion[CollectorProgressUpdate, chronicle.api.v1_3_0.CollectorProgressUpdate] {
       override def doConvert[C](
@@ -4576,7 +4576,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorStatus__To__1_3_0
     extends AbstractConversion[CollectorStatus, chronicle.api.v1_3_0.CollectorStatus] {
       override def doConvert[C](
@@ -4601,7 +4601,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorStatusResult__To__1_3_0
     extends AbstractConversion[CollectorStatusResult, chronicle.api.v1_3_0.CollectorStatusResult] {
       override def doConvert[C](
@@ -4622,7 +4622,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Completion__To__1_3_0
     extends AbstractConversion[Completion, chronicle.api.v1_3_0.Completion] {
       override def doConvert[C](
@@ -4639,7 +4639,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ContentView__To__1_3_0
     extends AbstractConversion[ContentView, chronicle.api.v1_3_0.ContentView] {
       override def doConvert[C](
@@ -4662,7 +4662,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Facet__To__1_3_0
     extends AbstractConversion[Facet, chronicle.api.v1_3_0.Facet] {
       override def doConvert[C](
@@ -4685,7 +4685,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__FacetsResult__To__1_3_0
     extends AbstractConversion[FacetsResult, chronicle.api.v1_3_0.FacetsResult] {
       override def doConvert[C](
@@ -4710,7 +4710,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Failure__To__1_3_0
     extends AbstractConversion[Failure, chronicle.api.v1_3_0.Failure] {
       override def doConvert[C](
@@ -4734,7 +4734,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__GroupInfo__To__1_3_0
     extends AbstractConversion[GroupInfo, chronicle.api.v1_3_0.GroupInfo] {
       override def doConvert[C](
@@ -4761,7 +4761,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__GroupsResult__To__1_3_0
     extends AbstractConversion[GroupsResult, chronicle.api.v1_3_0.GroupsResult] {
       override def doConvert[C](
@@ -4785,7 +4785,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__InviteInfo__To__1_3_0
     extends AbstractConversion[InviteInfo, chronicle.api.v1_3_0.InviteInfo] {
       override def doConvert[C](
@@ -4812,7 +4812,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__JobCounts__To__1_3_0
     extends AbstractConversion[JobCounts, chronicle.api.v1_3_0.JobCounts] {
       override def doConvert[C](
@@ -4848,7 +4848,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__JobInfo__To__1_3_0
     extends AbstractConversion[JobInfo, chronicle.api.v1_3_0.JobInfo] {
       override def doConvert[C](
@@ -4883,7 +4883,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__JobState__To__1_3_0
     extends AbstractConversion[JobState, chronicle.api.v1_3_0.JobState] {
       override def doConvert[C](
@@ -4899,7 +4899,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ListedToken__To__1_3_0
     extends AbstractConversion[ListedToken, chronicle.api.v1_3_0.ListedToken] {
       override def doConvert[C](
@@ -4922,7 +4922,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Message__To__1_3_0
     extends AbstractConversion[Message, chronicle.api.v1_3_0.Message] {
       override def doConvert[C](
@@ -4953,7 +4953,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__MessageLocation__To__1_3_0
     extends AbstractConversion[MessageLocation, chronicle.api.v1_3_0.MessageLocation] {
       override def doConvert[C](
@@ -4978,7 +4978,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__MessagesResult__To__1_3_0
     extends AbstractConversion[MessagesResult, chronicle.api.v1_3_0.MessagesResult] {
       override def doConvert[C](
@@ -5005,7 +5005,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Metadata__To__1_3_0
     extends AbstractConversion[Metadata, chronicle.api.v1_3_0.Metadata] {
       override def doConvert[C](
@@ -5047,7 +5047,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__MutationReceipt__To__1_3_0
     extends AbstractConversion[MutationReceipt, chronicle.api.v1_3_0.MutationReceipt] {
       override def doConvert[C](
@@ -5072,7 +5072,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__RawFile__To__1_3_0
     extends AbstractConversion[RawFile, chronicle.api.v1_3_0.RawFile] {
       override def doConvert[C](
@@ -5097,7 +5097,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__RawResult__To__1_3_0
     extends AbstractConversion[RawResult, chronicle.api.v1_3_0.RawResult] {
       override def doConvert[C](
@@ -5120,7 +5120,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__RelatedResult__To__1_3_0
     extends AbstractConversion[RelatedResult, chronicle.api.v1_3_0.RelatedResult] {
       override def doConvert[C](
@@ -5141,7 +5141,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Activity__To__1_3_0
     extends AbstractConversion[Result.Activity, chronicle.api.v1_3_0.Result.Activity] {
       override def doConvert[C](
@@ -5162,7 +5162,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__ActivityJobs__To__1_3_0
     extends AbstractConversion[Result.ActivityJobs, chronicle.api.v1_3_0.Result.ActivityJobs] {
       override def doConvert[C](
@@ -5183,7 +5183,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Archive__To__1_3_0
     extends AbstractConversion[Result.Archive, chronicle.api.v1_3_0.Result.Archive] {
       override def doConvert[C](
@@ -5204,7 +5204,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Chunks__To__1_3_0
     extends AbstractConversion[Result.Chunks, chronicle.api.v1_3_0.Result.Chunks] {
       override def doConvert[C](
@@ -5225,7 +5225,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__CollectionStatus__To__1_3_0
     extends AbstractConversion[Result.CollectionStatus, chronicle.api.v1_3_0.Result.CollectionStatus] {
       override def doConvert[C](
@@ -5246,7 +5246,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Error__To__1_3_0
     extends AbstractConversion[Result.Error, chronicle.api.v1_3_0.Result.Error] {
       override def doConvert[C](
@@ -5267,7 +5267,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Facets__To__1_3_0
     extends AbstractConversion[Result.Facets, chronicle.api.v1_3_0.Result.Facets] {
       override def doConvert[C](
@@ -5288,7 +5288,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Groups__To__1_3_0
     extends AbstractConversion[Result.Groups, chronicle.api.v1_3_0.Result.Groups] {
       override def doConvert[C](
@@ -5309,7 +5309,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Hello__To__1_3_0
     extends AbstractConversion[Result.Hello, chronicle.api.v1_3_0.Result.Hello] {
       override def doConvert[C](
@@ -5332,7 +5332,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__LocatedMessage__To__1_3_0
     extends AbstractConversion[Result.LocatedMessage, chronicle.api.v1_3_0.Result.LocatedMessage] {
       override def doConvert[C](
@@ -5353,7 +5353,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Messages__To__1_3_0
     extends AbstractConversion[Result.Messages, chronicle.api.v1_3_0.Result.Messages] {
       override def doConvert[C](
@@ -5374,7 +5374,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Mutation__To__1_3_0
     extends AbstractConversion[Result.Mutation, chronicle.api.v1_3_0.Result.Mutation] {
       override def doConvert[C](
@@ -5395,7 +5395,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Ping__To__1_3_0
     extends AbstractConversion[Result.Ping, chronicle.api.v1_3_0.Result.Ping] {
       override def doConvert[C](
@@ -5416,7 +5416,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Pong__To__1_3_0
     extends AbstractConversion[Result.Pong, chronicle.api.v1_3_0.Result.Pong] {
       override def doConvert[C](
@@ -5437,7 +5437,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Raw__To__1_3_0
     extends AbstractConversion[Result.Raw, chronicle.api.v1_3_0.Result.Raw] {
       override def doConvert[C](
@@ -5458,7 +5458,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Related__To__1_3_0
     extends AbstractConversion[Result.Related, chronicle.api.v1_3_0.Result.Related] {
       override def doConvert[C](
@@ -5479,7 +5479,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__RetryFailed__To__1_3_0
     extends AbstractConversion[Result.RetryFailed, chronicle.api.v1_3_0.Result.RetryFailed] {
       override def doConvert[C](
@@ -5500,7 +5500,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__RetryFailedPreview__To__1_3_0
     extends AbstractConversion[Result.RetryFailedPreview, chronicle.api.v1_3_0.Result.RetryFailedPreview] {
       override def doConvert[C](
@@ -5521,7 +5521,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Search__To__1_3_0
     extends AbstractConversion[Result.Search, chronicle.api.v1_3_0.Result.Search] {
       override def doConvert[C](
@@ -5542,7 +5542,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Session__To__1_3_0
     extends AbstractConversion[Result.Session, chronicle.api.v1_3_0.Result.Session] {
       override def doConvert[C](
@@ -5563,7 +5563,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Status__To__1_3_0
     extends AbstractConversion[Result.Status, chronicle.api.v1_3_0.Result.Status] {
       override def doConvert[C](
@@ -5584,7 +5584,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Token__To__1_3_0
     extends AbstractConversion[Result.Token, chronicle.api.v1_3_0.Result.Token] {
       override def doConvert[C](
@@ -5605,7 +5605,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Tokens__To__1_3_0
     extends AbstractConversion[Result.Tokens, chronicle.api.v1_3_0.Result.Tokens] {
       override def doConvert[C](
@@ -5626,7 +5626,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Whoami__To__1_3_0
     extends AbstractConversion[Result.Whoami, chronicle.api.v1_3_0.Result.Whoami] {
       override def doConvert[C](
@@ -5647,7 +5647,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Result__To__1_3_0
     extends AbstractConversion[Result, chronicle.api.v1_3_0.Result] {
       override def doConvert[C](
@@ -5689,7 +5689,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__RetryFailedCounts__To__1_3_0
     extends AbstractConversion[RetryFailedCounts, chronicle.api.v1_3_0.RetryFailedCounts] {
       override def doConvert[C](
@@ -5722,7 +5722,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__RetryFailedPlan__To__1_3_0
     extends AbstractConversion[RetryFailedPlan, chronicle.api.v1_3_0.RetryFailedPlan] {
       override def doConvert[C](
@@ -5748,7 +5748,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__RetryFailedResult__To__1_3_0
     extends AbstractConversion[RetryFailedResult, chronicle.api.v1_3_0.RetryFailedResult] {
       override def doConvert[C](
@@ -5775,7 +5775,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Scope__To__1_3_0
     extends AbstractConversion[Scope, chronicle.api.v1_3_0.Scope] {
       override def doConvert[C](
@@ -5791,7 +5791,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__SearchCountScope__To__1_3_0
     extends AbstractConversion[SearchCountScope, chronicle.api.v1_3_0.SearchCountScope] {
       override def doConvert[C](
@@ -5807,7 +5807,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__SearchHit__To__1_3_0
     extends AbstractConversion[SearchHit, chronicle.api.v1_3_0.SearchHit] {
       override def doConvert[C](
@@ -5832,7 +5832,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__SearchMode__To__1_3_0
     extends AbstractConversion[SearchMode, chronicle.api.v1_3_0.SearchMode] {
       override def doConvert[C](
@@ -5848,7 +5848,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__SearchResult__To__1_3_0
     extends AbstractConversion[SearchResult, chronicle.api.v1_3_0.SearchResult] {
       override def doConvert[C](
@@ -5876,7 +5876,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__ServerEnvelope__To__1_3_0
     extends AbstractConversion[ServerEnvelope, chronicle.api.v1_3_0.ServerEnvelope] {
       override def doConvert[C](
@@ -5900,7 +5900,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__SessionInfo__To__1_3_0
     extends AbstractConversion[SessionInfo, chronicle.api.v1_3_0.SessionInfo] {
       override def doConvert[C](
@@ -5937,7 +5937,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__SessionResult__To__1_3_0
     extends AbstractConversion[SessionResult, chronicle.api.v1_3_0.SessionResult] {
       override def doConvert[C](
@@ -5960,7 +5960,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__SortDirection__To__1_3_0
     extends AbstractConversion[SortDirection, chronicle.api.v1_3_0.SortDirection] {
       override def doConvert[C](
@@ -5976,7 +5976,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__SourceFormat__To__1_3_0
     extends AbstractConversion[SourceFormat, chronicle.api.v1_3_0.SourceFormat] {
       override def doConvert[C](
@@ -5992,7 +5992,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__SourceIdentity__To__1_3_0
     extends AbstractConversion[SourceIdentity, chronicle.api.v1_3_0.SourceIdentity] {
       override def doConvert[C](
@@ -6021,7 +6021,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__Span__To__1_3_0
     extends AbstractConversion[Span, chronicle.api.v1_3_0.Span] {
       override def doConvert[C](
@@ -6046,7 +6046,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__StatusResult__To__1_3_0
     extends AbstractConversion[StatusResult, chronicle.api.v1_3_0.StatusResult] {
       override def doConvert[C](
@@ -6070,7 +6070,7 @@ package chronicle.api {
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 import java.util.UUID
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__TokenInfo__To__1_3_0
     extends AbstractConversion[TokenInfo, chronicle.api.v1_3_0.TokenInfo] {
       override def doConvert[C](
@@ -6099,7 +6099,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__TokenResult__To__1_3_0
     extends AbstractConversion[TokenResult, chronicle.api.v1_3_0.TokenResult] {
       override def doConvert[C](
@@ -6122,7 +6122,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__TokenSource__To__1_3_0
     extends AbstractConversion[TokenSource, chronicle.api.v1_3_0.TokenSource] {
       override def doConvert[C](
@@ -6138,7 +6138,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__TokensResult__To__1_3_0
     extends AbstractConversion[TokensResult, chronicle.api.v1_3_0.TokensResult] {
       override def doConvert[C](
@@ -6159,7 +6159,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__UserInfo__To__1_3_0
     extends AbstractConversion[UserInfo, chronicle.api.v1_3_0.UserInfo] {
       override def doConvert[C](
@@ -6184,7 +6184,7 @@ package chronicle.api {
 
 import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
 
-package chronicle.api {
+package chronicle.api.v1_4_0 {
   @scala.annotation.nowarn("cat=deprecation") object Convert__VersionInfo__To__1_3_0
     extends AbstractConversion[VersionInfo, chronicle.api.v1_3_0.VersionInfo] {
       override def doConvert[C](
@@ -6203,6 +6203,3202 @@ package chronicle.api {
       }
       override def versionFrom: String = "1.4.0"
       override def versionTo: String = "1.3.0"
+      override def typeId: String = "chronicle.api/:#VersionInfo"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityCollector__To__1_4_0
+    extends AbstractConversion[ActivityCollector, chronicle.api.v1_4_0.ActivityCollector] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ActivityCollector
+      ): chronicle.api.v1_4_0.ActivityCollector = {
+        val collectorid: String = _from.collectorId
+        val status: Option[chronicle.api.v1_4_0.CollectorStatus] = _from.status.map(e1 => conversions.convertWithContext[C, CollectorStatus, chronicle.api.v1_4_0.CollectorStatus](context, e1))
+        val archiveheads: Long = _from.archiveHeads
+        val headswithouttargetjob: Long = _from.headsWithoutTargetJob
+        val current: chronicle.api.v1_4_0.JobCounts = conversions.convertWithContext[C, JobCounts, chronicle.api.v1_4_0.JobCounts](context, _from.current)
+        val historical: chronicle.api.v1_4_0.JobCounts = conversions.convertWithContext[C, JobCounts, chronicle.api.v1_4_0.JobCounts](context, _from.historical)
+        chronicle.api.v1_4_0.ActivityCollector(
+                collectorid,
+                status,
+                archiveheads,
+                headswithouttargetjob,
+                current,
+                historical
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ActivityCollector"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityCollectorSort__To__1_4_0
+    extends AbstractConversion[ActivityCollectorSort, chronicle.api.v1_4_0.ActivityCollectorSort] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: ActivityCollectorSort
+      ): chronicle.api.v1_4_0.ActivityCollectorSort = chronicle.api.v1_4_0.ActivityCollectorSort.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ActivityCollectorSort"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJob__To__1_4_0
+    extends AbstractConversion[ActivityJob, chronicle.api.v1_4_0.ActivityJob] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ActivityJob
+      ): chronicle.api.v1_4_0.ActivityJob = {
+        val job: chronicle.api.v1_4_0.JobInfo = conversions.convertWithContext[C, JobInfo, chronicle.api.v1_4_0.JobInfo](context, _from.job)
+        val profile: String = _from.profile
+        val classification: chronicle.api.v1_4_0.ActivityJobClass = conversions.convertWithContext[C, ActivityJobClass, chronicle.api.v1_4_0.ActivityJobClass](context, _from.classification)
+        val leaseexpiresat: Option[String] = _from.leaseExpiresAt.map(e1 => e1)
+        val leaseactive: Boolean = _from.leaseActive
+        val retryable: Boolean = _from.retryable
+        val collectorid: String = _from.collectorId
+        val session: chronicle.api.v1_4_0.SessionInfo = conversions.convertWithContext[C, SessionInfo, chronicle.api.v1_4_0.SessionInfo](context, _from.session)
+        val lasttimestamp: Option[String] = _from.lastTimestamp.map(e1 => e1)
+        chronicle.api.v1_4_0.ActivityJob(
+                job,
+                profile,
+                classification,
+                leaseexpiresat,
+                leaseactive,
+                retryable,
+                collectorid,
+                session,
+                lasttimestamp
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ActivityJob"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJobClass__To__1_4_0
+    extends AbstractConversion[ActivityJobClass, chronicle.api.v1_4_0.ActivityJobClass] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: ActivityJobClass
+      ): chronicle.api.v1_4_0.ActivityJobClass = chronicle.api.v1_4_0.ActivityJobClass.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ActivityJobClass"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJobScope__To__1_4_0
+    extends AbstractConversion[ActivityJobScope, chronicle.api.v1_4_0.ActivityJobScope] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: ActivityJobScope
+      ): chronicle.api.v1_4_0.ActivityJobScope = chronicle.api.v1_4_0.ActivityJobScope.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ActivityJobScope"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJobSort__To__1_4_0
+    extends AbstractConversion[ActivityJobSort, chronicle.api.v1_4_0.ActivityJobSort] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: ActivityJobSort
+      ): chronicle.api.v1_4_0.ActivityJobSort = chronicle.api.v1_4_0.ActivityJobSort.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ActivityJobSort"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJobsQuery__To__1_4_0
+    extends AbstractConversion[ActivityJobsQuery, chronicle.api.v1_4_0.ActivityJobsQuery] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ActivityJobsQuery
+      ): chronicle.api.v1_4_0.ActivityJobsQuery = {
+        val collectorid: Option[String] = _from.collectorId.map(e1 => e1)
+        val scope: chronicle.api.v1_4_0.ActivityJobScope = conversions.convertWithContext[C, ActivityJobScope, chronicle.api.v1_4_0.ActivityJobScope](context, _from.scope)
+        val expression: String = _from.expression
+        val sort: chronicle.api.v1_4_0.ActivityJobSort = conversions.convertWithContext[C, ActivityJobSort, chronicle.api.v1_4_0.ActivityJobSort](context, _from.sort)
+        val direction: chronicle.api.v1_4_0.SortDirection = conversions.convertWithContext[C, SortDirection, chronicle.api.v1_4_0.SortDirection](context, _from.direction)
+        val cursor: Option[String] = _from.cursor.map(e1 => e1)
+        val limit: Int = _from.limit
+        chronicle.api.v1_4_0.ActivityJobsQuery(
+                collectorid,
+                scope,
+                expression,
+                sort,
+                direction,
+                cursor,
+                limit
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ActivityJobsQuery"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityJobsResult__To__1_4_0
+    extends AbstractConversion[ActivityJobsResult, chronicle.api.v1_4_0.ActivityJobsResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ActivityJobsResult
+      ): chronicle.api.v1_4_0.ActivityJobsResult = {
+        val observedat: String = _from.observedAt
+        val jobs: List[chronicle.api.v1_4_0.ActivityJob] = _from.jobs.map(e1 => conversions.convertWithContext[C, ActivityJob, chronicle.api.v1_4_0.ActivityJob](context, e1)).toList
+        val total: Long = _from.total
+        val nextcursor: Option[String] = _from.nextCursor.map(e1 => e1)
+        chronicle.api.v1_4_0.ActivityJobsResult(
+                observedat,
+                jobs,
+                total,
+                nextcursor
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ActivityJobsResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityQuery__To__1_4_0
+    extends AbstractConversion[ActivityQuery, chronicle.api.v1_4_0.ActivityQuery] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ActivityQuery
+      ): chronicle.api.v1_4_0.ActivityQuery = {
+        val expression: String = _from.expression
+        val sort: chronicle.api.v1_4_0.ActivityCollectorSort = conversions.convertWithContext[C, ActivityCollectorSort, chronicle.api.v1_4_0.ActivityCollectorSort](context, _from.sort)
+        val direction: chronicle.api.v1_4_0.SortDirection = conversions.convertWithContext[C, SortDirection, chronicle.api.v1_4_0.SortDirection](context, _from.direction)
+        val cursor: Option[String] = _from.cursor.map(e1 => e1)
+        val limit: Int = _from.limit
+        chronicle.api.v1_4_0.ActivityQuery(
+                expression,
+                sort,
+                direction,
+                cursor,
+                limit
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ActivityQuery"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ActivityResult__To__1_4_0
+    extends AbstractConversion[ActivityResult, chronicle.api.v1_4_0.ActivityResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ActivityResult
+      ): chronicle.api.v1_4_0.ActivityResult = {
+        val observedat: String = _from.observedAt
+        val user: chronicle.api.v1_4_0.UserInfo = conversions.convertWithContext[C, UserInfo, chronicle.api.v1_4_0.UserInfo](context, _from.user)
+        val archiveheads: Long = _from.archiveHeads
+        val headswithouttargetjob: Long = _from.headsWithoutTargetJob
+        val current: chronicle.api.v1_4_0.JobCounts = conversions.convertWithContext[C, JobCounts, chronicle.api.v1_4_0.JobCounts](context, _from.current)
+        val historical: chronicle.api.v1_4_0.JobCounts = conversions.convertWithContext[C, JobCounts, chronicle.api.v1_4_0.JobCounts](context, _from.historical)
+        val collectors: List[chronicle.api.v1_4_0.ActivityCollector] = _from.collectors.map(e1 => conversions.convertWithContext[C, ActivityCollector, chronicle.api.v1_4_0.ActivityCollector](context, e1)).toList
+        val totalcollectors: Long = _from.totalCollectors
+        val allcollectors: Long = _from.allCollectors
+        val nextcursor: Option[String] = _from.nextCursor.map(e1 => e1)
+        chronicle.api.v1_4_0.ActivityResult(
+                observedat,
+                user,
+                archiveheads,
+                headswithouttargetjob,
+                current,
+                historical,
+                collectors,
+                totalcollectors,
+                allcollectors,
+                nextcursor
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ActivityResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ArchiveQuery__To__1_4_0
+    extends AbstractConversion[ArchiveQuery, chronicle.api.v1_4_0.ArchiveQuery] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ArchiveQuery
+      ): chronicle.api.v1_4_0.ArchiveQuery = {
+        val expression: String = _from.expression
+        val sort: chronicle.api.v1_4_0.ArchiveSort = conversions.convertWithContext[C, ArchiveSort, chronicle.api.v1_4_0.ArchiveSort](context, _from.sort)
+        val direction: chronicle.api.v1_4_0.SortDirection = conversions.convertWithContext[C, SortDirection, chronicle.api.v1_4_0.SortDirection](context, _from.direction)
+        val cursor: Option[String] = _from.cursor.map(e1 => e1)
+        val limit: Int = _from.limit
+        chronicle.api.v1_4_0.ArchiveQuery(
+                expression,
+                sort,
+                direction,
+                cursor,
+                limit
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ArchiveQuery"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ArchiveResult__To__1_4_0
+    extends AbstractConversion[ArchiveResult, chronicle.api.v1_4_0.ArchiveResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ArchiveResult
+      ): chronicle.api.v1_4_0.ArchiveResult = {
+        val rows: List[chronicle.api.v1_4_0.ArchiveRow] = _from.rows.map(e1 => conversions.convertWithContext[C, ArchiveRow, chronicle.api.v1_4_0.ArchiveRow](context, e1)).toList
+        val total: Long = _from.total
+        val nextcursor: Option[String] = _from.nextCursor.map(e1 => e1)
+        val textscope: chronicle.api.v1_4_0.ArchiveTextScope = conversions.convertWithContext[C, ArchiveTextScope, chronicle.api.v1_4_0.ArchiveTextScope](context, _from.textScope)
+        val annchunklimitperoperand: Option[Int] = _from.annChunkLimitPerOperand.map(e1 => e1)
+        chronicle.api.v1_4_0.ArchiveResult(
+                rows,
+                total,
+                nextcursor,
+                textscope,
+                annchunklimitperoperand
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ArchiveResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ArchiveSort__To__1_4_0
+    extends AbstractConversion[ArchiveSort, chronicle.api.v1_4_0.ArchiveSort] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: ArchiveSort
+      ): chronicle.api.v1_4_0.ArchiveSort = chronicle.api.v1_4_0.ArchiveSort.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ArchiveSort"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ArchiveTextScope__To__1_4_0
+    extends AbstractConversion[ArchiveTextScope, chronicle.api.v1_4_0.ArchiveTextScope] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: ArchiveTextScope
+      ): chronicle.api.v1_4_0.ArchiveTextScope = chronicle.api.v1_4_0.ArchiveTextScope.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ArchiveTextScope"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Chunk__To__1_4_0
+    extends AbstractConversion[Chunk, chronicle.api.v1_4_0.Chunk] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Chunk
+      ): chronicle.api.v1_4_0.Chunk = {
+        val id: UUID = _from.id
+        val sessionid: UUID = _from.sessionId
+        val text: String = _from.text
+        val summary: String = _from.summary
+        val tags: List[String] = _from.tags.map(e1 => e1).toList
+        val spans: List[chronicle.api.v1_4_0.Span] = _from.spans.map(e1 => conversions.convertWithContext[C, Span, chronicle.api.v1_4_0.Span](context, e1)).toList
+        val score: Double = _from.score
+        chronicle.api.v1_4_0.Chunk(
+                id,
+                sessionid,
+                text,
+                summary,
+                tags,
+                spans,
+                score
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#Chunk"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ChunksResult__To__1_4_0
+    extends AbstractConversion[ChunksResult, chronicle.api.v1_4_0.ChunksResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ChunksResult
+      ): chronicle.api.v1_4_0.ChunksResult = {
+        val chunks: List[chronicle.api.v1_4_0.Chunk] = _from.chunks.map(e1 => conversions.convertWithContext[C, Chunk, chronicle.api.v1_4_0.Chunk](context, e1)).toList
+        val total: Int = _from.total
+        val offset: Int = _from.offset
+        val view: chronicle.api.v1_4_0.ContentView = conversions.convertWithContext[C, ContentView, chronicle.api.v1_4_0.ContentView](context, _from.view)
+        chronicle.api.v1_4_0.ChunksResult(
+                chunks,
+                total,
+                offset,
+                view
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ChunksResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorCounters__To__1_4_0
+    extends AbstractConversion[CollectorCounters, chronicle.api.v1_4_0.CollectorCounters] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: CollectorCounters
+      ): chronicle.api.v1_4_0.CollectorCounters = {
+        val discovered: Int = _from.discovered
+        val scanned: Int = _from.scanned
+        val waiting: Int = _from.waiting
+        val excluded: Int = _from.excluded
+        val unchanged: Int = _from.unchanged
+        val enqueued: Int = _from.enqueued
+        val uploaded: Int = _from.uploaded
+        val uploadfailures: Int = _from.uploadFailures
+        val quarantined: Int = _from.quarantined
+        val pending: Int = _from.pending
+        val stopped: Int = _from.stopped
+        val conflicts: Int = _from.conflicts
+        val scannedbytes: Long = _from.scannedBytes
+        chronicle.api.v1_4_0.CollectorCounters(
+                discovered,
+                scanned,
+                waiting,
+                excluded,
+                unchanged,
+                enqueued,
+                uploaded,
+                uploadfailures,
+                quarantined,
+                pending,
+                stopped,
+                conflicts,
+                scannedbytes
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#CollectorCounters"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorPhase__To__1_4_0
+    extends AbstractConversion[CollectorPhase, chronicle.api.v1_4_0.CollectorPhase] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: CollectorPhase
+      ): chronicle.api.v1_4_0.CollectorPhase = chronicle.api.v1_4_0.CollectorPhase.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#CollectorPhase"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorProgressAck__To__1_4_0
+    extends AbstractConversion[CollectorProgressAck, chronicle.api.v1_4_0.CollectorProgressAck] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: CollectorProgressAck
+      ): chronicle.api.v1_4_0.CollectorProgressAck = {
+        val sequence: Long = _from.sequence
+        val accepted: Boolean = _from.accepted
+        chronicle.api.v1_4_0.CollectorProgressAck(
+                sequence,
+                accepted
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#CollectorProgressAck"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorProgressUpdate__To__1_4_0
+    extends AbstractConversion[CollectorProgressUpdate, chronicle.api.v1_4_0.CollectorProgressUpdate] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: CollectorProgressUpdate
+      ): chronicle.api.v1_4_0.CollectorProgressUpdate = {
+        val collectorid: String = _from.collectorId
+        val sequence: Long = _from.sequence
+        val runid: UUID = _from.runId
+        val phase: chronicle.api.v1_4_0.CollectorPhase = conversions.convertWithContext[C, CollectorPhase, chronicle.api.v1_4_0.CollectorPhase](context, _from.phase)
+        val startedat: String = _from.startedAt
+        val counters: chronicle.api.v1_4_0.CollectorCounters = conversions.convertWithContext[C, CollectorCounters, chronicle.api.v1_4_0.CollectorCounters](context, _from.counters)
+        val totaluploadbytes: Long = _from.totalUploadBytes
+        val uploadedbytes: Long = _from.uploadedBytes
+        val currentuploadtotalbytes: Option[Long] = _from.currentUploadTotalBytes.map(e1 => e1)
+        val error: Option[String] = _from.error.map(e1 => e1)
+        chronicle.api.v1_4_0.CollectorProgressUpdate(
+                collectorid,
+                sequence,
+                runid,
+                phase,
+                startedat,
+                counters,
+                totaluploadbytes,
+                uploadedbytes,
+                currentuploadtotalbytes,
+                error
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#CollectorProgressUpdate"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorStatus__To__1_4_0
+    extends AbstractConversion[CollectorStatus, chronicle.api.v1_4_0.CollectorStatus] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: CollectorStatus
+      ): chronicle.api.v1_4_0.CollectorStatus = {
+        val report: chronicle.api.v1_4_0.CollectorProgressUpdate = conversions.convertWithContext[C, CollectorProgressUpdate, chronicle.api.v1_4_0.CollectorProgressUpdate](context, _from.report)
+        val receivedat: String = _from.receivedAt
+        val stale: Boolean = _from.stale
+        chronicle.api.v1_4_0.CollectorStatus(
+                report,
+                receivedat,
+                stale
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#CollectorStatus"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__CollectorStatusResult__To__1_4_0
+    extends AbstractConversion[CollectorStatusResult, chronicle.api.v1_4_0.CollectorStatusResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: CollectorStatusResult
+      ): chronicle.api.v1_4_0.CollectorStatusResult = {
+        val collectors: List[chronicle.api.v1_4_0.CollectorStatus] = _from.collectors.map(e1 => conversions.convertWithContext[C, CollectorStatus, chronicle.api.v1_4_0.CollectorStatus](context, e1)).toList
+        chronicle.api.v1_4_0.CollectorStatusResult(
+                collectors
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#CollectorStatusResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Completion__To__1_4_0
+    extends AbstractConversion[Completion, chronicle.api.v1_4_0.Completion] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: Completion
+      ): chronicle.api.v1_4_0.Completion = chronicle.api.v1_4_0.Completion.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#Completion"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ContentView__To__1_4_0
+    extends AbstractConversion[ContentView, chronicle.api.v1_4_0.ContentView] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ContentView
+      ): chronicle.api.v1_4_0.ContentView = {
+        val revision: Int = _from.revision
+        val generationid: Option[UUID] = _from.generationId.map(e1 => e1)
+        chronicle.api.v1_4_0.ContentView(
+                revision,
+                generationid
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ContentView"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ExpressionHint__To__1_4_0
+    extends AbstractConversion[ExpressionHint, chronicle.api.v1_4_0.ExpressionHint] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ExpressionHint
+      ): chronicle.api.v1_4_0.ExpressionHint = {
+        val kind: chronicle.api.v1_4_0.ExpressionHintKind = conversions.convertWithContext[C, ExpressionHintKind, chronicle.api.v1_4_0.ExpressionHintKind](context, _from.kind)
+        val label: String = _from.label
+        val inserttext: String = _from.insertText
+        val caretoffsetutf16: Int = _from.caretOffsetUtf16
+        chronicle.api.v1_4_0.ExpressionHint(
+                kind,
+                label,
+                inserttext,
+                caretoffsetutf16
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ExpressionHint"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ExpressionHintKind__To__1_4_0
+    extends AbstractConversion[ExpressionHintKind, chronicle.api.v1_4_0.ExpressionHintKind] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: ExpressionHintKind
+      ): chronicle.api.v1_4_0.ExpressionHintKind = chronicle.api.v1_4_0.ExpressionHintKind.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ExpressionHintKind"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ExpressionHintQuery__To__1_4_0
+    extends AbstractConversion[ExpressionHintQuery, chronicle.api.v1_4_0.ExpressionHintQuery] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ExpressionHintQuery
+      ): chronicle.api.v1_4_0.ExpressionHintQuery = {
+        val target: chronicle.api.v1_4_0.ExpressionHintTarget = conversions.convertWithContext[C, ExpressionHintTarget, chronicle.api.v1_4_0.ExpressionHintTarget](context, _from.target)
+        val expression: String = _from.expression
+        val caretutf16: Int = _from.caretUtf16
+        val limit: Int = _from.limit
+        chronicle.api.v1_4_0.ExpressionHintQuery(
+                target,
+                expression,
+                caretutf16,
+                limit
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ExpressionHintQuery"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ExpressionHintTarget__ActivityCollectors__To__1_4_0
+    extends AbstractConversion[ExpressionHintTarget.ActivityCollectors, chronicle.api.v1_4_0.ExpressionHintTarget.ActivityCollectors] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ExpressionHintTarget.ActivityCollectors
+      ): chronicle.api.v1_4_0.ExpressionHintTarget.ActivityCollectors = {
+        
+        chronicle.api.v1_4_0.ExpressionHintTarget.ActivityCollectors(
+                
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#ExpressionHintTarget]#ActivityCollectors"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ExpressionHintTarget__ActivityJobs__To__1_4_0
+    extends AbstractConversion[ExpressionHintTarget.ActivityJobs, chronicle.api.v1_4_0.ExpressionHintTarget.ActivityJobs] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ExpressionHintTarget.ActivityJobs
+      ): chronicle.api.v1_4_0.ExpressionHintTarget.ActivityJobs = {
+        val scope: chronicle.api.v1_4_0.ActivityJobScope = conversions.convertWithContext[C, ActivityJobScope, chronicle.api.v1_4_0.ActivityJobScope](context, _from.scope)
+        val collectorid: Option[String] = _from.collectorId.map(e1 => e1)
+        chronicle.api.v1_4_0.ExpressionHintTarget.ActivityJobs(
+                scope,
+                collectorid
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#ExpressionHintTarget]#ActivityJobs"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ExpressionHintTarget__Archive__To__1_4_0
+    extends AbstractConversion[ExpressionHintTarget.Archive, chronicle.api.v1_4_0.ExpressionHintTarget.Archive] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ExpressionHintTarget.Archive
+      ): chronicle.api.v1_4_0.ExpressionHintTarget.Archive = {
+        
+        chronicle.api.v1_4_0.ExpressionHintTarget.Archive(
+                
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#ExpressionHintTarget]#Archive"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ExpressionHintTarget__To__1_4_0
+    extends AbstractConversion[ExpressionHintTarget, chronicle.api.v1_4_0.ExpressionHintTarget] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: ExpressionHintTarget
+      ): chronicle.api.v1_4_0.ExpressionHintTarget = from match {
+        case x: ExpressionHintTarget.Archive => conversions.convertWithContext[C, ExpressionHintTarget.Archive, chronicle.api.v1_4_0.ExpressionHintTarget.Archive](context, x)
+        case x: ExpressionHintTarget.ActivityCollectors => conversions.convertWithContext[C, ExpressionHintTarget.ActivityCollectors, chronicle.api.v1_4_0.ExpressionHintTarget.ActivityCollectors](context, x)
+        case x: ExpressionHintTarget.ActivityJobs => conversions.convertWithContext[C, ExpressionHintTarget.ActivityJobs, chronicle.api.v1_4_0.ExpressionHintTarget.ActivityJobs](context, x)
+        case other => throw new IllegalArgumentException(s"Bad input: $other")
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ExpressionHintTarget"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ExpressionHintsResult__To__1_4_0
+    extends AbstractConversion[ExpressionHintsResult, chronicle.api.v1_4_0.ExpressionHintsResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ExpressionHintsResult
+      ): chronicle.api.v1_4_0.ExpressionHintsResult = {
+        val queryhash: String = _from.queryHash
+        val observedat: String = _from.observedAt
+        val replacestartutf16: Int = _from.replaceStartUtf16
+        val replaceendutf16: Int = _from.replaceEndUtf16
+        val hints: List[chronicle.api.v1_4_0.ExpressionHint] = _from.hints.map(e1 => conversions.convertWithContext[C, ExpressionHint, chronicle.api.v1_4_0.ExpressionHint](context, e1)).toList
+        val truncated: Boolean = _from.truncated
+        chronicle.api.v1_4_0.ExpressionHintsResult(
+                queryhash,
+                observedat,
+                replacestartutf16,
+                replaceendutf16,
+                hints,
+                truncated
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ExpressionHintsResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Facet__To__1_4_0
+    extends AbstractConversion[Facet, chronicle.api.v1_4_0.Facet] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Facet
+      ): chronicle.api.v1_4_0.Facet = {
+        val value: String = _from.value
+        val count: Int = _from.count
+        chronicle.api.v1_4_0.Facet(
+                value,
+                count
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#Facet"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__FacetsResult__To__1_4_0
+    extends AbstractConversion[FacetsResult, chronicle.api.v1_4_0.FacetsResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: FacetsResult
+      ): chronicle.api.v1_4_0.FacetsResult = {
+        val projects: List[chronicle.api.v1_4_0.Facet] = _from.projects.map(e1 => conversions.convertWithContext[C, Facet, chronicle.api.v1_4_0.Facet](context, e1)).toList
+        val branches: List[chronicle.api.v1_4_0.Facet] = _from.branches.map(e1 => conversions.convertWithContext[C, Facet, chronicle.api.v1_4_0.Facet](context, e1)).toList
+        val tags: List[chronicle.api.v1_4_0.Facet] = _from.tags.map(e1 => conversions.convertWithContext[C, Facet, chronicle.api.v1_4_0.Facet](context, e1)).toList
+        chronicle.api.v1_4_0.FacetsResult(
+                projects,
+                branches,
+                tags
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#FacetsResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Failure__To__1_4_0
+    extends AbstractConversion[Failure, chronicle.api.v1_4_0.Failure] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Failure
+      ): chronicle.api.v1_4_0.Failure = {
+        val code: String = _from.code
+        val message: String = _from.message
+        chronicle.api.v1_4_0.Failure(
+                code,
+                message
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#Failure"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__GroupInfo__To__1_4_0
+    extends AbstractConversion[GroupInfo, chronicle.api.v1_4_0.GroupInfo] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: GroupInfo
+      ): chronicle.api.v1_4_0.GroupInfo = {
+        val id: UUID = _from.id
+        val name: String = _from.name
+        val ownerid: String = _from.ownerId
+        val members: List[String] = _from.members.map(e1 => e1).toList
+        chronicle.api.v1_4_0.GroupInfo(
+                id,
+                name,
+                ownerid,
+                members
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#GroupInfo"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__GroupsResult__To__1_4_0
+    extends AbstractConversion[GroupsResult, chronicle.api.v1_4_0.GroupsResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: GroupsResult
+      ): chronicle.api.v1_4_0.GroupsResult = {
+        val groups: List[chronicle.api.v1_4_0.GroupInfo] = _from.groups.map(e1 => conversions.convertWithContext[C, GroupInfo, chronicle.api.v1_4_0.GroupInfo](context, e1)).toList
+        val invitations: List[chronicle.api.v1_4_0.InviteInfo] = _from.invitations.map(e1 => conversions.convertWithContext[C, InviteInfo, chronicle.api.v1_4_0.InviteInfo](context, e1)).toList
+        chronicle.api.v1_4_0.GroupsResult(
+                groups,
+                invitations
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#GroupsResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__IndexingSettings__To__1_4_0
+    extends AbstractConversion[IndexingSettings, chronicle.api.v1_4_0.IndexingSettings] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: IndexingSettings
+      ): chronicle.api.v1_4_0.IndexingSettings = {
+        val annotationsessions: Int = _from.annotationSessions
+        val embeddingrequests: Int = _from.embeddingRequests
+        val embeddingbatchsize: Int = _from.embeddingBatchSize
+        chronicle.api.v1_4_0.IndexingSettings(
+                annotationsessions,
+                embeddingrequests,
+                embeddingbatchsize
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#IndexingSettings"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__InviteInfo__To__1_4_0
+    extends AbstractConversion[InviteInfo, chronicle.api.v1_4_0.InviteInfo] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: InviteInfo
+      ): chronicle.api.v1_4_0.InviteInfo = {
+        val id: UUID = _from.id
+        val groupid: UUID = _from.groupId
+        val targetid: String = _from.targetId
+        val expiresat: String = _from.expiresAt
+        chronicle.api.v1_4_0.InviteInfo(
+                id,
+                groupid,
+                targetid,
+                expiresat
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#InviteInfo"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__JobCounts__To__1_4_0
+    extends AbstractConversion[JobCounts, chronicle.api.v1_4_0.JobCounts] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: JobCounts
+      ): chronicle.api.v1_4_0.JobCounts = {
+        val total: Long = _from.total
+        val queued: Long = _from.queued
+        val running: Long = _from.running
+        val failed: Long = _from.failed
+        val complete: Long = _from.complete
+        val activerunning: Long = _from.activeRunning
+        val expiredrunning: Long = _from.expiredRunning
+        val unleasedrunning: Long = _from.unleasedRunning
+        chronicle.api.v1_4_0.JobCounts(
+                total,
+                queued,
+                running,
+                failed,
+                complete,
+                activerunning,
+                expiredrunning,
+                unleasedrunning
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#JobCounts"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__JobInfo__To__1_4_0
+    extends AbstractConversion[JobInfo, chronicle.api.v1_4_0.JobInfo] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: JobInfo
+      ): chronicle.api.v1_4_0.JobInfo = {
+        val id: UUID = _from.id
+        val sessionid: UUID = _from.sessionId
+        val revision: Int = _from.revision
+        val state: chronicle.api.v1_4_0.JobState = conversions.convertWithContext[C, JobState, chronicle.api.v1_4_0.JobState](context, _from.state)
+        val attempts: Int = _from.attempts
+        val error: Option[String] = _from.error.map(e1 => e1)
+        val completedwindows: Int = _from.completedWindows
+        val totalwindows: Option[Int] = _from.totalWindows.map(e1 => e1)
+        chronicle.api.v1_4_0.JobInfo(
+                id,
+                sessionid,
+                revision,
+                state,
+                attempts,
+                error,
+                completedwindows,
+                totalwindows
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#JobInfo"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__JobState__To__1_4_0
+    extends AbstractConversion[JobState, chronicle.api.v1_4_0.JobState] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: JobState
+      ): chronicle.api.v1_4_0.JobState = chronicle.api.v1_4_0.JobState.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#JobState"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ListedToken__To__1_4_0
+    extends AbstractConversion[ListedToken, chronicle.api.v1_4_0.ListedToken] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ListedToken
+      ): chronicle.api.v1_4_0.ListedToken = {
+        val info: chronicle.api.v1_4_0.TokenInfo = conversions.convertWithContext[C, TokenInfo, chronicle.api.v1_4_0.TokenInfo](context, _from.info)
+        val source: chronicle.api.v1_4_0.TokenSource = conversions.convertWithContext[C, TokenSource, chronicle.api.v1_4_0.TokenSource](context, _from.source)
+        chronicle.api.v1_4_0.ListedToken(
+                info,
+                source
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ListedToken"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__McpTestCatalog__To__1_4_0
+    extends AbstractConversion[McpTestCatalog, chronicle.api.v1_4_0.McpTestCatalog] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: McpTestCatalog
+      ): chronicle.api.v1_4_0.McpTestCatalog = {
+        val instanceid: UUID = _from.instanceId
+        val model: String = _from.model
+        val modelrevision: String = _from.modelRevision
+        val maximumoutputtokens: Int = _from.maximumOutputTokens
+        val reasoningpolicy: String = _from.reasoningPolicy
+        val limits: chronicle.api.v1_4_0.McpTestLimits = conversions.convertWithContext[C, McpTestLimits, chronicle.api.v1_4_0.McpTestLimits](context, _from.limits)
+        val tools: List[chronicle.api.v1_4_0.McpToolDefinition] = _from.tools.map(e1 => conversions.convertWithContext[C, McpToolDefinition, chronicle.api.v1_4_0.McpToolDefinition](context, e1)).toList
+        chronicle.api.v1_4_0.McpTestCatalog(
+                instanceid,
+                model,
+                modelrevision,
+                maximumoutputtokens,
+                reasoningpolicy,
+                limits,
+                tools
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#McpTestCatalog"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__McpTestEvent__To__1_4_0
+    extends AbstractConversion[McpTestEvent, chronicle.api.v1_4_0.McpTestEvent] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: McpTestEvent
+      ): chronicle.api.v1_4_0.McpTestEvent = {
+        val sequence: Long = _from.sequence
+        val observedat: String = _from.observedAt
+        val item: chronicle.api.v1_4_0.McpTestItem = conversions.convertWithContext[C, McpTestItem, chronicle.api.v1_4_0.McpTestItem](context, _from.item)
+        chronicle.api.v1_4_0.McpTestEvent(
+                sequence,
+                observedat,
+                item
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#McpTestEvent"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__McpTestItem__Response__To__1_4_0
+    extends AbstractConversion[McpTestItem.Response, chronicle.api.v1_4_0.McpTestItem.Response] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: McpTestItem.Response
+      ): chronicle.api.v1_4_0.McpTestItem.Response = {
+        val partindex: Int = _from.partIndex
+        val partcount: Int = _from.partCount
+        val textpart: String = _from.textPart
+        chronicle.api.v1_4_0.McpTestItem.Response(
+                partindex,
+                partcount,
+                textpart
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#McpTestItem]#Response"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__McpTestItem__ToolCall__To__1_4_0
+    extends AbstractConversion[McpTestItem.ToolCall, chronicle.api.v1_4_0.McpTestItem.ToolCall] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: McpTestItem.ToolCall
+      ): chronicle.api.v1_4_0.McpTestItem.ToolCall = {
+        val callid: String = _from.callId
+        val tool: String = _from.tool
+        val partindex: Int = _from.partIndex
+        val partcount: Int = _from.partCount
+        val argumentsjsonpart: String = _from.argumentsJsonPart
+        chronicle.api.v1_4_0.McpTestItem.ToolCall(
+                callid,
+                tool,
+                partindex,
+                partcount,
+                argumentsjsonpart
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#McpTestItem]#ToolCall"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__McpTestItem__ToolResult__To__1_4_0
+    extends AbstractConversion[McpTestItem.ToolResult, chronicle.api.v1_4_0.McpTestItem.ToolResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: McpTestItem.ToolResult
+      ): chronicle.api.v1_4_0.McpTestItem.ToolResult = {
+        val callid: String = _from.callId
+        val partindex: Int = _from.partIndex
+        val partcount: Int = _from.partCount
+        val resultjsonpart: String = _from.resultJsonPart
+        chronicle.api.v1_4_0.McpTestItem.ToolResult(
+                callid,
+                partindex,
+                partcount,
+                resultjsonpart
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#McpTestItem]#ToolResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__McpTestItem__To__1_4_0
+    extends AbstractConversion[McpTestItem, chronicle.api.v1_4_0.McpTestItem] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: McpTestItem
+      ): chronicle.api.v1_4_0.McpTestItem = from match {
+        case x: McpTestItem.ToolCall => conversions.convertWithContext[C, McpTestItem.ToolCall, chronicle.api.v1_4_0.McpTestItem.ToolCall](context, x)
+        case x: McpTestItem.ToolResult => conversions.convertWithContext[C, McpTestItem.ToolResult, chronicle.api.v1_4_0.McpTestItem.ToolResult](context, x)
+        case x: McpTestItem.Response => conversions.convertWithContext[C, McpTestItem.Response, chronicle.api.v1_4_0.McpTestItem.Response](context, x)
+        case other => throw new IllegalArgumentException(s"Bad input: $other")
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#McpTestItem"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__McpTestLimits__To__1_4_0
+    extends AbstractConversion[McpTestLimits, chronicle.api.v1_4_0.McpTestLimits] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: McpTestLimits
+      ): chronicle.api.v1_4_0.McpTestLimits = {
+        val maximumrounds: Int = _from.maximumRounds
+        val maximumtoolcalls: Int = _from.maximumToolCalls
+        val maximumpromptbytes: Int = _from.maximumPromptBytes
+        val maximumsourcebytes: Int = _from.maximumSourceBytes
+        val maximumresultbytes: Int = _from.maximumResultBytes
+        val maximumrequestbytes: Int = _from.maximumRequestBytes
+        val maximumtracebytes: Int = _from.maximumTraceBytes
+        val maximumevents: Int = _from.maximumEvents
+        val pagebytes: Int = _from.pageBytes
+        val deadlineseconds: Int = _from.deadlineSeconds
+        val retentionseconds: Int = _from.retentionSeconds
+        chronicle.api.v1_4_0.McpTestLimits(
+                maximumrounds,
+                maximumtoolcalls,
+                maximumpromptbytes,
+                maximumsourcebytes,
+                maximumresultbytes,
+                maximumrequestbytes,
+                maximumtracebytes,
+                maximumevents,
+                pagebytes,
+                deadlineseconds,
+                retentionseconds
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#McpTestLimits"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__McpTestSnapshot__To__1_4_0
+    extends AbstractConversion[McpTestSnapshot, chronicle.api.v1_4_0.McpTestSnapshot] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: McpTestSnapshot
+      ): chronicle.api.v1_4_0.McpTestSnapshot = {
+        val instanceid: UUID = _from.instanceId
+        val runid: UUID = _from.runId
+        val state: chronicle.api.v1_4_0.McpTestState = conversions.convertWithContext[C, McpTestState, chronicle.api.v1_4_0.McpTestState](context, _from.state)
+        val observedat: String = _from.observedAt
+        val events: List[chronicle.api.v1_4_0.McpTestEvent] = _from.events.map(e1 => conversions.convertWithContext[C, McpTestEvent, chronicle.api.v1_4_0.McpTestEvent](context, e1)).toList
+        val lastsequence: Long = _from.lastSequence
+        val hasmore: Boolean = _from.hasMore
+        val failure: Option[chronicle.api.v1_4_0.Failure] = _from.failure.map(e1 => conversions.convertWithContext[C, Failure, chronicle.api.v1_4_0.Failure](context, e1))
+        chronicle.api.v1_4_0.McpTestSnapshot(
+                instanceid,
+                runid,
+                state,
+                observedat,
+                events,
+                lastsequence,
+                hasmore,
+                failure
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#McpTestSnapshot"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__McpTestState__To__1_4_0
+    extends AbstractConversion[McpTestState, chronicle.api.v1_4_0.McpTestState] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: McpTestState
+      ): chronicle.api.v1_4_0.McpTestState = chronicle.api.v1_4_0.McpTestState.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#McpTestState"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__McpToolDefinition__To__1_4_0
+    extends AbstractConversion[McpToolDefinition, chronicle.api.v1_4_0.McpToolDefinition] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: McpToolDefinition
+      ): chronicle.api.v1_4_0.McpToolDefinition = {
+        val name: String = _from.name
+        val description: String = _from.description
+        val inputschemajson: String = _from.inputSchemaJson
+        chronicle.api.v1_4_0.McpToolDefinition(
+                name,
+                description,
+                inputschemajson
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#McpToolDefinition"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Message__To__1_4_0
+    extends AbstractConversion[Message, chronicle.api.v1_4_0.Message] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Message
+      ): chronicle.api.v1_4_0.Message = {
+        val id: String = _from.id
+        val parentid: Option[String] = _from.parentId.map(e1 => e1)
+        val role: String = _from.role
+        val text: String = _from.text
+        val timestamp: Option[String] = _from.timestamp.map(e1 => e1)
+        val recordindex: Int = _from.recordIndex
+        chronicle.api.v1_4_0.Message(
+                id,
+                parentid,
+                role,
+                text,
+                timestamp,
+                recordindex
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#Message"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__MessageLocation__To__1_4_0
+    extends AbstractConversion[MessageLocation, chronicle.api.v1_4_0.MessageLocation] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: MessageLocation
+      ): chronicle.api.v1_4_0.MessageLocation = {
+        val view: chronicle.api.v1_4_0.ContentView = conversions.convertWithContext[C, ContentView, chronicle.api.v1_4_0.ContentView](context, _from.view)
+        val position: Int = _from.position
+        val total: Int = _from.total
+        chronicle.api.v1_4_0.MessageLocation(
+                view,
+                position,
+                total
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#MessageLocation"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__MessagesResult__To__1_4_0
+    extends AbstractConversion[MessagesResult, chronicle.api.v1_4_0.MessagesResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: MessagesResult
+      ): chronicle.api.v1_4_0.MessagesResult = {
+        val messages: List[chronicle.api.v1_4_0.Message] = _from.messages.map(e1 => conversions.convertWithContext[C, Message, chronicle.api.v1_4_0.Message](context, e1)).toList
+        val total: Int = _from.total
+        val offset: Int = _from.offset
+        val view: chronicle.api.v1_4_0.ContentView = conversions.convertWithContext[C, ContentView, chronicle.api.v1_4_0.ContentView](context, _from.view)
+        chronicle.api.v1_4_0.MessagesResult(
+                messages,
+                total,
+                offset,
+                view
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#MessagesResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Metadata__To__1_4_0
+    extends AbstractConversion[Metadata, chronicle.api.v1_4_0.Metadata] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Metadata
+      ): chronicle.api.v1_4_0.Metadata = {
+        val title: String = _from.title
+        val project: Option[String] = _from.project.map(e1 => e1)
+        val workdir: Option[String] = _from.workdir.map(e1 => e1)
+        val gitremote: Option[String] = _from.gitRemote.map(e1 => e1)
+        val gitbranch: Option[String] = _from.gitBranch.map(e1 => e1)
+        val gitcommit: Option[String] = _from.gitCommit.map(e1 => e1)
+        val producer: String = _from.producer
+        val model: Option[String] = _from.model.map(e1 => e1)
+        val startedat: Option[String] = _from.startedAt.map(e1 => e1)
+        val endedat: Option[String] = _from.endedAt.map(e1 => e1)
+        val tags: List[String] = _from.tags.map(e1 => e1).toList
+        chronicle.api.v1_4_0.Metadata(
+                title,
+                project,
+                workdir,
+                gitremote,
+                gitbranch,
+                gitcommit,
+                producer,
+                model,
+                startedat,
+                endedat,
+                tags
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#Metadata"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ModelPurpose__To__1_4_0
+    extends AbstractConversion[ModelPurpose, chronicle.api.v1_4_0.ModelPurpose] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: ModelPurpose
+      ): chronicle.api.v1_4_0.ModelPurpose = chronicle.api.v1_4_0.ModelPurpose.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ModelPurpose"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ModelRateBasis__To__1_4_0
+    extends AbstractConversion[ModelRateBasis, chronicle.api.v1_4_0.ModelRateBasis] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: ModelRateBasis
+      ): chronicle.api.v1_4_0.ModelRateBasis = chronicle.api.v1_4_0.ModelRateBasis.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ModelRateBasis"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ModelUsageResult__To__1_4_0
+    extends AbstractConversion[ModelUsageResult, chronicle.api.v1_4_0.ModelUsageResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ModelUsageResult
+      ): chronicle.api.v1_4_0.ModelUsageResult = {
+        val observedat: String = _from.observedAt
+        val processstartedat: String = _from.processStartedAt
+        val windowstartat: String = _from.windowStartAt
+        val windowendat: String = _from.windowEndAt
+        val coveredmillis: Int = _from.coveredMillis
+        val basis: chronicle.api.v1_4_0.ModelRateBasis = conversions.convertWithContext[C, ModelRateBasis, chronicle.api.v1_4_0.ModelRateBasis](context, _from.basis)
+        val settings: chronicle.api.v1_4_0.IndexingSettings = conversions.convertWithContext[C, IndexingSettings, chronicle.api.v1_4_0.IndexingSettings](context, _from.settings)
+        val samples: List[chronicle.api.v1_4_0.ModelUsageSlice] = _from.samples.map(e1 => conversions.convertWithContext[C, ModelUsageSlice, chronicle.api.v1_4_0.ModelUsageSlice](context, e1)).toList
+        chronicle.api.v1_4_0.ModelUsageResult(
+                observedat,
+                processstartedat,
+                windowstartat,
+                windowendat,
+                coveredmillis,
+                basis,
+                settings,
+                samples
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ModelUsageResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ModelUsageSlice__To__1_4_0
+    extends AbstractConversion[ModelUsageSlice, chronicle.api.v1_4_0.ModelUsageSlice] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ModelUsageSlice
+      ): chronicle.api.v1_4_0.ModelUsageSlice = {
+        val purpose: chronicle.api.v1_4_0.ModelPurpose = conversions.convertWithContext[C, ModelPurpose, chronicle.api.v1_4_0.ModelPurpose](context, _from.purpose)
+        val inflight: Int = _from.inFlight
+        val finishedcalls: Long = _from.finishedCalls
+        val failedcalls: Long = _from.failedCalls
+        val cancelledcalls: Long = _from.cancelledCalls
+        val invalidusagecalls: Long = _from.invalidUsageCalls
+        val input: chronicle.api.v1_4_0.TokenRateWindow = conversions.convertWithContext[C, TokenRateWindow, chronicle.api.v1_4_0.TokenRateWindow](context, _from.input)
+        val output: Option[chronicle.api.v1_4_0.TokenRateWindow] = _from.output.map(e1 => conversions.convertWithContext[C, TokenRateWindow, chronicle.api.v1_4_0.TokenRateWindow](context, e1))
+        val reasoningsubset: Option[chronicle.api.v1_4_0.TokenRateWindow] = _from.reasoningSubset.map(e1 => conversions.convertWithContext[C, TokenRateWindow, chronicle.api.v1_4_0.TokenRateWindow](context, e1))
+        chronicle.api.v1_4_0.ModelUsageSlice(
+                purpose,
+                inflight,
+                finishedcalls,
+                failedcalls,
+                cancelledcalls,
+                invalidusagecalls,
+                input,
+                output,
+                reasoningsubset
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ModelUsageSlice"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__MutationReceipt__To__1_4_0
+    extends AbstractConversion[MutationReceipt, chronicle.api.v1_4_0.MutationReceipt] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: MutationReceipt
+      ): chronicle.api.v1_4_0.MutationReceipt = {
+        val requestid: UUID = _from.requestId
+        val operation: String = _from.operation
+        val entityid: Option[UUID] = _from.entityId.map(e1 => e1)
+        chronicle.api.v1_4_0.MutationReceipt(
+                requestid,
+                operation,
+                entityid
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#MutationReceipt"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__OwnerReindexPlan__To__1_4_0
+    extends AbstractConversion[OwnerReindexPlan, chronicle.api.v1_4_0.OwnerReindexPlan] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: OwnerReindexPlan
+      ): chronicle.api.v1_4_0.OwnerReindexPlan = {
+        val currenttargetprofile: String = _from.currentTargetProfile
+        val targetprofile: String = _from.targetProfile
+        val selectionhash: String = _from.selectionHash
+        val heads: Long = _from.heads
+        val alreadycurrent: Long = _from.alreadyCurrent
+        val replacements: Long = _from.replacements
+        chronicle.api.v1_4_0.OwnerReindexPlan(
+                currenttargetprofile,
+                targetprofile,
+                selectionhash,
+                heads,
+                alreadycurrent,
+                replacements
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#OwnerReindexPlan"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__OwnerReindexResult__To__1_4_0
+    extends AbstractConversion[OwnerReindexResult, chronicle.api.v1_4_0.OwnerReindexResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: OwnerReindexResult
+      ): chronicle.api.v1_4_0.OwnerReindexResult = {
+        val requestid: UUID = _from.requestId
+        val targetprofile: String = _from.targetProfile
+        val heads: Long = _from.heads
+        val queued: Long = _from.queued
+        val alreadycurrent: Long = _from.alreadyCurrent
+        val invalidatedclaims: Long = _from.invalidatedClaims
+        chronicle.api.v1_4_0.OwnerReindexResult(
+                requestid,
+                targetprofile,
+                heads,
+                queued,
+                alreadycurrent,
+                invalidatedclaims
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#OwnerReindexResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__PassageFormat__To__1_4_0
+    extends AbstractConversion[PassageFormat, chronicle.api.v1_4_0.PassageFormat] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: PassageFormat
+      ): chronicle.api.v1_4_0.PassageFormat = chronicle.api.v1_4_0.PassageFormat.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#PassageFormat"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__PassageInfo__To__1_4_0
+    extends AbstractConversion[PassageInfo, chronicle.api.v1_4_0.PassageInfo] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: PassageInfo
+      ): chronicle.api.v1_4_0.PassageInfo = {
+        val id: UUID = _from.id
+        val ordinal: Int = _from.ordinal
+        val summary: String = _from.summary
+        val tags: List[String] = _from.tags.map(e1 => e1).toList
+        val start: chronicle.api.v1_4_0.PassagePoint = conversions.convertWithContext[C, PassagePoint, chronicle.api.v1_4_0.PassagePoint](context, _from.start)
+        val `end`: chronicle.api.v1_4_0.PassagePoint = conversions.convertWithContext[C, PassagePoint, chronicle.api.v1_4_0.PassagePoint](context, _from.`end`)
+        val sourcebytes: Long = _from.sourceBytes
+        val spancount: Long = _from.spanCount
+        val piececount: Long = _from.pieceCount
+        chronicle.api.v1_4_0.PassageInfo(
+                id,
+                ordinal,
+                summary,
+                tags,
+                start,
+                `end`,
+                sourcebytes,
+                spancount,
+                piececount
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#PassageInfo"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__PassagePoint__To__1_4_0
+    extends AbstractConversion[PassagePoint, chronicle.api.v1_4_0.PassagePoint] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: PassagePoint
+      ): chronicle.api.v1_4_0.PassagePoint = {
+        val messageid: String = _from.messageId
+        val messageposition: Int = _from.messagePosition
+        val byteoffset: Int = _from.byteOffset
+        chronicle.api.v1_4_0.PassagePoint(
+                messageid,
+                messageposition,
+                byteoffset
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#PassagePoint"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__PassageSourceSpan__To__1_4_0
+    extends AbstractConversion[PassageSourceSpan, chronicle.api.v1_4_0.PassageSourceSpan] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: PassageSourceSpan
+      ): chronicle.api.v1_4_0.PassageSourceSpan = {
+        val messageid: String = _from.messageId
+        val messageposition: Int = _from.messagePosition
+        val start: Int = _from.start
+        val `end`: Int = _from.`end`
+        chronicle.api.v1_4_0.PassageSourceSpan(
+                messageid,
+                messageposition,
+                start,
+                `end`
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#PassageSourceSpan"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__PassageSpansResult__To__1_4_0
+    extends AbstractConversion[PassageSpansResult, chronicle.api.v1_4_0.PassageSpansResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: PassageSpansResult
+      ): chronicle.api.v1_4_0.PassageSpansResult = {
+        val view: chronicle.api.v1_4_0.ContentView = conversions.convertWithContext[C, ContentView, chronicle.api.v1_4_0.ContentView](context, _from.view)
+        val passageid: UUID = _from.passageId
+        val spans: List[chronicle.api.v1_4_0.PassageSourceSpan] = _from.spans.map(e1 => conversions.convertWithContext[C, PassageSourceSpan, chronicle.api.v1_4_0.PassageSourceSpan](context, e1)).toList
+        val total: Long = _from.total
+        val offset: Int = _from.offset
+        chronicle.api.v1_4_0.PassageSpansResult(
+                view,
+                passageid,
+                spans,
+                total,
+                offset
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#PassageSpansResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__PassagesResult__To__1_4_0
+    extends AbstractConversion[PassagesResult, chronicle.api.v1_4_0.PassagesResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: PassagesResult
+      ): chronicle.api.v1_4_0.PassagesResult = {
+        val view: chronicle.api.v1_4_0.ContentView = conversions.convertWithContext[C, ContentView, chronicle.api.v1_4_0.ContentView](context, _from.view)
+        val format: chronicle.api.v1_4_0.PassageFormat = conversions.convertWithContext[C, PassageFormat, chronicle.api.v1_4_0.PassageFormat](context, _from.format)
+        val passages: List[chronicle.api.v1_4_0.PassageInfo] = _from.passages.map(e1 => conversions.convertWithContext[C, PassageInfo, chronicle.api.v1_4_0.PassageInfo](context, e1)).toList
+        val total: Long = _from.total
+        val offset: Int = _from.offset
+        chronicle.api.v1_4_0.PassagesResult(
+                view,
+                format,
+                passages,
+                total,
+                offset
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#PassagesResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__RawFile__To__1_4_0
+    extends AbstractConversion[RawFile, chronicle.api.v1_4_0.RawFile] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: RawFile
+      ): chronicle.api.v1_4_0.RawFile = {
+        val path: String = _from.path
+        val sha256: String = _from.sha256
+        val content: String = _from.content
+        chronicle.api.v1_4_0.RawFile(
+                path,
+                sha256,
+                content
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#RawFile"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__RawResult__To__1_4_0
+    extends AbstractConversion[RawResult, chronicle.api.v1_4_0.RawResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: RawResult
+      ): chronicle.api.v1_4_0.RawResult = {
+        val files: List[chronicle.api.v1_4_0.RawFile] = _from.files.map(e1 => conversions.convertWithContext[C, RawFile, chronicle.api.v1_4_0.RawFile](context, e1)).toList
+        val revision: Int = _from.revision
+        chronicle.api.v1_4_0.RawResult(
+                files,
+                revision
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#RawResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__RelatedResult__To__1_4_0
+    extends AbstractConversion[RelatedResult, chronicle.api.v1_4_0.RelatedResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: RelatedResult
+      ): chronicle.api.v1_4_0.RelatedResult = {
+        val sessions: List[chronicle.api.v1_4_0.SearchHit] = _from.sessions.map(e1 => conversions.convertWithContext[C, SearchHit, chronicle.api.v1_4_0.SearchHit](context, e1)).toList
+        chronicle.api.v1_4_0.RelatedResult(
+                sessions
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#RelatedResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Activity__To__1_4_0
+    extends AbstractConversion[Result.Activity, chronicle.api.v1_4_0.Result.Activity] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Activity
+      ): chronicle.api.v1_4_0.Result.Activity = {
+        val result: chronicle.api.v1_4_0.ActivityResult = conversions.convertWithContext[C, ActivityResult, chronicle.api.v1_4_0.ActivityResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Activity(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Activity"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__ActivityJobs__To__1_4_0
+    extends AbstractConversion[Result.ActivityJobs, chronicle.api.v1_4_0.Result.ActivityJobs] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.ActivityJobs
+      ): chronicle.api.v1_4_0.Result.ActivityJobs = {
+        val result: chronicle.api.v1_4_0.ActivityJobsResult = conversions.convertWithContext[C, ActivityJobsResult, chronicle.api.v1_4_0.ActivityJobsResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.ActivityJobs(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#ActivityJobs"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Archive__To__1_4_0
+    extends AbstractConversion[Result.Archive, chronicle.api.v1_4_0.Result.Archive] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Archive
+      ): chronicle.api.v1_4_0.Result.Archive = {
+        val result: chronicle.api.v1_4_0.ArchiveResult = conversions.convertWithContext[C, ArchiveResult, chronicle.api.v1_4_0.ArchiveResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Archive(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Archive"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Chunks__To__1_4_0
+    extends AbstractConversion[Result.Chunks, chronicle.api.v1_4_0.Result.Chunks] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Chunks
+      ): chronicle.api.v1_4_0.Result.Chunks = {
+        val result: chronicle.api.v1_4_0.ChunksResult = conversions.convertWithContext[C, ChunksResult, chronicle.api.v1_4_0.ChunksResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Chunks(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Chunks"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__CollectionStatus__To__1_4_0
+    extends AbstractConversion[Result.CollectionStatus, chronicle.api.v1_4_0.Result.CollectionStatus] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.CollectionStatus
+      ): chronicle.api.v1_4_0.Result.CollectionStatus = {
+        val result: chronicle.api.v1_4_0.CollectorStatusResult = conversions.convertWithContext[C, CollectorStatusResult, chronicle.api.v1_4_0.CollectorStatusResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.CollectionStatus(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#CollectionStatus"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Error__To__1_4_0
+    extends AbstractConversion[Result.Error, chronicle.api.v1_4_0.Result.Error] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Error
+      ): chronicle.api.v1_4_0.Result.Error = {
+        val failure: chronicle.api.v1_4_0.Failure = conversions.convertWithContext[C, Failure, chronicle.api.v1_4_0.Failure](context, _from.failure)
+        chronicle.api.v1_4_0.Result.Error(
+                failure
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Error"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__ExpressionHints__To__1_4_0
+    extends AbstractConversion[Result.ExpressionHints, chronicle.api.v1_4_0.Result.ExpressionHints] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.ExpressionHints
+      ): chronicle.api.v1_4_0.Result.ExpressionHints = {
+        val result: chronicle.api.v1_4_0.ExpressionHintsResult = conversions.convertWithContext[C, ExpressionHintsResult, chronicle.api.v1_4_0.ExpressionHintsResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.ExpressionHints(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#ExpressionHints"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Facets__To__1_4_0
+    extends AbstractConversion[Result.Facets, chronicle.api.v1_4_0.Result.Facets] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Facets
+      ): chronicle.api.v1_4_0.Result.Facets = {
+        val result: chronicle.api.v1_4_0.FacetsResult = conversions.convertWithContext[C, FacetsResult, chronicle.api.v1_4_0.FacetsResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Facets(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Facets"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Groups__To__1_4_0
+    extends AbstractConversion[Result.Groups, chronicle.api.v1_4_0.Result.Groups] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Groups
+      ): chronicle.api.v1_4_0.Result.Groups = {
+        val result: chronicle.api.v1_4_0.GroupsResult = conversions.convertWithContext[C, GroupsResult, chronicle.api.v1_4_0.GroupsResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Groups(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Groups"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Hello__To__1_4_0
+    extends AbstractConversion[Result.Hello, chronicle.api.v1_4_0.Result.Hello] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Hello
+      ): chronicle.api.v1_4_0.Result.Hello = {
+        val versions: chronicle.api.v1_4_0.VersionInfo = conversions.convertWithContext[C, VersionInfo, chronicle.api.v1_4_0.VersionInfo](context, _from.versions)
+        val user: chronicle.api.v1_4_0.UserInfo = conversions.convertWithContext[C, UserInfo, chronicle.api.v1_4_0.UserInfo](context, _from.user)
+        chronicle.api.v1_4_0.Result.Hello(
+                versions,
+                user
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Hello"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__LocatedMessage__To__1_4_0
+    extends AbstractConversion[Result.LocatedMessage, chronicle.api.v1_4_0.Result.LocatedMessage] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.LocatedMessage
+      ): chronicle.api.v1_4_0.Result.LocatedMessage = {
+        val result: chronicle.api.v1_4_0.MessageLocation = conversions.convertWithContext[C, MessageLocation, chronicle.api.v1_4_0.MessageLocation](context, _from.result)
+        chronicle.api.v1_4_0.Result.LocatedMessage(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#LocatedMessage"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__McpTestRun__To__1_4_0
+    extends AbstractConversion[Result.McpTestRun, chronicle.api.v1_4_0.Result.McpTestRun] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.McpTestRun
+      ): chronicle.api.v1_4_0.Result.McpTestRun = {
+        val result: chronicle.api.v1_4_0.McpTestSnapshot = conversions.convertWithContext[C, McpTestSnapshot, chronicle.api.v1_4_0.McpTestSnapshot](context, _from.result)
+        chronicle.api.v1_4_0.Result.McpTestRun(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#McpTestRun"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__McpTestTools__To__1_4_0
+    extends AbstractConversion[Result.McpTestTools, chronicle.api.v1_4_0.Result.McpTestTools] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.McpTestTools
+      ): chronicle.api.v1_4_0.Result.McpTestTools = {
+        val result: chronicle.api.v1_4_0.McpTestCatalog = conversions.convertWithContext[C, McpTestCatalog, chronicle.api.v1_4_0.McpTestCatalog](context, _from.result)
+        chronicle.api.v1_4_0.Result.McpTestTools(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#McpTestTools"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Messages__To__1_4_0
+    extends AbstractConversion[Result.Messages, chronicle.api.v1_4_0.Result.Messages] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Messages
+      ): chronicle.api.v1_4_0.Result.Messages = {
+        val result: chronicle.api.v1_4_0.MessagesResult = conversions.convertWithContext[C, MessagesResult, chronicle.api.v1_4_0.MessagesResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Messages(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Messages"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__ModelUsage__To__1_4_0
+    extends AbstractConversion[Result.ModelUsage, chronicle.api.v1_4_0.Result.ModelUsage] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.ModelUsage
+      ): chronicle.api.v1_4_0.Result.ModelUsage = {
+        val result: chronicle.api.v1_4_0.ModelUsageResult = conversions.convertWithContext[C, ModelUsageResult, chronicle.api.v1_4_0.ModelUsageResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.ModelUsage(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#ModelUsage"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Mutation__To__1_4_0
+    extends AbstractConversion[Result.Mutation, chronicle.api.v1_4_0.Result.Mutation] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Mutation
+      ): chronicle.api.v1_4_0.Result.Mutation = {
+        val receipt: chronicle.api.v1_4_0.MutationReceipt = conversions.convertWithContext[C, MutationReceipt, chronicle.api.v1_4_0.MutationReceipt](context, _from.receipt)
+        chronicle.api.v1_4_0.Result.Mutation(
+                receipt
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Mutation"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__OwnerReindexPreview__To__1_4_0
+    extends AbstractConversion[Result.OwnerReindexPreview, chronicle.api.v1_4_0.Result.OwnerReindexPreview] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.OwnerReindexPreview
+      ): chronicle.api.v1_4_0.Result.OwnerReindexPreview = {
+        val result: chronicle.api.v1_4_0.OwnerReindexPlan = conversions.convertWithContext[C, OwnerReindexPlan, chronicle.api.v1_4_0.OwnerReindexPlan](context, _from.result)
+        chronicle.api.v1_4_0.Result.OwnerReindexPreview(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#OwnerReindexPreview"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__OwnerReindexed__To__1_4_0
+    extends AbstractConversion[Result.OwnerReindexed, chronicle.api.v1_4_0.Result.OwnerReindexed] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.OwnerReindexed
+      ): chronicle.api.v1_4_0.Result.OwnerReindexed = {
+        val result: chronicle.api.v1_4_0.OwnerReindexResult = conversions.convertWithContext[C, OwnerReindexResult, chronicle.api.v1_4_0.OwnerReindexResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.OwnerReindexed(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#OwnerReindexed"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__PassageSpans__To__1_4_0
+    extends AbstractConversion[Result.PassageSpans, chronicle.api.v1_4_0.Result.PassageSpans] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.PassageSpans
+      ): chronicle.api.v1_4_0.Result.PassageSpans = {
+        val result: chronicle.api.v1_4_0.PassageSpansResult = conversions.convertWithContext[C, PassageSpansResult, chronicle.api.v1_4_0.PassageSpansResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.PassageSpans(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#PassageSpans"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Passages__To__1_4_0
+    extends AbstractConversion[Result.Passages, chronicle.api.v1_4_0.Result.Passages] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Passages
+      ): chronicle.api.v1_4_0.Result.Passages = {
+        val result: chronicle.api.v1_4_0.PassagesResult = conversions.convertWithContext[C, PassagesResult, chronicle.api.v1_4_0.PassagesResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Passages(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Passages"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Ping__To__1_4_0
+    extends AbstractConversion[Result.Ping, chronicle.api.v1_4_0.Result.Ping] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Ping
+      ): chronicle.api.v1_4_0.Result.Ping = {
+        val nonce: String = _from.nonce
+        chronicle.api.v1_4_0.Result.Ping(
+                nonce
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Ping"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Pong__To__1_4_0
+    extends AbstractConversion[Result.Pong, chronicle.api.v1_4_0.Result.Pong] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Pong
+      ): chronicle.api.v1_4_0.Result.Pong = {
+        val nonce: String = _from.nonce
+        chronicle.api.v1_4_0.Result.Pong(
+                nonce
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Pong"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Raw__To__1_4_0
+    extends AbstractConversion[Result.Raw, chronicle.api.v1_4_0.Result.Raw] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Raw
+      ): chronicle.api.v1_4_0.Result.Raw = {
+        val result: chronicle.api.v1_4_0.RawResult = conversions.convertWithContext[C, RawResult, chronicle.api.v1_4_0.RawResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Raw(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Raw"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Related__To__1_4_0
+    extends AbstractConversion[Result.Related, chronicle.api.v1_4_0.Result.Related] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Related
+      ): chronicle.api.v1_4_0.Result.Related = {
+        val result: chronicle.api.v1_4_0.RelatedResult = conversions.convertWithContext[C, RelatedResult, chronicle.api.v1_4_0.RelatedResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Related(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Related"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__RetryFailed__To__1_4_0
+    extends AbstractConversion[Result.RetryFailed, chronicle.api.v1_4_0.Result.RetryFailed] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.RetryFailed
+      ): chronicle.api.v1_4_0.Result.RetryFailed = {
+        val result: chronicle.api.v1_4_0.RetryFailedResult = conversions.convertWithContext[C, RetryFailedResult, chronicle.api.v1_4_0.RetryFailedResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.RetryFailed(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#RetryFailed"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__RetryFailedPreview__To__1_4_0
+    extends AbstractConversion[Result.RetryFailedPreview, chronicle.api.v1_4_0.Result.RetryFailedPreview] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.RetryFailedPreview
+      ): chronicle.api.v1_4_0.Result.RetryFailedPreview = {
+        val result: chronicle.api.v1_4_0.RetryFailedPlan = conversions.convertWithContext[C, RetryFailedPlan, chronicle.api.v1_4_0.RetryFailedPlan](context, _from.result)
+        chronicle.api.v1_4_0.Result.RetryFailedPreview(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#RetryFailedPreview"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Search__To__1_4_0
+    extends AbstractConversion[Result.Search, chronicle.api.v1_4_0.Result.Search] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Search
+      ): chronicle.api.v1_4_0.Result.Search = {
+        val result: chronicle.api.v1_4_0.SearchResult = conversions.convertWithContext[C, SearchResult, chronicle.api.v1_4_0.SearchResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Search(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Search"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Session__To__1_4_0
+    extends AbstractConversion[Result.Session, chronicle.api.v1_4_0.Result.Session] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Session
+      ): chronicle.api.v1_4_0.Result.Session = {
+        val result: chronicle.api.v1_4_0.SessionResult = conversions.convertWithContext[C, SessionResult, chronicle.api.v1_4_0.SessionResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Session(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Session"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Status__To__1_4_0
+    extends AbstractConversion[Result.Status, chronicle.api.v1_4_0.Result.Status] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Status
+      ): chronicle.api.v1_4_0.Result.Status = {
+        val result: chronicle.api.v1_4_0.StatusResult = conversions.convertWithContext[C, StatusResult, chronicle.api.v1_4_0.StatusResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Status(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Status"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Token__To__1_4_0
+    extends AbstractConversion[Result.Token, chronicle.api.v1_4_0.Result.Token] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Token
+      ): chronicle.api.v1_4_0.Result.Token = {
+        val result: chronicle.api.v1_4_0.TokenResult = conversions.convertWithContext[C, TokenResult, chronicle.api.v1_4_0.TokenResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Token(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Token"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Tokens__To__1_4_0
+    extends AbstractConversion[Result.Tokens, chronicle.api.v1_4_0.Result.Tokens] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Tokens
+      ): chronicle.api.v1_4_0.Result.Tokens = {
+        val result: chronicle.api.v1_4_0.TokensResult = conversions.convertWithContext[C, TokensResult, chronicle.api.v1_4_0.TokensResult](context, _from.result)
+        chronicle.api.v1_4_0.Result.Tokens(
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Tokens"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Whoami__To__1_4_0
+    extends AbstractConversion[Result.Whoami, chronicle.api.v1_4_0.Result.Whoami] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Result.Whoami
+      ): chronicle.api.v1_4_0.Result.Whoami = {
+        val user: chronicle.api.v1_4_0.UserInfo = conversions.convertWithContext[C, UserInfo, chronicle.api.v1_4_0.UserInfo](context, _from.user)
+        chronicle.api.v1_4_0.Result.Whoami(
+                user
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Whoami"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__To__1_4_0
+    extends AbstractConversion[Result, chronicle.api.v1_4_0.Result] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: Result
+      ): chronicle.api.v1_4_0.Result = from match {
+        case x: Result.Hello => conversions.convertWithContext[C, Result.Hello, chronicle.api.v1_4_0.Result.Hello](context, x)
+        case x: Result.Pong => conversions.convertWithContext[C, Result.Pong, chronicle.api.v1_4_0.Result.Pong](context, x)
+        case x: Result.Whoami => conversions.convertWithContext[C, Result.Whoami, chronicle.api.v1_4_0.Result.Whoami](context, x)
+        case x: Result.Search => conversions.convertWithContext[C, Result.Search, chronicle.api.v1_4_0.Result.Search](context, x)
+        case x: Result.Session => conversions.convertWithContext[C, Result.Session, chronicle.api.v1_4_0.Result.Session](context, x)
+        case x: Result.Chunks => conversions.convertWithContext[C, Result.Chunks, chronicle.api.v1_4_0.Result.Chunks](context, x)
+        case x: Result.Messages => conversions.convertWithContext[C, Result.Messages, chronicle.api.v1_4_0.Result.Messages](context, x)
+        case x: Result.Raw => conversions.convertWithContext[C, Result.Raw, chronicle.api.v1_4_0.Result.Raw](context, x)
+        case x: Result.Related => conversions.convertWithContext[C, Result.Related, chronicle.api.v1_4_0.Result.Related](context, x)
+        case x: Result.Facets => conversions.convertWithContext[C, Result.Facets, chronicle.api.v1_4_0.Result.Facets](context, x)
+        case x: Result.CollectionStatus => conversions.convertWithContext[C, Result.CollectionStatus, chronicle.api.v1_4_0.Result.CollectionStatus](context, x)
+        case x: Result.Status => conversions.convertWithContext[C, Result.Status, chronicle.api.v1_4_0.Result.Status](context, x)
+        case x: Result.Tokens => conversions.convertWithContext[C, Result.Tokens, chronicle.api.v1_4_0.Result.Tokens](context, x)
+        case x: Result.Token => conversions.convertWithContext[C, Result.Token, chronicle.api.v1_4_0.Result.Token](context, x)
+        case x: Result.Groups => conversions.convertWithContext[C, Result.Groups, chronicle.api.v1_4_0.Result.Groups](context, x)
+        case x: Result.Mutation => conversions.convertWithContext[C, Result.Mutation, chronicle.api.v1_4_0.Result.Mutation](context, x)
+        case x: Result.Error => conversions.convertWithContext[C, Result.Error, chronicle.api.v1_4_0.Result.Error](context, x)
+        case x: Result.Ping => conversions.convertWithContext[C, Result.Ping, chronicle.api.v1_4_0.Result.Ping](context, x)
+        case x: Result.Archive => conversions.convertWithContext[C, Result.Archive, chronicle.api.v1_4_0.Result.Archive](context, x)
+        case x: Result.Activity => conversions.convertWithContext[C, Result.Activity, chronicle.api.v1_4_0.Result.Activity](context, x)
+        case x: Result.ActivityJobs => conversions.convertWithContext[C, Result.ActivityJobs, chronicle.api.v1_4_0.Result.ActivityJobs](context, x)
+        case x: Result.LocatedMessage => conversions.convertWithContext[C, Result.LocatedMessage, chronicle.api.v1_4_0.Result.LocatedMessage](context, x)
+        case x: Result.RetryFailedPreview => conversions.convertWithContext[C, Result.RetryFailedPreview, chronicle.api.v1_4_0.Result.RetryFailedPreview](context, x)
+        case x: Result.RetryFailed => conversions.convertWithContext[C, Result.RetryFailed, chronicle.api.v1_4_0.Result.RetryFailed](context, x)
+        case x: Result.ExpressionHints => conversions.convertWithContext[C, Result.ExpressionHints, chronicle.api.v1_4_0.Result.ExpressionHints](context, x)
+        case x: Result.ModelUsage => conversions.convertWithContext[C, Result.ModelUsage, chronicle.api.v1_4_0.Result.ModelUsage](context, x)
+        case x: Result.Passages => conversions.convertWithContext[C, Result.Passages, chronicle.api.v1_4_0.Result.Passages](context, x)
+        case x: Result.PassageSpans => conversions.convertWithContext[C, Result.PassageSpans, chronicle.api.v1_4_0.Result.PassageSpans](context, x)
+        case x: Result.OwnerReindexPreview => conversions.convertWithContext[C, Result.OwnerReindexPreview, chronicle.api.v1_4_0.Result.OwnerReindexPreview](context, x)
+        case x: Result.OwnerReindexed => conversions.convertWithContext[C, Result.OwnerReindexed, chronicle.api.v1_4_0.Result.OwnerReindexed](context, x)
+        case x: Result.McpTestTools => conversions.convertWithContext[C, Result.McpTestTools, chronicle.api.v1_4_0.Result.McpTestTools](context, x)
+        case x: Result.McpTestRun => conversions.convertWithContext[C, Result.McpTestRun, chronicle.api.v1_4_0.Result.McpTestRun](context, x)
+        case _ => throw chronicle.DomainError("version-mismatch","response is not available in negotiated API version")
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#Result"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__RetryFailedCounts__To__1_4_0
+    extends AbstractConversion[RetryFailedCounts, chronicle.api.v1_4_0.RetryFailedCounts] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: RetryFailedCounts
+      ): chronicle.api.v1_4_0.RetryFailedCounts = {
+        val eligiblecurrentfailed: Long = _from.eligibleCurrentFailed
+        val supersededrevisionfailed: Long = _from.supersededRevisionFailed
+        val obsoleteprofilefailed: Long = _from.obsoleteProfileFailed
+        val supersededrevisionandprofilefailed: Long = _from.supersededRevisionAndProfileFailed
+        val unchangedqueued: Long = _from.unchangedQueued
+        val unchangedrunning: Long = _from.unchangedRunning
+        val unchangedcomplete: Long = _from.unchangedComplete
+        chronicle.api.v1_4_0.RetryFailedCounts(
+                eligiblecurrentfailed,
+                supersededrevisionfailed,
+                obsoleteprofilefailed,
+                supersededrevisionandprofilefailed,
+                unchangedqueued,
+                unchangedrunning,
+                unchangedcomplete
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#RetryFailedCounts"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__RetryFailedPlan__To__1_4_0
+    extends AbstractConversion[RetryFailedPlan, chronicle.api.v1_4_0.RetryFailedPlan] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: RetryFailedPlan
+      ): chronicle.api.v1_4_0.RetryFailedPlan = {
+        val targetprofile: String = _from.targetProfile
+        val selectionhash: String = _from.selectionHash
+        val counts: chronicle.api.v1_4_0.RetryFailedCounts = conversions.convertWithContext[C, RetryFailedCounts, chronicle.api.v1_4_0.RetryFailedCounts](context, _from.counts)
+        chronicle.api.v1_4_0.RetryFailedPlan(
+                targetprofile,
+                selectionhash,
+                counts
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#RetryFailedPlan"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__RetryFailedResult__To__1_4_0
+    extends AbstractConversion[RetryFailedResult, chronicle.api.v1_4_0.RetryFailedResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: RetryFailedResult
+      ): chronicle.api.v1_4_0.RetryFailedResult = {
+        val requestid: UUID = _from.requestId
+        val targetprofile: String = _from.targetProfile
+        val retried: Long = _from.retried
+        val counts: chronicle.api.v1_4_0.RetryFailedCounts = conversions.convertWithContext[C, RetryFailedCounts, chronicle.api.v1_4_0.RetryFailedCounts](context, _from.counts)
+        chronicle.api.v1_4_0.RetryFailedResult(
+                requestid,
+                targetprofile,
+                retried,
+                counts
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#RetryFailedResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Scope__To__1_4_0
+    extends AbstractConversion[Scope, chronicle.api.v1_4_0.Scope] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: Scope
+      ): chronicle.api.v1_4_0.Scope = chronicle.api.v1_4_0.Scope.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#Scope"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__SearchCountScope__To__1_4_0
+    extends AbstractConversion[SearchCountScope, chronicle.api.v1_4_0.SearchCountScope] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: SearchCountScope
+      ): chronicle.api.v1_4_0.SearchCountScope = chronicle.api.v1_4_0.SearchCountScope.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#SearchCountScope"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__SearchHit__To__1_4_0
+    extends AbstractConversion[SearchHit, chronicle.api.v1_4_0.SearchHit] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: SearchHit
+      ): chronicle.api.v1_4_0.SearchHit = {
+        val session: chronicle.api.v1_4_0.SessionInfo = conversions.convertWithContext[C, SessionInfo, chronicle.api.v1_4_0.SessionInfo](context, _from.session)
+        val chunks: List[chronicle.api.v1_4_0.Chunk] = _from.chunks.map(e1 => conversions.convertWithContext[C, Chunk, chronicle.api.v1_4_0.Chunk](context, e1)).toList
+        val score: Double = _from.score
+        chronicle.api.v1_4_0.SearchHit(
+                session,
+                chunks,
+                score
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#SearchHit"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__SearchMode__To__1_4_0
+    extends AbstractConversion[SearchMode, chronicle.api.v1_4_0.SearchMode] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: SearchMode
+      ): chronicle.api.v1_4_0.SearchMode = chronicle.api.v1_4_0.SearchMode.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#SearchMode"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__SearchResult__To__1_4_0
+    extends AbstractConversion[SearchResult, chronicle.api.v1_4_0.SearchResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: SearchResult
+      ): chronicle.api.v1_4_0.SearchResult = {
+        val hits: List[chronicle.api.v1_4_0.SearchHit] = _from.hits.map(e1 => conversions.convertWithContext[C, SearchHit, chronicle.api.v1_4_0.SearchHit](context, e1)).toList
+        val total: Int = _from.total
+        val countscope: chronicle.api.v1_4_0.SearchCountScope = conversions.convertWithContext[C, SearchCountScope, chronicle.api.v1_4_0.SearchCountScope](context, _from.countScope)
+        val rankinglimit: Option[Int] = _from.rankingLimit.map(e1 => e1)
+        chronicle.api.v1_4_0.SearchResult(
+                hits,
+                total,
+                countscope,
+                rankinglimit
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#SearchResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__ServerEnvelope__To__1_4_0
+    extends AbstractConversion[ServerEnvelope, chronicle.api.v1_4_0.ServerEnvelope] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: ServerEnvelope
+      ): chronicle.api.v1_4_0.ServerEnvelope = {
+        val requestid: UUID = _from.requestId
+        val result: chronicle.api.v1_4_0.Result = conversions.convertWithContext[C, Result, chronicle.api.v1_4_0.Result](context, _from.result)
+        chronicle.api.v1_4_0.ServerEnvelope(
+                requestid,
+                result
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#ServerEnvelope"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__SessionInfo__To__1_4_0
+    extends AbstractConversion[SessionInfo, chronicle.api.v1_4_0.SessionInfo] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: SessionInfo
+      ): chronicle.api.v1_4_0.SessionInfo = {
+        val view: chronicle.api.v1_4_0.ContentView = conversions.convertWithContext[C, ContentView, chronicle.api.v1_4_0.ContentView](context, _from.view)
+        val id: UUID = _from.id
+        val ownerid: String = _from.ownerId
+        val revision: Int = _from.revision
+        val indexedrevision: Option[Int] = _from.indexedRevision.map(e1 => e1)
+        val metadata: chronicle.api.v1_4_0.Metadata = conversions.convertWithContext[C, Metadata, chronicle.api.v1_4_0.Metadata](context, _from.metadata)
+        val source: chronicle.api.v1_4_0.SourceIdentity = conversions.convertWithContext[C, SourceIdentity, chronicle.api.v1_4_0.SourceIdentity](context, _from.source)
+        val completion: chronicle.api.v1_4_0.Completion = conversions.convertWithContext[C, Completion, chronicle.api.v1_4_0.Completion](context, _from.completion)
+        val redacted: Boolean = _from.redacted
+        chronicle.api.v1_4_0.SessionInfo(
+                view,
+                id,
+                ownerid,
+                revision,
+                indexedrevision,
+                metadata,
+                source,
+                completion,
+                redacted
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#SessionInfo"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__SessionResult__To__1_4_0
+    extends AbstractConversion[SessionResult, chronicle.api.v1_4_0.SessionResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: SessionResult
+      ): chronicle.api.v1_4_0.SessionResult = {
+        val session: chronicle.api.v1_4_0.SessionInfo = conversions.convertWithContext[C, SessionInfo, chronicle.api.v1_4_0.SessionInfo](context, _from.session)
+        val chunks: List[chronicle.api.v1_4_0.Chunk] = _from.chunks.map(e1 => conversions.convertWithContext[C, Chunk, chronicle.api.v1_4_0.Chunk](context, e1)).toList
+        chronicle.api.v1_4_0.SessionResult(
+                session,
+                chunks
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#SessionResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__SortDirection__To__1_4_0
+    extends AbstractConversion[SortDirection, chronicle.api.v1_4_0.SortDirection] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: SortDirection
+      ): chronicle.api.v1_4_0.SortDirection = chronicle.api.v1_4_0.SortDirection.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#SortDirection"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__SourceFormat__To__1_4_0
+    extends AbstractConversion[SourceFormat, chronicle.api.v1_4_0.SourceFormat] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: SourceFormat
+      ): chronicle.api.v1_4_0.SourceFormat = chronicle.api.v1_4_0.SourceFormat.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#SourceFormat"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__SourceIdentity__To__1_4_0
+    extends AbstractConversion[SourceIdentity, chronicle.api.v1_4_0.SourceIdentity] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: SourceIdentity
+      ): chronicle.api.v1_4_0.SourceIdentity = {
+        val collectornamespace: String = _from.collectorNamespace
+        val discoveryrootid: String = _from.discoveryRootId
+        val format: chronicle.api.v1_4_0.SourceFormat = conversions.convertWithContext[C, SourceFormat, chronicle.api.v1_4_0.SourceFormat](context, _from.format)
+        val producersessionid: String = _from.producerSessionId
+        val subagentid: Option[String] = _from.subagentId.map(e1 => e1)
+        chronicle.api.v1_4_0.SourceIdentity(
+                collectornamespace,
+                discoveryrootid,
+                format,
+                producersessionid,
+                subagentid
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#SourceIdentity"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Span__To__1_4_0
+    extends AbstractConversion[Span, chronicle.api.v1_4_0.Span] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: Span
+      ): chronicle.api.v1_4_0.Span = {
+        val messageid: String = _from.messageId
+        val start: Int = _from.start
+        val `end`: Int = _from.`end`
+        chronicle.api.v1_4_0.Span(
+                messageid,
+                start,
+                `end`
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#Span"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__StatusResult__To__1_4_0
+    extends AbstractConversion[StatusResult, chronicle.api.v1_4_0.StatusResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: StatusResult
+      ): chronicle.api.v1_4_0.StatusResult = {
+        val jobs: List[chronicle.api.v1_4_0.JobInfo] = _from.jobs.map(e1 => conversions.convertWithContext[C, JobInfo, chronicle.api.v1_4_0.JobInfo](context, e1)).toList
+        val total: Int = _from.total
+        chronicle.api.v1_4_0.StatusResult(
+                jobs,
+                total
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#StatusResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+import java.util.UUID
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__TokenInfo__To__1_4_0
+    extends AbstractConversion[TokenInfo, chronicle.api.v1_4_0.TokenInfo] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: TokenInfo
+      ): chronicle.api.v1_4_0.TokenInfo = {
+        val id: UUID = _from.id
+        val name: String = _from.name
+        val scopes: List[chronicle.api.v1_4_0.Scope] = _from.scopes.map(e1 => conversions.convertWithContext[C, Scope, chronicle.api.v1_4_0.Scope](context, e1)).toList
+        val createdat: String = _from.createdAt
+        val revoked: Boolean = _from.revoked
+        chronicle.api.v1_4_0.TokenInfo(
+                id,
+                name,
+                scopes,
+                createdat,
+                revoked
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#TokenInfo"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__TokenRateWindow__To__1_4_0
+    extends AbstractConversion[TokenRateWindow, chronicle.api.v1_4_0.TokenRateWindow] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: TokenRateWindow
+      ): chronicle.api.v1_4_0.TokenRateWindow = {
+        val knowntokens: Long = _from.knownTokens
+        val reportedcalls: Long = _from.reportedCalls
+        val unknowncalls: Long = _from.unknownCalls
+        val tokenspersecond: Option[Double] = _from.tokensPerSecond.map(e1 => e1)
+        val sampleagemillis: Option[Long] = _from.sampleAgeMillis.map(e1 => e1)
+        chronicle.api.v1_4_0.TokenRateWindow(
+                knowntokens,
+                reportedcalls,
+                unknowncalls,
+                tokenspersecond,
+                sampleagemillis
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#TokenRateWindow"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__TokenResult__To__1_4_0
+    extends AbstractConversion[TokenResult, chronicle.api.v1_4_0.TokenResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: TokenResult
+      ): chronicle.api.v1_4_0.TokenResult = {
+        val token: chronicle.api.v1_4_0.TokenInfo = conversions.convertWithContext[C, TokenInfo, chronicle.api.v1_4_0.TokenInfo](context, _from.token)
+        val secret: Option[String] = _from.secret.map(e1 => e1)
+        chronicle.api.v1_4_0.TokenResult(
+                token,
+                secret
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#TokenResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__TokenSource__To__1_4_0
+    extends AbstractConversion[TokenSource, chronicle.api.v1_4_0.TokenSource] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        from: TokenSource
+      ): chronicle.api.v1_4_0.TokenSource = chronicle.api.v1_4_0.TokenSource.parse(from.toString).get
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#TokenSource"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__TokensResult__To__1_4_0
+    extends AbstractConversion[TokensResult, chronicle.api.v1_4_0.TokensResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: TokensResult
+      ): chronicle.api.v1_4_0.TokensResult = {
+        val tokens: List[chronicle.api.v1_4_0.ListedToken] = _from.tokens.map(e1 => conversions.convertWithContext[C, ListedToken, chronicle.api.v1_4_0.ListedToken](context, e1)).toList
+        chronicle.api.v1_4_0.TokensResult(
+                tokens
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#TokensResult"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__UserInfo__To__1_4_0
+    extends AbstractConversion[UserInfo, chronicle.api.v1_4_0.UserInfo] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: UserInfo
+      ): chronicle.api.v1_4_0.UserInfo = {
+        val id: String = _from.id
+        val login: String = _from.login
+        val scopes: List[chronicle.api.v1_4_0.Scope] = _from.scopes.map(e1 => conversions.convertWithContext[C, Scope, chronicle.api.v1_4_0.Scope](context, e1)).toList
+        chronicle.api.v1_4_0.UserInfo(
+                id,
+                login,
+                scopes
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
+      override def typeId: String = "chronicle.api/:#UserInfo"
+  }
+}
+
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__VersionInfo__To__1_4_0
+    extends AbstractConversion[VersionInfo, chronicle.api.v1_4_0.VersionInfo] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: VersionInfo
+      ): chronicle.api.v1_4_0.VersionInfo = {
+        val current: String = _from.current
+        val minimum: String = _from.minimum
+        val supported: List[String] = _from.supported.map(e1 => e1).toList
+        chronicle.api.v1_4_0.VersionInfo(
+                current,
+                minimum,
+                supported
+             )
+      }
+      override def versionFrom: String = "1.5.0"
+      override def versionTo: String = "1.4.0"
       override def typeId: String = "chronicle.api/:#VersionInfo"
   }
 }
@@ -7110,449 +10306,1075 @@ final class ProtocolConversions {
 
   val up1_3_0 = new baboon.runtime.shared.AbstractBaboonConversions { def versionsFrom = List("1.3.0"); def versionTo = "1.4.0" }
 
-  up1_3_0.register(chronicle.api.Convert__ActivityCollector__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityCollector__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ActivityCollectorSort__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityCollectorSort__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ActivityJob__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJob__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ActivityJobClass__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJobClass__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ActivityJobScope__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJobScope__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ActivityJobSort__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJobSort__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ActivityJobsQuery__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJobsQuery__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ActivityJobsResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJobsResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ActivityQuery__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityQuery__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ActivityResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ArchiveQuery__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ArchiveQuery__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ArchiveResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ArchiveResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ArchiveRow__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ArchiveRow__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ArchiveSort__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ArchiveSort__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ArchiveTextScope__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ArchiveTextScope__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Chunk__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Chunk__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ChunksResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ChunksResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ClientEnvelope__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ClientEnvelope__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__CollectorCounters__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorCounters__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__CollectorPhase__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorPhase__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__CollectorProgressAck__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorProgressAck__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__CollectorProgressUpdate__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorProgressUpdate__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__CollectorStatus__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorStatus__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__CollectorStatusResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorStatusResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Completion__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Completion__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ContentView__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ContentView__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Facet__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Facet__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__FacetsResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__FacetsResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Failure__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Failure__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__GroupInfo__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__GroupInfo__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__GroupsResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__GroupsResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__IngestReceipt__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__IngestReceipt__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__IngestRequest__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__IngestRequest__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__InviteInfo__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__InviteInfo__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__JobCounts__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__JobCounts__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__JobInfo__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__JobInfo__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__JobState__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__JobState__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ListedToken__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ListedToken__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__LoginRequest__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__LoginRequest__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__LoginResponse__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__LoginResponse__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Message__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Message__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__MessageLocation__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__MessageLocation__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__MessagesResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__MessagesResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Metadata__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Metadata__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__MutationReceipt__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__MutationReceipt__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__AcceptInvite__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__AcceptInvite__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Activity__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Activity__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__ActivityJobs__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__ActivityJobs__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__ApplyRetryFailed__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__ApplyRetryFailed__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Archive__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Archive__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__CollectionStatus__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__CollectionStatus__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__CreateGroup__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__CreateGroup__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__DeleteGroup__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__DeleteGroup__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Facets__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Facets__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__GetChunks__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__GetChunks__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__GetMessages__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__GetMessages__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__GetRaw__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__GetRaw__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__GetSession__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__GetSession__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Hello__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Hello__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__IngestStatus__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__IngestStatus__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Invite__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Invite__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__LeaveGroup__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__LeaveGroup__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__ListGroups__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__ListGroups__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__ListTokens__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__ListTokens__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__LocateMessage__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__LocateMessage__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Logout__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Logout__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__MintToken__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__MintToken__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Ping__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Ping__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Pong__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Pong__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__PreviewRetryFailed__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__PreviewRetryFailed__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Purge__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Purge__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Receipt__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Receipt__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Related__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Related__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__RemoveMember__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__RemoveMember__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__RetryJob__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__RetryJob__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__RevokeToken__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__RevokeToken__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Search__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Search__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__Whoami__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__Whoami__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Operation__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Operation__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__RawFile__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__RawFile__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__RawResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__RawResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__RelatedResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__RelatedResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Activity__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Activity__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__ActivityJobs__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__ActivityJobs__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Archive__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Archive__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Chunks__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Chunks__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__CollectionStatus__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__CollectionStatus__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Error__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Error__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Facets__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Facets__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Groups__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Groups__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Hello__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Hello__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__LocatedMessage__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__LocatedMessage__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Messages__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Messages__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Mutation__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Mutation__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Ping__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Ping__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Pong__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Pong__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Raw__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Raw__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Related__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Related__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__RetryFailed__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__RetryFailed__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__RetryFailedPreview__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__RetryFailedPreview__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Search__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Search__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Session__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Session__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Status__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Status__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Token__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Token__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Tokens__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Tokens__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__Whoami__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Whoami__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Result__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Result__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__RetryFailedCounts__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__RetryFailedCounts__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__RetryFailedPlan__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__RetryFailedPlan__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__RetryFailedResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__RetryFailedResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Scope__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Scope__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SearchCountScope__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SearchCountScope__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SearchFilter__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SearchFilter__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SearchHit__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SearchHit__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SearchMode__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SearchMode__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SearchQuery__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SearchQuery__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SearchResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SearchResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__ServerEnvelope__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__ServerEnvelope__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SessionInfo__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SessionInfo__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SessionResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SessionResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SortDirection__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SortDirection__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SourceFormat__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SourceFormat__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__SourceIdentity__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__SourceIdentity__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__Span__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__Span__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__StatusResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__StatusResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__TokenInfo__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__TokenInfo__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__TokenResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__TokenResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__TokenSource__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__TokenSource__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__TokensResult__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__TokensResult__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__UserInfo__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__UserInfo__From__1_3_0)
 
-  up1_3_0.register(chronicle.api.Convert__VersionInfo__From__1_3_0)
+  up1_3_0.register(chronicle.api.v1_4_0.Convert__VersionInfo__From__1_3_0)
 
   val down1_3_0 = new baboon.runtime.shared.AbstractBaboonConversions { def versionsFrom = List("1.4.0"); def versionTo = "1.3.0" }
 
-  down1_3_0.register(chronicle.api.Convert__ActivityCollector__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityCollector__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ActivityCollectorSort__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityCollectorSort__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ActivityJob__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJob__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ActivityJobClass__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJobClass__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ActivityJobScope__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJobScope__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ActivityJobSort__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJobSort__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ActivityJobsQuery__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJobsQuery__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ActivityJobsResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityJobsResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ActivityQuery__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityQuery__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ActivityResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ActivityResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ArchiveQuery__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ArchiveQuery__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ArchiveResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ArchiveResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ArchiveRow__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ArchiveRow__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ArchiveSort__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ArchiveSort__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ArchiveTextScope__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ArchiveTextScope__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Chunk__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Chunk__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ChunksResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ChunksResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__CollectorCounters__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorCounters__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__CollectorPhase__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorPhase__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__CollectorProgressAck__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorProgressAck__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__CollectorProgressUpdate__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorProgressUpdate__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__CollectorStatus__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorStatus__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__CollectorStatusResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__CollectorStatusResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Completion__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Completion__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ContentView__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ContentView__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Facet__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Facet__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__FacetsResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__FacetsResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Failure__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Failure__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__GroupInfo__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__GroupInfo__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__GroupsResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__GroupsResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__InviteInfo__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__InviteInfo__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__JobCounts__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__JobCounts__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__JobInfo__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__JobInfo__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__JobState__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__JobState__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ListedToken__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ListedToken__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Message__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Message__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__MessageLocation__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__MessageLocation__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__MessagesResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__MessagesResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Metadata__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Metadata__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__MutationReceipt__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__MutationReceipt__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__RawFile__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__RawFile__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__RawResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__RawResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__RelatedResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__RelatedResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Activity__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Activity__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__ActivityJobs__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__ActivityJobs__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Archive__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Archive__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Chunks__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Chunks__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__CollectionStatus__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__CollectionStatus__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Error__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Error__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Facets__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Facets__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Groups__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Groups__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Hello__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Hello__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__LocatedMessage__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__LocatedMessage__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Messages__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Messages__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Mutation__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Mutation__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Ping__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Ping__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Pong__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Pong__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Raw__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Raw__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Related__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Related__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__RetryFailed__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__RetryFailed__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__RetryFailedPreview__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__RetryFailedPreview__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Search__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Search__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Session__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Session__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Status__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Status__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Token__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Token__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Tokens__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Tokens__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__Whoami__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__Whoami__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Result__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Result__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__RetryFailedCounts__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__RetryFailedCounts__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__RetryFailedPlan__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__RetryFailedPlan__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__RetryFailedResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__RetryFailedResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Scope__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Scope__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__SearchCountScope__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__SearchCountScope__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__SearchHit__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__SearchHit__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__SearchMode__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__SearchMode__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__SearchResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__SearchResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__ServerEnvelope__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__ServerEnvelope__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__SessionInfo__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__SessionInfo__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__SessionResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__SessionResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__SortDirection__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__SortDirection__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__SourceFormat__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__SourceFormat__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__SourceIdentity__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__SourceIdentity__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__Span__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__Span__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__StatusResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__StatusResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__TokenInfo__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__TokenInfo__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__TokenResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__TokenResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__TokenSource__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__TokenSource__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__TokensResult__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__TokensResult__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__UserInfo__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__UserInfo__To__1_3_0)
 
-  down1_3_0.register(chronicle.api.Convert__VersionInfo__To__1_3_0)
+  down1_3_0.register(chronicle.api.v1_4_0.Convert__VersionInfo__To__1_3_0)
+
+  val up1_4_0 = new baboon.runtime.shared.AbstractBaboonConversions { def versionsFrom = List("1.4.0"); def versionTo = "1.5.0" }
+
+  up1_4_0.register(chronicle.api.Convert__ActivityCollector__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ActivityCollectorSort__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ActivityJob__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ActivityJobClass__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ActivityJobScope__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ActivityJobSort__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ActivityJobsQuery__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ActivityJobsResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ActivityQuery__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ActivityResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ArchiveQuery__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ArchiveResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ArchiveRow__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ArchiveSort__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ArchiveTextScope__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Chunk__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ChunksResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ClientEnvelope__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__CollectorCounters__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__CollectorPhase__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__CollectorProgressAck__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__CollectorProgressUpdate__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__CollectorStatus__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__CollectorStatusResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Completion__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ContentView__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ExpressionHint__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ExpressionHintKind__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ExpressionHintQuery__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ExpressionHintTarget__ActivityCollectors__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ExpressionHintTarget__ActivityJobs__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ExpressionHintTarget__Archive__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ExpressionHintTarget__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ExpressionHintsResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Facet__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__FacetsResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Failure__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__GroupInfo__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__GroupsResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__IndexingSettings__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__IngestReceipt__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__IngestRequest__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__InviteInfo__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__JobCounts__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__JobInfo__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__JobState__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ListedToken__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__LoginRequest__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__LoginResponse__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__McpTestCatalog__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__McpTestEvent__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__McpTestItem__Response__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__McpTestItem__ToolCall__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__McpTestItem__ToolResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__McpTestItem__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__McpTestLimits__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__McpTestSnapshot__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__McpTestState__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__McpToolDefinition__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Message__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__MessageLocation__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__MessagesResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Metadata__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ModelPurpose__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ModelRateBasis__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ModelUsageResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ModelUsageSlice__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__MutationReceipt__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__AcceptInvite__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Activity__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__ActivityJobs__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__ApplyOwnerReindex__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__ApplyRetryFailed__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Archive__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__CancelMcpTest__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__CollectionStatus__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__CreateGroup__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__DeleteGroup__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__ExpressionHints__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Facets__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__GetChunks__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__GetMessages__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__GetPassageSpans__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__GetPassages__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__GetRaw__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__GetSession__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Hello__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__IngestStatus__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Invite__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__LeaveGroup__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__ListGroups__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__ListTokens__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__LocateMessage__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Logout__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__McpTestTools__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__MintToken__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__ModelUsage__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Ping__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Pong__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__PreviewOwnerReindex__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__PreviewRetryFailed__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Purge__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__ReadMcpTest__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Receipt__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Related__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__RemoveMember__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__RetryJob__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__RevokeToken__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Search__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__StartMcpTest__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__Whoami__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Operation__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__OwnerReindexPlan__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__OwnerReindexResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__PassageFormat__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__PassageInfo__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__PassagePoint__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__PassageSourceSpan__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__PassageSpansResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__PassagesResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__RawFile__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__RawResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__RelatedResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Activity__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__ActivityJobs__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Archive__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Chunks__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__CollectionStatus__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Error__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__ExpressionHints__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Facets__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Groups__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Hello__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__LocatedMessage__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__McpTestRun__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__McpTestTools__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Messages__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__ModelUsage__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Mutation__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__OwnerReindexPreview__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__OwnerReindexed__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__PassageSpans__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Passages__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Ping__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Pong__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Raw__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Related__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__RetryFailed__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__RetryFailedPreview__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Search__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Session__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Status__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Token__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Tokens__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__Whoami__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Result__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__RetryFailedCounts__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__RetryFailedPlan__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__RetryFailedResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Scope__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SearchCountScope__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SearchFilter__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SearchHit__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SearchMode__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SearchQuery__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SearchResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__ServerEnvelope__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SessionInfo__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SessionResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SortDirection__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SourceFormat__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__SourceIdentity__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__Span__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__StatusResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__TokenInfo__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__TokenRateWindow__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__TokenResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__TokenSource__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__TokensResult__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__UserInfo__From__1_4_0)
+
+  up1_4_0.register(chronicle.api.Convert__VersionInfo__From__1_4_0)
+
+  val down1_4_0 = new baboon.runtime.shared.AbstractBaboonConversions { def versionsFrom = List("1.5.0"); def versionTo = "1.4.0" }
+
+  down1_4_0.register(chronicle.api.Convert__ActivityCollector__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ActivityCollectorSort__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ActivityJob__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ActivityJobClass__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ActivityJobScope__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ActivityJobSort__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ActivityJobsQuery__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ActivityJobsResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ActivityQuery__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ActivityResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ArchiveQuery__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ArchiveResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ArchiveSort__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ArchiveTextScope__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Chunk__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ChunksResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__CollectorCounters__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__CollectorPhase__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__CollectorProgressAck__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__CollectorProgressUpdate__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__CollectorStatus__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__CollectorStatusResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Completion__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ContentView__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ExpressionHint__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ExpressionHintKind__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ExpressionHintQuery__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ExpressionHintTarget__ActivityCollectors__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ExpressionHintTarget__ActivityJobs__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ExpressionHintTarget__Archive__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ExpressionHintTarget__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ExpressionHintsResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Facet__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__FacetsResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Failure__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__GroupInfo__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__GroupsResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__IndexingSettings__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__InviteInfo__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__JobCounts__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__JobInfo__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__JobState__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ListedToken__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__McpTestCatalog__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__McpTestEvent__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__McpTestItem__Response__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__McpTestItem__ToolCall__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__McpTestItem__ToolResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__McpTestItem__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__McpTestLimits__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__McpTestSnapshot__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__McpTestState__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__McpToolDefinition__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Message__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__MessageLocation__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__MessagesResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Metadata__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ModelPurpose__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ModelRateBasis__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ModelUsageResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ModelUsageSlice__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__MutationReceipt__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__OwnerReindexPlan__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__OwnerReindexResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__PassageFormat__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__PassageInfo__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__PassagePoint__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__PassageSourceSpan__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__PassageSpansResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__PassagesResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__RawFile__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__RawResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__RelatedResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Activity__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__ActivityJobs__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Archive__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Chunks__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__CollectionStatus__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Error__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__ExpressionHints__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Facets__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Groups__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Hello__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__LocatedMessage__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__McpTestRun__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__McpTestTools__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Messages__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__ModelUsage__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Mutation__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__OwnerReindexPreview__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__OwnerReindexed__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__PassageSpans__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Passages__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Ping__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Pong__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Raw__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Related__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__RetryFailed__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__RetryFailedPreview__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Search__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Session__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Status__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Token__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Tokens__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__Whoami__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Result__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__RetryFailedCounts__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__RetryFailedPlan__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__RetryFailedResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Scope__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__SearchCountScope__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__SearchHit__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__SearchMode__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__SearchResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__ServerEnvelope__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__SessionInfo__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__SessionResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__SortDirection__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__SourceFormat__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__SourceIdentity__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__Span__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__StatusResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__TokenInfo__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__TokenRateWindow__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__TokenResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__TokenSource__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__TokensResult__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__UserInfo__To__1_4_0)
+
+  down1_4_0.register(chronicle.api.Convert__VersionInfo__To__1_4_0)
+
+  down1_4_0.register(new chronicle.protocol.ArchiveRowToV14)
 
 }
 }

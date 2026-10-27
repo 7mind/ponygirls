@@ -2,6 +2,7 @@ import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 import {ContentView, ContentView_JsonCodec} from './ContentView.js'
 import {JobInfo, JobInfo_JsonCodec} from './JobInfo.js'
+import {PassageFormat, PassageFormat_JsonCodec} from './PassageFormat.js'
 import {SessionInfo, SessionInfo_JsonCodec} from './SessionInfo.js'
 
 export class ArchiveRow implements BaboonGeneratedLatest {
@@ -12,8 +13,9 @@ export class ArchiveRow implements BaboonGeneratedLatest {
     private readonly _messageCount: number;
     private readonly _tags: Array<string>;
     private readonly _headJob: JobInfo | undefined;
+    private readonly _publishedFormat: PassageFormat | undefined;
 
-    constructor(head: SessionInfo, publishedView: ContentView | undefined, matchedView: ContentView | undefined, lastTimestamp: string | undefined, messageCount: number, tags: Array<string>, headJob: JobInfo | undefined) {
+    constructor(head: SessionInfo, publishedView: ContentView | undefined, matchedView: ContentView | undefined, lastTimestamp: string | undefined, messageCount: number, tags: Array<string>, headJob: JobInfo | undefined, publishedFormat: PassageFormat | undefined) {
         this._head = head
         this._publishedView = publishedView
         this._matchedView = matchedView
@@ -21,6 +23,7 @@ export class ArchiveRow implements BaboonGeneratedLatest {
         this._messageCount = messageCount
         this._tags = tags
         this._headJob = headJob
+        this._publishedFormat = publishedFormat
     }
 
     public get head(): SessionInfo {
@@ -44,6 +47,9 @@ export class ArchiveRow implements BaboonGeneratedLatest {
     public get headJob(): JobInfo | undefined {
         return this._headJob;
     }
+    public get publishedFormat(): PassageFormat | undefined {
+        return this._publishedFormat;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -53,11 +59,12 @@ export class ArchiveRow implements BaboonGeneratedLatest {
             lastTimestamp: this._lastTimestamp !== undefined ? this._lastTimestamp : undefined,
             messageCount: this._messageCount,
             tags: this._tags,
-            headJob: this._headJob !== undefined ? this._headJob : undefined
+            headJob: this._headJob !== undefined ? this._headJob : undefined,
+            publishedFormat: this._publishedFormat !== undefined ? this._publishedFormat : undefined
         };
     }
 
-    public with(overrides: {head?: SessionInfo; publishedView?: ContentView | undefined; matchedView?: ContentView | undefined; lastTimestamp?: string | undefined; messageCount?: number; tags?: Array<string>; headJob?: JobInfo | undefined}): ArchiveRow {
+    public with(overrides: {head?: SessionInfo; publishedView?: ContentView | undefined; matchedView?: ContentView | undefined; lastTimestamp?: string | undefined; messageCount?: number; tags?: Array<string>; headJob?: JobInfo | undefined; publishedFormat?: PassageFormat | undefined}): ArchiveRow {
         return new ArchiveRow(
             'head' in overrides ? overrides.head! : this._head,
             'publishedView' in overrides ? overrides.publishedView! : this._publishedView,
@@ -65,11 +72,12 @@ export class ArchiveRow implements BaboonGeneratedLatest {
             'lastTimestamp' in overrides ? overrides.lastTimestamp! : this._lastTimestamp,
             'messageCount' in overrides ? overrides.messageCount! : this._messageCount,
             'tags' in overrides ? overrides.tags! : this._tags,
-            'headJob' in overrides ? overrides.headJob! : this._headJob
+            'headJob' in overrides ? overrides.headJob! : this._headJob,
+            'publishedFormat' in overrides ? overrides.publishedFormat! : this._publishedFormat
         );
     }
 
-    public static fromPlain(obj: {head: SessionInfo; publishedView: ContentView | undefined; matchedView: ContentView | undefined; lastTimestamp: string | undefined; messageCount: number; tags: Array<string>; headJob: JobInfo | undefined}): ArchiveRow {
+    public static fromPlain(obj: {head: SessionInfo; publishedView: ContentView | undefined; matchedView: ContentView | undefined; lastTimestamp: string | undefined; messageCount: number; tags: Array<string>; headJob: JobInfo | undefined; publishedFormat: PassageFormat | undefined}): ArchiveRow {
         return new ArchiveRow(
             obj.head,
             obj.publishedView,
@@ -77,11 +85,12 @@ export class ArchiveRow implements BaboonGeneratedLatest {
             obj.lastTimestamp,
             obj.messageCount,
             obj.tags,
-            obj.headJob
+            obj.headJob,
+            obj.publishedFormat
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.4.0'
+    public static readonly BaboonDomainVersion = '1.5.0'
     public baboonDomainVersion() {
         return ArchiveRow.BaboonDomainVersion
     }
@@ -93,15 +102,15 @@ export class ArchiveRow implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return ArchiveRow.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.3.0", "1.4.0"]
+    public static readonly BaboonSameInVersions = ["1.5.0"]
     public baboonSameInVersions() {
         return ArchiveRow.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical" }
     public baboonForwardReadable() {
         return ArchiveRow.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.3.0", "identical": "1.3.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.5.0", "identical": "1.5.0" }
     public baboonMinReaderVersions() {
         return ArchiveRow.BaboonMinReaderVersions
     }
@@ -124,6 +133,7 @@ export class ArchiveRow_JsonCodec {
             "messageCount": value.messageCount,
             "tags": Array.from(value.tags),
             "headJob": value.headJob === undefined ? null : JobInfo_JsonCodec.instance.encode(BaboonCodecContext.Default, value.headJob),
+            "publishedFormat": value.publishedFormat === undefined ? null : PassageFormat_JsonCodec.instance.encode(BaboonCodecContext.Default, value.publishedFormat),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): ArchiveRow {
@@ -140,10 +150,11 @@ export class ArchiveRow_JsonCodec {
             obj["messageCount"] as number,
             (obj["tags"] as unknown[]).map(item => item as string),
             obj["headJob"] === undefined || obj["headJob"] === null ? undefined : obj["headJob"] === undefined || obj["headJob"] === null ? undefined : JobInfo_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["headJob"]),
+            obj["publishedFormat"] === undefined || obj["publishedFormat"] === null ? undefined : obj["publishedFormat"] === undefined || obj["publishedFormat"] === null ? undefined : PassageFormat_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["publishedFormat"]),
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.4.0'
+    public static readonly BaboonDomainVersion = '1.5.0'
     public baboonDomainVersion() {
         return ArchiveRow_JsonCodec.BaboonDomainVersion
     }

@@ -5,9 +5,9 @@ import { read, type ChronicleConnection } from './client.ts';
 import type { ManagerStats } from './transport/types.ts';
 import { acceptExpressionHint, scalarBoundary } from './completion.ts';
 export interface CompletionContext { connection: ChronicleConnection; stats: ManagerStats; owner: string; target: ExpressionHintTarget }
-interface Props { context: CompletionContext; inputRef: RefObject<HTMLInputElement | null>; id: string; label: string; placeholder: string; value: string; change(value: string): void; clear(): void; canClear: boolean; maxLength: number }
+interface Props { context: CompletionContext; inputRef: RefObject<HTMLInputElement | null>; id: string; label: string; placeholder: string; value: string; change(value: string): void; clear(): void; canClear: boolean; maxLength: number; compositionChange?: (composing: boolean) => void }
 const HINT_DEBOUNCE_MS = 180, HINT_LIMIT = 12;
-export function ExpressionInput({ context, inputRef, id, label, placeholder, value, change, clear, canClear, maxLength }: Props) {
+export function ExpressionInput({ context, inputRef, id, label, placeholder, value, change, clear, canClear, maxLength, compositionChange }: Props) {
   const { connection, stats, owner, target } = context, listId = useId();
   const [caret, setCaret] = useState(0), [focused, setFocused] = useState(false), [composing, setComposing] = useState(false), [choice, setChoice] = useState(0);
   const [result, setResult] = useState<{ stamp: string; data: ExpressionHintsResult } | null>(null), [error, setError] = useState<string | null>(null), [epoch, setEpoch] = useState(0);
@@ -43,10 +43,11 @@ export function ExpressionInput({ context, inputRef, id, label, placeholder, val
     const hint = hints.hints[index]; if (hint === undefined) return;
     const next = acceptExpressionHint(value, hints, hint); pendingCaret.current = next.caret; if (next.expression === value && inputRef.current !== null) { inputRef.current.setSelectionRange(next.caret, next.caret); setCaret(next.caret); pendingCaret.current = null; } setResult(null); setDismissed(stamp); change(next.expression);
   }
-  function reset() { setResult(null); setError(null); setDismissed(stamp); pendingCaret.current = null; clear(); if (inputRef.current !== null) { inputRef.current.focus({ preventScroll: true }); inputRef.current.setSelectionRange(0, 0); setCaret(0); } }
+  function composition(value: boolean) { setComposing(value); if (compositionChange !== undefined) compositionChange(value); }
+  function reset() { composition(false); setResult(null); setError(null); setDismissed(stamp); pendingCaret.current = null; clear(); if (inputRef.current !== null) { inputRef.current.focus({ preventScroll: true }); inputRef.current.setSelectionRange(0, 0); setCaret(0); } }
   return <div className="expression-composer"><input id={id} ref={inputRef} role="combobox" aria-label={label} aria-autocomplete="list" aria-expanded={open} aria-controls={listId} aria-activedescendant={open ? `${listId}-${choice}` : undefined} autoComplete="off" spellCheck={false} maxLength={maxLength} value={value} placeholder={placeholder}
     onFocus={event => { setFocused(true); selection(event.currentTarget); }} onBlur={() => { setFocused(false); setResult(null); }} onChange={event => { setDismissed(null); change(event.target.value); selection(event.currentTarget); }} onSelect={event => selection(event.currentTarget)}
-    onCompositionStart={() => { setComposing(true); setResult(null); }} onCompositionEnd={event => { setComposing(false); selection(event.currentTarget); }}
+    onCompositionStart={() => { composition(true); setResult(null); }} onCompositionEnd={event => { composition(false); selection(event.currentTarget); }}
     onKeyDown={event => {
       if (composing || event.nativeEvent.isComposing || event.keyCode === 229) { if (event.key === 'Enter') event.preventDefault(); return; }
       if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setDismissed(stamp); }

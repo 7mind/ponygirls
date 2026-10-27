@@ -1,4 +1,5 @@
 interface Token { start: number; end: number; text: string; literal: boolean; depth: number }
+class IncompleteExpression extends Error {}
 export interface ExpressionParts { body: string; modeDirective: string | null; mode: 'Lexical' | 'Semantic' | 'Hybrid' }
 function scalarText(value: string) {
   for (let index = 0; index < value.length; index++) {
@@ -16,8 +17,8 @@ function quotedValue(value: string): string {
   if (typeof decoded !== 'string') throw new Error('Expected a quoted search value.');
   scalarText(decoded); return decoded;
 }
-function tokens(expression: string): Token[] {
-  scalarText(expression);
+function tokens(expression: string, strict: boolean): Token[] {
+  if (strict) scalarText(expression);
   const result: Token[] = [], groups: string[] = [];
   let index = 0;
   while (index < expression.length) {
@@ -26,7 +27,8 @@ function tokens(expression: string): Token[] {
     const start = index;
     if (char === '(' || char === '{') { result.push({ start, end: ++index, text: char, literal: false, depth: groups.length }); groups.push(char); continue; }
     if (char === ')' || char === '}') {
-      if (groups.pop() !== (char === ')' ? '(' : '{')) throw new Error('Close quotes and groups before applying a quick filter.');
+      const opening = groups.pop();
+      if (strict && opening !== (char === ')' ? '(' : '{')) throw new Error('Close quotes and groups before applying a quick filter.');
       result.push({ start, end: ++index, text: char, literal: false, depth: groups.length }); continue;
     }
     if (char === ':') { result.push({ start, end: ++index, text: char, literal: false, depth: groups.length }); continue; }
@@ -37,16 +39,16 @@ function tokens(expression: string): Token[] {
       if (current === '\\') { literal = true; escaped = true; index++; continue; }
       if (current === '"') {
         literal = true;
-        if (quoted) quotedValue(expression.slice(quoteStart, index + 1)); else quoteStart = index;
+        if (quoted && strict) quotedValue(expression.slice(quoteStart, index + 1)); else if (!quoted) quoteStart = index;
         quoted = !quoted; index++; continue;
       }
       if (!quoted && /[\s:(){}]/.test(current)) break;
       index++;
     }
-    if (quoted || escaped) throw new Error('Close quotes and groups before applying a quick filter.');
+    if (quoted || escaped) throw new IncompleteExpression('Close quotes and groups before applying a quick filter.');
     result.push({ start, end: index, text: expression.slice(start, index), literal, depth: groups.length });
   }
-  if (groups.length !== 0) throw new Error('Close quotes and groups before applying a quick filter.');
+  if (groups.length !== 0) throw new IncompleteExpression('Close quotes and groups before applying a quick filter.');
   return result;
 }
 function operator(token: Token | undefined, value: string): boolean { return token !== undefined && !token.literal && token.text.toUpperCase() === value; }
@@ -70,9 +72,19 @@ function validateStructure(scanned: readonly Token[]) {
   if (scanned.length > 0 && needsOperand) invalid();
 }
 
+// This is an editing gate, not validation: complete invalid expressions still reach the server unchanged.
+export function incompleteExpression(expression: string): boolean {
+  let scanned: Token[];
+  try { scanned = tokens(expression, false); } catch (cause) { if (cause instanceof IncompleteExpression) return true; throw cause; }
+  const last = scanned.at(-1), previous = scanned.at(-2);
+  if (last === undefined) return false;
+  if (['AND', 'OR', 'NOT'].some(value => operator(last, value)) && previous?.text !== ':') return true;
+  return last.text === ':' && !last.literal;
+}
+
 // Validate structure before removing a directive; fields and search policy remain server-authoritative.
 export function splitGlobalMode(expression: string): ExpressionParts {
-  const scanned = tokens(expression), modes: number[] = [];
+  const scanned = tokens(expression, true), modes: number[] = [];
   validateStructure(scanned);
   for (let index = 0; index < scanned.length; index++) {
     const token = scanned[index]!;
@@ -93,7 +105,7 @@ export function splitGlobalMode(expression: string): ExpressionParts {
   if (operator(before, 'AND')) start = before!.start;
   else if (operator(after, 'AND')) end = after!.end;
   const body = [expression.slice(0, start).trim(), expression.slice(end).trim()].filter(Boolean).join(' ');
-  validateStructure(tokens(body));
+  validateStructure(tokens(body, true));
   return { body, modeDirective: expression.slice(first.start, last.end), mode };
 }
 function filterAttribute(attribute: string): string {
@@ -113,7 +125,7 @@ export function addExpressionFilter(expression: string, attribute: string, value
   return [modeDirective, conjoin(body, clause)].filter(part => part !== null).join(' ');
 }
 export function validateMetadataExpression(expression: string): void {
-  const scanned = tokens(expression); validateStructure(scanned);
+  const scanned = tokens(expression, true); validateStructure(scanned);
   for (let index = 0; index < scanned.length; index++) {
     const token = scanned[index]!;
     if (!token.literal && token.text.toLowerCase() === 'mode' && scanned[index + 1]?.text === ':') throw new Error('Search mode directives are not supported in Activity. Search metadata without a mode.');

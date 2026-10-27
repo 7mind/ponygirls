@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { addExpressionFilter, addExpressionField, addMetadataField, splitGlobalMode } from '../src/expression.ts';
+import { addExpressionFilter, addExpressionField, addMetadataField, splitGlobalMode, incompleteExpression } from '../src/expression.ts';
 
 test('BA specified: quick filters conjoin the entire opaque Boolean expression', () => {
   assert.equal(addExpressionFilter('A OR B', 'project', 'chronicle'), '(A OR B) AND project:"chronicle"');
@@ -39,6 +39,11 @@ test('BA specified: inline field shortcuts preserve global directives and the en
   assert.throws(() => addExpressionField('tag:"unfinished', 'tag'), /Close quotes/);
   assert.throws(() => addMetadataField('(mode:semantic)', 'tag'), /not supported in Activity/);
   assert.throws(() => addExpressionField('', 'field:injection'), /Invalid quick-filter attribute/);
+});
+
+test('BA: live editing holds incomplete structure but is not a second server validator', () => {
+  for (const expression of ['project:', 'project : ', 'after:2026-10-27T12:30:', 'project:foo:', 'A AND', 'A OR', 'NOT', 'tag:"unfinished', '(A OR B', 'A\\', String.raw`project:"bad\q" AND`, String.raw`project:"bad\q" AND tag:"unfinished`]) assert.equal(incompleteExpression(expression), true, expression);
+  for (const expression of ['', 'mode:lexical migration', 'after:2026-10-27T12:30:00Z', 'after:2026-10-27T12:30:00+00:00', 'tag:"AND"', 'project:AND', 'mode:unknown', 'unknown:value', 'tag:""', '""', '{A)', String.raw`tag:"invalid\q"`]) assert.equal(incompleteExpression(expression), false, expression);
 });
 
 interface ModeCase { input: string; valid: boolean; mode?: string; body?: string }

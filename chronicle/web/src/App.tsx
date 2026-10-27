@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ThemeControl } from './ThemeControl.tsx';
 import type { ThemeController } from './theme.ts';
 import type { FormEvent } from 'react';
@@ -9,6 +9,7 @@ import { useConnection, useResource } from './hooks.ts';
 import { ConnectionHealth } from './ConnectionHealth.tsx';
 import { Archive, emptyArchive } from './Archive.tsx';
 import type { ArchiveState } from './Archive.tsx';
+import { ArchiveReadLane } from './archive-requests.ts';
 import { Access } from './Access.tsx';
 import { McpTester, useMcpTester } from './McpTester.tsx';
 import { Activity } from './Activity.tsx';
@@ -40,25 +41,32 @@ function LoginPanel({ connection, stats }: { connection: ChronicleConnection; st
 export function App({ connection, theme }: { connection: ChronicleConnection; theme: ThemeController }) {
   const stats = useConnection(connection), [tab, setTab] = useState<'archive' | 'activity' | 'access' | 'mcp'>('archive');
   const [archive, setArchive] = useState<ArchiveState>(emptyArchive);
+  const archiveRequests = useMemo(() => new ArchiveReadLane(), [connection]);
+  useEffect(() => {
+    const unsubscribe = connection.onInvalidate(() => archiveRequests.invalidate());
+    return () => { unsubscribe(); archiveRequests.invalidate(); };
+  }, [connection, archiveRequests]);
   const [draft, setDraft] = useState('');
   const [archiveOwner, setArchiveOwner] = useState<string | null>(null);
+  const resetArchive = useCallback((owner: string | null) => {
+    archiveRequests.invalidate(); setArchive(emptyArchive()); setDraft(''); setTab('archive'); setArchiveOwner(owner);
+  }, [archiveRequests]);
   const identity = useResource(connection, stats, 'identity', '', true, () => read(connection, new Operation_Whoami(), r => r instanceof Result_Whoami ? r.user : null));
   useEffect(() => {
-    if (identity.data !== null && identity.data.id !== archiveOwner) {
-      setArchive(emptyArchive()); setDraft(''); setTab('archive'); setArchiveOwner(identity.data.id);
-    }
-  }, [identity.data?.id, archiveOwner]);
+    if (stats.terminal === 'unauthorized') { if (archiveOwner !== null) resetArchive(null); return; }
+    if (identity.data !== null && identity.data.id !== archiveOwner) resetArchive(identity.data.id);
+  }, [identity.data?.id, archiveOwner, stats.terminal, resetArchive]);
   const user = identity.data !== null && identity.data.id === archiveOwner ? identity.data : null;
   const tester = useMcpTester(connection, stats, user === null ? null : user.id, tab === 'mcp');
   const actions = useMutations(connection, identity.data?.id ?? null);
   useEffect(() => { connection.start(); return () => connection.dispose(); }, [connection]);
   async function logout() {
-    setArchive(emptyArchive()); setDraft(''); setTab('archive'); setArchiveOwner(null);
+    resetArchive(null);
     if (await actions.run(new Operation_Logout(), 'Sign out')) connection.retry();
   }
   return <><a className="skip-link" href="#main-content">Skip to content</a><header className="masthead"><a href="/" className="brand" aria-label="Chronicle home"><span className="brand-mark" aria-hidden="true">C<span>·</span></span>chronicle</a>{user && <><nav aria-label="Main navigation">{(['archive', 'activity', 'access', 'mcp'] as const).map(item => <button className={tab === item ? 'nav-active' : ''} onClick={() => setTab(item)} key={item} aria-current={tab === item ? 'page' : undefined}>{item}</button>)}</nav><div className="identity"><span>{user.login}</span><button className="text-button" disabled={actions.busy || actions.uncertain !== null} onClick={() => void logout()}>Sign out</button></div></>}<ThemeControl controller={theme}/></header>
     <div id="main-content" tabIndex={-1}><div className="global-mutation-notices"><MutationNotice actions={actions}/></div>{identity.error && stats.terminal !== 'unauthorized' && <ErrorNotice>{identity.error}</ErrorNotice>}
-      {identity.data === null ? <LoginPanel connection={connection} stats={stats}/> : user === null ? <div className="loading-line" role="status">Preparing an account-scoped archive…</div> : tab === 'archive' ? <Archive connection={connection} stats={stats} user={user} draft={draft} setDraft={setDraft} archive={archive} setArchive={setArchive}/> : tab === 'activity' ? <Activity connection={connection} stats={stats} user={user} actions={actions}/> : tab === 'mcp' ? <McpTester tester={tester}/> : <Access connection={connection} stats={stats} user={user} actions={actions}/>}</div>
+      {identity.data === null ? <LoginPanel connection={connection} stats={stats}/> : user === null ? <div className="loading-line" role="status">Preparing an account-scoped archive…</div> : tab === 'archive' ? <Archive connection={connection} requests={archiveRequests} stats={stats} user={user} draft={draft} setDraft={setDraft} archive={archive} setArchive={setArchive}/> : tab === 'activity' ? <Activity connection={connection} stats={stats} user={user} actions={actions}/> : tab === 'mcp' ? <McpTester tester={tester}/> : <Access connection={connection} stats={stats} user={user} actions={actions}/>}</div>
     <footer className="app-footer"><span>Chronicle</span></footer><ConnectionHealth connection={connection} stats={stats}/>
   </>;
 }

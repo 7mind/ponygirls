@@ -50,7 +50,7 @@ try {
     const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 180; });
     const first = fixture.calls.find(call => call.operation instanceof api.Operation_Archive).operation.query;
     assert.equal(first.expression, ''); assert.equal(first.sort, api.ArchiveSort.LastTimestamp); assert.equal(first.direction, api.SortDirection.Desc);
-    assert.ok(fixture.calls[0].operation instanceof api.Operation_Hello); assert.deepEqual(fixture.calls[0].operation.versions, ['1.4.0']);
+    assert.ok(fixture.calls[0].operation instanceof api.Operation_Hello); assert.deepEqual(fixture.calls[0].operation.versions, ['1.5.0']);
     assert.equal(await page.getByRole('heading', { level: 1 }).count(), 0); assert.equal(await page.getByRole('radio').count(), 0);
     await appendUntil(page, '.archive-table-scroll', '.archive-row', 180);
     assert.equal(new Set(await page.locator('.archive-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-session-id')))).size, 180);
@@ -79,8 +79,8 @@ try {
     await until(() => Promise.resolve(fixture.pendingArchive.length > 0), 'Expected held cursor request');
     const replacement = fixture.archiveAt(0).with({ head: fixture.archiveAt(0).head.with({ metadata: fixture.metadata.with({ title: 'New query result only' }) }) });
     fixture.archiveRows = [replacement]; await search(page, 'changed query');
-    await page.getByRole('button', { name: 'New query result only', exact: true }).waitFor();
-    fixture.releaseArchive(); await page.waitForTimeout(100);
+    fixture.releaseArchive();
+    await page.getByRole('button', { name: 'New query result only', exact: true }).waitFor(); await page.waitForTimeout(100);
     assert.equal(await page.locator('.archive-row').count(), 1); assert.equal(await page.getByText('Synthetic conversation 051', { exact: true }).count(), 0);
     assert.equal(await page.locator('.archive-table-scroll').evaluate(element => element.scrollTop), 0);
     await context.close();

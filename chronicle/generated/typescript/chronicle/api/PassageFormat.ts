@@ -36,7 +36,7 @@ export class PassageFormat_JsonCodec {
         return PassageFormat_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.4.0'
+    public static readonly BaboonDomainVersion = '1.5.0'
     public baboonDomainVersion() {
         return PassageFormat_JsonCodec.BaboonDomainVersion
     }

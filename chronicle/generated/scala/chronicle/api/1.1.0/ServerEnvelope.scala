@@ -4,7 +4,7 @@ import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, Baboon
 import java.util.UUID
 
 package chronicle.api.v1_1_0 {
-  @deprecated("Version 1.1.0 is deprecated, you should migrate to 1.4.0")
+  @deprecated("Version 1.1.0 is deprecated, you should migrate to 1.5.0")
   final case class ServerEnvelope(
     requestId: UUID,
     result: Result
@@ -30,7 +30,7 @@ package chronicle.api.v1_1_0 {
     @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[ServerEnvelope] = ServerEnvelope_JsonCodec.instance
   }
   
-  @deprecated("Version 1.1.0 is deprecated, you should migrate to 1.4.0")
+  @deprecated("Version 1.1.0 is deprecated, you should migrate to 1.5.0")
   object ServerEnvelope_JsonCodec extends BaboonJsonCodec.BaseGenerated[ServerEnvelope, BaboonJsonCodec[ServerEnvelope]] {
     def encode(ctx: BaboonCodecContext, value: ServerEnvelope): Json = {
       if (this ne LazyInstance.value) {

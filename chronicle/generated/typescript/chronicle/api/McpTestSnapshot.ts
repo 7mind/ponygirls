@@ -89,7 +89,7 @@ export class McpTestSnapshot implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.4.0'
+    public static readonly BaboonDomainVersion = '1.5.0'
     public baboonDomainVersion() {
         return McpTestSnapshot.BaboonDomainVersion
     }
@@ -101,11 +101,11 @@ export class McpTestSnapshot implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return McpTestSnapshot.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0"]
     public baboonSameInVersions() {
         return McpTestSnapshot.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical" }
     public baboonForwardReadable() {
         return McpTestSnapshot.BaboonForwardReadable
     }
@@ -153,7 +153,7 @@ export class McpTestSnapshot_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.4.0'
+    public static readonly BaboonDomainVersion = '1.5.0'
     public baboonDomainVersion() {
         return McpTestSnapshot_JsonCodec.BaboonDomainVersion
     }

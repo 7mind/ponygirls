@@ -15,7 +15,7 @@ class McpTestWireTest extends munit.FunSuite {
   private val now=Instant.parse("2026-01-01T00:00:00.123456789Z")
   private def snapshot(text: String,state: McpRunState): McpRunSnapshot = McpRunSnapshot(instance,run,state,now,List(McpRunEvent(Long.MaxValue,now,McpRunItem.Response(Int.MaxValue,Int.MaxValue,text))),Long.MaxValue,true,Some(McpRunFailure("sanitized","fixed failure")))
 
-  test("BA: every state, item, timestamp, counter, and failure uses the exact API1.4 shape") {
+  test("BA: every state, item, timestamp, counter, and failure retains API1.4 and API1.5 encoding") {
     McpRunState.values.foreach { state =>
       val domain=snapshot("\u0085\"\\🙂",state).copy(events=List(
         McpRunEvent(1L,now,McpRunItem.ToolCall("call","provided-tool",0,1,"{\"q\":\"🙂\"}")),
@@ -28,9 +28,11 @@ class McpTestWireTest extends munit.FunSuite {
       assertEquals(dto.events(1).item,McpTestItem.ToolResult("call",0,1,"{}"))
       assertEquals(dto.lastSequence,Long.MaxValue)
       assertEquals(dto.failure,Some(Failure("sanitized","fixed failure")))
-      val encoded=protocol.encodeServer("1.4.0",ServerEnvelope(requestId,wire.snapshot(domain)))
-      assertEquals(wire.bytes(domain),encoded.noSpaces.getBytes(UTF_8).length.toLong)
-      assertEquals(Wire.decode(ServerEnvelope.codecJson,encoded).result,wire.snapshot(domain))
+      wire.supportedVersions.foreach { version =>
+        val encoded=wire.encode(ServerEnvelope(requestId,wire.snapshot(domain)),version)
+        assertEquals(wire.bytes(domain),encoded.noSpaces.getBytes(UTF_8).length.toLong)
+        assertEquals(Wire.decode(ServerEnvelope.codecJson,encoded).result,wire.snapshot(domain))
+      }
     }
   }
 
@@ -38,11 +40,13 @@ class McpTestWireTest extends munit.FunSuite {
     val empty=snapshot("",McpRunState.Failed)
     val overhead=wire.bytes(empty).toInt
     val exact=empty.copy(events=List(McpRunEvent(Long.MaxValue,now,McpRunItem.Response(Int.MaxValue,Int.MaxValue,"x"*(McpRunLimits.pageBytes-overhead)))))
-    val json=wire.encode(ServerEnvelope(requestId,wire.snapshot(exact)))
-    assertEquals(json.noSpaces.getBytes(UTF_8).length,McpRunLimits.pageBytes)
     assertEquals(wire.bytes(exact),McpRunLimits.pageBytes.toLong)
     val excessive=exact.copy(events=List(McpRunEvent(Long.MaxValue,now,McpRunItem.Response(Int.MaxValue,Int.MaxValue,"x"*(McpRunLimits.pageBytes-overhead+1)))))
-    assertEquals(intercept[DomainError](wire.encode(ServerEnvelope(requestId,wire.snapshot(excessive)))).code,"mcp-page-invariant")
+    wire.supportedVersions.foreach { version =>
+      val json=wire.encode(ServerEnvelope(requestId,wire.snapshot(exact)),version)
+      assertEquals(json.noSpaces.getBytes(UTF_8).length,McpRunLimits.pageBytes)
+      assertEquals(intercept[DomainError](wire.encode(ServerEnvelope(requestId,wire.snapshot(excessive)),version)).code,"mcp-page-invariant")
+    }
   }
 
   test("BA: catalog maps injected definitions/model/limits without a copied registry or truncation") {
@@ -56,7 +60,7 @@ class McpTestWireTest extends munit.FunSuite {
     assertEquals(dto.reasoningPolicy,"max")
     assertEquals(dto.limits,McpTestLimits(4,8,16384,65536,131072,524288,1048576,256,49152,900,600))
     val oversized=domain.copy(tools=List(tools.head.copy(description="\u0085"*10000)))
-    assertEquals(intercept[DomainError](wire.encode(ServerEnvelope(requestId,wire.catalog(oversized)))).code,"mcp-catalog-limit")
+    wire.supportedVersions.foreach(version => assertEquals(intercept[DomainError](wire.encode(ServerEnvelope(requestId,wire.catalog(oversized)),version)).code,"mcp-catalog-limit"))
     assertEquals(wire.catalog(oversized).result.tools.head.description.length,10000)
   }
 }

@@ -58,11 +58,11 @@ export class VersionInfo implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return VersionInfo.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"]
     public baboonSameInVersions() {
         return VersionInfo.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical" }
     public baboonForwardReadable() {
         return VersionInfo.BaboonForwardReadable
     }
@@ -75,7 +75,7 @@ export class VersionInfo implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.4.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.5.0 */
 export class VersionInfo_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: VersionInfo): unknown {
         if (this !== VersionInfo_JsonCodec.lazyInstance.value) {

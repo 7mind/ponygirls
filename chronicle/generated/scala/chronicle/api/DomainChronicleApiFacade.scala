@@ -6,6 +6,7 @@ package chronicle.api {
     locally { register(BaboonDomainVersion("chronicle.api", "1.1.0"), _root_.chronicle.api.v1_1_0.BaboonCodecsJson, _root_.chronicle.api.v1_1_0.BaboonCodecsUeba); () }
     locally { register(BaboonDomainVersion("chronicle.api", "1.2.0"), _root_.chronicle.api.v1_2_0.BaboonCodecsJson, _root_.chronicle.api.v1_2_0.BaboonCodecsUeba); () }
     locally { register(BaboonDomainVersion("chronicle.api", "1.3.0"), _root_.chronicle.api.v1_3_0.BaboonCodecsJson, _root_.chronicle.api.v1_3_0.BaboonCodecsUeba); () }
-    locally { register(BaboonDomainVersion("chronicle.api", "1.4.0"), _root_.chronicle.api.BaboonCodecsJson, _root_.chronicle.api.BaboonCodecsUeba); () }
+    locally { register(BaboonDomainVersion("chronicle.api", "1.4.0"), _root_.chronicle.api.v1_4_0.BaboonCodecsJson, _root_.chronicle.api.v1_4_0.BaboonCodecsUeba); () }
+    locally { register(BaboonDomainVersion("chronicle.api", "1.5.0"), _root_.chronicle.api.BaboonCodecsJson, _root_.chronicle.api.BaboonCodecsUeba); () }
   }
 }

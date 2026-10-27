@@ -1,0 +1,20 @@
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__Ping__From__1_4_0
+    extends AbstractConversion[v1_4_0.Result.Ping, Result.Ping] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: v1_4_0.Result.Ping
+      ): Result.Ping = {
+        val nonce: String = _from.nonce
+        Result.Ping(
+                nonce
+             )
+      }
+      override def versionFrom: String = "1.4.0"
+      override def versionTo: String = "1.5.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#Ping"
+  }
+}

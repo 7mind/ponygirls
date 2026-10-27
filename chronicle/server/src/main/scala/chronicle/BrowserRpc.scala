@@ -28,7 +28,7 @@ final class BrowserRpc(app: Application,runs: McpTestRuns,wire: McpTestWire) {
 
   def execute(identity: Identity,envelope: ClientEnvelope,version: String,connection: McpRunConnection): IO[BrowserReply] = IO.defer {
     def requireTester(): Unit = {
-      Check(version=="1.4.0","version-mismatch","MCP testing requires API 1.4.0")
+      Check(wire.supportedVersions.contains(version),"version-mismatch","MCP testing requires API 1.4.0 or 1.5.0")
       identity.requireBrowser()
       identity.requireScope(Scope.Read)
     }
@@ -54,11 +54,11 @@ final class BrowserRpc(app: Application,runs: McpTestRuns,wire: McpTestWire) {
   def materialize(reply: BrowserReply,currentIdentity: IO[Identity],version: String,protocol: VersionedWire): IO[Json] = IO.defer { reply match {
     case BrowserReply.Ordinary(envelope) => IO(protocol.encodeServer(version,envelope))
     case BrowserReply.McpCatalog(id) =>
-      Check(version=="1.4.0","version-mismatch","MCP testing requires API 1.4.0")
-      currentIdentity.flatMap(runs.catalog).map(value => wire.encode(ServerEnvelope(id,wire.catalog(value))))
+      Check(wire.supportedVersions.contains(version),"version-mismatch","MCP testing requires API 1.4.0 or 1.5.0")
+      currentIdentity.flatMap(runs.catalog).map(value => wire.encode(ServerEnvelope(id,wire.catalog(value)),version))
     case BrowserReply.McpRead(handle) =>
-      Check(version=="1.4.0","version-mismatch","MCP testing requires API 1.4.0")
+      Check(wire.supportedVersions.contains(version),"version-mismatch","MCP testing requires API 1.4.0 or 1.5.0")
       currentIdentity.flatMap(identity => runs.read(identity,handle.instanceId,handle.runId,handle.afterSequence,handle.limit))
-        .map(value => wire.encode(ServerEnvelope(handle.requestId,wire.snapshot(value))))
+        .map(value => wire.encode(ServerEnvelope(handle.requestId,wire.snapshot(value)),version))
   }}
 }

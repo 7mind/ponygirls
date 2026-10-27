@@ -6,7 +6,7 @@ import java.util.UUID
 
 final class McpTestWire(protocol: VersionedWire) extends McpRunPageEncoding {
   private val sizingRequestId=new UUID(0L,0L)
-  private val version="1.4.0"
+  val supportedVersions=List("1.4.0","1.5.0")
 
   def snapshot(value: McpRunSnapshot): Result.McpTestRun = Result.McpTestRun(McpTestSnapshot(
     value.instanceId,value.runId,value.state match {
@@ -30,9 +30,10 @@ final class McpTestWire(protocol: VersionedWire) extends McpRunPageEncoding {
       McpRunLimits.maximumTraceBytes,McpRunLimits.maximumEvents,McpRunLimits.pageBytes,McpRunLimits.deadlineSeconds,McpRunLimits.retentionSeconds),
     value.tools.map(tool => McpToolDefinition(tool.name,tool.description,tool.inputSchemaJson.noSpaces))))
 
-  def bytes(value: McpRunSnapshot): Long = JsonUtf8Size(protocol.encodeServer(version,ServerEnvelope(sizingRequestId,snapshot(value))))
+  def bytes(value: McpRunSnapshot): Long = supportedVersions.map(version => JsonUtf8Size(protocol.encodeServer(version,ServerEnvelope(sizingRequestId,snapshot(value))))).max
 
-  def encode(envelope: ServerEnvelope): Json = {
+  def encode(envelope: ServerEnvelope,version: String): Json = {
+    Check(supportedVersions.contains(version),"version-mismatch","MCP testing requires API 1.4.0 or 1.5.0")
     val json=protocol.encodeServer(version,envelope)
     val code=envelope.result match {
       case _: Result.McpTestTools => "mcp-catalog-limit"

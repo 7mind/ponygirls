@@ -52,7 +52,7 @@ export class ArchiveSort_JsonCodec {
         return ArchiveSort_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.4.0'
+    public static readonly BaboonDomainVersion = '1.5.0'
     public baboonDomainVersion() {
         return ArchiveSort_JsonCodec.BaboonDomainVersion
     }

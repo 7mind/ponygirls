@@ -44,7 +44,7 @@ export function ActivityJobSort_parse(s: string): ActivityJobSort {
     return found;
 }
 
-/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.4.0 */
+/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.5.0 */
 export class ActivityJobSort_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ActivityJobSort): unknown {
         if (this !== ActivityJobSort_JsonCodec.lazyInstance.value) {

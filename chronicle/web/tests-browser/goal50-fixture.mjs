@@ -6,6 +6,7 @@ export class Goal50Fixture extends ChronicleFixture {
   signals = new EventEmitter(); hintPending = []; holdHints = false; hintResult = query => new api.ExpressionHintsResult('synthetic-server-hash', NOW, 0, query.expression.length, [new api.ExpressionHint(api.ExpressionHintKind.Field, 'project:', 'project:', 8)], false);
   holdUsage = false; usagePending = []; usageDenied = false; reindexDrop = false; reindexConflict = false; reindexMalformed = false;
   passageMode = 'legacy'; passageDenied = false;
+  get publishedFormat() { return this.passageMode === 'legacy' ? api.PassageFormat.LegacyAnnotations : this.passageMode === 'unverified' ? undefined : api.PassageFormat.ContiguousProblems; }
   tools = ['source_catalog', 'dynamic_tool_from_registry', 'authorized_read']; incarnation = INSTANCE; mcpRuns = new Map(); mcpDropStart = false; mcpReadFailure = null; mcpAuthorityLost = false; mcpHoldReads = false; mcpCaptureReads = false; mcpPending = []; cancelComplete = false; mcpWrongTerminal = false; cancelAuthorityLost = false; catalogDenied = false; holdCatalogs = false; catalogPending = []; holdCancels = false; cancelPending = [];
   constructor() { super(); this.goal50Operation = (operation, envelope, send, entry) => { this.signals.emit('request', operation); return this.handle(operation, envelope, send, entry); }; }
   waitCall(Type, count) {

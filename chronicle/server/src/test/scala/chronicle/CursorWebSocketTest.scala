@@ -81,7 +81,7 @@ final class CursorWebSocketTest extends munit.FunSuite {
                 reply.result
               }
               try {
-                assert(request(Operation.Hello(List("1.3.0"))).isInstanceOf[Result.Hello])
+                assert(request(Operation.Hello(List(Wire.versions.current))).isInstanceOf[Result.Hello])
                 List(SortDirection.Asc,SortDirection.Desc).foreach { direction =>
                   val archive=ArchiveQuery("mode:lexical",ArchiveSort.Title,direction,None,1)
                   val first=request(Operation.Archive(archive)).asInstanceOf[Result.Archive].result

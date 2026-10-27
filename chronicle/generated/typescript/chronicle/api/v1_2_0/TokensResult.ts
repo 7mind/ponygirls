@@ -43,11 +43,11 @@ export class TokensResult implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return TokensResult.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0", "1.4.0"]
+    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0", "1.4.0", "1.5.0"]
     public baboonSameInVersions() {
         return TokensResult.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical" }
     public baboonForwardReadable() {
         return TokensResult.BaboonForwardReadable
     }
@@ -60,7 +60,7 @@ export class TokensResult implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.4.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.5.0 */
 export class TokensResult_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: TokensResult): unknown {
         if (this !== TokensResult_JsonCodec.lazyInstance.value) {

@@ -1,0 +1,8 @@
+import {Operation_Hello as Hello__1_3_0} from '../v1_3_0/Operation.js'
+import {Operation_Hello as v1_4_0_Operation_Hello} from './Operation.js'
+
+export function convert__operation__hello__from__1_3_0(from: Hello__1_3_0): v1_4_0_Operation_Hello {
+    return new v1_4_0_Operation_Hello (
+        from.versions
+    )
+}

@@ -207,6 +207,7 @@ class ArchiveIndexTest extends munit.FunSuite {
     val semantic=browse(index,"a",query("mode:semantic unrelated",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)).rows.head
     assertEquals(semantic.head.revision,2); assertEquals(semantic.head.metadata,next.metadata)
     assertEquals(semantic.head.view,ContentView(2,None)); assertEquals(semantic.publishedView,Some(published)); assertEquals(semantic.matchedView,Some(published))
+    assertEquals(Wire.encode(ArchiveRow.codecJson,semantic).hcursor.get[Option[String]]("publishedFormat"),Right(Some("LegacyAnnotations")))
     assert(semantic.tags.contains("annotation-work"))
     val hybrid=browse(index,"a",query("successor",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)).rows.head
     assertEquals(hybrid.matchedView,Some(ContentView(2,None)))

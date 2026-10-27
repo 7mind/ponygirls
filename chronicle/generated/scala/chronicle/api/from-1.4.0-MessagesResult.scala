@@ -1,0 +1,26 @@
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__MessagesResult__From__1_4_0
+    extends AbstractConversion[v1_4_0.MessagesResult, MessagesResult] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: v1_4_0.MessagesResult
+      ): MessagesResult = {
+        val messages: List[Message] = _from.messages.map(e1 => conversions.convertWithContext[C, v1_4_0.Message, Message](context, e1)).toList
+        val total: Int = _from.total
+        val offset: Int = _from.offset
+        val view: ContentView = conversions.convertWithContext[C, v1_4_0.ContentView, ContentView](context, _from.view)
+        MessagesResult(
+                messages,
+                total,
+                offset,
+                view
+             )
+      }
+      override def versionFrom: String = "1.4.0"
+      override def versionTo: String = "1.5.0"
+      override def typeId: String = "chronicle.api/:#MessagesResult"
+  }
+}
