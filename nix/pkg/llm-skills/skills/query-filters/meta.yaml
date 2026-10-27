@@ -3,7 +3,8 @@ description: >-
   Design, implement or review structured filter languages and their CQ/GitHub-like
   editors for lists and tables: typed attributes, Boolean grammar, positioned
   diagnostics, inline shortcuts/chips, exact cursor-aware completion, draft versus
-  applied queries, keyboard/IME/accessibility and authorized bounded suggestions.
+  applied queries, bounded debounced live application, keyboard/IME/accessibility
+  and authorized bounded suggestions.
   Use when adding or reworking a filter/query bar, its grammar or completion
   contract; not for plain free-text search, backend-only query optimization or
   documentation-only syntax help. Respect the project's existing dialect,

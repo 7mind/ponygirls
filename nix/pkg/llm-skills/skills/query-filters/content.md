@@ -135,10 +135,31 @@ Hint failure must not prevent manual editing or imply query invalidity.
 
 Completion/snippets edit the draft. Search/Apply captures one exact expression
 for editor and request state; do not submit stale state immediately after setting
-it. Live filtering is appropriate only when explicitly chosen for the product,
-data location, cost and privacy model. For remote/live application, debounce,
-bound/cancel work and use authoritative executable validation, not merely an
-absence of completion errors. Do not silently add per-keystroke provider costs.
+it. Choose the product's application policy explicitly. When dynamic results are
+chosen, use **debounced, latest-only live application**: keep typing responsive,
+apply the exact settled draft, and make the pending/submitted/result distinction
+visible. Enter can flush the current eligible intent; declare whether explicit
+Search also requests authoritative diagnostics for an incomplete original draft.
+Neither path may submit during composition or execute a rewritten query.
+
+For remote execution, bound starts, not only state commits: one unsettled request
+plus one replaceable unsent intent across query, sort, page and refresh changes.
+Keep physical admission across logical key changes and navigation within its
+connection lifetime. Each queued intent owns its captured request and promise;
+never give a new query the active query's result as generic single-flight reuse.
+Settle superseded intents explicitly, not as fabricated empty successes. Coalesce
+refresh into an already-unsent current read rather than issuing it again afterward.
+Cancellation, timeout and disconnect do not prove backend/provider work stopped;
+state the actual bound rather than promising bounded billing or cancellation.
+
+Withhold structurally incomplete drafts from automatic execution using lenient
+editing analysis. Continue scanning past earlier complete-invalid literals so a
+later unfinished quote, group, escape, operand or field continuation is not missed.
+Do not reject complete date literals merely because they contain colons. Complete
+unknown fields/typed values/modes still reach authoritative validation unchanged;
+absence of completion errors is not validation. Keep semantic/hybrid costs and
+admission explicit; do not silently add per-keystroke provider work or force a
+cheaper search mode. Hints remain a separate provider-free editing service.
 Refresh/theme changes must not submit an unsent draft.
 
 Keep the submitted query and query/scope owning displayed rows explicit. While
@@ -152,6 +173,9 @@ prior owner's query.
 
 Provide a named in-field clear/reset control. Decide whether it clears only the
 draft or also applies the empty query; update both coherently and retain focus.
+For live application, clear cancels obsolete debounce/queued intents immediately;
+applying the empty query still obeys physical admission and cannot resurrect an
+older draft. A flushed Enter or clear must not fire again when its timer expires.
 URL sharing and persistence are explicit privacy/product decisions, not defaults.
 Do not put private filters in URLs, logs or browser storage without authorization.
 Where enabled, use a reversible query/view encoding, principal/view scoping,
@@ -166,9 +190,11 @@ Handle same-text/caret-only acceptance or reset immediately, without leaving a
 pending command to corrupt later typing. Support selections deliberately or
 suppress non-collapsed completion.
 
-During IME composition suppress hints, acceptance, reset and form submission.
-Guard native composition/key events as well as component state; resume from
-committed text. Synthetic composition events do not prove real IME behavior.
+During IME composition suppress hints, acceptance, automatic execution and form
+submission, including pointer Search. Guard native composition/key events as well
+as component state; resume from committed text. If explicit reset is available,
+it must cancel composition and apply the documented empty query, never interim
+text; otherwise defer it. Synthetic composition events do not prove real IME behavior.
 Define and test:
 - Up/Down select an option, keep it visible and retain input focus.
 - Enter inserts an active suggestion without submitting; otherwise follows the
@@ -207,6 +233,13 @@ Use `constructive-test-taxonomy` for test placement; prefer public behavior.
 - Controlled browser journeys: shortcuts, Apply/live policy, reset, arrows,
   Enter/Tab/Escape, pointer, nested overlays, focus restoration, mid-token edits,
   selections and composition. Assert exact text/caret, requests and non-submission.
+- Controlled-time live journeys: burst typing before/at the debounce boundary,
+  Enter flush and immediate clear without duplicate timers, incomplete prefixes
+  after complete-invalid literals, and valid colon-containing dates. Hold an
+  active read while replacing several queued queries, sorting and refreshing;
+  only the latest unsent request may start afterward. Include held cursor and
+  multi-page refresh chains, tab unmount/remount and owner changes with pending
+  timers/queued reads. Verify stale replies cannot append, reopen or cross owners.
 - Deferred replies across edits, dismissal, target/scope, reconnect and account/
   revocation changes; real authorization/provider-free adapter checks, not only
   UI stubs. Distinguish no suggestions/results, loading, unavailable hints, invalid
