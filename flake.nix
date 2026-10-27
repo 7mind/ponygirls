@@ -303,6 +303,7 @@
           chronicle-web = self.packages.${system}.chronicle-web;
           chronicle-collector = self.packages.${system}.chronicle-collector;
           default-models = defaultModelsCheck;
+          general-context-hm-eval = import ./nix/tests/general-context-hm-eval.nix { inherit pkgs nixpkgs inputs; };
           notify-module = pkgs.callPackage ./nix/tests/notify-module.nix { };
           atlassian-hm-eval = import ./nix/tests/atlassian-hm-eval.nix { inherit pkgs nixpkgs inputs; };
           tui-terminal = self.packages.${system}.tui-tmux.tests.terminal;

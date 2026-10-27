@@ -31,6 +31,13 @@ let
   # pre-composed llm-context-with-env.
   llmSkills = pkgs.callPackage ../pkg/llm-skills/default.nix { };
   llmContexts = pkgs.callPackage ../pkg/llm-contexts/default.nix { };
+  generalContext = config.smind.hm.dev.llm.generalContext;
+  enabledSections = lib.filter (section: section.enable) (lib.attrValues generalContext.sections);
+  orderedSections = lib.sort (a: b: a.order < b.order) enabledSections;
+  generalContextText = lib.concatStringsSep "\n\n" (
+    map (text: lib.removeSuffix "\n" text)
+      ([ generalContext.preamble ] ++ map (section: section.text) orderedSections)
+  ) + "\n";
 
   # Canonical llmAssets bundle from the two in-repo packages: skills from
   # llm-skills, general context from llm-contexts. Symmetric with
@@ -39,7 +46,7 @@ let
     skills = llmSkills.skills;
     commands = { };
     agents = { };
-    context = [ llmContexts.general ];
+    context = lib.optional generalContext.enable generalContextText;
   };
 
   # Aggregate every contributed asset bundle into one merged view. Mirrors
@@ -67,6 +74,58 @@ in
 {
   options = {
     smind.hm.dev.llm.enable = lib.mkEnableOption "LLM development environment variables";
+
+    smind.hm.dev.llm.generalContext = {
+      enable = lib.mkEnableOption "the shared general coding guidelines" // { default = true; };
+      preamble = lib.mkOption {
+        type = lib.types.lines;
+        default = llmContexts.preamble;
+        description = "Text before the general guideline sections. Integration context is configured separately.";
+      };
+      sections = lib.mkOption {
+        type = lib.types.submodule {
+          options = lib.mapAttrs (name: section: lib.mkOption {
+            default = { };
+            description = "The ${name} general guideline section.";
+            type = lib.types.submodule ({ config, ... }: {
+              options = {
+                enable = lib.mkEnableOption "the ${name} guidelines" // { default = true; };
+                text = lib.mkOption {
+                  type = lib.types.lines;
+                  default = if section.fragments == [ ] then section.text else
+                    section.heading + lib.concatMapStrings (fragment:
+                      lib.optionalString config.rules.${fragment.rule}.enable fragment.text
+                    ) section.fragments;
+                  description = "Complete Markdown section, including its heading. An explicit value replaces generated text and takes precedence over rule flags.";
+                };
+                order = lib.mkOption {
+                  type = lib.types.int;
+                  default = section.order;
+                  description = "Ascending section order; ties are sorted by section name.";
+                };
+                rules = lib.mkOption {
+                  type = lib.types.submodule {
+                    options = lib.genAttrs
+                      (lib.unique (map (fragment: fragment.rule) section.fragments))
+                      (rule: lib.mkOption {
+                        default = { };
+                        description = "The ${rule} policy within the ${name} section.";
+                        type = lib.types.submodule {
+                          options.enable = lib.mkEnableOption "the ${rule} policy in ${name}" // { default = true; };
+                        };
+                      });
+                  };
+                  default = { };
+                  description = "Policy flags local to this section. Repeated fragments of the same policy share one flag.";
+                };
+              };
+            });
+          }) llmContexts.sections;
+        };
+        default = { };
+        description = "Independently enabled, replaced, and ordered general guideline sections shared by Claude Code, Codex, and Pi.";
+      };
+    };
 
     # Read-only views of the merged asset bundles, exposed so sibling modules
     # can reuse the same skill set and memory text without re-folding

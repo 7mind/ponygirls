@@ -139,6 +139,11 @@ The main knobs (all under `smind.hm.dev.llm`):
   definitions, and memory fragments; everything is merged and delivered to all
   three agents (`merged.skills`, `merged.commands`, `merged.agents`,
   `merged.contextText` expose the result).
+- **`generalContext`** — disable or customize the built-in general guidelines
+  shared by Claude Code, Codex, and Pi. Every section has `enable`, `text`,
+  and `order` options, with finer policy flags under selected sections'
+  `rules`; integration guidance and contributed assets remain independent.
+  See the examples below.
 - **`pi.providers.<name>.enable`** — opt-in inference provider packages for Pi
   (xAI/Grok, Ollama Cloud, …).
 - **`crawl4ai`** — register the Crawl4AI MCP endpoint with Claude Code, Codex,
@@ -156,6 +161,87 @@ The main knobs (all under `smind.hm.dev.llm`):
   `/dev/kvm` and a persistent state directory, so an agent can run its own
   NixOS/Ubuntu test VMs without host disks or a privileged VM manager — and
   **forge tokens** (`yolo.forgeTokens`), see below.
+
+The general guidelines and rule fragments are kept together in
+[`general-context.nix`](nix/pkg/llm-contexts/general-context.nix), in document
+order. To customize them in your Home Manager configuration:
+
+```nix
+smind.hm.dev.llm.generalContext = {
+  sections.hammer-mode.enable = false;
+  sections.code-style.text = builtins.readFile ./coding-policy.md;
+  sections.tools.order = 50;
+  sections.core-principles.rules.strict-terminology.enable = false;
+  sections.goal-driven-execution.rules.mandatory-plans.enable = false;
+};
+```
+
+All sections and rules are enabled by default, with the original content and
+order. `text` replaces the complete section, including its Markdown heading,
+and takes precedence over that section's rule flags. Disabling a section
+removes its heading and all its rules regardless of their individual flags.
+Sections sort by ascending `order` (defaults are 100, 200, …, 1100);
+equal orders sort by section name. Existing numbered headings are preserved
+when disabling or reordering sections. The supported section names, in default
+order, are:
+
+- `hammer-mode`
+- `core-principles`
+- `references`
+- `think-before-coding`
+- `simplicity-first`
+- `surgical-changes`
+- `goal-driven-execution`
+- `reproduction-discipline`
+- `code-style`
+- `project-structure`
+- `tools`
+
+Finer controls use
+`generalContext.sections.<section>.rules.<rule>.enable`. The supported rules
+are:
+
+| Section | Rules |
+| --- | --- |
+| `hammer-mode` | `anti-sycophancy`, `evidence-discipline`, `inspection-claims`, `challenge-premises`, `abrasive-language`, `interaction-analysis` |
+| `core-principles` | `read-before-editing`, `concise-output`, `prefer-edits`, `avoid-redundant-reads`, `test-before-done`, `reproduction-first`, `strict-terminology`, `terminology-clarification`, `evidence-based-reasoning`, `operational-criteria`, `persistence`, `fail-fast`, `explicit-arguments`, `minimal-comments`, `root-cause-corrections`, `clarification`, `version-discipline` |
+| `goal-driven-execution` | `success-criteria`, `reproduction-first`, `mandatory-plans` |
+| `code-style` | `type-safety`, `solid`, `no-globals`, `named-constants`, `internal-compatibility`, `composition`, `dry` |
+| `project-structure` | `documentation-paths`, `debug-script-paths`, `service-boundaries`, `ignore-rules` |
+| `tools` | `debugger-use`, `processor-detection`, `nix-store-traversal`, `batch-mode`, `worktree-isolation` |
+
+Rule flags affect only their containing section. Within a section, a flag
+removes every fragment belonging to that rule; for example,
+`hammer-mode.rules.anti-sycophancy.enable = false` removes both the opening
+instructions and the later enthusiasm-mirroring instruction. Disabling every
+rule leaves the section heading; disable the section to remove it too.
+
+Reproduction-first guidance appears in three sections. To remove all three
+occurrences:
+
+```nix
+smind.hm.dev.llm.generalContext.sections = {
+  core-principles.rules.reproduction-first.enable = false;
+  goal-driven-execution.rules.reproduction-first.enable = false;
+  reproduction-discipline.enable = false;
+};
+```
+
+`generalContext.preamble` replaces the title and introductory text. To remove
+all built-in general guidelines, including the preamble, and supply your own:
+
+```nix
+smind.hm.dev.llm.generalContext.enable = false;
+smind.hm.dev.llm.memorySections = lib.mkAfter [
+  (builtins.readFile ./agent-instructions.md)
+];
+```
+
+This retains context from integrations and other modules, along with installed
+skills, commands, and agents. Pi's separate operating manual in
+`APPEND_SYSTEM.md` is unaffected. These options configure the Home Manager
+context; the standalone `llm-contexts` and `llm-context-with-env` packages
+continue to contain the default guidelines.
 
 To configure harnesses **only in named yolo profiles**, leaving their native
 (default-profile) configuration unmanaged:
