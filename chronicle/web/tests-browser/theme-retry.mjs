@@ -16,6 +16,8 @@ const address = server.httpServer.address();
 if (address === null || typeof address === 'string') throw new Error('Missing synthetic origin');
 const origin = `http://127.0.0.1:${address.port}`, browser = await chromium.launch({ headless: true }), errors = [];
 const AA_TEXT = 4.5, AA_CONTROL = 3;
+const MIN_LIGHT_CANVAS_LUMINANCE = .85, MIN_DARK_CANVAS_LUMINANCE = .02, MAX_DARK_CANVAS_LUMINANCE = .12, MIN_DARK_SURFACE_CONTRAST = 1.25;
+const THEME_CANVAS_RGB = { light: 'rgb(241, 245, 249)', dark: 'rgb(36, 44, 55)' };
 const MAX_COMPACT_RETRY_WIDTH = 280, MIN_SUMMARY_TABLE_FRACTION = .9, DESKTOP = { width: 1440, height: 900 }, MOBILE = { width: 390, height: 844 }, THEME_KEY = 'chronicle.theme.preference';
 const evidence = resolve(root, 'test-results/theme-retry'); await mkdir(evidence, { recursive: true });
 async function scene(viewport, configure) {
@@ -53,6 +55,22 @@ async function configureTheme(context, page, colorScheme, preference) { await pa
 async function activity(page) { await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-overview .section-heading time').waitFor(); }
 async function source(page) { await page.locator('.archive-row .table-title').first().click(); await page.getByRole('dialog', { name: 'Source conversation', exact: true }).waitFor(); await page.locator('.original-message').first().waitFor(); }
 async function themeCases() {
+  await run('specified lifted dark surfaces and genuinely light rendered controls under either device scheme', async () => {
+    for (const system of ['light', 'dark']) {
+      const { context, page } = await scene(DESKTOP, async ({ page, fixture }) => { fixture.signedIn = false; await page.emulateMedia({ colorScheme: system }); });
+      await choose(page, 'dark');
+      const dark = await page.evaluate(() => { const style = getComputedStyle(document.documentElement); return { canvas: style.getPropertyValue('--canvas').trim(), paper: style.getPropertyValue('--paper').trim(), background: style.backgroundColor }; });
+      assert.ok(luminance(dark.canvas) >= MIN_DARK_CANVAS_LUMINANCE, `Dark canvas is near black: ${luminance(dark.canvas)} < ${MIN_DARK_CANVAS_LUMINANCE}`);
+      assert.ok(luminance(dark.canvas) <= MAX_DARK_CANVAS_LUMINANCE);
+      assert.ok(contrast(dark.canvas, dark.paper) >= MIN_DARK_SURFACE_CONTRAST, 'Dark panels must be visibly separated from the canvas');
+      await choose(page, 'light');
+      const light = await page.evaluate(() => { const style = getComputedStyle(document.documentElement), input = getComputedStyle(document.querySelector('.login-card input')); return { canvas: style.getPropertyValue('--canvas').trim(), scheme: style.colorScheme, background: style.backgroundColor, inputBackground: input.backgroundColor, inputScheme: input.colorScheme, ink: input.color }; });
+      assert.ok(luminance(light.canvas) >= MIN_LIGHT_CANVAS_LUMINANCE, 'Explicit Light must render a light canvas, including on a dark OS');
+      assert.equal(light.scheme, 'light'); assert.equal(light.inputScheme, 'light'); assert.notEqual(light.background, dark.background);
+      assert.equal(light.inputBackground, 'rgb(255, 255, 255)');
+      await context.close();
+    }
+  });
   await run('shared theme behavior contract · actual browser storage, storage events and device media', async () => {
     const { context, page } = await scene(DESKTOP, async ({ page }) => page.emulateMedia({ colorScheme: 'light' })); const other = await context.newPage(); await other.goto(`${origin}/theme-init.js`);
     try { await themeBehaviorContract({ snapshot: () => snapshot(page), choose: preference => choose(page, preference), saved: () => page.evaluate(key => localStorage.getItem(key), THEME_KEY), system: async dark => { await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' }); await settledFrame(page); }, external: async preference => { await storeInTab(other, preference); await waitStoredTheme(page, preference); } }); }
@@ -112,7 +130,7 @@ async function paletteAudit(page, label) {
   const palette = await page.evaluate(() => { const style = getComputedStyle(document.documentElement); return Object.fromEntries(Array.from(style).filter(name => name.startsWith('--')).map(name => [name.slice(2), style.getPropertyValue(name).trim()])); });
   const pairs = [];
   for (const foreground of ['ink', 'muted']) for (const background of ['canvas', 'paper', 'soft', 'control-hover', 'notice-surface', 'error-surface', 'warning-surface', 'row-hover', 'row-selected', 'table-heading', 'table-sorted', 'passage-surface', 'passage-item', 'passage-selected', 'message-highlight', 'raw-surface', 'secret-surface', 'socket-surface']) pairs.push([foreground, background, AA_TEXT]);
-  pairs.push(['on-accent', 'accent', AA_TEXT], ['on-accent', 'accent-hover', AA_TEXT], ['accent', 'paper', AA_TEXT], ['error', 'paper', AA_TEXT], ['error', 'error-surface', AA_TEXT], ['error-ink', 'error-surface', AA_TEXT], ['warning-ink', 'warning-surface', AA_TEXT], ['warning-ink', 'paper', AA_TEXT], ['success', 'paper', AA_TEXT], ['tag-ink', 'tag-surface', AA_TEXT], ['mark-ink', 'mark', AA_TEXT], ['role-ink', 'paper', AA_TEXT], ['passage-number', 'passage-item', AA_TEXT], ['placeholder', 'paper', AA_TEXT], ['healthy', 'paper', AA_TEXT], ['selection-ink', 'selection', AA_TEXT]);
+  pairs.push(['on-accent', 'accent', AA_TEXT], ['on-accent', 'accent-hover', AA_TEXT], ['accent', 'paper', AA_TEXT], ['error', 'paper', AA_TEXT], ['error', 'error-surface', AA_TEXT], ['error-ink', 'error-surface', AA_TEXT], ['warning-ink', 'warning-surface', AA_TEXT], ['warning-ink', 'paper', AA_TEXT], ['success', 'paper', AA_TEXT], ['tag-ink', 'tag-surface', AA_TEXT], ['mark-ink', 'mark', AA_TEXT], ['role-ink', 'paper', AA_TEXT], ['passage-number', 'passage-item', AA_TEXT], ['placeholder', 'paper', AA_TEXT], ['healthy', 'paper', AA_TEXT], ['selection-ink', 'selection', AA_TEXT], ['disabled-ink', 'disabled-surface', AA_TEXT]);
   for (const background of ['paper', 'canvas', 'soft', 'notice-surface']) pairs.push(['focus', background, AA_CONTROL]);
   pairs.push(['control-border', 'paper', AA_CONTROL], ['control-border', 'canvas', AA_CONTROL]);
   const results = pairs.map(([foreground, background, minimum]) => ({ foreground, background, minimum, contrast: contrast(palette[foreground], palette[background]) }));
@@ -159,8 +177,11 @@ async function productionPrepaint() {
         }, { key: THEME_KEY, preference });
         page.on('pageerror', error => errors.push(error.message)); await fixture.install(page); await page.route('**/assets/*.js', route => { held.push(route); }); await page.goto(base, { waitUntil: 'commit' });
         await page.waitForFunction(() => window.themePaints.length > 0); const paints = await page.evaluate(() => window.themePaints); assert.ok(held.length > 0); assert.equal(await page.locator('#root').innerHTML(), '');
-        for (const paint of paints) { assert.equal(paint.theme, expected); assert.equal(paint.scheme, expected); assert.equal(paint.background, expected === 'dark' ? 'rgb(17, 23, 19)' : 'rgb(244, 243, 238)'); }
-        for (const route of held) await route.continue(); await page.unroute('**/assets/*.js'); await page.locator('.archive-row').first().waitFor(); await choose(page, expected === 'dark' ? 'light' : 'dark'); assert.deepEqual(await page.evaluate(() => window.themePolicyViolations), []);
+        for (const paint of paints) { assert.equal(paint.theme, expected); assert.equal(paint.scheme, expected); assert.equal(paint.background, THEME_CANVAS_RGB[expected]); }
+        for (const route of held) await route.continue(); await page.unroute('**/assets/*.js'); await page.locator('.archive-row').first().waitFor(); assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor), THEME_CANVAS_RGB[expected]);
+        const nextTheme = expected === 'dark' ? 'light' : 'dark'; await choose(page, nextTheme);
+        assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor), THEME_CANVAS_RGB[nextTheme]);
+        assert.deepEqual(await page.evaluate(() => window.themePolicyViolations), []);
         await writeFile(resolve(evidence, `prepaint-${system}-${preference ?? 'system'}.json`), JSON.stringify(paints, null, 2)); await context.close();
       }
     } finally { await new Promise((resolve, reject) => staticServer.close(error => error === undefined ? resolve() : reject(error))); }

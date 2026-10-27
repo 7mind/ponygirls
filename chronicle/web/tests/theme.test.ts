@@ -60,6 +60,6 @@ test('external prepaint initializer agrees with the theme policy, including deni
     const fixture = new ThemeFixture(); fixture.value = raw; fixture.dark = dark; fixture.readFails = denied; const expected = fixture.controller().getSnapshot();
     const root = { dataset: {} as Record<string, string>, style: { colorScheme: '', backgroundColor: '' } }, meta = { content: '' };
     runInNewContext(source, { document: { documentElement: root, querySelector: () => meta }, window: { get localStorage() { if (denied) throw new Error('Storage denied'); return { getItem: () => raw }; }, matchMedia: () => ({ matches: dark }) } });
-    assert.deepEqual(root.dataset, { theme: expected.resolved, themePreference: expected.preference, themePersistence: expected.persistence }); assert.equal(root.style.colorScheme, expected.resolved); assert.equal(root.style.backgroundColor, expected.resolved === 'dark' ? '#111713' : '#f4f3ee'); assert.equal(meta.content, root.style.backgroundColor);
+    assert.deepEqual(root.dataset, { theme: expected.resolved, themePreference: expected.preference, themePersistence: expected.persistence }); assert.equal(root.style.colorScheme, expected.resolved); assert.equal(root.style.backgroundColor, expected.resolved === 'dark' ? '#242c37' : '#f1f5f9'); assert.equal(meta.content, root.style.backgroundColor);
   }
 });
