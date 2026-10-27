@@ -55,7 +55,8 @@ try {
     await appendUntil(page, '.archive-table-scroll', '.archive-row', 180);
     assert.equal(new Set(await page.locator('.archive-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-session-id')))).size, 180);
     assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).every(call => call.operation.query.limit <= 100));
-    assert.ok(await page.getByText('Not indexed', { exact: false }).count() > 0, 'raw-only HEADs are browsable before indexing');
+    assert.ok(await page.getByText('Unscheduled', { exact: true }).count() > 0, 'raw-only HEADs remain browsable before indexing');
+    const tableControls = page.getByRole('region', { name: 'Conversations table controls', exact: true }); await tableControls.locator('summary').click(); await tableControls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await tableControls.locator('summary').click();
     await search(page, 'original source'); await until(() => Promise.resolve(fixture.calls.some(call => call.operation instanceof api.Operation_Archive && call.operation.query.expression === 'original source')), 'Text query not sent');
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).at(-1).operation.query.sort, api.ArchiveSort.LastTimestamp, 'text queries do not silently switch to relevance');
     const sorts = [['Last activity', api.ArchiveSort.LastTimestamp], ['Conversation', api.ArchiveSort.Title], ['User', api.ArchiveSort.Owner], ['Project', api.ArchiveSort.Project], ['Branch', api.ArchiveSort.Branch], ['Producer', api.ArchiveSort.Producer], ['Format', api.ArchiveSort.Format], ['Model', api.ArchiveSort.Model], ['Index status', api.ArchiveSort.Status], ['Messages', api.ArchiveSort.MessageCount], ['Tags', api.ArchiveSort.Tags]];
@@ -84,16 +85,16 @@ try {
     assert.equal(await page.locator('.archive-table-scroll').evaluate(element => element.scrollTop), 0);
     await context.close();
   });
-  await run('mode-aware quick filters, compact help and query errors never silently fall back', async () => {
+  await run('mode-aware inline shortcuts, compact help and query errors never silently fall back', async () => {
     const { context, page, fixture } = await scene();
     await page.keyboard.press('Control+k'); assert.equal(await page.getByRole('combobox', { name: 'Search conversations' }).evaluate(element => element === document.activeElement), true);
     await page.getByRole('combobox', { name: 'Search conversations' }).fill('(A OR B) mode : lexical');
-    await page.locator('.quick-filters > summary').click(); await page.getByLabel('Attribute', { exact: true }).selectOption('project'); await page.getByLabel('Value', { exact: true }).fill('chronicle');
-    await page.getByRole('button', { name: 'Apply filter', exact: true }).click();
+    await page.getByRole('button', { name: 'Add Project filter', exact: true }).click(); await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('mode : lexical ((A OR B)) AND project:"chronicle"');
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
     await until(() => Promise.resolve(fixture.calls.some(call => call.operation instanceof api.Operation_Archive && call.operation.query.expression === 'mode : lexical ((A OR B)) AND project:"chronicle"')), 'Quick filter did not conjoin the complete expression');
-    const before = fixture.searchCount; await page.getByRole('combobox', { name: 'Search conversations' }).fill('A OR B mode:lexical'); await page.locator('.quick-filters > summary').click(); await page.getByLabel('Value', { exact: true }).fill('chronicle'); await page.getByRole('button', { name: 'Apply filter', exact: true }).click();
+    const before = fixture.searchCount; await page.getByRole('combobox', { name: 'Search conversations' }).fill('A OR B mode:lexical'); await page.getByRole('button', { name: 'Add Project filter', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'outer AND directive' }).waitFor(); assert.equal(fixture.searchCount, before, 'invalid global mode placement is not quietly repaired');
-    await page.locator('.quick-filters > summary').click(); await page.locator('.expression-help > summary').click();
+    await page.locator('.expression-help > summary').click();
     assert.match(await page.locator('.expression-help-content').innerText(), /NOT text/); assert.match(await page.locator('.expression-help-content').innerText(), /literal substring/); assert.match(await page.locator('.expression-help-content').innerText(), /not proof/);
     await page.locator('.expression-help > summary').click();
     fixture.archiveFailure = 'Unknown field at character 1'; await search(page, 'unknown:value'); await page.getByRole('alert').filter({ hasText: 'Unknown field at character 1' }).waitFor(); assert.equal(await page.locator('.archive-row').count(), 0);
@@ -275,7 +276,7 @@ try {
     await page.getByRole('button', { name: 'Refresh archive', exact: true }).evaluate(element => element.click());
     await until(() => Promise.resolve(fixture.searchCount > staleRefresh), 'Expected older Archive revalidation');
     await page.locator('.archive-table[aria-busy="false"]').waitFor();
-    assert.match(await page.locator('.archive-row .row-lineage').first().innerText(), /HEAD r2/, 'the older authorized Archive HEAD r2 reached the table');
+    assert.match(await page.locator('.archive-row td[data-column-id="Title"]').first().getAttribute('title'), /HEAD r2/, 'the older authorized Archive HEAD r2 remains in full provenance, not the tag preview');
     assert.match(await page.locator('.provenance').innerText(), /HEAD r4 \/ index r1/, 'later older metadata from both sources cannot forget the highest authorized numeric HEAD r4');
     await page.getByText('Viewing source r1', { exact: true }).waitFor();
     assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetMessages).every(call => call.operation.view.revision === 1), 'learning HEAD r4 never navigates the immutable source view');

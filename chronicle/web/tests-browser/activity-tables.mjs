@@ -47,6 +47,7 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     page.on('pageerror', error => errors.push(error.message)); if (configure !== null) configure(fixture);
     await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`); await page.locator('.archive-row').first().waitFor();
     await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-overview').waitFor();
+    for (const name of ['Collectors', 'Indexing jobs']) { const controls = page.getByRole('region', { name: `${name} table controls`, exact: true }); await controls.locator('summary').click(); await controls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await controls.locator('summary').click(); }
     return { context, page, fixture };
   }
   for (const mismatch of [{ label: 'inner request ID', button: 'Return wrong inner request ID' }, { label: 'target profile', button: 'Return wrong target profile' }, { label: 'result type', button: 'Return wrong result type' }]) await run(`bulk hook unverified ${mismatch.label} retains original uncertainty and blocks new writes`, async () => {
@@ -101,7 +102,7 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     await page.getByRole('button', { name: 'History', exact: true }).click();
     await until(async () => (await page.locator('.activity-jobs .eyebrow').textContent()).includes('165 matching historical'), 'history scope did not load');
     for (const field of [api.ActivityJobSort.Revision, api.ActivityJobSort.Profile, api.ActivityJobSort.Classification]) {
-      const before = fixture.calls.length; await page.locator(`.activity-job-table th[data-sort="${field}"] button`).click();
+      const before = fixture.calls.length; await page.locator(`.activity-job-table th[data-sort="${field}"] button:not([role="separator"])`).click();
       await until(() => fixture.calls.slice(before).some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.sort === field), 'historical sort not requested');
       const query = fixture.calls.slice(before).find(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.sort === field).operation.query;
       await until(async () => JSON.stringify(await rowIds(page, '.activity-job-row')) === JSON.stringify(fixture.activityJobsResult(query).jobs.map(row => row.job.id)), 'historical revision/profile sort did not use its global universe');
@@ -139,8 +140,9 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     fixture.jobExpressions.set(expression, fixture.activityJobs.filter(row => (row.session.metadata.project === 'project-1' || row.job.state === api.JobState.Failed) && row.session.metadata.gitBranch === 'branch-1').map(row => row.job.id));
     const editor = page.getByRole('region', { name: 'Indexing job metadata search', exact: true });
     await page.keyboard.press('Control+k'); assert.equal(await editor.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).evaluate(element => element === document.activeElement), true);
-    await editor.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).fill(body); await editor.locator('.quick-filters > summary').click();
-    await editor.getByRole('combobox', { name: 'Field', exact: true }).selectOption('branch'); await editor.getByRole('combobox', { name: 'Value', exact: true }).fill('branch-1'); await editor.getByRole('button', { name: 'Apply filter', exact: true }).click();
+    await editor.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).fill(body); await editor.getByRole('button', { name: 'Add Branch filter', exact: true }).click();
+    assert.equal(await editor.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).inputValue(), `(${body}) AND branch:`);
+    await editor.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).fill(expression); await editor.getByRole('button', { name: 'Filter', exact: true }).click();
     await until(() => fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.expression === expression), 'quick filter did not conjoin the entire Boolean metadata body');
     const expected = fixture.activityJobs.filter(row => row.classification === api.ActivityJobClass.Current && fixture.jobExpressions.get(expression).includes(row.job.id));
     await until(async () => await page.locator('.activity-job-row').count() === expected.length, 'metadata results did not load');
@@ -269,7 +271,7 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     const details = await row.locator('.activity-job-lease').innerText(); await row.locator('.activity-row-details > summary').click();
     const retained = await page.locator('.activity-job-row[data-scroll-anchor="00000000-0000-4000-8000-000000000008"] [data-column="LeaseState"]').innerText();
     await filter(page, 'Indexing job', 'lease:unleased'); await until(async () => await page.locator('.activity-job-row').count() === 1, 'unleased metadata filter did not return the queued row');
-    await page.locator('.activity-job-table th[data-sort="LeaseState"] button').click(); await until(() => fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.expression === 'lease:unleased' && call.operation.query.sort === api.ActivityJobSort.LeaseState), 'lease sort did not keep the metadata predicate');
+    await page.locator('.activity-job-table th[data-sort="LeaseState"] button:not([role="separator"])').click(); await until(() => fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.expression === 'lease:unleased' && call.operation.query.sort === api.ActivityJobSort.LeaseState), 'lease sort did not keep the metadata predicate');
     assert.deepEqual({ cellBefore: before, detailsUnleased: details.startsWith('Unleased'), retainedNonRunningLease: retained, filteredIds: await rowIds(page, '.activity-job-row'), cellAfter: await row.locator('[data-column="LeaseState"]').innerText() }, { cellBefore: 'Unleased', detailsUnleased: true, retainedNonRunningLease: 'Inactive', filteredIds: [id], cellAfter: 'Unleased' });
     await context.close();
   });

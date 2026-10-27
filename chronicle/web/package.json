@@ -8,11 +8,12 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-transform-types --import ./tests/resolve-generated.mjs --test tests/*.test.ts",
-    "test:browser": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/run.mjs && node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/ux.mjs && npm run test:refresh && npm run test:theme && npm run test:goal50 && npm run test:catalog",
+    "test:browser": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/run.mjs && node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/ux.mjs && npm run test:refresh && npm run test:theme && npm run test:goal50 && npm run test:catalog && npm run test:filters",
     "test:refresh": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/refresh-regression.mjs",
     "test:theme": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/theme-retry.mjs",
     "test:goal50": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/goal50.mjs",
-    "test:catalog": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/tool-catalog.mjs"
+    "test:catalog": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/tool-catalog.mjs",
+    "test:filters": "node --experimental-transform-types --import ./tests/resolve-generated.mjs tests-browser/filter-table-ux.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

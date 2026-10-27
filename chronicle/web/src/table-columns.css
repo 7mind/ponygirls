@@ -1,0 +1,11 @@
+.table-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:7px 0;font-size:10px;position:relative;min-width:0}
+.table-controls>button,.table-column-menu button{font-size:10px;padding:4px 8px}
+.table-column-menu>summary{cursor:pointer;padding:4px 8px;color:var(--ink)}
+.table-column-menu>div{position:absolute;z-index:8;right:0;top:100%;display:grid;gap:7px;width:min(290px,100%);max-height:330px;overflow:auto;background:var(--paper);border:1px solid var(--control-border);box-shadow:0 5px 15px var(--shadow-soft);padding:12px}
+.table-column-menu label{display:flex;align-items:center;gap:8px;font-size:12px}
+.table-column-menu input{width:auto}
+.archive-table th,.activity-table thead th{position:sticky;overflow:visible}
+.archive-table th>button:not(.column-resizer),.activity-table thead th>button:not(.column-resizer){padding-right:15px;overflow:hidden;text-overflow:ellipsis}
+.archive-table th>button.column-resizer,.activity-table thead th>button.column-resizer{position:absolute;right:0;top:0;bottom:0;width:12px;height:100%;min-width:0;padding:0;border:0;border-radius:0;border-left:1px solid var(--control-border);background:transparent;cursor:col-resize;touch-action:none;z-index:1}
+.archive-table th>button.column-resizer:hover,.activity-table thead th>button.column-resizer:hover{background:var(--soft)}
+.column-resizer:focus-visible{outline-offset:-3px}

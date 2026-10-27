@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { addExpressionFilter, splitGlobalMode } from '../src/expression.ts';
+import { addExpressionFilter, addExpressionField, addMetadataField, splitGlobalMode } from '../src/expression.ts';
 
 test('BA specified: quick filters conjoin the entire opaque Boolean expression', () => {
   assert.equal(addExpressionFilter('A OR B', 'project', 'chronicle'), '(A OR B) AND project:"chronicle"');
@@ -29,6 +29,16 @@ test('BA specified: ambiguous unfinished input is not silently rewritten', () =>
   assert.throws(() => addExpressionFilter('A', 'tag:injection', 'review'), /Invalid quick-filter attribute/);
   for (const expression of ['mode:lexical AND A OR B', 'A OR B AND mode:lexical', 'A OR B mode:lexical', 'NOT mode:lexical', '(mode:lexical OR A)']) assert.throws(() => addExpressionFilter(expression, 'tag', 'review'), /outer AND directive/);
   assert.throws(() => addExpressionFilter('mode:lexical mode:semantic', 'tag', 'review'), /only one global mode/);
+});
+
+test('BA specified: inline field shortcuts preserve global directives and the entire Boolean body', () => {
+  assert.equal(addExpressionField('', 'project'), 'project:');
+  assert.equal(addExpressionField('(A OR B) mode:lexical', 'project'), 'mode:lexical ((A OR B)) AND project:');
+  assert.equal(addMetadataField('project:"猫🦄" OR status:failed', 'branch'), '(project:"猫🦄" OR status:failed) AND branch:');
+  assert.throws(() => addExpressionField('A OR B mode:lexical', 'tag'), /outer AND directive/);
+  assert.throws(() => addExpressionField('tag:"unfinished', 'tag'), /Close quotes/);
+  assert.throws(() => addMetadataField('(mode:semantic)', 'tag'), /not supported in Activity/);
+  assert.throws(() => addExpressionField('', 'field:injection'), /Invalid quick-filter attribute/);
 });
 
 interface ModeCase { input: string; valid: boolean; mode?: string; body?: string }

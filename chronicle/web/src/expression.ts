@@ -96,13 +96,21 @@ export function splitGlobalMode(expression: string): ExpressionParts {
   validateStructure(tokens(body));
   return { body, modeDirective: expression.slice(first.start, last.end), mode };
 }
-function quickFilterClause(attribute: string, value: string): string {
+function filterAttribute(attribute: string): string {
   if (!/^[a-z][a-z0-9_-]*$/i.test(attribute)) throw new Error('Invalid quick-filter attribute.');
-  scalarText(value); return `${attribute}:${JSON.stringify(value)}`;
+  return attribute;
+}
+function quickFilterClause(attribute: string, value: string): string {
+  scalarText(value); return `${filterAttribute(attribute)}:${JSON.stringify(value)}`;
+}
+function conjoin(body: string, clause: string): string { return body.length === 0 ? clause : `(${body}) AND ${clause}`; }
+export function addExpressionField(expression: string, attribute: string): string {
+  const { body, modeDirective } = splitGlobalMode(expression);
+  return [modeDirective, conjoin(body, `${filterAttribute(attribute)}:`)].filter(part => part !== null).join(' ');
 }
 export function addExpressionFilter(expression: string, attribute: string, value: string): string {
   const { body, modeDirective } = splitGlobalMode(expression), clause = quickFilterClause(attribute, value);
-  return [modeDirective, body.length === 0 ? clause : `(${body}) AND ${clause}`].filter(part => part !== null).join(' ');
+  return [modeDirective, conjoin(body, clause)].filter(part => part !== null).join(' ');
 }
 export function validateMetadataExpression(expression: string): void {
   const scanned = tokens(expression); validateStructure(scanned);
@@ -114,5 +122,9 @@ export function validateMetadataExpression(expression: string): void {
 export function addMetadataFilter(expression: string, attribute: string, value: string): string {
   validateMetadataExpression(expression);
   const body = expression.trim(), clause = quickFilterClause(attribute, value);
-  return body.length === 0 ? clause : `(${body}) AND ${clause}`;
+  return conjoin(body, clause);
+}
+export function addMetadataField(expression: string, attribute: string): string {
+  validateMetadataExpression(expression);
+  return conjoin(expression.trim(), `${filterAttribute(attribute)}:`);
 }

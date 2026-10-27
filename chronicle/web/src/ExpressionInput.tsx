@@ -5,9 +5,9 @@ import { read, type ChronicleConnection } from './client.ts';
 import type { ManagerStats } from './transport/types.ts';
 import { acceptExpressionHint, scalarBoundary } from './completion.ts';
 export interface CompletionContext { connection: ChronicleConnection; stats: ManagerStats; owner: string; target: ExpressionHintTarget }
-interface Props { context: CompletionContext; inputRef: RefObject<HTMLInputElement | null>; id: string; label: string; placeholder: string; value: string; change(value: string): void; maxLength: number }
+interface Props { context: CompletionContext; inputRef: RefObject<HTMLInputElement | null>; id: string; label: string; placeholder: string; value: string; change(value: string): void; clear(): void; canClear: boolean; maxLength: number }
 const HINT_DEBOUNCE_MS = 180, HINT_LIMIT = 12;
-export function ExpressionInput({ context, inputRef, id, label, placeholder, value, change, maxLength }: Props) {
+export function ExpressionInput({ context, inputRef, id, label, placeholder, value, change, clear, canClear, maxLength }: Props) {
   const { connection, stats, owner, target } = context, listId = useId();
   const [caret, setCaret] = useState(0), [focused, setFocused] = useState(false), [composing, setComposing] = useState(false), [choice, setChoice] = useState(0);
   const [result, setResult] = useState<{ stamp: string; data: ExpressionHintsResult } | null>(null), [error, setError] = useState<string | null>(null), [epoch, setEpoch] = useState(0);
@@ -43,16 +43,18 @@ export function ExpressionInput({ context, inputRef, id, label, placeholder, val
     const hint = hints.hints[index]; if (hint === undefined) return;
     const next = acceptExpressionHint(value, hints, hint); pendingCaret.current = next.caret; if (next.expression === value && inputRef.current !== null) { inputRef.current.setSelectionRange(next.caret, next.caret); setCaret(next.caret); pendingCaret.current = null; } setResult(null); setDismissed(stamp); change(next.expression);
   }
+  function reset() { setResult(null); setError(null); setDismissed(stamp); pendingCaret.current = null; clear(); if (inputRef.current !== null) { inputRef.current.focus({ preventScroll: true }); inputRef.current.setSelectionRange(0, 0); setCaret(0); } }
   return <div className="expression-composer"><input id={id} ref={inputRef} role="combobox" aria-label={label} aria-autocomplete="list" aria-expanded={open} aria-controls={listId} aria-activedescendant={open ? `${listId}-${choice}` : undefined} autoComplete="off" spellCheck={false} maxLength={maxLength} value={value} placeholder={placeholder}
     onFocus={event => { setFocused(true); selection(event.currentTarget); }} onBlur={() => { setFocused(false); setResult(null); }} onChange={event => { setDismissed(null); change(event.target.value); selection(event.currentTarget); }} onSelect={event => selection(event.currentTarget)}
     onCompositionStart={() => { setComposing(true); setResult(null); }} onCompositionEnd={event => { setComposing(false); selection(event.currentTarget); }}
     onKeyDown={event => {
       if (composing || event.nativeEvent.isComposing || event.keyCode === 229) { if (event.key === 'Enter') event.preventDefault(); return; }
       if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setDismissed(stamp); }
+      else if (event.key === 'Escape' && canClear) { event.preventDefault(); event.stopPropagation(); reset(); }
       else if (event.key === 'Tab') setDismissed(stamp);
       else if (open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) { event.preventDefault(); setChoice(index => (index + (event.key === 'ArrowDown' ? 1 : hints.hints.length - 1)) % hints.hints.length); }
       else if (open && event.key === 'Enter') { event.preventDefault(); accept(choice); }
-    }}/>
+    }}/><button type="button" className="expression-clear" aria-label={`Clear ${label}`} title="Clear search · Escape (after closing suggestions)" aria-keyshortcuts="Escape" disabled={!canClear} onClick={reset}>×</button>
     {open && <div className="expression-hints" id={listId} role="listbox" aria-label="Expression suggestions">{hints.hints.map((hint, index) => <div role="option" id={`${listId}-${index}`} key={`${index}:${hint.insertText}`} aria-selected={index === choice} onMouseDown={event => { event.preventDefault(); accept(index); }}><span>{hint.label}</span><small>{hint.kind}</small></div>)}<p className="tiny">Authorized metadata · {hints.truncated ? 'more suggestions available · ' : ''}↑↓ select · Enter insert · Escape close</p></div>}
     {focused && error !== null && <span className="completion-error tiny" role="status">Completions unavailable: {error}</span>}
   </div>;
