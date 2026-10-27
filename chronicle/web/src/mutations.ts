@@ -12,7 +12,8 @@ export function validateMutationResult(operation: Operation, result: Result, req
     if (result.result.requestId !== requestId) throw unverified('Receipt identity mismatch');
     if (result.result.targetProfile !== operation.targetProfile) throw unverified('Receipt target profile mismatch');
     const counts = [result.result.heads, result.result.queued, result.result.alreadyCurrent, result.result.invalidatedClaims];
-    if (counts.some(count => typeof count !== 'bigint' || count < 0n) || result.result.queued + result.result.alreadyCurrent !== result.result.heads) throw unverified('Invalid owner reprocess result counts');
+    // Live current-target claims can remain Running without being queued or already published.
+    if (counts.some(count => typeof count !== 'bigint' || count < 0n) || result.result.queued + result.result.alreadyCurrent > result.result.heads) throw unverified('Invalid owner reprocess result counts');
     return result;
   }
   if (operation instanceof Operation_ApplyRetryFailed) {

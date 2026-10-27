@@ -180,5 +180,20 @@ try {
     }
     await writeFile(`${output}/metrics.json`, JSON.stringify({ syntheticOnly: true, providerCalls: 0, records }, null, 2)); console.log(`MCP catalog evidence: ${output}`);
   });
+  for (const recover of [false, true]) await group(`regression partial owner reprocess ${recover ? 'correlated Receipt' : 'direct result'} acknowledges the retained live claim without uncertainty`, async () => {
+    let applySignals = 0;
+    const { context, page, fixture } = await scene(fixture => {
+      fixture.targetProfile = 'contiguous-problems-profile'; const job = fixture.jobs[0].with({ state: api.JobState.Running, error: undefined }); fixture.jobs = [job]; fixture.activityJobs = [new api.ActivityJob(job, fixture.targetProfile, api.ActivityJobClass.Current, '2030-01-01T00:00:00Z', true, false, fixture.source.collectorNamespace, fixture.jobSession(job), NOW)];
+      fixture.signals.on('request', operation => { if (operation instanceof api.Operation_ApplyOwnerReindex) applySignals++; });
+      const original = fixture.goal50Operation; fixture.goal50Operation = (operation, envelope, send, entry) => {
+        if (!(operation instanceof api.Operation_ApplyOwnerReindex)) return original(operation, envelope, send, entry);
+        fixture.signals.emit('request', operation);
+        const result = new api.Result_OwnerReindexed(new api.OwnerReindexResult(envelope.requestId, operation.targetProfile, 1n, 0n, 0n, 0n)); fixture.receipts.set(envelope.requestId, result); if (!recover) send(result); return true;
+      };
+    });
+    await activity(page); await page.getByRole('button', { name: 'Preview reprocessing all my HEADs', exact: true }).click(); const preview = page.getByRole('region', { name: 'Owner reprocess preview', exact: true }); await preview.getByRole('checkbox').check(); const applyArrived = fixture.waitCall(api.Operation_ApplyOwnerReindex, 1); await preview.getByRole('button', { name: 'Confirm owner reprocess', exact: true }).click(); await applyArrived; const apply = fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyOwnerReindex)[0];
+    if (recover) { fixture.restart(); const uncertain = page.getByRole('region', { name: 'Uncertain mutation', exact: true }); await uncertain.waitFor(); await uncertain.getByRole('button', { name: 'Look up receipt', exact: true }).click(); await fixture.waitCall(api.Operation_Receipt, 1); const receipt = fixture.calls.filter(call => call.operation instanceof api.Operation_Receipt)[0]; assert.equal(receipt.operation.mutationId, apply.requestId); assert.notEqual(receipt.requestId, apply.requestId); }
+    const result = page.getByRole('region', { name: 'Owner reprocess result', exact: true }); await result.waitFor(); assert.match(await result.textContent(), /Queued 0 of 1 HEADs; already current 0/); assert.equal(await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).count(), 0); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyOwnerReindex).length, 1); assert.equal(fixture.activityJobs[0].job.state, api.JobState.Running); assert.equal(fixture.activityJobs[0].leaseActive, true); assert.equal(applySignals, 1, 'intercepted Apply must wake the fixture request observer exactly once'); await context.close();
+  });
   assert.deepEqual(errors, []);
 } finally { await browser.close(); await server.close(); }

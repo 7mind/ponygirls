@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Operation_ApplyRetryFailed, Operation_CreateGroup, Operation_MintToken, MutationReceipt, Result_Mutation, Result_RetryFailed, Result_RetryFailedPreview, Result_Token, RetryFailedCounts, RetryFailedPlan, RetryFailedResult, Scope, TokenInfo, TokenResult } from '../src/api.ts';
+import { Operation_ApplyOwnerReindex, OwnerReindexResult, Result_OwnerReindexed, Operation_ApplyRetryFailed, Operation_CreateGroup, Operation_MintToken, MutationReceipt, Result_Mutation, Result_RetryFailed, Result_RetryFailedPreview, Result_Token, RetryFailedCounts, RetryFailedPlan, RetryFailedResult, Scope, TokenInfo, TokenResult } from '../src/api.ts';
 import { validateMutationResult } from '../src/mutations.ts';
 import { RequestFailure } from '../src/transport/types.ts';
 
@@ -65,4 +65,24 @@ test('BA specified: existing group and token responses retain their accepted res
   const { generic, token } = fixture();
   assert.equal(validateMutationResult(new Operation_CreateGroup('Synthetic group'), generic, REQUEST_ID), generic);
   assert.equal(validateMutationResult(new Operation_MintToken('Synthetic token', [Scope.Read]), token, REQUEST_ID), token);
+});
+
+test('BA regression: owner apply accepts exact partial queue counts while live current claims continue', () => {
+  const operation = new Operation_ApplyOwnerReindex(TARGET_PROFILE, 'selection-hash', true);
+  for (const counts of [[1n, 0n, 0n, 0n], [3n, 1n, 0n, 8n], [9007199254740995n, 1n, 9007199254740993n, 9007199254740996n]] as const) {
+    const reply = new Result_OwnerReindexed(new OwnerReindexResult(REQUEST_ID, TARGET_PROFILE, counts[0], counts[1], counts[2], counts[3]));
+    assert.equal(validateMutationResult(operation, reply, REQUEST_ID), reply);
+    assert.equal(reply.result.invalidatedClaims, counts[3]);
+  }
+});
+test('BA regression: owner partial queue counts reject impossible totals, negative counts and non-bigint values', () => {
+  const operation = new Operation_ApplyOwnerReindex(TARGET_PROFILE, 'selection-hash', true), result = new OwnerReindexResult(REQUEST_ID, TARGET_PROFILE, 1n, 0n, 0n, 0n);
+  for (const invalid of [result.with({ queued: 1n, alreadyCurrent: 1n }), result.with({ heads: -1n }), result.with({ queued: -1n }), result.with({ alreadyCurrent: -1n }), result.with({ invalidatedClaims: -1n }), result.with({ heads: 1 as unknown as bigint }), result.with({ queued: 0 as unknown as bigint }), result.with({ alreadyCurrent: 0 as unknown as bigint }), result.with({ invalidatedClaims: 0 as unknown as bigint })]) {
+    assertUnverifiedReply(() => validateMutationResult(operation, new Result_OwnerReindexed(invalid), REQUEST_ID), /Invalid owner reprocess result counts/, REQUEST_ID);
+  }
+});
+test('BA regression: valid partial populations do not relax owner receipt request or profile binding', () => {
+  const operation = new Operation_ApplyOwnerReindex(TARGET_PROFILE, 'selection-hash', true), result = new OwnerReindexResult(REQUEST_ID, TARGET_PROFILE, 1n, 0n, 0n, 0n);
+  assertUnverifiedReply(() => validateMutationResult(operation, new Result_OwnerReindexed(result.with({ requestId: OTHER_REQUEST_ID })), REQUEST_ID), /Receipt identity mismatch/, REQUEST_ID);
+  assertUnverifiedReply(() => validateMutationResult(operation, new Result_OwnerReindexed(result.with({ targetProfile: 'other-profile' })), REQUEST_ID), /Receipt target profile mismatch/, REQUEST_ID);
 });

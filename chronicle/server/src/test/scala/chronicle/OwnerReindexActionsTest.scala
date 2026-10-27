@@ -43,6 +43,25 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
     val result=c.auth.mutate(c.owner,request).asInstanceOf[Result.OwnerReindexed].result
     assertEquals(result.requestId,request.requestId); assertEquals(result.heads,1L); assertEquals(result.queued,1L)
   }}
+  test("Blackbox GoodCommunication regression: same-target live P1 claim returns partial queue counts and an exact stored receipt without fencing the worker") { database { c =>
+    c.archive.ingest("a",Fixtures.snapshot())
+    applied(c,envelope(plan(c)))
+    val claim=c.archive.claim(c.db.profiles.knownProfiles,ClaimScope.Owner("a"),300).get
+    assertEquals(claim.profile,c.db.profiles.preferred.profile)
+    val before=ownerRows(c,"a")
+    val preview=plan(c)
+    assertEquals(preview.currentTargetProfile,preview.targetProfile)
+    assertEquals((preview.heads,preview.alreadyCurrent,preview.replacements),(1L,0L,1L))
+    val request=envelope(preview)
+    val result=c.auth.mutate(c.owner,request)
+    assertEquals(result,Result.OwnerReindexed(OwnerReindexResult(request.requestId,preview.targetProfile,1L,0L,0L,0L)))
+    assertEquals(c.auth.receipt(c.owner,request.requestId),result)
+    assertEquals(c.auth.mutate(c.owner,request),result)
+    assertEquals(receiptCount(c,request.requestId),1L)
+    assertEquals(ownerRows(c,"a"),before,"the same live claim retains its exact lease, fence, owner target and source rows")
+    assert(c.archive.renew(claim,300))
+    assert(ProblemPublicationFixtures.publish(c.archive,claim,c.db.profiles))
+  }}
   test("specified: Auth retains owner selection conflicts as a digest-bound terminal receipt") { database { c =>
     c.archive.ingest("a",Fixtures.snapshot())
     val request=envelope(plan(c)); c.archive.ingest("a",Fixtures.snapshot())
