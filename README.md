@@ -106,7 +106,7 @@ happen during builds/tests.
 
 | Package | What it is |
 |---|---|
-| `llm-skills` | The shared **skill set** — progressive-disclosure instruction documents (SKILL.md with metadata) every agent can be handed: baboon, constructive-test-taxonomy, dual-tests, environment, flake-upgrade, haystack-skills-sort, izumi, resilient-ws-ui, tass, tui-testing. Metadata is validated at build time. |
+| `llm-skills` | The shared **skill set** — progressive-disclosure instruction documents (SKILL.md with metadata) every agent can be handed: baboon, constructive-test-taxonomy, dual-tests, environment, flake-upgrade, haystack-skills-sort, izumi, query-filters, resilient-ws-ui, tass, tui-testing. Metadata is validated at build time. |
 | `llm-contexts` | The shared **context fragments**: the general context every agent reads (CLAUDE.md / AGENTS.md memory) and Pi's repo-agnostic operating manual (appended into Pi's system prompt). |
 | `llm-context-with-env` | The general context combined with the sandbox-environment skill, for hosts running agents inside `yolo`. |
 
