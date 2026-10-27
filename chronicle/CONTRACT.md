@@ -81,9 +81,6 @@ The current dashboard offers only 1.5.0. Retained 1.0–1.4 clients use their ge
 
 ## Archive and Activity (1.3)
 
-The complete additive wire fields, expression grammar, candidate-domain policy,
-paging and pinning contract are in
-[`docs/drafts/20261026-1106-archive-contract.md`](docs/drafts/20261026-1106-archive-contract.md).
 New operations are Archive(ArchiveQuery), Activity(ActivityQuery),
 ActivityJobs(ActivityJobsQuery), LocateMessage(sessionId,view,messageId); locator
 responds with Result.LocatedMessage(MessageLocation). Every previous operation,
@@ -123,10 +120,8 @@ Whole fields/messages are lowercased in PostgreSQL before fragmentation; origina
 normalized content and spans are unchanged. A lexical-version marker rebuilds
 obsolete fragments transactionally. Content paging has no100000 offset ceiling;
 GetMessages seeks by indexed position. The trigram index is on
-lower(value COLLATE pg_unicode_fast), not raw ILIKE: the
-observed raw-index Unicode false-negative constraint and differential tests are
-documented in
-[`docs/drafts/20261026-1140-lexical-index-collation.md`](docs/drafts/20261026-1140-lexical-index-collation.md).
+lower(value COLLATE pg_unicode_fast), not raw ILIKE, due to an observed
+raw-index Unicode false-negative constraint.
 
 ## Published generation format (1.5)
 

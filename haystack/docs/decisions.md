@@ -1,8 +1,6 @@
-# Haystack — decisions log (normative deviations from the plan)
+# Haystack — decisions log
 
-Plan: `docs/drafts/20261007-1828-agent-memory-implementation-plan.md`.
-This file records user-approved deviations. Everything not listed here
-follows the plan as written.
+This file records user-approved implementation decisions and deviations.
 
 1. **In-repo placement.** The service lives in this repo under `haystack/`
    (approved 2026-10-07), not in a separate flake/repo. The dependency
@@ -13,7 +11,7 @@ follows the plan as written.
 2. **Name: haystack** (user-christened 2026-10-07).
    Module `smind.services.haystack`, cookie `__Host-haystack`,
    env `HAYSTACK_TOKEN`, MCP entry `haystack`.
-3. **No launch preflight** (approved 2026-10-07). Plan §7.7's bounded bearer
+3. **No launch preflight** (approved 2026-10-07). The originally planned bounded bearer
    `whoami` gate before harness launch is dropped: launches proceed with
    configured URL/token-file and failures surface at MCP call time.
    Accepted residual risks: late detection of wrong identity / namespace

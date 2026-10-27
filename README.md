@@ -96,8 +96,8 @@ management match the Linux tool; the bubblewrap-only capabilities do not apply.
 | `chronicle-collector` | Opt-in TypeScript user daemon/CLI for Claude, Codex and Pi histories, including yolo profiles and subagents. Private durable spool, pre-upload redaction, exact retries and honest quiescent-snapshot evidence. |
 | `chronicle-web` | Responsive TypeScript dashboard with transcript/source navigation, access management and visible heartbeat-based connection recovery. |
 
-Start with the [reviewed plan](docs/drafts/20261024-2340-chronicle-plan.md),
-[server README](chronicle/README.md), and [deployment runbook](chronicle/docs/operations.md).
+Start with the [server README](chronicle/README.md) and
+[deployment runbook](chronicle/docs/operations.md).
 `nix develop .#chronicle` provides the pinned toolchain. MCP access and collection
 are separate Home Manager opt-ins; neither deployment nor real-history uploads
 happen during builds/tests.
