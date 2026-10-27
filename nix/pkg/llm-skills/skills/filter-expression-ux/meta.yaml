@@ -1,8 +1,0 @@
-name: filter-expression-ux
-description: >-
-  Design, implement or review CQ/GitHub-like structured filter inputs: inline
-  field/value shortcuts, grammar-safe Boolean composition, draft versus applied
-  queries, caret-aware autocomplete, keyboard/focus behavior and accessible
-  suggestions. Use when changing an expression-based search/filter bar or its
-  completion contract; not for plain free-text search, backend-only query
-  optimization, or documentation-only syntax help.
