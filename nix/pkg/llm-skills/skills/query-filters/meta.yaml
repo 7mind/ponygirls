@@ -1,0 +1,8 @@
+name: query-filters
+description: >-
+  Design and build an ergonomic filter/search query language for a list or
+  table (GitHub-style `attribute:value` terms with AND/OR/NOT, grouping and
+  quoting) together with its editor: cursor-aware completion popup, attribute
+  hints, positioned diagnostics and quick-filter chips. Use when adding or
+  reworking a filter bar, search box, or query input, or when replacing ad-hoc
+  filter syntax (comma lists, `is:`/`has:` flags) with a real grammar.
