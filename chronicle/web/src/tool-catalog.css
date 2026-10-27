@@ -1,0 +1,19 @@
+.tool-catalog{margin:20px 0;border:1px solid var(--control-border);border-radius:5px;background:var(--paper);min-width:0}
+.tool-catalog-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--rule)}
+.tool-catalog-layout{display:grid;grid-template-columns:minmax(190px,250px) minmax(0,1fr);min-width:0}
+.tool-catalog-list{min-width:0;max-height:650px;overflow:auto;padding:8px;background:var(--canvas);border-right:1px solid var(--rule)}
+.tool-catalog-list button{display:block;width:100%;text-align:left;padding:11px 12px;border:1px solid transparent;border-left:3px solid transparent;border-radius:3px;margin:3px 0;overflow-wrap:anywhere}
+.tool-catalog-list code{font-size:12px}
+.tool-catalog-list button[aria-pressed=true]{background:var(--row-selected);border-color:var(--control-border);border-left-color:var(--accent);color:var(--ink)}
+.tool-catalog button:focus-visible{outline-offset:-4px}
+.tool-catalog-inspector{min-width:0;padding:18px}
+.tool-catalog-inspector>header{margin-bottom:16px;overflow-wrap:anywhere}
+.tool-catalog-inspector>header h3{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:15px;margin-bottom:10px}
+.tool-catalog-inspector>header p{font-size:12px;line-height:1.7;color:var(--muted)}
+.tool-catalog-tabs{display:flex;gap:7px;padding-bottom:10px;border-bottom:1px solid var(--rule)}
+.tool-catalog-tabs button{font-size:11px;font-weight:650;letter-spacing:.5px;padding:8px 13px}
+.tool-catalog .tool-catalog-tabs button[aria-selected=true]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.tool-catalog .tool-catalog-tabs button[aria-selected=true]:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.tool-catalog-panel>p{margin:12px 0}
+.mcp-tester .tool-catalog pre{min-width:0;max-width:100%;min-height:180px;max-height:52vh;overflow:auto;white-space:pre;overflow-wrap:normal;word-break:normal;background:var(--raw-surface);border:1px solid var(--control-border);border-radius:3px;padding:16px;font-size:12px;line-height:1.7}
+@media(max-width:720px){.tool-catalog-layout{grid-template-columns:minmax(0,1fr)}.tool-catalog-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;max-height:220px;border-right:0;border-bottom:1px solid var(--rule)}.tool-catalog-list button{margin:0;padding:9px;align-self:stretch}.tool-catalog-list code{font-size:11px}.tool-catalog-inspector{padding:14px}.tool-catalog-heading{padding:12px 14px}}
