@@ -36,9 +36,19 @@ object ChroniclePlugin extends PluginDef {
   make[CollectorProgress]
   make[Application]
   make[Mcp]
+  make[RunAuthorization].from[PostgresRunAuthorization]
+  make[McpRunTools].from[LiveMcpRunTools]
+  make[ModelConfig].from { (config: Config) => config.annotation }
+  make[McpTestModel].from[OpenAIMcpTestModel]
+  make[McpRunClock].from[SystemMcpRunClock]
   make[Http.WebRoot].from { () => Http.WebRoot(sys.env.get("CHRONICLE_WEB_ROOT")) }
   make[chronicle.protocol.ProtocolConversions]
   make[VersionedWire]
+  make[McpTestWire]
+  make[McpRunPageEncoding].from { (wire: McpTestWire) => wire }
+  make[McpTestRuns].fromResource[McpTestRunsResource]
+  make[BrowserControlAdmission].fromResource[BrowserControlResource]
+  make[BrowserRpc]
   make[Http]
   make[RuntimeServices]
 }

@@ -81,7 +81,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
     })
     auth=new Auth(db,config)
     archive=new PostgresArchive(db,config)
-    app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,java.time.Clock.systemUTC()))
+    app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,java.time.Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,java.time.Clock.systemUTC()),ModelFixtures.usage(config))
     protocol=new VersionedWire(new chronicle.protocol.ProtocolConversions)
     wire=new McpTestWire(protocol)
     runs <- McpTestRuns.resource(tools,model,wrap(new PostgresRunAuthorization(db,auth)),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),config.users.map(_.id).toSet,wire,IO(UUID.randomUUID()))
@@ -96,8 +96,8 @@ class BrowserWebSocketTest extends munit.FunSuite {
   } yield s"ws://127.0.0.1:${server.address.getPort}/api/ws"
 
   private val immediateEmbedder: Embedder = new Embedder {
-    def query(text: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
-    def documents(text: List[String]): IO[List[List[Double]]] = IO.pure(text.map(_ => List(1.0,0.0,0.0)))
+    def query(owner: String,text: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
+    def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.pure(text.map(_ => List(1.0,0.0,0.0)))
   }
 
   test("BG GoodCommunication regression: Logout bypasses a blocked serialized semantic search") {
@@ -105,8 +105,8 @@ class BrowserWebSocketTest extends munit.FunSuite {
       entered <- Deferred[IO,Unit]
       release <- Deferred[IO,Unit]
       embedder=new Embedder {
-        def query(text: String): IO[List[Double]] = entered.complete(()).void *> release.get.as(List(1.0,0.0,0.0))
-        def documents(text: List[String]): IO[List[List[Double]]] = immediateEmbedder.documents(text)
+        def query(owner: String,text: String): IO[List[Double]] = entered.complete(()).void *> release.get.as(List(1.0,0.0,0.0))
+        def documents(owner: String,text: List[String]): IO[List[List[Double]]] = immediateEmbedder.documents(owner,text)
       }
       tools <- McpTestFixtures.ordinaryTools
       model <- McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("not used")))
@@ -218,8 +218,8 @@ class BrowserWebSocketTest extends munit.FunSuite {
       tools <- McpTestFixtures.ordinaryTools
       model <- McpTestFixtures.model(_ => IO.never)
       embedder=new Embedder {
-        def query(text: String): IO[List[Double]] = entered.complete(()).void *> release.get.as(List(1.0,0.0,0.0))
-        def documents(text: List[String]): IO[List[List[Double]]] = immediateEmbedder.documents(text)
+        def query(owner: String,text: String): IO[List[Double]] = entered.complete(()).void *> release.get.as(List(1.0,0.0,0.0))
+        def documents(owner: String,text: List[String]): IO[List[List[Double]]] = immediateEmbedder.documents(owner,text)
       }
       _ <- fixture(embedder,model,tools,identity).use { f => server(f).use { url =>
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret => socket(url,f.config,secret).use { socket =>
