@@ -281,6 +281,12 @@ let
       config.programs.mcp.servers;
   };
 
+  piKeybindingsJson = jsonFormat.generate "pi-keybindings.json" (
+    {
+      "$schema" = "https://pi.dev/schemas/keybindings.schema.json";
+    } // piCfg.keybindings
+  );
+
   # Declarative subagents model policy (see the `subagents*` options): the
   # managed file is always complete — every field the extension reads — so
   # enabling any subagents option can never half-clobber a hand-maintained
@@ -356,6 +362,7 @@ in
     # skills/enableMcpIntegration), built from the shared factory. Pi config
     # layout (https://pi.dev/docs/latest):
     #   ~/.pi/agent/settings.json   global settings (JSON)
+    #   ~/.pi/agent/keybindings.json   custom keybindings (JSON)
     #   ~/.pi/agent/AGENTS.md       concatenated agent instructions / memory
     #   ~/.pi/agent/skills/<n>/SKILL.md   skills (progressive disclosure)
     #   ~/.pi/agent/extensions/*.ts       auto-discovered TS extensions
@@ -406,6 +413,24 @@ in
         global, repo-agnostic behavioural rules; keep project-specific facts
         in {option}`programs.pi.context`. Either inline content or a path.
         Empty string disables the file.
+      '';
+    };
+
+    programs.pi.keybindings = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.either lib.types.str (lib.types.listOf lib.types.str));
+      default = {
+        "app.tree.foldOrUp" = "ctrl+b";
+        "app.tree.unfoldOrDown" = "ctrl+f";
+      };
+      example = {
+        "app.tree.foldOrUp" = "ctrl+b";
+        "app.tree.unfoldOrDown" = "ctrl+f";
+      };
+      description = ''
+        Custom terminal UI and application keybindings, written to
+        {file}`keybindings.json` in {option}`programs.pi.configDir` (see
+        https://pi.dev/docs/keybindings). A configured value replaces the
+        default for that action. Empty attrset disables the file.
       '';
     };
 
@@ -814,6 +839,13 @@ in
     # otherwise a hand-maintained file (or none) is left alone.
     (lib.mkIf subagentsPolicyManaged {
       home.file."${piCfg.configDir}/subagents-policy.json".source = piSubagentsPolicyJson;
+    })
+    # Declarative keybindings (see piKeybindingsJson). RO store symlink like
+    # settings.json: manage via programs.pi.keybindings, not by hand-editing
+    # the file. The /tree footer resolves labels through the live keybinding
+    # manager, so the branch row follows these bindings automatically.
+    (lib.mkIf (piCfg.keybindings != { }) {
+      home.file."${piCfg.configDir}/keybindings.json".source = piKeybindingsJson;
     })
     {
       # The extension silently drops nesting below depth 2; fail fast instead.
