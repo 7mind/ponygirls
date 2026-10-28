@@ -51,6 +51,25 @@ export interface TypeBuilder<S> {
   Null(): S;
 }
 
+/**
+ * System-prompt guidelines for whoever delegates (governing session and
+ * nesting children): a subagent's view of external state is what its owner
+ * observed and relayed, so relayed values carry their source and age.
+ */
+export const DELEGATION_GUIDELINES: Readonly<Record<"spawn_agent" | "send_message", readonly string[]>> = {
+  spawn_agent: [
+    "A subagent reads external systems only through the tools in its grant (externalTools in list_agents). When its task depends on external state it cannot read (merge request targets, pipelines, issues, remote refs), read that state yourself immediately before delegating and give each value with its source and observation time.",
+  ],
+  send_message: [
+    "When a subagent asks about external state you can read (merge request targets, pipelines, issues, remote refs), read it again before replying and give the value with its source and observation time. An earlier tool result, including the response that created the object, is history, not current state; if you cannot observe the state now, say so and give the earlier value only with its age.",
+  ],
+};
+
+/** The delegation guidelines of a child tool (none for tools that do not delegate). */
+export function childToolGuidelines(name: string): string[] {
+  return name === "spawn_agent" || name === "send_message" ? [...DELEGATION_GUIDELINES[name]] : [];
+}
+
 export interface ToolSpec<S> {
   description: string;
   parameters: S;

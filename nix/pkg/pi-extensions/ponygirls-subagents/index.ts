@@ -18,7 +18,7 @@ import { instructionsFromPromptOptions, parseSelection } from "./src/instruction
 import { defaultSupervisorPolicy, validateAllowedTools, validateWorktreeRoot, type SupervisorPolicy } from "./src/policy.ts";
 import { GoverningModels } from "./src/parent-models.ts";
 import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/governing-runtime.ts";
-import { gateParameters, readParameters, reviewParameters, spawnParameters, waitParameters } from "./src/tools.ts";
+import { DELEGATION_GUIDELINES, gateParameters, readParameters, reviewParameters, spawnParameters, waitParameters } from "./src/tools.ts";
 import type { InstructionSet, Isolation, ResolvedModel } from "./src/types.ts";
 import { AgentsScreen, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
 import { themeStyle } from "./src/display.ts";
@@ -273,6 +273,7 @@ export default function (pi: ExtensionAPI): void {
       label: "Spawn subagent",
       description:
         "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). workspace_path instead puts the child in a git work tree you prepared and keep (policy workspaceRoots must contain it). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. The default 32-agent cap counts open identities, including nested agents and reviewers; close_agent frees their slots without deleting history. Optional gate requires unanimous reviewer validation (single model or panel), with deterministic checks for writers. Alternatively review runs one-shot advisory reviewers without gating or automatic repairs. Both return all feedback through read_agent view=reviews.",
+      promptGuidelines: [...DELEGATION_GUIDELINES.spawn_agent],
       parameters: spawnParameters<TSchema>(Type, {
         model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String(), thinkingLevel: Type.Optional(Type.String()) })),
         gate: Type.Optional(gateParameters<TSchema>(Type)),
@@ -312,6 +313,7 @@ export default function (pi: ExtensionAPI): void {
       name: "send_message",
       label: "Message subagent",
       description: "Send a durable attributed message to a subagent. mode note persists without starting work; steer affects the running generation (rejects idle agents); task starts a new task run (queued behind unfinished work; reloads an idle agent). The governing session can reuse any ordinary open descendant, including nested agents, via mode=task. Reuse needs no new identity slot; close_agent instead permanently closes a subtree and releases its open-agent slots. Optional model explicitly switches a settled non-gated agent before its task, subject to the root allowlist and current checkpoint (rejects busy/queued/closed targets). Root model changes never update retained children automatically. reply_to answers a child's question (see openQuestion in list_agents or messages in wait_agent).",
+      promptGuidelines: [...DELEGATION_GUIDELINES.send_message],
       parameters: Type.Object({
         target: Type.String({ description: "Agent id" }),
         message: Type.String(),
@@ -336,7 +338,7 @@ export default function (pi: ExtensionAPI): void {
     defineTool({
       name: "list_agents",
       label: "List subagents",
-      description: "Return the subagent tree: id, path, profile, model, observed state, pending intent, current task-run id, generation, outcome, usage, and any open question a child asked you.",
+      description: "Return the subagent tree: id, path, profile, model, the external tools (MCP etc) it may call, observed state, pending intent, current task-run id, generation, outcome, usage, and any open question a child asked you.",
       parameters: Type.Object({}),
       async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
         try {

@@ -29,7 +29,7 @@ import type { InitializePayload, IpcEnvelope, ProviderAdmissionResponse, WorkerE
 import { bindChannel, taskHeader, validateEnvelope, validateInitializePayload } from "./protocol.ts";
 import type { Api, AssistantMessage, AssistantMessageEventStream, CredentialStore, Model, Provider, ProviderStreams, SimpleStreamOptions, TranscriptContext, Usage } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, RESULT_TEXT_MAX, childToolSpec, type TypeBuilder } from "./tools.ts";
+import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, RESULT_TEXT_MAX, childToolGuidelines, childToolSpec, type TypeBuilder } from "./tools.ts";
 import { MAX_PAYLOAD_BYTES } from "./protocol.ts";
 import { PROTOCOL_VERSION, type InstructionSet } from "./types.ts";
 import type { ChannelBinding } from "./protocol.ts";
@@ -1619,7 +1619,7 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
         });
       }
       const spec = childToolSpec(Type, name);
-      return sdk.defineTool({ name, label: name, description: spec.description, parameters: spec.parameters, executionMode: "sequential", execute: makeProxyExecute(name) });
+      return sdk.defineTool({ name, label: name, description: spec.description, promptGuidelines: childToolGuidelines(name), parameters: spec.parameters, executionMode: "sequential", execute: makeProxyExecute(name) });
     });
     const resolved = await resolveModel(sdk, init, agentDir);
     const { modelRuntime, model } = resolved;

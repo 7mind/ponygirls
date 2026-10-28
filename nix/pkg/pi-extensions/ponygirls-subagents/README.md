@@ -435,6 +435,16 @@ its text is in `messages` (and `openQuestion` in `list_agents`). Answer with
 `send_message(target="<child>", mode="note", reply_to="<messageId>", message=...)`
 and wait again.
 
+`externalTools` in `list_agents` and `read_agent view=status` names the
+governing-session tools a child may call (empty for sandbox children and
+reviewers); anything else outside its files it knows only from what it is
+told. The `spawn_agent` and `send_message` prompt guidelines (governing
+session and nesting children alike) therefore ask the delegating side to
+read such external state immediately before relaying it, including when
+answering a child's question, and to state its source and observation
+time; an earlier result, such as the response that created a merge
+request, is relayed only as history with its age.
+
 A result is the child's final text, the first 8,000 characters by default.
 `result_limit` on `spawn_agent` keeps up to 524,288 characters per task run
 (a larger value is refused), and `read_agent view=result` pages through

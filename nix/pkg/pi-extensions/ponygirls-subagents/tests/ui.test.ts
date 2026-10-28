@@ -20,6 +20,7 @@ function view(overrides: Partial<AgentView> = {}): AgentView {
     profile: "reader",
     isolation: "none",
     workdir: "/proj",
+    externalTools: [],
     model: "p/m",
     observed: "running",
     pendingIntent: "running",

@@ -114,6 +114,8 @@ export interface AgentView {
   isolation: Isolation;
   /** Where the agent works (its worktree keeps its changes; nothing is merged back). */
   workdir: string;
+  /** Governing-session tools (MCP etc) this agent may call besides its file/shell/control tools. */
+  externalTools: string[];
   model: string;
   observed: string;
   pendingIntent: string;
@@ -5240,6 +5242,7 @@ export class Supervisor implements GateHost {
       profile: r.profile,
       isolation: r.grants.isolation,
       workdir: r.allocation.workdir,
+      externalTools: [...(r.grants.externalTools ?? [])],
       model: r.model ? `${r.model.provider}/${r.model.id}` : "unresolved",
       observed: r.observed,
       pendingIntent: rt.activeRun?.interruptRequested === true ? "interrupt pending" : pendingIntentOf(rt),
