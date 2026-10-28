@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { localBoundary } from "./runtime.ts";
 import type { State } from "./runtime.ts";
@@ -7,6 +8,18 @@ import { CG_HELP, completeCommand, parseCommand } from "./commands.ts";
 import type { CgCommand } from "./commands.ts";
 
 const WIDGET = "ponygirls-codegraph";
+/**
+ * ponygirls-subagents delegated-call contract (its src/delegated-call.ts;
+ * duplicated because the extensions are packaged separately). Subagent calls
+ * of the session's MCP tools skip `tool_call`, so they are prepared here.
+ */
+const DELEGATED_CALL_CHANNEL = "ponygirls-subagents:prepare-delegated-call";
+interface DelegatedCallEvent {
+  readonly toolName: string;
+  readonly input: Record<string, unknown>;
+  readonly cwd: string;
+  waitUntil(work: Promise<void>): void;
+}
 const NOTICE_LIMIT = 16_384;
 
 export default function codegraphExtension(pi: ExtensionAPI): void {
@@ -78,6 +91,24 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     } catch (error) {
       return { block: true, reason: String(error) };
     }
+  });
+  // A subagent's omitted projectPath means its own working directory (its
+  // worktree) unless it works in the session's cwd, where the session
+  // default applies; relative paths resolve against the subagent's cwd.
+  pi.events.on(DELEGATED_CALL_CHANNEL, (data) => {
+    const event = data as DelegatedCallEvent;
+    if (!event.toolName.startsWith("mcp__codegraph__") || workspace === undefined || !workspace.routingEnabled) return;
+    const runtime = workspace;
+    const sessionCwd = currentContext === undefined ? null : resolve(currentContext.cwd);
+    event.waitUntil((async () => {
+      const requested = event.input.projectPath;
+      if (requested !== undefined && typeof requested !== "string") throw new Error("projectPath must be a string");
+      const target = requested !== undefined ? resolve(event.cwd, requested)
+        : resolve(event.cwd) === sessionCwd ? undefined : event.cwd;
+      const root = await runtime.query(target);
+      if (workspace !== runtime) throw new Error("Codegraph session was replaced");
+      event.input.projectPath = root;
+    })());
   });
   pi.on("tool_execution_start", (event) => {
     if (!event.toolName.startsWith("mcp__codegraph__")) return;

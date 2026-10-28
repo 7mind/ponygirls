@@ -323,6 +323,22 @@ transcript events, and `nestedCalls` summaries are NOT replayed for
 delegated calls. The pinned 1.1.0 five-argument runtime adapter is an
 implementation constraint, not hook equivalence.
 
+Extensions whose tools need the preparation such a hook performs opt in
+through the `pi.events` channel `ponygirls-subagents:prepare-delegated-call`
+(`src/delegated-call.ts`). After authorization and immediately before the
+effect, the supervisor emits `{ toolName, input, cwd, waitUntil }`: `input`
+is a copy of the validated arguments that handlers may change in place,
+`cwd` is the child's working directory, and `waitUntil(work)` (called
+synchronously, before the handler's first `await`) makes the call wait for
+`work`; a rejection blocks the call with `BLOCKED: <message>`. A call no
+handler claims starts without yielding, as before. Live checks run again
+after preparation, and cancellation returns promptly without
+waiting for it (the extension's own work continues). Preparation is not
+authorization: a handler cannot grant a tool. The child's per-call wait is
+bounded by its 15-minute supervisor tool timeout; a retry joins work still
+in progress. ponygirls-codegraph uses it to build a missing index before a
+child's query reaches the MCP server.
+
 Every nested/direct call is re-authorized live immediately before effects
 (current binding, worker identity, active task/generation, current
 root/owner grants, live scope); completed scopes are revoked, so retained

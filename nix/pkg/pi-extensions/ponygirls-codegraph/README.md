@@ -23,6 +23,13 @@ authoritative. Pinned Codegraph **1.6.2** already supports multiple indexes thro
 - Explicit cross-project queries do not change the selected default. Both explicit
   and implicit targets are resolved again before reusing readiness. Changed scope
   identities invalidate old readiness; changed busy entries require cancellation.
+- Subagent calls (ponygirls-subagents) skip `tool_call`, so they are prepared
+  through its delegated-call channel instead, with the same per-project
+  preparation and canonical `projectPath`. A subagent's relative `projectPath`
+  resolves against its working directory; an omitted one means that directory
+  (its own worktree), or the session default when it works in Pi's cwd.
+  Preparing a large checkout can take longer than the subagent's 15-minute
+  tool wait; a retry joins the preparation still running.
 - Before an agent run, an undisplayed context message supplies project inventory,
   selection, and routing instructions. Its size is bounded and omitted projects
   are counted. This is independent graph selection, **not** merged search or

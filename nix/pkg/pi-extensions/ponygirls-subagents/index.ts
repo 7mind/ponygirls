@@ -18,6 +18,7 @@ import { instructionsFromPromptOptions, parseSelection } from "./src/instruction
 import { defaultSupervisorPolicy, validateAllowedTools, validateWorktreeRoot, type SupervisorPolicy } from "./src/policy.ts";
 import { GoverningModels } from "./src/parent-models.ts";
 import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/governing-runtime.ts";
+import { prepareThroughEventBus } from "./src/delegated-call.ts";
 import { DELEGATION_GUIDELINES, gateParameters, readParameters, reviewParameters, spawnParameters, waitParameters } from "./src/tools.ts";
 import type { InstructionSet, Isolation, ResolvedModel } from "./src/types.ts";
 import { AgentsScreen, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
@@ -230,6 +231,7 @@ export default function (pi: ExtensionAPI): void {
           baseCtx: () => binding.governingBaseCtx,
         };
       },
+      prepareDelegatedCall: (call) => prepareThroughEventBus(pi.events, call),
       workerPath: WORKER_PATH,
       sdkRoot,
       deterministic: false,

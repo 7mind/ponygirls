@@ -58,6 +58,7 @@ import { authorizeExternalTool, isReservedToolName } from "./policy.ts";
 import type { BrokerCaller } from "./broker.ts";
 import type { RunStore } from "./store.ts";
 import type { AgentId, OperationId } from "./types.ts";
+import type { DelegatedCall } from "./delegated-call.ts";
 
 export interface GoverningRegistry {
   /** False after reload/replacement/disposal (revoked binding). */
@@ -106,6 +107,13 @@ export interface DispatcherHooks {
    * and journals `usage.reported`. Aggregates never travel here: totals are
    * derived by summing receipts, each once.
    */
+  /**
+   * Extension preparation of a delegated call (see delegated-call.ts),
+   * after authorization and immediately before the effect: resolves to the
+   * arguments the tool receives; a rejection blocks the call. Null (the
+   * default) means nothing to prepare: the effect starts without yielding.
+   */
+  prepareCall?: (call: DelegatedCall) => Promise<Record<string, unknown>> | null;
   onUsage?: (info: {
     operationId: OperationId;
     agentId: AgentId;
@@ -247,6 +255,7 @@ export class GoverningToolDispatcher {
   private isValid: () => boolean;
   private ownsJournal: () => boolean;
   private onUsage: NonNullable<DispatcherHooks["onUsage"]>;
+  private prepareCall: NonNullable<DispatcherHooks["prepareCall"]>;
   private jobs = new Map<OperationId, ActiveExternal>();
   /** Every owned invocation ID ever admitted (duplicate fencing across history). */
   private seenIds = new Set<OperationId>();
@@ -272,6 +281,7 @@ export class GoverningToolDispatcher {
     this.ownsJournal = hooks?.ownsJournal ?? isValid;
     this.sharedIds = hooks?.sharedIds ?? new Set<OperationId>();
     this.onUsage = hooks?.onUsage ?? (() => {});
+    this.prepareCall = hooks?.prepareCall ?? (() => null);
   }
 
   activeJobs(agentId: AgentId): ActiveExternal[] {
@@ -680,18 +690,20 @@ export class GoverningToolDispatcher {
     } catch {
       paramsJson = null;
     }
-    const execute = async (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: ((p: AgentToolResult) => void) | undefined): Promise<GoverningToolResult> => {
+    // Live checks immediately before the effect; repeated after extension
+    // preparation, which may take long enough for the scope to change.
+    const denial = (): { result: GoverningToolResult } | { current: PinnedGoverningHandle } => {
       if (scopeJob.cancelRequested) {
-        return { content: [{ type: "text", text: "NOT_RUNNING: invocation scope retired" }], details: {}, isError: true };
+        return { result: { content: [{ type: "text", text: "NOT_RUNNING: invocation scope retired" }], details: {}, isError: true } };
       }
       const live = this.authorizeLive(caller.agentId, parent.name, { taskRunId: caller.taskRunId, generation: caller.generation });
       if (!live.ok) {
-        return { content: [{ type: "text", text: `${live.code}: ${live.message}` }], details: {}, isError: true };
+        return { result: { content: [{ type: "text", text: `${live.code}: ${live.message}` }], details: {}, isError: true } };
       }
       const registry = this.getRegistry();
       const current = registry?.isActive() === true ? registry.getHandle(parent.name) : undefined;
       if (!current) {
-        return { content: [{ type: "text", text: `POLICY_DENIED: tool ${parent.name} unavailable in the governing session` }], details: {}, isError: true };
+        return { result: { content: [{ type: "text", text: `POLICY_DENIED: tool ${parent.name} unavailable in the governing session` }], details: {}, isError: true } };
       }
       // Always compare the underlying implementation references, regardless of
       // object identity: a same-object in-place execute/prepare swap during
@@ -699,17 +711,35 @@ export class GoverningToolDispatcher {
       // SDK wrapper clone around the same definition (same refs + schema)
       // still delegates normally. Anything else is a revocation.
       if (current.execute !== boundExecute || current.prepareArguments !== boundPrepare) {
-        return { content: [{ type: "text", text: `POLICY_DENIED: tool ${parent.name} implementation changed during preparation` }], details: {}, isError: true };
+        return { result: { content: [{ type: "text", text: `POLICY_DENIED: tool ${parent.name} implementation changed during preparation` }], details: {}, isError: true } };
       }
       try {
         if (JSON.stringify(current.parameters ?? null) !== paramsJson) {
-          return { content: [{ type: "text", text: `POLICY_DENIED: tool ${parent.name} schema changed during preparation` }], details: {}, isError: true };
+          return { result: { content: [{ type: "text", text: `POLICY_DENIED: tool ${parent.name} schema changed during preparation` }], details: {}, isError: true } };
         }
       } catch {
-        return { content: [{ type: "text", text: `POLICY_DENIED: tool ${parent.name} schema not serializable` }], details: {}, isError: true };
+        return { result: { content: [{ type: "text", text: `POLICY_DENIED: tool ${parent.name} schema not serializable` }], details: {}, isError: true } };
       }
       if (!this.jobs.has(scopeJob.operationId) || scopeJob.done || scopeJob.cancelRequested) {
-        return { content: [{ type: "text", text: "STALE_GENERATION: invocation scope revoked" }], details: {}, isError: true };
+        return { result: { content: [{ type: "text", text: "STALE_GENERATION: invocation scope revoked" }], details: {}, isError: true } };
+      }
+      return { current };
+    };
+    const execute = async (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: ((p: AgentToolResult) => void) | undefined): Promise<GoverningToolResult> => {
+      const before = denial();
+      if ("result" in before) return before.result;
+      let current = before.current;
+      let prepared = params;
+      const preparation = this.prepareCall({ tool: parent.name, args: params as Record<string, unknown>, workdir: caller.workdir });
+      if (preparation !== null) {
+        try {
+          prepared = await preparation;
+        } catch (e) {
+          return { content: [{ type: "text", text: `BLOCKED: ${(e as Error).message}` }], details: {}, isError: true };
+        }
+        const after = denial();
+        if ("result" in after) return after.result;
+        current = after.current;
       }
       // Bridge partial-update callbacks across the narrow runtime boundary
       // (single documented cast; content shape is preserved verbatim).
@@ -718,7 +748,7 @@ export class GoverningToolDispatcher {
         : (partial: GoverningToolResult): void => {
           onUpdate(partial as unknown as AgentToolResult);
         };
-      return current.execute(toolCallId, params, signal, forwardUpdate, scoped);
+      return current.execute(toolCallId, prepared, signal, forwardUpdate, scoped);
     };
     return {
       name: parent.name,

@@ -27,6 +27,7 @@ import { ISOLATION_LEVELS } from "./types.ts";
 import { authorizeWorkspace, intersectGrants, pathWithin, resolveAllowedConcrete, rootGrants, type RegisteredRepo, type SupervisorPolicy } from "./policy.ts";
 import { GoverningToolDispatcher, type GoverningRegistry } from "./external-dispatcher.ts";
 import { snapshotGoverningHandles } from "./governing-runtime.ts";
+import type { DelegatedCall } from "./delegated-call.ts";
 import { killAndConfirm, readProcessIdentity, verifyOwnership, type OwnershipVerdict, type ProcessIdentity } from "./process-identity.ts";
 import { AdmissionScheduler, PathRegistry, type AgentCreationReservation, type LeaseTicket } from "./scheduler.ts";
 import { BwrapToolExecutor, HostToolExecutor, sandboxRuntimePath } from "./sandbox.ts";
@@ -353,6 +354,8 @@ export interface SupervisorOptions {
   hostAgentDir?: string;
   /** Live governing-session tool registry (revoked on reload/replacement/disposal). */
   governingRegistry?: () => GoverningRegistry | null;
+  /** Governing-session extension preparation of delegated calls (see delegated-call.ts). */
+  prepareDelegatedCall?: (call: DelegatedCall) => Promise<Record<string, unknown>> | null;
   workerFactory?: WorkerFactory;
   now?: () => string;
   questionTtlMs?: number;
@@ -579,6 +582,7 @@ export class Supervisor implements GateHost {
           ownsJournal: () => !this.disposed,
           onUsage: (info) => this.accountExternalUsage(info),
           sharedIds: this.sharedOpIds,
+          ...(options.prepareDelegatedCall !== undefined ? { prepareCall: options.prepareDelegatedCall } : {}),
         },
       );
       this.workspace = options.workspace ?? new GitWorkspaceManager();
