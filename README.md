@@ -147,6 +147,14 @@ The main knobs (all under `smind.hm.dev.llm`):
   verified task changes by default unless the user says otherwise, limited to
   the agent's own changes. This does not authorize pushing, force operations,
   or history rewriting.
+- **`worktrees.enable`** — opt-in task-worktree guidance for all three harnesses
+  (default `false`), independent of `generalContext.enable`. Set
+  `smind.hm.dev.llm.worktrees.enable = true;` to work under the main checkout's
+  ignored `.worktrees/`, verify changes, and merge back safely according to
+  `commitPolicy`. The guidance preserves user changes and leaves worktrees
+  intact when integration is unsafe. It is prompt guidance, not filesystem
+  enforcement. The existing general rule for concurrent subagent worktrees
+  remains separately controlled by `generalContext.sections.tools.rules.worktree-isolation.enable`.
 - **`generalContext`** — disable or customize the built-in general guidelines
   shared by Claude Code, Codex, and Pi. Every section has `enable`, `text`,
   and `order` options, with finer policy flags under selected sections'
