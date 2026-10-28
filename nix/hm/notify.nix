@@ -141,12 +141,50 @@ in
         }
       ];
     })
-    (lib.mkIf (active && notifyCfg.codex.enable) {
-      programs.codex.settings.hooks.UserPromptSubmit = [
+    (lib.mkIf (active && notifyCfg.codex.enable) (let
+      userPromptSubmit = [
         { hooks = [ { type = "command"; command = "${notifyCommand} codex --start"; } ]; }
       ];
+      codexConfigFile =
+        if config.home.preferXdgDirectories
+        then "${config.xdg.configHome}/codex/config.toml"
+        else "${config.home.homeDirectory}/.codex/config.toml";
+      hookTrustHash = handler:
+        "sha256:${
+          builtins.hashString "sha256" (builtins.toJSON {
+            event_name = "user_prompt_submit";
+            hooks = [
+              ({
+                type = "command";
+                command = handler.command;
+                timeout =
+                  if handler ? timeout && handler.timeout != null
+                  then handler.timeout
+                  else 600;
+                async =
+                  if handler ? async && handler.async != null
+                  then handler.async
+                  else false;
+              }
+              // lib.optionalAttrs (handler ? statusMessage && handler.statusMessage != null) {
+                inherit (handler) statusMessage;
+              })
+            ];
+          })
+        }";
+      hookTrustState = lib.listToAttrs (lib.concatLists (lib.imap0
+        (gi: group:
+          lib.imap0 (hi: handler: {
+            name = "${codexConfigFile}:user_prompt_submit:${toString gi}:${toString hi}";
+            value.trusted_hash = hookTrustHash handler;
+          })
+          group.hooks)
+        userPromptSubmit));
+    in {
+      programs.codex.settings.hooks.UserPromptSubmit = userPromptSubmit;
       programs.codex.settings.notify = [ notifyCommand "codex" ];
-    })
+      programs.codex.settings.hooks.state = hookTrustState;
+    }))
     (lib.mkIf (active && notifyCfg.pi.enable) {
       programs.pi.settings.extensions = lib.mkAfter [ "${notifyExtension}" ];
     })
