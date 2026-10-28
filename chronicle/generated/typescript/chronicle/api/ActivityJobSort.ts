@@ -60,7 +60,7 @@ export class ActivityJobSort_JsonCodec {
         return ActivityJobSort_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return ActivityJobSort_JsonCodec.BaboonDomainVersion
     }

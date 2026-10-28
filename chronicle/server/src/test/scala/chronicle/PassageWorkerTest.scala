@@ -18,7 +18,6 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     val progressCalls=ListBuffer.empty[(Int,Int)]
     val publications=ListBuffer.empty[ProblemsPublication]
     val failures=ListBuffer.empty[String]
-    var legacyPublications=0
     def knownProfiles: Set[String] = delegate.knownProfiles
     def ingest(owner: String,r: IngestRequest): IngestReceipt = delegate.ingest(owner,r)
     def session(reader: String,id: UUID): SessionInfo = delegate.session(reader,id)
@@ -26,17 +25,16 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def claim(profiles: Set[String],scope: ClaimScope,lease: Int): Option[Claim] = delegate.claim(profiles,scope,lease)
     def renew(claim: Claim,lease: Int): Boolean = delegate.renew(claim,lease)
     def progress(claim: Claim,done: Int,total: Int): Boolean = synchronized { progressCalls+=((done,total)); delegate.progress(claim,done,total) }
-    def publish(claim: Claim,chunks: List[IndexedChunk]): Boolean = synchronized { legacyPublications+=1; delegate.publish(claim,chunks) }
     def publishProblems(claim: Claim,publication: ProblemsPublication): Boolean = synchronized { publications+=publication; delegate.publishProblems(claim,publication) }
     def fail(claim: Claim,code: String): Unit = synchronized { failures+=code; delegate.fail(claim,code) }
+    def fail(claim: Claim,code: String,stage: IndexingStage): Unit = synchronized { failures+=code; delegate.fail(claim,code,stage) }
+    def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
+    def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
   }
   private def source(texts: List[String]): IngestRequest = {
     val messages=texts.zipWithIndex.map((text,index) => Message(s"m$index",None,"assistant",text,None,index))
     val raw=messages.map(m => Json.obj("id"->Json.fromString(m.id),"text"->Json.fromString(m.text)).noSpaces+"\n").mkString
     Fixtures.snapshot().copy(messages=messages,files=List(RawFile("synthetic.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
-  }
-  private val forbiddenLegacy=new Annotator {
-    def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO.raiseError(new AssertionError("passage profile invoked legacy annotator"))
   }
   private final class Embeddings extends Embedder {
     val batches=ListBuffer.empty[List[String]]
@@ -48,7 +46,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     }
   }
   private def worker(archive: SessionArchive,config: Config,catalog: IndexProfileCatalog,model: ProblemPassageAnnotator,embedder: Embedder): Worker =
-    new Worker(archive,forbiddenLegacy,model,embedder,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger())
+    new Worker(archive,model,embedder,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger())
 
   test("BG/GoodCommunication: actual passage Worker carries one problem, embeds each prefix in batches, coalesces spans and publishes final metadata") { withArchive { (config,catalog,delegate,_) =>
     val archive=new Recording(delegate)
@@ -74,8 +72,8 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     assertEquals(published.spans.head.source.end,request.messages.head.text.getBytes(UTF_8).length)
     assertEquals(published.chunks.map(_.vector),embedding.vectors.toList)
     assert(published.chunks.forall(_.chunk.summary==s"status $calls"))
-    assertEquals(archive.legacyPublications,0); assertEquals(delegate.session("a",receipt.sessionId).indexedRevision,Some(1))
-    assertEquals(delegate.passages("a",receipt.sessionId,0,100,None).format,PassageFormat.ContiguousProblems)
+    assertEquals(archive.publications.size,1); assertEquals(delegate.session("a",receipt.sessionId).indexedRevision,Some(1))
+    assertEquals(delegate.passages("a",receipt.sessionId,0,100,None).format,PassageFormat.ContextAwareProblems)
   }}
   test("BG/GoodCommunication: actual Worker publishes inside-message A-B-A as three passages with exact source and fresh namespaces") { withArchive { (config,catalog,delegate,_) =>
     val archive=new Recording(delegate); val request=source(List("AAA🙂BBBBAAAA")); val receipt=archive.ingest("a",request)
@@ -118,7 +116,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         Response[IO](Status.Ok).withEntity(response.noSpaces)
       }}
       val model=new OpenAIProblemPassageAnnotator(new ModelHttp(Client.fromHttpApp(app),store,admission),config)
-      val worked4=new Worker(archive,forbiddenLegacy,model,embedding,config,catalog,admission,logstage.IzLogger()).once.unsafeRunSync(); assert(worked4)
+      val worked4=new Worker(archive,model,embedding,config,catalog,admission,logstage.IzLogger()).once.unsafeRunSync(); assert(worked4)
       if(exhaust) {
         assertEquals(requests.size,6); assertEquals(embedding.batches.flatten.size,64); assertEquals(archive.publications.size,0)
         assertEquals(archive.progressCalls.toList,List((0,3),(1,3)))
@@ -175,23 +173,45 @@ abstract class PassageWorkerContract extends munit.FunSuite {
       }
     }
     val worked5=worker(archive,config,catalog,model,embedder).once.unsafeRunSync(); assert(worked5)
-    assertEquals(calls,1); assertEquals(archive.publications.size,0); assertEquals(archive.progressCalls.toList,List((0,3),(1,3)))
+    // The new checkpoint commit guard rejects the stale vector before reporting this window complete.
+    assertEquals(calls,1); assertEquals(archive.publications.size,0); assertEquals(archive.progressCalls.toList,List((0,3)))
   }}
-  test("BG/GoodCommunication: authoritative retained legacy profile never invokes passage annotation or publishes P1") { withArchive { (config,catalog,delegate,retain) =>
-    retain("a",config.profile)
-    val archive=new Recording(delegate); val receipt=archive.ingest("a",source(List.fill(12)("A substep")))
-    val legacy=new Annotator {
-      def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO {
-        AnnotationPartition.project(window,Json.obj("chunks"->Json.arr(Json.obj("first"->Json.fromInt(0),"last"->Json.fromInt(window.size-1),"summary"->Json.fromString("legacy"),"tags"->Json.arr()))))
+  test("BG/GoodCommunication: a fresh worker resumes validated decisions and each committed partial embedding batch") { withArchive { (config,catalog,delegate,_) =>
+    val original=source((0 until 96).map(i => s"A source-$i").toList); val receipt=delegate.ingest("a",original)
+    val annotations=ListBuffer.empty[Int]; val embedded=ListBuffer.empty[String]; var failed=false
+    val failedPiece=config.indexing.embeddingBatchSize
+    val base=new ProblemPassageFixtures.Dummy
+    val model=new ProblemPassageAnnotator {
+      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = {
+        annotations+=window.fragments.head.messagePosition; base.annotate(owner,window,previous)
       }
     }
-    val forbidden=new ProblemPassageAnnotator {
-      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(new AssertionError("legacy claim mislabeled as passage"))
+    val embedder=new Embedder {
+      def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query"))
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO {
+        embedded++=text
+        if(text.head==s"A source-$failedPiece" && !failed) { failed=true; throw DomainError("model-timeout","model deadline exceeded") }
+        text.map(_ => List(1.0,0.0,0.0))
+      }
     }
-    val worked6=new Worker(archive,legacy,forbidden,new Embeddings,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger()).once.unsafeRunSync(); assert(worked6)
-    assertEquals(archive.publications.size,0); assertEquals(archive.legacyPublications,1)
-    assertEquals(delegate.passages("a",receipt.sessionId,0,100,None).format,PassageFormat.LegacyAnnotations)
-    assertEquals(archive.progressCalls.toList,List((0,3),(1,3),(2,3),(3,3)))
+    assert(worker(delegate,config,catalog,model,embedder).once.unsafeRunSync())
+    assert(failed); assertEquals(delegate.session("a",receipt.sessionId).indexedRevision,None)
+    assert(worker(delegate,config,catalog,model,embedder).once.unsafeRunSync())
+    assertEquals(delegate.session("a",receipt.sessionId).indexedRevision,Some(1))
+    assertEquals(annotations.toList,List(0,64))
+    assertEquals(embedded.count(_=="A source-0"),1)
+    assertEquals(embedded.count(_==s"A source-$failedPiece"),2)
+    assertEquals(embedded.count(_==s"A source-${failedPiece*2}"),1)
+  }}
+  test("BG/GoodCommunication: an unconfigured old target cannot call the sole current model under an old identity") { withArchive { (config,catalog,delegate,retain) =>
+    val archive=new Recording(delegate); val receipt=archive.ingest("a",source(List.fill(12)("A substep")))
+    retain("a","unconfigured-old-policy")
+    val forbidden=new ProblemPassageAnnotator {
+      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(new AssertionError("unconfigured claim called current model"))
+    }
+    assert(!new Worker(archive,forbidden,new Embeddings,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger()).once.unsafeRunSync())
+    assertEquals(archive.publications.size,0); assertEquals(delegate.session("a",receipt.sessionId).indexedRevision,None)
+    assertEquals(archive.progressCalls.toList,Nil)
   }}
   test("BG/GoodCommunication: finite worker lanes let an independent owner publish while another annotation is blocked; cancellation releases both gates") { withArchive { (config,catalog,delegate,_) =>
     val a=delegate.ingest("a",source(List("A blocked"))); val b=delegate.ingest("b",source(List("A ready")))
@@ -222,8 +242,11 @@ abstract class PassageWorkerContract extends munit.FunSuite {
           result
         }
         def fail(c: Claim,code: String)=delegate.fail(c,code)
+        def fail(c: Claim,code: String,stage: IndexingStage)=delegate.fail(c,code,stage)
+        def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
+        def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
       }
-      fiber <- new Worker(archive,forbiddenLegacy,model,embedder,config,catalog,admission,logstage.IzLogger()).run.start
+      fiber <- new Worker(archive,model,embedder,config,catalog,admission,logstage.IzLogger()).run.start
       _ <- blocked.get.timeout(3.seconds)
       _ <- published.get.timeout(3.seconds)
       _ <- IO { assertEquals(delegate.session("a",a.sessionId).indexedRevision,None); assertEquals(delegate.session("b",b.sessionId).indexedRevision,Some(1)) }

@@ -37,7 +37,7 @@ class ExpressionHintContextTest extends munit.FunSuite {
   }
   test("BG specified: field and operator vocabularies are the existing parser vocabularies, not table column names") {
     def fields(target: ExpressionHintTarget): Set[String] = hints("¦",target,Nil).hints.filter(_.kind==ExpressionHintKind.Field).map(_.label).toSet
-    assertEquals(fields(archive),Set("after","before","branch","format","mode","model","producer","project","status","tag","tags","user"))
+    assertEquals(fields(archive),Set("after","agent","before","branch","format","mode","model","producer","project","status","tag","tags","user","yolo-profile"))
     assertEquals(fields(collectors),Set("after","before","collector","phase","freshness"))
     assertEquals(fields(jobs),fields(archive)-"mode"++Set("collector","profile","classification","reason","lease"))
     List("attempts¦","revision¦","messageCount¦","completedWindows¦","unknown:¦").foreach(marked => assertEquals(hints(marked,jobs,Nil).hints,Nil))
@@ -128,6 +128,19 @@ class ExpressionHintContextTest extends munit.FunSuite {
     }
     assert(hints("NOT (text) ¦",archive,Nil).hints.exists(_.label=="mode"))
     assert(!hints("mode:lexical mo¦",archive,Nil).hints.exists(_.label=="mode"))
+  }
+  test("BG specified: agent hints are fixed, case-insensitive and replace the whole active value") {
+    List(archive,jobs).foreach { target =>
+      assertEquals(hints("agent:¦",target,List("worker")).hints.map(_.label),List("main","subagent"))
+      val q=request("NOT (agent:SU¦BAGENT) AND tag:keep",target,20)
+      val result=index(List("worker")).hints("a",q)
+      assertEquals(result.hints.map(_.label),List("subagent"))
+      val updated=replacement(q,result,result.hints.head)
+      assertEquals(updated,"NOT (agent:\"subagent\") AND tag:keep")
+      if(target==archive) ArchiveExpression.parse(updated) else ActivityExpression.jobs(updated)
+    }
+    assertEquals(hints("agent:¦",collectors,Nil).hints,Nil)
+    assertEquals(hints("ag¦",collectors,Nil).hints,Nil)
   }
   test("BG specified: UTF16 carets and ranges retain non-BMP text and reject a split scalar") {
     val q=request("\"😀\" AND project:\"🙂¦old\" AND tag:keep",archive,20)

@@ -1,0 +1,13 @@
+chronicle.ActivityExpressionTest
+chronicle.AgentKindTest
+chronicle.ApiVersionCompatibilityTest
+chronicle.ArchiveExpressionTest
+chronicle.CodecFixtureTest
+chronicle.ContextCoverageTest
+chronicle.CoreTest
+chronicle.ExpressionHintContextTest
+chronicle.ProblemPassagesTest
+chronicle.ProblemsPublicationTest
+chronicle.ProtocolEvolutionTest
+chronicle.ProviderUsageTest
+chronicle.RevisionSortAnchorTest

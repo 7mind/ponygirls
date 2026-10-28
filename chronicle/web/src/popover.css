@@ -1,0 +1,14 @@
+:root{--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;--space-8:32px}
+.transient-popover{position:fixed;inset:auto;margin:0;box-sizing:border-box;width:470px;max-width:calc(100vw - 16px);overflow:auto;overscroll-behavior:contain;padding:var(--space-4);background:var(--paper);color:var(--ink);border:1px solid var(--control-border);border-radius:4px;box-shadow:0 8px 24px var(--shadow-soft);white-space:normal;overflow-wrap:anywhere;text-align:left;font-size:12px;font-weight:400}
+.transient-popover::backdrop{background:transparent}
+.transient-popover .popover-close{display:none}
+.transient-popover.table-column-panel{width:290px}
+.table-column-panel:popover-open{display:grid;gap:var(--space-2)}
+.transient-popover.activity-about-content{width:560px}
+.transient-popover.theme-menu{width:270px}
+.transient-popover.retry-failed-help-content{width:380px}
+.transient-popover.health-panel{width:390px}
+.activity-row-details>button{font-size:10px;padding:var(--space-1) var(--space-2);color:var(--ink);text-decoration:none}
+.activity-about>button,.expression-help>button{font-size:11px;padding:var(--space-1) var(--space-2)}
+.table-column-menu>button{font-size:10px;padding:var(--space-1) var(--space-2)}
+@media(max-width:640px){.transient-popover{inset:auto 8px 8px;width:auto!important;max-width:none;max-height:75dvh;padding:var(--space-4)}.transient-popover .popover-close{display:block;margin:0 0 var(--space-3) auto;font-size:12px;padding:var(--space-1) var(--space-2)}}

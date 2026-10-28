@@ -40,7 +40,11 @@ final class Auth(db: Database, config: Config) {
   def receipt(i: Identity,id: UUID): Result = { i.requireBrowser(); db.transaction(c => Sql.one(c,"SELECT result FROM ch_mutations WHERE owner=? AND request_id=?",i.user.id,id)(r => Wire.decode(Result.codecJson,Sql.json(r,"result"))).getOrElse(throw DomainError("not-found","receipt not found"))) }
   def previewRetryFailed(i: Identity): RetryFailedPlan = {
     i.requireBrowser(); i.requireScope(Scope.Read)
-    db.transaction { c => c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ); RetryFailedJobs.preview(c,i.user.id) }
+    db.transaction { c =>
+      c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+      db.profiles.resolve(OwnerTargets.read(c,i.user.id,false).profile)
+      RetryFailedJobs.preview(c,i.user.id)
+    }
   }
   def previewOwnerReindex(i: Identity): OwnerReindexPlan = {
     i.requireBrowser(); i.requireScope(Scope.Read)
@@ -50,6 +54,10 @@ final class Auth(db: Database, config: Config) {
       val plan=OwnerReindex.preview(c,i.user.id,db.profiles)
       OwnerReindexPlan(plan.currentTargetProfile,plan.targetProfile,plan.selectionHash,plan.heads,plan.alreadyCurrent,plan.replacements)
     }
+  }
+  def reindexStatus(i: Identity,id: UUID): ReindexStatusResult = {
+    i.requireBrowser(); i.requireScope(Scope.Read)
+    db.transaction { c => c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ); currentBrowser(c,i); ReindexCohort.status(c,i.user.id,id) }
   }
   def mutate(i: Identity,e: ClientEnvelope): Result = { i.requireBrowser()
     e.operation match { case _: Operation.ApplyRetryFailed | _: Operation.ApplyOwnerReindex => i.requireScope(Scope.Read); case _ => () }
@@ -117,11 +125,13 @@ final class Auth(db: Database, config: Config) {
         Sql.exec(c,"DELETE FROM ch_members WHERE group_id=? AND user_id=?",id,owner); receipt("LeaveGroup",Some(id))
       case Operation.DeleteGroup(id) => groupOwner(id); Sql.exec(c,"DELETE FROM ch_groups WHERE id=?",id); receipt("DeleteGroup",Some(id))
       case Operation.ApplyRetryFailed(targetProfile,selectionHash,confirm) =>
+        db.profiles.resolve(OwnerTargets.read(c,owner,true).profile)
         Result.RetryFailed(RetryFailedJobs(c,owner,e.requestId,targetProfile,selectionHash,confirm))
       case Operation.ApplyOwnerReindex(targetProfile,selectionHash,confirm) =>
         val result=OwnerReindex(c,owner,e.requestId,targetProfile,selectionHash,confirm,db.profiles)
         Result.OwnerReindexed(OwnerReindexResult(result.requestId,result.targetProfile,result.heads,result.queued,result.alreadyCurrent,result.invalidatedClaims))
       case Operation.RetryJob(id) =>
+        db.profiles.resolve(OwnerTargets.read(c,owner,true).profile)
         Jobs.retry(c,owner,id); receipt("RetryJob",Some(id))
       case Operation.Purge(id) =>
         Check(Sql.exec(c,"UPDATE ch_sources SET tombstone=true,published=NULL WHERE id=? AND owner=?",id,owner)==1,"not-found","session not found")

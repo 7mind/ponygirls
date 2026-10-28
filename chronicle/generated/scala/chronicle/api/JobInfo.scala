@@ -12,7 +12,8 @@ package chronicle.api {
     attempts: Int,
     error: Option[String],
     completedWindows: Int,
-    totalWindows: Option[Int]
+    totalWindows: Option[Int],
+    failureStage: Option[IndexingFailureStage]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = JobInfo.baboonDomainVersion
     override def baboonDomainIdentifier: String = JobInfo.baboonDomainIdentifier
@@ -23,14 +24,14 @@ package chronicle.api {
   }
   
   object JobInfo {
-    def baboonDomainVersion: String = "1.5.0"
+    def baboonDomainVersion: String = "1.7.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#JobInfo"
-    private lazy val _baboonSameInVersions: List[String] = List("1.2.0", "1.3.0", "1.4.0", "1.5.0")
+    private lazy val _baboonSameInVersions: List[String] = List("1.7.0")
     def baboonSameInVersions: List[String] = _baboonSameInVersions
-    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.5.0" -> "identical")
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.7.0" -> "identical")
     def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.2.0", "identical" -> "1.2.0")
+    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.7.0", "identical" -> "1.7.0")
     def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
     def codecJson: BaboonJsonCodec[JobInfo] = JobInfo_JsonCodec.instance
   }
@@ -49,7 +50,8 @@ package chronicle.api {
         "attempts" -> Json.fromInt(value.attempts),
         "error" -> value.error.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "completedWindows" -> Json.fromInt(value.completedWindows),
-        "totalWindows" -> value.totalWindows.map(v => Json.fromInt(v)).getOrElse(Json.Null)
+        "totalWindows" -> value.totalWindows.map(v => Json.fromInt(v)).getOrElse(Json.Null),
+        "failureStage" -> value.failureStage.map(v => IndexingFailureStage_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null)
       )
     }
     
@@ -68,7 +70,8 @@ package chronicle.api {
             error <- getField(jsonObject, "error").flatMap(v => decodeOption(decodeString)(v.hcursor))
             completedWindows <- getField(jsonObject, "completedWindows").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))
             totalWindows <- getField(jsonObject, "totalWindows").flatMap(v => decodeOption(BaboonJsonCodec.decodeInt)(v.hcursor))
-          } yield JobInfo(id,sessionId,revision,state,attempts,error,completedWindows,totalWindows)
+            failureStage <- getField(jsonObject, "failureStage").flatMap(v => decodeOption(IndexingFailureStage_JsonCodec.circeDecoder)(v.hcursor))
+          } yield JobInfo(id,sessionId,revision,state,attempts,error,completedWindows,totalWindows,failureStage)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to JobInfo: object expected"))
       }
     }

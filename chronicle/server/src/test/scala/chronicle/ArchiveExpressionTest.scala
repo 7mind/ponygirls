@@ -89,9 +89,12 @@ class ArchiveExpressionTest extends munit.FunSuite {
       ("branch:Main",ArchivePredicate.Branch("Main")),
       ("producer:Pi",ArchivePredicate.Producer("Pi")),
       ("model:ModelA",ArchivePredicate.Model("ModelA")),
+      ("YOLO-PROFILE:Named_1.2",ArchivePredicate.YoloProfile("Named_1.2")),
       ("format:CLAUDE",ArchivePredicate.Format(SourceFormat.Claude)),
       ("format:Codex",ArchivePredicate.Format(SourceFormat.Codex)),
       ("format:pi",ArchivePredicate.Format(SourceFormat.Pi)),
+      ("AGENT:MAIN",ArchivePredicate.Agent(AgentKind.Main)),
+      ("agent:SubAgent",ArchivePredicate.Agent(AgentKind.Subagent)),
       ("status:QUEUED",ArchivePredicate.Status(ArchiveStatus.Queued)),
       ("status:Running",ArchivePredicate.Status(ArchiveStatus.Running)),
       ("status:failed",ArchivePredicate.Status(ArchiveStatus.Failed)),
@@ -105,6 +108,11 @@ class ArchiveExpressionTest extends munit.FunSuite {
       assertEquals(query.textOperands,Nil,input)
     }
     assertEquals(parsed("project : \"some project\"").expression,Field(ArchivePredicate.Project("some project")))
+  }
+
+  test("BA: recorded yolo profile is metadata, not free text or annotation profile") {
+    assertEquals(parsed("yolo-profile:Named_1.2").textOperands,Nil)
+    assertEquals(parsed("yolo-profile:Named_1.2").candidateFilter,parsed("yolo-profile:Named_1.2").expression)
   }
 
   test("BA: repeated metadata atoms remain ordinary Boolean operands") {
@@ -121,7 +129,8 @@ class ArchiveExpressionTest extends munit.FunSuite {
   }
 
   test("BA: unsupported fields and enum values fail without partial parsing") {
-    List("unknown:value","owner:a","format:gemini","status:pending","mode:other","a unknown:x").foreach(invalid)
+    List("unknown:value","owner:a","format:gemini","agent:worker","status:pending","mode:other","a unknown:x").foreach(invalid)
+    invalidAt("🐎 agent:worker",8)
     invalidAt("🐎 unknown:x",2)
     invalidAt("user:a unknown:x",7)
   }
@@ -254,6 +263,14 @@ class ArchiveExpressionTest extends munit.FunSuite {
     assertEquals(parsed("NOT (tag:spam OR user:a) AND foo").candidateFilter,Not(Or(tag("spam"),user("a"))))
   }
 
+  test("BA: agent restrictions participate in the same Boolean and semantic candidate policy as other metadata") {
+    val agent=Field(ArchivePredicate.Agent(AgentKind.Subagent))
+    assertEquals(parsed("agent:subagent needle").candidateFilter,agent)
+    assertEquals(parsed("NOT agent:main needle").candidateFilter,Not(Field(ArchivePredicate.Agent(AgentKind.Main))))
+    assertEquals(parsed("agent:subagent OR needle").candidateFilter,True)
+    assertEquals(parsed("NOT(agent:subagent AND needle)").candidateFilter,True)
+    assertEquals(parsed("agent:main OR agent:subagent").textOperands,Nil)
+  }
   test("BA: candidate filter never extracts metadata through mixed OR or NOT subtrees") {
     List("user:a OR foo","NOT(user:a AND foo)","(tag:a AND foo) OR (tag:b AND bar)","NOT (foo OR tag:a)").foreach { input =>
       assertEquals(parsed(input).candidateFilter,True,input)

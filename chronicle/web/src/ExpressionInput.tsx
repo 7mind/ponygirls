@@ -1,3 +1,4 @@
+import { closePopovers } from './Popover.tsx';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { ExpressionHintQuery, Operation_ExpressionHints, Result_ExpressionHints, type ExpressionHintsResult, type ExpressionHintTarget } from './api.ts';
@@ -46,7 +47,7 @@ export function ExpressionInput({ context, inputRef, id, label, placeholder, val
   function composition(value: boolean) { setComposing(value); if (compositionChange !== undefined) compositionChange(value); }
   function reset() { composition(false); setResult(null); setError(null); setDismissed(stamp); pendingCaret.current = null; clear(); if (inputRef.current !== null) { inputRef.current.focus({ preventScroll: true }); inputRef.current.setSelectionRange(0, 0); setCaret(0); } }
   return <div className="expression-composer"><input id={id} ref={inputRef} role="combobox" aria-label={label} aria-autocomplete="list" aria-expanded={open} aria-controls={listId} aria-activedescendant={open ? `${listId}-${choice}` : undefined} autoComplete="off" spellCheck={false} maxLength={maxLength} value={value} placeholder={placeholder}
-    onFocus={event => { setFocused(true); selection(event.currentTarget); }} onBlur={() => { setFocused(false); setResult(null); }} onChange={event => { setDismissed(null); change(event.target.value); selection(event.currentTarget); }} onSelect={event => selection(event.currentTarget)}
+    onFocus={event => { closePopovers(); setFocused(true); selection(event.currentTarget); }} onBlur={() => { setFocused(false); setResult(null); }} onChange={event => { setDismissed(null); change(event.target.value); selection(event.currentTarget); }} onSelect={event => selection(event.currentTarget)}
     onCompositionStart={() => { composition(true); setResult(null); }} onCompositionEnd={event => { composition(false); selection(event.currentTarget); }}
     onKeyDown={event => {
       if (composing || event.nativeEvent.isComposing || event.keyCode === 229) { if (event.key === 'Enter') event.preventDefault(); return; }

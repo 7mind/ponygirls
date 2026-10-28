@@ -50,13 +50,13 @@ try {
     const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 180; });
     const first = fixture.calls.find(call => call.operation instanceof api.Operation_Archive).operation.query;
     assert.equal(first.expression, ''); assert.equal(first.sort, api.ArchiveSort.LastTimestamp); assert.equal(first.direction, api.SortDirection.Desc);
-    assert.ok(fixture.calls[0].operation instanceof api.Operation_Hello); assert.deepEqual(fixture.calls[0].operation.versions, ['1.5.0']);
+    assert.ok(fixture.calls[0].operation instanceof api.Operation_Hello); assert.deepEqual(fixture.calls[0].operation.versions, ['1.7.0']);
     assert.equal(await page.getByRole('heading', { level: 1 }).count(), 0); assert.equal(await page.getByRole('radio').count(), 0);
     await appendUntil(page, '.archive-table-scroll', '.archive-row', 180);
     assert.equal(new Set(await page.locator('.archive-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-session-id')))).size, 180);
     assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).every(call => call.operation.query.limit <= 100));
     assert.ok(await page.getByText('Unscheduled', { exact: true }).count() > 0, 'raw-only HEADs remain browsable before indexing');
-    const tableControls = page.getByRole('region', { name: 'Conversations table controls', exact: true }); await tableControls.locator('summary').click(); await tableControls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await tableControls.locator('summary').click();
+    const tableControls = page.getByRole('region', { name: 'Conversations table controls', exact: true }); await tableControls.getByRole('button', { name: 'Columns', exact: true }).click(); await tableControls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await tableControls.getByRole('button', { name: 'Columns', exact: true }).click();
     await search(page, 'original source'); await until(() => Promise.resolve(fixture.calls.some(call => call.operation instanceof api.Operation_Archive && call.operation.query.expression === 'original source')), 'Text query not sent');
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).at(-1).operation.query.sort, api.ArchiveSort.LastTimestamp, 'text queries do not silently switch to relevance');
     const sorts = [['Last activity', api.ArchiveSort.LastTimestamp], ['Conversation', api.ArchiveSort.Title], ['User', api.ArchiveSort.Owner], ['Project', api.ArchiveSort.Project], ['Branch', api.ArchiveSort.Branch], ['Producer', api.ArchiveSort.Producer], ['Format', api.ArchiveSort.Format], ['Model', api.ArchiveSort.Model], ['Index status', api.ArchiveSort.Status], ['Messages', api.ArchiveSort.MessageCount], ['Tags', api.ArchiveSort.Tags]];
@@ -94,9 +94,9 @@ try {
     await until(() => Promise.resolve(fixture.calls.some(call => call.operation instanceof api.Operation_Archive && call.operation.query.expression === 'mode : lexical ((A OR B)) AND project:"chronicle"')), 'Quick filter did not conjoin the complete expression');
     const before = fixture.searchCount; await page.getByRole('combobox', { name: 'Search conversations' }).fill('A OR B mode:lexical'); await page.getByRole('button', { name: 'Add Project filter', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'outer AND directive' }).waitFor(); assert.equal(fixture.searchCount, before, 'invalid global mode placement is not quietly repaired');
-    await page.locator('.expression-help > summary').click();
+    await page.getByRole('button', { name: 'Search syntax', exact: true }).click();
     assert.match(await page.locator('.expression-help-content').innerText(), /NOT text/); assert.match(await page.locator('.expression-help-content').innerText(), /literal substring/); assert.match(await page.locator('.expression-help-content').innerText(), /not proof/);
-    await page.locator('.expression-help > summary').click();
+    await page.getByRole('button', { name: 'Search syntax', exact: true }).click();
     fixture.archiveFailure = 'Unknown field at character 1'; await search(page, 'unknown:value'); await page.getByRole('alert').filter({ hasText: 'Unknown field at character 1' }).waitFor(); assert.equal(await page.locator('.archive-row').count(), 0);
     fixture.archiveFailure = 'Semantic model unavailable'; await search(page, 'mode:semantic missing-model'); await page.getByRole('alert').filter({ hasText: 'Semantic model unavailable' }).waitFor(); assert.equal(await page.locator('.archive-row').count(), 0);
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Search).length, 0, 'new Archive never falls back to the old Search operation');
@@ -135,7 +135,7 @@ try {
     fixture.releaseLocators(); await page.locator('#message-m1 mark').waitFor(); await page.waitForTimeout(100);
     assert.equal(await page.locator('#message-m1 mark').textContent(), '猫🦄'); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetMessages && call.operation.offset >= 12000).length, 0, 'a newer already-loaded selection cancels an older remote locator');
     await appendUntil(page, '.conversation-passages', '.passage-list .passage', 205);
-    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_GetChunks && call.operation.offset === 200 && call.operation.limit === 40));
+    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_GetPassages && call.operation.offset === 200 && call.operation.limit === 40));
     fixture.holdLocators = true; await page.locator('.passage-list').getByRole('button', { name: /Winning passage beyond the first hundred/ }).click();
     await until(() => Promise.resolve(fixture.pendingLocators.length === 1), 'Expected held direct locator');
     const before = await page.evaluate(() => ({ left: document.querySelector('.conversation-passages').scrollTop, window: scrollY, body: document.body.style.top }));
@@ -153,7 +153,7 @@ try {
     const { context, page, fixture } = await scene(fixture => {
       const zero = new api.JobCounts(0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n);
       fixture.activityCollectors = Array.from({ length: 120 }, (_, index) => new api.ActivityCollector(`collector-${String(index).padStart(3, '0')}`, undefined, BigInt(index), 0n, zero, zero));
-      const job = (id, revision, state, error) => new api.JobInfo(id, fixture.session.id, revision, state, 1, error, 0, undefined);
+      const job = (id, revision, state, error) => new api.JobInfo(id, fixture.session.id, revision, state, 1, error, 0, undefined, undefined);
       const activity = (info, profile, classification, expires, active, retryable) => new api.ActivityJob(info, profile, classification, expires, active, retryable, fixture.source.collectorNamespace, fixture.jobSession(info), '2026-10-23T09:31:00Z');
       const failed = activity(job(currentFailedId, 2, api.JobState.Failed, 'Current failed work'), 'target-profile', api.ActivityJobClass.Current, undefined, false, true);
       const running = ['active', 'expired', 'unleased'].map((kind, index) => activity(job(`00000000-0000-4000-8000-${String(90002 + index).padStart(12, '0')}`, 2, api.JobState.Running, kind === 'active' ? 'Previous-attempt synthetic failure' : undefined).with({ attempts: kind === 'active' ? 4 : 1 }), 'target-profile', api.ActivityJobClass.Current, kind === 'unleased' ? undefined : kind === 'active' ? '2030-01-01T00:00:00Z' : '2020-01-01T00:00:00Z', kind === 'active', false));
@@ -169,22 +169,22 @@ try {
     const runningRows = page.locator('.activity-job-row').filter({ has: page.locator('td[data-column="State"]').getByText('Running', { exact: true }) });
     for (const [index, label] of ['Active lease at snapshot', 'Expired lease at snapshot', 'Unleased · no lease expiry'].entries()) {
       const row = page.locator(`.activity-job-row[data-scroll-anchor="00000000-0000-4000-8000-${String(90002 + index).padStart(12, '0')}"]`);
-      await row.locator('.activity-row-details > summary').click();
+      await row.getByRole('button', { name: 'Details', exact: true }).click();
       await row.getByText(label, { exact: index === 2 }).waitFor();
-      await row.locator('.activity-row-details > summary').click();
+      await row.getByRole('button', { name: 'Details', exact: true }).click();
     }
     assert.equal(await runningRows.count(), 3);
     assert.equal(await page.getByRole('button', { name: 'Retry indexing', exact: true }).count(), 1);
     const priorAttempt = page.locator('.activity-job-row').filter({ hasText: 'Previous-attempt synthetic failure' });
-    await priorAttempt.locator('.activity-row-details > summary').click();
+    await priorAttempt.getByRole('button', { name: 'Details', exact: true }).click();
     await page.getByText('Prior-attempt error: Previous-attempt synthetic failure', { exact: true }).waitFor();
     assert.equal(await page.getByText('Prior-attempt error: Previous-attempt synthetic failure', { exact: true }).count(), 1, 'Running retains prior failure provenance without claiming the current attempt has Failed');
     assert.equal(await priorAttempt.locator('td[data-column="Attempts"]').innerText(), '4');
-    await priorAttempt.locator('.activity-row-details > summary').click();
+    await priorAttempt.getByRole('button', { name: 'Details', exact: true }).click();
     const collector = page.locator('.activity-collector-row').first();
-    await collector.locator('.activity-row-details > summary').click();
+    await collector.getByRole('button', { name: 'Details', exact: true }).click();
     assert.match(await collector.innerText(), /No stored report · collection progress unknown/);
-    await collector.locator('.activity-row-details > summary').click();
+    await collector.getByRole('button', { name: 'Details', exact: true }).click();
     await appendUntil(page, '.activity-collector-scroll', '.activity-collector-row', 120);
     assert.ok(new Set(fixture.calls.filter(call => call.operation instanceof api.Operation_Activity && call.operation.query.cursor !== undefined && call.operation.query.limit === 50).map(call => call.operation.query.cursor)).size >= 2, '120 collectors require at least two distinct opaque continuation cursors');
     fixture.activityJobs = fixture.activityJobs.map(item => item.job.id === currentFailedId ? item.with({ classification: api.ActivityJobClass.SupersededRevision, retryable: false }) : item);
@@ -193,10 +193,10 @@ try {
     await until(async () => await totals.locator('tbody tr').first().locator('td').first().innerText() === '3', 'Independent collector-summary chain did not finish refreshing');
     assert.deepEqual(await totals.locator('tbody tr').first().locator('td').allTextContents(), ['3', '0', '3', '0', '0']);
     assert.equal(await page.getByRole('button', { name: 'Retry indexing', exact: true }).count(), 0, 'a job that became historical does not silently remain actionable in Current');
-    await priorAttempt.locator('.activity-row-details > summary').click();
+    await priorAttempt.getByRole('button', { name: 'Details', exact: true }).click();
     await page.getByText('Prior-attempt error: Previous-attempt synthetic failure', { exact: true }).waitFor();
     assert.equal(await page.getByText('Prior-attempt error: Previous-attempt synthetic failure', { exact: true }).count(), 1, 'zero current Failed jobs does not erase a Running job\'s prior-attempt error');
-    await priorAttempt.locator('.activity-row-details > summary').click();
+    await priorAttempt.getByRole('button', { name: 'Details', exact: true }).click();
     await page.getByRole('button', { name: 'History', exact: true }).click();
     await appendUntil(page, '.activity-job-scroll', '.activity-job-row', 59);
     assert.equal(await page.getByRole('button', { name: 'Retry indexing', exact: true }).count(), 0, 'historical failures are retained for accounting, never presented as retryable current work');
@@ -230,7 +230,7 @@ try {
       const visible = await locator.evaluate(element => { const rect = element.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, height: innerHeight }; });
       assert.ok(visible.top >= 0 && visible.bottom <= visible.height, `${label} must be visible without scrolling: ${JSON.stringify(visible)}`);
     }
-    await page.locator('.activity-about > summary').click();
+    await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
     assert.match(await page.locator('.activity-about-content').innerText(), /Browser HTTP\/socket availability is not collector or worker health/);
     assert.match(await page.locator('.activity-about-content').innerText(), /in-flight page chains finish/);
     await context.close();

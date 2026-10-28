@@ -31,6 +31,13 @@ class BrowserWebSocketTest extends munit.FunSuite {
       Wire.decode(ServerEnvelope.codecJson,Wire.parse(text))
     }
     def request(operation: Operation): IO[Result] = IO(UUID.randomUUID()).flatMap(id => send(operation,id) *> receive.map { result => assertEquals(result.requestId,id); result.result })
+    def request16(operation: chronicle.api.v1_6_0.Operation): IO[chronicle.api.v1_6_0.Result] = IO.blocking {
+      val id=UUID.randomUUID()
+      ws.sendText(Wire.encode(chronicle.api.v1_6_0.ClientEnvelope.codecJson,chronicle.api.v1_6_0.ClientEnvelope(id,operation)).noSpaces,true).get(5,TimeUnit.SECONDS)
+      val text=inbox.poll(5,TimeUnit.SECONDS); assert(text!=null,"missing retained-client response")
+      val result=Wire.decode(chronicle.api.v1_6_0.ServerEnvelope.codecJson,Wire.parse(text))
+      assertEquals(result.requestId,id); result.result
+    }
   }
   private def socket(url: String,config: Config,secret: String): Resource[IO,Socket] = for {
     client <- Resource.make(IO(JClient.newHttpClient()))(c => IO.blocking(c.close()))
@@ -46,11 +53,12 @@ class BrowserWebSocketTest extends munit.FunSuite {
           if(last) {
             val raw=text.toString; text.setLength(0)
             maximumFrameBytes.accumulateAndGet(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong,(a,b) => a.max(b))
-            val envelope=Wire.decode(ServerEnvelope.codecJson,Wire.parse(raw))
-            envelope.result match {
-              case Result.Ping(nonce) => ws.sendText(Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(envelope.requestId,Operation.Pong(nonce))).noSpaces,true)
-              case _ => inbox.offer(raw)
-            }
+            val json=Wire.parse(raw)
+            if(json.hcursor.downField("result").downField("Ping").succeeded) {
+              val envelope=Wire.decode(ServerEnvelope.codecJson,json)
+              val nonce=envelope.result.asInstanceOf[Result.Ping].nonce
+              ws.sendText(Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(envelope.requestId,Operation.Pong(nonce))).noSpaces,true)
+            } else inbox.offer(raw)
           }
           ws.request(1); CompletableFuture.completedFuture(null)
         }
@@ -98,6 +106,69 @@ class BrowserWebSocketTest extends munit.FunSuite {
   private val immediateEmbedder: Embedder = new Embedder {
     def query(owner: String,text: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
     def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.pure(text.map(_ => List(1.0,0.0,0.0)))
+  }
+
+  // Regression-origin: one unsupported optional archive format must not disconnect a retained client.
+  test("BG GoodCommunication regression: retained 1.6 context archive remains usable and unsupported passage reads are nonterminal") {
+    import chronicle.api.{v1_6_0 as old}
+    (for {
+      tools <- McpTestFixtures.ordinaryTools
+      model <- McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("synthetic reply")))
+      _ <- fixture(immediateEmbedder,model,tools,identity).use { f => for {
+        data <- IO.blocking {
+          val receipt=f.archive.ingest("a",Fixtures.snapshot())
+          val claim=f.archive.claim(f.archive.knownProfiles,ClaimScope.Owner("a"),300).get
+          val chunks=Fragments.split(claim.snapshot.messages).map(chunk => IndexedChunk(chunk.copy(sessionId=claim.sessionId,summary="synthetic problem"),List(1.0,0.0,0.0)))
+          assert(f.archive.publishProblems(claim,TestPublications.from(claim,chunks)))
+          val passages=f.archive.passages("a",receipt.sessionId,0,10,None)
+          (receipt.sessionId,passages.view,passages.passages.head.id)
+        }
+        secret <- IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2)
+        _ <- server(f).use(url => socket(url,f.config,secret).use { client => for {
+          hello <- client.request16(old.Operation.Hello(List("1.6.0")))
+          _ <- IO(assert(hello.isInstanceOf[old.Result.Hello]))
+          archive <- client.request16(old.Operation.Archive(old.ArchiveQuery("",old.ArchiveSort.LastTimestamp,old.SortDirection.Desc,None,10)))
+          _ <- IO {
+            assert(archive.isInstanceOf[old.Result.Archive],archive.toString)
+            assertEquals(archive.asInstanceOf[old.Result.Archive].result.rows.head.publishedFormat,None)
+          }
+          view=old.ContentView(data._2.revision,data._2.generationId)
+          passages <- client.request16(old.Operation.GetPassages(data._1,view,0,10))
+          _ <- IO(assertEquals(passages.asInstanceOf[old.Result.Error].failure.code,"unavailable"))
+          spans <- client.request16(old.Operation.GetPassageSpans(data._1,view,data._3,0,10))
+          _ <- IO(assertEquals(spans.asInstanceOf[old.Result.Error].failure.code,"unavailable"))
+          subsequent <- client.request16(old.Operation.GetSession(data._1,None))
+          _ <- IO { assert(subsequent.isInstanceOf[old.Result.Session]); assert(!client.closed.isDone) }
+        } yield () })
+      } yield () }
+    } yield ()).unsafeRunSync()
+  }
+
+  test("BG GoodCommunication specified: current negotiated API retains tester catalog and run reads") {
+    (for {
+      tools <- McpTestFixtures.ordinaryTools
+      model <- McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("synthetic reply")))
+      _ <- fixture(immediateEmbedder,model,tools,identity).use { f =>
+        val rpc=new BrowserRpc(f.app,f.runs,f.wire)
+        val version=Wire.negotiate(List(Wire.versions.current))
+        rpc.connection(UUID.randomUUID()).use { connection => for {
+          owner <- IO.blocking(f.auth.browser(f.auth.login(LoginRequest("a","synthetic"))._2))
+          catalogHandle <- rpc.execute(owner,ClientEnvelope(UUID.randomUUID(),Operation.McpTestTools()),version,connection)
+          catalogFrame <- rpc.materialize(catalogHandle,IO.pure(owner),version,f.protocol)
+          catalog=Wire.decode(ServerEnvelope.codecJson,catalogFrame).result.asInstanceOf[Result.McpTestTools].result
+          run=UUID.randomUUID()
+          _ <- rpc.execute(owner,ClientEnvelope(UUID.randomUUID(),Operation.StartMcpTest(catalog.instanceId,run,"synthetic request")),version,connection)
+          _ <- McpTestFixtures.settled(f.runs,owner,catalog.instanceId,run)
+          readHandle <- rpc.execute(owner,ClientEnvelope(UUID.randomUUID(),Operation.ReadMcpTest(catalog.instanceId,run,0L,1)),version,connection)
+          readFrame <- rpc.materialize(readHandle,IO.pure(owner),version,f.protocol)
+          _ <- IO {
+            assertEquals(Wire.decode(ServerEnvelope.codecJson,readFrame).result.asInstanceOf[Result.McpTestRun].result.runId,run)
+            assert(JsonUtf8Size(catalogFrame)<=McpRunLimits.pageBytes)
+            assert(JsonUtf8Size(readFrame)<=McpRunLimits.pageBytes)
+          }
+        } yield () }
+      }
+    } yield ()).unsafeRunSync()
   }
 
   test("BG GoodCommunication regression: Logout bypasses a blocked serialized semantic search") {

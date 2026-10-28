@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS ch_embedding_spaces(
 CREATE TABLE IF NOT EXISTS ch_index_profiles(
   profile text PRIMARY KEY,
   embedding_space text NOT NULL REFERENCES ch_embedding_spaces(id),
-  policy text NOT NULL CHECK(policy IN('LegacyV4','ContiguousPassagesV1')),
+  policy text NOT NULL CHECK(policy IN('LegacyV4','ContiguousPassagesV1','ContextAwareProblemsV1')),
   descriptor jsonb NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ch_owner_targets(

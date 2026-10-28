@@ -43,7 +43,7 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
     val result=c.auth.mutate(c.owner,request).asInstanceOf[Result.OwnerReindexed].result
     assertEquals(result.requestId,request.requestId); assertEquals(result.heads,1L); assertEquals(result.queued,1L)
   }}
-  test("Blackbox GoodCommunication regression: same-target live P1 claim returns partial queue counts and an exact stored receipt without fencing the worker") { database { c =>
+  test("Blackbox GoodCommunication regression: same-target live claim is forcibly replaced once and its exact stored receipt never fences the new worker again") { database { c =>
     c.archive.ingest("a",Fixtures.snapshot())
     applied(c,envelope(plan(c)))
     val claim=c.archive.claim(c.db.profiles.knownProfiles,ClaimScope.Owner("a"),300).get
@@ -54,13 +54,16 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
     assertEquals((preview.heads,preview.alreadyCurrent,preview.replacements),(1L,0L,1L))
     val request=envelope(preview)
     val result=c.auth.mutate(c.owner,request)
-    assertEquals(result,Result.OwnerReindexed(OwnerReindexResult(request.requestId,preview.targetProfile,1L,0L,0L,0L)))
+    assertEquals(result,Result.OwnerReindexed(OwnerReindexResult(request.requestId,preview.targetProfile,1L,1L,0L,1L)))
+    val after=ownerRows(c,"a"); assertNotEquals(after,before)
     assertEquals(c.auth.receipt(c.owner,request.requestId),result)
     assertEquals(c.auth.mutate(c.owner,request),result)
     assertEquals(receiptCount(c,request.requestId),1L)
-    assertEquals(ownerRows(c,"a"),before,"the same live claim retains its exact lease, fence, owner target and source rows")
-    assert(c.archive.renew(claim,300))
-    assert(ProblemPublicationFixtures.publish(c.archive,claim,c.db.profiles))
+    assertEquals(ownerRows(c,"a"),after,"receipt replay cannot repeat the replacement")
+    assert(!c.archive.renew(claim,300))
+    val fresh=c.archive.claim(c.db.profiles.knownProfiles,ClaimScope.Owner("a"),300).get
+    assertNotEquals(fresh.runId,claim.runId); assert(fresh.fence>claim.fence && fresh.targetEpoch>claim.targetEpoch)
+    assert(ProblemPublicationFixtures.publish(c.archive,fresh,c.db.profiles))
   }}
   test("specified: Auth retains owner selection conflicts as a digest-bound terminal receipt") { database { c =>
     c.archive.ingest("a",Fixtures.snapshot())
@@ -203,7 +206,7 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
   }}
   test("Effectual GoodCommunication: handler Conflict rolls back actual partial owner/job effects before sanitized receipt storage") { database { c =>
     c.archive.ingest("a",Fixtures.snapshot()); val request=envelope(plan(c)); val before=ownerRows(c,"a"); val wrote=new AtomicBoolean(false)
-    observed(c,_ => (),(sql,connection) => if(sql.startsWith("WITH queued AS")) {
+    observed(c,_ => (),(sql,connection) => if(sql.startsWith("INSERT INTO ch_jobs(")) {
       assertEquals(Sql.one(connection,"SELECT profile FROM ch_owner_targets WHERE owner='a'")(_.getString(1)).get,c.db.profiles.preferred.profile)
       assertEquals(Sql.one(connection,"SELECT count(*) FROM ch_jobs WHERE profile=?",c.db.profiles.preferred.profile)(_.getLong(1)).get,1L)
       wrote.set(true); throw DomainError("conflict","synthetic handler detail must not be persisted")
@@ -217,7 +220,7 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
   test("Effectual GoodCommunication: receipt insertion and savepoint faults roll back instead of creating safe terminal conflicts") {
     List(ConnectionFault.None,ConnectionFault.CreateSavepoint,ConnectionFault.RollbackSavepoint,ConnectionFault.ReleaseSavepoint).foreach { fault => database { c =>
       c.archive.ingest("a",Fixtures.snapshot()); val request=envelope(plan(c)); val before=ownerRows(c,"a")
-      observed(c,sql => if(fault==ConnectionFault.None && sql.startsWith("INSERT INTO ch_mutations")) throw new SQLException("synthetic receipt fault"),(sql,_) => if(fault==ConnectionFault.RollbackSavepoint && sql.startsWith("WITH queued AS")) throw DomainError("conflict","synthetic handler conflict"),fault) { auth =>
+      observed(c,sql => if(fault==ConnectionFault.None && sql.startsWith("INSERT INTO ch_mutations")) throw new SQLException("synthetic receipt fault"),(sql,_) => if(fault==ConnectionFault.RollbackSavepoint && sql.startsWith("INSERT INTO ch_jobs(")) throw DomainError("conflict","synthetic handler conflict"),fault) { auth =>
         intercept[SQLException](auth.mutate(c.owner,request))
         assertEquals(ownerRows(c,"a"),before); assertEquals(receiptCount(c,request.requestId),0L)
       }
@@ -225,7 +228,7 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
   }
   test("Effectual GoodCommunication: actual PostgreSQL overflow is not converted to a terminal Conflict") { database { c =>
     c.archive.ingest("a",Fixtures.snapshot())
-    c.db.transaction(x => Sql.exec(x,"UPDATE ch_owner_targets SET epoch=? WHERE owner='a'",Long.MaxValue))
+    c.db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET fence=? WHERE session_id IN(SELECT id FROM ch_sources WHERE owner='a')",Long.MaxValue))
     val request=envelope(plan(c)); val before=ownerRows(c,"a")
     assertEquals(intercept[SQLException](c.auth.mutate(c.owner,request)).getSQLState,"22003")
     assertEquals(ownerRows(c,"a"),before); assertEquals(receiptCount(c,request.requestId),0L)

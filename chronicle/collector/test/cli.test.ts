@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { DaemonLock } from '../src/spool.ts';
+import { DaemonLock, SqliteSpool } from '../src/spool.ts';
+import type { CollectorReport } from '../src/domain.ts';
 
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 
@@ -24,7 +25,7 @@ for (const [name, configHome] of [['unset', undefined], ['empty', ''], ['relativ
       const home = join(dir, 'home'), directory = join(home, '.config', 'chronicle'), state = join(dir, 'state');
       mkdirSync(directory, { recursive: true });
       writeFileSync(join(directory, 'collector.json'), JSON.stringify({ enabled: false, stateDir: state }));
-      const result = invoke(home, configHome, ['--status'], dir);
+      const result = invoke(home, configHome, ['--status', '--json'], dir);
       assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout) as unknown, { enabled: false });
       assert.equal(existsSync(state), false);
     } finally { rmSync(dir, { recursive: true }); }
@@ -38,7 +39,7 @@ test('GoodCommunication CLI uses XDG config for status without credentials, scan
     mkdirSync(join(home, '.config', 'chronicle'), { recursive: true }); mkdirSync(directory, { recursive: true });
     writeFileSync(join(home, '.config', 'chronicle', 'collector.json'), 'SYNTHETIC_UNSELECTED_CONFIG');
     writeFileSync(join(directory, 'collector.json'), JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'missing-token'), redactions: { secretFiles: [join(dir, 'missing-secret')] }, stateDir: state, discoverNative: false, discoverYolo: false }));
-    const result = invoke(home, configHome, ['--status'], dir);
+    const result = invoke(home, configHome, ['--status', '--json'], dir);
     assert.equal(result.status, 0, result.stderr);
     const status = JSON.parse(result.stdout) as { namespace: string; queue: unknown[]; lastRun: unknown };
     assert.match(status.namespace, /^[0-9a-f-]{36}$/); assert.deepEqual(status.queue, []); assert.equal(status.lastRun, null);
@@ -53,7 +54,7 @@ test('GoodCommunication CLI explicit config overrides the default without mergin
     const home = join(dir, 'home'), configHome = join(dir, 'config'), directory = join(configHome, 'chronicle'), explicit = join(dir, 'explicit.json');
     mkdirSync(directory, { recursive: true }); writeFileSync(join(directory, 'collector.json'), 'SYNTHETIC_IGNORED_DEFAULT');
     writeFileSync(explicit, JSON.stringify({ enabled: false }));
-    const result = invoke(home, configHome, ['--config', explicit, '--status'], dir);
+    const result = invoke(home, configHome, ['--config', explicit, '--status', '--json'], dir);
     assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout) as unknown, { enabled: false });
     assert.doesNotMatch(result.stdout + result.stderr, /SYNTHETIC_IGNORED_DEFAULT/);
   } finally { rmSync(dir, { recursive: true }); }
@@ -122,4 +123,81 @@ test('GoodCommunication daemon lock is released by process death, no stale PID-f
     const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
     const lock = new DaemonLock(join(dir, 'state')); lock.close();
   } finally { child.kill('SIGKILL'); rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication status defaults to saved human-readable counters without credential reads or collection', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-human-status-'));
+  const state = join(dir, 'state'), config = join(dir, 'config.json');
+  try {
+    writeFileSync(config, JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'missing-token'), stateDir: state,
+      redactions: { secretFiles: [join(dir, 'missing-secret')] }, discoverNative: false, discoverYolo: false }));
+    const report: CollectorReport = {
+      at: Date.parse('2026-01-02T03:04:05Z'),
+      counters: { enabled: true, discovered: 527, scanned: 527, scannedBytes: 1792738972, waiting: 6, excluded: 0, unchanged: 520,
+        enqueued: 1, uploaded: 1, uploadFailures: 0, quarantined: 0, pending: 0, stopped: 0, conflicts: 0 },
+      roots: [{ rootId: 'native', pathId: 'a'.repeat(64), format: 'pi', discovered: 527, scanned: 527, bytes: 1792738972, waiting: 6, excluded: 0, quarantined: 0 }],
+    };
+    const spool = new SqliteSpool(state);
+    try {
+      spool.saveReport(report);
+      spool.diagnostic({ rootId: 'native', pathId: 'b'.repeat(64), code: 'root-missing' });
+      const sequence = spool.nextReportSequence(); spool.reportAccepted(sequence, Date.parse('2026-01-02T03:07:05Z'));
+    } finally { spool.close(); }
+    const result = invoke(dir, undefined, ['--config', config, '--status'], dir);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^Chronicle collector: enabled/m);
+    assert.match(result.stdout, /2026-01-02T03:04:05\.000Z/);
+    assert.match(result.stdout, /Scanned: 527/);
+    assert.match(result.stdout, /Unchanged: 520/);
+    assert.match(result.stdout, /Waiting: 6/);
+    assert.match(result.stdout, /1\.67 GiB/);
+    assert.match(result.stdout, /Queue: empty/);
+    assert.match(result.stdout, /Uploaded: 1/);
+    assert.match(result.stdout, /root missing/);
+    assert.match(result.stdout, /Reporting: sequence 1, acknowledged 1/);
+    assert.doesNotMatch(result.stdout, /^\s*\{/);
+    assert.doesNotMatch(result.stdout + result.stderr, /missing-token|missing-secret|privacy-secret-unavailable/);
+    assert.equal(existsSync(join(state, 'daemon-lock.sqlite')), false);
+    const reopened = new SqliteSpool(state);
+    try { assert.deepEqual(reopened.report(), report); assert.deepEqual(reopened.queue(), []); }
+    finally { reopened.close(); }
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication disabled status is human by default and JSON only when explicitly requested', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-disabled-status-'));
+  try {
+    const config = join(dir, 'config.json'), state = join(dir, 'state');
+    writeFileSync(config, JSON.stringify({ enabled: false, stateDir: state }));
+    const human = invoke(dir, undefined, ['--config', config, '--status'], dir);
+    assert.equal(human.status, 0, human.stderr); assert.equal(human.stdout, 'Chronicle collector: disabled\n');
+    const json = invoke(dir, undefined, ['--json', '--status', '--config', config], dir);
+    assert.equal(json.status, 0, json.stderr); assert.deepEqual(JSON.parse(json.stdout) as unknown, { enabled: false });
+    assert.equal(existsSync(state), false);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication fresh human status reports unknown scan and acknowledgement without inventing a run', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-fresh-status-'));
+  try {
+    const config = join(dir, 'config.json');
+    writeFileSync(config, JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'missing-token'), stateDir: join(dir, 'state'), discoverNative: false, discoverYolo: false }));
+    const result = invoke(dir, undefined, ['--config', config, '--status'], dir);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /No saved scan recorded/);
+    assert.match(result.stdout, /Reporting: sequence 0, acknowledged never/);
+    assert.doesNotMatch(result.stdout, /Scanned: 0|running|healthy/);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication JSON selection is status-only and duplicate flags fail before state creation', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-status-flags-'));
+  try {
+    const config = join(dir, 'config.json'), state = join(dir, 'state');
+    writeFileSync(config, JSON.stringify({ enabled: false, stateDir: state }));
+    for (const argv of [['--json'], ['--once', '--json'], ['--status', '--json', '--json']]) {
+      const result = invoke(dir, undefined, ['--config', config, ...argv], dir);
+      assert.equal(result.status, 1); assert.equal(result.stdout, ''); assert.equal(existsSync(state), false);
+    }
+  } finally { rmSync(dir, { recursive: true }); }
 });

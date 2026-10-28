@@ -16,6 +16,8 @@ private[chronicle] object ExpressionHintBounds {
 }
 
 private[chronicle] enum HintField(val name: String) {
+  case Agent extends HintField("agent")
+  case YoloProfile extends HintField("yolo-profile")
   case User extends HintField("user")
   case Tag extends HintField("tag")
   case Tags extends HintField("tags")

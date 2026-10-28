@@ -14,7 +14,18 @@ class IndexedSearchTest extends munit.FunSuite {
   private val prepareExecutions=9
   private val highDimensionCorpusSize=2048
   private def vector(seed: Int,dimensions: Int): List[Double] = (1 to dimensions).map(d => math.sin(seed*d*0.031)+math.cos(seed*d*0.017)).toList
-  private def database(dimensions: Int)(f: (Config,Database,PostgresArchive,PostgresSearch) => Unit): Unit = {
+  private case class CorpusKey(dimensions: Int,size: Int)
+  private case class SearchDatabase(config: Config,db: Database,archive: PostgresArchive,index: PostgresSearch)
+  private case class SeededCorpus(key: CorpusKey,database: SearchDatabase,members: List[(UUID,String)])
+  // Serial suites own the shared database; only memberships may change between same-key cases.
+  private var seededCorpus=Option.empty[SeededCorpus]
+  private def clear(db: Database): Unit = db.transaction(c => Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE"))
+  private def clearCorpus(): Unit = {
+    val previous=seededCorpus; seededCorpus=None
+    previous.foreach(corpus => clear(corpus.database.db))
+  }
+  override def afterAll(): Unit = try clearCorpus() finally super.afterAll()
+  private def openDatabase(dimensions: Int): SearchDatabase = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val original=Fixtures.config(); val config=original.copy(embedding=original.embedding.copy(dimensions=dimensions))
     val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
@@ -23,8 +34,49 @@ class IndexedSearchTest extends munit.FunSuite {
       Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
     }
     val archive=new PostgresArchive(db,config)
-    try f(config,db,archive,new PostgresSearch(db,archive,config))
-    finally db.transaction(c => Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE"))
+    SearchDatabase(config,db,archive,new PostgresSearch(db,archive,config))
+  }
+  private def database(dimensions: Int)(f: (Config,Database,PostgresArchive,PostgresSearch) => Unit): Unit = {
+    clearCorpus()
+    val database=openDatabase(dimensions)
+    try f(database.config,database.db,database.archive,database.index)
+    finally clear(database.db)
+  }
+  private def members(db: Database): List[(UUID,String)] = db.transaction(c => Sql.rows(c,"SELECT group_id,user_id FROM ch_members ORDER BY group_id,user_id")(r => (r.getObject(1,classOf[UUID]),r.getString(2))))
+  private def assertCorpus(corpus: SeededCorpus): Unit = corpus.database.db.transaction { c =>
+    List("ch_sources","ch_revisions","ch_generations","ch_chunks","ch_search_chunks","ch_revision_info","ch_messages").foreach { table =>
+      assertEquals(Sql.one(c,s"SELECT count(*) FROM $table")(_.getInt(1)),Some(corpus.key.size),table)
+    }
+    assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks WHERE vector_dims(embedding)=?",corpus.key.dimensions)(_.getInt(1)),Some(corpus.key.size))
+    assertEquals(Sql.one(c,"SELECT count(*) FROM ch_revision_info WHERE lexical_version=?",ArchiveProjection.lexicalVersion)(_.getInt(1)),Some(corpus.key.size))
+    assertEquals(Sql.rows(c,"SELECT version FROM ch_schema_migrations WHERE version IN(2,6) ORDER BY version")(_.getInt(1)),List(2,6))
+    assertEquals(Sql.one(c,"SELECT count(*) FROM ch_revision_info i JOIN ch_revisions r USING(session_id,revision) WHERE (i.metadata,i.source,i.completion,i.redacted,i.message_count) IS DISTINCT FROM (r.snapshot->'metadata',r.snapshot->'source',r.snapshot->>'completion',(r.snapshot->>'redacted')::boolean,jsonb_array_length(r.snapshot->'messages'))")(_.getInt(1)),Some(0))
+    assertEquals(Sql.one(c,"SELECT count(*) FROM ch_messages m JOIN ch_revisions r USING(session_id,revision) WHERE m.value IS DISTINCT FROM r.snapshot->'messages'->m.position")(_.getInt(1)),Some(0))
+    assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks sc JOIN ch_chunks ch ON ch.id=sc.id JOIN ch_generations g ON g.id=ch.generation JOIN ch_sources s ON s.id=g.session_id WHERE (sc.generation,sc.session_id,sc.revision,sc.profile,sc.document,sc.embedding) IS DISTINCT FROM (s.published,s.id,g.revision,g.profile,ch.document,ch.embedding)")(_.getInt(1)),Some(0))
+  }
+  private def corpus(dimensions: Int,size: Int)(f: (Config,Database,PostgresArchive,PostgresSearch) => Unit): Unit = {
+    val key=CorpusKey(dimensions,size)
+    val current=seededCorpus.filter(_.key==key).getOrElse {
+      clearCorpus()
+      val database=openDatabase(dimensions)
+      try {
+        seed(database.config,database.db,size)
+        val prepared=SeededCorpus(key,database,members(database.db))
+        assertCorpus(prepared)
+        database.db.initialize()
+        assertCorpus(prepared)
+        seededCorpus=Some(prepared)
+        prepared
+      } catch { case error: Throwable => clear(database.db); throw error }
+    }
+    assertCorpus(current)
+    assertEquals(members(current.database.db),current.members)
+    val database=current.database
+    try f(database.config,database.db,database.archive,database.index)
+    finally database.db.transaction { c =>
+      Sql.exec(c,"DELETE FROM ch_members")
+      current.members.foreach { case (group,user) => Sql.exec(c,"INSERT INTO ch_members VALUES(?,?)",group,user) }
+    }
   }
   private def seed(config: Config,db: Database,size: Int): Unit = {
     val snapshot=Wire.encode(IngestRequest.codecJson,Fixtures.snapshot()).noSpaces
@@ -59,8 +111,7 @@ class IndexedSearchTest extends munit.FunSuite {
     assert(cached._2>0,"must exercise a generic server-prepared plan")
     Sql.rows(c,s"EXPLAIN (ANALYZE,BUFFERS) EXECUTE \"${cached._1}\"(${statement.args.map(literal).mkString(",")})")(_.getString(1)).mkString("\n")
   }
-  test("Effectual-GoodCommunication regression: production SQL naturally uses HNSW and GIN, including generic JDBC plans; disabled-index control does not") { database(testDimensions) { (config,db,archive,index) =>
-    seed(config,db,corpusSize)
+  test("Effectual-GoodCommunication regression: production SQL naturally uses HNSW and GIN, including generic JDBC plans; disabled-index control does not") { corpus(testDimensions,corpusSize) { (config,db,archive,index) =>
     val semantic=query(SearchMode.Semantic); val embedding=Some(vector(42,testDimensions))
     val page=index.pageStatement(index.statement("c",semantic,embedding),semantic)
     db.transaction { c =>
@@ -84,8 +135,7 @@ class IndexedSearchTest extends munit.FunSuite {
       assert(disabled.contains("Seq Scan on ch_search_chunks"),disabled)
     }
   }}
-  test("Blackbox-GoodCommunication: ANN recall against exact full-vector oracle survives selective ACL, filters and nontransitive groups") { database(testDimensions) { (config,db,archive,index) =>
-    seed(config,db,corpusSize)
+  test("Blackbox-GoodCommunication: ANN recall against exact full-vector oracle survives selective ACL, filters and nontransitive groups") { corpus(testDimensions,corpusSize) { (config,db,archive,index) =>
     List(("a",100,emptyFilter),("b",101,emptyFilter),("c",42,emptyFilter),("a",3700,emptyFilter.copy(project=Some("needle"))),("c",74,emptyFilter.copy(project=Some("needle")))).foreach { case (reader,target,filter) =>
       val q=query(SearchMode.Semantic).copy(filter=filter)
       val embedding=Some(vector(target,testDimensions))
@@ -117,7 +167,9 @@ class IndexedSearchTest extends munit.FunSuite {
     val request=Fixtures.snapshot(); val out=archive.ingest("a",request)
     val first=archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get
     def chunk()=IndexedChunk(Fragments.split(request.messages).head.copy(sessionId=out.sessionId),List(1.0,0.0,0.0))
-    assert(archive.publish(first,List(chunk(),chunk())))
+    val whole=chunk(); val middle=whole.chunk.text.length/2
+    val pieces=List(whole.copy(chunk=whole.chunk.copy(text=whole.chunk.text.take(middle),spans=List(Span("u",0,middle)))),whole.copy(chunk=whole.chunk.copy(id=UUID.randomUUID(),text=whole.chunk.text.drop(middle),spans=List(Span("u",middle,whole.chunk.text.length)))))
+    assert(archive.publish(first,pieces))
     val old=archive.session("a",out.sessionId).view
     archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
     assert(archive.publish(archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get,List(chunk())))
@@ -132,8 +184,7 @@ class IndexedSearchTest extends munit.FunSuite {
     auth.mutate(auth.browser(cookie),ClientEnvelope(UUID.randomUUID(),Operation.Purge(out.sessionId)))
     db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks")(_.getInt(1)),Some(0)))
   }}
-  test("Effectual-GoodCommunication: 2048-dimensional embeddings use halfvec HNSW while preserving float vectors and exact cosine scores") { database(2048) { (config,db,archive,index) =>
-    seed(config,db,highDimensionCorpusSize)
+  test("Effectual-GoodCommunication: 2048-dimensional embeddings use halfvec HNSW while preserving float vectors and exact cosine scores") { corpus(2048,highDimensionCorpusSize) { (config,db,archive,index) =>
     val highQuery=query(SearchMode.Semantic)
     db.transaction { c =>
       SearchPolicy.configure(c)

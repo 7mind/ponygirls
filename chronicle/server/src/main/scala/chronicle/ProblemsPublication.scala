@@ -6,7 +6,7 @@ import java.util.UUID
 
 final case class ProblemPieceLink(chunkId: UUID,passageOrdinal: Int,source: ProblemPassages.SourceSpan)
 final case class ProblemSourceSpan(passageOrdinal: Int,ordinal: Long,source: ProblemPassages.SourceSpan)
-final class ProblemsPublication private (val chunks: List[IndexedChunk],val passages: Vector[ProblemPassages.Passage],val spans: Vector[ProblemSourceSpan],val links: Vector[ProblemPieceLink]) {
+final class ProblemsPublication private[chronicle] (val chunks: List[IndexedChunk],val passages: Vector[ProblemPassages.Passage],val spans: Vector[ProblemSourceSpan],val links: Vector[ProblemPieceLink],val context: Vector[ProblemPassages.SourceSpan]) {
   def validate(claim: Claim,dimensions: Int): Unit = {
     val messages=ProblemPassages.Source(claim.snapshot.messages).messages
     Check(passages.map(_.ordinal)==passages.indices.toVector && passages.map(_.id).distinct.size==passages.size,"invalid","publication passage order/identity")
@@ -17,8 +17,32 @@ final class ProblemsPublication private (val chunks: List[IndexedChunk],val pass
       Check(passage.tags.size<=ProblemPassages.maximumTags && passage.tags.distinct==passage.tags,"invalid","publication tags")
       passage.tags.foreach(metadata(_,ProblemPassages.tagScalars))
     }
+    def location(span: ProblemPassages.SourceSpan): (Int,Int) = (span.messagePosition,span.start)
+    Check(context==context.sortBy(location) && links.map(_.source)==links.map(_.source).sortBy(location),"invalid","publication coverage order")
     var position=0; var chars=0; var offset=0
     def skipEmpty(): Unit = while(position<messages.size && chars==messages(position).text.length) { position+=1; chars=0; offset=0 }
+    val coverage=links.zip(chunks).map { (link,indexed) =>
+      Check(link.chunkId==indexed.chunk.id && indexed.chunk.sessionId==claim.sessionId,"invalid","publication piece/session identity")
+      (link.source,Some(indexed))
+    }++context.map(span => (span,None))
+    coverage.sortBy(item => location(item._1)).foreach { (span,indexed) =>
+      skipEmpty()
+      Check(position<messages.size,"invalid","publication coverage past source")
+      val message=messages(position)
+      Check(span.messageId==message.id && span.messagePosition==position && span.start==offset && span.end>span.start,"invalid","publication source coverage")
+      indexed.foreach { value =>
+        val chunk=value.chunk; val size=chunk.text.getBytes(UTF_8).length
+        Check(size>0 && size<=ProblemPassages.maximumFragmentBytes && UTF_8.newEncoder().canEncode(chunk.text) && !chunk.text.contains('\u0000'),"invalid","publication piece bounds")
+        Check(span.end.toLong==offset.toLong+size && message.text.startsWith(chunk.text,chars) && chunk.spans==List(Span(span.messageId,span.start,span.end)),"invalid","publication piece source")
+        Check(value.vector.size==dimensions && value.vector.forall(_.isFinite) && value.vector.exists(_!=0.0),"invalid","publication embedding")
+      }
+      while(offset<span.end && chars<message.text.length) {
+        val scalar=message.text.codePointAt(chars)
+        offset+=new String(Character.toChars(scalar)).getBytes(UTF_8).length; chars+=Character.charCount(scalar)
+      }
+      Check(offset==span.end,"invalid","publication coverage UTF8 boundary")
+    }
+    skipEmpty(); Check(position==messages.size,"invalid","incomplete publication problem/context coverage")
     val expectedSpans=spans.iterator
     var passageOrdinal = -1; var pieceCount=0L; var sourceBytes=0L; var spanCount=0L
     var pending=Option.empty[ProblemPassages.SourceSpan]
@@ -32,15 +56,8 @@ final class ProblemsPublication private (val chunks: List[IndexedChunk],val pass
       Check(passage.pieceCount==pieceCount && passage.sourceBytes==sourceBytes && passage.spanCount==spanCount && passage.end==pending.get.endPoint,"invalid","publication passage extents/counts")
     }
     chunks.iterator.zip(links.iterator).foreach { (indexed,link) =>
-      skipEmpty()
       val chunk=indexed.chunk; val span=link.source
-      Check(position<messages.size && link.chunkId==chunk.id && chunk.sessionId==claim.sessionId,"invalid","publication source/session identity")
       val size=chunk.text.getBytes(UTF_8).length
-      Check(size>0 && size<=ProblemPassages.maximumFragmentBytes && UTF_8.newEncoder().canEncode(chunk.text) && !chunk.text.contains('\u0000'),"invalid","publication piece bounds")
-      val message=messages(position)
-      Check(span.messageId==message.id && span.messagePosition==position && span.start==offset && span.end.toLong==offset.toLong+size && message.text.startsWith(chunk.text,chars),"invalid","publication source coverage")
-      Check(chunk.spans==List(Span(span.messageId,span.start,span.end)),"invalid","publication piece span")
-      Check(indexed.vector.size==dimensions && indexed.vector.forall(_.isFinite) && indexed.vector.exists(_!=0.0),"invalid","publication embedding")
       if(link.passageOrdinal!=passageOrdinal) {
         closePassage()
         Check(link.passageOrdinal==passageOrdinal+1 && link.passageOrdinal<passages.size,"invalid","publication passage continuity")
@@ -53,22 +70,22 @@ final class ProblemsPublication private (val chunks: List[IndexedChunk],val pass
         case Some(previous) if previous.messagePosition==span.messagePosition && previous.messageId==span.messageId && previous.end==span.start => pending=Some(previous.copy(end=span.end))
         case _ => flushSpan(); pending=Some(span)
       }
-      pieceCount+=1; sourceBytes+=size; chars+=chunk.text.length; offset+=size
+      pieceCount+=1; sourceBytes+=size
     }
-    closePassage(); skipEmpty()
-    Check(position==messages.size && passageOrdinal+1==passages.size && !expectedSpans.hasNext,"invalid","incomplete publication source/passages/spans")
+    closePassage()
+    Check(passageOrdinal+1==passages.size && !expectedSpans.hasNext,"invalid","incomplete publication passages/spans")
   }
 }
 object ProblemsPublication {
   private final case class SpanKey(passageId: UUID,ordinal: Long)
   final class Builder private[ProblemsPublication] (private val metadata: Map[UUID,ProblemPassages.PassageUpdate],private val source: Map[SpanKey,ProblemPassages.SourceSpan],
-    private val pieces: Vector[(ProblemPassages.RetrievalPiece,IndexedChunk)],private val state: Option[ProblemPassages.State]) {
+    private val pieces: Vector[(ProblemPassages.RetrievalPiece,IndexedChunk)],private val state: Option[ProblemPassages.State],private val context: Vector[ProblemPassages.SourceSpan]) {
     def append(delta: ProblemPassages.Delta,indexed: List[IndexedChunk]): Builder = {
       Check(!state.exists(_.finished) && state.forall(old => old.namespace==delta.state.namespace && old.sessionId==delta.state.sessionId),"invalid","publication builder state")
       Check(indexed.map(_.chunk)==delta.pieces.map(_.chunk).toList && delta.pieces.map(_.ordinal)==(pieces.size.toLong until pieces.size.toLong+indexed.size).toVector &&
         delta.state.nextPieceOrdinal==pieces.size.toLong+indexed.size,"invalid","publication indexed window mismatch")
       new Builder(metadata++delta.passages.map(update => update.passage.id->update),source++delta.spans.map(update => SpanKey(update.passageId,update.ordinal)->update.span),
-        pieces++delta.pieces.zip(indexed),Some(delta.state))
+        pieces++delta.pieces.zip(indexed),Some(delta.state),context++delta.context)
     }
     def result: ProblemsPublication = {
       Check(state.exists(_.finished) && metadata.values.forall(_.closed),"invalid","publication requires finished source")
@@ -81,10 +98,10 @@ object ProblemsPublication {
         val passage=passages(ordinal(piece.passageId))
         indexed.copy(chunk=indexed.chunk.copy(summary=passage.summary,tags=passage.tags))
       }.toList
-      new ProblemsPublication(chunks,passages,spans,pieces.map((piece,_) => ProblemPieceLink(piece.chunk.id,ordinal(piece.passageId),piece.sourceSpan)))
+      new ProblemsPublication(chunks,passages,spans,pieces.map((piece,_) => ProblemPieceLink(piece.chunk.id,ordinal(piece.passageId),piece.sourceSpan)),context)
     }
   }
-  def empty: Builder = new Builder(Map.empty,Map.empty,Vector.empty,None)
+  def empty: Builder = new Builder(Map.empty,Map.empty,Vector.empty,None,Vector.empty)
   def info(passage: ProblemPassages.Passage): PassageInfo = {
     def point(value: ProblemPassages.SourcePoint): PassagePoint = PassagePoint(value.messageId,value.messagePosition,value.byteOffset)
     PassageInfo(passage.id,passage.ordinal,passage.summary,passage.tags,point(passage.start),point(passage.end),passage.sourceBytes,passage.spanCount,passage.pieceCount)

@@ -1,7 +1,7 @@
 { pkgs, nixpkgs, chronicleModule }:
 let
   lib = nixpkgs.lib;
-  source = pkgs.callPackage ../pkg/chronicle/source.nix { };
+  source = (pkgs.callPackage ../pkg/chronicle/source.nix { }).development;
   hm = system: extra: (lib.evalModules {
     specialArgs.pkgs = import nixpkgs { inherit system; };
     modules = [
@@ -30,6 +30,9 @@ let
   };
   linux = hm "x86_64-linux" configured;
   darwin = hm "aarch64-darwin" (lib.recursiveUpdate configured { smind.hm.dev.llm.chronicle.collector.enable = false; });
+  admission = hm "x86_64-linux" (lib.recursiveUpdate configured { smind.hm.dev.llm.chronicle.collector = { excludeDefaultProfile = true; excludedYoloProfiles = [ "foo" "Foo" "foo" "default" ]; }; });
+  invalidAdmission = value: hm "x86_64-linux" (lib.recursiveUpdate configured { smind.hm.dev.llm.chronicle.collector.excludedYoloProfiles = value; });
+  invalidDefaultAdmission = hm "x86_64-linux" (lib.recursiveUpdate configured { smind.hm.dev.llm.chronicle.collector.excludeDefaultProfile = null; });
   separate = hm "x86_64-linux" (lib.recursiveUpdate configured { smind.hm.dev.llm.chronicle.collector.tokenFile = "/run/secrets/chronicle-ingest"; });
   collectorOnly = hm "x86_64-linux" { smind.hm.dev.llm.chronicle = { url = "https://chronicle.example.net"; collector = { enable = true; tokenFile = "/run/secrets/chronicle-ingest"; redactions.secretFiles = [ "/run/secrets/synthetic-other-credential" ]; }; }; };
   storeRedactionSecret = hm "x86_64-linux" (lib.recursiveUpdate configured { smind.hm.dev.llm.chronicle.collector.redactions.secretFiles = [ "/nix/store/synthetic-secret" ]; });
@@ -88,6 +91,15 @@ assert builtins.elem "static-token-${builtins.hashString "sha256" staticToken.id
 assert !(source.filter "${toString source.origSrc}/.local" "directory");
 assert checked linux;
 assert checked separate;
+assert checked admission;
+assert !linux.smind.hm.dev.llm.chronicle.collector.excludeDefaultProfile;
+assert linux.smind.hm.dev.llm.chronicle.collector.excludedYoloProfiles == [ ];
+assert admission.smind.hm.dev.llm.chronicle.collector.excludedYoloProfiles == [ "Foo" "default" "foo" ];
+assert admission.smind.hm.dev.llm.chronicle.collector.discoverNative == linux.smind.hm.dev.llm.chronicle.collector.discoverNative;
+assert admission.smind.hm.dev.llm.chronicle.collector.discoverYolo == linux.smind.hm.dev.llm.chronicle.collector.discoverYolo;
+assert admission.smind.hm.dev.llm.chronicle.collector.exclusions == linux.smind.hm.dev.llm.chronicle.collector.exclusions;
+assert !(builtins.tryEval invalidDefaultAdmission.smind.hm.dev.llm.chronicle.collector.excludeDefaultProfile).success;
+assert lib.all (value: !(builtins.tryEval (builtins.deepSeq (invalidAdmission value).smind.hm.dev.llm.chronicle.collector.excludedYoloProfiles true)).success) [ null "Foo" [ 1 ] [ "." ] [ ".." ] [ "bad/name" ] [ "bad name" ] [ "Foo\n" ] ];
 assert checked collectorOnly;
 assert !(checked missingCollectorToken);
 assert !(checked storeCollectorToken);
@@ -166,6 +178,8 @@ pkgs.runCommandLocal "chronicle-modules-test" { nativeBuildInputs = [ pkgs.jq ];
   jq -e '.allowInsecureHttp == false and .secureCookies == true' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.allowInsecureHttp == true and .secureCookies == false and .allowedOrigin == "http://192.168.50.10:47330"' ${lib.last (lib.splitString " " privateHttpServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.allowInsecureHttp == true and .secureCookies == true' ${lib.last (lib.splitString " " optedInHttpsServer.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.excludeDefaultProfile == false and .excludedYoloProfiles == []' ${lib.last (lib.splitString " " linux.systemd.user.services.chronicle-collector.Service.ExecStart)}
+  jq -e '.excludeDefaultProfile == true and .excludedYoloProfiles == ["Foo","default","foo"] and .discoverNative == true and .discoverYolo == true' ${lib.last (lib.splitString " " admission.systemd.user.services.chronicle-collector.Service.ExecStart)}
   jq -e '.tokenFile == "/run/secrets/chronicle-agent"' ${lib.last (lib.splitString " " linux.systemd.user.services.chronicle-collector.Service.ExecStart)}
   jq -e '.tokenFile == "/run/secrets/chronicle-ingest"' ${lib.last (lib.splitString " " separate.systemd.user.services.chronicle-collector.Service.ExecStart)}
   jq -e '.tokenFile == "/run/secrets/chronicle-ingest" and .redactions.secretFiles == ["/run/secrets/synthetic-other-credential"]' ${lib.last (lib.splitString " " collectorOnly.systemd.user.services.chronicle-collector.Service.ExecStart)}

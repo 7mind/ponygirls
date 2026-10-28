@@ -6,7 +6,8 @@ import java.util.UUID
 
 final class McpTestWire(protocol: VersionedWire) extends McpRunPageEncoding {
   private val sizingRequestId=new UUID(0L,0L)
-  val supportedVersions=List("1.4.0","1.5.0")
+  val supportedVersions=List("1.4.0","1.5.0","1.6.0","1.7.0")
+  val versionRequirement="MCP testing requires API 1.4.0, 1.5.0, 1.6.0 or 1.7.0"
 
   def snapshot(value: McpRunSnapshot): Result.McpTestRun = Result.McpTestRun(McpTestSnapshot(
     value.instanceId,value.runId,value.state match {
@@ -33,7 +34,7 @@ final class McpTestWire(protocol: VersionedWire) extends McpRunPageEncoding {
   def bytes(value: McpRunSnapshot): Long = supportedVersions.map(version => JsonUtf8Size(protocol.encodeServer(version,ServerEnvelope(sizingRequestId,snapshot(value))))).max
 
   def encode(envelope: ServerEnvelope,version: String): Json = {
-    Check(supportedVersions.contains(version),"version-mismatch","MCP testing requires API 1.4.0 or 1.5.0")
+    Check(supportedVersions.contains(version),"version-mismatch",versionRequirement)
     val json=protocol.encodeServer(version,envelope)
     val code=envelope.result match {
       case _: Result.McpTestTools => "mcp-catalog-limit"

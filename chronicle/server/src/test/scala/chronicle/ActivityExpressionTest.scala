@@ -34,9 +34,12 @@ class ActivityExpressionTest extends munit.FunSuite {
       ("branch:Main",ArchivePredicate.Branch("Main")),
       ("producer:Pi",ArchivePredicate.Producer("Pi")),
       ("model:ModelA",ArchivePredicate.Model("ModelA")),
+      ("YOLO-PROFILE:Named_1.2",ArchivePredicate.YoloProfile("Named_1.2")),
       ("format:CLAUDE",ArchivePredicate.Format(SourceFormat.Claude)),
       ("format:Codex",ArchivePredicate.Format(SourceFormat.Codex)),
       ("format:pi",ArchivePredicate.Format(SourceFormat.Pi)),
+      ("AGENT:MAIN",ArchivePredicate.Agent(AgentKind.Main)),
+      ("agent:SubAgent",ArchivePredicate.Agent(AgentKind.Subagent)),
       ("status:QUEUED",ArchivePredicate.Status(ArchiveStatus.Queued)),
       ("status:Running",ArchivePredicate.Status(ArchiveStatus.Running)),
       ("status:failed",ArchivePredicate.Status(ArchiveStatus.Failed)),
@@ -48,6 +51,8 @@ class ActivityExpressionTest extends munit.FunSuite {
     assertEquals(ActivityExpression.jobs("project : \"some project\""),Field(ActivityJobPredicate.Source(ArchivePredicate.Project("some project"))))
     invalidAt(ActivityExpression.jobs,"status:unscheduled",7)
     invalidAt(ActivityExpression.jobs,"format:gemini",7)
+    invalidAt(ActivityExpression.jobs,"agent:worker",6)
+    invalidAt(ActivityExpression.jobs,"🐎 agent:worker",8)
   }
 
   test("BA: job identities and reason remain opaque literals while typed keywords are case insensitive") {
@@ -85,7 +90,7 @@ class ActivityExpressionTest extends munit.FunSuite {
     List("phase:idle","freshness:recent","owner:a","unknown:a").foreach { input =>
       invalidAt(ActivityExpression.jobs,"🐎 " + input,2)
     }
-    List("user:a","tag:a","tags:a","project:a","branch:a","producer:a","format:pi","model:a","status:failed","profile:a","classification:current","reason:a","lease:active","unknown:a").foreach { input =>
+    List("yolo-profile:named","agent:main","user:a","tag:a","tags:a","project:a","branch:a","producer:a","format:pi","model:a","status:failed","profile:a","classification:current","reason:a","lease:active","unknown:a").foreach { input =>
       invalidAt(ActivityExpression.collectors,"🐎 " + input,2)
     }
   }

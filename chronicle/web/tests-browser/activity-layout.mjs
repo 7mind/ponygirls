@@ -6,7 +6,7 @@ const TEXT_CONTRAST = 4.5, CONTROL_CONTRAST = 3, GEOMETRY_TOLERANCE = 1, USAGE_T
 async function measure(page, phase) {
   return page.evaluate(label => {
     const geometry = element => { if (element === null) return null; const bounds = element.getBoundingClientRect(), style = getComputedStyle(element); return { left: bounds.left, right: bounds.right, width: bounds.width, client: element.clientWidth, scroll: element.scrollWidth, overflow: style.overflowX }; };
-    return { phase: label, viewport: innerWidth, document: document.documentElement.scrollWidth, zoom: getComputedStyle(document.documentElement).zoom, documentOverflow: getComputedStyle(document.documentElement).overflowX, bodyOverflow: getComputedStyle(document.body).overflowX, main: geometry(document.querySelector('main')), usage: geometry(document.querySelector('.model-usage')), scroller: geometry(document.querySelector('.goal50-table-scroll')), table: geometry(document.querySelector('.usage-table')), owner: geometry(document.querySelector('.owner-reindex')), preview: geometry(document.querySelector('[aria-label="Owner reprocess preview"]')) };
+    return { phase: label, viewport: innerWidth, document: document.documentElement.scrollWidth, zoom: getComputedStyle(document.documentElement).zoom, documentOverflow: getComputedStyle(document.documentElement).overflowX, bodyOverflow: getComputedStyle(document.body).overflowX, main: geometry(document.querySelector('main')), usage: geometry(document.querySelector('.model-usage')), scroller: geometry(document.querySelector('.goal50-table-scroll')), table: geometry(document.querySelector('.usage-table')), owner: geometry(document.querySelector('.owner-reindex')), preview: geometry(document.querySelector('[aria-label="Archive rebuild preview"]')) };
   }, phase);
 }
 async function contrast(page) {
@@ -30,18 +30,18 @@ export async function runActivityLayoutCases(scene, activity) {
       const phases = [], name = `${colorScheme}-css${width}-dpr${scale}`;
       try {
         await page.emulateMedia({ colorScheme }); await activity(page);
-        const summary = page.getByText('Model usage and indexing settings', { exact: true }), trigger = page.getByRole('button', { name: 'Preview reprocessing all my HEADs', exact: true });
+        const summary = page.getByText('Model usage and indexing settings', { exact: true }), trigger = page.getByRole('button', { name: 'Rebuild archive index', exact: true });
         phases.push(await measure(page, 'both-collapsed')); await page.screenshot({ path: `${output}/${name}-collapsed.png`, fullPage: true });
         await summary.click(); const table = page.getByRole('table', { name: 'Completed model call usage', exact: true }); await table.waitFor(); phases.push(await measure(page, 'usage-expanded'));
-        const contents = await table.textContent(); await trigger.click(); const preview = page.getByRole('region', { name: 'Owner reprocess preview', exact: true }); await preview.getByRole('checkbox').waitFor();
-        assert.equal(await preview.getByRole('checkbox').isChecked(), false); assert.equal(await preview.getByRole('button', { name: 'Confirm owner reprocess', exact: true }).isDisabled(), true);
+        const contents = await table.textContent(); await trigger.click(); const preview = page.getByRole('region', { name: 'Archive rebuild preview', exact: true }); await preview.getByRole('checkbox').waitFor();
+        assert.equal(await preview.getByRole('checkbox').isChecked(), false); assert.equal(await preview.getByRole('button', { name: 'Confirm archive index rebuild', exact: true }).isDisabled(), true);
         await page.keyboard.press('Tab'); await trigger.focus();
         const colors = await contrast(page); phases.push(await measure(page, 'usage-and-preview-expanded')); await page.screenshot({ path: `${output}/${name}-expanded.png`, fullPage: true });
         await summary.click(); phases.push(await measure(page, 'usage-collapsed-preview-expanded')); await summary.click(); await table.waitFor();
         assert.equal(await table.textContent(), contents); assert.equal(await table.locator('thead th').count(), 6); assert.equal(await table.locator('tbody tr').count(), 4); assert.equal(await table.locator('tbody td').count(), 20);
         const scroll = page.locator('.goal50-table-scroll'); await scroll.evaluate(element => { element.scrollLeft = element.scrollWidth; });
         const horizontal = await scroll.evaluate(element => { const header = element.querySelector('thead th:last-child').getBoundingClientRect(), bounds = element.getBoundingClientRect(); return { left: element.scrollLeft, client: element.clientWidth, scroll: element.scrollWidth, headerLeft: header.left, headerRight: header.right, leftEdge: bounds.left, rightEdge: bounds.right, pageX: window.scrollX }; });
-        await preview.getByRole('button', { name: 'Cancel owner reprocess preview', exact: true }).click(); phases.push(await measure(page, 'usage-expanded-preview-cancelled')); await summary.click(); phases.push(await measure(page, 'both-collapsed-again'));
+        await preview.getByRole('button', { name: 'Cancel archive rebuild preview', exact: true }).click(); phases.push(await measure(page, 'usage-expanded-preview-cancelled')); await summary.click(); phases.push(await measure(page, 'both-collapsed-again'));
         const png = await readFile(`${output}/${name}-expanded.png`); assert.equal(png.readUInt32BE(16), width * scale);
         records.push({ name, colorScheme, deviceScaleFactor: scale, physicalScreenshotWidth: png.readUInt32BE(16), zoomInterpretation: scale === 1 ? 'native CSS viewport' : 'effective CSS viewport at 2x device scale; not actual browser zoom', phases, horizontal, colors });
         await writeFile(`${output}/metrics.json`, JSON.stringify({ syntheticOnly: true, providerCalls: 0, records }, null, 2));

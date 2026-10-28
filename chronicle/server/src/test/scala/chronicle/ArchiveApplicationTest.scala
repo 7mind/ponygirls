@@ -43,6 +43,17 @@ class ArchiveApplicationTest extends munit.FunSuite {
     assertEquals(location.position,0); assertEquals(location.total,1)
     assertEquals(intercept[DomainError](call(app,Operation.GetRaw(receipt.sessionId,Some(1)))).code,"forbidden")
   }}
+  test("BG GoodCommunication specified: selected-history find uses Read only and never calls an embedder") { database { (_,_,archive,app,embedder) =>
+    val receipt=archive.ingest("a",Fixtures.snapshot()); val view=ContentView(1,None)
+    val operation=Operation.SearchSessionMessages(receipt.sessionId,view,"archive",None,100)
+    val result=call(app,operation).asInstanceOf[Result.SessionMessageSearch].result
+    assertEquals(result,SessionMessageSearchResult(view,List(MessageSearchHit("u",0)),None))
+    val locator=call(app,Operation.LocateMessage(receipt.sessionId,view,result.hits.head.messageId)).asInstanceOf[Result.LocatedMessage].result
+    assertEquals(locator.position,0)
+    val unauthorized=reader.copy(user=reader.user.copy(scopes=Nil))
+    assertEquals(intercept[DomainError](app.operation(unauthorized,ClientEnvelope(UUID.randomUUID(),operation)).unsafeRunSync()).code,"forbidden")
+    assertEquals(embedder.queries,0)
+  }}
   test("BG GoodCommunication specified: validate before embeddings and never silently return metadata when a text model fails") { database { (config,db,archive,app,embedder) =>
     archive.ingest("a",Fixtures.snapshot())
     assertEquals(intercept[DomainError](call(app,Operation.Archive(query("mode:lexical AND text OR project:project",None)))).code,"invalid")

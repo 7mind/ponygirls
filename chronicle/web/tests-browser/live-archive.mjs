@@ -89,22 +89,22 @@ try {
     assert.equal(await input.inputValue(), ''); assert.equal(archiveCalls(fixture).at(-1).operation.query.expression, '');
     await context.close();
   });
-  await run('published format warning is independent of current job state and never inferred', async () => {
+  await run('current context-aware publications have no legacy warning and never alter independent job state', async () => {
     const { context, page, fixture } = await scene(fixture => {
       fixture.archiveRows = Array.from({ length: 5 }, (_, index) => {
         const row = fixture.archiveAt(index), publishedRevision = index === 0 || index === 3 ? row.head.revision : row.head.revision - 1;
         const publishedView = index === 4 ? undefined : new api.ContentView(publishedRevision, `00000000-0000-4000-8000-${String(52000 + index).padStart(12, '0')}`);
         const state = index === 0 || index === 3 ? api.JobState.Complete : index === 4 ? api.JobState.Queued : api.JobState.Failed;
-        const job = new api.JobInfo(`00000000-0000-4000-8000-${String(61000 + index).padStart(12, '0')}`, row.head.id, row.head.revision, state, 1, state === api.JobState.Failed ? 'model-output' : undefined, 0, 1);
-        return row.with({ head: row.head.with({ indexedRevision: publishedView === undefined ? undefined : publishedRevision }), publishedView, headJob: job, publishedFormat: index < 2 ? api.PassageFormat.LegacyAnnotations : index === 2 ? api.PassageFormat.ContiguousProblems : undefined });
+        const job = new api.JobInfo(`00000000-0000-4000-8000-${String(61000 + index).padStart(12, '0')}`, row.head.id, row.head.revision, state, 1, state === api.JobState.Failed ? 'model-output' : undefined, 0, 1, undefined);
+        return row.with({ head: row.head.with({ indexedRevision: publishedView === undefined ? undefined : publishedRevision }), publishedView, headJob: job, publishedFormat: index < 4 ? api.PassageFormat.ContextAwareProblems : undefined });
       });
     });
-    assert.equal(await page.locator('.legacy-index-warning').count(), 2, 'Explicit legacy publications need a visible table warning.');
+    assert.equal(await page.locator('.legacy-index-warning').count(), 0, 'Current context-aware publications must not be labeled legacy.');
     for (let index = 0; index < 5; index++) {
       const row = fixture.archiveRows[index], status = page.locator(`.archive-row[data-session-id="${row.head.id}"] td[data-column-id="Status"]`);
-      assert.equal(await status.locator('.legacy-index-warning').count(), index < 2 ? 1 : 0);
+      assert.equal(await status.locator('.legacy-index-warning').count(), 0);
       await status.getByText(row.headJob.state, { exact: true }).waitFor();
-      if (index < 2) assert.match(await status.locator('.legacy-index-warning').getAttribute('title'), new RegExp(`Published r${row.publishedView.revision}.*legacy`, 'i'));
+      if (index < 4) assert.equal(row.publishedFormat, api.PassageFormat.ContextAwareProblems);
     }
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetSession || call.operation instanceof api.Operation_GetPassages).length, 0, 'Rendering list provenance must not read source/passage pages.');
     await context.close();

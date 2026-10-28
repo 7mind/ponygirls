@@ -1,3 +1,4 @@
+import '../src/styles.css';
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useResource } from '../src/hooks.ts';
@@ -6,7 +7,6 @@ import { Dialog } from '../src/Dialog.tsx';
 import { useInfiniteResource } from '../src/infinite.ts';
 import type { InfinitePage } from '../src/infinite.ts';
 import { ScrollAnchor } from '../src/ScrollAnchor.tsx';
-import '../src/styles.css';
 
 interface PendingRead { id: number; resolve: (value: string) => void; reject: (error: Error) => void }
 class ResourceFixture {

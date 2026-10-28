@@ -16,8 +16,7 @@ object ProblemPassageFixtures {
   def message(id: String,text: String,role: String,position: Int): Message = Message(id,None,role,text,None,position)
   def one(window: Window,continued: Boolean,summary: String,tags: List[String]): Decision = Decision(Vector(Part(Point(0,0),window.terminal,continued,summary,tags)))
   def pointJson(point: Point): Json = Json.obj("fragmentIndex"->Json.fromInt(point.fragmentIndex),"scalarOffset"->Json.fromInt(point.scalarOffset))
-  def json(decision: Decision): Json = Json.obj("parts"->Json.arr(decision.parts.map(part => Json.obj("start"->pointJson(part.start),"end"->pointJson(part.end),
-    "continuePrevious"->Json.fromBoolean(part.continuePrevious),"summary"->Json.fromString(part.summary),"tags"->Json.arr(part.tags.map(Json.fromString)*)))*))
+  def json(decision: Decision): Json = CheckpointJson.decision(decision)
   def envelope(content: String,finish: String): Json = Json.obj("choices"->Json.arr(Json.obj("finish_reason"->Json.fromString(finish),"message"->Json.obj("content"->Json.fromString(content)))))
 
   // Synthetic A/B markers define the fixture's problems; all other scalars are substeps of the current problem.
@@ -209,10 +208,14 @@ class ProblemPassagesTest extends ProblemPassageContract {
       assertEquals(projected.pieces(1).sourceSpan.start,prefix.getBytes(UTF_8).length)
     }
   }
-  test("BA: continuation requires an open passage and is only permitted on the first part") {
+  test("BA: continuation requires an open problem, including one opened earlier in the same window") {
     val window=sample
     assertEquals(intercept[DomainError](validate(window,false,one(window,true,"x",Nil))).code,"model-output")
-    bad(Decision(Vector(Part(Point(0,0),Point(1,0),true,"first",Nil),Part(Point(1,0),window.terminal,true,"second",Nil))))
+    val decision=Decision(Vector(Part(Point(0,0),Point(1,0),false,"first",Nil),Part(Point(1,0),window.terminal,true,"second",Nil)))
+    validate(window,false,decision)
+    val delta=accept(State.start(sessionId,namespace),window,decision)
+    assertEquals(delta.state.nextPassageOrdinal,1); assertEquals(delta.passages.size,1)
+    assertEquals(delta.passages.head.passage.summary,"second")
   }
   test("BA: strict JSON rejects missing, extra, wrongly typed, and reference fields") {
     val window=sample; val valid=json(one(window,false,"summary",List("tag")))
@@ -326,8 +329,8 @@ class ProblemPassagesTest extends ProblemPassageContract {
     val schema=responseFormat(window).hcursor.downField("json_schema").downField("schema").downField("properties").downField("parts")
     assertEquals(schema.get[Int]("maxItems").toOption,Some(8))
   }
-  test("BA: stable new policy identity includes prompt/schema/window/context/piece policy without changing legacy identity") {
-    assert(identity.startsWith("contiguous-problems-v1:")); assertEquals(identity.length,"contiguous-problems-v1:".length+64)
-    assertEquals(AnnotationPartition.identity,"partition-v4:utf8:2048:windowFragments4:windowBytes8192:policyResponseTokens:strictJsonSchema:summary1000unicode:tags16x64unicode:messageBoundaryLF")
+  test("BA: sole policy identity binds explicit problem/context schema and bounded source/carry/piece policy") {
+    assert(identity.startsWith("problem-context-coverage-v1:")); assertEquals(identity.length,"problem-context-coverage-v1:".length+64)
+    val config=Fixtures.config(); assertEquals(IndexProfileCatalog.current(config).preferred.profile,config.profile)
   }
 }

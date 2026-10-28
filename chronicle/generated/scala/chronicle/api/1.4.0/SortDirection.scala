@@ -2,7 +2,7 @@ import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonEnum, Lazy}
 
 package chronicle.api.v1_4_0 {
-  @deprecated("Version 1.4.0 is deprecated, you should migrate to 1.5.0")
+  @deprecated("Version 1.4.0 is deprecated, you should migrate to 1.7.0")
   sealed trait SortDirection
   
   object SortDirection extends BaboonEnum[SortDirection] {
@@ -23,7 +23,7 @@ package chronicle.api.v1_4_0 {
     ) 
   }
   
-  @deprecated("Version 1.4.0 is deprecated, you should migrate to 1.5.0")
+  @deprecated("Version 1.4.0 is deprecated, you should migrate to 1.7.0")
   object SortDirection_JsonCodec extends BaboonJsonCodec.Base[SortDirection, BaboonJsonCodec[SortDirection]] {
     def encode(ctx: BaboonCodecContext, value: SortDirection): Json = {
       if (this ne LazyInstance.value) {

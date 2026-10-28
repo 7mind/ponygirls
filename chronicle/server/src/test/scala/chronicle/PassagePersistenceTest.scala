@@ -30,7 +30,7 @@ abstract class PassagePersistenceContract extends munit.FunSuite {
     val original=request(List("","A🙂\u0001sameBαsameA🙂"))
     val (receipt,current,publication,view)=publish(f,original)
     val page=f.reader.passages("a",receipt.sessionId,0,100,Some(view))
-    assertEquals(page.format,PassageFormat.ContiguousProblems); assertEquals(page.total,3L)
+    assertEquals(page.format,PassageFormat.ContextAwareProblems); assertEquals(page.total,3L)
     assertEquals(page.passages,publication.passages.map(ProblemsPublication.info).toList)
     assertEquals(page.passages.map(_.ordinal),List(0,1,2)); assertEquals(page.passages.map(_.id).distinct.size,3)
     page.passages.foreach { passage =>
@@ -91,29 +91,29 @@ abstract class PassagePersistenceContract extends munit.FunSuite {
       val current=claim(f,"a"); assert(f.archive.publishProblems(current,oneProblem(current)))
       val indexed=f.archive.session("a",receipt.sessionId).view
       assert(indexed.generationId.nonEmpty)
-      assertEquals(f.reader.passages("a",receipt.sessionId,0,100,None),PassagesResult(indexed,PassageFormat.ContiguousProblems,Nil,0,0))
+      assertEquals(f.reader.passages("a",receipt.sessionId,0,100,None),PassagesResult(indexed,PassageFormat.ContextAwareProblems,Nil,0,0))
       assertEquals(f.reader.passages("a",receipt.sessionId,0,100,Some(sourceView)).format,PassageFormat.Unindexed)
       assertEquals(intercept[DomainError](f.reader.passageSpans("a",receipt.sessionId,UUID.randomUUID(),0,100,Some(sourceView))).code,"invalid")
     }
   }}
-  test("BG/GoodCommunication regression: P1 rejects legacy payloads, legacy rejects problem payloads, Nil legacy spans stay readable") { withFixture { f =>
-    val p1=f.archive.ingest("a",request(List("A"))); val p1claim=claim(f,"a")
-    assertEquals(intercept[DomainError](f.archive.publish(p1claim,Nil)).code,"invalid")
-    assertEquals(f.archive.session("a",p1.sessionId).indexedRevision,None)
-    assert(f.archive.publishProblems(p1claim,oneProblem(p1claim)))
-    val old=f.archive.ingest("b",request(List("A original"))); val legacy=claim(f,"b")
-    assertEquals(intercept[DomainError](f.archive.publishProblems(legacy,oneProblem(legacy))).code,"invalid")
-    val chunk=Chunk(UUID.randomUUID(),old.sessionId,"manual legacy annotation","old",List("retained"),Nil,0.0)
-    assert(f.archive.publish(legacy,List(IndexedChunk(chunk,vector))))
+  test("BG/GoodCommunication regression: incomplete current coverage is rejected; explicit replacement retires old derived pins without touching raw revision") { withFixture { f =>
+    val source=f.archive.ingest("a",request(List("A"))); val current=claim(f,"a")
+    val incomplete=new ProblemsPublication(Nil,Vector.empty,Vector.empty,Vector.empty,Vector.empty)
+    assertEquals(intercept[DomainError](f.archive.publishProblems(current,incomplete)).code,"invalid")
+    assertEquals(f.archive.session("a",source.sessionId).indexedRevision,None)
+    assert(f.archive.publishProblems(current,oneProblem(current)))
+    val original=request(List("A original")); val old=f.archive.ingest("b",original); val first=claim(f,"b")
+    assert(f.archive.publishProblems(first,oneProblem(first)))
     val view=f.archive.session("b",old.sessionId).view
-    assertEquals(f.reader.passages("b",old.sessionId,0,100,Some(view)),PassagesResult(view,PassageFormat.LegacyAnnotations,Nil,0,0))
-    assertEquals(f.chunks("b",old.sessionId,view).chunks,List(chunk))
-    assertEquals(intercept[DomainError](f.reader.passageSpans("b",old.sessionId,chunk.id,0,100,Some(view))).code,"not-found")
+    assertEquals(f.reader.passages("b",old.sessionId,0,100,Some(view)).format,PassageFormat.ContextAwareProblems)
+    assert(f.chunks("b",old.sessionId,view).chunks.nonEmpty)
     f.transition("b")
+    assertEquals(f.archive.session("b",old.sessionId).view,view)
     val replacement=claim(f,"b"); assert(f.archive.publishProblems(replacement,oneProblem(replacement)))
-    assertEquals(f.reader.passages("b",old.sessionId,0,100,None).format,PassageFormat.ContiguousProblems)
-    assertEquals(f.reader.passages("b",old.sessionId,0,100,Some(view)).format,PassageFormat.LegacyAnnotations)
-    assertEquals(f.chunks("b",old.sessionId,view).chunks,List(chunk))
+    assertEquals(f.reader.passages("b",old.sessionId,0,100,None).format,PassageFormat.ContextAwareProblems)
+    assertEquals(intercept[DomainError](f.reader.passages("b",old.sessionId,0,100,Some(view))).code,"indexed-view-retired")
+    assertEquals(intercept[DomainError](f.chunks("b",old.sessionId,view)).code,"indexed-view-retired")
+    assertEquals(f.raw("b",old.sessionId,1).files,original.files)
   }}
   test("BG/GoodCommunication: source append retains historical generation pins, replacement cannot substitute mismatched or missing views") { withFixture { f =>
     val original=request(List("A🙂Bα")); val (receipt,_,_,old)=publish(f,original)

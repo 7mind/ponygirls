@@ -17,28 +17,33 @@ class ModelHttpTest extends munit.FunSuite {
       client <- ModelHttp.client(Fixtures.config())
     } yield (server,client)).use { case (server,client) => test(ModelFixtures.http(client,Fixtures.config()),s"http://127.0.0.1:${server.address.getPort}/v1/operation") }.unsafeRunSync()
   }
-  test("BG-GoodCommunication: OpenAI annotations partition valid source window") {
-    val reply="""{"choices":[{"finish_reason":"stop","message":{"content":"{\"chunks\":[{\"first\":0,\"last\":1,\"summary\":\"both\",\"tags\":[\"synthetic\"]}]}"}}]}"""
+  test("BG-GoodCommunication: model annotations classify the complete original source window") {
+    val reply="""{"choices":[{"finish_reason":"stop","message":{"content":"{\"parts\":[{\"kind\":\"Problem\",\"start\":{\"fragmentIndex\":0,\"scalarOffset\":0},\"end\":{\"fragmentIndex\":2,\"scalarOffset\":0},\"continuePrevious\":false,\"summary\":\"both\",\"tags\":[\"synthetic\"]}]}"}}]}"""
     simulator(Status.Ok,reply,(http,url) => {
       val c=Fixtures.config(); val messages=List(Message("u",None,"user","first",None,0),Message("a",Some("u"),"assistant","second",None,1))
-      new OpenAIAnnotator(http,c.copy(annotation=c.annotation.copy(endpoint=url))).annotate("a",Fragments.split(messages),messages).map { chunks => assertEquals(chunks.size,1); assertEquals(chunks.head.text,"first\nsecond") }
+      val window=ProblemPassages.Source(messages).next(ProblemPassages.SourceCursor.start).get
+      new OpenAIProblemPassageAnnotator(http,c.copy(annotation=c.annotation.copy(endpoint=url))).annotate("a",window,None).map { decision =>
+        val delta=ProblemPassages.accept(ProblemPassages.State.start(java.util.UUID.randomUUID(),java.util.UUID.randomUUID()),window,decision)
+        assertEquals(delta.pieces.map(_.chunk.text),Vector("first","second"))
+      }
     })
   }
   test("BG-GoodCommunication regression: annotation envelope exposes fragment indices without competing byte offsets") {
     val messages=List(Message("u",None,"user","first🙂",None,0),Message("a",Some("u"),"assistant","secondé",None,1))
-    val fragments=Fragments.split(messages)
-    val reply="""{"choices":[{"finish_reason":"stop","message":{"content":"{\"chunks\":[{\"first\":0,\"last\":1,\"summary\":\"both\",\"tags\":[\"synthetic\"]}]}"}}]}"""
+    val window=ProblemPassages.Source(messages).next(ProblemPassages.SourceCursor.start).get
+    val reply="""{"choices":[{"finish_reason":"stop","message":{"content":"{\"parts\":[{\"kind\":\"Problem\",\"start\":{\"fragmentIndex\":0,\"scalarOffset\":0},\"end\":{\"fragmentIndex\":2,\"scalarOffset\":0},\"continuePrevious\":false,\"summary\":\"both\",\"tags\":[\"synthetic\"]}]}"}}]}"""
     val endpoint: HttpApp[IO]=cats.data.Kleisli { request => request.as[String].map { body =>
       val payload=Wire.parse(body).hcursor.get[List[Json]]("messages").toOption.get
       val source=Wire.parse(payload(1).hcursor.get[String]("content").toOption.get).hcursor.get[List[Json]]("fragments").toOption.get
-      assertEquals(source.map(_.asObject.get.keys.toSet),List.fill(2)(Set("index","role","text","messageId")))
+      assertEquals(source.map(_.asObject.get.keys.toSet),List.fill(2)(Set("index","role","text","messageId","messagePosition","scalarCount","lineStarts")))
       assertEquals(source.map(_.hcursor.get[Int]("index").toOption.get),List(0,1))
       Response[IO](Status.Ok).withEntity(reply)
     }}
     val http=ModelFixtures.http(org.http4s.client.Client.fromHttpApp(endpoint),Fixtures.config())
-    new OpenAIAnnotator(http,Fixtures.config()).annotate("a",fragments,messages).map { chunks =>
-      assertEquals(chunks.head.text,"first🙂\nsecondé")
-      assertEquals(chunks.head.spans,fragments.flatMap(_.spans))
+    new OpenAIProblemPassageAnnotator(http,Fixtures.config()).annotate("a",window,None).map { decision =>
+      val delta=ProblemPassages.accept(ProblemPassages.State.start(java.util.UUID.randomUUID(),java.util.UUID.randomUUID()),window,decision)
+      assertEquals(delta.pieces.map(_.chunk.text),Vector("first🙂","secondé"))
+      assertEquals(delta.pieces.map(_.sourceSpan.messagePosition),Vector(0,1))
     }.unsafeRunSync()
   }
   test("BG-GoodCommunication: OpenAI embeddings require count indices dimensions finite nonzero") {

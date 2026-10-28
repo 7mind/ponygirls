@@ -4,12 +4,16 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CollectorError, hash, type CollectorReport, type Diagnostic } from './domain.ts';
 import { rejectSymlinks } from './discovery.ts';
+import { decodeOrigin, type CollectionOrigin } from './admission.ts';
+import { object } from './domain.ts';
 
 export interface Pending {
   requestId: string; sourceKey: string; sourceDigest: string; payload: string; payloadDigest: string;
   expectedRevision: number; policyDigest: string; attempts: number; nextAt: number;
   status: 'pending' | 'stopped' | 'conflict'; error: string | null;
 }
+export interface QueuedOrigin { entry: Pending; origin: CollectionOrigin }
+interface BoundOrigin { requestId: string; payloadDigest: string; sourceKey: string; origin: CollectionOrigin }
 export interface Head { revision: number; digest: string | null; tombstone: boolean }
 export interface Dropped { requestId: string; sourceKey: string; reason: string }
 export interface ReportingState { sequence: string; acceptedSequence: string | null; acceptedAt: number | null; error: string | null }
@@ -17,7 +21,8 @@ export interface Spool {
   readonly namespace: string;
   head(sourceKey: string): Head;
   observe(pathId: string, signature: string, now: number): number;
-  enqueue(entry: Pending): void; queue(): Pending[];
+  enqueue(entry: Pending, origin: CollectionOrigin): void; queue(): Pending[];
+  pendingOrigin(requestId: string): CollectionOrigin; queueWithOrigins(): QueuedOrigin[];
   ack(requestId: string, revision: number): void;
   fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): Pending['status'];
   retry(requestId: string): void; drop(requestId: string, reason: string): void;
@@ -37,6 +42,7 @@ interface Storage {
   list<T>(bucket: string): T[];
   clear(bucket: string): void;
   transaction<T>(run: () => T): T;
+  readTransaction<T>(read: () => T): T;
   close(): void;
 }
 class InMemoryStorage implements Storage {
@@ -47,6 +53,7 @@ class InMemoryStorage implements Storage {
   list<T>(bucket: string): T[] { return [...this.rows].filter(([key]) => key.startsWith(`${bucket}\0`)).map(([, value]) => JSON.parse(value) as T); }
   clear(bucket: string): void { for (const key of this.rows.keys()) if (key.startsWith(`${bucket}\0`)) this.rows.delete(key); }
   transaction<T>(run: () => T): T { const before = new Map(this.rows); try { return run(); } catch (error) { this.rows = before; throw error; } }
+  readTransaction<T>(read: () => T): T { return read(); }
   close(): void {}
 }
 function secureDirectory(path: string): void {
@@ -56,7 +63,7 @@ function secureFile(path: string): void {
   const fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
   closeSync(fd); rejectSymlinks(path); chmodSync(path, 0o600);
 }
-class SqliteStorage implements Storage {
+export class SqliteStorage implements Storage {
   private readonly db: DatabaseSync;
   constructor(directory: string) {
     secureDirectory(directory);
@@ -73,6 +80,7 @@ class SqliteStorage implements Storage {
   list<T>(bucket: string): T[] { return this.db.prepare('SELECT value FROM kv WHERE bucket=? ORDER BY key').all(bucket).map(row => JSON.parse(String(row['value'])) as T); }
   clear(bucket: string): void { this.db.prepare('DELETE FROM kv WHERE bucket=?').run(bucket); }
   transaction<T>(run: () => T): T { this.db.exec('BEGIN IMMEDIATE'); try { const result = run(); this.db.exec('COMMIT'); return result; } catch (error) { this.db.exec('ROLLBACK'); throw error; } }
+  readTransaction<T>(read: () => T): T { this.db.exec('BEGIN'); try { const result = read(); this.db.exec('COMMIT'); return result; } catch (error) { this.db.exec('ROLLBACK'); throw error; } }
   close(): void { this.db.close(); }
 }
 class DurableSpool implements Spool {
@@ -92,17 +100,34 @@ class DurableSpool implements Spool {
     if (previous !== undefined && previous.signature === signature && previous.since <= now) return previous.since;
     this.storage.set('observation', pathId, { signature, since: now }); return now;
   }
-  enqueue(entry: Pending): void {
+  enqueue(entry: Pending, origin: CollectionOrigin): void {
     this.storage.transaction(() => {
       if (hash(entry.payload) !== entry.payloadDigest) throw new CollectorError('payload-digest-mismatch');
       if (this.storage.get<string>('source-pending', entry.sourceKey) !== undefined) throw new CollectorError('source-already-pending');
+      if (this.storage.get<Pending>('pending', entry.requestId) !== undefined) throw new CollectorError('request-already-pending');
+      if (this.storedOrigin(entry.requestId) !== undefined) throw new CollectorError('orphaned-pending-origin');
+      const validatedOrigin = decodeOrigin(origin);
       const head = this.head(entry.sourceKey);
       if (head.tombstone || head.revision !== entry.expectedRevision) throw new CollectorError('source-head-mismatch');
       this.storage.set('pending', entry.requestId, entry);
       this.storage.set('source-pending', entry.sourceKey, entry.requestId);
+      this.storage.set<BoundOrigin>('pending-origin', entry.requestId, { requestId: entry.requestId, payloadDigest: entry.payloadDigest, sourceKey: entry.sourceKey, origin: validatedOrigin });
     });
   }
   queue(): Pending[] { return this.storage.list<Pending>('pending'); }
+  private storedOrigin(requestId: string): unknown {
+    try { return this.storage.get<unknown>('pending-origin', requestId); }
+    catch (error) { if (error instanceof SyntaxError) throw new CollectorError('invalid-pending-origin'); throw error; }
+  }
+  private origin(entry: Pending): CollectionOrigin {
+    if (typeof entry.requestId !== 'string' || typeof entry.payloadDigest !== 'string' || typeof entry.sourceKey !== 'string') throw new CollectorError('invalid-pending-origin');
+    const value = this.storedOrigin(entry.requestId);
+    if (value === undefined) return { kind: 'unknown' };
+    if (!object(value) || Object.keys(value).length !== 4 || typeof value['requestId'] !== 'string' || typeof value['payloadDigest'] !== 'string' || typeof value['sourceKey'] !== 'string' || value['requestId'] !== entry.requestId || value['payloadDigest'] !== entry.payloadDigest || value['sourceKey'] !== entry.sourceKey) throw new CollectorError('invalid-pending-origin');
+    return decodeOrigin(value['origin']);
+  }
+  pendingOrigin(requestId: string): CollectionOrigin { return this.storage.readTransaction(() => { const entry = this.required(requestId); if (entry.requestId !== requestId) throw new CollectorError('invalid-pending-origin'); return this.origin(entry); }); }
+  queueWithOrigins(): QueuedOrigin[] { return this.storage.readTransaction(() => this.queue().map(entry => ({ entry, origin: this.origin(entry) }))); }
   private required(requestId: string): Pending { const pending = this.storage.get<Pending>('pending', requestId); if (pending === undefined) throw new CollectorError('request-not-found'); return pending; }
   ack(requestId: string, revision: number): void {
     this.storage.transaction(() => {
@@ -110,7 +135,7 @@ class DurableSpool implements Spool {
       if (revision !== pending.expectedRevision + 1) throw new CollectorError('receipt-revision-mismatch');
       if (this.head(pending.sourceKey).revision !== pending.expectedRevision) throw new CollectorError('source-head-mismatch');
       this.storage.set<Head>('head', pending.sourceKey, { revision, digest: pending.sourceDigest, tombstone: false });
-      this.storage.remove('pending', requestId);
+      this.storage.remove('pending', requestId); this.storage.remove('pending-origin', requestId);
       this.storage.remove('source-pending', pending.sourceKey);
     });
   }
@@ -126,7 +151,7 @@ class DurableSpool implements Spool {
   drop(requestId: string, reason: string): void {
     this.storage.transaction(() => {
       const entry = this.required(requestId); const head = this.head(entry.sourceKey); head.tombstone = true;
-      this.storage.set('head', entry.sourceKey, head); this.storage.remove('pending', requestId);
+      this.storage.set('head', entry.sourceKey, head); this.storage.remove('pending', requestId); this.storage.remove('pending-origin', requestId);
       this.storage.remove('source-pending', entry.sourceKey);
       this.storage.set('audit', requestId, { requestId, sourceKey: entry.sourceKey, reason });
     });

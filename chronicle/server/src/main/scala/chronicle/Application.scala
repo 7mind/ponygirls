@@ -12,9 +12,17 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.Search(q) if version=="1.0.0" =>
         i.requireScope(Scope.Read)
         query(ReadAccess.current(i),q,true).map(Result.Search.apply)
+      case Operation.GetPassages(id,view,_,_) if version!="1.7.0" => retainedPassageRead(i,e,id,view)
+      case Operation.GetPassageSpans(id,view,_,_,_) if version!="1.7.0" => retainedPassageRead(i,e,id,view)
       case _ => operation(i,e)
     }
   }
+  private def retainedPassageRead(i: Identity,e: ClientEnvelope,id: UUID,view: ContentView): IO[Result] =
+    IO.blocking {
+      i.requireScope(Scope.Read)
+      // Fresh ACL/pin/retirement validation precedes feature compatibility; never disconnect an older client.
+      Check(archive.passages(i.user.id,id,0,1,Some(view)).format!=PassageFormat.ContextAwareProblems,"unavailable","context-aware passage reads require API1.7")
+    } *> operation(i,e)
   def operation(i: Identity,e: ClientEnvelope): IO[Result] = IO.defer {
     val uid = i.user.id
     e.operation match {
@@ -36,7 +44,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.Activity(q) => i.requireScope(Scope.Read); IO.blocking(Result.Activity(activityIndex.summary(i.user,q)))
       case Operation.ActivityJobs(q) => i.requireScope(Scope.Read); IO.blocking(Result.ActivityJobs(activityIndex.jobs(uid,q)))
       case Operation.LocateMessage(id,view,messageId) => i.requireScope(Scope.Read); IO.blocking(Result.LocatedMessage(archive.locateMessage(uid,id,view,messageId)))
-      case Operation.GetSession(_,_) | Operation.GetChunks(_,_,_,_) | Operation.GetMessages(_,_,_,_) => read(ReadAccess.current(i),e.operation)
+      case Operation.GetSession(_,_) | Operation.GetChunks(_,_,_,_) | Operation.GetMessages(_,_,_,_) | Operation.SearchSessionMessages(_,_,_,_,_) => read(ReadAccess.current(i),e.operation)
       case Operation.GetRaw(id,revision) => i.requireScope(Scope.Read); i.requireScope(Scope.Raw); IO.blocking(Result.Raw(archive.raw(uid,id,revision)))
       case Operation.Related(_,_) | Operation.Facets(_) | Operation.IngestStatus(_,_) => read(ReadAccess.current(i),e.operation)
       case Operation.CollectionStatus() => IO.blocking(Result.CollectionStatus(collectors.status(i)))
@@ -45,6 +53,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.Receipt(id) => IO.blocking(auth.receipt(i,id))
       case Operation.PreviewRetryFailed() => IO.blocking(Result.RetryFailedPreview(auth.previewRetryFailed(i)))
       case Operation.PreviewOwnerReindex() => IO.blocking(Result.OwnerReindexPreview(auth.previewOwnerReindex(i)))
+      case Operation.GetReindexStatus(id) => IO.blocking(Result.ReindexStatus(auth.reindexStatus(i,id)))
       case _ => IO.blocking(auth.mutate(i,e))
     }
   }
@@ -59,6 +68,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.GetSession(id,view) => access.blocking(i => Result.Session(archive.readSession(i.user.id,id,view,materialization)))
       case Operation.GetChunks(id,offset,limit,view) => access.blocking(i => Result.Chunks(archive.pageChunks(i.user.id,id,offset,limit,view,materialization)))
       case Operation.GetMessages(id,offset,limit,view) => access.blocking(i => Result.Messages(archive.messages(i.user.id,id,offset,limit,view,materialization)))
+      case Operation.SearchSessionMessages(id,view,literal,cursor,limit) => access.blocking(i => Result.SessionMessageSearch(archive.searchSessionMessages(i.user.id,id,view,literal,cursor,limit,materialization)))
       case Operation.Related(id,limit) =>
         Check.page(0,limit)
         access.blocking(i => archive.pageChunks(i.user.id,id,0,1,None,materialization).chunks.headOption.map(_.summary).getOrElse("")).flatMap { text =>

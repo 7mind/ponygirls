@@ -211,8 +211,7 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:2px;padding:1px 
 .state-queued,.state-running{color:var(--warning-ink)}
 .job-error{font-size:12px;color:var(--error);margin-top:10px}
 .connection-widget{position:fixed;right:24px;bottom:16px;z-index:10;background:var(--paper);border:1px solid var(--health-border);border-radius:25px;box-shadow:0 2px 14px var(--shadow-soft);max-width:calc(100vw - 24px)}
-.connection-widget>summary{display:flex;list-style:none;align-items:center;gap:7px;padding:6px 14px 6px 8px;font-size:11px;font-weight:550}
-.connection-widget>summary::-webkit-details-marker{display:none}
+.connection-widget>button{display:flex;list-style:none;align-items:center;gap:7px;padding:6px 14px 6px 8px;font-size:11px;font-weight:550}
 .connection-widget svg{height:24px;width:24px;flex-shrink:0;fill:none;color:var(--healthy)}
 .ring-track{stroke:var(--ring-track);stroke-width:2}
 .ring-budget{stroke:currentColor;stroke-width:2;transform:rotate(-90deg);transform-origin:50% 50%}
@@ -220,7 +219,6 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:2px;padding:1px 
 .health-hint{font-size:9px;letter-spacing:.2px;font-weight:400;color:var(--muted);border-left:1px solid var(--rule);padding-left:9px;margin-left:3px}
 .connection-widget[data-state=unauthorized] svg,.connection-widget[data-state=protocol-error] svg,.connection-widget[data-state=update-required] svg,.connection-widget[data-state=stopped] svg{color:var(--error)}
 .connection-widget[data-state=stale] svg,.connection-widget[data-state=retrying] svg,.connection-widget[data-state=deferred] svg{color:var(--warning-ink)}
-.health-panel{position:absolute;bottom:calc(100% + 10px);right:0;width:390px;max-width:calc(100vw - 32px);max-height:75vh;overflow:auto;background:var(--paper);border:1px solid var(--health-border);border-radius:4px;box-shadow:0 8px 35px var(--shadow-soft);padding:20px}
 .health-panel h2{font-size:14px}
 .health-panel .eyebrow{font-size:9px}
 .health-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px 12px;padding-bottom:17px;border-bottom:1px solid var(--rule)}
@@ -329,9 +327,8 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:2px;padding:1px 
 .job-row code{font-size:9px}
 .job-row button{font-size:10px;align-self:center}
 .app-footer{margin:20px 18px 0;padding-bottom:75px;gap:12px;justify-content:space-between;font-size:7px;letter-spacing:.6px}
-.connection-widget{right:12px;bottom:12px}
+.masthead .connection-widget{position:static;flex-shrink:0}
 .health-hint{display:none}
-.health-panel{max-width:calc(100vw - 24px)}
 .blank{padding:50px 25px;min-height:290px}
 .secret-card{padding:18px}
 .token-row{gap:10px}
@@ -356,3 +353,6 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:2px;padding:1px 
 .progress-counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1rem; }
 .progress-counters dt { font-size: .8rem; opacity: .8; }
 .progress-counters dd { margin: .25rem 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.app-shell{display:contents}
+.connection-widget>button{border:0;border-radius:24px}

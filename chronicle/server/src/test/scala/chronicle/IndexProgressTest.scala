@@ -48,58 +48,59 @@ class IndexProgressTest extends munit.FunSuite {
     assert(!a.progress(first,2,2)); assertEquals(counters(a,out.jobId),(1,Some(2)))
     val current=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get; assert(a.progress(current,1,2))
     val next=c.copy(embedding=c.embedding.copy(revision="progress-target"))
-    new PostgresArchive(db,next).beginMaintenance()
+    val nextDb=new Database(next,IndexProfileCatalog.current(next)); nextDb.initialize()
+    Fixtures.rebuild(nextDb,"a")
     assert(!a.progress(current,2,2)); a.fail(current,"stale-claim")
     assertEquals(counters(a,current.jobId),(1,Some(2)))
   }}
   test("worker counts completed source windows after annotation AND embedding, not output chunks") { database { (c,db,a) =>
     val original=Fixtures.snapshot()
-    val text="a" * (Fragments.maxBytes*9)
+    val text="a" * (ProblemPassages.maximumFragmentBytes*140)
     val raw=io.circe.Json.obj("id"->io.circe.Json.fromString("u"),"text"->io.circe.Json.fromString(text)).noSpaces+"\n"
     val request=original.copy(messages=List(Message("u",None,"user",text,None,0)),files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
     val out=a.ingest("a",request)
     var annotationCalls=0; var embeddingCalls=0
-    val annotator=new Annotator {
-      def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO {
+    val annotator=new ProblemPassageAnnotator {
+      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
         assertEquals(counters(a,out.jobId),(annotationCalls,Some(3)))
         annotationCalls+=1
-        List(window.head.copy(text=window.map(_.text).mkString,spans=window.flatMap(_.spans)))
+        ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,previous.nonEmpty,"synthetic goal",Nil)))
       }
     }
     val embedder=new Embedder {
       def query(owner: String,text: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
       def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO {
-        assertEquals(counters(a,out.jobId),(embeddingCalls,Some(3)))
+        assertEquals(counters(a,out.jobId),(annotationCalls-1,Some(3)))
         embeddingCalls+=1
         text.map(_ => List(1.0,0.0,0.0))
       }
     }
-    assert(ModelFixtures.legacyWorker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
-    assertEquals(annotationCalls,3); assertEquals(embeddingCalls,3)
+    assert(ModelFixtures.worker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
+    assertEquals(annotationCalls,3); assert(embeddingCalls>annotationCalls)
     assertEquals(counters(a,out.jobId),(3,Some(3)))
     assertEquals(a.statuses("a",0,100).jobs.head.state,JobState.Complete)
-    assertEquals(a.pageChunks("a",out.sessionId,0,100,None).total,3)
+    assertEquals(a.pageChunks("a",out.sessionId,0,100,None).total,140)
   }}
   test("worker annotation retry cannot publish after manual retry fences the claim") { database { (c,db,a) =>
-    val text="a"*(Fragments.maxBytes*4)+"b"*(Fragments.maxBytes*4)+"c"
-    val raw=io.circe.Json.obj("id"->io.circe.Json.fromString("u"),"text"->io.circe.Json.fromString(text)).noSpaces+"\n"
-    val request=Fixtures.snapshot().copy(messages=List(Message("u",None,"user",text,None,0)),files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
+    val messages=(0 until 160).map(i => Message(s"m$i",None,"user",s"${if(i<64) 'a' else if(i<128) 'b' else 'c'}$i",None,i)).toList
+    val raw=messages.map(message => io.circe.Json.obj("id"->io.circe.Json.fromString(message.id),"text"->io.circe.Json.fromString(message.text)).noSpaces+"\n").mkString
+    val request=Fixtures.snapshot().copy(messages=messages,files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
     val out=a.ingest("a",request)
     val calls=scala.collection.mutable.ListBuffer.empty[Char]; var embeddings=0
-    val annotator=new Annotator {
-      def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO {
-        calls += window.head.text.head
+    val annotator=new ProblemPassageAnnotator {
+      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
+        calls += window.fragments.head.text.head
         if(calls.size==2) throw DomainError("model-output/truncated","synthetic")
         if(calls.size==3) a.retry("a",out.jobId)
-        List(window.head.copy(text=window.map(_.text).mkString,spans=window.flatMap(_.spans)))
+        ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,previous.nonEmpty,"synthetic goal",Nil)))
       }
     }
     val embedder=new Embedder {
       def query(owner: String,text: String): IO[List[Double]] = IO.pure(Nil)
       def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO { embeddings+=1; text.map(_ => List(1.0,0.0,0.0)) }
     }
-    assert(ModelFixtures.legacyWorker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
-    assertEquals(calls.toList,List('a','b','b')); assertEquals(embeddings,2)
+    assert(ModelFixtures.worker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
+    assertEquals(calls.toList,List('a','b','b')); assertEquals(embeddings,4)
     val job=a.statuses("a",0,100).jobs.find(_.id==out.jobId).get
     assertEquals(job.state,JobState.Queued); assertEquals(job.attempts,0); assertEquals(job.error,None)
     assertEquals(counters(a,out.jobId),(0,None))
@@ -108,12 +109,12 @@ class IndexProgressTest extends munit.FunSuite {
   test("worker records a known zero total for an empty source") { database { (c,db,a) =>
     val request=Fixtures.snapshot().copy(messages=Nil)
     val out=a.ingest("a",request)
-    val annotator=new Annotator { def annotate(owner: String,window: List[Chunk],messages: List[Message]): IO[List[Chunk]] = IO.raiseError(new Exception("unexpected annotation")) }
+    val annotator=new ProblemPassageAnnotator { def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(new Exception("unexpected annotation")) }
     val embedder=new Embedder {
       def query(owner: String,text: String): IO[List[Double]] = IO.pure(Nil)
       def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.raiseError(new Exception("unexpected embedding"))
     }
-    assert(ModelFixtures.legacyWorker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
+    assert(ModelFixtures.worker(a,annotator,embedder,c,logstage.IzLogger()).once.unsafeRunSync())
     assertEquals(counters(a,out.jobId),(0,Some(0)))
     assertEquals(a.statuses("a",0,100).jobs.head.state,JobState.Complete)
   }}

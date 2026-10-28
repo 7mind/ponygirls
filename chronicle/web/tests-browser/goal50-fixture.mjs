@@ -5,8 +5,8 @@ export const NOW = '2026-10-26T12:00:00Z', INSTANCE = '00000000-0000-4000-8000-0
 export class Goal50Fixture extends ChronicleFixture {
   signals = new EventEmitter(); hintPending = []; holdHints = false; hintResult = query => new api.ExpressionHintsResult('synthetic-server-hash', NOW, 0, query.expression.length, [new api.ExpressionHint(api.ExpressionHintKind.Field, 'project:', 'project:', 8)], false);
   holdUsage = false; usagePending = []; usageDenied = false; reindexDrop = false; reindexConflict = false; reindexMalformed = false;
-  passageMode = 'legacy'; passageDenied = false;
-  get publishedFormat() { return this.passageMode === 'legacy' ? api.PassageFormat.LegacyAnnotations : this.passageMode === 'unverified' ? undefined : api.PassageFormat.ContiguousProblems; }
+  passageMode = 'source'; passageDenied = false;
+  get publishedFormat() { return this.passageMode === 'unverified' ? undefined : api.PassageFormat.ContextAwareProblems; }
   tools = ['source_catalog', 'dynamic_tool_from_registry', 'authorized_read']; incarnation = INSTANCE; mcpRuns = new Map(); mcpDropStart = false; mcpReadFailure = null; mcpAuthorityLost = false; mcpHoldReads = false; mcpCaptureReads = false; mcpPending = []; cancelComplete = false; mcpWrongTerminal = false; cancelAuthorityLost = false; catalogDenied = false; holdCatalogs = false; catalogPending = []; holdCancels = false; cancelPending = [];
   constructor() { super(); this.goal50Operation = (operation, envelope, send, entry) => { this.signals.emit('request', operation); return this.handle(operation, envelope, send, entry); }; }
   waitCall(Type, count) {
@@ -21,7 +21,7 @@ export class Goal50Fixture extends ChronicleFixture {
     const unknown = new api.TokenRateWindow(9007199254740993n, 2n, 1n, undefined, 9007199254740994n), zero = new api.TokenRateWindow(0n, 0n, 0n, 0, undefined), reasoning = new api.TokenRateWindow(3n, 1n, 0n, 0.3, 4n);
     return new api.ModelUsageResult(NOW, '2026-10-26T11:00:00Z', '2026-10-26T11:59:50.010Z', NOW, 9990, api.ModelRateBasis.ProviderReportedCompletedCalls, new api.IndexingSettings(2, 3, 8), Object.values(api.ModelPurpose).map(purpose => new api.ModelUsageSlice(purpose, 1, 4n, 1n, 0n, 1n, unknown, purpose.includes('Embedding') ? undefined : purpose === api.ModelPurpose.Annotation ? new api.TokenRateWindow(10n, 1n, 0n, 1, 4n) : zero, purpose.includes('Embedding') ? undefined : purpose === api.ModelPurpose.Annotation ? reasoning : zero)));
   }
-  reindexPlan() { const heads = BigInt(this.authorizedRows.filter(row => row.head.ownerId === this.user.id).length), already = 0n, target = 'contiguous-problems-profile', hash = createHash('sha256').update(JSON.stringify([this.user.id, this.targetProfile, target, heads.toString(), this.reindexConflict])).digest('hex'); return new api.OwnerReindexPlan(this.targetProfile, target, hash, heads, already, heads - already); }
+  reindexPlan() { const heads = BigInt(this.authorizedRows.filter(row => row.head.ownerId === this.user.id).length), already = 0n, target = this.targetProfile, hash = createHash('sha256').update(JSON.stringify([this.user.id, this.targetProfile, target, heads.toString(), this.reindexConflict])).digest('hex'); return new api.OwnerReindexPlan(this.targetProfile, target, hash, heads, already, heads - already); }
   passages(view) {
     if (this.passageMode === 'long') return [new api.PassageInfo('00000000-0000-4000-8000-000000070000', 0, 'Long problem across messages', ['logical'], new api.PassagePoint('m1', 0, 0), new api.PassagePoint('m85', 84, 9), 765n, 85n, 90n)];
     const end = Buffer.byteLength(this.messagesAt(view.revision)[0].text);
@@ -47,12 +47,13 @@ export class Goal50Fixture extends ChronicleFixture {
       const result = conflict ? new api.Result_Error(new api.Failure('conflict', 'owner reindex selection changed; preview again')) : new api.Result_OwnerReindexed(new api.OwnerReindexResult(this.reindexMalformed ? INSTANCE : envelope.requestId, plan.targetProfile, plan.heads, plan.replacements, plan.alreadyCurrent, 2n));
       this.receipts.set(envelope.requestId, result); if (!this.reindexDrop) send(result); return true;
     }
+    if (operation instanceof api.Operation_GetReindexStatus) { const receipt = this.receipts.get(operation.requestId); send(receipt instanceof api.Result_OwnerReindexed ? new api.Result_ReindexStatus(new api.ReindexStatusResult(operation.requestId, receipt.result.targetProfile, receipt.result.heads, 0n, 0n, 0n, receipt.result.heads)) : new api.Result_Error(new api.Failure('not-found', 'No captured rebuild cohort'))); return true; }
     if (operation instanceof api.Operation_Receipt) { const result = this.receipts.get(operation.mutationId); if (result instanceof api.Result_OwnerReindexed || result instanceof api.Result_Error) { send(result); return true; } }
-    if (operation instanceof api.Operation_GetPassages && this.passageMode !== 'legacy') {
+    if (operation instanceof api.Operation_GetPassages && this.passageMode !== 'source') {
       if (this.passageDenied || this.passageMode === 'unverified') { send(new api.Result_Error(new api.Failure(this.passageDenied ? 'forbidden' : 'unsupported-profile', 'Logical passage metadata unavailable for this profile'))); return true; }
-      const all = operation.view.generationId === undefined ? [] : this.passages(operation.view); send(new api.Result_Passages(new api.PassagesResult(operation.view, operation.view.generationId === undefined ? api.PassageFormat.Unindexed : api.PassageFormat.ContiguousProblems, all.slice(operation.offset, operation.offset + operation.limit), BigInt(all.length), operation.offset))); return true;
+      const all = operation.view.generationId === undefined ? [] : this.passages(operation.view); send(new api.Result_Passages(new api.PassagesResult(operation.view, operation.view.generationId === undefined ? api.PassageFormat.Unindexed : api.PassageFormat.ContextAwareProblems, all.slice(operation.offset, operation.offset + operation.limit), BigInt(all.length), operation.offset))); return true;
     }
-    if (operation instanceof api.Operation_GetPassageSpans) {
+    if (operation instanceof api.Operation_GetPassageSpans && this.passageMode !== 'source') {
       const spans = this.passageMode === 'long' ? Array.from({ length: 85 }, (_, index) => new api.PassageSourceSpan(`m${index + 1}`, index, 0, 9)) : this.passages(operation.view).filter(item => item.id === operation.passageId).map(item => new api.PassageSourceSpan(item.start.messageId, item.start.messagePosition, item.start.byteOffset, item.end.byteOffset));
       send(new api.Result_PassageSpans(new api.PassageSpansResult(operation.view, operation.passageId, spans.slice(operation.offset, operation.offset + operation.limit), BigInt(spans.length), operation.offset))); return true;
     }

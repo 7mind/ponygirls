@@ -1,3 +1,4 @@
+import { Popover } from './Popover.tsx';
 import { useEffect, useId, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { FilterShortcuts, type FilterField, type FilterShortcut } from './FilterShortcuts.tsx';
@@ -19,6 +20,6 @@ export function MetadataEditor({ name, value, applied, change, submit, fields, p
       <ExpressionInput context={completion} id={`${id}-expression`} inputRef={input} maxLength={MAX_EXPRESSION_CHARACTERS} value={value} change={change} clear={() => { change(''); submit(''); }} canClear={value.length > 0 || applied.length > 0} label={`Search ${name.toLowerCase()} metadata`} placeholder="Metadata expression · AND / OR / NOT"/>
       <button className="primary" disabled={disabled}>Filter</button>
     </form>
-    <div className="expression-tools"><FilterShortcuts expression={value} change={change} input={input} fields={fields} presets={presets} metadata={true}/><details className="expression-help"><summary>Metadata fields</summary><div className="expression-help-content">{help}<p>Boolean AND / OR / NOT, quotes and parentheses are supported. Search modes and conversation text are not supported.</p></div></details><span className="tiny">Metadata only{shortcut && ' · ⌘/Ctrl K'}</span></div>
+    <div className="expression-tools"><FilterShortcuts expression={value} change={change} input={input} fields={fields} presets={presets} metadata={true}/><Popover className="expression-help" label="Metadata fields" panelClassName="expression-help-content">{help}<p>Boolean AND / OR / NOT, quotes and parentheses are supported. Search modes and conversation text are not supported.</p></Popover><span className="tiny">Metadata only{shortcut && ' · ⌘/Ctrl K'}</span></div>
   </section>;
 }

@@ -56,7 +56,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     assertEquals(fence(c,failed.jobId),8L); assertEquals(fence(c,other.jobId),7L)
     val jobs=c.archive.statuses("a",0,100).jobs
     assertEquals(jobs.map(_.state),List(JobState.Queued)); assertEquals(jobs.head.attempts,0)
-    assertEquals(jobs.head.error,None); assertEquals(jobs.head.completedWindows,0); assertEquals(jobs.head.totalWindows,None)
+    assertEquals(jobs.head.error,Some("model-http")); assertEquals(jobs.head.completedWindows,0); assertEquals(jobs.head.totalWindows,None)
     assertEquals(receipts(c),1L)
     assertEquals(preview(c).counts.eligibleCurrentFailed,0L)
   }}
@@ -249,7 +249,8 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     c.db.transaction { connection =>
       Sql.exec(connection,s"CREATE ROLE $role LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE")
       Sql.exec(connection,s"GRANT USAGE ON SCHEMA public TO $role")
-      Sql.exec(connection,s"GRANT SELECT,INSERT,UPDATE ON ch_users,ch_profile,ch_sources,ch_jobs,ch_mutations TO $role")
+      Sql.exec(connection,s"GRANT SELECT,INSERT,UPDATE ON ch_users,ch_profile,ch_sources,ch_jobs,ch_mutations,ch_owner_targets TO $role")
+      Sql.exec(connection,s"GRANT SELECT ON ch_index_profiles,ch_embedding_spaces TO $role")
       Sql.exec(connection,s"REVOKE TEMP ON DATABASE ${quote(database)} FROM PUBLIC")
     }
     try {

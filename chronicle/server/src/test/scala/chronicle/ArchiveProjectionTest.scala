@@ -35,14 +35,19 @@ class ArchiveProjectionTest extends munit.FunSuite {
   private def database(f: (Config,Database,PostgresArchive) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
-    db.transaction { c => Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile) }
+    db.transaction { c => Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_members CASCADE"); Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile) }
     f(config,db,new PostgresArchive(db,config))
   }
   test("BG GoodCommunication specified: metadata/message pages and locator use pinned projection independent of raw files") { database { (config,db,archive) =>
     val original=Fixtures.snapshot(); val out=archive.ingest("a",original)
     val view=ContentView(1,None)
     assertEquals(archive.locateMessage("a",out.sessionId,view,"u"),MessageLocation(view,0,1))
-    db.transaction(c => Sql.exec(c,"UPDATE ch_revisions SET snapshot=jsonb_set(snapshot,'{files}',?::jsonb) WHERE session_id=?", "null",out.sessionId))
+    // Deliberately corrupt this owned fixture; normal snapshot UPDATE is now forbidden.
+    db.transaction { c =>
+      Sql.exec(c,"ALTER TABLE ch_revisions DISABLE TRIGGER ch_immutable_revision")
+      Sql.exec(c,"UPDATE ch_revisions SET snapshot=jsonb_set(snapshot,'{files}',?::jsonb) WHERE session_id=?","null",out.sessionId)
+      Sql.exec(c,"ALTER TABLE ch_revisions ENABLE TRIGGER ch_immutable_revision")
+    }
     assertEquals(archive.readSession("a",out.sessionId,Some(view)).session.metadata,original.metadata)
     assertEquals(archive.messages("a",out.sessionId,0,100,Some(view)).messages,original.messages)
     assertEquals(intercept[DomainError](archive.locateMessage("b",out.sessionId,view,"u")).code,"not-found")

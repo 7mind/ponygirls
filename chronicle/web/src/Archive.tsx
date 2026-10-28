@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
-import { ExpressionHintTarget_Archive, ArchiveQuery, ArchiveSort, ArchiveTextScope, PassageFormat, SortDirection, Operation_Archive, Result_Archive, type ArchiveResult, type ArchiveRow, type UserInfo } from './api.ts';
+import { ExpressionHintTarget_Archive, ArchiveQuery, ArchiveSort, ArchiveTextScope, SortDirection, Operation_Archive, Result_Archive, type ArchiveResult, type ArchiveRow, type UserInfo } from './api.ts';
 import { read, type ChronicleConnection } from './client.ts';
 import { useInfiniteResource } from './infinite.ts';
 import type { ArchiveReadLane } from './archive-requests.ts';
@@ -13,6 +13,7 @@ import { useTableColumns, TableControls, TableColumnGroup, ColumnResize } from '
 import type { TableColumnSpec } from './table-widths.ts';
 import { Dialog } from './Dialog.tsx';
 import { Conversation } from './Conversation.tsx';
+import type { SessionFindReadGate } from './session-find.ts';
 import { Blank, ErrorNotice, Tags } from './App.tsx';
 import type { ManagerStats } from './transport/types.ts';
 import './archive.css';
@@ -31,13 +32,13 @@ const columns: readonly ArchiveColumn[] = [
   { sort: ArchiveSort.Producer, label: 'Producer', title: row => row.head.metadata.producer, render: row => row.head.metadata.producer },
   { sort: ArchiveSort.Format, label: 'Format', title: row => row.head.source.format, render: row => row.head.source.format },
   { sort: ArchiveSort.Model, label: 'Model', title: row => row.head.metadata.model, render: row => row.head.metadata.model ?? '—' },
-  { sort: ArchiveSort.Status, label: 'Index status', title: row => row.headJob === undefined ? 'Unscheduled' : row.headJob.state, render: row => <><span className={`job-state state-${row.headJob === undefined ? 'unscheduled' : row.headJob.state.toLowerCase()}`}>{row.headJob === undefined ? 'Unscheduled' : row.headJob.state}</span>{row.publishedView !== undefined && row.publishedFormat === PassageFormat.LegacyAnnotations && <span className="legacy-index-warning" role="note" title={`Published r${row.publishedView.revision} uses legacy annotations without logical problem extents. The current job state is separate.`}><span aria-hidden="true">⚠</span> Legacy annotations</span>}</> },
+  { sort: ArchiveSort.Status, label: 'Index status', title: row => row.headJob === undefined ? 'Unscheduled' : row.headJob.state, render: row => <><span className={`job-state state-${row.headJob === undefined ? 'unscheduled' : row.headJob.state.toLowerCase()}`}>{row.headJob === undefined ? 'Unscheduled' : row.headJob.state}</span></> },
   { sort: ArchiveSort.MessageCount, label: 'Messages', title: row => row.messageCount.toLocaleString(), render: row => row.messageCount.toLocaleString() },
   { sort: ArchiveSort.Tags, label: 'Tags', title: row => row.tags.join(', '), render: row => <Tags tags={row.tags}/> },
 ];
 const archiveFields: readonly FilterField[] = [
   { attribute: 'project', label: 'Project' }, { attribute: 'branch', label: 'Branch' }, { attribute: 'tag', label: 'Tag' }, { attribute: 'user', label: 'User' },
-  { attribute: 'producer', label: 'Producer' }, { attribute: 'format', label: 'Format' }, { attribute: 'model', label: 'Model' }, { attribute: 'status', label: 'Status' },
+  { attribute: 'producer', label: 'Producer' }, { attribute: 'format', label: 'Format' }, { attribute: 'model', label: 'Model' }, { attribute: 'agent', label: 'Agent' }, { attribute: 'yolo-profile', label: 'Recorded yolo profile' }, { attribute: 'status', label: 'Status' },
   { attribute: 'after', label: 'After' }, { attribute: 'before', label: 'Before' },
 ];
 const archiveColumns: readonly TableColumnSpec[] = columns.map(column => ({ id: column.sort, label: column.label,
@@ -47,7 +48,7 @@ const archiveColumns: readonly TableColumnSpec[] = columns.map(column => ({ id: 
   compact: [ArchiveSort.LastTimestamp, ArchiveSort.Title, ArchiveSort.Project, ArchiveSort.Branch, ArchiveSort.Status, ArchiveSort.MessageCount].includes(column.sort),
 }));
 function timestamp(value: string | undefined): string { return value === undefined ? 'Not recorded' : new Date(value).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
-export function Archive({ connection, requests, stats, user, draft, setDraft, archive, setArchive }: { connection: ChronicleConnection; requests: ArchiveReadLane; stats: ManagerStats; user: UserInfo; draft: string; setDraft: (value: string) => void; archive: ArchiveState; setArchive: Dispatch<SetStateAction<ArchiveState>> }) {
+export function Archive({ connection, requests, findReads, stats, user, draft, setDraft, archive, setArchive }: { connection: ChronicleConnection; requests: ArchiveReadLane; findReads: SessionFindReadGate; stats: ManagerStats; user: UserInfo; draft: string; setDraft: (value: string) => void; archive: ArchiveState; setArchive: Dispatch<SetStateAction<ArchiveState>> }) {
   const [refresh, setRefresh] = useState(0), [relatedSelection, setRelatedSelection] = useState<string | null>(null), [composing, setComposing] = useState(false);
   const [readScope] = useState(() => Symbol('Archive mount')), mounted = useRef(true), timer = useRef<number | null>(null);
   const queryStamp = JSON.stringify([user.id, stats.generation, stats.activeId, archive.submitted, archive.sort, archive.direction]);
@@ -87,6 +88,6 @@ export function Archive({ connection, requests, stats, user, draft, setDraft, ar
       <div className="archive-table-scroll" ref={table.container} data-scroll-container tabIndex={0} role="region" aria-label="Archive conversations"><table className="archive-table" ref={table.table} style={{ width: table.width }} aria-label="Conversations" aria-busy={results.loading || results.refreshing}><TableColumnGroup layout={table}/><thead><tr>{shownColumns.map(column => <th key={column.sort} data-column-id={column.sort} scope="col" aria-sort={archive.sort === column.sort ? archive.direction === SortDirection.Asc ? 'ascending' : 'descending' : 'none'}><button onClick={() => setArchive(value => ({ ...value, sort: column.sort, direction: value.sort === column.sort ? value.direction === SortDirection.Asc ? SortDirection.Desc : SortDirection.Asc : column.sort === ArchiveSort.LastTimestamp ? SortDirection.Desc : SortDirection.Asc, selection: null }))} aria-label={`Sort by ${column.label}`}>{column.label}<span aria-hidden="true">{archive.sort === column.sort ? archive.direction === SortDirection.Asc ? ' ↑' : ' ↓' : ' ↕'}</span></button><ColumnResize column={table.columns.find(item => item.spec.id === column.sort)!} layout={table}/></th>)}</tr></thead><tbody>{results.items.map(row => <tr className="archive-row" key={row.head.id} data-session-id={row.head.id} data-scroll-anchor={row.head.id} onClick={event => { if ((event.target as Element).closest('button,a,input,select,summary') === null) choose(row.head.id); }}>
         {shownColumns.map(column => <td key={column.sort} data-column-id={column.sort} title={column.title(row)}>{column.render(row, choose)}</td>)}
       </tr>)}</tbody></table>{results.loading && <div className="loading-line" role="status">Retrieving an authorized archive page…</div>}{results.meta !== null && results.items.length === 0 && !results.updateAvailable && <Blank title="No matching conversations">Change the expression or clear it to browse every authorized archive HEAD.</Blank>}<InfiniteTrigger enabled={results.hasMore && results.error === null} loading={results.loadingMore || results.refreshing} load={results.loadMore} label="Loading more conversations…"/></div>
-    </ScrollAnchor>{selected !== undefined && <Dialog title="Source conversation" close={close}><Conversation key={`${relatedSelection ?? selected.head.id}:${archive.selectionKey}`} connection={connection} stats={stats} user={user} sessionId={relatedSelection ?? selected.head.id} initialView={relatedSelection === null ? selected.matchedView ?? selected.publishedView ?? selected.head.view : undefined} archiveHead={relatedSelection === null ? selected : null} select={setRelatedSelection} refresh={refresh}/></Dialog>}
+    </ScrollAnchor>{selected !== undefined && <Dialog title="Source conversation" close={close}><Conversation key={`${relatedSelection ?? selected.head.id}:${archive.selectionKey}`} connection={connection} stats={stats} user={user} sessionId={relatedSelection ?? selected.head.id} initialView={relatedSelection === null ? selected.matchedView ?? selected.publishedView ?? selected.head.view : undefined} archiveHead={relatedSelection === null ? selected : null} select={setRelatedSelection} refresh={refresh} findReads={findReads}/></Dialog>}
   </main>;
 }

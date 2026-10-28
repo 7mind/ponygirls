@@ -1,6 +1,6 @@
 { lib, callPackage, buildNpmPackage, fetchNpmDeps, nodejs_24, makeWrapper, gitMinimal }:
 let
-  src = callPackage ./source.nix { };
+  src = (callPackage ./source.nix { }).collector;
   hashes = import ./hashes.nix;
 in
 buildNpmPackage {

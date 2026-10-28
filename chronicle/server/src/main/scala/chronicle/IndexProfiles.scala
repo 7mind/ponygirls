@@ -4,10 +4,7 @@ import io.circe.Json
 import java.sql.Connection
 import java.nio.charset.StandardCharsets.UTF_8
 
-enum IndexPolicy { case LegacyV4,ContiguousPassagesV1 }
-final case class PassagePolicyIdentity(value: String) {
-  Check(value.nonEmpty && !value.contains('\u0000') && UTF_8.newEncoder().canEncode(value),"config","invalid passage policy identity")
-}
+enum IndexPolicy { case ContextAwareProblemsV1 }
 final case class EmbeddingSpaceDescriptor(endpointIdentity: String,model: String,revision: String,dimensions: Int,sendDimensions: Boolean,queryPrefix: String,documentPrefix: String,normalization: String) {
   def json: Json = Json.arr(Json.fromString("embedding-space-v1"),Json.fromString(endpointIdentity),Json.fromString(model),Json.fromString(revision),Json.fromInt(dimensions),Json.fromBoolean(sendDimensions),Json.fromString(queryPrefix),Json.fromString(documentPrefix),Json.fromString(normalization))
   def id: String = Wire.hash(json.noSpaces)
@@ -20,11 +17,6 @@ final case class IndexProfile(profile: String,policy: IndexPolicy,embedding: Emb
 final class IndexProfileCatalog private (val profiles: List[IndexProfile],val preferred: IndexProfile) {
   val knownProfiles: Set[String] = profiles.map(_.profile).toSet
   def resolve(profile: String): IndexProfile = profiles.find(_.profile==profile).getOrElse(throw DomainError("unavailable","retained target profile is not executable by this deployment"))
-  def transition(current: String): IndexProfile = {
-    val previous=resolve(current)
-    Check(previous.embedding==preferred.embedding,"unavailable","owner transition requires the same verified embedding space")
-    preferred
-  }
   def register(c: Connection): Unit = profiles.foreach(IndexProfiles.register(c,_))
 }
 object IndexProfileCatalog {
@@ -32,17 +24,11 @@ object IndexProfileCatalog {
     val a=config.annotation
     Json.arr(List(Wire.hash(a.endpoint),a.model,a.revision,a.requestPolicy.identity,a.maxResponseBytes.toString).map(Json.fromString)*)
   }
-  private def legacy(config: Config): IndexProfile = IndexProfile(config.profile,IndexPolicy.LegacyV4,EmbeddingSpaceDescriptor.from(config.embedding),
-    Json.arr(Json.fromString("index-profile-descriptor-v1"),annotation(config),Json.fromString(AnnotationPartition.identity),Json.fromString("prompt:v3:fragment-indices-only"),Json.fromString("schema:v2")))
-  def legacyOnly(config: Config): IndexProfileCatalog = {
-    val profile=legacy(config)
+  def current(config: Config): IndexProfileCatalog = {
+    val embedding=EmbeddingSpaceDescriptor.from(config.embedding)
+    val descriptor=Json.arr(Json.fromString("index-profile-descriptor-v1"),annotation(config),Json.fromString(ProblemPassages.identity))
+    val profile=IndexProfile(Wire.hash(Json.arr(Json.fromString("context-aware-problems-profile-v1"),Json.fromString(embedding.id),descriptor).noSpaces),IndexPolicy.ContextAwareProblemsV1,embedding,descriptor)
     new IndexProfileCatalog(List(profile),profile)
-  }
-  def passages(config: Config,identity: PassagePolicyIdentity): IndexProfileCatalog = {
-    val previous=legacy(config)
-    val descriptor=Json.arr(Json.fromString("index-profile-descriptor-v1"),annotation(config),Json.fromString(identity.value))
-    val profile=IndexProfile(Wire.hash(Json.arr(Json.fromString("contiguous-passages-profile-v1"),Json.fromString(previous.embedding.id),descriptor).noSpaces),IndexPolicy.ContiguousPassagesV1,previous.embedding,descriptor)
-    new IndexProfileCatalog(List(previous,profile),profile)
   }
 }
 final case class OwnerTarget(profile: String,epoch: Long)
@@ -89,11 +75,10 @@ object IndexProfiles {
       values(5).asBoolean.nonEmpty && values(8).asString.contains("cosine") && Wire.hash(json.noSpaces)==id,"unavailable","embedding space descriptor is unverified")
   }
   def registered(c: Connection,profile: String): String =
-    Sql.one(c,"SELECT p.embedding_space,e.descriptor FROM ch_index_profiles p JOIN ch_embedding_spaces e ON e.id=p.embedding_space WHERE p.profile=? AND p.policy IN('LegacyV4','ContiguousPassagesV1')",profile) { r =>
+    Sql.one(c,"SELECT p.embedding_space,e.descriptor FROM ch_index_profiles p JOIN ch_embedding_spaces e ON e.id=p.embedding_space WHERE p.profile=? AND p.policy IN('LegacyV4','ContiguousPassagesV1','ContextAwareProblemsV1')",profile) { r =>
       val id=r.getString(1); verifiedSpace(id,Sql.json(r,"descriptor")); id
     }.getOrElse(throw DomainError("unavailable","index profile has no verified descriptor"))
   def semantic(c: Connection,reader: String,visible: String,embedding: EmbeddingSpaceDescriptor): Unit = {
-    Check(Sql.one(c,"SELECT 1 FROM ch_profile WHERE singleton AND NOT maintenance")(_ => true).contains(true),"unavailable","semantic profile requires maintenance reindex")
     OwnerTargets.read(c,reader,false)
     val incompatible=Sql.one(c,s"""SELECT 1 FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published
       LEFT JOIN ch_index_profiles p ON p.profile=g.profile LEFT JOIN ch_embedding_spaces e ON e.id=p.embedding_space

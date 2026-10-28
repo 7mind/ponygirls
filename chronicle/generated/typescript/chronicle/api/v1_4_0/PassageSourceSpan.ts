@@ -66,11 +66,11 @@ export class PassageSourceSpan implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return PassageSourceSpan.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0"]
     public baboonSameInVersions() {
         return PassageSourceSpan.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical", "1.5.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
     public baboonForwardReadable() {
         return PassageSourceSpan.BaboonForwardReadable
     }
@@ -83,7 +83,7 @@ export class PassageSourceSpan implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.5.0 */
+/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.7.0 */
 export class PassageSourceSpan_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: PassageSourceSpan): unknown {
         if (this !== PassageSourceSpan_JsonCodec.lazyInstance.value) {

@@ -1,3 +1,4 @@
+import { closePopovers } from './Popover.tsx';
 import { useEffect, useId, useRef } from 'react';
 import type { ReactNode } from 'react';
 import './dialog.css';
@@ -12,6 +13,7 @@ export function Dialog({ title, close, children }: { title: string; close: () =>
     const scrollbar = window.innerWidth - document.documentElement.clientWidth;
     body.style.position = 'fixed'; body.style.top = `${-top}px`; body.style.left = `${-left}px`; body.style.width = '100%'; body.style.overflow = 'hidden';
     body.style.paddingRight = `${parseFloat(getComputedStyle(body).paddingRight) + scrollbar}px`;
+    closePopovers();
     dialog.showModal();
     const initial = dialog.querySelector<HTMLButtonElement>('.dialog-close');
     if (initial !== null) initial.focus({ preventScroll: true });

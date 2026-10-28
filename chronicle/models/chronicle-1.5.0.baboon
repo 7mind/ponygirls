@@ -1,0 +1,10 @@
+model chronicle.api
+version "1.5.0"
+
+import "1.4.0" { * } without { ArchiveRow }
+
+data ArchiveRow {
+  head: SessionInfo publishedView: opt[ContentView] matchedView: opt[ContentView]
+  lastTimestamp: opt[str] messageCount: i32 tags: lst[str] headJob: opt[JobInfo]
+  publishedFormat: opt[PassageFormat]
+}

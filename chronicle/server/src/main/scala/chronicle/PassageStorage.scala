@@ -9,15 +9,14 @@ trait PassageReader {
   def passageSpans(reader: String,id: UUID,passageId: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassageSpansResult
 }
 object PassageStorage {
-  def initializeFormats(c: Connection): Unit = Sql.rows(c,"SELECT profile FROM ch_index_profiles WHERE policy='LegacyV4'")(_.getString(1)).foreach { profile =>
-    IndexProfiles.registered(c,profile)
-    Sql.exec(c,"UPDATE ch_generations SET passage_format='LegacyAnnotations' WHERE profile=? AND passage_format IS NULL",profile)
-  }
   def requirePolicy(c: Connection,profile: String,expected: IndexPolicy): Unit = {
     IndexProfiles.registered(c,profile)
     Check(Sql.one(c,"SELECT policy FROM ch_index_profiles WHERE profile=?",profile)(_.getString(1)).contains(expected.toString),"invalid","publication payload does not match profile policy")
   }
   def persist(c: Connection,generation: UUID,publication: ProblemsPublication): Unit = {
+    publication.context.zipWithIndex.foreach { (span,ordinal) =>
+      Sql.exec(c,"INSERT INTO ch_context_spans VALUES(?,?,?,?,?,?)",generation,ordinal.toLong,span.messageId,span.messagePosition,span.start,span.end)
+    }
     publication.passages.foreach { passage =>
       Sql.exec(c,"INSERT INTO ch_problem_passages(generation,id,ordinal,initial_summary,value,span_count) VALUES(?,?,?,?,?::jsonb,?)",generation,passage.id,passage.ordinal,passage.initialSummary,Wire.encode(PassageInfo.codecJson,ProblemsPublication.info(passage)).noSpaces,passage.spanCount)
     }

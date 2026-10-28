@@ -3,18 +3,14 @@ package chronicle
 import io.circe.Json
 
 final class IndexProfilesTest extends munit.FunSuite {
-  test("Blackbox Atomic: legacy identity is preserved and closed policy identity is injected explicitly") {
-    val config=Fixtures.config()
-    val legacy=IndexProfileCatalog.legacyOnly(config)
-    val first=IndexProfileCatalog.passages(config,PassagePolicyIdentity("synthetic-kernel-v1"))
-    val next=IndexProfileCatalog.passages(config,PassagePolicyIdentity("synthetic-kernel-v2"))
-    assertEquals(legacy.preferred.profile,config.profile)
-    assertEquals(first.resolve(config.profile),legacy.preferred)
-    assertEquals(first.profiles.map(_.policy),List(IndexPolicy.LegacyV4,IndexPolicy.ContiguousPassagesV1))
-    assertNotEquals(first.preferred.profile,config.profile)
-    assertNotEquals(first.preferred.profile,next.preferred.profile)
-    assertEquals(first.preferred.embedding,legacy.preferred.embedding)
-    assertEquals(intercept[DomainError](first.resolve("historical-opaque-profile")).code,"unavailable")
+  test("Blackbox Atomic: exactly one current policy is executable and annotation identity changes never create fallback executors") {
+    val config=Fixtures.config(); val current=IndexProfileCatalog.current(config)
+    val changed=IndexProfileCatalog.current(config.copy(annotation=config.annotation.copy(revision="synthetic-v2")))
+    assertEquals(current.knownProfiles,Set(config.profile)); assertEquals(current.profiles.map(_.policy),List(IndexPolicy.ContextAwareProblemsV1))
+    assertNotEquals(current.preferred.profile,changed.preferred.profile)
+    assertEquals(current.preferred.embedding,changed.preferred.embedding)
+    assertEquals(intercept[DomainError](changed.resolve(current.preferred.profile)).code,"unavailable")
+    assertEquals(intercept[DomainError](current.resolve("historical-opaque-profile")).code,"unavailable")
   }
   test("Blackbox Atomic: embedding equality binds all identity fields, not only dimensions or credentials") {
     val c=Fixtures.config(); val embedding=c.embedding
@@ -60,7 +56,7 @@ final class IndexProfilesTest extends munit.FunSuite {
         assertEquals(targets,List("a"->"opaque-retained","b"->catalog.preferred.profile,"c"->catalog.preferred.profile))
         db.initialize(); assertEquals(targets.head,"a"->"opaque-retained")
         assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_index_profiles WHERE profile='opaque-retained'")(_.getLong(1)).get),0L)
-        assertEquals(intercept[DomainError](new PostgresOwnerReindex(db).preview("a")).code,"unavailable")
+        assertEquals(new PostgresOwnerReindex(db).preview("a").targetProfile,catalog.preferred.profile)
         assertEquals(intercept[DomainError](new PostgresArchive(db,isolated).ingest("a",Fixtures.snapshot())).code,"unavailable")
       } finally admin.transaction(x => Sql.exec(x,s"DROP SCHEMA $schema CASCADE"))
     }

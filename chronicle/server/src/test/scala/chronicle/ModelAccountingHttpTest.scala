@@ -25,7 +25,7 @@ abstract class ModelAccountingContract extends munit.FunSuite {
 
   test("BG/GoodCommunication: actual annotation HTTP usage survives truncation and downstream schema failures without changing model policy") {
     val config=configured
-    val valid="""{"chunks":[{"first":0,"last":0,"summary":"synthetic","tags":[]}]}"""
+    val valid="""{"parts":[{"kind":"Problem","start":{"fragmentIndex":0,"scalarOffset":0},"end":{"fragmentIndex":1,"scalarOffset":0},"continuePrevious":false,"summary":"synthetic","tags":[]}]}"""
     val responses=List(reply("length",""),reply("stop","{}"),reply("stop",valid).mapObject(_.remove("usage")),reply("stop",valid).mapObject(_.add("usage",usage.mapObject(_.add("prompt_tokens",Json.fromString("bad"))))))
     (for {
       index <- Ref.of[IO,Int](0)
@@ -39,10 +39,10 @@ abstract class ModelAccountingContract extends munit.FunSuite {
       store <- telemetry(config)
       admission <- ModelAdmission.make(config.indexing)
       _ <- connection(app,config).use { (client,url) =>
-        val service=new OpenAIAnnotator(new ModelHttp(client,store,admission),config.copy(annotation=config.annotation.copy(endpoint=url)))
+        val service=new OpenAIProblemPassageAnnotator(new ModelHttp(client,store,admission),config.copy(annotation=config.annotation.copy(endpoint=url)))
         val messages=List(Message("u",None,"user","synthetic",None,0))
         for {
-          results <- responses.traverse(_ => service.annotate("a",Fragments.split(messages),messages).attempt)
+          results <- responses.traverse(_ => service.annotate("a",ProblemPassages.Source(messages).next(ProblemPassages.SourceCursor.start).get,None).attempt)
           snapshot <- store.snapshot("a")
           _ <- IO {
             assertEquals(results.take(2).map(_.swap.toOption.get.asInstanceOf[DomainError].code),List("model-output/truncated","model-output"))

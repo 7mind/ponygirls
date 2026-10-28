@@ -57,7 +57,9 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     case ArchivePredicate.Branch(branch) => insensitive("c.metadata->>'gitBranch'",branch)
     case ArchivePredicate.Producer(producer) => insensitive("c.metadata->>'producer'",producer)
     case ArchivePredicate.Model(model) => insensitive("c.metadata->>'model'",model)
+    case ArchivePredicate.YoloProfile(profile) => ArchiveSql(s"COALESCE((${RecordedYoloProfile.sql("c.source")}) COLLATE \"C\"=? COLLATE \"C\",false)",List(profile))
     case ArchivePredicate.Format(format) => insensitive("c.source->>'format'",format.toString)
+    case ArchivePredicate.Agent(kind) => ArchiveSql(AgentKind.sql("c.source",kind),Nil)
     case ArchivePredicate.Status(ArchiveStatus.Unscheduled) => ArchiveSql("c.job_id IS NULL",Nil)
     case ArchivePredicate.Status(status) => ArchiveSql("COALESCE(c.job_state=?,false)",List(status.toString))
     case ArchivePredicate.After(time) => ArchiveSql("COALESCE(c.last_timestamp_order>=?::numeric,false)",List(ArchiveProjection.timestampOrder(time)))
@@ -116,7 +118,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
   }
   private[chronicle] def statement(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],position: Option[ArchiveCursor]): ArchiveSql = {
     val corpus=s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,s.published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,g.passage_format AS published_format,
-      j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.completed_windows,j.total_windows,
+      j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.failure_stage,j.completed_windows,j.total_windows,
       ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT tag FROM ch_generation_tags WHERE generation=s.published) tag_values ORDER BY lower(tag $unicode),tag) AS tags
       FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision
       JOIN ch_owner_targets profile ON profile.owner=s.owner LEFT JOIN ch_generations g ON g.id=s.published
@@ -162,7 +164,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     val head=SessionInfo(ContentView(r.getInt("revision"),None),id,r.getString("owner"),r.getInt("revision"),indexed,Wire.decode(Metadata.codecJson,Sql.json(r,"metadata")),Wire.decode(SourceIdentity.codecJson,Sql.json(r,"source")),Completion.parse(r.getString("completion")).get,r.getBoolean("redacted"))
     val published=Option(r.getObject("generation",classOf[UUID])).map(generation => ContentView(indexed.get,generationId=Some(generation)))
     val matched=Option(r.getObject("matched_revision",classOf[java.lang.Integer])).map(revision => ContentView(revision.intValue,Option(r.getObject("matched_generation",classOf[UUID]))))
-    val job=Option(r.getObject("job_id",classOf[UUID])).map(jobId => JobInfo(jobId,id,head.revision,JobState.parse(r.getString("job_state")).get,r.getInt("job_attempts"),Option(r.getString("job_error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue)))
+    val job=Option(r.getObject("job_id",classOf[UUID])).map(jobId => JobInfo(jobId,id,head.revision,JobState.parse(r.getString("job_state")).get,r.getInt("job_attempts"),Option(r.getString("job_error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue),Option(r.getString("failure_stage")).map(IndexingFailureStage.parse(_).getOrElse(throw DomainError("internal","invalid persisted failure stage")))))
     val tags=Sql.json(r,"tag_values").as[List[String]].getOrElse(throw DomainError("projection","invalid projected tags"))
     val format=Option(r.getString("published_format")).map(value => PassageFormat.parse(value).getOrElse(throw DomainError("projection","invalid published passage format")))
     ArchiveRow(head,published,matched,Option(r.getString("last_timestamp")),r.getInt("message_count"),tags,job,format)

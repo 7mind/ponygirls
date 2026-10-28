@@ -2,10 +2,11 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { CollectorError, object, type Format, type DiscoveryRoot } from './domain.ts';
 import type { PrivacyRules } from './privacy.ts';
+import { validYoloProfileName, type AdmissionPolicy } from './admission.ts';
 
 export interface Redactions extends PrivacyRules { secretFiles: string[] }
 export interface Exclusions { roots: string[]; profiles: string[]; projects: string[]; sessions: string[]; paths: string[] }
-export interface Config {
+export interface Config extends AdmissionPolicy {
   enabled: boolean; endpoint: string; tokenFile: string; stateDir: string; trustedHTTP: boolean;
   homeDir: string; yoloDir: string; discoverNative: boolean; discoverYolo: boolean;
   roots: DiscoveryRoot[]; exclusions: Exclusions; redactions: Redactions;
@@ -25,13 +26,15 @@ function absolute(value: unknown): string { if (typeof value !== 'string' || !is
 
 export function loadConfig(input: unknown): Config {
   if (!object(input)) return invalid();
-  keys(input, ['enabled', 'endpoint', 'tokenFile', 'stateDir', 'trustedHTTP', 'homeDir', 'yoloDir', 'discoverNative', 'discoverYolo', 'roots', 'exclusions', 'redactions', ...Object.keys(LIMITS)]);
+  keys(input, ['enabled', 'endpoint', 'tokenFile', 'stateDir', 'trustedHTTP', 'homeDir', 'yoloDir', 'discoverNative', 'discoverYolo', 'excludeDefaultProfile', 'excludedYoloProfiles', 'roots', 'exclusions', 'redactions', ...Object.keys(LIMITS)]);
   const enabled = bool(input['enabled'] ?? false);
   const homeDir = absolute(input['homeDir'] ?? homedir());
   const endpoint = input['endpoint'] ?? '';
   if (typeof endpoint !== 'string' || (enabled && endpoint.length === 0)) return invalid();
   const tokenFile = input['tokenFile'] === undefined && !enabled ? '' : absolute(input['tokenFile']);
   const stateDir = input['stateDir'] === undefined && !enabled ? '' : absolute(input['stateDir']);
+  const excludedYoloProfiles = [...new Set(strings(input['excludedYoloProfiles'] === undefined ? [] : input['excludedYoloProfiles']))].sort();
+  if (excludedYoloProfiles.some(name => !validYoloProfileName(name))) return invalid();
   const roots: DiscoveryRoot[] = [];
   if (input['roots'] !== undefined) {
     if (!Array.isArray(input['roots'])) return invalid();
@@ -67,5 +70,5 @@ export function loadConfig(input: unknown): Config {
     limits[key] = value;
   }
   if (limits.backoffBaseMs > limits.backoffCapMs || limits.maxDepth > 64) return invalid();
-  return { enabled, endpoint, tokenFile, stateDir, homeDir, yoloDir: absolute(input['yoloDir'] ?? join(homeDir, '.config/yolo')), trustedHTTP: bool(input['trustedHTTP'] ?? false), discoverNative: bool(input['discoverNative'] ?? true), discoverYolo: bool(input['discoverYolo'] ?? true), roots, exclusions, redactions, ...limits };
+  return { enabled, endpoint, tokenFile, stateDir, homeDir, excludeDefaultProfile: bool(input['excludeDefaultProfile'] === undefined ? false : input['excludeDefaultProfile']), excludedYoloProfiles, yoloDir: absolute(input['yoloDir'] ?? join(homeDir, '.config/yolo')), trustedHTTP: bool(input['trustedHTTP'] ?? false), discoverNative: bool(input['discoverNative'] ?? true), discoverYolo: bool(input['discoverYolo'] ?? true), roots, exclusions, redactions, ...limits };
 }

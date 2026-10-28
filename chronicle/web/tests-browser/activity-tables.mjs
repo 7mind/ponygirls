@@ -28,7 +28,7 @@ function largeFixture(fixture) {
 function queuedPublicationFixture(fixture) {
   fixture.publishedRevision = fixture.headRevision;
   const queued = fixture.jobs[0].with({ state: api.JobState.Queued, attempts: 0, error: undefined, completedWindows: 0, totalWindows: undefined });
-  const complete = new api.JobInfo('00000000-0000-4000-8000-000000000008', fixture.archiveAt(1).head.id, fixture.headRevision, api.JobState.Complete, 1, undefined, 2, 2);
+  const complete = new api.JobInfo('00000000-0000-4000-8000-000000000008', fixture.archiveAt(1).head.id, fixture.headRevision, api.JobState.Complete, 1, undefined, 2, 2, undefined);
   fixture.jobs = [queued, complete];
   fixture.activityJobs = [new api.ActivityJob(queued, fixture.targetProfile, api.ActivityJobClass.Current, undefined, false, false, fixture.source.collectorNamespace, fixture.jobSession(queued), '2026-10-23T09:31:00Z'), new api.ActivityJob(complete, fixture.targetProfile, api.ActivityJobClass.Current, '2020-01-01T00:00:00Z', false, false, fixture.source.collectorNamespace, fixture.jobSession(complete), '2026-10-23T09:31:00Z')];
   fixture.jobExpressions.set('lease:unleased', [queued.id]);
@@ -44,10 +44,10 @@ async function rowIds(page, selector) { return page.locator(selector).evaluateAl
 export async function runActivityTableCases({ browser, origin, run, errors }) {
   async function scene(configure) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } }), page = await context.newPage(), fixture = new ChronicleFixture();
-    page.on('pageerror', error => errors.push(error.message)); if (configure !== null) configure(fixture);
+    page.on('pageerror', error => errors.push(error.message)); if (configure !== null) await configure(fixture, page);
     await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`); await page.locator('.archive-row').first().waitFor();
     await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-overview').waitFor();
-    for (const name of ['Collectors', 'Indexing jobs']) { const controls = page.getByRole('region', { name: `${name} table controls`, exact: true }); await controls.locator('summary').click(); await controls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await controls.locator('summary').click(); }
+    for (const name of ['Collectors', 'Indexing jobs']) { const controls = page.getByRole('region', { name: `${name} table controls`, exact: true }); await controls.getByRole('button', { name: 'Columns', exact: true }).click(); await controls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await controls.getByRole('button', { name: 'Columns', exact: true }).click(); }
     return { context, page, fixture };
   }
   for (const mismatch of [{ label: 'inner request ID', button: 'Return wrong inner request ID' }, { label: 'target profile', button: 'Return wrong target profile' }, { label: 'result type', button: 'Return wrong result type' }]) await run(`bulk hook unverified ${mismatch.label} retains original uncertainty and blocks new writes`, async () => {
@@ -92,7 +92,8 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
         const expected = resultRows(query);
         await until(async () => JSON.stringify(await rowIds(page, rowSelector)) === JSON.stringify(expected), `${field} rows did not match the globally sorted server page`);
         await page.locator(`${tableSelector}[aria-busy="false"]`).waitFor();
-        assert.equal(await header.getAttribute('aria-sort'), direction === api.SortDirection.Asc ? 'ascending' : 'descending');
+        try { assert.equal(await header.getAttribute('aria-sort'), direction === api.SortDirection.Asc ? 'ascending' : 'descending'); }
+        catch (error) { console.log('Activity header-state diagnostics:', JSON.stringify({ field, direction, visibleHeaders: await table.locator('thead th[data-sort]').evaluateAll(items => items.map(item => ({ field: item.getAttribute('data-sort'), sort: item.getAttribute('aria-sort') }))), busy: await table.getAttribute('aria-busy'), scope: await page.locator('.activity-jobs .eyebrow').textContent(), recentRequests: fixture.calls.slice(-8).map(call => ({ id: call.requestId, operation: call.operation.toJSON() })), events: await page.locator('.event-log').textContent() })); throw error; }
         assert.equal(await button.evaluate(element => element === document.activeElement), true, 'sort focus survives resource replacement');
         assert.equal(await page.locator(scroller).evaluate(element => element.scrollTop), 0);
       }
@@ -110,8 +111,18 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetSession || call.operation instanceof api.Operation_GetMessages || call.operation instanceof api.Operation_GetRaw || call.operation instanceof api.Operation_GetChunks || call.operation instanceof api.Operation_Search).length, 0, 'table metadata never performs source reads, transcript search, ANN fallback or per-row GetSession');
     await context.close();
   });
+  await run('counterfactual timer pause without scrolling renews the authorization epoch', async () => {
+    const { context, page, fixture } = await scene(async (fixture, page) => { largeFixture(fixture); const at = Date.parse('2026-10-28T12:00:00Z'); await page.clock.install({ time: at }); await page.clock.pauseAt(at + 1000); });
+    const before = fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length;
+    await page.clock.fastForward(600);
+    await until(() => fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length > before, 'A timer pause alone must trigger the existing authorization refresh');
+    console.log('Timer-only counterfactual diagnostics:', await page.locator('.event-log').textContent());
+    assert.equal(await page.locator('.activity-collector-scroll').evaluate(element => element.scrollTop), 0); await context.close();
+  });
   await run('activity tables independently append four pages without duplicates and retain unfiltered owner totals', async () => {
-    const { context, page, fixture } = await scene(largeFixture);
+    // Hold fixture time constant: CPU/render pauses are tested separately above,
+    // not accidental stimuli for this cross-table scroll continuity contract.
+    const { context, page, fixture } = await scene(async (fixture, page) => { largeFixture(fixture); const at = Date.parse('2026-10-28T12:00:00Z'); await page.clock.install({ time: at }); await page.clock.pauseAt(at + 1000); });
     await appendUntil(page, '.activity-collector-scroll', '.activity-collector-row', 155);
     const collectorPosition = await page.locator('.activity-collector-scroll').evaluate(element => element.scrollTop), identities = fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length;
     await appendUntil(page, '.activity-job-scroll', '.activity-job-row', 165);
@@ -267,8 +278,8 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
   await run('activity truth lease cells agree with details and lease-unleased metadata filtering', async () => {
     const { context, page, fixture } = await scene(queuedPublicationFixture), id = fixture.jobs[0].id;
     const row = page.locator(`.activity-job-row[data-scroll-anchor="${id}"]`); await row.waitFor();
-    const before = await row.locator('[data-column="LeaseState"]').innerText(); await row.locator('.activity-row-details > summary').click();
-    const details = await row.locator('.activity-job-lease').innerText(); await row.locator('.activity-row-details > summary').click();
+    const before = await row.locator('[data-column="LeaseState"]').innerText(); await row.getByRole('button', { name: 'Details', exact: true }).click();
+    const details = await row.locator('.activity-job-lease').innerText(); await row.getByRole('button', { name: 'Details', exact: true }).click();
     const retained = await page.locator('.activity-job-row[data-scroll-anchor="00000000-0000-4000-8000-000000000008"] [data-column="LeaseState"]').innerText();
     await filter(page, 'Indexing job', 'lease:unleased'); await until(async () => await page.locator('.activity-job-row').count() === 1, 'unleased metadata filter did not return the queued row');
     await page.locator('.activity-job-table th[data-sort="LeaseState"] button:not([role="separator"])').click(); await until(() => fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.expression === 'lease:unleased' && call.operation.query.sort === api.ActivityJobSort.LeaseState), 'lease sort did not keep the metadata predicate');
@@ -278,7 +289,7 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
   await run('activity truth queued progress cannot attribute absence of an existing publication', async () => {
     const { context, page, fixture } = await scene(queuedPublicationFixture), queued = fixture.jobRows[0];
     assert.equal(queued.job.state, api.JobState.Queued); assert.equal(queued.session.indexedRevision, queued.job.revision, 'the fixture retains publication at the queued job revision');
-    const row = page.locator(`.activity-job-row[data-scroll-anchor="${queued.job.id}"]`); await row.locator('.activity-row-details > summary').click(); const progress = await row.locator('.activity-window-progress').innerText();
+    const row = page.locator(`.activity-job-row[data-scroll-anchor="${queued.job.id}"]`); await row.getByRole('button', { name: 'Details', exact: true }).click(); const progress = await row.locator('.activity-window-progress').innerText();
     assert.doesNotMatch(progress, /not published by this job/i, 'the Activity DTO cannot attribute publication or its absence to this logical job'); assert.match(progress, /job not Complete at this snapshot/);
     await context.close();
   });

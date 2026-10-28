@@ -46,6 +46,12 @@ Serve `dist/` on the **same origin** as `/api/login`, `/api/ws`, and the remaini
 
 The dashboard negotiates **only 1.5** before issuing Archive/Activity operations. Server-side 1.0/1.1/1.2/1.3/1.4 compatibility remains separate, not a client fallback. External permission changes are detected on the next authorized read/poll (Archive/source every 20 seconds; Activity every 4 seconds), not through an invented permission-change push stream. Successful list shrink also revokes the excluded row's bound modal immediately, even without a forbidden response.
 
+## Recorded yolo profiles
+
+Conversation provenance and Activity job Details show **Recorded yolo profile**, derived from the selected revision's exact `source.discoveryRootId` claim `yolo:<name>` (launcher-valid names only). Native/default and unrecognized roots show “not recorded”; no title/tag/path inference is performed. Archive and Activity job field shortcuts and authorized value hints expose `yolo-profile:`. Values are exact and case-sensitive; existing hint prefixes remain case-insensitive. Activity `profile:` still means the annotation/index policy hash. Historical jobs retain their own revision's recorded value.
+
+This is a recorded storage-root claim, not authenticated host/launch provenance: clients may supply root IDs and sessions can be copied between profiles. Existing archives need no metadata rewrite or re-ingestion. The attribute does not change ordinary text search, selected-history Find, source identity or collector admission. MCP `search_sessions` has its separate structured-filter/websearch contract and does not accept this expression field; inspect recorded source claims with `get_session`.
+
 ## Transport / resilient-ws-ui checklist
 
 `src/transport/manager.ts` is independent of React, browser globals and wire DTOs. Socket factory, protocol adapter, scheduler/clock, nonce source, random source and lifecycle source are injected. `baboon.ts` supplies the real generated codec adapter; each socket gets its own Hello/ping correlation state.

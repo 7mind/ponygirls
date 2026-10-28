@@ -10,7 +10,7 @@ abstract class OwnerProfileContract extends munit.FunSuite {
     val plan=service.preview(owner)
     service(owner,UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true)
   }
-  test("Behavioral Blackbox Atomic/GoodCommunication regression: owner transition preserves another owner's pending legacy execution") { withOwnerProfiles { (a,reindex,c,catalog) =>
+  test("Behavioral Blackbox Atomic/GoodCommunication regression: explicit owner rebuild preserves another owner's pending current execution") { withOwnerProfiles { (a,reindex,c,catalog) =>
     val own=a.ingest("a",Fixtures.snapshot()); val other=a.ingest("b",Fixtures.snapshot())
     val obsolete=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     val unrelated=a.claim(catalog.knownProfiles,ClaimScope.Owner("b"),300).get
@@ -26,7 +26,7 @@ abstract class OwnerProfileContract extends munit.FunSuite {
     assert(!reindex.completed("a"),"empty claim cannot establish completion when a parallel worker holds it")
     assert(ProblemPublicationFixtures.publish(a,fresh,catalog)); assert(reindex.completed("a")); assertEquals(a.session("a",own.sessionId).indexedRevision,Some(1))
   }}
-  test("Behavioral Blackbox Atomic/GoodCommunication: target-resolved ingestion, preview conflicts, and running-target retention") { withOwnerProfiles { (a,reindex,c,catalog) =>
+  test("Behavioral Blackbox Atomic/GoodCommunication: target-resolved ingestion, preview conflicts, and force-all running-target replacement") { withOwnerProfiles { (a,reindex,c,catalog) =>
     val original=Fixtures.snapshot(); val out=a.ingest("a",original)
     val stale=reindex.preview("a")
     a.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1))
@@ -34,9 +34,11 @@ abstract class OwnerProfileContract extends munit.FunSuite {
     applyPlan(reindex,"a")
     val claimed=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     assertEquals(claimed.revision,2); assertEquals(claimed.profile,catalog.preferred.profile)
-    val same=applyPlan(reindex,"a"); assertEquals(same.queued,0L); assertEquals(same.invalidatedClaims,0L)
-    assert(a.renew(claimed,300)); assert(ProblemPublicationFixtures.publish(a,claimed,catalog))
-    val noop=applyPlan(reindex,"a"); assertEquals(noop.alreadyCurrent,1L); assertEquals(noop.queued,0L)
+    val same=applyPlan(reindex,"a"); assertEquals(same.queued,1L); assertEquals(same.invalidatedClaims,1L)
+    assert(!a.renew(claimed,300))
+    val replacement=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+    assert(ProblemPublicationFixtures.publish(a,replacement,catalog))
+    val forced=applyPlan(reindex,"a"); assertEquals(forced.alreadyCurrent,0L); assertEquals(forced.queued,1L)
     a.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=2))
     val appended=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     assertEquals(appended.profile,catalog.preferred.profile); assertEquals(appended.revision,3)
@@ -112,28 +114,23 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
       Sql.rows(c,"SELECT to_jsonb(s)::text FROM ch_sources s WHERE owner=? ORDER BY id",owner)(_.getString(1))++
       Sql.rows(c,"SELECT to_jsonb(t)::text FROM ch_owner_targets t WHERE owner=?",owner)(_.getString(1))
   }
-  test("Blackbox GoodCommunication regression: operator maintenance requeues Running destination work from an earlier target epoch") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+  test("Blackbox GoodCommunication regression: every confirmed force-all rebuild rotates and fences Running work even at the same current profile") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     a.ingest("a",Fixtures.snapshot()); val old=a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get
-    val next=c.copy(embedding=c.embedding.copy(revision="synthetic-global-B")); val b=new PostgresArchive(db,next)
-    b.beginMaintenance(); assert(b.publish(b.claim(Set(next.profile),ClaimScope.Owner("a"),300).get,Nil)); assert(b.finishMaintenance())
-    val middle=a.session("a",old.sessionId).view
-    a.beginMaintenance()
+    applyPlan(db,"a")
     assert(!a.renew(old,300)); assert(!a.publish(old,Nil))
-    val fresh=a.claim(Set(c.profile),ClaimScope.Owner("a"),300)
-    assert(fresh.isDefined,"a Running A job from an older target epoch must not prevent fresh A work")
-    assert(fresh.get.fence>old.fence); assert(fresh.get.targetEpoch>old.targetEpoch)
-    a.beginMaintenance(); assert(a.renew(fresh.get,300),"same-target operator resume must retain valid in-flight work")
-    assert(a.publish(fresh.get,Nil)); assert(a.finishMaintenance())
-    assertEquals(a.readSession("a",old.sessionId,Some(middle)).session.view,middle)
+    val fresh=a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get
+    assert(fresh.fence>old.fence); assert(fresh.targetEpoch>old.targetEpoch); assertNotEquals(fresh.runId,old.runId)
+    applyPlan(db,"a"); assert(!a.renew(fresh,300))
+    val newest=a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get
+    assert(a.publish(newest,Nil)); assert(new PostgresOwnerReindex(db).completed("a"))
   }}
-  test("Blackbox GoodCommunication regression: global maintenance excludes owner transitions until its publication domain completes") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+  test("Blackbox GoodCommunication regression: accepted rebuild changes invalidate an older preview and completion requires publication") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     a.ingest("a",Fixtures.snapshot())
     val service=new PostgresOwnerReindex(db); val plan=service.preview("a")
-    a.beginMaintenance()
-    assertEquals(intercept[DomainError](service.preview("a")).code,"conflict")
+    val accepted=applyPlan(db,"a")
     assertEquals(intercept[DomainError](service("a",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true)).code,"conflict")
-    assert(a.publish(a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get,Nil)); assert(a.finishMaintenance())
-    assertEquals(service.preview("a").targetProfile,catalog.preferred.profile)
+    assertEquals(service.status("a",accepted.requestId).pending,1L); assert(!service.completed("a"))
+    assert(a.publish(a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get,Nil)); assert(service.completed("a"))
   }}
   test("Effectual GoodCommunication: owner scope includes exhausted-lease cleanup and leaves other owner rows byte-identical") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     a.ingest("a",Fixtures.snapshot()); a.ingest("b",Fixtures.snapshot())
@@ -146,16 +143,16 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     assertNotEquals(fingerprint(db,"b"),before)
     assertEquals(a.statuses("b",0,100).jobs.head.error,Some("lease-exhausted"))
   }}
-  test("Effectual GoodCommunication regression: A/B/A target epochs reject stale progress renew publish and fail even when profile returns") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+  test("Effectual GoodCommunication regression: repeated current-target epochs reject stale progress renew publish and fail even when profile returns") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     a.ingest("a",Fixtures.snapshot()); val old=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     applyPlan(db,"a")
     val b=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get; assert(ProblemPublicationFixtures.publish(a,b,catalog))
-    a.beginMaintenance(); assert(!a.finishMaintenance())
+    applyPlan(db,"a"); assert(!new PostgresOwnerReindex(db).completed("a"))
     val back=a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
     assertEquals(back.profile,old.profile); assert(back.targetEpoch>old.targetEpoch)
     assert(!a.progress(old,1,1)); assert(!a.renew(old,300)); assert(!a.publish(old,Nil))
     val before=fingerprint(db,"a"); a.fail(old,"stale-aba"); assertEquals(fingerprint(db,"a"),before)
-    assert(a.publish(back,Nil)); assert(a.finishMaintenance())
+    assert(a.publish(back,Nil)); assert(new PostgresOwnerReindex(db).completed("a"))
   }}
   test("Effectual GoodCommunication: restart retains owner targets and seeds only genuinely new owners to preferred") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     a.ingest("a",Fixtures.snapshot()); applyPlan(db,"a")
@@ -167,12 +164,9 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     assertEquals(db.transaction(x => Sql.one(x,"SELECT profile FROM ch_owner_targets WHERE owner=?",owner)(_.getString(1)).get),catalog.preferred.profile)
     new Database(c,catalog).initialize()
   }}
-  test("Blackbox GoodCommunication: mixed verified legacy/new publication profiles remain semantically readable through every search leg") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+  test("Blackbox GoodCommunication: independent current publications remain semantically readable through every retained search wire leg") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
     val first=a.ingest("a",Fixtures.snapshot()); val other=a.ingest("b",Fixtures.snapshot())
-    def publish(claim: Claim): Unit = catalog.resolve(claim.profile).policy match {
-      case IndexPolicy.LegacyV4 => assert(a.publish(claim,List(IndexedChunk(Fragments.split(claim.snapshot.messages).head.copy(sessionId=claim.sessionId),List(1.0,0.0,0.0)))))
-      case IndexPolicy.ContiguousPassagesV1 => assert(a.publishProblems(claim,ProblemPublicationFixtures.oneProblem(claim)))
-    }
+    def publish(claim: Claim): Unit = assert(a.publishProblems(claim,ProblemPublicationFixtures.oneProblem(claim)))
     publish(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get)
     publish(a.claim(catalog.knownProfiles,ClaimScope.Owner("b"),300).get)
     db.transaction { x =>
@@ -192,7 +186,7 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
       assertEquals(new PostgresArchiveIndex(db,a,c).browse("a",q,parsed,List(ArchiveVector("archive",List(1.0,0.0,0.0)))).total,2L)
     }
     val activity=new PostgresActivity(db,Clock.systemUTC()).jobs("a",ActivityJobsQuery(None,ActivityJobScope.Current,"",ActivityJobSort.JobId,SortDirection.Asc,None,20))
-    assertEquals(activity.jobs.map(_.profile),List(catalog.preferred.profile))
+    assertEquals(activity.jobs.map(_.profile).distinct,List(catalog.preferred.profile)); assertEquals(activity.jobs.size,1)
     val archiveQuery=ArchiveQuery("mode:lexical",ArchiveSort.Title,SortDirection.Asc,None,20)
     assertEquals(new PostgresArchiveIndex(db,a,c).browse("a",archiveQuery,ArchiveExpression.parse(archiveQuery.expression),Nil).rows.find(_.head.id==first.sessionId).get.headJob.get.state,JobState.Complete)
   }}
@@ -210,7 +204,7 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     rejected()
     assertEquals(search.search("a",q.copy(mode=SearchMode.Lexical),None).total,1)
     db.transaction(x => Sql.exec(x,"UPDATE ch_owner_targets SET profile='unresolved-retained' WHERE owner='a'"))
-    assertEquals(intercept[DomainError](new PostgresOwnerReindex(db).preview("a")).code,"unavailable")
+    assertEquals(new PostgresOwnerReindex(db).preview("a").targetProfile,catalog.preferred.profile)
     assertEquals(intercept[DomainError](a.ingest("a",Fixtures.snapshot())).code,"unavailable")
   }}
 }

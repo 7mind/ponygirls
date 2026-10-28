@@ -2,7 +2,7 @@ import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonEnum, Lazy}
 
 package chronicle.api.v1_1_0 {
-  @deprecated("Version 1.1.0 is deprecated, you should migrate to 1.5.0")
+  @deprecated("Version 1.1.0 is deprecated, you should migrate to 1.7.0")
   sealed trait SearchCountScope
   
   object SearchCountScope extends BaboonEnum[SearchCountScope] {
@@ -23,7 +23,7 @@ package chronicle.api.v1_1_0 {
     ) 
   }
   
-  @deprecated("Version 1.1.0 is deprecated, you should migrate to 1.5.0")
+  @deprecated("Version 1.1.0 is deprecated, you should migrate to 1.7.0")
   object SearchCountScope_JsonCodec extends BaboonJsonCodec.Base[SearchCountScope, BaboonJsonCodec[SearchCountScope]] {
     def encode(ctx: BaboonCodecContext, value: SearchCountScope): Json = {
       if (this ne LazyInstance.value) {

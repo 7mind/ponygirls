@@ -9,6 +9,12 @@ test('BA specified: quick filters conjoin the entire opaque Boolean expression',
   assert.equal(addExpressionFilter('', 'tag', 'source fidelity'), 'tag:"source fidelity"');
 });
 
+test('BA specified: recorded-agent shortcut composes an opaque server field, never title inference', () => {
+  assert.equal(addExpressionFilter('producer:"harness" OR format:"pi"', 'agent', 'subagent'), '(producer:"harness" OR format:"pi") AND agent:"subagent"');
+  assert.equal(addExpressionFilter('model:"source-model"', 'agent', 'main'), '(model:"source-model") AND agent:"main"');
+  assert.equal(addMetadataField('producer:"harness"', 'agent'), '(producer:"harness") AND agent:');
+});
+
 test('BA specified: global mode directives stay outside new Boolean groups', () => {
   assert.equal(addExpressionFilter('mode:semantic AND (A OR B)', 'tag', 'review'), 'mode:semantic ((A OR B)) AND tag:"review"');
   assert.equal(addExpressionFilter('A AND mode : lexical AND B', 'tag', 'review'), 'mode : lexical (A AND B) AND tag:"review"');

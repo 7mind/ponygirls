@@ -2,8 +2,10 @@ import { constants, closeSync, fstatSync, lstatSync, openSync, opendirSync, read
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { CollectorError, hash, type Diagnostic, type DiscoveryRoot } from './domain.ts';
 import type { Config } from './config.ts';
+import { validYoloProfileName, type CollectionOrigin } from './admission.ts';
 
-export interface SourceFile { root: DiscoveryRoot; path: string; relativePath: string }
+export interface DiscoveredRoot extends DiscoveryRoot { origin: CollectionOrigin }
+export interface SourceFile { root: DiscoveredRoot; path: string; relativePath: string }
 export interface Scan { files: SourceFile[]; diagnostics: Diagnostic[]; visited: number }
 export interface Snapshot { bytes: Buffer; digest: string; mtimeMs: number }
 export const pathWithin = (path: string, prefix: string): boolean => path === prefix || path.startsWith(prefix.endsWith(sep) ? prefix : prefix + sep);
@@ -20,17 +22,17 @@ export function rejectSymlinks(path: string): void {
   }
 }
 
-export function discoverRoots(config: Config, platform: string): DiscoveryRoot[] {
+export function discoverRoots(config: Config, platform: string): DiscoveredRoot[] {
   if (!config.enabled) return [];
-  const roots = [...config.roots];
-  const add = (id: string, profile: string | null, claude: string, codex: string, pi: string): void => {
-    roots.push({ id, profile, format: 'claude', path: join(claude, 'projects'), layout: 'transcripts' },
-      { id, profile, format: 'codex', path: join(codex, 'sessions'), layout: 'transcripts' },
-      { id, profile, format: 'codex', path: join(codex, 'archived_sessions'), layout: 'transcripts' },
-      { id, profile, format: 'pi', path: join(pi, 'sessions'), layout: 'transcripts' },
-      { id, profile, format: 'pi', path: join(pi, 'subagents'), layout: 'pi-subagents' });
+  const roots: DiscoveredRoot[] = config.roots.map(root => ({ ...root, origin: { kind: 'explicit' } }));
+  const add = (id: string, profile: string | null, claude: string, codex: string, pi: string, origin: CollectionOrigin): void => {
+    roots.push({ id, profile, origin, format: 'claude', path: join(claude, 'projects'), layout: 'transcripts' },
+      { id, profile, origin, format: 'codex', path: join(codex, 'sessions'), layout: 'transcripts' },
+      { id, profile, origin, format: 'codex', path: join(codex, 'archived_sessions'), layout: 'transcripts' },
+      { id, profile, origin, format: 'pi', path: join(pi, 'sessions'), layout: 'transcripts' },
+      { id, profile, origin, format: 'pi', path: join(pi, 'subagents'), layout: 'pi-subagents' });
   };
-  if (config.discoverNative) add('native', null, join(config.homeDir, '.claude'), join(config.homeDir, '.codex'), join(config.homeDir, '.pi/agent'));
+  if (config.discoverNative) add('native', null, join(config.homeDir, '.claude'), join(config.homeDir, '.codex'), join(config.homeDir, '.pi/agent'), { kind: 'native' });
   if (config.discoverYolo) {
     try {
       rejectSymlinks(config.yoloDir);
@@ -46,8 +48,9 @@ export function discoverRoots(config: Config, platform: string): DiscoveryRoot[]
       for (const profile of profiles.sort((a, b) => a.name.localeCompare(b.name))) {
         if ((!profile.isDirectory() && !profile.isSymbolicLink()) || config.exclusions.profiles.includes(profile.name)) continue;
         const root = join(config.yoloDir, profile.name);
-        if (platform === 'darwin') add(`yolo:${profile.name}`, profile.name, join(root, 'claude'), join(root, 'codex'), join(root, 'pi'));
-        else add(`yolo:${profile.name}`, profile.name, join(root, 'claude/home'), join(root, 'codex/home'), join(root, 'pi/home/agent'));
+        const origin: CollectionOrigin = profile.isDirectory() && validYoloProfileName(profile.name) ? { kind: 'named-yolo', name: profile.name } : { kind: 'unknown' };
+        if (platform === 'darwin') add(`yolo:${profile.name}`, profile.name, join(root, 'claude'), join(root, 'codex'), join(root, 'pi'), origin);
+        else add(`yolo:${profile.name}`, profile.name, join(root, 'claude/home'), join(root, 'codex/home'), join(root, 'pi/home/agent'), origin);
       }
     } catch (error) { if (code(error) !== 'ENOENT') throw error instanceof CollectorError ? error : new CollectorError('profile-discovery-failed'); }
   }
@@ -67,7 +70,7 @@ function transcriptPath(root: DiscoveryRoot, path: string): boolean {
   return !parts.some(p => ['memory', 'config', 'file-history'].includes(p));
 }
 
-export function scanRoots(roots: DiscoveryRoot[], config: Config): Scan {
+export function scanRoots(roots: DiscoveredRoot[], config: Config): Scan {
   const result: Scan = { files: [], diagnostics: [], visited: 0 };
   let stopped = false;
   const diagnostic = (root: DiscoveryRoot, path: string, value: string): void => { result.diagnostics.push({ rootId: root.id, pathId: hash(path), code: value }); };

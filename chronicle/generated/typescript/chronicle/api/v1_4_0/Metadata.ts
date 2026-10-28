@@ -122,11 +122,11 @@ export class Metadata implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return Metadata.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
     public baboonSameInVersions() {
         return Metadata.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical", "1.5.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
     public baboonForwardReadable() {
         return Metadata.BaboonForwardReadable
     }
@@ -139,7 +139,7 @@ export class Metadata implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.5.0 */
+/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.7.0 */
 export class Metadata_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Metadata): unknown {
         if (this !== Metadata_JsonCodec.lazyInstance.value) {

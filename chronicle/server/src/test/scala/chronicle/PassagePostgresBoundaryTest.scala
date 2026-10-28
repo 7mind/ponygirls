@@ -17,13 +17,14 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
       Sql.rows(c,"SELECT to_jsonb(g)::text FROM ch_generations g WHERE session_id=? ORDER BY id",id)(_.getString(1))++
       List("ch_chunks","ch_generation_tags","ch_problem_passages","ch_problem_spans","ch_problem_pieces").flatMap(table =>
         Sql.rows(c,s"SELECT to_jsonb(item)::text FROM $table item JOIN ch_generations g ON g.id=item.generation WHERE g.session_id=? ORDER BY to_jsonb(item)::text",id)(_.getString(1)))++
-      Sql.rows(c,"SELECT to_jsonb(s)::text FROM ch_search_chunks s WHERE session_id=? ORDER BY id",id)(_.getString(1))
+      Sql.rows(c,"SELECT to_jsonb(s)::text FROM ch_search_chunks s WHERE session_id=? ORDER BY id",id)(_.getString(1))++
+      Sql.rows(c,"SELECT to_jsonb(m)::text FROM ch_reindex_members m WHERE session_id=? ORDER BY request_id",id)(_.getString(1))
   }
   List("ch_problem_passages","ch_problem_spans","ch_problem_pieces").foreach { table =>
     test(s"Effectual GoodCommunication: lease expiry during $table persistence rolls back every new artifact and preserves prior publication") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
       val receipt=archive.ingest("a",request(List("A original"))); val legacy=claim(archive,catalog,300)
       val old=Chunk(UUID.randomUUID(),receipt.sessionId,"retained legacy","old",List("old-tag"),Nil,0.0)
-      assert(archive.publish(legacy,List(IndexedChunk(old,vector))))
+      StoredPublicationFixtures.publish(db,legacy,List(IndexedChunk(old,vector)))
       val previous=archive.session("a",receipt.sessionId).view
       transition(db)
       db.transaction { c =>
@@ -73,10 +74,10 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
       intercept[java.sql.SQLException](reader.headSnapshot("a",receipt.sessionId))
     } finally db.transaction { c => Sql.exec(c,s"DROP OWNED BY $role"); Sql.exec(c,s"DROP ROLE $role") }
   }}
-  test("Effectual GoodCommunication: migration008 precedes descriptor registration, backfills only verified legacy after registration, and never invents extents") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
+  test("Effectual GoodCommunication: migration restores schema but never infers lost historical format or invents passage extents") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
     val receipt=archive.ingest("a",request(List("A source"))); val current=claim(archive,catalog,300)
     val chunk=Chunk(UUID.randomUUID(),receipt.sessionId,"manual legacy","retained",Nil,Nil,0.0)
-    assert(archive.publish(current,List(IndexedChunk(chunk,vector))))
+    StoredPublicationFixtures.publish(db,current,List(IndexedChunk(chunk,vector)))
     val legacyView=archive.session("a",receipt.sessionId).view
     val opaque=UUID.randomUUID(); val p1=UUID.randomUUID()
     db.transaction { c =>
@@ -87,7 +88,7 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
       Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=8")
     }
     db.initialize()
-    assertEquals(archive.passages("a",receipt.sessionId,0,100,Some(legacyView)),PassagesResult(legacyView,PassageFormat.LegacyAnnotations,Nil,0,0))
+    assertEquals(intercept[DomainError](archive.passages("a",receipt.sessionId,0,100,Some(legacyView))).code,"unavailable")
     assertEquals(archive.pageChunks("a",receipt.sessionId,0,100,Some(legacyView)).chunks,List(chunk))
     List(opaque,p1).foreach { generation =>
       val view=ContentView(1,Some(generation))

@@ -20,7 +20,7 @@ export function SearchMode_parse(s: string): SearchMode {
     return found;
 }
 
-/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.5.0 */
+/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.7.0 */
 export class SearchMode_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: SearchMode): unknown {
         if (this !== SearchMode_JsonCodec.lazyInstance.value) {

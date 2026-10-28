@@ -14,13 +14,15 @@ class PostgresBehaviorTest extends munit.FunSuite {
   def mutation(auth: Auth,i: Identity,op: Operation): Result = auth.mutate(i,ClientEnvelope(UUID.randomUUID(),op))
   def entity(r: Result): UUID = r.asInstanceOf[Result.Mutation].receipt.entityId.get
   def annotatedTags(c: Config,a: PostgresArchive): IngestReceipt = {
-    val r=Fixtures.snapshot(); val request=r.copy(metadata=r.metadata.copy(tags=Nil))
+    val r=Fixtures.snapshot(); val messages=(0 until 3).map(index => Message(s"m$index",None,"user",s"synthetic source $index",None,index)).toList
+    val raw=messages.map(message => io.circe.Json.obj("id"->io.circe.Json.fromString(message.id),"text"->io.circe.Json.fromString(message.text)).noSpaces+"\n").mkString
+    val request=r.copy(metadata=r.metadata.copy(tags=Nil),messages=messages,files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
     val out=a.ingest("a",request); val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
-    val chunk=Fragments.split(request.messages).head.copy(sessionId=out.sessionId,tags=List("debugging"))
-    assert(a.publish(claim,List(IndexedChunk(chunk,List(1.0,0.0,0.0)),IndexedChunk(chunk.copy(id=UUID.randomUUID()),List(1.0,0.0,0.0)),IndexedChunk(chunk.copy(id=UUID.randomUUID(),tags=List("review")),List(1.0,0.0,0.0)))))
+    val chunks=Fragments.split(request.messages).zipWithIndex.map { (chunk,index) => IndexedChunk(chunk.copy(sessionId=out.sessionId,tags=List(if(index<2) "debugging" else "review")),List(1.0,0.0,0.0)) }
+    assert(a.publish(claim,chunks))
     out
   }
-  test("BG-GoodCommunication regression: merged semantic chunks preserve lexical words at message boundaries") { database { (c,db,a,auth) =>
+  test("BG-GoodCommunication regression: one problem preserves lexical words in exact original source pieces across message boundaries") { database { (c,db,a,auth) =>
     val original=Fixtures.snapshot()
     val raw="""{"id":"alpha","text":"alpha"}
 {"id":"beta","text":"beta"}
@@ -28,14 +30,14 @@ class PostgresBehaviorTest extends munit.FunSuite {
     val request=original.copy(messages=List(Message("alpha",None,"user","alpha",None,0),Message("beta",Some("alpha"),"assistant","beta",None,1)),files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
     val out=a.ingest("a",request); val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
     val fragments=Fragments.split(request.messages).map(_.copy(sessionId=out.sessionId))
-    val chunks=AnnotationPartition.project(fragments,Wire.parse("""{"chunks":[{"first":0,"last":1,"summary":"unrelated","tags":[]}]}"""))
-    assert(a.publish(claim,chunks.map(chunk => IndexedChunk(chunk,List(1.0,0.0,0.0)))))
+    assert(a.publishProblems(claim,ProblemPublicationFixtures.oneProblem(claim)))
     val embedder=new Embedder { def query(owner: String,text: String)=IO.pure(List(1.0,0.0,0.0)); def documents(owner: String,text: List[String])=IO.pure(text.map(_ => List(1.0,0.0,0.0))) }
     val app=new Application(a,new PostgresSearch(db,a,c),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,a,c),new PostgresActivity(db,java.time.Clock.systemUTC()),new PostgresExpressionHintIndex(db,a,java.time.Clock.systemUTC()),ModelFixtures.usage(c)); val owner=browser(auth,"a")
     List("alpha","beta").foreach { word =>
       val result=app.operation(owner,ClientEnvelope(UUID.randomUUID(),Operation.Search(SearchQuery(word,SearchMode.Lexical,SearchFilter(None,None,None,None,Nil),20,0)))).unsafeRunSync().asInstanceOf[Result.Search].result
       assertEquals(result.total,1,s"original word $word remains searchable")
-      assertEquals(result.hits.head.chunks.head.spans,fragments.flatMap(_.spans))
+      assertEquals(result.hits.head.chunks.head.text,word)
+      assertEquals(result.hits.head.chunks.head.spans,fragments.find(_.text==word).get.spans)
     }
   }}
   List(false,true).foreach { running =>
@@ -67,11 +69,12 @@ class PostgresBehaviorTest extends munit.FunSuite {
     val published=a.session("a",first.sessionId).view
     val second=a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
     a.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=2))
-    db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET state='Running',error=NULL,lease_until=now()+interval '300 seconds' WHERE id=?",second.jobId))
+    db.transaction(x => Sql.exec(x,"UPDATE ch_jobs SET state='Running',error='model-timeout',failure_stage='Embedding',lease_until=now()+interval '300 seconds' WHERE id=?",second.jobId))
     db.initialize()
     val jobs=a.statuses("a",0,100).jobs
     assertEquals(jobs.find(_.id==second.jobId).get.state,JobState.Failed)
     assertEquals(jobs.find(_.id==second.jobId).get.error,Some("superseded-revision"))
+    assertEquals(jobs.find(_.id==second.jobId).get.failureStage,None)
     assertEquals(jobs.find(_.id==first.jobId).get.state,JobState.Complete)
     assertEquals(a.readSession("a",first.sessionId,Some(published)).session.view,published)
   }}
@@ -80,11 +83,13 @@ class PostgresBehaviorTest extends munit.FunSuite {
       val out=a.ingest("a",Fixtures.snapshot())
       (1 to 5).foreach(_ => a.fail(a.claim(Set(c.profile),ClaimScope.AllOwners,300).get,"model-http"))
       assertEquals(a.statuses("a",0,100).jobs.head.state,JobState.Failed)
-      val next=c.copy(embedding=c.embedding.copy(revision="retry-target")); val replacement=new PostgresArchive(db,next)
-      replacement.beginMaintenance(); assert(replacement.publish(replacement.claim(Set(next.profile),ClaimScope.AllOwners,300).get,Nil)); assert(replacement.finishMaintenance())
+      val next=c.copy(embedding=c.embedding.copy(revision="retry-target")); val nextDb=new Database(next,IndexProfileCatalog.current(next)); nextDb.initialize()
+      val replacement=new PostgresArchive(nextDb,next); Fixtures.rebuild(nextDb,"a")
+      assert(replacement.publish(replacement.claim(Set(next.profile),ClaimScope.AllOwners,300).get,Nil)); assert(new PostgresOwnerReindex(nextDb).completed("a"))
       assertEquals(replacement.session("a",out.sessionId).revision,1)
       val error=intercept[DomainError] {
-        if(browserMutation) mutation(auth,browser(auth,"a"),Operation.RetryJob(out.jobId)) else a.retry("a",out.jobId)
+        val currentAuth=new Auth(nextDb,next)
+        if(browserMutation) mutation(currentAuth,browser(currentAuth,"a"),Operation.RetryJob(out.jobId)) else replacement.retry("a",out.jobId)
       }
       assertEquals(error.code,"conflict")
       assertEquals(a.statuses("a",0,100).jobs.find(_.id==out.jobId).get.state,JobState.Failed)
@@ -178,8 +183,11 @@ class PostgresBehaviorTest extends munit.FunSuite {
     assertEquals(a.raw("a",out.sessionId,Some(1)).files,revision(1).files)
   }}
   test("BG-GoodCommunication: chunk pages exceed100 without omissions and retain source order ACL") { database { (c,db,a,auth) =>
-    val request=Fixtures.snapshot(); val out=a.ingest("a",request); val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
-    val chunks=(0 until 201).map { index => IndexedChunk(Chunk(new UUID(0,201-index),out.sessionId,s"source-$index","summary",Nil,List(Span("u",0,1)),0.0),List(1.0,0.0,0.0)) }.toList
+    val base=Fixtures.snapshot(); val messages=(0 until 201).map(index => Message(s"m$index",None,"user",s"source-$index",None,index)).toList
+    val raw=messages.map(message => io.circe.Json.obj("id"->io.circe.Json.fromString(message.id),"text"->io.circe.Json.fromString(message.text)).noSpaces+"\n").mkString
+    val request=base.copy(messages=messages,files=List(RawFile("session.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
+    val out=a.ingest("a",request); val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
+    val chunks=messages.zipWithIndex.map { (message,index) => IndexedChunk(Chunk(new UUID(0,201-index),out.sessionId,message.text,"summary",Nil,List(Span(message.id,0,message.text.length)),0.0),List(1.0,0.0,0.0)) }
     assert(a.publish(claim,chunks))
     val first=a.pageChunks("a",out.sessionId,0,100,None); val second=a.pageChunks("a",out.sessionId,100,100,None); val third=a.pageChunks("a",out.sessionId,200,100,None)
     assertEquals(first.total,201); assertEquals(second.total,201)
@@ -254,29 +262,31 @@ class PostgresBehaviorTest extends munit.FunSuite {
       assertEquals(archive.statuses("a",0,100).jobs.find(_.id==old.jobId).get.error,Some("superseded-revision"))
     } finally { executor.shutdownNow(); executor.awaitTermination(6,java.util.concurrent.TimeUnit.SECONDS) }
   }}
-  test("BG-GoodCommunication regression: maintenance target switch serializes behind in-flight old publication") { database { (c,db,a,auth) =>
+  test("BG-GoodCommunication regression: confirmed rebuild waits behind in-flight publication and rejects its now-stale preview") { database { (c,db,a,auth) =>
     val timed=c.copy(jdbcUrl=c.jdbcUrl+"?options=-c%20statement_timeout%3D5000")
     val timedDb=new Database(timed,IndexProfileCatalog.legacyOnly(timed)); val oldArchive=new PostgresArchive(timedDb,timed)
     val out=oldArchive.ingest("a",Fixtures.snapshot())
     val old=oldArchive.claim(Set(timed.profile),ClaimScope.AllOwners,300).get
-    val next=timed.copy(embedding=timed.embedding.copy(revision="maintenance-race"))
-    val replacement=new PostgresArchive(timedDb,next)
+    val service=new PostgresOwnerReindex(timedDb); val plan=service.preview("a")
+    val replacement=oldArchive
     val executor=java.util.concurrent.Executors.newFixedThreadPool(2)
     var pending: java.util.concurrent.Future[Boolean]=null
-    var switching: java.util.concurrent.Future[Unit]=null
+    var switching: java.util.concurrent.Future[OwnerReindexOutcome]=null
     try {
       db.transaction { held =>
         Sql.one(held,"SELECT id FROM ch_jobs WHERE id=? FOR UPDATE",old.jobId)(_.getString(1))
         pending=executor.submit(new java.util.concurrent.Callable[Boolean] { def call(): Boolean=oldArchive.publish(old,Nil) })
         awaitBlocked(timedDb,"SELECT j.id FROM ch_jobs")
-        switching=executor.submit(new java.util.concurrent.Callable[Unit] { def call(): Unit=replacement.beginMaintenance() })
-        awaitBlocked(timedDb,"SELECT profile FROM ch_owner_targets")
+        switching=executor.submit(new java.util.concurrent.Callable[OwnerReindexOutcome] { def call(): OwnerReindexOutcome=service("a",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true) })
+        awaitBlocked(timedDb,"SELECT profile,epoch FROM ch_owner_targets")
       }
       assertEquals(pending.get(5,java.util.concurrent.TimeUnit.SECONDS),true)
-      switching.get(5,java.util.concurrent.TimeUnit.SECONDS)
-      assert(replacement.publish(replacement.claim(Set(next.profile),ClaimScope.AllOwners,300).get,Nil)); assert(replacement.finishMaintenance())
+      val conflict=intercept[java.util.concurrent.ExecutionException](switching.get(5,java.util.concurrent.TimeUnit.SECONDS))
+      assertEquals(conflict.getCause.asInstanceOf[DomainError].code,"conflict")
+      Fixtures.rebuild(timedDb,"a")
+      assert(replacement.publish(replacement.claim(Set(timed.profile),ClaimScope.AllOwners,300).get,Nil)); assert(service.completed("a"))
       assertEquals(oldArchive.publish(old,Nil),false)
-      assertEquals(timedDb.transaction(x => Sql.one(x,"SELECT g.profile FROM ch_sources s JOIN ch_generations g ON g.id=s.published WHERE s.id=?",out.sessionId)(_.getString(1)).get),next.profile)
+      assertEquals(timedDb.transaction(x => Sql.one(x,"SELECT g.profile FROM ch_sources s JOIN ch_generations g ON g.id=s.published WHERE s.id=?",out.sessionId)(_.getString(1)).get),timed.profile)
     } finally { executor.shutdownNow(); executor.awaitTermination(6,java.util.concurrent.TimeUnit.SECONDS) }
   }}
   test("BG-GoodCommunication regression: publisher waiting for a target switch rechecks the committed target") { database { (c,db,a,auth) =>
@@ -296,31 +306,29 @@ class PostgresBehaviorTest extends munit.FunSuite {
       assertEquals(pending.get(5,java.util.concurrent.TimeUnit.SECONDS),false)
     } finally { executor.shutdownNow(); executor.awaitTermination(6,java.util.concurrent.TimeUnit.SECONDS) }
   }}
-  test("BG-GoodCommunication regression: maintenance can return A to B to A on the same archived revision") { database { (c,db,a,auth) =>
-    val out=a.ingest("a",Fixtures.snapshot())
+  test("BG-GoodCommunication regression: repeated same-revision explicit rebuilds rotate work, preserve raw bytes, and retire only accepted obsolete pins") { database { (c,db,a,auth) =>
+    val request=Fixtures.snapshot(); val out=a.ingest("a",request)
     assert(a.publish(a.claim(Set(c.profile),ClaimScope.AllOwners,300).get,Nil)); val original=a.session("a",out.sessionId).view
-    val next=c.copy(embedding=c.embedding.copy(revision="profile-B")); val b=new PostgresArchive(db,next)
-    b.beginMaintenance(); assert(b.publish(b.claim(Set(next.profile),ClaimScope.AllOwners,300).get,Nil)); assert(b.finishMaintenance())
-    val middle=b.session("a",out.sessionId).view
-    a.beginMaintenance(); assert(!a.finishMaintenance())
-    val rebuilding=a.claim(Set(c.profile),ClaimScope.AllOwners,300)
-    assert(rebuilding.isDefined,"previously completed target job must become eligible when publication belongs to B")
-    a.beginMaintenance()
-    assert(a.publish(rebuilding.get,Nil),"resuming maintenance must not fence eligible in-progress target work")
-    assert(a.finishMaintenance()); assertEquals(a.session("a",out.sessionId).revision,1)
-    assertEquals(a.readSession("a",out.sessionId,Some(original)).session.view,original)
-    assertEquals(a.readSession("a",out.sessionId,Some(middle)).session.view,middle)
-    a.beginMaintenance(); assert(a.finishMaintenance()); assertEquals(a.claim(Set(c.profile),ClaimScope.AllOwners,300),None)
+    Fixtures.rebuild(db,"a"); assert(a.publish(a.claim(Set(c.profile),ClaimScope.AllOwners,300).get,Nil))
+    val middle=a.session("a",out.sessionId).view
+    Fixtures.rebuild(db,"a"); assert(!new PostgresOwnerReindex(db).completed("a"))
+    val rebuilding=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
+    Fixtures.rebuild(db,"a"); assert(!a.publish(rebuilding,Nil))
+    assert(a.publish(a.claim(Set(c.profile),ClaimScope.AllOwners,300).get,Nil)); assert(new PostgresOwnerReindex(db).completed("a"))
+    List(original,middle).foreach(pin => assertEquals(intercept[DomainError](a.readSession("a",out.sessionId,Some(pin))).code,"indexed-view-retired"))
+    assertEquals(a.raw("a",out.sessionId,Some(1)).files,request.files)
+    assertEquals(a.session("a",out.sessionId).revision,1)
   }}
-  test("BG-GoodCommunication: maintenance profile migration is explicit resumable and pauses semantic only") { database { (c,db,a,auth) =>
-    val out=a.ingest("a",Fixtures.snapshot()); assert(a.publish(a.claim(Set(c.profile),ClaimScope.AllOwners,300).get,Nil))
-    val next=c.copy(embedding=c.embedding.copy(revision="new-deployment"))
-    val replacement=new PostgresArchive(db,next); replacement.beginMaintenance()
-    val q=SearchQuery("",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)
-    intercept[DomainError](new PostgresSearch(db,replacement,next).search("a",q,Some(List(1.0,0.0,0.0))))
-    assert(!replacement.finishMaintenance()); replacement.beginMaintenance()
-    assert(replacement.publish(replacement.claim(Set(next.profile),ClaimScope.AllOwners,300).get,Nil)); assert(replacement.finishMaintenance())
-    assertEquals(new PostgresSearch(db,replacement,next).search("a",q,Some(List(1.0,0.0,0.0))).total,0)
+  test("BG-GoodCommunication: confirmed current rebuild keeps prior compatible semantic publication until a validated context-only replacement") { database { (c,db,a,auth) =>
+    val out=a.ingest("a",Fixtures.snapshot()); val first=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
+    assert(a.publishProblems(first,ProblemPublicationFixtures.oneProblem(first)))
+    val next=c.copy(annotation=c.annotation.copy(revision="new-deployment")); val nextDb=new Database(next,IndexProfileCatalog.current(next)); nextDb.initialize()
+    val replacement=new PostgresArchive(nextDb,next); Fixtures.rebuild(nextDb,"a")
+    val q=SearchQuery("archive",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)
+    assertEquals(new PostgresSearch(nextDb,replacement,next).search("a",q,Some(List(1.0,0.0,0.0))).total,1)
+    assert(!new PostgresOwnerReindex(nextDb).completed("a"))
+    assert(replacement.publish(replacement.claim(Set(next.profile),ClaimScope.AllOwners,300).get,Nil)); assert(new PostgresOwnerReindex(nextDb).completed("a"))
+    assertEquals(new PostgresSearch(nextDb,replacement,next).search("a",q,Some(List(1.0,0.0,0.0))).total,0)
     assertEquals(a.headSnapshot("a",out.sessionId).messages.size,1)
   }}
 }

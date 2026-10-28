@@ -1,3 +1,4 @@
+import { Popover } from './Popover.tsx';
 import { useEffect, useState } from 'react';
 import type { ChronicleConnection } from './client.ts';
 import type { ManagerStats } from './transport/types.ts';
@@ -31,9 +32,8 @@ export function ConnectionHealth({ connection, stats }: { connection: ChronicleC
   const start = stats.retryStartedAt ?? channel?.deadlineStartedAt ?? now;
   const fraction = end > start ? Math.max(0, Math.min(1, (end - now) / (end - start))) : 0;
   const loss = stats.sentPings === 0 ? '—' : `${Math.round(100 * stats.lostPings / stats.sentPings)}%`;
-  return <details className="connection-widget" data-state={label}>
-    <summary aria-label={`Connection: ${label}`}><svg viewBox="0 0 24 24" aria-hidden="true"><circle className="ring-track" cx="12" cy="12" r="9"/><circle className="ring-budget" cx="12" cy="12" r="9" pathLength="1" strokeDasharray={`${fraction} 1`}/><text x="12" y="16" textAnchor="middle">{label === 'live' ? '✓' : stats.terminal ? '×' : '·'}</text></svg><span>{label}</span><span className="health-hint">Connection details</span></summary>
-    <div className="health-panel"><div className="section-heading"><h2>Channel health</h2><span className="eyebrow">{label}</span></div>
+  return <Popover className="connection-widget" dataState={label} ariaLabel={`Connection: ${label}`} panelClassName="health-panel" label={<><svg viewBox="0 0 24 24" aria-hidden="true"><circle className="ring-track" cx="12" cy="12" r="9"/><circle className="ring-budget" cx="12" cy="12" r="9" pathLength="1" strokeDasharray={`${fraction} 1`}/><text x="12" y="16" textAnchor="middle">{label === 'live' ? '✓' : stats.terminal ? '×' : '·'}</text></svg><span>{label}</span><span className="health-hint">Connection details</span></>}>
+    <div className="section-heading"><h2>Channel health</h2><span className="eyebrow">{label}</span></div>
       <dl className="health-grid"><div><dt>Active socket</dt><dd>{stats.activeId ?? 'none'}</dd></div><div><dt>Live pool</dt><dd>{live.length}</dd></div><div><dt>Attempt</dt><dd>{stats.attempts}/{stats.maxAttempts}</dd></div><div><dt>Next retry</dt><dd>{stats.deferred ? 'when visible' : stats.retryAt !== null ? duration(stats.retryAt - now) : 'not scheduled'}</dd></div><div><dt>Heartbeat loss</dt><dd>{loss}</dd></div><div><dt>Pending pings</dt><dd>{live.reduce((sum, s) => sum + s.pendingPings, 0)}</dd></div></dl>
       <p className="tiny">RTT min / median / max</p>{[30, 60, 300].map(seconds => <div className="rtt" key={seconds}><span>{seconds}s</span><code>{rttWindow(stats, now, seconds)}</code></div>)}
       <div className="pool">{stats.sockets.map(s => <div key={s.id} className={s.active ? 'socket active-socket' : 'socket'}><strong>#{s.id} {s.active ? 'ACTIVE' : ''}</strong><span>{s.state}</span><span>{duration(now - s.createdAt)} uptime</span></div>)}</div>
@@ -41,6 +41,5 @@ export function ConnectionHealth({ connection, stats }: { connection: ChronicleC
       {stats.terminal !== null && <button onClick={() => connection.retry()}>Try again manually</button>}
       <details className="event-log"><summary>Recent events ({stats.events.length})</summary><ol>{[...stats.events].reverse().map((event, index) => <li key={`${event.at}-${index}`}><time>{new Date(event.at).toLocaleTimeString()}</time> {event.message}</li>)}</ol></details>
       <p className="tiny">Hidden tabs may pause timers. Returning verifies liveness and reloads authorized snapshots; writes are never replayed.</p>
-    </div>
-  </details>;
+  </Popover>;
 }

@@ -15,17 +15,17 @@ private object ActivityTestData {
   def jobsQuery(collectorId: Option[String],scope: ActivityJobScope,cursor: Option[String],limit: Int): ActivityJobsQuery = ActivityJobsQuery(collectorId,scope,"",ActivityJobSort.JobId,SortDirection.Asc,cursor,limit)
   def metadata(head: Head,revision: Int): Metadata = head.metadata.copy(title=head.metadata.title.replace("$revision",revision.toString),startedAt=activity(head,revision).map(_.toString),endedAt=None)
   def activity(head: Head,revision: Int): Option[Instant] = head.activity.map(_.minusSeconds((head.revision-revision).toLong*86400))
-  def source(head: Head,revision: Int): SourceIdentity = SourceIdentity(if(revision==head.revision) head.namespace else "wrong-old-namespace","native",SourceFormat.Pi,head.id.toString,None)
+  def source(head: Head,revision: Int): SourceIdentity = SourceIdentity(if(revision==head.revision) head.namespace else "wrong-old-namespace",head.roots.getOrElse(revision,"native"),SourceFormat.Pi,head.id.toString,head.subagents.getOrElse(revision,None))
   def session(head: Head,revision: Int): SessionInfo = SessionInfo(ContentView(revision,None),head.id,head.owner,head.revision,None,metadata(head,revision),source(head,revision),Completion.Quiescent,false)
 
-  final case class Head(id: UUID,owner: String,revision: Int,namespace: String,tombstone: Boolean,activity: Option[Instant],metadata: Metadata)
+  final case class Head(id: UUID,owner: String,revision: Int,namespace: String,tombstone: Boolean,activity: Option[Instant],metadata: Metadata,subagents: Map[Int,Option[String]]=Map.empty,roots: Map[Int,String])
   final case class Job(info: JobInfo,profile: String,lease: Option[Instant])
   final case class Report(owner: String,value: CollectorProgressUpdate,received: Instant)
   final case class Seed(heads: List[Head],jobs: List[Job],reports: List[Report],disabled: Set[String],observedAt: Instant)
   def id(n: Int): UUID = new UUID(0,n.toLong)
-  def head(n: Int,owner: String,revision: Int,namespace: String,tombstone: Boolean): Head = Head(id(n),owner,revision,namespace,tombstone,None,Fixtures.snapshot().metadata.copy(title="revision-$revision"))
+  def head(n: Int,owner: String,revision: Int,namespace: String,tombstone: Boolean): Head = Head(id(n),owner,revision,namespace,tombstone,None,Fixtures.snapshot().metadata.copy(title="revision-$revision"),roots=Map.empty)
   def job(n: Int,session: Int,revision: Int,profile: String,state: JobState,lease: Option[Instant]): Job =
-    Job(JobInfo(id(n),id(session),revision,state,5,Some("actual-error"),2,Some(4)),profile,lease)
+    Job(JobInfo(id(n),id(session),revision,state,5,Some("actual-error"),2,Some(4),None),profile,lease)
   def report(owner: String,name: String,age: Long): Report = Report(owner,CollectorProgressUpdate(name,9007199254740993L,id(1000),CollectorPhase.Uploading,now.minusSeconds(600).toString,CollectorCounters(10,10,0,0,0,0,999,0,0,0,0,0,9007199254740993L),1000,500,Some(500),None),now.minusSeconds(age))
   def seed: Seed = Seed(
     List(head(1,"a",2,"base/episode/child",false),head(2,"a",1,"base/other",false),head(3,"a",1,"orphan/child",false),
@@ -118,6 +118,43 @@ abstract class ActivityContract extends munit.FunSuite {
     assertEquals(index.jobs("c",query).total,0L)
     assertEquals(index.jobs("c",query).nextCursor,None)
   }}
+  test("Behavioral-Blackbox Atomic/GoodCommunication specified: agent classification uses each job revision identity, never its title or HEAD") {
+    val varied=seed.copy(heads=seed.heads.map { h =>
+      if(h.id==id(1)) h.copy(metadata=h.metadata.copy(title="subagent in title only"),subagents=Map(1->Some("child"),2->None))
+      else if(h.id==id(2)) h.copy(metadata=h.metadata.copy(title="main session"),subagents=Map(1->Some("child-2")))
+      else h
+    })
+    withIndex(varied) { index =>
+      val q=jobsQuery(None,ActivityJobScope.All,None,1)
+      def ids(expression: String,scope: ActivityJobScope=ActivityJobScope.All): List[UUID] = allJobs(index,q.copy(expression=expression,scope=scope)).map(_.job.id)
+      assertEquals(ids("agent:subagent"),List(id(2),id(4),id(5)))
+      assertEquals(ids("NOT agent:main"),ids("agent:subagent"))
+      assertEquals(ids("agent:main"),List(id(1),id(3),id(6),id(7),id(8),id(9),id(10)))
+      assertEquals(ids("agent:main AND agent:subagent"),Nil)
+      assertEquals(ids("agent:main OR agent:subagent"),(1 to 10).map(id).toList)
+      assertEquals(ids("agent:subagent",ActivityJobScope.Current),List(id(5)))
+      assertEquals(ids("agent:subagent",ActivityJobScope.Historical),List(id(2),id(4)))
+    }
+  }
+  test("Behavioral-Blackbox Atomic/GoodCommunication specified: recorded yolo profile uses job revision claims with exact case and owner scope") {
+    val varied=seed.copy(heads=seed.heads.map { h =>
+      if(h.id==id(1)) h.copy(roots=Map(1->"yolo:Historical",2->"yolo:Foo"))
+      else if(h.id==id(2)) h.copy(roots=Map(1->"yolo:foo"))
+      else if(h.id==id(8)) h.copy(roots=Map(1->"yolo:Foo"))
+      else h.copy(metadata=h.metadata.copy(title="yolo:Foo",tags=List("yolo-profile:Foo")))
+    })
+    withIndex(varied) { index =>
+      val q=jobsQuery(None,ActivityJobScope.All,None,1)
+      def ids(expression: String,scope: ActivityJobScope): List[UUID] = allJobs(index,q.copy(expression=expression,scope=scope)).map(_.job.id)
+      assertEquals(ids("yolo-profile:Foo",ActivityJobScope.All),List(id(1),id(3)))
+      assertEquals(ids("yolo-profile:foo",ActivityJobScope.All),List(id(5)))
+      assertEquals(ids("yolo-profile:FOO",ActivityJobScope.All),Nil)
+      assertEquals(ids("yolo-profile:Historical",ActivityJobScope.Current),Nil)
+      assertEquals(ids("yolo-profile:Historical",ActivityJobScope.Historical),List(id(2),id(4)))
+      assertEquals(ids("yolo-profile:Foo profile:"+target,ActivityJobScope.All),List(id(1)))
+      assertEquals(ids("NOT (yolo-profile:Foo OR yolo-profile:foo OR yolo-profile:Historical)",ActivityJobScope.All),(6 to 10).map(id).toList)
+    }
+  }
   test("Behavioral-Blackbox Atomic/GoodCommunication regression: sub-microsecond observation never rounds a future lease into expiry") {
     withIndex(seed.copy(observedAt=now.minusNanos(400))) { index =>
       val summary=index.summary(user,collectorQuery(None,100))
@@ -405,7 +442,7 @@ final class ActivityPostgresTest extends ActivityContract {
           CREATE TABLE ch_revisions(session_id uuid REFERENCES ch_sources(id),revision integer,snapshot jsonb NOT NULL,PRIMARY KEY(session_id,revision));
           CREATE TABLE ch_revision_info(session_id uuid,revision integer,metadata jsonb NOT NULL,source jsonb NOT NULL,completion text NOT NULL,redacted boolean NOT NULL,last_timestamp text,last_timestamp_order numeric,message_count integer NOT NULL,PRIMARY KEY(session_id,revision),FOREIGN KEY(session_id,revision) REFERENCES ch_revisions(session_id,revision) ON DELETE CASCADE);
           CREATE TABLE ch_generations(id uuid PRIMARY KEY,session_id uuid,revision integer,profile text);
-          CREATE TABLE ch_jobs(id uuid PRIMARY KEY,session_id uuid REFERENCES ch_sources(id),revision integer NOT NULL,profile text NOT NULL,state text NOT NULL,attempts integer NOT NULL,fence bigint NOT NULL,lease_until timestamptz,error text,completed_windows integer NOT NULL,total_windows integer,UNIQUE(session_id,revision,profile));
+          CREATE TABLE ch_jobs(id uuid PRIMARY KEY,session_id uuid REFERENCES ch_sources(id),revision integer NOT NULL,profile text NOT NULL,state text NOT NULL,attempts integer NOT NULL,fence bigint NOT NULL,lease_until timestamptz,error text,completed_windows integer NOT NULL,total_windows integer,failure_stage text,UNIQUE(session_id,revision,profile));
           CREATE TABLE ch_profile(singleton boolean PRIMARY KEY CHECK(singleton),active text NOT NULL,target text NOT NULL,maintenance boolean NOT NULL);
           CREATE TABLE ch_collector_progress(owner text REFERENCES ch_users(id),collector_id text,sequence bigint NOT NULL CHECK(sequence>0),report jsonb NOT NULL,received_at timestamptz NOT NULL,PRIMARY KEY(owner,collector_id));
           CREATE TABLE ch_groups(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),name text NOT NULL);
@@ -519,7 +556,9 @@ private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) exte
       case ArchivePredicate.Branch(v) => equal(j.session.metadata.gitBranch,v)
       case ArchivePredicate.Producer(v) => equal(Some(j.session.metadata.producer),v)
       case ArchivePredicate.Model(v) => equal(j.session.metadata.model,v)
+      case ArchivePredicate.YoloProfile(v) => RecordedYoloProfile.fromRootId(j.session.source.discoveryRootId).contains(v)
       case ArchivePredicate.Format(v) => j.session.source.format==v
+      case ArchivePredicate.Agent(v) => AgentKind.classify(j.session.source)==v
       case ArchivePredicate.Status(v) => j.job.state.toString==v.toString
       case ArchivePredicate.After(v) => j.lastTimestamp.exists(t => !Instant.parse(t).isBefore(v))
       case ArchivePredicate.Before(v) => j.lastTimestamp.exists(t => Instant.parse(t).isBefore(v))

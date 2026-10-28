@@ -20,7 +20,7 @@ object Check {
 }
 object Wire {
   val ctx = BaboonCodecContext.Default
-  val versions = VersionInfo("1.5.0", "1.0.0", List("1.5.0","1.4.0","1.3.0","1.2.0","1.1.0","1.0.0"))
+  val versions = VersionInfo("1.7.0", "1.0.0", List("1.7.0","1.6.0","1.5.0","1.4.0","1.3.0","1.2.0","1.1.0","1.0.0"))
   def negotiate(offered: List[String]): String = versions.supported.find(offered.contains).getOrElse(throw DomainError("version-mismatch","unsupported API version"))
   def encode[A](codec: BaboonJsonCodec[A], value: A): Json = codec.encode(ctx, value)
   def decode[A](codec: BaboonJsonCodec[A], json: Json): A = codec.decode(ctx, json).fold(_ => throw DomainError("invalid", "invalid payload"), identity)
@@ -43,7 +43,7 @@ final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int
 }
 object IndexingCapacity { val defaults = IndexingCapacity(4,8,16) }
 final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity) {
-  def profile: String = Wire.hash(Json.arr(List(annotation.endpoint,annotation.model,annotation.revision,annotation.requestPolicy.identity,annotation.maxResponseBytes.toString,embedding.endpoint,embedding.model,embedding.revision,embedding.dimensions.toString,embedding.sendDimensions.toString,embedding.queryPrefix,embedding.documentPrefix,AnnotationPartition.identity,"prompt:v3:fragment-indices-only","schema:v2","cosine").map(Json.fromString)*).noSpaces)
+  def profile: String = IndexProfileCatalog.current(this).preferred.profile
   def validate(): Unit = {
     indexing.validate()
     Check(users.map(_.id).distinct.size == users.size && users.map(_.login).distinct.size == users.size, "config", "duplicate users")
@@ -149,13 +149,13 @@ final case class Identity(user: UserInfo, browser: Boolean, credentialHash: Stri
   def requireScope(s: Scope): Unit = Check(user.scopes.contains(s), "forbidden", "scope required")
   def requireBrowser(): Unit = Check(browser, "forbidden", "browser session required")
 }
-final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long)
+final case class Claim(jobId: UUID, sessionId: UUID, revision: Int, fence: Long, profile: String, snapshot: IngestRequest, owner: String, targetEpoch: Long, runId: UUID, revisionBinding: RevisionBinding)
 final case class IndexedChunk(chunk: Chunk, vector: List[Double])
 enum ClaimScope {
   case AllOwners
   case Owner(owner: String)
 }
-trait SessionArchive {
+trait SessionArchive extends IndexCheckpoints {
   def knownProfiles: Set[String]
   def ingest(owner: String, request: IngestRequest): IngestReceipt
   def session(reader: String, id: UUID): SessionInfo
@@ -163,9 +163,9 @@ trait SessionArchive {
   def claim(profiles: Set[String], scope: ClaimScope, leaseSeconds: Int): Option[Claim]
   def renew(claim: Claim, leaseSeconds: Int): Boolean
   def progress(claim: Claim, completedWindows: Int, totalWindows: Int): Boolean
-  def publish(claim: Claim, chunks: List[IndexedChunk]): Boolean
   def publishProblems(claim: Claim, publication: ProblemsPublication): Boolean
   def fail(claim: Claim, code: String): Unit
+  def fail(claim: Claim, code: String, stage: IndexingStage): Unit
 }
 object SnapshotProjection {
   def text(value: String): String = value.replace("\u0000", "\\u0000")

@@ -1,3 +1,4 @@
+import { Popover } from './Popover.tsx';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { clampColumn, fitTableColumns, type SizedColumn, type TableColumnSpec } from './table-widths.ts';
@@ -77,5 +78,5 @@ export function ColumnResize({ column, layout }: { column: SizedColumn; layout: 
   }}/>;
 }
 export function TableControls({ name, layout }: { name: string; layout: TableLayout }) {
-  return <div className="table-controls" role="region" aria-label={`${name} table controls`}><button type="button" onClick={layout.fitWidth}>Fit to width</button><button type="button" onClick={layout.fitContent}>Fit to content</button><details className="table-column-menu" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.currentTarget.open = false; event.currentTarget.querySelector('summary')!.focus(); } }}><summary>Columns</summary><div><button type="button" onClick={layout.showAll}>Show all columns</button><button type="button" onClick={layout.compact}>Compact columns</button>{layout.specs.map(spec => <label key={spec.id}><input type="checkbox" checked={layout.columns.some(column => column.spec.id === spec.id)} disabled={spec.required} onChange={event => layout.toggle(spec.id, event.target.checked)}/>{spec.label}</label>)}</div></details></div>;
+  return <div className="table-controls" role="region" aria-label={`${name} table controls`}><button type="button" onClick={layout.fitWidth}>Fit to width</button><button type="button" onClick={layout.fitContent}>Fit to content</button><Popover className="table-column-menu" label="Columns" panelClassName="table-column-panel"><button type="button" onClick={layout.showAll}>Show all columns</button><button type="button" onClick={layout.compact}>Compact columns</button>{layout.specs.map(spec => <label key={spec.id}><input type="checkbox" checked={layout.columns.some(column => column.spec.id === spec.id)} disabled={spec.required} onChange={event => layout.toggle(spec.id, event.target.checked)}/>{spec.label}</label>)}</Popover></div>;
 }

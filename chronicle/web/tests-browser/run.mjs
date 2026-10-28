@@ -133,18 +133,20 @@ try {
     await page.getByRole('button', { name: 'activity', exact: true }).click();
     const collection = page.getByRole('region', { name: 'Collectors', exact: true });
     const collector = page.locator('.activity-collector-row').filter({ has: page.locator('td[data-column="CollectorId"]').getByText('alice-private-collector', { exact: true }) });
-    await collector.locator('.activity-row-details > summary').click();
+    await collector.getByRole('button', { name: 'Details', exact: true }).click();
     await collector.getByText('Discovering · Recent report', { exact: true }).waitFor();
-    for (const summary of await page.locator('.activity-job-row .activity-row-details > summary').all()) await summary.click();
     await collector.getByText('Per-run collector counters', { exact: true }).click();
     assert.match(await collector.innerText(), /sequence 9007199254740993/);
     assert.match(await collector.innerText(), /Scanned \/ discovered sessions\n0 \/ 0/);
+    await page.locator('.activity-job-row').filter({ hasText: 'Embedding provider unavailable' }).getByRole('button', { name: 'Details', exact: true }).click();
     await page.getByText('0 / unknown windows processed · job not Complete at this snapshot', { exact: true }).waitFor();
+    await page.locator('.activity-job-row').filter({ has: page.locator('td[data-column="State"]').getByText('Running', { exact: true }) }).getByRole('button', { name: 'Details', exact: true }).click();
     await page.getByText('2 / 3 windows processed · job not Complete at this snapshot', { exact: true }).waitFor();
     fixture.jobs = fixture.jobs.map(job => job.state === api.JobState.Running ? job.with({ completedWindows: 3, totalWindows: 3 }) : job);
     await page.getByText('3 / 3 windows processed · job not Complete at this snapshot', { exact: true }).waitFor({ timeout: 7000 });
     fixture.jobs = fixture.jobs.map(job => job.state === api.JobState.Running ? job.with({ state: api.JobState.Complete }) : job);
     await page.getByText('3 / 3 windows processed · job complete', { exact: true }).waitFor({ timeout: 7000 });
+    await collector.getByRole('button', { name: 'Details', exact: true }).click();
     const scanning = report.with({ phase: api.CollectorPhase.Scanning, sequence: report.sequence + 1n, counters: report.counters.with({ discovered: 12, scanned: 7, waiting: 2, pending: 4, quarantined: 1, stopped: 1, conflicts: 1, uploadFailures: 2, scannedBytes: 9007199254740995n }) });
     fixture.collectors = [new api.CollectorStatus(scanning, '2026-10-26T01:02:00Z', false)];
     await collector.getByText('Scanning · Recent report', { exact: true }).waitFor({ timeout: 7000 });
@@ -168,9 +170,9 @@ try {
     await collector.getByText('Failed · Stale report (>120s)', { exact: true }).waitFor({ timeout: 7000 });
     await collector.getByText('Collector error: progress-upload-failed', { exact: true }).waitFor();
     assert.match(await collector.innerText(), /Last known snapshot only; current collection progress is unknown/);
-    await page.locator('.activity-about > summary').click();
+    await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
     assert.match(await page.locator('.activity-about-content').innerText(), /not collector or worker health/);
-    await page.locator('.activity-about > summary').click();
+    await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
     fixture.collectionDenied = true;
     await page.getByRole('button', { name: 'Refresh snapshots ↻' }).click();
     await page.getByRole('alert').filter({ hasText: 'Collection status denied' }).waitFor();
@@ -199,7 +201,7 @@ try {
     const { context, page, fixture } = await scene();
     await search(page);
     assert.equal(await page.locator('.archive-context [role="status"]').textContent(), '1 conversations · 1 shown');
-    await page.locator('.expression-help > summary').click();
+    await page.getByRole('button', { name: 'Search syntax', exact: true }).click();
     await page.getByText(/This result uses up to 1000 authorized published chunks per distinct text operand/).waitFor();
     assert.match(await page.locator('.expression-help-content').textContent(), /not a row limit.*total is exact under those bounded candidate sets/);
     await submitExpression(page, '(original source) mode:lexical');
@@ -210,7 +212,7 @@ try {
   }
   {
     const { context, page } = await scene(fixture => {
-      fixture.jobs.push(new api.JobInfo('00000000-0000-4000-8000-000000000099', fixture.jobs[0].sessionId, 1, api.JobState.Failed, 1, 'superseded-revision', 0, undefined));
+      fixture.jobs.push(new api.JobInfo('00000000-0000-4000-8000-000000000099', fixture.jobs[0].sessionId, 1, api.JobState.Failed, 1, 'superseded-revision', 0, undefined, undefined));
     });
     await page.getByRole('button', { name: 'activity', exact: true }).click();
     await page.getByRole('button', { name: 'Retry indexing', exact: true }).waitFor();
@@ -219,7 +221,7 @@ try {
     const superseded = page.locator('.activity-job-row').filter({ hasText: 'superseded-revision' });
     await superseded.waitFor();
     assert.equal(await superseded.getByRole('button', { name: 'Retry indexing', exact: true }).count(), 0, 'superseded work is terminal, never presented as retryable');
-    await superseded.locator('.activity-row-details > summary').click();
+    await superseded.getByRole('button', { name: 'Details', exact: true }).click();
     await superseded.getByText('Historical job · not actionable here. This does not describe the current published view.', { exact: true }).waitFor();
     await context.close(); console.log('PASS browser: superseded revisions remain visible in History without an impossible retry action');
   }
@@ -271,11 +273,11 @@ try {
     await page.getByText('Viewing source r1', { exact: true }).waitFor();
     fixture.publishedRevision = 2;
     await loadPassages(page, 45);
-    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_GetChunks && call.operation.offset === 40 && call.operation.view.generationId === fixture.viewAt(1).generationId));
+    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_GetPassages && call.operation.offset === 40 && call.operation.view.generationId === fixture.viewAt(1).generationId));
     await refreshArchive(page);
     await page.getByText('HEAD r2 / index r2', { exact: true }).waitFor();
     await page.getByText('Viewing source r1', { exact: true }).waitFor();
-    assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetChunks).every(call => call.operation.view.revision === 1 && call.operation.view.generationId === fixture.viewAt(1).generationId), 'publication must not substitute another generation into the pinned annotation list');
+    assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetPassages).every(call => call.operation.view.revision === 1 && call.operation.view.generationId === fixture.viewAt(1).generationId), 'publication must not substitute another generation into the pinned annotation list');
     await scrollEnd(page, '.conversation-source');
     await page.locator('#message-m41 pre').waitFor(); assert.match(await page.locator('#message-m41 pre').textContent(), /Synthetic source message 41/);
     await page.getByRole('button', { name: 'Request raw records' }).click();
@@ -304,7 +306,7 @@ try {
     await loadPassages(page, 200);
     await page.locator('.passage-list').getByRole('button', { name: /Winning passage beyond the first hundred/ }).waitFor();
     assert.equal(await page.getByText('Archive-only view · no annotations', { exact: true }).count(), 0);
-    const latestChunks = fixture.calls.filter(call => call.operation instanceof api.Operation_GetChunks).at(-1).operation;
+    const latestChunks = fixture.calls.filter(call => call.operation instanceof api.Operation_GetPassages).at(-1).operation;
     assert.equal(latestChunks.view.generationId, fixture.viewAt(2).generationId);
     await context.close(); console.log('PASS browser: explicit latest archive is independent of indexing; generation-mismatched annotations stay hidden until explicit resync');
   }
@@ -331,7 +333,7 @@ try {
     await winner.click();
     await page.locator('#message-m65 mark').waitFor();
     assert.equal(await page.locator('#message-m65 mark').textContent(), 'Synthetic');
-    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_GetChunks && call.operation.offset === 160 && call.operation.limit === 40), 'infinite annotations must use bounded generated pages');
+    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_GetPassages && call.operation.offset === 160 && call.operation.limit === 40), 'infinite annotations must use bounded generated pages');
     assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_LocateMessage && call.operation.messageId === 'm65'), 'off-page navigation uses the generated locator, not a source scan');
     assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetMessages).every(call => call.operation.limit === 40));
     await page.locator('.passage-list').getByRole('button', { name: /Annotated passage 141\./ }).click();
@@ -339,7 +341,7 @@ try {
     await loadPassages(page, 205);
     assert.equal(await page.locator('.passage-list .passage').count(), 205);
     await scrollEnd(page, '.conversation-passages'); await page.waitForTimeout(200);
-    const pages = fixture.calls.filter(call => call.operation instanceof api.Operation_GetChunks).map(call => call.operation.offset);
+    const pages = fixture.calls.filter(call => call.operation instanceof api.Operation_GetPassages).map(call => call.operation.offset);
     assert.deepEqual(pages, [0, 40, 80, 120, 160, 200]);
     assert.equal(await page.getByRole('button', { name: /Next passages|Previous passages/ }).count(), 0, 'scrolling replaces manual pagination without dropping annotation reachability');
     fixture.restart(); await loadPassages(page, 40);

@@ -18,7 +18,7 @@ export function Completion_parse(s: string): Completion {
     return found;
 }
 
-/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.5.0 */
+/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.7.0 */
 export class Completion_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Completion): unknown {
         if (this !== Completion_JsonCodec.lazyInstance.value) {

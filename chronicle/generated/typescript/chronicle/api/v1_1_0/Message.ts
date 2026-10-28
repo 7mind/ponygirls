@@ -82,11 +82,11 @@ export class Message implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return Message.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
     public baboonSameInVersions() {
         return Message.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.1.0": "identical", "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.1.0": "identical", "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
     public baboonForwardReadable() {
         return Message.BaboonForwardReadable
     }
@@ -99,7 +99,7 @@ export class Message implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.1.0 is deprecated, you should migrate to 1.5.0 */
+/** @deprecated Version 1.1.0 is deprecated, you should migrate to 1.7.0 */
 export class Message_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Message): unknown {
         if (this !== Message_JsonCodec.lazyInstance.value) {

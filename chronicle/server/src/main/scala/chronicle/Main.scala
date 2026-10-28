@@ -17,7 +17,7 @@ object Main extends IOApp {
       Check(chars!=null && chars.nonEmpty && chars.length<=1024,"invalid","password required on stdin")
       try println(Password.hash(chars)) finally java.util.Arrays.fill(chars,'\u0000')
     }.as(ExitCode.Success)
-    case List(command,path) if Set("serve","maintenance-reindex").contains(command) =>
+    case List("serve",path) =>
       IO.blocking(Config.load(path)).flatMap { config =>
         ModelHttp.client(config).use { client =>
           // Explicit graph registration: no classpath scanning in native images.
@@ -27,11 +27,11 @@ object Main extends IOApp {
             make[org.http4s.client.Client[IO]].fromValue(client)
           })
           lifecycle.use { services =>
-            IO.blocking(services.database.initialize()) *> (if(command=="serve") serve(config,services) else maintenance(services))
+            IO.blocking(services.database.initialize()) *> serve(config,services)
           }
         }
       }.as(ExitCode.Success)
-    case _ => IO.println("usage: chronicle-server serve CONFIG.json | maintenance-reindex CONFIG.json | password-hash (stdin)").as(ExitCode.Error)
+    case _ => IO.println("usage: chronicle-server serve CONFIG.json | password-hash (stdin)").as(ExitCode.Error)
   }
   private def serve(config: Config,s: RuntimeServices): IO[Nothing] = for {
     gate <- Semaphore[IO](2)
@@ -40,8 +40,4 @@ object Main extends IOApp {
     }
     never <- IO.never[Nothing]
   } yield never
-  private def maintenance(s: RuntimeServices): IO[Unit] = IO.blocking(s.archive.beginMaintenance()) *> {
-    def loop: IO[Unit] = IO.blocking(s.archive.finishMaintenance()).flatMap { done => if(done) IO.unit else s.worker.once.flatMap(found => if(found) IO.defer(loop) else IO.raiseError(DomainError("unavailable","maintenance incomplete; inspect failed jobs and retry before resuming"))) }
-    loop
-  }
 }

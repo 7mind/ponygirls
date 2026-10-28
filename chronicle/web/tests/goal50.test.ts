@@ -23,19 +23,20 @@ test('BA specified: invalid surrogate boundaries and unpaired insertion scalars 
   assert.equal(scalarUtf8Bytes('🦄'.repeat(4096)), limits.maximumPromptBytes); assert.equal(scalarUtf8Bytes('🦄'.repeat(4097)), 16388);
 });
 test('BA specified: owner reprocess result must match original action ID, target and exact nonnegative i64 shape', () => {
-  const operation = new Operation_ApplyOwnerReindex('target', 'hash', true), result = new OwnerReindexResult(ID, 'target', 9007199254740995n, 9007199254740993n, 2n, 8n), valid = new Result_OwnerReindexed(result);
+  const operation = new Operation_ApplyOwnerReindex('target', 'hash', true), result = new OwnerReindexResult(ID, 'target', 9007199254740995n, 9007199254740995n, 0n, 8n), valid = new Result_OwnerReindexed(result);
   assert.equal(validateMutationResult(operation, valid, ID), valid);
-  for (const invalid of [new Result_Mutation(new MutationReceipt(ID, 'ApplyOwnerReindex', undefined)), new Result_OwnerReindexed(result.with({ requestId: OTHER })), new Result_OwnerReindexed(result.with({ targetProfile: 'other' })), new Result_OwnerReindexed(result.with({ queued: -1n })), new Result_OwnerReindexed(result.with({ heads: 0n }))]) {
+  for (const invalid of [new Result_Mutation(new MutationReceipt(ID, 'ApplyOwnerReindex', undefined)), new Result_OwnerReindexed(result.with({ requestId: OTHER })), new Result_OwnerReindexed(result.with({ targetProfile: 'other' })), new Result_OwnerReindexed(result.with({ queued: -1n })), new Result_OwnerReindexed(result.with({ queued: 0n })), new Result_OwnerReindexed(result.with({ alreadyCurrent: 1n })),  new Result_OwnerReindexed(result.with({ heads: 0n }))]) {
     assert.throws(() => validateMutationResult(operation, invalid, ID), cause => cause instanceof RequestFailure && cause.outcome === 'uncertain' && cause.receiptId === ID);
   }
 });
 const view = new ContentView(1, ID);
 function passage() { return new PassageInfo(OTHER, 0, 'A', ['synthetic'], new PassagePoint('m1', 0, 29), new PassagePoint('m2', 1, 7), 50n, 2n, 4n); }
 test('BA specified: passage pages retain exact pins and reject unverified formats, inverted extents and oversized pages', () => {
-  const page = new PassagesResult(view, PassageFormat.ContiguousProblems, [passage()], 1n, 0);
+  const page = new PassagesResult(view, PassageFormat.ContextAwareProblems, [passage()], 1n, 0);
   assert.equal(validatePassages(page, view, 0), page);
   for (const invalid of [page.with({ view: new ContentView(2, ID) }), page.with({ offset: 40 }), page.with({ passages: Array.from({ length: 41 }, passage), total: 41n }), page.with({ format: 'Unknown' as PassageFormat }), page.with({ passages: [passage().with({ end: new PassagePoint('m1', 0, 0) })] })]) assert.throws(() => validatePassages(invalid, view, 0));
-  for (const format of [PassageFormat.LegacyAnnotations, PassageFormat.Unindexed]) assert.equal(validatePassages(new PassagesResult(view, format, [], 0n, 0), view, 0).passages.length, 0);
+  for (const format of [PassageFormat.ContextAwareProblems, PassageFormat.Unindexed]) assert.equal(validatePassages(new PassagesResult(view, format, [], 0n, 0), view, 0).passages.length, 0);
+  for (const format of [PassageFormat.LegacyAnnotations, PassageFormat.ContiguousProblems]) assert.throws(() => validatePassages(new PassagesResult(view, format, [], 0n, 0), view, 0), /no longer supported/);
 });
 test('BA specified: bounded span pages cannot cross passage/view identity or fabricate empty ranges', () => {
   const page = new PassageSpansResult(view, OTHER, [new PassageSourceSpan('m1', 0, 29, 36)], 85n, 0);

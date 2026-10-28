@@ -98,7 +98,7 @@ private[chronicle] final class ReadSourceFixture(val config: Config,val db: Data
   def publish(request: IngestRequest,chunkText: String,summary: String,tags: List[String],spans: List[Span]): IngestReceipt = {
     val receipt=archive.ingest("a",request)
     val current=archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
-    assert(archive.publish(current,List(IndexedChunk(Chunk(UUID.randomUUID(),receipt.sessionId,chunkText,summary,tags,spans,0.0),ProblemPublicationFixtures.vector))))
+    StoredPublicationFixtures.publish(db,current,List(IndexedChunk(Chunk(UUID.randomUUID(),receipt.sessionId,chunkText,summary,tags,spans,0.0),ProblemPublicationFixtures.vector)))
     receipt
   }
 }

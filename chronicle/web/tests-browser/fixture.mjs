@@ -19,11 +19,11 @@ function fixturePage(rows, cursor, limit, key) {
 function leaseState(item) { return item.leaseExpiresAt === undefined ? 'unleased' : item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : 'expired'; }
 export class ChronicleFixture {
   user = new api.UserInfo('alice', 'alice', [api.Scope.Read, api.Scope.Raw]);
-  version = new api.VersionInfo('1.5.0', '1.0.0', ['1.5.0', '1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']);
+  version = new api.VersionInfo('1.7.0', '1.0.0', ['1.7.0', '1.6.0', '1.5.0', '1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']);
   sockets = []; calls = []; requests = []; receipts = new Map(); tokens = []; staticTokens = []; collectors = []; collectionDenied = false;
   groups = [new api.GroupInfo(ID.group, 'Systems workshop', 'alice', ['alice', 'bob']), new api.GroupInfo(ID.otherGroup, 'Research circle', 'bob', ['bob', 'alice'])];
   invitations = [new api.InviteInfo(ID.invitation, ID.otherGroup, 'alice', '2030-01-01T00:00:00Z')];
-  jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined)];
+  jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined, undefined)];
   archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchive = false; holdArchiveCursor = false; pendingArchive = [];
   activityJobs = undefined; activityCollectors = undefined; collectorExpressions = new Map(); jobExpressions = new Map(); activityFailure = null;
   holdSessions = false; sessionHeadSnapshot = undefined; pendingSessions = [];
@@ -36,7 +36,7 @@ export class ChronicleFixture {
   source = new api.SourceIdentity('synthetic-collector', 'native', api.SourceFormat.Pi, 'synthetic-session', undefined);
   viewAt(revision) { return new api.ContentView(revision, `00000000-0000-4000-8000-${String(5000 + revision).padStart(12, '0')}`); }
   get view() { return this.viewAt(this.publishedRevision); }
-  get publishedFormat() { return api.PassageFormat.LegacyAnnotations; }
+  get publishedFormat() { return api.PassageFormat.ContextAwareProblems; }
   sessionAt(view) { return new api.SessionInfo(view, ID.session, 'alice', this.headRevision, this.publishedRevision, this.metadata, this.source, api.Completion.Quiescent, false); }
   get session() { return this.sessionAt(this.view); }
   messagesAt(revision) { const messages = [new api.Message('m1', undefined, 'user', 'Can we preserve the original 猫🦄 source while the index catches up?', '2026-10-23T09:30:00Z', 0), new api.Message('m2', 'm1', 'assistant', 'Keep immutable source revisions. Publish annotations atomically. A quiescent snapshot does not assert that the process has ended.\n\n<script>alert("untrusted transcript")</script>', '2026-10-23T09:31:00Z', 1), ...Array.from({length: this.messageCount - 2}, (_, i) => new api.Message(`m${i + 3}`, 'm2', i % 2 ? 'tool' : 'assistant', `Synthetic source message ${i + 3}. Literal archived text, never executed.`, undefined, i + 2))];
@@ -49,6 +49,10 @@ export class ChronicleFixture {
     const chunks = [new api.Chunk(ID.chunk, ID.session, messages[0].text, 'Keep original source independent from publication.', ['source-fidelity'], [new api.Span('m1', 29, 36)], 0.93), new api.Chunk('00000000-0000-4000-8000-000000000008', ID.session, 'Late source page', 'A passage on a later bounded source page.', ['pagination'], [new api.Span(this.lateMessageId, 0, 9)], 0.8)];
     for (let index = chunks.length; index < this.annotationCount; index++) chunks.push(new api.Chunk(`00000000-0000-4000-8000-${String(index + 100).padStart(12, '0')}`, ID.session, messages[Number(this.lateMessageId.slice(1)) - 1].text, index === 164 ? 'Winning passage beyond the first hundred.' : `Annotated passage ${index + 1}.`, ['pagination'], [new api.Span(this.lateMessageId, 0, 9)], index === 164 ? 0.99 : 0.5));
     return chunks;
+  }
+  problemsAt(view) {
+    const messages = this.messagesAt(view.revision);
+    return this.chunksAt(view).map((item, ordinal) => { const first = item.spans[0], last = item.spans.at(-1); return new api.PassageInfo(item.id, ordinal, item.summary, item.tags, new api.PassagePoint(first.messageId, messages.findIndex(message => message.id === first.messageId), first.start), new api.PassagePoint(last.messageId, messages.findIndex(message => message.id === last.messageId), last.end), BigInt(item.spans.reduce((total, span) => total + span.end - span.start, 0)), BigInt(item.spans.length), 1n); });
   }
   get chunks() { return this.chunksAt(this.view); }
   get hit() { return new api.SearchHit(this.session, this.winnerBeyondFirstPage ? [this.chunks[164]] : this.chunks.slice(0, 2), .93); }
@@ -93,7 +97,7 @@ export class ChronicleFixture {
     const revision = index % 3 === 0 ? this.headRevision - 1 : this.headRevision, profile = index % 5 === 0 ? 'obsolete-profile' : this.targetProfile;
     const classification = revision === this.headRevision ? profile === this.targetProfile ? api.ActivityJobClass.Current : api.ActivityJobClass.ObsoleteProfile : profile === this.targetProfile ? api.ActivityJobClass.SupersededRevision : api.ActivityJobClass.SupersededRevisionAndProfile;
     const row = this.archiveAt(index), states = [api.JobState.Complete, api.JobState.Failed, api.JobState.Queued, api.JobState.Running], state = states[index % states.length];
-    const job = new api.JobInfo(`00000000-0000-4000-8000-${String(90000 + index).padStart(12, '0')}`, row.head.id, revision, state, index % 7 + 1, state === api.JobState.Failed ? 'synthetic-failure' : undefined, index, index % 4 === 0 ? undefined : index + 10);
+    const job = new api.JobInfo(`00000000-0000-4000-8000-${String(90000 + index).padStart(12, '0')}`, row.head.id, revision, state, index % 7 + 1, state === api.JobState.Failed ? 'synthetic-failure' : undefined, index, index % 4 === 0 ? undefined : index + 10, undefined);
     const session = this.jobSession(job).with({ metadata: this.jobSession(job).metadata.with({ title: `${revision === this.headRevision ? 'Current' : 'Historical'} metadata ${String(index).padStart(3, '0')}`, project: `project-${index % 7}` }) });
     return new api.ActivityJob(job, profile, classification, state === api.JobState.Running ? index % 2 === 0 ? '2030-01-01T00:00:00Z' : '2020-01-01T00:00:00Z' : undefined, state === api.JobState.Running && index % 2 === 0, classification === api.ActivityJobClass.Current && state === api.JobState.Failed, `collector-${String(index % 8).padStart(3, '0')}`, session, index % 11 === 0 ? undefined : new Date(Date.parse('2026-10-23T09:31:00Z') - Math.floor(index / 2) * 60000).toISOString());
   }
@@ -191,7 +195,8 @@ export class ChronicleFixture {
         if (operation instanceof api.Operation_Whoami) { send(new api.Result_Whoami(this.user)); return; }
         if (this.goal50Operation !== undefined && this.goal50Operation(operation, envelope, send, entry)) return;
         if (operation instanceof api.Operation_ExpressionHints) { const hash = createHash('sha256').update(JSON.stringify(operation.query.toJSON())).digest('hex'); send(new api.Result_ExpressionHints(new api.ExpressionHintsResult(hash, '2026-10-26T12:00:00Z', operation.query.caretUtf16, operation.query.caretUtf16, [], false))); return; }
-        if (operation instanceof api.Operation_GetPassages) { send(new api.Result_Passages(new api.PassagesResult(operation.view, operation.view.generationId === undefined ? api.PassageFormat.Unindexed : api.PassageFormat.LegacyAnnotations, [], 0n, operation.offset))); return; }
+        if (operation instanceof api.Operation_GetPassages) { const view = this.chunksViewOverride ?? operation.view, problems = this.problemsAt(view); send(new api.Result_Passages(new api.PassagesResult(view, view.generationId === undefined ? api.PassageFormat.Unindexed : api.PassageFormat.ContextAwareProblems, problems.slice(operation.offset, operation.offset + operation.limit), BigInt(problems.length), operation.offset))); return; }
+        if (operation instanceof api.Operation_GetPassageSpans) { const item = this.chunksAt(operation.view).find(item => item.id === operation.passageId), messages = this.messagesAt(operation.view.revision), spans = item === undefined ? [] : item.spans.map(span => new api.PassageSourceSpan(span.messageId, messages.findIndex(message => message.id === span.messageId), span.start, span.end)); send(new api.Result_PassageSpans(new api.PassageSpansResult(operation.view, operation.passageId, spans.slice(operation.offset, operation.offset + operation.limit), BigInt(spans.length), operation.offset))); return; }
 
         if (operation instanceof api.Operation_Archive) {
           this.searchCount++;

@@ -23,7 +23,7 @@ class ProblemPassageHttpTest extends ProblemPassageContract {
     assert(payload.noSpaces.getBytes(UTF_8).length<=maximumRequestBytes)
     val format=payload.hcursor.downField("response_format")
     assertEquals(format.get[String]("type").toOption,Some("json_schema"))
-    assertEquals(format.downField("json_schema").get[String]("name").toOption,Some("contiguous_problem_passages"))
+    assertEquals(format.downField("json_schema").get[String]("name").toOption,Some("problem_context_coverage"))
     assertEquals(format.downField("json_schema").get[Boolean]("strict").toOption,Some(true))
     assertEquals(format.downField("json_schema").downField("schema").get[Boolean]("additionalProperties").toOption,Some(false))
     val messages=payload.hcursor.get[Vector[Json]]("messages").toOption.get
@@ -61,14 +61,15 @@ class ProblemPassageHttpTest extends ProblemPassageContract {
     new OpenAIProblemPassageAnnotator(ModelFixtures.http(Client.fromHttpApp(app),config),config).annotate("a",window,None).attempt.unsafeRunSync()
   }
 
-  test("BG: strict passage schema remains distinct from unchanged legacy AnnotationPartition") {
+  test("BG: strict coverage schema requires Problem or Context without invented context annotations") {
     val value=window
     val payload=ProblemPassageHttp.request(config.annotation,value,None)
     inspect(payload)
     assertEquals(payload.hcursor.downField("response_format").focus,Some(responseFormat(value)))
-    assertNotEquals(payload.hcursor.downField("response_format").focus,Some(AnnotationPartition.responseFormat(2)))
+    val branches=responseFormat(value).hcursor.downField("json_schema").downField("schema").downField("properties").downField("parts").downField("items").downField("anyOf")
+    assertEquals(branches.downN(1).get[List[String]]("required").toOption,Some(List("kind","start","end")))
     assertEquals(ModelHttp.transportTimeout(config),900.seconds)
-    val point=responseFormat(value).hcursor.downField("json_schema").downField("schema").downField("properties").downField("parts").downField("items").downField("properties").downField("start")
+    val point=responseFormat(value).hcursor.downField("json_schema").downField("schema").downField("properties").downField("parts").downField("items").downField("anyOf").downN(0).downField("properties").downField("start")
     assertEquals(point.get[Boolean]("additionalProperties").toOption,Some(false))
     assertEquals(point.get[List[String]]("required").toOption,Some(List("fragmentIndex","scalarOffset")))
     assertEquals(point.downField("properties").downField("fragmentIndex").get[Int]("maximum").toOption,Some(value.fragments.size))

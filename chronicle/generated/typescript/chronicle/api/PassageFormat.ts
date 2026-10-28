@@ -3,13 +3,15 @@ import {BaboonCodecContext, BaboonDecoderFailure, Lazy} from '../../BaboonShared
 export enum PassageFormat {
     Unindexed = "Unindexed",
     LegacyAnnotations = "LegacyAnnotations",
-    ContiguousProblems = "ContiguousProblems"
+    ContiguousProblems = "ContiguousProblems",
+    ContextAwareProblems = "ContextAwareProblems"
 }
 
 export const PassageFormat_values: ReadonlyArray<PassageFormat> = [
     PassageFormat.Unindexed,
     PassageFormat.LegacyAnnotations,
-    PassageFormat.ContiguousProblems
+    PassageFormat.ContiguousProblems,
+    PassageFormat.ContextAwareProblems
 ] as const;
 
 export function PassageFormat_parse(s: string): PassageFormat {
@@ -36,7 +38,7 @@ export class PassageFormat_JsonCodec {
         return PassageFormat_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return PassageFormat_JsonCodec.BaboonDomainVersion
     }

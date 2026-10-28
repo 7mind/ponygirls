@@ -82,6 +82,54 @@ class ArchiveIndexTest extends munit.FunSuite {
     assertEquals(count("mode:lexical (user:b OR needlealpha)"),1L)
     assertEquals(browse(index,"a",query("user:a",ArchiveSort.Title,SortDirection.Asc,None,100)).rows.head.head.id,visible.sessionId)
   }}
+  test("BG GoodCommunication specified: agent predicates partition visible HEADs by identity, including absent and null subagent IDs") { database { (config,db,archive,index) =>
+    def ingest(owner: String,subagent: Option[String],title: String,format: SourceFormat) = {
+      val base=snapshot(List("agent needle"))
+      val raw=Json.obj("parentSession"->Json.fromString("parent"),"title"->Json.fromString(title)).noSpaces+"\n"
+      archive.ingest(owner,base.copy(source=base.source.copy(format=format,subagentId=subagent),metadata=base.metadata.copy(title=title),files=List(RawFile("source.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw)))
+    }
+    val missing=ingest("a",None,"subagent worker",SourceFormat.Claude)
+    val main=ingest("a",None,"subagent helper",SourceFormat.Pi)
+    val child=ingest("a",Some("child"),"main session",SourceFormat.Codex)
+    ingest("b",Some("private-child"),"main private",SourceFormat.Pi)
+    // Missing-key SQL semantics are tested without inventing a browseable malformed wire record.
+    db.transaction { c =>
+      val sql=AgentKind.sql("source",AgentKind.Main)
+      val classified=Sql.one(c,s"SELECT $sql FROM (SELECT source-'subagentId' AS source FROM ch_revision_info WHERE session_id=?) candidate",missing.sessionId)(_.getBoolean(1)).get
+      assert(classified)
+    }
+    def ids(expression: String): Set[UUID] = all(index,expression,ArchiveSort.Title,SortDirection.Asc,1).map(_.head.id).toSet
+    assertEquals(ids("agent:MAIN"),Set(missing.sessionId,main.sessionId))
+    assertEquals(ids("agent:subagent"),Set(child.sessionId))
+    assertEquals(ids("NOT agent:main"),ids("agent:subagent"))
+    assertEquals(ids("NOT agent:subagent"),ids("agent:main"))
+    assertEquals(ids("agent:main AND agent:subagent"),Set.empty[UUID])
+    assertEquals(ids("agent:main OR agent:subagent"),Set(missing.sessionId,main.sessionId,child.sessionId))
+    assertEquals(ids("mode:lexical agent:subagent needle"),Set(child.sessionId))
+    assertEquals(ids("agent:main format:claude"),Set(missing.sessionId))
+  }}
+  test("BG GoodCommunication specified: recorded yolo profiles match exact authorized root claims without relabeling archives") { database { (config,db,archive,index) =>
+    RecordedYoloProfileTest.cases.filterNot(_.rootId.contains('\u0000')).foreach { fixture =>
+      db.transaction { c =>
+        val source=io.circe.Json.obj("discoveryRootId"->io.circe.Json.fromString(fixture.rootId))
+        val actual=Sql.one(c,s"SELECT ${RecordedYoloProfile.sql("source")} FROM (SELECT ?::jsonb AS source) candidate",source.noSpaces)(r => Option(r.getString(1))).get
+        assertEquals(actual,fixture.profile,fixture.rootId)
+      }
+    }
+    def ingest(owner: String,root: String) = {
+      val base=snapshot(List("profile needle"))
+      archive.ingest(owner,base.copy(source=base.source.copy(discoveryRootId=root),metadata=base.metadata.copy(title="yolo:Foo",tags=List("yolo-profile:Foo"))))
+    }
+    val upper=ingest("a","yolo:Foo"); val lower=ingest("a","yolo:foo"); val native=ingest("a","native")
+    ingest("b","yolo:Foo")
+    def ids(expression: String): Set[UUID] = all(index,expression,ArchiveSort.Title,SortDirection.Asc,1).map(_.head.id).toSet
+    assertEquals(ids("yolo-profile:Foo"),Set(upper.sessionId))
+    assertEquals(ids("yolo-profile:foo"),Set(lower.sessionId))
+    assertEquals(ids("yolo-profile:FOO"),Set.empty[UUID])
+    assertEquals(ids("NOT (yolo-profile:Foo OR yolo-profile:foo)"),Set(native.sessionId))
+    assertEquals(ids("mode:lexical yolo-profile:Foo needle"),Set(upper.sessionId))
+    assertEquals(ids("user:b yolo-profile:Foo"),Set.empty[UUID])
+  }}
   test("BG GoodCommunication specified: every global header sort pages with stable UUID ties and nulls last") { database { (config,db,archive,index) =>
     (0 until 7).foreach { number =>
       val base=snapshot(List.fill(number+1)("message"))
@@ -207,7 +255,7 @@ class ArchiveIndexTest extends munit.FunSuite {
     val semantic=browse(index,"a",query("mode:semantic unrelated",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)).rows.head
     assertEquals(semantic.head.revision,2); assertEquals(semantic.head.metadata,next.metadata)
     assertEquals(semantic.head.view,ContentView(2,None)); assertEquals(semantic.publishedView,Some(published)); assertEquals(semantic.matchedView,Some(published))
-    assertEquals(Wire.encode(ArchiveRow.codecJson,semantic).hcursor.get[Option[String]]("publishedFormat"),Right(Some("LegacyAnnotations")))
+    assertEquals(Wire.encode(ArchiveRow.codecJson,semantic).hcursor.get[Option[String]]("publishedFormat"),Right(Some("ContextAwareProblems")))
     assert(semantic.tags.contains("annotation-work"))
     val hybrid=browse(index,"a",query("successor",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)).rows.head
     assertEquals(hybrid.matchedView,Some(ContentView(2,None)))
@@ -234,7 +282,12 @@ class ArchiveIndexTest extends munit.FunSuite {
   }}
   test("Perf GoodCommunication: empty metadata projection does not touch100MiB raw snapshot or message payloads") { database { (config,db,archive,index) =>
     val out=archive.ingest("a",snapshot(List("tiny visible message")))
-    db.transaction(c => Sql.exec(c,"UPDATE ch_revisions SET snapshot=jsonb_set(snapshot,'{files,0,content}',to_jsonb(repeat('r',100*1024*1024))) WHERE session_id=?",out.sessionId))
+    // Explicitly poison only the owned raw fixture, retaining the thin projected read surface.
+    db.transaction { c =>
+      Sql.exec(c,"ALTER TABLE ch_revisions DISABLE TRIGGER ch_immutable_revision")
+      Sql.exec(c,"UPDATE ch_revisions SET snapshot=jsonb_set(snapshot,'{files,0,content}',to_jsonb(repeat('r',100*1024*1024))) WHERE session_id=?",out.sessionId)
+      Sql.exec(c,"ALTER TABLE ch_revisions ENABLE TRIGGER ch_immutable_revision")
+    }
     val q=query("",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)
     val statement=index.statement("a",q,ArchiveExpression.parse(""),Nil,None)
     val plan=db.transaction(c => Sql.rows(c,"EXPLAIN (ANALYZE,BUFFERS) "+statement.text,statement.args*)(_.getString(1)).mkString("\n"))

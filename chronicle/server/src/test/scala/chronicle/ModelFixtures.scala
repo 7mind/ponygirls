@@ -18,11 +18,8 @@ object ModelFixtures {
     ModelTelemetry.make(clock,config.users.map(_.id).toSet).map(store =>
       new ModelUsageView(store,chronicle.api.IndexingSettings(capacity.annotationSessions,capacity.embeddingRequests,capacity.embeddingBatchSize))).unsafeRunSync()
   }
-  def legacyWorker(archive: SessionArchive,annotator: Annotator,embedder: Embedder,config: Config,logger: logstage.IzLogger): Worker = {
-    val forbidden=new ProblemPassageAnnotator {
-      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(new AssertionError("legacy worker invoked passage annotator"))
-    }
+  def worker(archive: SessionArchive,annotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,logger: logstage.IzLogger): Worker = {
     val admission=ModelAdmission.make(config.indexing).unsafeRunSync()
-    new Worker(archive,annotator,forbidden,embedder,config,IndexProfileCatalog.legacyOnly(config),admission,logger)
+    new Worker(archive,annotator,embedder,config,IndexProfileCatalog.current(config),admission,logger)
   }
 }

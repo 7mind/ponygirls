@@ -18,7 +18,7 @@ export function TokenSource_parse(s: string): TokenSource {
     return found;
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.5.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
 export class TokenSource_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: TokenSource): unknown {
         if (this !== TokenSource_JsonCodec.lazyInstance.value) {

@@ -40,7 +40,7 @@ export class CollectorPhase_JsonCodec {
         return CollectorPhase_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return CollectorPhase_JsonCodec.BaboonDomainVersion
     }

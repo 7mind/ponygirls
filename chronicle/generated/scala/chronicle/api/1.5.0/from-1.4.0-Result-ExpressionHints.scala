@@ -1,0 +1,20 @@
+import _root_.baboon.runtime.shared.{AbstractBaboonConversions, AbstractConversion}
+
+package chronicle.api.v1_5_0 {
+  @scala.annotation.nowarn("cat=deprecation") object Convert__Result__ExpressionHints__From__1_4_0
+    extends AbstractConversion[chronicle.api.v1_4_0.Result.ExpressionHints, Result.ExpressionHints] {
+      override def doConvert[C](
+        context: Option[C],
+        conversions: AbstractBaboonConversions,
+        _from: chronicle.api.v1_4_0.Result.ExpressionHints
+      ): Result.ExpressionHints = {
+        val result: ExpressionHintsResult = conversions.convertWithContext[C, chronicle.api.v1_4_0.ExpressionHintsResult, ExpressionHintsResult](context, _from.result)
+        Result.ExpressionHints(
+                result
+             )
+      }
+      override def versionFrom: String = "1.4.0"
+      override def versionTo: String = "1.5.0"
+      override def typeId: String = "chronicle.api/[chronicle.api/:#Result]#ExpressionHints"
+  }
+}

@@ -21,9 +21,8 @@ object ProblemPublicationFixtures {
   def oneProblem(claim: Claim): ProblemsPublication = build(claim,(window,previous) => Decision(Vector(Part(Point(0,0),window.terminal,previous.nonEmpty,
     if(previous.isEmpty) "initial synthetic goal" else "updated synthetic goal",List("synthetic")))))
   def topics(claim: Claim): ProblemsPublication = build(claim,(window,previous) => ProblemPassageFixtures.plan(window.fragments.map(_.text),previous.flatMap(_.tags.headOption)))
-  def publish(archive: SessionArchive,claim: Claim,catalog: IndexProfileCatalog): Boolean = catalog.resolve(claim.profile).policy match {
-    case IndexPolicy.LegacyV4 => archive.publish(claim,Nil)
-    case IndexPolicy.ContiguousPassagesV1 => archive.publishProblems(claim,oneProblem(claim))
+  def publish(archive: SessionArchive,claim: Claim,catalog: IndexProfileCatalog): Boolean = {
+    catalog.resolve(claim.profile); archive.publishProblems(claim,oneProblem(claim))
   }
   def request(texts: List[String]): IngestRequest = {
     val base=Fixtures.snapshot()
@@ -36,7 +35,10 @@ object ProblemPublicationFixtures {
 
 class ProblemsPublicationTest extends munit.FunSuite {
   import ProblemPublicationFixtures.*
-  private def claim(request: IngestRequest): Claim = Claim(UUID.randomUUID(),UUID.randomUUID(),1,1,"synthetic",SnapshotProjection(request),"a",0)
+  private def claim(request: IngestRequest): Claim = {
+    val id=UUID.randomUUID(); val snapshot=SnapshotProjection(request)
+    Claim(UUID.randomUUID(),id,1,1,"synthetic",snapshot,"a",0,UUID.randomUUID(),RevisionBinding.captured(UUID.randomUUID(),id,1,snapshot))
+  }
   test("BG: builder requires finish and matching indexed pieces, preserves embeddings and finalizes annotations separately") {
     val c=claim(request(List("A"*300000)))
     val publication=oneProblem(c)

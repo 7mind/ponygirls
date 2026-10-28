@@ -1,0 +1,126 @@
+[
+  {
+    "rootId": "yolo:a",
+    "profile": "a"
+  },
+  {
+    "rootId": "yolo:Foo",
+    "profile": "Foo"
+  },
+  {
+    "rootId": "yolo:foo",
+    "profile": "foo"
+  },
+  {
+    "rootId": "yolo:named_1.2",
+    "profile": "named_1.2"
+  },
+  {
+    "rootId": "yolo:_",
+    "profile": "_"
+  },
+  {
+    "rootId": "yolo:-",
+    "profile": "-"
+  },
+  {
+    "rootId": "yolo:.a",
+    "profile": ".a"
+  },
+  {
+    "rootId": "yolo:..a",
+    "profile": "..a"
+  },
+  {
+    "rootId": "yolo:a.",
+    "profile": "a."
+  },
+  {
+    "rootId": "yolo:a..",
+    "profile": "a.."
+  },
+  {
+    "rootId": "yolo:a_b-c.d",
+    "profile": "a_b-c.d"
+  },
+  {
+    "rootId": "native",
+    "profile": null
+  },
+  {
+    "rootId": "default",
+    "profile": null
+  },
+  {
+    "rootId": "fixture",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:.",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:..",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:a:b",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:a/b",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:a\\b",
+    "profile": null
+  },
+  {
+    "rootId": " yolo:a",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:a ",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:a\n",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:a\r\n",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:a\t",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:a\u0000",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:é",
+    "profile": null
+  },
+  {
+    "rootId": "YOLO:a",
+    "profile": null
+  },
+  {
+    "rootId": "prefixyolo:a",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:a/yolo:b",
+    "profile": null
+  },
+  {
+    "rootId": "yolo:\na",
+    "profile": null
+  }
+]

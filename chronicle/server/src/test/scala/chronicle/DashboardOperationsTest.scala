@@ -34,7 +34,7 @@ final class DashboardOperationsTest extends munit.FunSuite {
   private def run(c: Context,identity: Identity,operation: Operation): Result =
     c.app.operationVersion(identity,ClientEnvelope(UUID.randomUUID(),operation),"1.4.0").unsafeRunSync()
 
-  test("Blackbox-GoodCommunication: authorized completion and usage use the current 1.4 application without inference") { database { c =>
+  test("Blackbox-GoodCommunication: authorized completion and usage remain available through retained 1.4 without inference") { database { c =>
     c.archive.ingest("a",Fixtures.snapshot())
     val hints=run(c,c.owner,Operation.ExpressionHints(ExpressionHintQuery(ExpressionHintTarget.Archive(),"proj",4,20))).asInstanceOf[Result.ExpressionHints].result
     assert(hints.hints.exists(_.insertText=="project:"))
@@ -49,7 +49,7 @@ final class DashboardOperationsTest extends munit.FunSuite {
     val unindexed=run(c,c.owner,Operation.GetPassages(source.sessionId,sourceView,0,40)).asInstanceOf[Result.Passages].result
     assertEquals(unindexed,PassagesResult(sourceView,PassageFormat.Unindexed,Nil,0L,0))
     val claim=c.archive.claim(c.archive.knownProfiles,ClaimScope.Owner("a"),300).get
-    assert(c.archive.publish(claim,Nil))
+    StoredPublicationFixtures.publish(c.db,claim,Nil)
     val legacy=c.archive.session("a",source.sessionId).view
     assertEquals(run(c,c.owner,Operation.GetPassages(source.sessionId,legacy,0,40)),Result.Passages(PassagesResult(legacy,PassageFormat.LegacyAnnotations,Nil,0L,0)))
     assertEquals(run(c,c.owner,Operation.GetPassages(source.sessionId,sourceView,0,40)),Result.Passages(unindexed))

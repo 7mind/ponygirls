@@ -73,6 +73,13 @@ abstract class ExpressionHintsContract extends munit.FunSuite {
   def fixture(seed: Seed)(f: HintFixture => Unit): Unit
   private def query(target: ExpressionHintTarget,expression: String,limit: Int): ExpressionHintQuery = ExpressionHintQuery(target,expression,expression.length,limit)
   private def labels(f: HintFixture,reader: String,target: ExpressionHintTarget,expression: String): List[String] = f.index.hints(reader,query(target,expression,20)).hints.map(_.label)
+  test("Blackbox Atomic/GoodCommunication specified: agent hints are fixed independently of corpus, scope and other clauses") { fixture(seed.copy(heads=Nil,jobs=Nil,reports=Nil)) { f =>
+    List(archive,jobs(ActivityJobScope.Current,None),jobs(ActivityJobScope.Historical,Some("missing"))).foreach { target =>
+      assertEquals(labels(f,"a",target,"agent:"),List("main","subagent"))
+      assertEquals(labels(f,"a",target,"project:missing AND agent:SU"),List("subagent"))
+    }
+    assertEquals(labels(f,"a",collectors,"agent:"),Nil)
+  }}
   test("Blackbox Atomic/GoodCommunication specified: Archive uses authorized live HEAD metadata plus the published tag union, independent of clauses") { fixture(seed) { f =>
     assertEquals(labels(f,"a",archive,"project:"),List("current-project","literal-percent","orphan-project","wildcard-neighbor"))
     assertEquals(labels(f,"a",archive,"tag:"),List("head-tag","published-tag"))
@@ -86,6 +93,28 @@ abstract class ExpressionHintsContract extends munit.FunSuite {
     assert(!labels(f,"a",archive,"project:").contains("current-project"))
     assertEquals(labels(f,"a",archive,"tag:"),List("head-tag","published-tag"))
   }}
+  test("Blackbox Atomic/GoodCommunication specified: recorded yolo profile hints use authorized revision claims, never tags or policy hashes") {
+    val varied=seed.copy(heads=seed.heads.map(h => h.copy(revisions=h.revisions.map { r =>
+      val root=if(h.id==id(1)) { if(r.number==1) "yolo:Historical" else "yolo:Foo" }
+        else if(h.id==id(2)) "yolo:foo" else if(h.id==id(5)) "yolo:Private" else "yolo:invalid\n"
+      r.copy(source=r.source.copy(discoveryRootId=root),metadata=r.metadata.copy(tags=r.metadata.tags:+"yolo-profile:Pretend"))
+    })))
+    fixture(varied) { f =>
+      val current=jobs(ActivityJobScope.Current,None); val historical=jobs(ActivityJobScope.Historical,None)
+      assertEquals(labels(f,"a",archive,"yolo-profile:"),List("Foo","foo"))
+      assertEquals(labels(f,"a",current,"yolo-profile:"),List("Foo","foo"))
+      assertEquals(labels(f,"a",historical,"yolo-profile:"),List("Foo","Historical"))
+      assertEquals(labels(f,"a",current,"profile:"),List(target))
+      assertEquals(labels(f,"a",collectors,"yolo-profile:"),Nil)
+      f.sharing("a","b",true)
+      assertEquals(labels(f,"a",archive,"yolo-profile:P"),List("Private"))
+      assertEquals(labels(f,"a",current,"yolo-profile:P"),Nil)
+      f.sharing("a","b",false)
+      assertEquals(labels(f,"a",archive,"yolo-profile:P"),Nil)
+      f.enabled("a",false)
+      assertEquals(intercept[DomainError](labels(f,"a",archive,"yolo-profile:")).code,"unauthorized")
+    }
+  }
   test("Blackbox Atomic/GoodCommunication specified: sharing, revocation, restoration, owner disable and purge are re-evaluated without cached values") { fixture(seed) { f =>
     f.sharing("a","b",true)
     assert(labels(f,"a",archive,"project:").contains("private-b"))
@@ -202,6 +231,7 @@ final class ExpressionHintsDummyTest extends ExpressionHintsContract {
         case HintField.Branch => revision.metadata.gitBranch.toList
         case HintField.Producer => List(revision.metadata.producer)
         case HintField.Model => revision.metadata.model.toList
+        case HintField.YoloProfile => RecordedYoloProfile.fromRootId(revision.source.discoveryRootId).toList
         case HintField.Tag | HintField.Tags => revision.metadata.tags++tags
         case HintField.After | HintField.Before => List(revision.time)
         case _ => throw new AssertionError("unexpected metadata hint field")

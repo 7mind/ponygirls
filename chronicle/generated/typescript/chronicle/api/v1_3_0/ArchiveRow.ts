@@ -97,7 +97,7 @@ export class ArchiveRow implements BaboonGenerated {
     public baboonSameInVersions() {
         return ArchiveRow.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "prefix-compact" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "prefix-compact", "1.6.0": "prefix-compact" }
     public baboonForwardReadable() {
         return ArchiveRow.BaboonForwardReadable
     }
@@ -110,7 +110,7 @@ export class ArchiveRow implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.5.0 */
+/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.7.0 */
 export class ArchiveRow_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ArchiveRow): unknown {
         if (this !== ArchiveRow_JsonCodec.lazyInstance.value) {

@@ -1,6 +1,6 @@
 { lib, stdenv, callPackage, buildNpmPackage, fetchNpmDeps, nodejs_24, playwright-driver, makeFontsConf, dejavu_fonts }:
 let
-  src = callPackage ./source.nix { };
+  src = (callPackage ./source.nix { }).web;
   hashes = import ./hashes.nix;
 in
 buildNpmPackage {

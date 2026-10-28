@@ -74,7 +74,7 @@ export class ActivityCollectorSort_JsonCodec {
         return ActivityCollectorSort_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return ActivityCollectorSort_JsonCodec.BaboonDomainVersion
     }

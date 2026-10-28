@@ -16,13 +16,14 @@ private[chronicle] trait ExpressionHintStore {
 }
 
 private[chronicle] object ExpressionHintVocabulary {
-  private val archive=List(HintField.After,HintField.Before,HintField.Branch,HintField.Format,HintField.Mode,HintField.Model,HintField.Producer,HintField.Project,HintField.Status,HintField.Tag,HintField.Tags,HintField.User)
+  private val archive=List(HintField.After,HintField.Agent,HintField.Before,HintField.Branch,HintField.Format,HintField.Mode,HintField.Model,HintField.Producer,HintField.Project,HintField.Status,HintField.Tag,HintField.Tags,HintField.User,HintField.YoloProfile)
   def fields(target: ExpressionHintTarget): List[HintField] = target match {
     case _: ExpressionHintTarget.Archive => archive
     case _: ExpressionHintTarget.ActivityCollectors => List(HintField.After,HintField.Before,HintField.Collector,HintField.Freshness,HintField.Phase)
     case _: ExpressionHintTarget.ActivityJobs => (archive.filterNot(_==HintField.Mode)++List(HintField.Classification,HintField.Collector,HintField.Lease,HintField.Profile,HintField.Reason)).sortBy(_.name)
   }
   def fixed(target: ExpressionHintTarget,field: HintField): Option[List[String]] = field match {
+    case HintField.Agent => Some(List("main","subagent"))
     case HintField.Mode => Some(List("hybrid","lexical","semantic"))
     case HintField.Format => Some(List("claude","codex","pi"))
     case HintField.Status => Some(List("complete","failed","queued","running")++(if(target.isInstanceOf[ExpressionHintTarget.Archive]) List("unscheduled") else Nil))
@@ -113,6 +114,7 @@ private[chronicle] final class PostgresExpressionHintStore(db: Database,archive:
       case HintField.Branch => "metadata->>'gitBranch'"
       case HintField.Producer => "metadata->>'producer'"
       case HintField.Model => "metadata->>'model'"
+      case HintField.YoloProfile => RecordedYoloProfile.sql("source")
       case HintField.After | HintField.Before => "last_timestamp"
       case HintField.Tag | HintField.Tags => "jsonb_array_elements_text(metadata->'tags')"
       case _ => throw DomainError("internal","unsupported archive hint field")
@@ -139,6 +141,7 @@ private[chronicle] final class PostgresExpressionHintStore(db: Database,archive:
           case HintField.Branch => "i.metadata->>'gitBranch'"
           case HintField.Producer => "i.metadata->>'producer'"
           case HintField.Model => "i.metadata->>'model'"
+          case HintField.YoloProfile => RecordedYoloProfile.sql("i.source")
           case HintField.Tag | HintField.Tags => "jsonb_array_elements_text(i.metadata->'tags')"
           case HintField.After | HintField.Before => "i.last_timestamp"
           case HintField.Collector => "j.collector_id"

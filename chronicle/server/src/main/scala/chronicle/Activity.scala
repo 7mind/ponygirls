@@ -103,7 +103,9 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
       case ArchivePredicate.Branch(value) => insensitive("j.metadata->>'gitBranch'",value)
       case ArchivePredicate.Producer(value) => insensitive("j.metadata->>'producer'",value)
       case ArchivePredicate.Model(value) => insensitive("j.metadata->>'model'",value)
+      case ArchivePredicate.YoloProfile(value) => ActivitySql(s"COALESCE((${RecordedYoloProfile.sql("j.source")}) COLLATE \"C\"=? COLLATE \"C\",false)",List(value))
       case ArchivePredicate.Format(value) => insensitive("j.source->>'format'",value.toString)
+      case ArchivePredicate.Agent(value) => ActivitySql(AgentKind.sql("j.source",value),Nil)
       case ArchivePredicate.Status(ArchiveStatus.Unscheduled) => throw DomainError("internal","unscheduled predicate reached job query")
       case ArchivePredicate.Status(value) => ActivitySql("j.state=?",List(value.toString))
       case ArchivePredicate.After(value) => time("j.last_timestamp_order",value,">=")
@@ -262,7 +264,7 @@ final class PostgresActivity(db: Database,clock: Clock) extends ActivityIndex {
             case (false,false) => ActivityJobClass.SupersededRevisionAndProfile
           }
           val lease=Option(r.getTimestamp("lease_until")).map(_.toInstant)
-          val job=JobInfo(id,r.getObject("session_id",classOf[UUID]),r.getInt("revision"),state,r.getInt("attempts"),Option(r.getString("error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue))
+          val job=JobInfo(id,r.getObject("session_id",classOf[UUID]),r.getInt("revision"),state,r.getInt("attempts"),Option(r.getString("error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue),Option(r.getString("failure_stage")).map(IndexingFailureStage.parse(_).getOrElse(throw DomainError("internal","invalid persisted failure stage"))))
           val indexed=Option(r.getObject("indexed_revision",classOf[java.lang.Integer])).map(_.intValue)
           val session=SessionInfo(ContentView(job.revision,None),job.sessionId,owner,r.getInt("head_revision"),indexed,Wire.decode(Metadata.codecJson,Sql.json(r,"metadata")),Wire.decode(SourceIdentity.codecJson,Sql.json(r,"source")),Completion.parse(r.getString("completion")).get,r.getBoolean("redacted"))
           (ActivityJob(job,r.getString("profile"),classification,lease.map(_.toString),state==JobState.Running && lease.exists(_.isAfter(now)),classification==ActivityJobClass.Current && state==JobState.Failed,r.getString("collector_id"),session,Option(r.getString("last_timestamp"))),Option(r.getString("sort_value")))

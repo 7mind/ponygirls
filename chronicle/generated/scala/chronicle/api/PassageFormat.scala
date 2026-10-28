@@ -8,12 +8,14 @@ package chronicle.api {
     case object Unindexed extends PassageFormat
     case object LegacyAnnotations extends PassageFormat
     case object ContiguousProblems extends PassageFormat
+    case object ContextAwareProblems extends PassageFormat
     
     def parse(s: String): Option[PassageFormat] = {
       s match {
         case "Unindexed" => Some(Unindexed)
         case "LegacyAnnotations" => Some(LegacyAnnotations)
         case "ContiguousProblems" => Some(ContiguousProblems)
+        case "ContextAwareProblems" => Some(ContextAwareProblems)
         case _ => None
       }
     }
@@ -21,7 +23,8 @@ package chronicle.api {
     def all: List[PassageFormat] = List(
       Unindexed,
       LegacyAnnotations,
-      ContiguousProblems
+      ContiguousProblems,
+      ContextAwareProblems
     ) 
   }
   
@@ -49,7 +52,7 @@ package chronicle.api {
       }
     }
   
-    def baboonDomainVersion: String = "1.5.0"
+    def baboonDomainVersion: String = "1.7.0"
     
     def baboonDomainIdentifier: String = "chronicle.api"
     

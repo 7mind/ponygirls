@@ -18,7 +18,7 @@ let
     endpoint = baseUrl;
     tokenFile = if cfg.collector.tokenFile == null then "" else toString cfg.collector.tokenFile;
     stateDir = cfg.collector.stateDirectory;
-    inherit (cfg.collector) trustedHTTP discoverNative discoverYolo roots exclusions redactions;
+    inherit (cfg.collector) trustedHTTP discoverNative discoverYolo excludeDefaultProfile excludedYoloProfiles roots exclusions redactions;
   } // cfg.collector.limits));
   collectorCommand = "${cfg.collector.package}/bin/chronicle-collector --config ${collectorConfig}";
 in
@@ -61,6 +61,17 @@ in
       };
       discoverNative = lib.mkOption { type = lib.types.bool; default = true; description = "Discover native Claude, Codex active/archived, and Pi/subagent stores."; };
       discoverYolo = lib.mkOption { type = lib.types.bool; default = true; description = "Reconcile all named yolo profile stores as profiles are added."; };
+      excludeDefaultProfile = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Exclude shared native/default-yolo storage. When true, admit only observed named yolo roots: ALL explicit/custom roots and unknown legacy pending origins are held, including named-looking IDs/paths. Reversible admission does not delete pending payloads; restart the collector after configuration changes.";
+      };
+      excludedYoloProfiles = lib.mkOption {
+        type = lib.types.listOf (lib.types.addCheck (lib.types.strMatching "[A-Za-z0-9._-]+") (name: name != "." && name != ".."));
+        default = [ ];
+        apply = names: lib.sort builtins.lessThan (lib.unique names);
+        description = "Exact case-sensitive named yolo profile exclusion set. Any nonempty set also holds ALL explicit/custom roots and unknown legacy origins because their discovery provenance cannot prove eligibility. A named folder called default is named, not native. Admission never infers origin from recorded IDs, paths, tags or prose; existing privacy-policy invalidation remains independent.";
+      };
       roots = lib.mkOption {
         type = lib.types.listOf (lib.types.submodule {
           options = {

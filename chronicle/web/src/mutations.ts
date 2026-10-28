@@ -8,12 +8,12 @@ export type MutationConnection = Pick<ChronicleConnection, 'request' | 'onInvali
 export function validateMutationResult(operation: Operation, result: Result, requestId: string): Result_Mutation | Result_Token | Result_RetryFailed | Result_OwnerReindexed {
   if (operation instanceof Operation_ApplyOwnerReindex) {
     const unverified = (message: string) => new RequestFailure(message, 'unverified-result', 'uncertain', requestId);
-    if (!(result instanceof Result_OwnerReindexed)) throw unverified('Unexpected owner reprocess response');
+    if (!(result instanceof Result_OwnerReindexed)) throw unverified('Unexpected archive rebuild response');
     if (result.result.requestId !== requestId) throw unverified('Receipt identity mismatch');
     if (result.result.targetProfile !== operation.targetProfile) throw unverified('Receipt target profile mismatch');
     const counts = [result.result.heads, result.result.queued, result.result.alreadyCurrent, result.result.invalidatedClaims];
-    // Live current-target claims can remain Running without being queued or already published.
-    if (counts.some(count => typeof count !== 'bigint' || count < 0n) || result.result.queued + result.result.alreadyCurrent > result.result.heads) throw unverified('Invalid owner reprocess result counts');
+    // Acceptance queues every captured HEAD. It is not evidence of publication.
+    if (counts.some(count => typeof count !== 'bigint' || count < 0n) || result.result.alreadyCurrent !== 0n || result.result.queued !== result.result.heads) throw unverified('Invalid archive rebuild acceptance counts');
     return result;
   }
   if (operation instanceof Operation_ApplyRetryFailed) {
@@ -101,7 +101,7 @@ export function useMutations(connection: MutationConnection, userId: string | nu
       if (bulk && (currentUser.current !== uncertain.owner || epoch.current !== requestEpoch)) return;
       if (bulk && cause instanceof RequestFailure && cause.code === 'conflict' && cause.outcome === 'failed') {
         // Only the owner-bound Receipt lookup proves rejection; a direct Apply conflict does not.
-        setUncertain(null); setMessage(`Receipt ${uncertain.id} confirms that this ${uncertain.operation instanceof Operation_ApplyOwnerReindex ? 'owner reprocess' : 'indexing retry'} was rejected. Request a fresh preview and explicitly confirm again before retrying.`);
+        setUncertain(null); setMessage(`Receipt ${uncertain.id} confirms that this ${uncertain.operation instanceof Operation_ApplyOwnerReindex ? 'archive rebuild' : 'indexing retry'} was rejected. Request a fresh preview and explicitly confirm again before retrying.`);
         return;
       }
       setErrorCode(cause instanceof RequestFailure ? cause.code : null);

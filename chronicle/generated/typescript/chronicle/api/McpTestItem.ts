@@ -4,11 +4,11 @@ import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 export type McpTestItem = McpTestItem_ToolCall | McpTestItem_ToolResult | McpTestItem_Response
 
 export const McpTestItem = {
-    BaboonDomainVersion: '1.5.0',
+    BaboonDomainVersion: '1.7.0',
     BaboonDomainIdentifier: 'chronicle.api',
     BaboonTypeIdentifier: 'chronicle.api/:#McpTestItem',
-    BaboonSameInVersions: ["1.4.0", "1.5.0"],
-    BaboonForwardReadable: { "1.5.0": "identical" } as { readonly [version: string]: string },
+    BaboonSameInVersions: ["1.4.0", "1.5.0", "1.6.0", "1.7.0"],
+    BaboonForwardReadable: { "1.7.0": "identical" } as { readonly [version: string]: string },
     BaboonMinReaderVersions: { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" } as { readonly [tier: string]: string },
     BaboonAdtTypeIdentifier: 'chronicle.api/:#McpTestItem',
     jsonCodec(): McpTestItem_JsonCodec {
@@ -78,7 +78,7 @@ export class McpTestItem_ToolCall implements BaboonAdtMemberMeta, BaboonGenerate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return McpTestItem_ToolCall.BaboonDomainVersion
     }
@@ -90,11 +90,11 @@ export class McpTestItem_ToolCall implements BaboonAdtMemberMeta, BaboonGenerate
     public baboonTypeIdentifier() {
         return McpTestItem_ToolCall.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0"]
     public baboonSameInVersions() {
         return McpTestItem_ToolCall.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.7.0": "identical" }
     public baboonForwardReadable() {
         return McpTestItem_ToolCall.BaboonForwardReadable
     }
@@ -141,7 +141,7 @@ export class McpTestItem_ToolCall_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return McpTestItem_ToolCall_JsonCodec.BaboonDomainVersion
     }
@@ -218,7 +218,7 @@ export class McpTestItem_ToolResult implements BaboonAdtMemberMeta, BaboonGenera
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return McpTestItem_ToolResult.BaboonDomainVersion
     }
@@ -230,11 +230,11 @@ export class McpTestItem_ToolResult implements BaboonAdtMemberMeta, BaboonGenera
     public baboonTypeIdentifier() {
         return McpTestItem_ToolResult.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0"]
     public baboonSameInVersions() {
         return McpTestItem_ToolResult.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.7.0": "identical" }
     public baboonForwardReadable() {
         return McpTestItem_ToolResult.BaboonForwardReadable
     }
@@ -279,7 +279,7 @@ export class McpTestItem_ToolResult_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return McpTestItem_ToolResult_JsonCodec.BaboonDomainVersion
     }
@@ -348,7 +348,7 @@ export class McpTestItem_Response implements BaboonAdtMemberMeta, BaboonGenerate
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return McpTestItem_Response.BaboonDomainVersion
     }
@@ -360,11 +360,11 @@ export class McpTestItem_Response implements BaboonAdtMemberMeta, BaboonGenerate
     public baboonTypeIdentifier() {
         return McpTestItem_Response.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0"]
     public baboonSameInVersions() {
         return McpTestItem_Response.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.7.0": "identical" }
     public baboonForwardReadable() {
         return McpTestItem_Response.BaboonForwardReadable
     }
@@ -407,7 +407,7 @@ export class McpTestItem_Response_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return McpTestItem_Response_JsonCodec.BaboonDomainVersion
     }
@@ -463,7 +463,7 @@ export class McpTestItem_JsonCodec {
         }
     }
 
-    public static readonly BaboonDomainVersion = '1.5.0'
+    public static readonly BaboonDomainVersion = '1.7.0'
     public baboonDomainVersion() {
         return McpTestItem_JsonCodec.BaboonDomainVersion
     }

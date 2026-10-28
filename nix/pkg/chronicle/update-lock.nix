@@ -1,7 +1,7 @@
 { lib, callPackage, writeShellApplication, writeShellScriptBin, coursier, python3, bash, coreutils, gnugrep, lockfileGenerator }:
 let
   tools = callPackage ./toolchain.nix { };
-  src = callPackage ./source.nix { };
+  src = (callPackage ./source.nix { }).development;
   coursierTool = coursier.override { jre = tools.graal; };
   sbtRunner = writeShellScriptBin "sbt" ''
     set -euo pipefail

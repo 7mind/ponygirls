@@ -58,11 +58,11 @@ export class McpToolDefinition implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return McpToolDefinition.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0"]
     public baboonSameInVersions() {
         return McpToolDefinition.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical", "1.5.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
     public baboonForwardReadable() {
         return McpToolDefinition.BaboonForwardReadable
     }
@@ -75,7 +75,7 @@ export class McpToolDefinition implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.5.0 */
+/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.7.0 */
 export class McpToolDefinition_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: McpToolDefinition): unknown {
         if (this !== McpToolDefinition_JsonCodec.lazyInstance.value) {

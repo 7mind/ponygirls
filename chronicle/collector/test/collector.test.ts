@@ -91,7 +91,7 @@ test('BG Pi subagent projection preserves pre-upgrade pending bytes and acknowle
     const legacy = JSON.parse(encodeSnapshot(requestId, identity, 0, parsed, 'session.jsonl')) as { metadata: { title: string; tags: string[] } };
     legacy.metadata.title = header.trimEnd(); legacy.metadata.tags = [];
     const payload = JSON.stringify(legacy), digest = policyDigest(config, runtime.identity);
-    spool.enqueue({ requestId, sourceKey: key, sourceDigest: hash(raw), payload, payloadDigest: hash(payload), expectedRevision: 0, policyDigest: digest, attempts: 0, nextAt: 0, status: 'pending', error: null });
+    spool.enqueue({ requestId, sourceKey: key, sourceDigest: hash(raw), payload, payloadDigest: hash(payload), expectedRevision: 0, policyDigest: digest, attempts: 0, nextAt: 0, status: 'pending', error: null }, { kind: 'unknown' });
     spool.close(); spool = new SqliteSpool(config.stateDir);
     const resumed = await collect(100); assert.equal(resumed.uploaded, 1); assert.equal(resumed.enqueued, 0);
     assert.deepEqual(ingester.payloads, [payload]); assert.equal(decode(ingester.payloads[0]!).metadata.title, header.trimEnd()); assert.deepEqual(decode(ingester.payloads[0]!).metadata.tags, []);

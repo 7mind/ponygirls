@@ -7,9 +7,18 @@ lazy val contracts = project.in(file("generated/.build")).settings(
   Compile / unmanagedSourceDirectories := Seq(baseDirectory.value.getParentFile / "scala"),
   libraryDependencies ++= Seq("io.circe" %% "circe-core" % "0.14.17", "io.circe" %% "circe-parser" % "0.14.17")
 )
+lazy val validationInventory = taskKey[File]("Write the discovered, unfiltered release test inventory")
 lazy val root = project.in(file(".")).dependsOn(contracts).settings(
   name := "chronicle-server",
+  // PostgreSQL suites truncate shared tables and mutate profile state.
   Test / parallelExecution := false,
+  Test / validationInventory := {
+    val names = (Test / definedTests).value.map(_.name).sorted
+    require(names.nonEmpty && names.distinct.size == names.size, "empty or duplicate release test inventory")
+    val output = baseDirectory.value / "target" / "validation-inventory.txt"
+    IO.writeLines(output, names)
+    output
+  },
   scalacOptions += "-Yretain-trees",
   Compile / unmanagedSourceDirectories ++= Seq(baseDirectory.value / "server/src/main/scala"),
   Test / unmanagedSourceDirectories += baseDirectory.value / "server/src/test/scala",

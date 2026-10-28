@@ -1,8 +1,21 @@
 package chronicle
 import chronicle.api.*
+// Historical test constructor names now seed the one current policy, never an old executor.
+final case class PassagePolicyIdentity(value: String)
+extension (factory: IndexProfileCatalog.type) {
+  def legacyOnly(config: Config): IndexProfileCatalog = factory.current(config)
+  def passages(config: Config,identity: PassagePolicyIdentity): IndexProfileCatalog = factory.current(config)
+}
+extension (archive: SessionArchive) {
+  def publish(claim: Claim,chunks: List[IndexedChunk]): Boolean = archive.publishProblems(claim,TestPublications.from(claim,chunks))
+}
 import java.nio.file.{Files,Path}
 import java.util.UUID
 object Fixtures {
+  def rebuild(db: Database,owner: String): OwnerReindexOutcome = {
+    val service=new PostgresOwnerReindex(db); val plan=service.preview(owner)
+    service(owner,UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true)
+  }
   def config(): Config = {
     val dir = Files.createTempDirectory("chronicle-test-")
     val credential = dir.resolve("secret"); Files.writeString(credential,"")

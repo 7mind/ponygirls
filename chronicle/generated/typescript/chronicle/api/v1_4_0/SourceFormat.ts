@@ -20,7 +20,7 @@ export function SourceFormat_parse(s: string): SourceFormat {
     return found;
 }
 
-/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.5.0 */
+/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.7.0 */
 export class SourceFormat_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: SourceFormat): unknown {
         if (this !== SourceFormat_JsonCodec.lazyInstance.value) {

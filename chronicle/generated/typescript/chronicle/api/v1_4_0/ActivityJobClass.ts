@@ -22,7 +22,7 @@ export function ActivityJobClass_parse(s: string): ActivityJobClass {
     return found;
 }
 
-/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.5.0 */
+/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.7.0 */
 export class ActivityJobClass_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ActivityJobClass): unknown {
         if (this !== ActivityJobClass_JsonCodec.lazyInstance.value) {

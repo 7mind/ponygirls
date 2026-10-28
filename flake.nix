@@ -289,6 +289,7 @@
           chronicle-web = pkgs.callPackage ./nix/pkg/chronicle/web.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           chronicle = self.lib.mkChroniclePackage { inherit pkgs; };
+          chronicle-native-dev = self.packages.${system}.chronicle.nativeArtifact;
           chronicle-update-sbt-lock = pkgs.callPackage ./nix/pkg/chronicle/update-lock.nix { lockfileGenerator = inputs.squish.packages.${system}.generate-lockfile; };
           crawl4ai = pkgs.callPackage ./nix/pkg/crawl4ai/package.nix { src = inputs.crawl4ai; };
           reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
@@ -821,6 +822,13 @@
           };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           chronicle = self.packages.${system}.chronicle;
+          chronicle-backend = self.packages.${system}.chronicle.backendValidation;
+          chronicle-protocol = self.packages.${system}.chronicle.protocolValidation;
+          chronicle-validation = self.packages.${system}.chronicle.validationEvidence;
+          chronicle-validation-policy = pkgs.runCommand "chronicle-validation-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            python3 ${./nix/tests/chronicle-validation-policy.py} ${./chronicle/scripts/validation-report.py}
+            touch "$out"
+          '';
           chronicle-modules = import ./nix/tests/chronicle-modules.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
           chronicle-models = import ./nix/tests/chronicle-models.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
           chronicle-sbt-lock = import ./nix/tests/chronicle-sbt-lock.nix { inherit pkgs; };

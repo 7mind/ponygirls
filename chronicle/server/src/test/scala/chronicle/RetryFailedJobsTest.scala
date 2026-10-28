@@ -9,7 +9,7 @@ import scala.util.Using
 
 final class RetryFailedJobsTest extends munit.FunSuite {
   private val target=Fixtures.config().profile
-  private val nextCatalog=IndexProfileCatalog.passages(Fixtures.config(),PassagePolicyIdentity("synthetic-retry-policy"))
+  private val nextCatalog={ val config=Fixtures.config(); IndexProfileCatalog.current(config.copy(annotation=config.annotation.copy(revision="synthetic-next"))) }
   private val nextTarget=nextCatalog.preferred.profile
   private val old="old-profile"
   private val empty=RetryFailedCounts(0,0,0,0,0,0,0)
@@ -33,7 +33,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
       db.transaction { c =>
         val ddl="""CREATE TABLE ch_users(id text PRIMARY KEY,login text UNIQUE NOT NULL,enabled boolean NOT NULL,credential text NOT NULL);
           CREATE TABLE ch_sources(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),source_key text NOT NULL,revision integer NOT NULL,published uuid,tombstone boolean NOT NULL,UNIQUE(owner,source_key));
-          CREATE TABLE ch_jobs(id uuid PRIMARY KEY,session_id uuid REFERENCES ch_sources(id),revision integer NOT NULL,profile text NOT NULL,state text NOT NULL,attempts integer NOT NULL,fence bigint NOT NULL,lease_until timestamptz,error text,completed_windows integer NOT NULL,total_windows integer,UNIQUE(session_id,revision,profile),CHECK(completed_windows>=0 AND (total_windows IS NULL AND completed_windows=0 OR total_windows>=completed_windows)));
+          CREATE TABLE ch_jobs(id uuid PRIMARY KEY,session_id uuid REFERENCES ch_sources(id),revision integer NOT NULL,profile text NOT NULL,state text NOT NULL,attempts integer NOT NULL,fence bigint NOT NULL,lease_until timestamptz,error text,completed_windows integer NOT NULL,total_windows integer,run_id uuid NOT NULL DEFAULT gen_random_uuid(),failure_stage text,UNIQUE(session_id,revision,profile),CHECK(completed_windows>=0 AND (total_windows IS NULL AND completed_windows=0 OR total_windows>=completed_windows)));
           CREATE TABLE ch_profile(singleton boolean PRIMARY KEY CHECK(singleton),active text NOT NULL,target text NOT NULL,maintenance boolean NOT NULL);
           CREATE TABLE ch_groups(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),name text NOT NULL);
           CREATE TABLE ch_members(group_id uuid REFERENCES ch_groups(id),user_id text REFERENCES ch_users(id),PRIMARY KEY(group_id,user_id));
@@ -49,7 +49,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
           val sql=Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
           Using.resource(c.createStatement())(_.execute(sql))
         }
-        nextCatalog.register(c)
+        db.profiles.register(c); nextCatalog.register(c)
         List("a","b","c").foreach(owner => Sql.exec(c,"INSERT INTO ch_users VALUES(?,?,true,'synthetic')",owner,owner))
         Sql.exec(c,"INSERT INTO ch_users VALUES('disabled','disabled',false,'synthetic')")
         Sql.exec(c,"INSERT INTO ch_profile VALUES(true,?,?,false)",old,target)
@@ -85,7 +85,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
     } finally admin.transaction(c => Sql.exec(c,s"DROP SCHEMA $schema CASCADE"))
   }
   private def addJob(c: Connection,job: UUID,source: UUID,revision: Int,profile: String,state: String,fence: Long): Unit = {
-    Sql.exec(c,"INSERT INTO ch_jobs VALUES(?,?,?,?,?,5,?,'2026-10-26T10:00:00Z','actual-error',2,4)",job,source,revision,profile,state,fence)
+    Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile,state,attempts,fence,lease_until,error,completed_windows,total_windows) VALUES(?,?,?,?,?,5,?,'2026-10-26T10:00:00Z','actual-error',2,4)",job,source,revision,profile,state,fence)
     ()
   }
   private def preview(db: Database,owner: String): RetryFailedPlan = db.transaction { c =>
@@ -122,7 +122,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
       val updated=db.transaction(c => Sql.one(c,"SELECT state,attempts,fence,lease_until,error,completed_windows,total_windows FROM ch_jobs WHERE id=?",id(101)) { r =>
         (r.getString(1),r.getInt(2),r.getLong(3),Option(r.getTimestamp(4)),Option(r.getString(5)),r.getInt(6),Option(r.getObject(7)))
       }.get)
-      assertEquals(updated,("Queued",0,10L,None,None,0,None))
+      assertEquals(updated,("Queued",0,10L,None,Some("actual-error"),0,None))
       assertEquals(db.transaction(c => Sql.rows(c,"SELECT to_jsonb(j)::text FROM ch_jobs j WHERE id<>? ORDER BY id",id(101))(_.getString(1))),untouched)
       assertEquals(retained(db),before)
       assertEquals(db.transaction(c => Sql.exec(c,"UPDATE ch_jobs SET state='Complete' WHERE id=? AND fence=? AND state='Running'",id(101),9L)),0)
@@ -240,7 +240,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
       assertEquals(plan.selectionHash,hash("c",target,selected))
       assertEquals(applyPlan(db,"c",plan,id(9007)).retried,population.toLong)
       assertEquals(preview(db,"c").counts,empty.copy(unchangedQueued=population.toLong))
-      assertEquals(db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE s.owner='c' AND (j.state<>'Queued' OR j.attempts<>0 OR j.fence<>split_part(s.source_key,'-',2)::bigint+2 OR j.error IS NOT NULL OR j.lease_until IS NOT NULL OR j.completed_windows<>0 OR j.total_windows IS NOT NULL)")(_.getLong(1)).get),0L)
+      assertEquals(db.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_jobs j JOIN ch_sources s ON s.id=j.session_id WHERE s.owner='c' AND (j.state<>'Queued' OR j.attempts<>0 OR j.fence<>split_part(s.source_key,'-',2)::bigint+2 OR j.error IS DISTINCT FROM 'actual-error' OR j.lease_until IS NOT NULL OR j.completed_windows<>0 OR j.total_windows IS NOT NULL)")(_.getLong(1)).get),0L)
     }
   }
   test("Behavioral-Effectual-GoodCommunication specified: legacy single-job retry continues to fence Running work") {
@@ -248,7 +248,7 @@ final class RetryFailedJobsTest extends munit.FunSuite {
       db.transaction(c => Jobs.retry(c,"a",id(106)))
       assertEquals(db.transaction(c => Sql.one(c,"SELECT state,fence,attempts,completed_windows,total_windows,error,lease_until FROM ch_jobs WHERE id=?",id(106)) { r =>
         (r.getString(1),r.getLong(2),r.getInt(3),r.getInt(4),Option(r.getObject(5)),Option(r.getString(6)),Option(r.getTimestamp(7)))
-      }.get),("Queued",15L,0,0,None,None,None))
+      }.get),("Queued",15L,0,0,None,Some("actual-error"),None))
     }
   }
   private def awaitBlocked(db: Database,name: String): Unit = {

@@ -15,7 +15,15 @@ class McpTestWireTest extends munit.FunSuite {
   private val now=Instant.parse("2026-01-01T00:00:00.123456789Z")
   private def snapshot(text: String,state: McpRunState): McpRunSnapshot = McpRunSnapshot(instance,run,state,now,List(McpRunEvent(Long.MaxValue,now,McpRunItem.Response(Int.MaxValue,Int.MaxValue,text))),Long.MaxValue,true,Some(McpRunFailure("sanitized","fixed failure")))
 
-  test("BA: every state, item, timestamp, counter, and failure retains API1.4 and API1.5 encoding") {
+  test("BA: current tester API is supported and old pre-tester versions remain denied") {
+    assertEquals(wire.supportedVersions,List("1.4.0","1.5.0","1.6.0","1.7.0"))
+    assert(wire.supportedVersions.contains(Wire.versions.current))
+    List("1.0.0","1.1.0","1.2.0","1.3.0").foreach { version =>
+      assertEquals(intercept[DomainError](wire.encode(ServerEnvelope(requestId,wire.snapshot(snapshot("",McpRunState.Queued))),version)).code,"version-mismatch")
+    }
+  }
+
+  test("BA: every state, item, timestamp, counter, and failure retains API1.4 through API1.7 encoding") {
     McpRunState.values.foreach { state =>
       val domain=snapshot("\u0085\"\\🙂",state).copy(events=List(
         McpRunEvent(1L,now,McpRunItem.ToolCall("call","provided-tool",0,1,"{\"q\":\"🙂\"}")),
@@ -60,7 +68,12 @@ class McpTestWireTest extends munit.FunSuite {
     assertEquals(dto.reasoningPolicy,"max")
     assertEquals(dto.limits,McpTestLimits(4,8,16384,65536,131072,524288,1048576,256,49152,900,600))
     val oversized=domain.copy(tools=List(tools.head.copy(description="\u0085"*10000)))
-    wire.supportedVersions.foreach(version => assertEquals(intercept[DomainError](wire.encode(ServerEnvelope(requestId,wire.catalog(oversized)),version)).code,"mcp-catalog-limit"))
+    wire.supportedVersions.foreach { version =>
+      val encoded=wire.encode(ServerEnvelope(requestId,wire.catalog(domain)),version)
+      assert(JsonUtf8Size(encoded)<=McpRunLimits.pageBytes)
+      assertEquals(Wire.decode(ServerEnvelope.codecJson,encoded).result,wire.catalog(domain))
+      assertEquals(intercept[DomainError](wire.encode(ServerEnvelope(requestId,wire.catalog(oversized)),version)).code,"mcp-catalog-limit")
+    }
     assertEquals(wire.catalog(oversized).result.tools.head.description.length,10000)
   }
 }

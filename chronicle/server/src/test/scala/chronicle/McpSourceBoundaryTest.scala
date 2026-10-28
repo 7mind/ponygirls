@@ -104,7 +104,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
     f.archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1,metadata=original.metadata.copy(project=Some("unpublished"))))
     val privateRequest=Fixtures.snapshot().copy(metadata=original.metadata.copy(project=Some("AAA-private")))
     val other=f.archive.ingest("b",privateRequest); val claim=f.archive.claim(f.catalog.knownProfiles,ClaimScope.Owner("b"),300).get
-    assert(f.archive.publish(claim,List(IndexedChunk(Chunk(UUID.randomUUID(),other.sessionId,"archive","archive",List("private"),Nil,0.0),vector))))
+    StoredPublicationFixtures.publish(f.db,claim,List(IndexedChunk(Chunk(UUID.randomUUID(),other.sessionId,"archive","archive",List("private"),Nil,0.0),vector)))
     val result=f.tools.invoke(f.access,"list_facets",Json.obj(),admission(f,_ => ())).unsafeRunSync()
     val content=result.hcursor.downField("content").downN(0).get[String]("text").toOption.get
     val facets=Wire.decode(Result.codecJson,Wire.parse(content)).asInstanceOf[Result.Facets].result

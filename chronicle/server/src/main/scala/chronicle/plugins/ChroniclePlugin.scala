@@ -8,7 +8,7 @@ import org.http4s.client.Client
 
 object ChroniclePlugin extends PluginDef {
   make[logstage.IzLogger].fromValue(logstage.IzLogger())
-  make[IndexProfileCatalog].from { (config: Config) => IndexProfileCatalog.passages(config,PassagePolicyIdentity(ProblemPassages.identity)) }
+  make[IndexProfileCatalog].from { (config: Config) => IndexProfileCatalog.current(config) }
   make[Database]
   make[Auth]
   make[PostgresArchive]
@@ -27,7 +27,6 @@ object ChroniclePlugin extends PluginDef {
   make[ModelUsageView]
   make[ExpressionHintIndex].from[PostgresExpressionHintIndex]
   make[ModelHttp]
-  make[Annotator].from[OpenAIAnnotator]
   make[ProblemPassageAnnotator].from[OpenAIProblemPassageAnnotator]
   make[Embedder].from[OpenAIEmbedder]
   make[Worker]

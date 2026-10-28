@@ -27,8 +27,8 @@ for (const adapter of ['memory', 'sqlite']) {
       assert.equal(store.observe('path', 'a', 10), 10);
       assert.equal(store.observe('path', 'a', 20), 10);
       assert.equal(store.observe('path', 'b', 20), 20);
-      store.enqueue(entry);
-      assert.throws(() => store.enqueue(pending()), /source-already-pending/);
+      store.enqueue(entry, { kind: 'unknown' });
+      assert.throws(() => store.enqueue(pending(), { kind: 'unknown' }), /source-already-pending/);
       store.fail(entry.requestId, 'network', 50, false, 8);
       assert.equal(store.queue()[0]!.payload, entry.payload);
       assert.equal(store.queue()[0]!.requestId, entry.requestId);
@@ -40,7 +40,7 @@ for (const adapter of ['memory', 'sqlite']) {
       assert.equal(store.head('source').revision, 1);
       assert.equal(store.head('source').digest, entry.sourceDigest);
       const next = { ...pending(), expectedRevision: 1 };
-      store.enqueue(next);
+      store.enqueue(next, { kind: 'unknown' });
       store.fail(next.requestId, 'cas-conflict', 100, true, 8);
       assert.equal(store.queue()[0]!.status, 'conflict');
       assert.equal(store.head('source').revision, 1);
@@ -58,7 +58,7 @@ test('SQLite restart preserves namespace, pending exact bytes, attempts and excl
   const dir = mkdtempSync(join(tmpdir(), 'chronicle-spool-'));
   try {
     let store = new SqliteSpool(dir); const namespace = store.namespace;
-    const entry = pending(); store.enqueue(entry);
+    const entry = pending(); store.enqueue(entry, { kind: 'unknown' });
     assert.equal(store.nextReportSequence(), 1n); store.reportAccepted(1n, 10);
     assert.equal(store.nextReportSequence(), 2n); store.reportFailed('report-failed'); store.close();
     store = new SqliteSpool(dir);
