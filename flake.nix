@@ -640,6 +640,16 @@
                 touch $out
               '';
           pi-codegraph-wiring = import ./nix/lib/pi-codegraph-test.nix { inherit pkgs; };
+          codegraph-bootstrap = pkgs.runCommand "codegraph-bootstrap-test" {
+            nativeBuildInputs = [ pkgs.bash ];
+            CODEGRAPH_TELEMETRY = "0";
+          } ''
+            export HOME="$TMPDIR"
+            cp ${./nix/pkg/yolo/codegraph-bootstrap.sh} codegraph-bootstrap.sh
+            cp ${./nix/pkg/yolo/codegraph-bootstrap-test.sh} codegraph-bootstrap-test.sh
+            bash ./codegraph-bootstrap-test.sh ${self.packages.${system}.codegraph}/bin/codegraph ${pkgs.jq}/bin/jq ${pkgs.git}/bin/git
+            touch $out
+          '';
           ponygirls-codegraph = pkgs.runCommand "ponygirls-codegraph-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.flock ];
             PI_CODEGRAPH_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";

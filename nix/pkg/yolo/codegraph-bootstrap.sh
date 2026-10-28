@@ -9,7 +9,17 @@ fi
 cg="$1"
 jq="$2"
 git="$3"
-root="$("$git" rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+# Outside Git, only a workspace opted in through ponygirls-codegraph's
+# `/cg init --workspace` marker is an index scope: an implicit index of a
+# parent of many checkouts makes the MCP watcher walk all of them.
+if ! root="$("$git" rev-parse --show-toplevel 2>/dev/null)"; then
+  root="$(pwd -P)"
+  marker="$root/.pi/codegraph-workspace.json"
+  if [[ ! -f "$marker" || -L "$marker" ]] || [[ "$("$jq" -r '.version // empty' "$marker" 2>/dev/null)" != "1" ]]; then
+    echo "yolo: skipping CodeGraph index for ${root}: not a Git checkout or opted-in workspace (/cg init --workspace)" >&2
+    exit 0
+  fi
+fi
 root="$(realpath "$root")"
 expected_index="$root/.codegraph"
 

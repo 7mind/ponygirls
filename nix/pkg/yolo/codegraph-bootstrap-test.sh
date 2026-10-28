@@ -38,4 +38,25 @@ status_json="$(cd "$child" && "$cg" status --json)"
 warm_output="$(cd "$child" && bash "$bootstrap" "$cg" "$jq" "$git" 2>&1)"
 [[ "$warm_output" == *"syncing CodeGraph index for $child"* ]]
 
-echo "CodeGraph bootstrap ancestor-index regression passed"
+# A non-Git directory is not an index scope unless it opted in as a workspace
+# (ponygirls-codegraph's `/cg init --workspace` marker): indexing a parent of
+# many checkouts makes the MCP watcher walk every one of them.
+plain="$workdir/plain"
+mkdir -p "$plain/repo-a"
+plain="$(cd "$plain" && pwd -P)"
+printf 'export const a = 1;\n' > "$plain/repo-a/a.ts"
+plain_output="$(cd "$plain" && bash "$bootstrap" "$cg" "$jq" "$git" 2>&1)"
+[[ "$plain_output" == *"not a Git checkout or opted-in workspace"* ]]
+test ! -e "$plain/.codegraph"
+test ! -e "$plain/.gitignore"
+
+opted="$workdir/opted"
+mkdir -p "$opted/.pi"
+opted="$(cd "$opted" && pwd -P)"
+printf 'export const opted = 1;\n' > "$opted/opted.ts"
+printf '{"version":1}\n' > "$opted/.pi/codegraph-workspace.json"
+opted_output="$(cd "$opted" && bash "$bootstrap" "$cg" "$jq" "$git" 2>&1)"
+[[ "$opted_output" == *"building CodeGraph index for $opted"* ]]
+test -f "$opted/.codegraph/codegraph.db"
+
+echo "CodeGraph bootstrap ancestor-index and workspace opt-in regressions passed"
