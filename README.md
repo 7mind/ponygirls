@@ -392,6 +392,16 @@ The token is read at runtime and exposed read-only inside yolo only when
 notifications are configured and enabled. Each client can be disabled through
 `notify.codex.enable`, `notify.claude.enable`, or `notify.pi.enable`.
 
+With `transport = "e2ee"`, delivery goes through matrix-nio instead: set
+`sender` and `passwordFile`, and the notifier provisions a per-host device
+automatically on first use (`agent-notify-matrix --setup` forces
+reprovisioning). Add `recoveryKeyFile` pointing at a file containing the
+account recovery key and provisioning also decrypts the account self-signing
+key from secret storage and signs the new device with it, so the device is
+cross-signed without a verification round-trip in Element; an
+already-provisioned device is cross-signed on its next send. Without
+`recoveryKeyFile`, the new device must be verified in Element once.
+
 Interactive clients use terminal focus reports. Terminal multiplexers must
 forward those reports; tmux requires `set -g focus-events on`. Unknown focus
 suppresses alerts with a diagnostic. Set `onlyWhenUnfocused = false` for alerts

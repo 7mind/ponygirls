@@ -74,6 +74,16 @@ let
   noToken = evaluate { notify.tokenFile = null; };
   noHarness = evaluate { enable = false; };
   e2ee = evaluate { notify.transport = "e2ee"; };
+  e2eeRecovery = evaluate {
+    notify.transport = "e2ee";
+    notify.passwordFile = "/run/agenix/matrix-notify-password";
+    notify.recoveryKeyFile = "/run/agenix/matrix-notify-recovery-key";
+  };
+  plaintextSecrets = evaluate {
+    notify.passwordFile = "/run/agenix/matrix-notify-password";
+    notify.recoveryKeyFile = "/run/agenix/matrix-notify-recovery-key";
+  };
+  testPython = pkgs.python3.withPackages (ps: [ ps.matrix-nio ps.vodozemac ps.pycryptodome ps.cachetools ps.atomicwrites ps.peewee ]);
   bodyOnPlaintext = evaluate { notify.includeMessageBody = true; };
   bodyOnE2EE = evaluate { notify.transport = "e2ee"; notify.includeMessageBody = true; };
 in
@@ -100,8 +110,14 @@ assert builtins.elem "/home/test/.local/share/agent-notify-matrix" e2ee.smind.hm
 assert builtins.elem existingPath e2ee.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
 assert !(lib.all (assertion: assertion.assertion) bodyOnPlaintext.assertions);
 assert lib.all (assertion: assertion.assertion) bodyOnE2EE.assertions;
+assert builtins.elem "/run/agenix/matrix-notify-password" e2eeRecovery.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
+assert builtins.elem "/run/agenix/matrix-notify-recovery-key" e2eeRecovery.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
+assert !(builtins.elem "/run/agenix/matrix-notify-password" e2ee.smind.hm.dev.llm.yolo.extraReadOnlyPaths);
+assert !(builtins.elem "/run/agenix/matrix-notify-recovery-key" e2ee.smind.hm.dev.llm.yolo.extraReadOnlyPaths);
+assert !(builtins.elem "/run/agenix/matrix-notify-password" plaintextSecrets.smind.hm.dev.llm.yolo.extraReadOnlyPaths);
+assert !(builtins.elem "/run/agenix/matrix-notify-recovery-key" plaintextSecrets.smind.hm.dev.llm.yolo.extraReadOnlyPaths);
 pkgs.runCommandLocal "notify-module-test" {
-  nativeBuildInputs = [ pkgs.python3 pkgs.nodejs pkgs.bash ];
+  nativeBuildInputs = [ testPython pkgs.nodejs pkgs.bash ];
   NOTIFY_PI_EXTENSION = builtins.head enabled.programs.pi.settings.extensions;
   NOTIFY_TEST_PACKAGES = lib.concatMapStringsSep " " (name: "${enabled.programs.${name}.package}/bin/${if name == "claude-code" then "claude" else name}") [ "claude-code" "codex" "pi" ];
   NOTIFY_CODEX_HOOKS = builtins.toJSON enabled.programs.codex.settings.hooks.UserPromptSubmit;
@@ -109,6 +125,7 @@ pkgs.runCommandLocal "notify-module-test" {
 } ''
   export PYTHONDONTWRITEBYTECODE=1
   export XDG_CACHE_HOME=$TMPDIR/cache
+  python3 -c "import Crypto, vodozemac, nio"
   python3 -m unittest discover -s ${../pkg/agent-notify} -p '*_test.py'
   node --test ${../pkg/agent-notify/pi.test.mjs}
   for command in $NOTIFY_TEST_PACKAGES; do

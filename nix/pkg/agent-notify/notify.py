@@ -164,6 +164,7 @@ def make_sender(configuration: dict[str, object]):
             str(configuration["roomId"]),
             configuration.get("sender"),
             configuration.get("passwordFile"),
+            configuration.get("recoveryKeyFile"),
         )
     token_file = configuration.get("tokenFile")
     if not isinstance(token_file, str):
@@ -174,7 +175,8 @@ def make_sender(configuration: dict[str, object]):
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Send coding-agent turn notifications to Matrix.",
-        epilog="Provision once per host: agent-notify-matrix CONFIG --setup. "
+        epilog="E2EE transport provisions itself on first use; "
+               "agent-notify-matrix CONFIG --setup forces reprovisioning. "
                "Manual test ping: agent-notify-matrix CONFIG "
                "pi --attention PAYLOAD, where PAYLOAD is hook JSON with a session_id.",
     )
@@ -184,7 +186,7 @@ def main() -> None:
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--start", action="store_true", help="Record a turn start for completion throttling")
     actions.add_argument("--attention", action="store_true", help="Notify immediately that input is needed")
-    actions.add_argument("--setup", action="store_true", help="Provision this host for e2ee transport")
+    actions.add_argument("--setup", action="store_true", help="Force (re)provisioning this host for e2ee transport; provisioning otherwise happens automatically on first e2ee use")
     parser.add_argument("payload", nargs="?", help="Hook JSON payload, or read from stdin when absent")
     arguments = parser.parse_args()
     if arguments.harness is None and not arguments.setup:

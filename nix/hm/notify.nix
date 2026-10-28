@@ -9,10 +9,10 @@ let
     && notifyCfg.roomId != null
     && (transportE2EE || notifyCfg.tokenFile != null);
   runtime = ../pkg/agent-notify;
-  e2eEnv = pkgs.python3.withPackages (ps: [ ps.matrix-nio ps.vodozemac ps.cachetools ps.atomicwrites ps.peewee ]);
+  e2eEnv = pkgs.python3.withPackages (ps: [ ps.matrix-nio ps.vodozemac ps.pycryptodome ps.cachetools ps.atomicwrites ps.peewee ]);
   settings = pkgs.writeText "agent-notify-matrix.json" (builtins.toJSON {
     inherit (notifyCfg) homeserver roomId tokenFile minTurnSeconds;
-    inherit (notifyCfg) transport sender passwordFile;
+    inherit (notifyCfg) transport sender passwordFile recoveryKeyFile;
     inherit (notifyCfg) includeMessageBody includeWorkdir includeHostname;
   });
   notifyScript = pkgs.writeShellScriptBin "agent-notify-matrix" ''
@@ -48,7 +48,7 @@ in
     transport = lib.mkOption {
       type = lib.types.enum [ "plaintext" "e2ee" ];
       default = "plaintext";
-      description = "Matrix delivery transport. Plaintext posts raw events with tokenFile and needs no setup. E2EE encrypts via matrix-nio with per-host provisioning (agent-notify-matrix --setup plus one device verification in Element); the key store lives under ~/.local/share/agent-notify-matrix and is bound into the sandbox, so XDG_DATA_HOME overrides need manual binding.";
+      description = "Matrix delivery transport. Plaintext posts raw events with tokenFile and needs no setup. E2EE encrypts via matrix-nio and provisions itself on first use per host (agent-notify-matrix --setup forces reprovisioning); without recoveryKeyFile the new device still needs one verification in Element. The key store lives under ~/.local/share/agent-notify-matrix and is bound into the sandbox, so XDG_DATA_HOME overrides need manual binding.";
     };
     sender = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
@@ -60,7 +60,13 @@ in
       type = lib.types.nullOr (lib.types.either lib.types.str lib.types.path);
       default = null;
       example = "/run/agenix/matrix-notify-password";
-      description = "File holding the notifier account password, read only by one-time e2ee setup so it never lands in the store. Null prompts interactively during setup.";
+      description = "File holding the notifier account password, read only when e2ee provisioning logs in (first use on a host, or agent-notify-matrix --setup) so it never lands in the store. Null prompts interactively during setup. When set, the file is also bound read-only into the yolo sandbox so first-use provisioning can happen from a hook.";
+    };
+    recoveryKeyFile = lib.mkOption {
+      type = lib.types.nullOr (lib.types.either lib.types.str lib.types.path);
+      default = null;
+      example = "/run/agenix/matrix-notify-recovery-key";
+      description = "File holding the notifier account Matrix recovery key (the Element Secure Backup key), read the same way as passwordFile. When set, e2ee provisioning decrypts the account self-signing key from secret storage with it and signs this host device, so the device is cross-signed and no verification in Element is needed; an already-provisioned device is cross-signed on its next send. Without it, the device must be verified in Element once. When set, the file is also bound read-only into the yolo sandbox so provisioning and cross-signing can happen from a hook.";
     };
     minTurnSeconds = lib.mkOption {
       type = lib.types.ints.unsigned;
@@ -112,7 +118,10 @@ in
     }
     (lib.mkIf active {
       home.packages = [ notifyScript ];
-      smind.hm.dev.llm.yolo.extraReadOnlyPaths = lib.optional (notifyCfg.tokenFile != null) "${notifyCfg.tokenFile}";
+      smind.hm.dev.llm.yolo.extraReadOnlyPaths =
+        lib.optional (notifyCfg.tokenFile != null) "${notifyCfg.tokenFile}"
+        ++ lib.optional (transportE2EE && notifyCfg.passwordFile != null) "${notifyCfg.passwordFile}"
+        ++ lib.optional (transportE2EE && notifyCfg.recoveryKeyFile != null) "${notifyCfg.recoveryKeyFile}";
       smind.hm.dev.llm.yolo.extraReadWritePaths = lib.optional (notifyCfg.transport == "e2ee") "${config.home.homeDirectory}/.local/share/agent-notify-matrix";
     })
     (lib.mkIf (active && notifyCfg.claude.enable) {

@@ -1,4 +1,8 @@
+import base64
 import contextlib
+import hashlib
+import hmac as hmac_module
+import importlib.util
 import io
 import json
 import os
@@ -304,18 +308,273 @@ class E2EESelectionTests(unittest.TestCase):
 
     def test_e2ee_selects_nio_sender_without_network(self):
         from matrix_e2ee import NioMatrixSender
-        config = dict(self.base_config(), transport="e2ee", sender="@bot:test", passwordFile=None)
+        config = dict(self.base_config(), transport="e2ee", sender="@bot:test", passwordFile=None,
+                        recoveryKeyFile="/run/secrets/recovery")
         sender = make_sender(config)
         self.assertIsInstance(sender, NioMatrixSender)
         self.assertEqual(sender.room, "!room:test")
+        self.assertEqual(str(sender.recovery_key_file), "/run/secrets/recovery")
 
-    def test_unprovisioned_e2ee_send_fails_closed(self):
+    def test_unprovisioned_e2ee_send_without_password_fails_closed(self):
         from matrix_e2ee import NioMatrixSender
         with tempfile.TemporaryDirectory() as directory:
             with mock.patch.dict(os.environ, {"XDG_DATA_HOME": directory}):
                 sender = NioMatrixSender("https://matrix.test", "!room:test", "@bot:test")
-                with self.assertRaisesRegex(ValueError, "not provisioned"):
+                with self.assertRaisesRegex(ValueError, "no passwordFile is configured"):
                     sender.send("hello")
+
+    def test_unprovisioned_e2ee_send_provisions_on_first_use(self):
+        from matrix_e2ee import NioMatrixSender
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.dict(os.environ, {"XDG_DATA_HOME": directory}):
+                sender = NioMatrixSender("https://matrix.test", "!room:test", "@bot:test")
+                calls = []
+
+                def provision():
+                    calls.append(1)
+                    store = Path(directory) / "agent-notify-matrix"
+                    store.mkdir(parents=True, exist_ok=True)
+                    (store / "session.json").write_text(json.dumps({
+                        "user_id": "@bot:test", "device_id": "DEVICE", "access_token": "token",
+                    }))
+
+                with mock.patch.object(sender, "_setup", side_effect=provision):
+                    self.assertEqual(sender._session(), ("@bot:test", "DEVICE", "token"))
+                    self.assertEqual(sender._session(), ("@bot:test", "DEVICE", "token"))
+                self.assertEqual(len(calls), 1)
+
+
+def _unpadded(value):
+    return base64.b64encode(value).decode().rstrip("=")
+
+
+def _spec_hkdf(key, info, length=64):
+    prk = hmac_module.new(b"\x00" * 32, key, hashlib.sha256).digest()
+    output = b""
+    block = b""
+    counter = 1
+    while len(output) < length:
+        block = hmac_module.new(prk, block + info + bytes((counter,)), hashlib.sha256).digest()
+        output += block
+        counter += 1
+    return output[:length]
+
+
+def _spec_encrypt(storage_key, name, plaintext, iv):
+    from Crypto.Cipher import AES
+    derived = _spec_hkdf(storage_key, name.encode())
+    cipher = AES.new(derived[:32], AES.MODE_CTR, initial_value=int.from_bytes(iv, "big"), nonce=b"")
+    ciphertext = cipher.encrypt(plaintext)
+    return {
+        "iv": _unpadded(iv),
+        "ciphertext": _unpadded(ciphertext),
+        "mac": _unpadded(hmac_module.new(derived[32:], ciphertext, hashlib.sha256).digest()),
+    }
+
+
+HAS_CRYPTO = importlib.util.find_spec("Crypto") is not None
+HAS_VODOZEMAC = importlib.util.find_spec("vodozemac") is not None
+
+
+@unittest.skipUnless(HAS_CRYPTO, "pycryptodome unavailable")
+class RecoveryKeyTests(unittest.TestCase):
+    def test_recovers_key_from_frozen_element_format_vector(self):
+        from matrix_e2ee import decode_recovery_key
+        self.assertEqual(
+            decode_recovery_key("EsSz ykH7 LCZx 7Cae cmKD wcmY JRXi Ybtu 8iQ3 t8Ez nRwK pUY1"),
+            bytes(range(32)),
+        )
+        self.assertEqual(
+            decode_recovery_key("EsSzykH7LCZx7CaecmKDwcmYJRXiYbtu8iQ3t8EznRwKpUY1"),
+            bytes(range(32)),
+        )
+
+    def test_rejects_tampered_recovery_key(self):
+        from matrix_e2ee import decode_recovery_key
+        with self.assertRaisesRegex(ValueError, "parity"):
+            decode_recovery_key("EsSz ykH7 LCZx 7Cae cmKD wcmY JRXi Ybtu 8iQ3 t8Ez nRwK pUY2")
+        with self.assertRaisesRegex(ValueError, "base58|decodes to"):
+            decode_recovery_key("not a key 0OIl")
+
+    def test_decrypts_secret_stored_per_spec(self):
+        from matrix_e2ee import decrypt_secret
+        storage_key = bytes(range(32))
+        encrypted = _spec_encrypt(storage_key, "m.cross_signing.self_signing", _unpadded(b"s" * 32).encode(), bytes(range(16, 32)))
+        self.assertEqual(decrypt_secret(storage_key, "m.cross_signing.self_signing", encrypted), _unpadded(b"s" * 32).encode())
+        encrypted["mac"] = _unpadded(b"\x00" * 32)
+        with self.assertRaisesRegex(ValueError, "MAC check"):
+            decrypt_secret(storage_key, "m.cross_signing.self_signing", encrypted)
+
+    def test_secret_storage_key_check_accepts_and_rejects(self):
+        from matrix_e2ee import secret_storage_key
+        storage_key = bytes(range(32))
+        check = _spec_encrypt(storage_key, "", b"\x00" * 32, bytes(range(16)))
+        description = {"algorithm": "m.secret_storage.v1.aes-hmac-sha2", "iv": check["iv"], "mac": check["mac"]}
+        self.assertEqual(
+            secret_storage_key("EsSz ykH7 LCZx 7Cae cmKD wcmY JRXi Ybtu 8iQ3 t8Ez nRwK pUY1", description),
+            storage_key,
+        )
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            secret_storage_key("EsSz ygLv VP1b xF1C v7kE eBQx MxDP buG5 w25T L3b6 hfyG Kkrd", description)
+
+    def test_signs_canonical_json_with_frozen_vector(self):
+        from matrix_e2ee import canonical_json, ed25519_public_key, ed25519_sign
+        seed = bytes(range(32))
+        self.assertEqual(_unpadded(ed25519_public_key(seed)), "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg")
+        signed = {"b": 1, "a": 2, "signatures": {"@bot:test": {}}, "unsigned": {"age_ts": 1}}
+        self.assertEqual(canonical_json(signed), b'{"a":2,"b":1}')
+        self.assertEqual(
+            _unpadded(ed25519_sign(seed, canonical_json(signed))),
+            "pOb5vaHoMMWP+HrtBGCH+mO4856xt7RA+t0unRp8HVOiEaEj6OIbs61cpGHSobP3+YnxFELABqVU9QPandHgCQ",
+        )
+
+
+@unittest.skipUnless(HAS_CRYPTO and HAS_VODOZEMAC, "e2ee crypto unavailable")
+class VerifyOwnDeviceTests(unittest.TestCase):
+    def test_recovery_key_cross_signs_own_device(self):
+        from matrix_e2ee import canonical_json, ed25519_public_key, ed25519_sign, verify_own_device
+        import vodozemac
+
+        user = "@bot:test"
+        device = "DEVICE"
+        storage_key = bytes(range(32))
+        master_seed = b"m" * 32
+        self_signing_seed = b"s" * 32
+        master_public = _unpadded(ed25519_public_key(master_seed))
+        self_signing_public = _unpadded(ed25519_public_key(self_signing_seed))
+        check = _spec_encrypt(storage_key, "", b"\x00" * 32, bytes(range(16)))
+        account_data = {
+            "m.secret_storage.default_key": {"key": "key1"},
+            "m.secret_storage.key.key1": {
+                "algorithm": "m.secret_storage.v1.aes-hmac-sha2", "iv": check["iv"], "mac": check["mac"],
+            },
+            "m.cross_signing.master": {"encrypted": {"key1": _spec_encrypt(
+                storage_key, "m.cross_signing.master", _unpadded(master_seed).encode(), bytes(range(16, 32)))}},
+            "m.cross_signing.self_signing": {"encrypted": {"key1": _spec_encrypt(
+                storage_key, "m.cross_signing.self_signing", _unpadded(self_signing_seed).encode(), bytes(range(32, 48)))}},
+        }
+        master_key = {
+            "user_id": user, "usage": ["master"],
+            "keys": {f"ed25519:{master_public}": master_public},
+        }
+        master_key["signatures"] = {user: {f"ed25519:{master_public}": _unpadded(
+            ed25519_sign(master_seed, canonical_json(master_key)))}}
+        self_signing_key = {
+            "user_id": user, "usage": ["self_signing"],
+            "keys": {f"ed25519:{self_signing_public}": self_signing_public},
+        }
+        self_signing_key["signatures"] = {user: {f"ed25519:{master_public}": _unpadded(
+            ed25519_sign(master_seed, canonical_json(self_signing_key)))}}
+        device_key = {
+            "user_id": user, "device_id": device,
+            "algorithms": ["m.olm.v1.curve25519-aes-sha2", "m.megolm.v1.aes-sha2"],
+            "keys": {f"curve25519:{device}": _unpadded(b"c" * 32), f"ed25519:{device}": _unpadded(b"d" * 32)},
+            "signatures": {user: {f"ed25519:{device}": _unpadded(b"e" * 64)}},
+            "unsigned": {"age_ts": 1},
+        }
+        uploads = []
+
+        class Homeserver(BaseHTTPRequestHandler):
+            def respond(self, payload):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.headers["Authorization"] != "Bearer token":
+                    self.send_error(401)
+                    return
+                event_type = self.path.rsplit("/", 1)[-1]
+                from urllib.parse import unquote
+                event_type = unquote(event_type)
+                if event_type not in account_data:
+                    self.send_error(404)
+                    return
+                self.respond(account_data[event_type])
+
+            def do_POST(self):
+                payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path.endswith("/keys/query"):
+                    self.respond({
+                        "device_keys": {user: {device: device_key}},
+                        "master_keys": {user: master_key},
+                        "self_signing_keys": {user: self_signing_key},
+                    })
+                    return
+                if self.path.endswith("/keys/signatures/upload"):
+                    uploads.append(payload)
+                    self.respond({})
+                    return
+                self.send_error(404)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Homeserver)
+        worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+        worker.start()
+        try:
+            result = verify_own_device(
+                f"http://127.0.0.1:{server.server_port}", user, device, "token",
+                "EsSz ykH7 LCZx 7Cae cmKD wcmY JRXi Ybtu 8iQ3 t8Ez nRwK pUY1",
+            )
+        finally:
+            server.shutdown()
+            worker.join()
+            server.server_close()
+        self.assertEqual(result, self_signing_public)
+        self.assertEqual(len(uploads), 1)
+        signed_device = uploads[0][user][device]
+        self.assertEqual(signed_device["keys"], device_key["keys"])
+        self.assertEqual(signed_device["signatures"][user][f"ed25519:{device}"], _unpadded(b"e" * 64))
+        signature = signed_device["signatures"][user][f"ed25519:{self_signing_public}"]
+        vodozemac.Ed25519PublicKey.from_base64(
+            base64.b64encode(base64.b64decode(self_signing_public + "=")).decode()
+        ).verify_signature(
+            canonical_json(device_key),
+            vodozemac.Ed25519Signature.from_base64(base64.b64encode(base64.b64decode(signature + "==")).decode()),
+        )
+
+    def test_wrong_recovery_key_fails_before_any_upload(self):
+        from matrix_e2ee import verify_own_device
+        storage_key = bytes(range(32))
+        check = _spec_encrypt(storage_key, "", b"\x00" * 32, bytes(range(16)))
+        account_data = {
+            "m.secret_storage.default_key": {"key": "key1"},
+            "m.secret_storage.key.key1": {
+                "algorithm": "m.secret_storage.v1.aes-hmac-sha2", "iv": check["iv"], "mac": check["mac"],
+            },
+        }
+
+        class Homeserver(BaseHTTPRequestHandler):
+            def do_GET(self):
+                from urllib.parse import unquote
+                event_type = unquote(self.path.rsplit("/", 1)[-1])
+                body = json.dumps(account_data[event_type]).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Homeserver)
+        worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+        worker.start()
+        try:
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                verify_own_device(
+                    f"http://127.0.0.1:{server.server_port}", "@bot:test", "DEVICE", "token",
+                    "EsSz ygLv VP1b xF1C v7kE eBQx MxDP buG5 w25T L3b6 hfyG Kkrd",
+                )
+        finally:
+            server.shutdown()
+            worker.join()
+            server.server_close()
 
 
 if __name__ == "__main__":
