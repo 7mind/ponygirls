@@ -167,9 +167,9 @@
    );
  }
 
-@@ -258,6 +309,19 @@
+@@ -258,11 +258,34 @@
  }
-
+ 
  export function assertNoRebuild(root: string): void {
 +  if (process.platform === 'linux') {
 +    const pidPath = getWriterPidPath(root, 'rebuild.pid');
@@ -184,9 +184,24 @@
 +    } finally { releaseKernelLock(fd); }
 +    return;
 +  }
+   if (isRebuildInProgress(root)) throw new RebuildInProgressError();
+ }
+ 
+ /** Whether another live process holds the project's rebuild lock (`codegraph index`). */
+ export function isRebuildInProgress(root: string): boolean {
++  if (process.platform === 'linux') {
++    const pidPath = getWriterPidPath(root, 'rebuild.pid');
++    if (kernelWriters.has(pidPath)) return false;
++    const fd = tryKernelLock(pidPath + '.flock');
++    if (fd === null) return true;
++    try {
++      const record = readWriterLock(root, 'rebuild.pid');
++      return fs.existsSync(pidPath) && record?.lockProtocol !== LOCK_PROTOCOL;
++    } finally { releaseKernelLock(fd); }
++  }
    const lock = readWriterLock(root, 'rebuild.pid');
-   if (lock && lock.pid !== process.pid && isProcessAlive(lock.pid)) {
-     throw new RebuildInProgressError();
+   return !!lock && lock.pid !== process.pid && isProcessAlive(lock.pid);
+ }
 --- a/src/utils.ts
 +++ b/src/utils.ts
 @@ -1,3 +1,4 @@

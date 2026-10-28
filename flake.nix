@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     squish = {
-      url = "github:7mind/squish-find-the-brains/b731a16d0de7198303d890273249e0136dede902";
+      url = "github:7mind/squish-find-the-brains/main";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
     };

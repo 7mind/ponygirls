@@ -24,11 +24,11 @@
     "codegraph": {
       "flake": false,
       "locked": {
-        "lastModified": 1792808177,
-        "narHash": "sha256-ENkj5c4F4ADgE9fYBsMFptolx6L2s93C1Op6PXe9FbE=",
+        "lastModified": 1793153692,
+        "narHash": "sha256-kjMMKt6o76CCbIKnWYqHWz7fwSZvmB/DpINRBD+6ZBY=",
         "owner": "colbymchenry",
         "repo": "codegraph",
-        "rev": "69af19ace270f2e940444d514de6dde971df12df",
+        "rev": "01e0ac3aa7419a7ab75583963e8a95359f3af1d3",
         "type": "github"
       },
       "original": {
@@ -93,11 +93,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1792502884,
-        "narHash": "sha256-IoNisKcGbUjdd45qCqywGMCYmZ5EnkxezvLII0FWwNA=",
+        "lastModified": 1792773339,
+        "narHash": "sha256-rZLrzrC6i+jnTAlvPZHogKDulY7WWDEv9hJeHieO7Zw=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "02c087f3fe673c9e317f206a627cb6b910336dbe",
+        "rev": "3ec636362e1816bc2f0888fa0fa2c69f1bc9e504",
         "type": "github"
       },
       "original": {
@@ -153,8 +153,8 @@
       },
       "original": {
         "owner": "7mind",
+        "ref": "main",
         "repo": "squish-find-the-brains",
-        "rev": "b731a16d0de7198303d890273249e0136dede902",
         "type": "github"
       }
     },
