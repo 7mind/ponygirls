@@ -49,6 +49,12 @@ let
       enabled = evaluateLLM { inherit commitPolicy; };
       disabled = evaluateLLM { inherit commitPolicy; generalContext.enable = false; };
     });
+  worktrees = evaluateLLM { worktrees.enable = true; };
+  worktreesWithoutGeneral = evaluateLLM {
+    worktrees.enable = true;
+    generalContext.enable = false;
+  };
+  worktreeConfigs = [ worktrees worktreesWithoutGeneral ];
   invalidPolicy = evaluateLLM { commitPolicy = "commit-everything"; };
   noCommits = "Commit policy (no-commits): Do not create commits unless explicitly requested by the user. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting.";
   commitByDefault = "Commit policy (commit-by-default): Commit completed, verified task changes by default unless the user says otherwise. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting.";
@@ -110,6 +116,17 @@ in
 assert builtins.hashString "sha256" contexts.general == "a8e93f54a82de4aeccd453354e60c2bc4bb0ff0ab2007a4870619eead69016bf";
 assert general == contexts.general;
 assert defaults.smind.hm.dev.llm.commitPolicy == "no-preference";
+assert !defaults.smind.hm.dev.llm.worktrees.enable;
+assert !(lib.hasInfix "## Worktree workflow" (memory defaults));
+assert lib.all (cfg:
+  lib.hasInfix "## Worktree workflow" (memory cfg)
+  && lib.hasInfix "git check-ignore" (memory cfg)
+  && lib.hasInfix "merge the task branch back" (memory cfg)
+  && lib.hasInfix "integration guidance" (memory cfg)
+  && lib.hasInfix "Kai's instructions" (memory cfg)
+  && cfg.smind.hm.dev.llm.commitPolicy == "no-preference"
+) worktreeConfigs;
+assert !(lib.hasInfix "# Project Guidelines" (memory worktreesWithoutGeneral));
 assert memory defaults == general + "\n\nintegration guidance\n\nKai's instructions";
 assert memory disabled == "integration guidance\n\nKai's instructions";
 assert memory policyConfigs.no-commits.enabled == general + "\n\n${noCommits}\n\nintegration guidance\n\nKai's instructions";
@@ -159,6 +176,7 @@ assert lib.all (cfg:
   && cfg.programs.codex.context == memory cfg
   && cfg.programs.pi.context == memory cfg
 ) ([ defaults disabled withoutHammer replaced reordered withoutAbrasiveLanguage withoutReproduction withoutNixStoreRule ]
+  ++ worktreeConfigs
   ++ lib.concatMap (configs: [ configs.enabled configs.disabled ]) (lib.attrValues policyConfigs));
 pkgs.runCommandLocal "general-context-hm-eval-test" {
   passthru.testTaxonomy = {

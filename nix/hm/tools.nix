@@ -55,7 +55,9 @@ let
     commands = { };
     agents = { };
     context = lib.optional generalContext.enable generalContextText
-      ++ lib.optional (commitPolicy != "no-preference") commitPolicyText;
+      ++ lib.optional (commitPolicy != "no-preference") commitPolicyText
+      ++ lib.optional config.smind.hm.dev.llm.worktrees.enable
+        (builtins.readFile ../pkg/llm-contexts/worktree-workflow.md);
   };
 
   # Aggregate every contributed asset bundle into one merged view. Mirrors
@@ -89,6 +91,13 @@ in
       default = "no-preference";
       description = "Shared commit guidance for Claude Code, Codex, and Pi, independent of generalContext. Commit-by-default covers only your own completed, verified changes and does not authorize pushing, force operations, or history rewriting. No-preference emits no guidance.";
     };
+
+    smind.hm.dev.llm.worktrees.enable = lib.mkEnableOption ''
+      shared task-worktree guidance for Claude Code, Codex, and Pi, independent
+      of generalContext. Work under an ignored .worktrees directory, verify
+      changes, and integrate safely according to the commit policy. This is
+      prompt guidance, not filesystem enforcement
+    '';
 
     smind.hm.dev.llm.generalContext = {
       enable = lib.mkEnableOption "the shared general coding guidelines" // { default = true; };
