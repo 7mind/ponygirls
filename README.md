@@ -139,6 +139,14 @@ The main knobs (all under `smind.hm.dev.llm`):
   definitions, and memory fragments; everything is merged and delivered to all
   three agents (`merged.skills`, `merged.commands`, `merged.agents`,
   `merged.contextText` expose the result).
+- **`commitPolicy`** — shared commit guidance for Claude Code, Codex, and Pi,
+  independent of `generalContext.enable`. Defaults to `"no-preference"`, which
+  emits no commit guidance. `"no-commits"` requires an explicit user request
+  before creating commits. Set
+  `smind.hm.dev.llm.commitPolicy = "commit-by-default";` to commit completed,
+  verified task changes by default unless the user says otherwise, limited to
+  the agent's own changes. This does not authorize pushing, force operations,
+  or history rewriting.
 - **`generalContext`** — disable or customize the built-in general guidelines
   shared by Claude Code, Codex, and Pi. Every section has `enable`, `text`,
   and `order` options, with finer policy flags under selected sections'
@@ -237,8 +245,8 @@ smind.hm.dev.llm.memorySections = lib.mkAfter [
 ];
 ```
 
-This retains context from integrations and other modules, along with installed
-skills, commands, and agents. Pi's separate operating manual in
+This retains the independent commit policy, context from integrations and other
+modules, along with installed skills, commands, and agents. Pi's separate operating manual in
 `APPEND_SYSTEM.md` is unaffected. These options configure the Home Manager
 context; the standalone `llm-contexts` and `llm-context-with-env` packages
 continue to contain the default guidelines.

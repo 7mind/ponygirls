@@ -1,15 +1,28 @@
 { pkgs, nixpkgs, inputs }:
 let
   lib = nixpkgs.lib;
-  evaluate = settings: (lib.evalModules {
+  evaluateLLM = settings: (lib.evalModules {
     specialArgs = { inherit pkgs inputs; };
     modules = [
       (import ../hm/tools.nix { inherit inputs; })
+      (import ../hm/claude.nix { inherit inputs; })
       ../hm/codex.nix
       ../hm/pi.nix
       ({ lib, ... }: {
         options.assertions = lib.mkOption { type = lib.types.listOf lib.types.attrs; default = [ ]; };
         options.programs.mcp = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+        options.programs.claude-code = lib.genAttrs
+          [ "enable" "enableMcpIntegration" "skills" "context" "package" "plugins" "settings" ]
+          (_: lib.mkOption { type = lib.types.anything; }) // {
+            finalPackage = lib.mkOption {
+              type = lib.types.package;
+              default = pkgs.hello;
+            };
+          };
+        options.smind.hm.dev.llm.yolo.configureDefaultProfile = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+        };
         options.programs.codex = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
         options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
         options.home.file = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
@@ -22,15 +35,23 @@ let
       {
         smind.hm.dev.llm = {
           enable = true;
-          generalContext = settings;
           assetBundles = [ { context = [ "integration guidance" ]; } ];
           memorySections = lib.mkAfter [ "Kai's instructions" ];
           extraSkills.sentinel = "sentinel skill";
-        };
+        } // settings;
       }
     ];
   }).config;
+  evaluate = settings: evaluateLLM { generalContext = settings; };
   defaults = evaluate { };
+  policyConfigs = lib.genAttrs [ "no-commits" "commit-by-default" "no-preference" ]
+    (commitPolicy: {
+      enabled = evaluateLLM { inherit commitPolicy; };
+      disabled = evaluateLLM { inherit commitPolicy; generalContext.enable = false; };
+    });
+  invalidPolicy = evaluateLLM { commitPolicy = "commit-everything"; };
+  noCommits = "Commit policy (no-commits): Do not create commits unless explicitly requested by the user. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting.";
+  commitByDefault = "Commit policy (commit-by-default): Commit completed, verified task changes by default unless the user says otherwise. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting.";
   disabled = evaluate { enable = false; };
   withoutHammer = evaluate { sections.hammer-mode.enable = false; };
   replaced = evaluate { sections.hammer-mode.text = "Kai's replacement"; };
@@ -88,8 +109,16 @@ let
 in
 assert builtins.hashString "sha256" contexts.general == "a8e93f54a82de4aeccd453354e60c2bc4bb0ff0ab2007a4870619eead69016bf";
 assert general == contexts.general;
+assert defaults.smind.hm.dev.llm.commitPolicy == "no-preference";
 assert memory defaults == general + "\n\nintegration guidance\n\nKai's instructions";
 assert memory disabled == "integration guidance\n\nKai's instructions";
+assert memory policyConfigs.no-commits.enabled == general + "\n\n${noCommits}\n\nintegration guidance\n\nKai's instructions";
+assert memory policyConfigs.no-commits.disabled == "${noCommits}\n\nintegration guidance\n\nKai's instructions";
+assert memory policyConfigs.commit-by-default.enabled == general + "\n\n${commitByDefault}\n\nintegration guidance\n\nKai's instructions";
+assert memory policyConfigs.commit-by-default.disabled == "${commitByDefault}\n\nintegration guidance\n\nKai's instructions";
+assert memory policyConfigs.no-preference.enabled == general + "\n\nintegration guidance\n\nKai's instructions";
+assert memory policyConfigs.no-preference.disabled == "integration guidance\n\nKai's instructions";
+assert !(builtins.tryEval (memory invalidPolicy)).success;
 assert disabled.smind.hm.dev.llm.merged.skills == defaults.smind.hm.dev.llm.merged.skills;
 assert disabled.smind.hm.dev.llm.merged.skills.sentinel == "sentinel skill";
 assert !(lib.hasInfix "Hammer Mode" (memory withoutHammer));
@@ -126,9 +155,11 @@ assert !(builtins.tryEval (memory misspelledRule)).success;
 assert allHammerRulesDisabled.smind.hm.dev.llm.generalContext.sections.hammer-mode.text == "## 1. Hammer Mode\n\n";
 assert memory parentDisabled == memory withoutHammer;
 assert lib.all (cfg:
-  cfg.programs.codex.context == memory cfg
+  cfg.programs.claude-code.context == memory cfg
+  && cfg.programs.codex.context == memory cfg
   && cfg.programs.pi.context == memory cfg
-) [ defaults disabled withoutHammer replaced reordered withoutAbrasiveLanguage withoutReproduction withoutNixStoreRule ];
+) ([ defaults disabled withoutHammer replaced reordered withoutAbrasiveLanguage withoutReproduction withoutNixStoreRule ]
+  ++ lib.concatMap (configs: [ configs.enabled configs.disabled ]) (lib.attrValues policyConfigs));
 pkgs.runCommandLocal "general-context-hm-eval-test" {
   passthru.testTaxonomy = {
     purpose = "behavioral";

@@ -39,6 +39,14 @@ let
       ([ generalContext.preamble ] ++ map (section: section.text) orderedSections)
   ) + "\n";
 
+  commitPolicy = config.smind.hm.dev.llm.commitPolicy;
+  commitPolicyText =
+    if commitPolicy == "no-commits" then
+      "Commit policy (no-commits): Do not create commits unless explicitly requested by the user. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting."
+    else if commitPolicy == "commit-by-default" then
+      "Commit policy (commit-by-default): Commit completed, verified task changes by default unless the user says otherwise. Only commit your own changes. This does not authorize pushing, force operations, or history rewriting."
+    else "";
+
   # Canonical llmAssets bundle from the two in-repo packages: skills from
   # llm-skills, general context from llm-contexts. Symmetric with
   # external llmAssets bundles. This base bundle has no commands or agents.
@@ -46,7 +54,8 @@ let
     skills = llmSkills.skills;
     commands = { };
     agents = { };
-    context = lib.optional generalContext.enable generalContextText;
+    context = lib.optional generalContext.enable generalContextText
+      ++ lib.optional (commitPolicy != "no-preference") commitPolicyText;
   };
 
   # Aggregate every contributed asset bundle into one merged view. Mirrors
@@ -74,6 +83,12 @@ in
 {
   options = {
     smind.hm.dev.llm.enable = lib.mkEnableOption "LLM development environment variables";
+
+    smind.hm.dev.llm.commitPolicy = lib.mkOption {
+      type = lib.types.enum [ "no-commits" "commit-by-default" "no-preference" ];
+      default = "no-preference";
+      description = "Shared commit guidance for Claude Code, Codex, and Pi, independent of generalContext. Commit-by-default covers only your own completed, verified changes and does not authorize pushing, force operations, or history rewriting. No-preference emits no guidance.";
+    };
 
     smind.hm.dev.llm.generalContext = {
       enable = lib.mkEnableOption "the shared general coding guidelines" // { default = true; };
