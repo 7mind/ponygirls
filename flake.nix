@@ -21,7 +21,10 @@
       url = "github:openai/codex-plugin-cc";
       flake = false;
     };
-    claude-code-sandbox.url = "github:neko-kai/claude-code-sandbox";
+    claude-code-sandbox = {
+      url = "github:neko-kai/claude-code-sandbox";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs@{ self, nixpkgs, flake-utils, ... }:
