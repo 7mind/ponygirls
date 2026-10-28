@@ -4,7 +4,7 @@ Internal session archive: Scala3/http4s, explicit distage constructor graph, Lif
 
 ## Build and verification
 
-Pinned toolchain: sbt1.13.0, server Scala3.9.0, generated-only Scala2.13.18, Izumi1.2.25, Baboon0.0.198, PostgreSQL18.6+pgvector0.8.7. Generated Scala runtime contains Scala2 `do/while`, so it compiles separately under `generated/.build`; server remains Scala3. Circe/cats/http4s use their2.13 artifacts consistently at this boundary. Izumi macros require `-Yretain-trees`. Scala3.10.0 was tested and rejected: PluginDef's ForcedRecompilationToken macro expands to an incompatible singleton type (retained sanitized failure in `server/scala-3.10-izumi-repro.log`). Scala3.9.0 is the newest compatible stable3.9 release verified.
+Pinned toolchain: sbt1.13.1, server Scala3.9.0, generated-only Scala2.13.18, Izumi1.2.25, Baboon0.0.198, PostgreSQL18.6+pgvector0.8.7. Generated Scala runtime contains Scala2 `do/while`, so it compiles separately under `generated/.build`; server remains Scala3. Circe/cats/http4s use their2.13 artifacts consistently at this boundary. Izumi macros require `-Yretain-trees`. Scala3.10.0 was tested and rejected: PluginDef's ForcedRecompilationToken macro expands to an incompatible singleton type (retained sanitized failure in `server/scala-3.10-izumi-repro.log`). Scala3.9.0 is the newest compatible stable3.9 release verified.
 
 ```bash
 export SBT_LAUNCH_JAR=/path/to/sbt-launch.jar
