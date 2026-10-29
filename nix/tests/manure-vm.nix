@@ -86,7 +86,14 @@ GUARDEOF
   # pairing is the compatible choice; the rev assertion forces explicit
   # re-review on any nixpkgs bump instead of silent skew.
   hmSrc = pkgs.home-manager.src;
-  hmLib = import "${hmSrc}/lib" { inherit (nixpkgs) lib; };
+  # Use the evaluator's fetcher for the same pinned tree; importing the
+  # fixed-output derivation itself would require a build during evaluation.
+  hmTree = builtins.fetchTree {
+    type = "tarball";
+    url = hmSrc.url;
+    narHash = hmSrc.outputHash;
+  };
+  hmLib = import "${hmTree.outPath}/lib" { inherit (nixpkgs) lib; };
   hmEvalPkgs = import nixpkgs { system = "x86_64-linux"; };
   hm = hmLib.homeManagerConfiguration {
     pkgs = hmEvalPkgs;
