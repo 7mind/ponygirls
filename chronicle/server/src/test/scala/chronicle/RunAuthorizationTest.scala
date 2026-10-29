@@ -177,9 +177,35 @@ final class PostgresRunAuthorizationTest extends RunAuthorizationContract {
   test("GoodCommunication: ordinary database startup registers the authorization epoch migration") { withDatabaseFixture { (_,db) =>
     IO.blocking(db.transaction { c =>
       assert(SecurityEpoch.current(c)>=0L)
-      assertEquals(Sql.one(c,"SELECT version FROM ch_schema_migrations WHERE version=9")(_.getInt(1)),Some(9))
+      List(9,14).foreach(version => assertEquals(Sql.one(c,"SELECT version FROM ch_schema_migrations WHERE version=?",version)(_.getInt(1)),Some(version)))
     })
   }}
+
+  List("hash change","owner change","expiry reduction","expired revival").foreach { change =>
+    test(s"BG GoodCommunication specified: $change on an unrelated session invalidates captured authority") { withDatabaseFixture { (f,db) =>
+      val hash=Wire.hash(Wire.secret())
+      for {
+        _ <- IO.blocking(db.transaction { c =>
+          val lifetime=if(change=="expired revival") "-interval '1 second'" else "+interval '1 day'"
+          Sql.exec(c,s"INSERT INTO ch_sessions VALUES(?,?,clock_timestamp()$lifetime)",hash,"a")
+        })
+        stamp <- f.authorization.capture(f.identity)
+        _ <- IO.blocking(db.transaction { c => change match {
+          case "hash change" => Sql.exec(c,"UPDATE ch_sessions SET hash=? WHERE hash=?",Wire.hash(Wire.secret()),hash)
+          case "owner change" => Sql.exec(c,"UPDATE ch_sessions SET owner=? WHERE hash=?","c",hash)
+          case "expiry reduction" => Sql.exec(c,"UPDATE ch_sessions SET expires=clock_timestamp()+interval '1 hour' WHERE hash=?",hash)
+          case "expired revival" => Sql.exec(c,"UPDATE ch_sessions SET expires=clock_timestamp()+interval '1 day' WHERE hash=?",hash)
+        }})
+        rejected <- f.authorization.verify(stamp).attempt
+        _ <- IO(rejected match {
+          case Left(error: DomainError) => assertEquals(error.code,"authorization-changed")
+          case _ => fail("security-relevant session update failed to invalidate unrelated authority")
+        })
+        fresh <- f.authorization.capture(f.identity)
+        _ <- f.authorization.verify(fresh)
+      } yield ()
+    }}
+  }
 
   test("GoodCommunication: natural session expiry is checked even when the security epoch is unchanged") { withDatabaseFixture { (f,db) =>
     for {

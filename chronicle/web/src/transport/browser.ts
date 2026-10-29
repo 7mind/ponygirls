@@ -16,6 +16,7 @@ export function browserLifecycle(win: Window, doc: Document): Lifecycle {
       on(doc, 'visibilitychange', () => callback(doc.visibilityState === 'hidden' ? 'hidden' : 'visible'));
       for (const name of ['freeze', 'resume']) on(doc, name, () => callback(name as LifecycleEvent));
       for (const name of ['online', 'offline']) on(win, name, () => callback(name as LifecycleEvent));
+      on(win, 'focus', () => callback('focus'));
       on(win, 'pagehide', () => callback('pagehide'));
       on(win, 'pageshow', event => { if ((event as PageTransitionEvent).persisted) callback('pageshow'); });
       const network: unknown = Reflect.get(win.navigator, 'connection');

@@ -1,6 +1,6 @@
 export type SocketState = 'NEW' | 'ALIVE' | 'STALE' | 'DEAD';
 export type StopReason = 'stopped' | 'unauthorized' | 'update-required' | 'protocol-error';
-export type LifecycleEvent = 'visible' | 'hidden' | 'online' | 'offline' | 'network-change' | 'freeze' | 'resume' | 'pagehide' | 'pageshow';
+export type LifecycleEvent = 'focus' | 'visible' | 'hidden' | 'online' | 'offline' | 'network-change' | 'freeze' | 'resume' | 'pagehide' | 'pageshow';
 export interface Scheduler {
   now(): number;
   setTimeout(callback: () => void, delay: number): number;

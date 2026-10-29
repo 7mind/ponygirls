@@ -170,8 +170,15 @@ export class ChronicleFixture {
     const selection = [this.user.id, this.targetProfile, ...eligible.map(row => [row.job.id, row.job.revision, this.jobFences.get(row.job.id) ?? 0]).sort((left, right) => left[0].localeCompare(right[0]))];
     return new api.RetryFailedPlan(this.targetProfile, createHash('sha256').update(JSON.stringify(selection)).digest('hex'), counts);
   }
+  whoamiFailure = null;
+  refreshStatus = 200; refreshTtl = '2592000'; refreshRequests = [];
   goal50Operation = undefined;
   async install(page) {
+    // Synthetic renewal server; real backend cookie/revocation semantics are tested separately.
+    await page.route('**/api/session/refresh', route => {
+      this.refreshRequests.push({ method: route.request().method(), headers: route.request().headers(), body: route.request().postData() });
+      return route.fulfill({ status: this.refreshStatus, contentType: 'application/json', headers: this.refreshStatus === 200 ? { 'X-Chronicle-Session-Ttl-Seconds': this.refreshTtl, 'Set-Cookie': `chronicle_session=synthetic; HttpOnly; SameSite=Strict; Path=/; Max-Age=${this.refreshTtl}` } : {}, body: JSON.stringify(api.UserInfo_JsonCodec.instance.encode(context, this.user)) });
+    });
     await page.route('**/api/login', route => {
       const request = api.LoginRequest_JsonCodec.instance.decode(context, route.request().postDataJSON());
       if (!['alice', 'bob'].includes(request.login) || request.password !== 'synthetic-password') return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify(api.Failure_JsonCodec.instance.encode(context, new api.Failure('unauthorized', 'Invalid credentials'))) });
@@ -192,7 +199,7 @@ export class ChronicleFixture {
         if (operation instanceof api.Operation_Hello) { send(new api.Result_Hello(this.version, this.user)); return; }
         if (operation instanceof api.Operation_Ping) { send(new api.Result_Pong(operation.nonce)); return; }
         if (operation instanceof api.Operation_Pong) return;
-        if (operation instanceof api.Operation_Whoami) { send(new api.Result_Whoami(this.user)); return; }
+        if (operation instanceof api.Operation_Whoami) { send(this.whoamiFailure === null ? new api.Result_Whoami(this.user) : new api.Result_Error(new api.Failure('unavailable', this.whoamiFailure))); return; }
         if (this.goal50Operation !== undefined && this.goal50Operation(operation, envelope, send, entry)) return;
         if (operation instanceof api.Operation_ExpressionHints) { const hash = createHash('sha256').update(JSON.stringify(operation.query.toJSON())).digest('hex'); send(new api.Result_ExpressionHints(new api.ExpressionHintsResult(hash, '2026-10-26T12:00:00Z', operation.query.caretUtf16, operation.query.caretUtf16, [], false))); return; }
         if (operation instanceof api.Operation_GetPassages) { const view = this.chunksViewOverride ?? operation.view, problems = this.problemsAt(view); send(new api.Result_Passages(new api.PassagesResult(view, view.generationId === undefined ? api.PassageFormat.Unindexed : api.PassageFormat.ContextAwareProblems, problems.slice(operation.offset, operation.offset + operation.limit), BigInt(problems.length), operation.offset))); return; }

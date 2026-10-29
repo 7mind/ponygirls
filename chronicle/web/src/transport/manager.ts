@@ -85,6 +85,8 @@ export class ConnectionManager<Operation, Result> {
     this.terminal = null; this.attempts = 0; this.suspended = false;
     this.cancelRetry(); this.invalidate(); this.closeAll('manual retry'); this.open(false);
   }
+  /** Only a confirmed cookie renewal HTTP 401 is credential rejection, not network/5xx failure. */
+  sessionExpired(): void { this.stop('unauthorized', 'Your session expired. Sign in again.'); }
   dispose(): void {
     if (this.destroyed) return;
     this.destroyed = true;

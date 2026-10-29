@@ -15,7 +15,7 @@ import scala.concurrent.duration.*
 
 final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission) {
   private val socketQueueCapacity = 32
-  private val livenessTimeoutCloseCode = 1013
+  private val retryableCloseCode = 1013
   private val normalCloseCode = 1000
   private def header(r: Request[IO],key: String): Option[String] = r.headers.get(CIString(key)).map(_.head.value)
   private def origin(r: Request[IO],required: Boolean): Unit = Check(header(r,"Origin").contains(config.allowedOrigin) || (!required && header(r,"Origin").isEmpty),"forbidden","Origin not allowed")
@@ -40,7 +40,13 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
         boundedBody(r,math.min(config.maxBodyBytes,Http.loginBodyBytes)).flatMap(raw => IO.blocking(auth.login(Wire.decode(LoginRequest.codecJson,Wire.parse(raw))))).map { case (response,secret) => json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,config.sessionTtlSeconds.toLong)) }
       }
     }
-    case r @ POST -> Root / "api" / "logout" => handle { IO.blocking { noUrlSecrets(r); origin(r,true); val i = auth.browser(cookie(r)); auth.logout(i); json(Status.Ok,io.circe.Json.obj()).addCookie(sessionCookie("",0)) } }
+    case r @ POST -> Root / "api" / "session" / "refresh" => handle { IO.blocking {
+      noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only")
+      val secret=cookie(r)
+      val user=auth.refreshBrowser(secret)
+      json(Status.Ok,Wire.encode(UserInfo.codecJson,user)).putHeaders(Header.Raw(CIString(Http.sessionTtlHeader),config.sessionTtlSeconds.toString)).addCookie(sessionCookie(secret,config.sessionTtlSeconds.toLong))
+    } }
+    case r @ POST -> Root / "api" / "logout" => handle { IO.blocking { noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only"); val i = auth.browser(cookie(r)); auth.logout(i); json(Status.Ok,io.circe.Json.obj()).addCookie(sessionCookie("",0)) } }
     case r @ POST -> Root / "api" / "ingest" => handle {
       IO.blocking { noUrlSecrets(r); origin(r,false); val i = bearer(r); i.requireScope(Scope.Ingest); i }.flatMap(i => boundedBody(r,config.maxBodyBytes).flatMap(raw => IO.blocking(archive.ingest(i.user.id,Wire.decode(IngestRequest.codecJson,Wire.parse(raw)))))).map(receipt => json(Status.Ok,Wire.encode(IngestReceipt.codecJson,receipt)))
     }
@@ -111,7 +117,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     opened <- IO.monotonic
     close = (code: Int,failure: Option[ServerEnvelope]) => IO.uncancelable(_ => closed.set(true) *> cleanup.get.flatten *> ending.complete(Http.SocketClose(code,failure)).void)
     enqueue = (output: Http.SocketOutput) => closed.get.ifM(IO.unit,queue.tryOffer(output).flatMap { accepted =>
-      if(accepted) IO.unit else close(livenessTimeoutCloseCode,None)
+      if(accepted) IO.unit else close(retryableCloseCode,None)
     })
     send = (envelope: ServerEnvelope) => enqueue(Http.SocketOutput.Reply(BrowserReply.Ordinary(envelope)))
     error = (id: UUID,d: DomainError) => {
@@ -120,6 +126,10 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
         case "unauthorized" => close(4401,Some(envelope))
         case "version-mismatch" => close(4406,Some(envelope))
         case "protocol-error" => close(4400,Some(envelope))
+        case "unavailable" => negotiated.get.flatMap {
+          case None => IO(logger.error("WebSocket negotiation unavailable")) *> close(retryableCloseCode,None)
+          case Some(_) => send(envelope)
+        }
         case _ => send(envelope)
       }
     }
@@ -168,12 +178,15 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     })
     tick = Stream.awakeEvery[IO](1.second).evalMap { _ => closed.get.ifM(IO.unit,IO.monotonic.flatMap { now =>
       IO.blocking(auth.browser(cookie(r))).attempt.flatMap {
-        case Left(_) => error(new UUID(0,0),DomainError("unauthorized","session expired or revoked"))
+        case Left(d: DomainError) if d.code=="unauthorized" => error(new UUID(0,0),d)
+        case Left(_) =>
+          // A bare retryable close cannot overtake Hello with an ordinary, not-yet-negotiated error frame.
+          IO(logger.error("session verification failed")) *> close(retryableCloseCode,None)
         case Right(_) => negotiated.get.flatMap { ready =>
-          if(ready.isEmpty && now-opened>10.seconds) close(livenessTimeoutCloseCode,None)
+          if(ready.isEmpty && now-opened>10.seconds) close(retryableCloseCode,None)
           else if(ready.isEmpty) IO.unit
           else heartbeat.get.flatMap {
-            case Some((_,_,deadline)) if now>deadline => close(livenessTimeoutCloseCode,None)
+            case Some((_,_,deadline)) if now>deadline => close(retryableCloseCode,None)
             case Some(_) => IO.unit
             case None => if((now-opened).toSeconds%20==0) { val id=UUID.randomUUID(); val nonce=Wire.secret(); heartbeat.set(Some((id,nonce,now+10.seconds))) *> send(ServerEnvelope(id,Result.Ping(nonce))) } else IO.unit
           }
@@ -215,6 +228,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
 }
 
 object Http {
+  val sessionTtlHeader = "X-Chronicle-Session-Ttl-Seconds"
   val loginBodyBytes = 16*1024
   val mcpBodyBytes = 64*1024
   val socketFrameBytes = 64*1024

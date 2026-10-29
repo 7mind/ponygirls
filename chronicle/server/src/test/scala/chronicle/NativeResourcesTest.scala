@@ -5,6 +5,9 @@ import scala.jdk.CollectionConverters.*
 import scala.util.Using
 
 class NativeResourcesTest extends munit.FunSuite {
+  test("Blackbox-Group: renewable-session migration is available on the packaged classpath") {
+    assert(getClass.getResource("/014_renewable_sessions.sql")!=null,"renewable-session migration missing")
+  }
   test("Blackbox-Group: native resource selectors include every database migration") {
     val properties=new Properties
     val resource=getClass.getResourceAsStream("/META-INF/native-image/chronicle/native-image.properties")

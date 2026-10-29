@@ -66,6 +66,7 @@ let
   maxBodyServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.limits.maxBodyBytes = 536870912; });
   oversizedBodyServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.limits.maxBodyBytes = 536870913; });
   enabledServer = server serverConfig;
+  shortSessionServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.limits.sessionTtlSeconds = 3600; });
   defaultPackageServer = server { smind.services.chronicle = builtins.removeAttrs serverConfig.smind.services.chronicle [ "package" ]; };
   glmServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.annotation.requestPolicy = "glm-max-reasoning"; });
   capacityServer = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.indexing = { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; }; });
@@ -138,6 +139,8 @@ assert defaultPackageServer.smind.services.chronicle.package.toolchain.nativeIma
 assert builtins.isString defaultPackageServer.smind.services.chronicle.package.offlineAssemblyCheck.drvPath;
 assert enabledServer.systemd.services.chronicle.serviceConfig.User == "chronicle";
 assert enabledServer.systemd.services.chronicle.serviceConfig.TimeoutStopSec == 60;
+assert enabledServer.smind.services.chronicle.limits.sessionTtlSeconds == 30 * 24 * 60 * 60;
+assert shortSessionServer.smind.services.chronicle.limits.sessionTtlSeconds == 3600;
 assert enabledServer.smind.services.chronicle.indexing == { annotationSessions = 4; embeddingRequests = 8; embeddingBatchSize = 16; };
 assert capacityServer.smind.services.chronicle.indexing == { annotationSessions = 8; embeddingRequests = 12; embeddingBatchSize = 3; };
 assert rejectedCapacity "annotationSessions" 0;
@@ -171,6 +174,8 @@ pkgs.runCommandLocal "chronicle-modules-test" { nativeBuildInputs = [ pkgs.jq ];
   test -n '${enabledServer.systemd.services.chronicle.serviceConfig.ExecStart}'
   jq -e '.annotation.requestPolicy == "strict-json-schema" and (.embedding | has("requestPolicy") | not)' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.annotation.requestPolicy == "glm-max-reasoning"' ${lib.last (lib.splitString " " glmServer.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.sessionTtlSeconds == 2592000' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
+  jq -e '.sessionTtlSeconds == 3600' ${lib.last (lib.splitString " " shortSessionServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.indexing == {annotationSessions:4,embeddingRequests:8,embeddingBatchSize:16}' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.indexing == {annotationSessions:8,embeddingRequests:12,embeddingBatchSize:3}' ${lib.last (lib.splitString " " capacityServer.systemd.services.chronicle.serviceConfig.ExecStart)}
   jq -e '.embedding.sendDimensions == false' ${lib.last (lib.splitString " " enabledServer.systemd.services.chronicle.serviceConfig.ExecStart)}

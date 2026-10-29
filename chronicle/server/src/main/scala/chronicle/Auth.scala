@@ -19,6 +19,13 @@ final class Auth(db: Database, config: Config) {
   private def browserHash(c: Connection,hash: String): Identity =
     Sql.one(c,"SELECT u.id,u.login FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND s.expires>clock_timestamp() AND u.enabled",hash)(r => Identity(UserInfo(r.getString(1),r.getString(2),allScopes),true,hash)).getOrElse(throw DomainError("unauthorized","session expired or revoked"))
   def browser(secret: String): Identity = db.transaction(c => browserHash(c,Wire.hash(secret)))
+  def refreshBrowser(secret: String): UserInfo = db.transaction { c =>
+    val hash=Wire.hash(secret)
+    // Check expiry after acquiring the existing row: time may pass while waiting for a concurrent renewal/logout.
+    Sql.one(c,"SELECT hash FROM ch_sessions WHERE hash=? FOR UPDATE",hash)(_.getString(1))
+    Sql.one(c,"UPDATE ch_sessions s SET expires=clock_timestamp()+make_interval(secs=>?) FROM ch_users u WHERE s.hash=? AND s.owner=u.id AND s.expires>clock_timestamp() AND u.enabled RETURNING u.id,u.login",config.sessionTtlSeconds,hash)(r => UserInfo(r.getString(1),r.getString(2),allScopes))
+      .getOrElse(throw DomainError("unauthorized","session expired or revoked"))
+  }
   private[chronicle] def currentBrowser(c: Connection,identity: Identity): Identity = {
     identity.requireBrowser()
     val current=browserHash(c,identity.credentialHash)

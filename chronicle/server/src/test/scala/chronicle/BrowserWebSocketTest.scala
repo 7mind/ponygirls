@@ -78,9 +78,11 @@ class BrowserWebSocketTest extends munit.FunSuite {
       val db=new Database(config,IndexProfileCatalog.legacyOnly(config))
       db.initialize()
       db.transaction { c =>
-        val stream=getClass.getResourceAsStream("/009_transient_security_epoch.sql")
-        Check(stream!=null,"test","security migration missing")
-        Using.resource(c.createStatement())(_.execute(Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)))
+        List("/009_transient_security_epoch.sql","/014_renewable_sessions.sql").foreach { migration =>
+          val stream=getClass.getResourceAsStream(migration)
+          Check(stream!=null,"test","security migration missing")
+          Using.resource(c.createStatement())(_.execute(Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)))
+        }
         Sql.exec(c,"TRUNCATE ch_sources,ch_sessions,ch_groups,ch_tokens,ch_mutations,ch_collector_progress CASCADE")
         Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
         Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
@@ -196,6 +198,93 @@ class BrowserWebSocketTest extends munit.FunSuite {
         }}
       }}
     } yield ()).unsafeRunSync()
+  }
+
+  test("Effectual GoodCommunication specified: refresh preserves the open socket while heartbeats stay read-only and real expiry or revocation remains terminal") {
+    List("expiry","revocation").foreach { boundary =>
+      (for {
+        tools <- McpTestFixtures.ordinaryTools
+        model <- McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("unused")))
+        _ <- fixture(immediateEmbedder,model,tools,identity).use { f => for {
+          secret <- IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2)
+          _ <- server(f).use { url => EmberClientBuilder.default[IO].build.use { httpClient => socket(url,f.config,secret).use { client =>
+            def expires: IO[java.sql.Timestamp]=IO.blocking(f.db.transaction(c => Sql.one(c,"SELECT expires FROM ch_sessions WHERE hash=?",Wire.hash(secret))(_.getTimestamp(1)).get))
+            for {
+              hello <- client.request(Operation.Hello(List(Wire.versions.current)))
+              _ <- IO(assert(hello.isInstanceOf[Result.Hello]))
+              before <- expires
+              _ <- IO.sleep(1200.millis)
+              after <- expires
+              _ <- IO(assertEquals(after,before,"heartbeat authentication must remain read-only"))
+              _ <- IO.blocking(f.db.transaction(c => Sql.exec(c,"UPDATE ch_sessions SET expires=clock_timestamp()+interval '3 seconds' WHERE hash=?",Wire.hash(secret))))
+              request=Request[IO](Method.POST,Uri.unsafeFromString(url.replace("ws://","http://").stripSuffix("/api/ws")+"/api/session/refresh"))
+                .putHeaders(Header.Raw(org.typelevel.ci.CIString("Origin"),f.config.allowedOrigin),Header.Raw(org.typelevel.ci.CIString("Cookie"),s"chronicle_session=$secret"))
+              _ <- httpClient.run(request).use { response => IO(assertEquals(response.status,Status.Ok)) *> response.body.compile.drain }
+              _ <- IO.sleep(4.seconds)
+              current <- client.request(Operation.Whoami())
+              _ <- IO { assert(current.isInstanceOf[Result.Whoami]); assert(!client.closed.isDone) }
+              _ <- IO.blocking {
+                if(boundary=="expiry") f.db.transaction(c => Sql.exec(c,"UPDATE ch_sessions SET expires=clock_timestamp() WHERE hash=?",Wire.hash(secret)))
+                else f.auth.logout(f.auth.browser(secret))
+              }
+              code <- IO.blocking(client.closed.get(5,TimeUnit.SECONDS))
+              failure <- client.receive
+              _ <- IO { assertEquals(code,4401); assertEquals(failure.result,Result.Error(Failure("unauthorized","session expired or revoked"))) }
+            } yield ()
+          }}}
+        } yield () }
+      } yield ()).unsafeRunSync()
+    }
+  }
+
+  // Regression-origin: an unavailable session store is not evidence of revoked authentication.
+  List("negotiated heartbeat","pre-Hello heartbeat","Hello lookup").foreach { phase =>
+    test(s"BG GoodCommunication regression: heartbeat JDBC failure is retryable without false deauthentication or disclosure ($phase)") {
+      val failing=new java.util.concurrent.atomic.AtomicBoolean(false)
+      val prefix="jdbc:heartbeat-"+UUID.randomUUID()+":"
+      val driver=new java.sql.Driver {
+        private val delegate=new org.postgresql.Driver()
+        def acceptsURL(url: String): Boolean=url.startsWith(prefix)
+        def connect(url: String,properties: java.util.Properties): java.sql.Connection = {
+          if(!acceptsURL(url)) return null
+          val connection=delegate.connect(url.stripPrefix(prefix),properties)
+          java.lang.reflect.Proxy.newProxyInstance(classOf[java.sql.Connection].getClassLoader,Array(classOf[java.sql.Connection]),(_,method,args) => {
+            val arguments=if(args==null) Array.empty[Object] else args
+            if(method.getName=="prepareStatement" && arguments(0).asInstanceOf[String].startsWith("SELECT u.id,u.login FROM ch_sessions") && failing.get())
+              throw new java.sql.SQLException("synthetic private JDBC credential marker")
+            try method.invoke(connection,arguments*) catch { case e: java.lang.reflect.InvocationTargetException => throw e.getCause }
+          }).asInstanceOf[java.sql.Connection]
+        }
+        def getPropertyInfo(url: String,properties: java.util.Properties): Array[java.sql.DriverPropertyInfo]=delegate.getPropertyInfo(url.stripPrefix(prefix),properties)
+        def getMajorVersion(): Int=delegate.getMajorVersion()
+        def getMinorVersion(): Int=delegate.getMinorVersion()
+        def jdbcCompliant(): Boolean=delegate.jdbcCompliant()
+        def getParentLogger(): java.util.logging.Logger=delegate.getParentLogger()
+      }
+      (for {
+        tools <- McpTestFixtures.ordinaryTools
+        model <- McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("unused")))
+        _ <- Resource.make(IO(java.sql.DriverManager.registerDriver(driver)))(_ => IO(java.sql.DriverManager.deregisterDriver(driver))).use { _ =>
+          fixture(immediateEmbedder,model,tools,identity).use { f =>
+            val observed=f.config.copy(jdbcUrl=prefix+f.config.jdbcUrl)
+            val auth=new Auth(new Database(observed,f.db.profiles),observed)
+            for {
+              secret <- IO.blocking(auth.login(LoginRequest("a","synthetic"))._2)
+              _ <- server(f.copy(auth=auth)).use(url => socket(url,f.config,secret).use { client => for {
+                _ <- if(phase=="negotiated heartbeat") client.request(Operation.Hello(List(Wire.versions.current))).flatMap(hello => IO(assert(hello.isInstanceOf[Result.Hello]))) else IO.unit
+                _ <- IO(failing.set(true))
+                _ <- if(phase=="Hello lookup") client.send(Operation.Hello(List(Wire.versions.current)),UUID.randomUUID()) else IO.unit
+                code <- IO.blocking(client.closed.get(5,TimeUnit.SECONDS))
+                _ <- IO(assertEquals(code,1013))
+                _ <- IO(assertEquals(client.inbox.size(),0,"session-store failures close retryably without racing Hello with an ordinary application envelope"))
+              } yield () })
+              _ <- IO(failing.set(false))
+              _ <- IO.blocking(assertEquals(auth.browser(secret).user.id,"a"))
+            } yield ()
+          }
+        }
+      } yield ()).unsafeRunSync()
+    }
   }
 
   private def runSnapshot(socket: Socket,instance: UUID,run: UUID): IO[McpTestSnapshot] =
