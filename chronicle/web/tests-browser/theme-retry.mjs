@@ -111,9 +111,21 @@ async function themeCases() {
     assert.equal(await focused.evaluate(element => element === document.activeElement), true); assert.equal(await page.locator('.conversation-source').evaluate(element => element.scrollTop), sourceScroll); assert.equal(await message.evaluate(element => element.isConnected && element === document.querySelector('.original-message')), true); assert.equal(await page.locator('.provenance').innerText(), pin); assert.equal(fixture.calls.length, sourceCalls); await context.close();
   });
   await run('owner-wide preview stays confirmed through theme changes, independent of History and filters; no Apply is implied', async () => {
-    const { context, page, fixture } = await scene(DESKTOP, async () => {}); await activity(page); await page.getByRole('button', { name: 'History', exact: true }).click(); await page.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).fill('status:Failed'); await page.locator('.activity-jobs').getByRole('button', { name: 'Filter', exact: true }).click(); await page.locator('.activity-job-table[aria-busy="false"]').waitFor();
+    const { context, page, fixture } = await scene(DESKTOP, async ({ page }) => {
+      // Isolate theme's request invariant from the real transport's 600ms heartbeat.
+      await page.clock.install({ time: new Date('2030-01-01T00:00:00Z') });
+      await page.clock.pauseAt(new Date('2030-01-01T00:01:00Z'));
+    }); await activity(page); await page.getByRole('button', { name: 'History', exact: true }).click(); await page.getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).fill('status:Failed'); await page.locator('.activity-jobs').getByRole('button', { name: 'Filter', exact: true }).click(); await page.locator('.activity-job-table[aria-busy="false"]').waitFor();
     const trigger = page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }); await trigger.click(); const preview = page.getByRole('region', { name: 'Retry failed indexing preview', exact: true }), checkbox = preview.getByRole('checkbox'); await checkbox.check(); const node = await preview.elementHandle(), counts = await preview.locator('table').innerText(), calls = fixture.calls.length;
     await choose(page, 'dark'); assert.equal(await checkbox.isChecked(), true); assert.equal(await node.evaluate(element => element.isConnected && element === document.querySelector('.retry-failed-preview')), true); assert.equal(await preview.locator('table').innerText(), counts); assert.equal(await preview.getByRole('button', { name: 'Confirm retry indexing jobs', exact: true }).isEnabled(), true); if (fixture.calls.length !== calls) console.log('Owner-theme request count diagnostics:', JSON.stringify(fixture.calls.slice(calls).map(call => call.operation.toJSON()))); assert.equal(fixture.calls.length, calls); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).length, 0);
+    const HARNESS_HEARTBEAT_MS = 600; // Matches tests-browser/harness.tsx, not the production default.
+    const callsBeforeHeartbeat = fixture.calls.length;
+    await page.clock.runFor(HARNESS_HEARTBEAT_MS);
+    const afterTheme = fixture.calls.slice(callsBeforeHeartbeat);
+    assert.equal(afterTheme.length, 1, 'one real heartbeat runs after the paused theme assertions');
+    assert.equal(afterTheme[0].operation instanceof api.Operation_Ping, true, 'the added envelope is the actual transport Ping');
+    assert.equal(afterTheme.filter(call => !(call.operation instanceof api.Operation_Ping)).length, 0, 'theme must not queue delayed application or mutation requests');
+    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyRetryFailed).length, 0);
     await preview.getByRole('button', { name: 'Cancel retry preview', exact: true }).click(); assert.equal(await trigger.evaluate(element => element === document.activeElement), true); await context.close();
   });
   await run('theme changes cannot clear delivered retry uncertainty or resend Apply', async () => {
