@@ -259,7 +259,7 @@
       in
       {
         devShells.chronicle = pkgs.mkShell {
-          packages = [ chronicleTools.graal chronicleTools.baboon chronicleTools.sbt chronicleTools.postgres pkgs.nodejs_24 pkgs.git pkgs.pkg-config pkgs.zlib pkgs.openssl pkgs.stdenv.cc ];
+          packages = [ chronicleTools.graal chronicleTools.baboon chronicleTools.sbt chronicleTools.postgres pkgs.nodejs_24 pkgs.python3 pkgs.git pkgs.pkg-config pkgs.zlib pkgs.openssl pkgs.stdenv.cc ];
           JAVA_HOME = chronicleTools.graal.home;
           GRAALVM_HOME = chronicleTools.graal.home;
           CHRONICLE_NATIVE_IMAGE_FLAGS = pkgs.lib.concatStringsSep " " chronicleTools.nativeImageFlags;
@@ -270,6 +270,7 @@
           BABOON = "${chronicleTools.baboon}/bin/baboon";
           PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
+          FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
         };
         packages = {
           llm-skills = skills.package;
@@ -839,7 +840,7 @@
           chronicle-protocol = self.packages.${system}.chronicle.protocolValidation;
           chronicle-validation = self.packages.${system}.chronicle.validationEvidence;
           chronicle-validation-policy = pkgs.runCommand "chronicle-validation-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-            python3 ${./nix/tests/chronicle-validation-policy.py} ${./chronicle/scripts/validation-report.py}
+            python3 ${./nix/tests/chronicle-validation-policy.py} ${./chronicle/scripts/validation-report.py} ${./nix/pkg/chronicle/validation-evidence.py}
             touch "$out"
           '';
           chronicle-modules = import ./nix/tests/chronicle-modules.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
