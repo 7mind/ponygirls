@@ -1,6 +1,6 @@
 /** Visible instruction text. Pure rendering; every string returned must be placed verbatim in a display:true custom message. */
 
-import type { GoalRecord } from "./goal.ts";
+import { GOAL_STATUSES, type GoalRecord, type GoalStatus } from "./goal.ts";
 
 export const CUSTOM_TYPE = "codex-goal-context";
 export const NOTICE_TYPE = "codex-goal-notice";
@@ -22,9 +22,11 @@ export interface InstructionMetadata {
   dispatchId?: string;
 }
 
+const FENCE_ESCAPE = "``\u200b`";
+
 function fence(text: string): string {
   // Escape triple-backtick closers so the objective cannot break the fence.
-  return text.replace(/```/g, "``\u200b`");
+  return text.replace(/```/g, FENCE_ESCAPE);
 }
 
 function budgetLine(record: GoalRecord): string {
@@ -189,4 +191,38 @@ export function renderStaleCancellation(meta: {
     `A previously admitted goal instruction for session ${meta.sessionId} was not delivered before ${meta.reason}. It is preserved in the transcript for audit but must not be acted on.`,
     "No model or tool work may proceed on behalf of the cancelled dispatch.",
   ].join("\n");
+}
+
+const PURPOSES: readonly InstructionPurpose[] = ["kickoff", "continuation", "objective_update", "resync", "budget_wrapup"];
+const HEADER_PATTERN = /^\[codex-goal:(\w+) goal=(\S+) rev=(\d+) status=(\w+)\] /;
+const EXECUTION_PATTERN = /^This is automatic goal execution #(\d+) /m;
+const OBJECTIVE_PATTERN = /^```goal-objective\n([\s\S]*?)\n```$/m;
+
+/** The tag line `header()` writes, read back for display. */
+export interface InstructionHeader {
+  purpose: InstructionPurpose;
+  goalId: string;
+  revision: number;
+  status: GoalStatus;
+}
+
+export function parseInstructionHeader(content: string): InstructionHeader | null {
+  const match = HEADER_PATTERN.exec(content);
+  if (!match) return null;
+  const purpose = PURPOSES.find((p) => p === match[1]);
+  const status = GOAL_STATUSES.find((st) => st === match[4]);
+  if (purpose === undefined || status === undefined) return null;
+  return { purpose, goalId: match[2]!, revision: Number(match[3]), status };
+}
+
+/** The execution number `renderContinuation` writes. */
+export function parseExecutionIndex(content: string): number | null {
+  const match = EXECUTION_PATTERN.exec(content);
+  return match ? Number(match[1]) : null;
+}
+
+/** The fenced objective an instruction carries, unescaped. */
+export function parseObjective(content: string): string | null {
+  const match = OBJECTIVE_PATTERN.exec(content);
+  return match ? match[1]!.split(FENCE_ESCAPE).join("```") : null;
 }

@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-type BadgeFactory = () => { render(): string[]; handleMouse?: (event: unknown) => unknown };
+type BadgeFactory = () => { render(): string[]; renderCompact?: (width: number) => string; handleMouse?: (event: unknown) => unknown };
 type StatusEntry = [string, BadgeFactory | undefined, ({ placement: "borderBottomLeft" } | undefined)?];
 
 /** The published badge's first rendered line. */
@@ -13,12 +13,13 @@ function badgeLine(factory: unknown): string {
   return (factory as BadgeFactory)().render()[0] ?? "";
 }
 
-/** Assert the last publish is a clickable bottom-left badge showing `line`. */
-function assertBadge(statuses: StatusEntry[], line: string): void {
+/** Assert the last publish is a clickable bottom-left badge showing `line`, and `compact` when narrow. */
+function assertBadge(statuses: StatusEntry[], line: string, compact: string): void {
   const entry = statuses.at(-1)!;
   assert.equal(entry[0], "goal");
   assert.deepEqual(entry[2], { placement: "borderBottomLeft" });
   assert.equal(badgeLine(entry[1]), line);
+  assert.equal((entry[1] as BadgeFactory)().renderCompact?.(10), compact);
   assert.equal(typeof (entry[1] as BadgeFactory)().handleMouse, "function");
 }
 
@@ -51,7 +52,7 @@ test("border goal badge follows create, pause, resume, and complete", async (t) 
   const ui = {
     notify: () => {},
     setWidget: (...args: StatusEntry) => { statuses.push(args); },
-    theme: { bg: (_color: string, text: string) => text },
+    theme: { bg: (_color: string, text: string) => text, fg: (color: string, text: string) => `<${color}>${text}</${color}>` },
     confirm: async () => true,
   };
   const startCtx = { sessionManager, ui, isIdle: () => true, hasPendingMessages: () => false, mode: "rpc", hasUI: false };
@@ -60,13 +61,13 @@ test("border goal badge follows create, pause, resume, and complete", async (t) 
 
   const cmdCtx = { ...startCtx, abort: () => {} };
   await commands.get("goal")!.handler("status test objective" as never, cmdCtx as never);
-  assertBadge(statuses, " goal active ");
+  assertBadge(statuses, " goal active ", " <success>◎</success> ");
 
   await commands.get("goal")!.handler("pause" as never, cmdCtx as never);
-  assertBadge(statuses, " goal paused ");
+  assertBadge(statuses, " goal paused ", " <warning>◉</warning> ");
 
   await commands.get("goal")!.handler("resume" as never, cmdCtx as never);
-  assertBadge(statuses, " goal active ");
+  assertBadge(statuses, " goal active ", " <success>◎</success> ");
 
   const done = await tools.get("update_goal")!.execute("u1" as never, { status: "complete" } as never, undefined as never, undefined as never, { sessionManager, ui } as never);
   assert.match(done.content[0]!.text, /complete/);

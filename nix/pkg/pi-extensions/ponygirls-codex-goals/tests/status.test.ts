@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { UiTheme } from "@ponygirls/pi-ui";
 import type { GoalRecord } from "../src/goal.ts";
-import { GOAL_STATUS_KEY, goalStatusLine } from "../src/status.ts";
+import { GOAL_STATUS_KEY, goalCompactBadge, goalStatusLine } from "../src/status.ts";
 
 function goal(status: GoalRecord["status"]): GoalRecord {
   return {
@@ -35,4 +36,17 @@ test("other unfinished states are indicated too", () => {
   assert.equal(goalStatusLine(goal("blocked")), "goal blocked");
   assert.equal(goalStatusLine(goal("budget_limited")), "goal budget_limited");
   assert.equal(goalStatusLine(goal("usage_limited")), "goal usage_limited");
+});
+
+test("the compact badge is the status glyph in its state colour on a neutral chip, without a label", () => {
+  const tags: UiTheme = {
+    fg: (color, text) => `<${color}>${text}</${color}>`,
+    bg: (color, text) => `[${color}]${text}[/${color}]`,
+    bold: (text) => text,
+  };
+  assert.equal(goalCompactBadge(tags, "active"), "[toolPendingBg] <success>◎</success> [/toolPendingBg]");
+  assert.equal(goalCompactBadge(tags, "paused"), "[toolPendingBg] <warning>◉</warning> [/toolPendingBg]");
+  for (const status of ["blocked", "usage_limited", "budget_limited"] as const) {
+    assert.equal(goalCompactBadge(tags, status), "[toolPendingBg] <error>✖</error> [/toolPendingBg]");
+  }
 });

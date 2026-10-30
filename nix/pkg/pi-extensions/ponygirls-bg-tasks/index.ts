@@ -2,16 +2,18 @@
  * ponygirls-bg-tasks: background shell tasks for Pi — the `bg_task` tool,
  * the `/bg` output inspector, and completion notices.
  */
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { compactChip } from "@ponygirls/pi-ui";
 import { Value } from "typebox/value";
 import { Activation, readRuntimeConfig } from "./src/activation.ts";
 import { NoticeDispatcher, SessionFileReceipts, connectBackend, systemTimers, type ReceiptSource } from "./src/delivery.ts";
 import { BgTaskError, COMPLETION_CUSTOM_TYPE, CompletionDetailsSchema, MAX_LIST_ITEMS, SIGNAL_NAMES, STATUS_CUSTOM_TYPE, type SessionId, type SignalName, type TaskRecord } from "./src/protocol.ts";
-import { BG_STATUS_KEY, bgStatusLine } from "./src/status.ts";
+import { BG_STATUS_KEY, bgStatusLine, countRunning } from "./src/status.ts";
 import type { TaskBackend } from "./src/backend.ts";
 import { createBgTaskTool, taskLine } from "./src/tool.ts";
-import { BgInspector, renderCompletion, type ViewerStyle } from "./src/ui.ts";
+import { OneLine, bgTaskRenderers, completionLine, statusLine, type StatusNoticeKind } from "./src/transcript.ts";
+import { BgInspector, renderCompletion } from "./src/ui.ts";
 
 interface Bound {
   activation: Activation;
@@ -22,6 +24,8 @@ interface Bound {
   statusTimer: ReturnType<typeof setTimeout> | null;
   /** Last status-backend error, or null when reachable (outage episode state). */
   statusError: string | null;
+  /** Retained records from the last status refresh, by id, for transcript lines. */
+  tasks: ReadonlyMap<string, TaskRecord>;
   /** Submit a model-visible status follow-up (also shown in the chat). */
   submitNotice: (status: "unavailable" | "recovered", text: string) => void;
 }
@@ -41,18 +45,24 @@ async function readStatusTasks(backend: TaskBackend): Promise<TaskRecord[]> {
   return seen;
 }
 
+/** Glyph of the short border form. */
+const BADGE_GLYPH = "⚙";
+
 /** Publish (or clear) the bottom-left badge; a click opens the /bg inspector. */
-function publishBadge(entry: Bound, line: string | null): void {
+function publishBadge(entry: Bound, tasks: readonly TaskRecord[]): void {
   const ui = entry.ctx.ui;
+  const line = bgStatusLine(tasks);
   if (line === null) {
     ui.setWidget(BG_STATUS_KEY, undefined);
     return;
   }
   const label = ui.theme.bg("selectedBg", ` ${line} `);
+  const running = countRunning(tasks);
   ui.setWidget(
     BG_STATUS_KEY,
     () => ({
       render: () => [label],
+      renderCompact: () => compactChip(ui.theme, BADGE_GLYPH, "running", String(running)),
       invalidate: () => {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left") return undefined;
@@ -86,11 +96,11 @@ export function advanceStatusEpisode(
 
 async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<void> {
   if (!isCurrent()) return;
-  let line: string | null;
+  let tasks: TaskRecord[];
   try {
     const backend = await entry.activation.backend();
     if (!isCurrent()) return;
-    line = bgStatusLine(await readStatusTasks(backend));
+    tasks = await readStatusTasks(backend);
   } catch (error) {
     // The backend is unreachable (no persistent session, missing executables,
     // disposed activation, lost supervisor): keep the last known badge — the
@@ -108,8 +118,9 @@ async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<vo
   if (!isCurrent()) return;
   const notice = advanceStatusEpisode(entry, false, "");
   if (notice && isCurrent()) entry.submitNotice(notice.status, notice.text);
+  entry.tasks = new Map(tasks.map((task) => [task.id, task]));
   try {
-    publishBadge(entry, line);
+    publishBadge(entry, tasks);
   } catch {
     // Badge rendering failed (e.g. the theme is not initialized in a headless
     // runtime): not a backend outage, so outside the episode above — a later
@@ -123,18 +134,6 @@ function scheduleStatus(entry: Bound, isCurrent: () => boolean): void {
     entry.statusTimer = null;
     void refreshStatus(entry, isCurrent);
   }, STATUS_THROTTLE_MS);
-}
-
-function themeStyle(theme: Theme): ViewerStyle {
-  return {
-    accent: (s) => theme.fg("accent", s),
-    dim: (s) => theme.fg("dim", s),
-    error: (s) => theme.fg("error", s),
-    warning: (s) => theme.fg("warning", s),
-    success: (s) => theme.fg("success", s),
-    bold: (s) => theme.bold(s),
-    selected: (s) => theme.bg("selectedBg", s),
-  };
 }
 
 const NO_RECEIPTS: ReceiptSource = { scan: () => ({ present: new Set(), answered: new Set() }) };
@@ -166,7 +165,7 @@ const openBgInspector = async (ctx: ExtensionContext, b: Bound): Promise<void> =
         b.views.delete(entry);
         done();
       },
-      style: themeStyle(theme),
+      theme,
       now: () => Date.now(),
     });
     b.views.add(entry);
@@ -183,12 +182,15 @@ export default function bgTasks(pi: ExtensionAPI): void {
     return bound;
   };
 
-  pi.registerTool(createBgTaskTool({
-    backend: () => current().activation.backend(),
-    sessionId: () => current().activation.sessionId,
-    noticeState: (task) => bound?.dispatcher.localState(task) ?? null,
-    noticeForgotten: (task) => bound?.dispatcher.forget(task),
-  }));
+  pi.registerTool({
+    ...createBgTaskTool({
+      backend: () => current().activation.backend(),
+      sessionId: () => current().activation.sessionId,
+      noticeState: (task) => bound?.dispatcher.localState(task) ?? null,
+      noticeForgotten: (task) => bound?.dispatcher.forget(task),
+    }),
+    ...bgTaskRenderers,
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     const sessionId = ctx.sessionManager.getSessionId() as SessionId;
@@ -218,7 +220,7 @@ export default function bgTasks(pi: ExtensionAPI): void {
       if (self.value) scheduleStatus(self.value, () => bound === self.value);
     });
     self.value = {
-      activation, dispatcher, ctx, views: new Set(), statusTimer: null, statusError: null,
+      activation, dispatcher, ctx, views: new Set(), statusTimer: null, statusError: null, tasks: new Map(),
       submitNotice: (status, text) =>
         pi.sendMessage(
           { customType: STATUS_CUSTOM_TYPE, content: text, display: true, details: { status } },
@@ -241,7 +243,7 @@ export default function bgTasks(pi: ExtensionAPI): void {
     if (ending.statusTimer) clearTimeout(ending.statusTimer);
     ending.statusTimer = null;
     try {
-      publishBadge(ending, null);
+      publishBadge(ending, []);
     } catch {
       // Stale UI after replacement/reload: nothing to do.
     }
@@ -253,10 +255,18 @@ export default function bgTasks(pi: ExtensionAPI): void {
     await ending.activation.shutdown(event.reason);
   });
 
-  pi.registerMessageRenderer(COMPLETION_CUSTOM_TYPE, (message, _options, theme) => {
-    const text = typeof message.content === "string" ? message.content : message.content.map((p) => (p.type === "text" ? p.text : "")).join("");
+  pi.registerMessageRenderer(COMPLETION_CUSTOM_TYPE, (message, options, theme) => {
+    const text = messageText(message.content);
     const details = Value.Check(CompletionDetailsSchema, message.details) ? message.details : undefined;
-    return new Text(renderCompletion(details, text, themeStyle(theme)).join("\n"), 1, 0);
+    if (options.expanded || !details) return new Text(renderCompletion(details, text, theme).join("\n"), 1, 0);
+    return new OneLine(() => completionLine(details, (id) => bound?.tasks.get(id), Date.now(), theme), 1);
+  });
+  // Collapsed only: expanded, pi's default rendering of the notice stays as it was.
+  pi.registerMessageRenderer(STATUS_CUSTOM_TYPE, (message, options, theme) => {
+    const status = statusKind(message.details);
+    if (options.expanded || status === null) return undefined;
+    const text = messageText(message.content);
+    return new OneLine(() => statusLine(status, text, theme), 1);
   });
 
   pi.registerCommand("bg", {
@@ -291,6 +301,17 @@ export default function bgTasks(pi: ExtensionAPI): void {
   pi.on("session_before_compact", () => { bound?.dispatcher.compactionStarted(); });
   pi.on("session_compact", () => bound?.dispatcher.compactionEnded());
   pi.on("session_compact_failed", () => bound?.dispatcher.compactionEnded());
+}
+
+function messageText(content: string | ReadonlyArray<{ type: string; text?: string }>): string {
+  return typeof content === "string" ? content : content.map((p) => (p.type === "text" ? (p.text ?? "") : "")).join("");
+}
+
+const STATUS_KINDS: readonly StatusNoticeKind[] = ["unavailable", "recovered"];
+
+function statusKind(details: unknown): StatusNoticeKind | null {
+  if (typeof details !== "object" || details === null || !("status" in details)) return null;
+  return STATUS_KINDS.find((kind) => kind === details.status) ?? null;
 }
 
 function seconds(ms: number): string {

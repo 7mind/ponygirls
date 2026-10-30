@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { PLAIN_THEME, type UiTheme } from "@ponygirls/pi-ui";
+
 import {
 	classifyOutcome,
 	clampStatsBudget,
@@ -25,10 +27,25 @@ import {
 	summarizeMetric,
 	tokensPerSecond,
 	WEEK_MS,
+	windowTitle,
 	type MetricStats,
+	type ModelWindowStats,
 	type ResponseSample,
+	type SortOrder,
 	type StatsRecord,
+	type WindowSummary,
 } from "./ponygirls-model-stats-state.ts";
+import { scrollPosition } from "./scroll-state.ts";
+
+/** The view's default sort: mean tok/s, fastest first. */
+const DEFAULT_SORT: SortOrder = { id: "tps-mean", descending: true };
+
+/** Wraps styled text in `<token>…</token>` (bold as `<b>`); for checking which style a cell got, not widths. */
+const TAG_THEME: UiTheme = {
+	fg: (color, text) => `<${color}>${text}</${color}>`,
+	bg: (color, text) => `<${color}>${text}</${color}>`,
+	bold: (text) => `<b>${text}</b>`,
+};
 
 const NOW = 1_000_000_000_000;
 
@@ -191,59 +208,137 @@ function barsAt(line: string): number[] {
 	return indexes;
 }
 
-test("renderWindow lays out header, sub-header, and one row per model", () => {
-	const table = renderWindow({
-		label: "Last hour",
-		models: [
-			{
-				key: "anthropic/claude-sonnet",
-				responses: 2,
-				failures: { aborted: 0, timeout: 1, error: 0 },
-				ttft: metric({ mean: 500, p50: 500, p90: 500, p99: 500 }),
-				total: metric({ mean: 10_000, p50: 10_000, p90: 10_000, p99: 10_000 }),
-				tps: metric({ mean: 105.3, p50: 105.3, p90: 105.3, p99: 105.3, p10: 90.1, p1: 42.5 }),
-			},
-			{
-				key: "openai/gpt-5",
-				responses: 0,
-				failures: { aborted: 1, timeout: 0, error: 0 },
-			},
-		],
-	});
+/** Columns of a plain-theme line: every glyph the table uses is one column wide. */
+function visibleWidth(line: string): number {
+	return [...line].length;
+}
+
+function junctionsAt(line: string): number[] {
+	const indexes: number[] = [];
+	for (let index = 0; index < line.length; index++) if (line[index] === "┼") indexes.push(index);
+	return indexes;
+}
+
+const SONNET: ModelWindowStats = {
+	key: "anthropic/claude-sonnet",
+	responses: 2,
+	failures: { aborted: 0, timeout: 1, error: 0 },
+	ttft: metric({ mean: 500, p50: 500, p90: 500, p99: 500 }),
+	total: metric({ mean: 10_000, p50: 10_000, p90: 10_000, p99: 10_000 }),
+	tps: metric({ mean: 105.3, p50: 105.3, p90: 105.3, p99: 105.3, p10: 90.1, p1: 42.5 }),
+};
+const GPT5: ModelWindowStats = {
+	key: "openai/gpt-5",
+	responses: 0,
+	failures: { aborted: 1, timeout: 0, error: 3 },
+};
+const HOUR: WindowSummary = { label: "Last hour", models: [SONNET, GPT5] };
+
+test("renderWindow lays out group titles, column labels, a ┼ rule, and one row per model", () => {
+	const table = renderWindow(HOUR, PLAIN_THEME, DEFAULT_SORT);
 	const lines = [...table.header, ...table.rows];
-	assert.equal(lines.length, 4);
-	assert.match(lines[0]!, /ttft s.+total s.+tok\/s/);
-	assert.match(lines[1]!, /mean.+p50.+p90.+p99/);
+	assert.equal(lines.length, 5);
+	assert.match(lines[0]!, /ttft s.+total s.+tok\/s ↓/);
+	assert.match(lines[1]!, /mean +p50 +p90 +p99/);
 	// The tok/s group carries the slow-tail columns; ttft/total keep four each.
 	assert.equal(lines[1]!.split("p10").length - 1, 1);
-	assert.match(lines[1]!, /p99.+p10.+p1/);
-	assert.match(lines[2]!, /90\.1.+42\.5/);
-	assert.match(lines[2]!, /^anthropic\/claude-sonnet │ +2 │ +│ +1 │/);
-	assert.match(lines[2]!, /│ +0\.5 │ +0\.5 │ +0\.5 │ +0\.5 │ +10\.0 │/);
-	assert.match(lines[3]!, /^openai\/gpt-5 +│ +0 │ +1 │/);
-	assert.match(lines[3]!, /│ +-/);
-	const headerBars = barsAt(lines[0]!);
-	const rowBars = barsAt(lines[2]!);
-	assert.ok(headerBars.length > 0);
-	assert.ok(headerBars.every((index) => rowBars.includes(index)));
+	assert.match(lines[1]!, /p99 +p10 +p1/);
+	assert.match(lines[2]!, /^─+┼─+┼─/);
+	assert.match(lines[3]!, /90\.1 +42\.5/);
+	assert.match(lines[3]!, /^anthropic\/claude-sonnet │ +2 │ +· │ +1 │ +· │/);
+	// Percentiles inside a group are space-separated; groups keep their │.
+	assert.match(lines[3]!, /│ +0\.5 +0\.5 +0\.5 +0\.5 +│ +10\.0 +10\.0/);
+	assert.match(lines[4]!, /^openai\/gpt-5 +│ +0 │ +1 │ +· │ +3 │/);
+	assert.match(lines[4]!, /│ +-/);
+	const rowBars = barsAt(lines[3]!);
+	// One bar per top-level column boundary: model, n, abrt, tout, err, ttft, total | tok/s.
+	assert.equal(rowBars.length, 7);
+	assert.ok(barsAt(lines[0]!).every((index) => rowBars.includes(index)));
 	assert.deepEqual(barsAt(lines[1]!), rowBars);
-	assert.deepEqual(renderWindow({ label: "Last hour", models: [] }), { header: ["(no samples)"], rows: [] });
+	assert.deepEqual(barsAt(lines[4]!), rowBars);
+	assert.deepEqual(junctionsAt(lines[2]!), rowBars);
+	assert.deepEqual(renderWindow({ label: "Last hour", models: [] }, PLAIN_THEME, DEFAULT_SORT), {
+		header: ["(no samples)"],
+		rows: [],
+	});
+});
+
+test("renderWindow lines share one visible width", () => {
+	const table = renderWindow(HOUR, PLAIN_THEME, DEFAULT_SORT);
+	const widths = [...table.header, ...table.rows].map((line) => visibleWidth(line));
+	assert.ok(widths.every((width) => width === widths[0]), `widths ${widths.join(",")}`);
+	// A narrower width shrinks the model column only, down to the requested width.
+	const narrow = renderWindow(HOUR, PLAIN_THEME, DEFAULT_SORT, { width: widths[0]! - 10 });
+	for (const line of [...narrow.header, ...narrow.rows]) assert.equal(visibleWidth(line), widths[0]! - 10);
+	assert.match(narrow.rows[0]!, /^anthropic\/cl… │/);
+});
+
+test("renderWindow styles the grid dim and failure counts by kind", () => {
+	const table = renderWindow(HOUR, TAG_THEME, DEFAULT_SORT);
+	for (const line of [...table.header, ...table.rows]) {
+		assert.doesNotMatch(line.replaceAll("<dim> │ </dim>", ""), /│/, "every │ is dim");
+	}
+	assert.match(table.header[2]!, /^<dim>─+┼/);
+	const [sonnet, gpt5] = table.rows as [string, string];
+	// Zero is a dim dot; abrt/tout warn and err errors when positive.
+	assert.match(sonnet, /<dim> │ <\/dim><dim> {3}·<\/dim><dim> │ <\/dim><warning> {3}1<\/warning><dim> │ <\/dim><dim> {2}·<\/dim>/);
+	assert.match(gpt5, /<warning> {3}1<\/warning><dim> │ <\/dim><dim> {3}·<\/dim><dim> │ <\/dim><error> {2}3<\/error>/);
+	// Header labels are dim.
+	assert.match(table.header[0]!, /<dim>abrt<\/dim>/);
+	assert.match(table.header[1]!, /<dim>model {2,}<\/dim>/);
+});
+
+test("renderWindow marks the sorted column: accent header with arrow, bold values", () => {
+	const byMean = renderWindow(HOUR, TAG_THEME, DEFAULT_SORT);
+	assert.match(byMean.header[0]!, /<b><accent>tok\/s ↓ *<\/accent><\/b>/);
+	assert.match(byMean.header[1]!, /<b><accent>mean<\/accent><\/b>/);
+	assert.equal(byMean.header[1]!.split("<accent>").length - 1, 1, "only the sorted label is accent");
+	assert.match(byMean.rows[0]!, /<b> *105<\/b>/);
+	assert.equal(byMean.rows[0]!.split("<b>").length - 1, 1, "only the sorted cell is bold");
+
+	const byTtft = renderWindow(HOUR, TAG_THEME, { id: "ttft-mean", descending: false });
+	assert.match(byTtft.header[0]!, /<b><accent>ttft s ↑ *<\/accent><\/b>/);
+	assert.match(byTtft.header[0]!, /<dim>tok\/s *<\/dim>/);
+	assert.match(byTtft.rows[0]!, /<b> *0\.5<\/b>/);
+
+	const byN = renderWindow(HOUR, TAG_THEME, { id: "n", descending: true });
+	assert.match(byN.header[0]!, /<b><accent>n ↓<\/accent><\/b>/);
+	assert.match(byN.rows[0]!, /<dim> │ <\/dim><b> +2<\/b><dim> │ <\/dim>/);
+
+	const byModel = renderWindow(HOUR, TAG_THEME, { id: "model", descending: false });
+	assert.match(byModel.header[1]!, /^<b><accent>model ↑ *<\/accent><\/b>/);
+	assert.match(byModel.rows[0]!, /^<b>anthropic\/claude-sonnet<\/b>/);
+
+	// The arrow is reserved in every layout: a sort change never moves a column.
+	const plainBars = (sort: SortOrder) => renderWindow(HOUR, PLAIN_THEME, sort).rows.map(barsAt);
+	assert.deepEqual(plainBars({ id: "n", descending: true }), plainBars(DEFAULT_SORT));
+	assert.deepEqual(plainBars({ id: "model", descending: false }), plainBars(DEFAULT_SORT));
+});
+
+test("windowTitle is the bold label with a dim model and request summary", () => {
+	assert.equal(windowTitle(TAG_THEME, HOUR), "<b><text>Last hour</text></b><dim> · 2 models · 7 requests</dim>");
+	assert.equal(windowTitle(PLAIN_THEME, { label: "Last week", models: [SONNET] }), "Last week · 1 model · 3 requests");
+	assert.equal(windowTitle(PLAIN_THEME, { label: "Last week", models: [] }), "Last week");
 });
 
 test("renderWindow sizes each column to its content so percentiles stay separate", () => {
-	const table = renderWindow({
-		label: "Last hour",
-		models: [
-			{
-				key: "xai/grok-4.7",
-				responses: 64,
-				failures: { aborted: 0, timeout: 0, error: 0 },
-				ttft: metric({ mean: 3_300, p50: 2_900, p90: 4_500, p99: 9_400 }),
-				total: metric({ mean: 16_000, p50: 7_300, p90: 36_600, p99: 92_300 }),
-				tps: metric({ mean: 6_238, p50: 126, p90: 51_831, p99: 43_305, p10: 88, p1: 12 }),
-			},
-		],
-	});
+	const table = renderWindow(
+		{
+			label: "Last hour",
+			models: [
+				{
+					key: "xai/grok-4.7",
+					responses: 64,
+					failures: { aborted: 0, timeout: 0, error: 0 },
+					ttft: metric({ mean: 3_300, p50: 2_900, p90: 4_500, p99: 9_400 }),
+					total: metric({ mean: 16_000, p50: 7_300, p90: 36_600, p99: 92_300 }),
+					tps: metric({ mean: 6_238, p50: 126, p90: 51_831, p99: 43_305, p10: 88, p1: 12 }),
+				},
+			],
+		},
+		PLAIN_THEME,
+		DEFAULT_SORT,
+	);
 	const row = table.rows[0]!;
 	const sub = table.header[1]!;
 	assert.match(row, /(^|\s)51831(\s|$)/);
@@ -272,15 +367,22 @@ test("renderWindow with a shared layout aligns columns across windows", () => {
 	const hour = { label: "Last hour", models: [short] };
 	const week = { label: "Last week", models: [short, long] };
 	const layout = measureWindows([hour, week]);
-	const hourTable = renderWindow(hour, { layout });
-	const weekTable = renderWindow(week, { layout });
+	const hourTable = renderWindow(hour, PLAIN_THEME, DEFAULT_SORT, { layout });
+	const weekTable = renderWindow(week, PLAIN_THEME, DEFAULT_SORT, { layout });
 	// Same column boundaries in both sections ...
 	assert.deepEqual(barsAt(hourTable.rows[0]!), barsAt(weekTable.rows[0]!));
 	assert.deepEqual(barsAt(hourTable.header[0]!), barsAt(weekTable.header[0]!));
+	assert.equal(hourTable.header[2], weekTable.header[2]);
 	// ... and the hour's short name is padded to the shared model width.
 	assert.match(hourTable.rows[0]!, /^a\/b +│/);
 	// Measured alone, the hour table would be narrower.
-	assert.notDeepEqual(barsAt(renderWindow(hour).rows[0]!), barsAt(hourTable.rows[0]!));
+	assert.notDeepEqual(barsAt(renderWindow(hour, PLAIN_THEME, DEFAULT_SORT).rows[0]!), barsAt(hourTable.rows[0]!));
+});
+
+test("scrollPosition shows the visible range with arrows where lines are hidden", () => {
+	assert.equal(scrollPosition(40, 0, 15), "lines 1–15 of 40 ↓");
+	assert.equal(scrollPosition(40, 10, 25), "↑ lines 11–25 of 40 ↓");
+	assert.equal(scrollPosition(40, 25, 40), "↑ lines 26–40 of 40");
 });
 
 test("stats scroll budget clamps to the adjustable range", () => {

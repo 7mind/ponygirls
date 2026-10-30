@@ -161,7 +161,11 @@ export function windowStart(selected: number, count: number, size: number): numb
 export const PICKER_FALLBACK_ROWS = 10;
 export const PICKER_MIN_ROWS = 5;
 export const PICKER_MAX_ROWS = 30;
-/** Dialog chrome around the list: overlay margin (2) + border (2) + tabs (1) + filter (1) + hints (2). */
+/**
+ * Dialog chrome around the list: overlay margin (2) + border with the tabs (2)
+ * + filter (1) + hints (2) + one spare row for a hint line wrapped on narrow
+ * terminals.
+ */
 const PICKER_CHROME_ROWS = 8;
 
 /** Model-picker list rows for a terminal height: two thirds for the dialog, less chrome. */
@@ -291,11 +295,11 @@ export function hitAt(hits: readonly Hit[], x: number, y: number): Hit | undefin
 	return hits.find((hit) => hit.line === y && x >= hit.start && x < hit.end);
 }
 
-/** Cells consumed by "│ " on the left and " │" on the right. */
-export const OUTLINE_INSET_X = 2;
+/** Cells consumed by "│" on the left and "│" on the right. */
+export const OUTLINE_INSET_X = 1;
 export const OUTLINE_INSET_Y = 1;
 
-/** Map a click on an outlined component to the inner content, or undefined if it landed on the frame. */
+/** Map a click on a boxed component to the inner content, or undefined if it landed on the frame. */
 export function outlineContentPoint(
 	x: number,
 	y: number,

@@ -1,6 +1,6 @@
 import { sanitizeDisplay } from "./display.ts";
 
-const CUSTOM_NOTICE = "pi-subagents-notice";
+export const CUSTOM_NOTICE = "pi-subagents-notice";
 const NOTICE_BATCH = 20;
 const NOTICE_TEXT_MAX = 48_000;
 const NOTICE_RETRY_DELAY_MS = 100;

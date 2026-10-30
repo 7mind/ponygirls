@@ -1,10 +1,12 @@
 import { join } from "node:path";
 import { Type } from "typebox";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { resolveProject } from "./src/project.ts";
+import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { compactChip } from "@ponygirls/pi-ui";
+import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
 import { DecisionsPane } from "./src/pane.ts";
+import { CONTEXT_TYPE, contextLine, summarizeContext } from "./src/context.ts";
 
 const POLL_MS = 1000;
 const NOTICE_TYPE = "decisions-answer";
@@ -75,6 +77,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         if (pending === 0) b.ctx.ui.setWidget(STATUS_KEY, undefined);
         else b.ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({
           render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${pending} `)), width)],
+          renderCompact: () => compactChip(theme, "?", "attention", String(pending)),
           invalidate() {},
           handleMouse(event) {
             if (event.type !== "click" || event.button !== "left") return;
@@ -132,7 +135,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
           },
           close: () => done(),
           requestRender: () => tui.requestRender(),
-        }, id, () => Math.max(1, tui.terminal.rows - PANE_CHROME_ROWS));
+        }, projectDisplayName(b.project), id, () => Math.max(1, tui.terminal.rows - PANE_CHROME_ROWS));
       });
     } finally {
       b.repaint = null;
@@ -193,7 +196,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     const pending = questions.filter((q) => q.status === "pending");
     const recent = questions.filter((q) => q.status !== "pending").slice(-PAGE_SIZE);
     return { message: {
-      customType: "decisions-context", display: true,
+      customType: CONTEXT_TYPE, display: true,
       content: `Project decisions: ${pending.length} unanswered. Pending questions are not permission to proceed on their dependent work. Continue independent work; never poll in a loop waiting for the user. Use decisions list/get to read current answers before acting.\n` +
         [...pending.slice(0, PAGE_SIZE), ...recent].map((q) => `${q.id} [${q.status}] ${q.question.slice(0, 160)}`).join("\n"),
       details: { project: b.project },
@@ -248,6 +251,13 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   });
 
   pi.registerMessageRenderer(NOTICE_TYPE, (message) => new Text(plain(String(message.content)), 0, 0));
+  pi.registerMessageRenderer(CONTEXT_TYPE, (message, options, theme) => {
+    if (options.expanded || typeof message.content !== "string") return undefined;
+    const line = contextLine(summarizeContext(message.content));
+    const box = new Box(options.outputPad, 0, (text) => theme.bg("customMessageBg", text));
+    box.addChild(new Text(theme.fg("warning", line.lead) + theme.fg("muted", plain(line.detail)), 0, 0));
+    return box;
+  });
   pi.registerCommand("decisions", {
     description: "Decision inbox: [Qn] | answer Qn <text> | dismiss Qn | reopen Qn",
     getArgumentCompletions: (prefix) => {

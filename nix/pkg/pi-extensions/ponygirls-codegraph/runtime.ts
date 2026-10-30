@@ -6,7 +6,8 @@ const OUTPUT_LIMIT = 32_768;
 const KILL_GRACE_MS = 700;
 export type Action = "status" | "sync" | "reindex";
 export interface State {
-  phase: "idle" | "working" | "ready" | "error" | "skipped" | "cancelled";
+  /** `empty`: a consistent, complete index of a checkout with no indexable files. */
+  phase: "idle" | "working" | "ready" | "empty" | "error" | "skipped" | "cancelled";
   detail: string;
 }
 export interface Boundary {
@@ -45,9 +46,15 @@ function statusFrom(text: string, root: string): Status {
 function needsIndex(s: Status): boolean {
   return s.index.state !== "complete" || s.index.reindexRecommended || s.fileCount === 0 || s.nodeCount === 0;
 }
+function settledIndex(s: Status): boolean {
+  return s.index.state === "complete" && !s.index.reindexRecommended && s.index.pendingRefs === 0 &&
+    s.index.filesNeedingReindex === 0 && Object.values(s.pendingChanges).every((n) => n === 0);
+}
 function ready(s: Status): boolean {
-  return !needsIndex(s) && s.index.pendingRefs === 0 && s.index.filesNeedingReindex === 0 &&
-    Object.values(s.pendingChanges).every((n) => n === 0);
+  return !needsIndex(s) && settledIndex(s);
+}
+function empty(s: Status): boolean {
+  return settledIndex(s) && s.fileCount === 0 && s.nodeCount === 0;
 }
 function readyDetail(root: string, status: Status): string {
   const warnings = status.index.filesWithParseErrors;
@@ -117,9 +124,7 @@ export class CodegraphSession {
     if (action === "reindex") {
       await run(["init", root, "--yes"]);
       await run(["index", root, "--quiet"]);
-      const status = statusFrom(await run(["status", root, "--json"]), root);
-      if (!ready(status)) throw new Error(`Index not ready at ${root}: ${JSON.stringify(status)}`);
-      this.publish("ready", readyDetail(root, status));
+      this.conclude(root, statusFrom(await run(["status", root, "--json"]), root));
       return;
     }
     if (!local) {
@@ -135,10 +140,12 @@ export class CodegraphSession {
       }
       status = statusFrom(await run(["status", root, "--json"]), root);
     }
-    if (!ready(status)) {
-      throw new Error(`Index not ready at ${root}: ${JSON.stringify(status)}`);
-    }
-    this.publish("ready", readyDetail(root, status));
+    this.conclude(root, status);
+  }
+  private conclude(root: string, status: Status): void {
+    if (ready(status)) this.publish("ready", readyDetail(root, status));
+    else if (empty(status)) this.publish("empty", `${root}: no indexable files (0 files, 0 symbols)`);
+    else throw new Error(`Index not ready at ${root}\n${JSON.stringify(status)}`);
   }
 }
 

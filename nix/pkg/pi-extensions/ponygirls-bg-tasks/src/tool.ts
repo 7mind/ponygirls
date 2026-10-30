@@ -62,11 +62,17 @@ export function stateLabel(task: Pick<TaskRecord, "state" | "phase" | "cleanupUn
   return task.cleanupUnconfirmed ? `${task.phase}, cleanup unconfirmed` : (task.phase ?? "running");
 }
 
+/** The notice policy/delivery state alone: off, on, delivered, inline, pending, or a local overlay. */
+export function noticeStatus(task: TaskRecord, local: string | null): string {
+  if (!task.notify) return "off";
+  if (local) return local;
+  if (!task.event) return "on";
+  return task.event.status === "received" ? "delivered" : task.event.status === "inline" ? "inline" : "pending";
+}
+
 export function noticeLabel(task: TaskRecord, local: string | null): string {
-  if (!task.notify) return "notice off";
-  if (local) return `notice ${local}`;
-  if (!task.event) return "notice on";
-  return task.event.status === "received" ? "notice delivered" : task.event.status === "inline" ? "reported inline" : "notice pending";
+  const status = noticeStatus(task, local);
+  return status === "inline" ? "reported inline" : `notice ${status}`;
 }
 
 export function summarize(task: TaskRecord, notice: string | null, now: number = Date.now()): TaskSummary {

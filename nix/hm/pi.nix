@@ -62,6 +62,11 @@ let
   # extension-package warning and installs a duplicate copy —
   # ronnieops/pi-search-hub#33). See the derivation header for the full story.
   piSearchHub = pkgs.callPackage ../pkg/pi-search-hub/package.nix { };
+  # The ponygirls extensions as one tree, linking the shared UI kit
+  # (@ponygirls/pi-ui) into its node_modules; see pkg/pi-extensions/package.nix.
+  piExtensions = pkgs.callPackage ../pkg/pi-extensions/package.nix {
+    ponygirls-pi-ui = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = piBase; };
+  };
 
   # Provider/API-key secrets are no longer injected by the pi wrapper. They are
   # supplied to ALL harnesses by the yolo sandbox via
@@ -780,45 +785,45 @@ in
             # This rewrites the web_search tool definition per request to list
             # only the backends actually active per the live search.json. See
             # the extension header and the upstream bug-report draft.
-            "${../pkg/pi-extensions/ponygirls-quirk-search-hub-backends.ts}"
-            "${../pkg/pi-extensions/ponygirls-quirk-kimi-401-retry.ts}"
+            "${piExtensions}/ponygirls-quirk-search-hub-backends.ts"
+            "${piExtensions}/ponygirls-quirk-kimi-401-retry.ts"
             # /fast on|off|status: persistent OpenAI priority processing, without changing reasoning.
-            "${../pkg/pi-extensions/ponygirls-openai-fast.ts}"
+            "${piExtensions}/ponygirls-openai-fast.ts"
             # Visible scope clarification after Codex's cyber-risk flag, capped at two continuations.
-            "${../pkg/pi-extensions/ponygirls-codex-risk-retry.ts}"
+            "${piExtensions}/ponygirls-codex-risk-retry.ts"
             # Footer model/thinking clicks (fullscreen) plus ctrl+shift+m / ctrl+shift+e.
-            "${../pkg/pi-extensions}/ponygirls-model-picker.ts"
+            "${piExtensions}/ponygirls-model-picker.ts"
             # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
-            "${../pkg/pi-extensions}/ponygirls-model-stats.ts"
+            "${piExtensions}/ponygirls-model-stats.ts"
             # /usage table: period tabs with flat per-provider/per-model rows,
             # scrollable, plus a global input-size distribution view (ascii
             # chart/table, [v]/[c]). Data collection is vendored in ponygirls-usage-data.ts
             # (same cache file, plus a marked local inputSizes extension);
             # insights, graphs, and export are out of scope.
-            "${../pkg/pi-extensions}/ponygirls-usage.ts"
+            "${piExtensions}/ponygirls-usage.ts"
             # Codex-style session goals with fully visible transcript
             # instructions (same-session continuation, three model tools,
             # atomic session sidecar). See nix/pkg/pi-extensions/ponygirls-codex-goals.
-            "${../pkg/pi-extensions/ponygirls-codex-goals}"
+            "${piExtensions}/ponygirls-codex-goals"
             # Persistent project questions, asynchronous answers, and a clickable inbox badge.
-            "${../pkg/pi-extensions/ponygirls-decisions}"
+            "${piExtensions}/ponygirls-decisions"
             # Supervisor/worker subagents: durable delegation, sandbox-brokered
             # tools, worktrees, gates, /agents inspector.
             # See nix/pkg/pi-extensions/ponygirls-subagents (optional policy
             # file ~/.pi/agent/subagents-policy.json: repos for `sandbox`
             # children, nesting, model, and gate limits).
-            "${../pkg/pi-extensions/ponygirls-subagents}"
+            "${piExtensions}/ponygirls-subagents"
             # Background shell tasks: the `bg_task` tool, the /bg terminal
             # output inspector, and completion notices that wake an idle
             # session. Runtime executables come from piWrapped above; state
             # lives beside each session file. See
             # nix/pkg/pi-extensions/ponygirls-bg-tasks.
-            "${../pkg/pi-extensions/ponygirls-bg-tasks}"
+            "${piExtensions}/ponygirls-bg-tasks"
             # Provider quotas: the `tokemon` tool for agents (optionally with
             # each provider's available models) and a /tokemon table — tokemon
             # without Claude, Codex, or yolo profiles.
-            "${../pkg/pi-extensions/ponygirls-tokemon}"
-          ] ++ lib.optional codegraphLocal "${../pkg/pi-extensions/ponygirls-codegraph}";
+            "${piExtensions}/ponygirls-tokemon"
+          ] ++ lib.optional codegraphLocal "${piExtensions}/ponygirls-codegraph";
         };
       };
 

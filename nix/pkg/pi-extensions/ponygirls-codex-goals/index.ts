@@ -10,7 +10,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { defineTool, SessionManager } from "@earendil-works/pi-coding-agent";
+import { defineTool, keyText, SessionManager } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
 import {
@@ -25,8 +25,8 @@ import {
   type GoalRecord,
   type SessionId,
 } from "./src/goal.ts";
-import { parseGoalCommand } from "./src/commands.ts";
-import { GoalPane } from "./src/pane.ts";
+import { type GoalCommand, parseGoalCommand } from "./src/commands.ts";
+import { GoalPane, type GoalPaneAction, type GoalSnapshotResult } from "./src/pane.ts";
 import {
   CUSTOM_TYPE as GOAL_CUSTOM_TYPE,
   NOTICE_TYPE as GOAL_NOTICE_TYPE,
@@ -44,13 +44,28 @@ import {
   type SidecarEnvelope,
 } from "./src/store.ts";
 import { handleCreateGoal, handleGetGoal, handleUpdateGoal } from "./src/tools.ts";
-import { GOAL_STATUS_KEY, goalStatusLine } from "./src/status.ts";
+import { GOAL_STATUS_KEY, goalCompactBadge, goalStatusLine } from "./src/status.ts";
+import {
+  BannerLine,
+  commitSummary,
+  instructionSummary,
+  isCommitMeta,
+  isPauseNotice,
+  messageText,
+  type NoticeData,
+  type PauseNoticeData,
+  pauseNoticeSummary,
+} from "./src/transcript.ts";
 
 const COMMIT_META_TYPE = "codex-goal-commit";
 const TOOL_CREATE = "create_goal";
 const TOOL_GET = "get_goal";
 const TOOL_UPDATE = "update_goal";
 const COMMAND_GOAL = "goal";
+/** pi's global expand toggle, named in collapsed transcript lines. */
+const EXPAND_KEYBINDING = "app.tools.expand";
+/** Inset of a collapsed notice banner, matching pi's default output padding. */
+const NOTICE_BANNER_PADDING = 1;
 
 const CREATE_DESCRIPTION = [
   "Create a goal the user explicitly requested. Create only after an explicit user, system, or developer request; do not infer goal creation from an ordinary task.",
@@ -100,26 +115,37 @@ function safeNotify(ctx: { ui: { notify(m: string, t?: NotifyLevel): void } }, m
 }
 
 /**
+ * Info for a lifecycle change whose notice entry is already drawn in the TUI
+ * transcript; other modes have no transcript view, so they still get it.
+ */
+function notifyOutsideTranscript(ctx: ExtensionContext, message: string): void {
+  if (ctx.mode !== "tui") safeNotify(ctx, message, "info");
+}
+
+/**
  * Publish (or clear) the bottom-left goal badge from the persisted sidecar;
  * a click opens the /goal pane.
  */
-function refreshGoalStatus(binding: { store: GoalStore }, ui: ExtensionContext["ui"]): void {
+function refreshGoalStatus(binding: { store: GoalStore }, ui: ExtensionContext["ui"], openPane: () => void): void {
   try {
     const loaded = binding.store.load();
-    const line = loaded.ok ? goalStatusLine(loaded.value.goal) : null;
-    if (line === null) {
+    const goal = loaded.ok ? loaded.value.goal : null;
+    const line = goalStatusLine(goal);
+    if (goal === null || line === null) {
       ui.setWidget(GOAL_STATUS_KEY, undefined);
       return;
     }
     const label = ui.theme.bg("customMessageBg", ` ${line} `);
+    const compact = goalCompactBadge(ui.theme, goal.status);
     ui.setWidget(
       GOAL_STATUS_KEY,
       () => ({
         render: () => [label],
+        renderCompact: () => compact,
         invalidate: () => {},
         handleMouse: (event) => {
           if (event.type !== "click" || event.button !== "left") return undefined;
-          void openGoalPane(ui, binding);
+          openPane();
           return { handled: true };
         },
       }),
@@ -134,18 +160,18 @@ function refreshGoalStatus(binding: { store: GoalStore }, ui: ExtensionContext["
   }
 }
 
-/** The /goal pane (TUI): the persisted goal at a glance. */
-async function openGoalPane(ui: ExtensionContext["ui"], binding: { store: GoalStore }): Promise<void> {
-  await ui.custom<void>((_tui, theme, _kb, done) =>
-    new GoalPane(
-      theme,
-      () => {
-        const loaded = binding.store.load();
-        return loaded.ok ? loaded.value.goal : null;
-      },
-      () => done(),
-    ),
-  );
+/** The /goal subcommand each pane key runs. */
+const PANE_COMMANDS: Readonly<Record<GoalPaneAction, GoalCommand>> = {
+  pause: { kind: "pause" },
+  resume: { kind: "resume", tokenBudget: undefined },
+  edit: { kind: "edit", objective: null },
+  clear: { kind: "clear" },
+};
+
+function paneSnapshot(store: GoalStore): GoalSnapshotResult {
+  const loaded = store.load();
+  if (!loaded.ok) return { ok: false, error: loaded.error.message };
+  return { ok: true, value: { goal: loaded.value.goal, revision: loaded.value.revision } };
 }
 
 function safeSendUser(
@@ -463,7 +489,7 @@ export default function (pi: ExtensionAPI): void {
           }
           return outcome;
         });
-        refreshGoalStatus(binding, ctx.ui);
+        publishGoalStatus(binding, ctx);
         return {
           content: [{ type: "text" as const, text: outcome.content }],
           details: undefined,
@@ -554,7 +580,7 @@ export default function (pi: ExtensionAPI): void {
           binding.controller.invalidate("tool:update");
           appendEvidence(binding, COMMIT_META_TYPE, { sessionId: binding.sessionId, goalId: outcome.state!.id, revision: outcome.revision });
         }
-        refreshGoalStatus(binding, ctx.ui);
+        publishGoalStatus(binding, ctx);
         return {
           content: [{ type: "text" as const, text: outcome.content }],
           details: undefined,
@@ -565,6 +591,392 @@ export default function (pi: ExtensionAPI): void {
     }),
   );
 
+  function publishGoalStatus(binding: SessionBinding, ctx: ExtensionContext): void {
+    refreshGoalStatus(binding, ctx.ui, () => void openGoalPane(binding, ctx));
+  }
+
+  /** The /goal pane (TUI): the persisted goal at a glance; its keys run /goal subcommands. */
+  async function openGoalPane(binding: SessionBinding, ctx: ExtensionContext): Promise<void> {
+    await ctx.ui.custom<void>((tui, theme, _kb, done) =>
+      new GoalPane(theme, {
+        load: () => paneSnapshot(binding.store),
+        run: (action) => runPaneAction(binding, action, ctx),
+        requestRender: () => tui.requestRender(),
+        close: () => done(),
+        nowMs: () => Date.now(),
+      }),
+    );
+  }
+
+  async function runPaneAction(binding: SessionBinding, action: GoalPaneAction, ctx: ExtensionContext): Promise<void> {
+    try {
+      if (action === "clear") {
+        const loaded = binding.store.load();
+        const goal = loaded.ok ? loaded.value.goal : null;
+        const subject = goal === null ? "The current goal" : `Goal ${goal.id} (${goal.status})`;
+        const confirmed = await ctx.ui.confirm("Clear goal?", `${subject} will be cleared. Transcript entries are retained.`);
+        if (!confirmed) return;
+      }
+      await runGoalCommand(PANE_COMMANDS[action], ctx);
+    } catch (err) {
+      if (!isStaleError(err)) safeNotify(ctx, `/goal ${action} failed: ${(err as Error).message}`, "error");
+    }
+  }
+
+  /** One /goal subcommand; the command and the /goal pane keys share this path. */
+  async function runGoalCommand(cmd: GoalCommand, ctx: ExtensionContext): Promise<void> {
+    if (cmd.kind === "show") {
+      const binding = getOrCreateBinding(ctx);
+      if (!binding) {
+        ctx.ui.notify("/goal: no saved session yet. Send a message first so Pi materializes the session file.", "warning");
+        return;
+      }
+      const envelope = loadEnvelope(binding);
+      try {
+        pi.appendEntry(GOAL_NOTICE_TYPE, { text: formatStatus(envelope.goal, envelope.revision), at: clk.nowIso() });
+      } catch {
+        // non-fatal
+      }
+      if (ctx.mode === "tui" && ctx.hasUI) {
+        await openGoalPane(binding, ctx);
+      } else {
+        ctx.ui.notify(formatStatus(envelope.goal, envelope.revision), "info");
+      }
+      return;
+    }
+
+    const binding = getOrCreateBinding(ctx);
+    if (!binding) {
+      ctx.ui.notify("/goal: a saved Pi session is required. Send a message first; ephemeral sessions cannot host a goal.", "warning");
+      return;
+    }
+
+    if (cmd.kind === "clear") {
+      // Synchronous: no await before pi/ctx use (stale-runtime guard).
+      try {
+        const envelope = loadEnvelope(binding);
+        const committed = binding.store.commit(envelope.revision, (current) => ({
+          ...current,
+          goal: null,
+          dispatch: null,
+          cleared: true,
+          clearedAt: clk.nowIso(),
+          chargedEntryIds: [],
+          baselineEntryCount: null,
+          remainderMs: 0,
+        }));
+        if (!committed.ok) {
+          safeNotify(ctx, `/goal clear failed: ${committed.error.message}`, "error");
+          return;
+        }
+        binding.controller.invalidate("clear");
+        try {
+          ctx.abort();
+        } catch {
+          // Idle when no run is active; stopping is best-effort.
+        }
+        appendEvidence(binding, COMMIT_META_TYPE, {
+          sessionId: binding.sessionId,
+          goalId: null,
+          revision: committed.value.revision,
+          tombstone: true,
+        });
+        appendEvidence(binding, GOAL_NOTICE_TYPE, { text: "Goal cleared. Transcript entries retained.", at: clk.nowIso() });
+        notifyOutsideTranscript(ctx, "Goal cleared. Transcript entries retained.");
+        publishGoalStatus(binding, ctx);
+      } catch (err) {
+        safeNotify(ctx, `/goal clear failed: ${(err as Error).message}`, "error");
+      }
+      return;
+    }
+
+    if (cmd.kind === "pause") {
+      try {
+        const envelope = loadEnvelope(binding);
+        if (!envelope.goal) {
+          safeNotify(ctx, "/goal pause: no current goal.", "warning");
+          return;
+        }
+        if (envelope.goal.status === "budget_limited") {
+          safeNotify(ctx, "/goal pause: goal is budget-limited (not paused). Raise the cap and resume to continue.", "warning");
+          return;
+        }
+        const next = pauseRecord(envelope.goal, clk, "user");
+        if (!next.ok) {
+          safeNotify(ctx, `/goal pause rejected: ${next.error.message}`, "warning");
+          return;
+        }
+        const committed = binding.store.commit(envelope.revision, (current) => ({
+          ...current,
+          goal: next.value,
+          dispatch: null,
+        }));
+        if (!committed.ok) {
+          safeNotify(ctx, `/goal pause failed: ${committed.error.message}`, "error");
+          return;
+        }
+        binding.controller.invalidate("pause");
+        try {
+          ctx.abort();
+        } catch {
+          // Idle when no run is active; stopping is best-effort.
+        }
+        appendEvidence(binding, COMMIT_META_TYPE, {
+          sessionId: binding.sessionId,
+          goalId: committed.value.goal!.id,
+          revision: committed.value.revision,
+        });
+        const paused = committed.value.goal!;
+        const notice: PauseNoticeData = {
+          text: `Goal paused (${paused.id}).`,
+          at: clk.nowIso(),
+          event: "paused",
+          goalId: paused.id,
+          revision: committed.value.revision,
+          timeUsedSeconds: paused.timeUsedSeconds,
+        };
+        appendEvidence(binding, GOAL_NOTICE_TYPE, notice);
+        notifyOutsideTranscript(ctx, "Goal paused.");
+        publishGoalStatus(binding, ctx);
+      } catch (err) {
+        safeNotify(ctx, `/goal pause failed: ${(err as Error).message}`, "error");
+      }
+      return;
+    }
+
+    if (cmd.kind === "resume") {
+      // Synchronous commit first; only the kickoff send follows.
+      let resumed: { ok: true; record: GoalRecord; revision: number } | { ok: false; message: string };
+      try {
+        let envelope = loadEnvelope(binding);
+        if (envelope.goal?.status === "active" && (envelope.dispatch !== null || binding.controller.state.admissionDisabled || binding.controller.state.needsRecovery)) {
+          const reconciled = binding.controller.checkpointAccounting(envelope, viewOf(ctx));
+          envelope = reconciled.envelope;
+          if (reconciled.unknownUsage && envelope.goal!.tokenBudget !== null) {
+            binding.controller.disableAdmission();
+            resumed = { ok: false, message: "Cannot resume under a spending cap: persisted usage is unknown." };
+            return;
+          }
+        }
+        if (!envelope.goal) {
+          resumed = { ok: false, message: "No goal to resume." };
+        } else {
+          const recovering = envelope.dispatch !== null || binding.controller.state.needsRecovery || binding.controller.state.admissionDisabled;
+          const resumable = recovering && envelope.goal.status === "active" ? { ...envelope.goal, status: "paused" as const } : envelope.goal;
+          const next = resumeRecord(resumable, clk, { tokenBudget: cmd.tokenBudget });
+          if (!next.ok) {
+            resumed = { ok: false, message: next.error.message };
+          } else {
+            const committed = binding.store.commit(envelope.revision, (current) => ({
+              ...current,
+              goal: next.value,
+              dispatch: null,
+              baselineEntryCount: ctx.sessionManager.getEntries().length,
+            }));
+            if (!committed.ok) {
+              resumed = { ok: false, message: committed.error.message };
+            } else {
+              binding.controller.invalidate("resume");
+              binding.controller.markRecoveryComplete();
+              appendEvidence(binding, COMMIT_META_TYPE, {
+                sessionId: binding.sessionId,
+                goalId: committed.value.goal!.id,
+                revision: committed.value.revision,
+              });
+              resumed = { ok: true, record: committed.value.goal!, revision: committed.value.revision };
+            }
+          }
+        }
+      } catch (err) {
+        resumed = { ok: false, message: (err as Error).message };
+      }
+      publishGoalStatus(binding, ctx);
+      if (!resumed.ok) {
+        safeNotify(ctx, `/goal resume rejected: ${resumed.message}`, "warning");
+        return;
+      }
+      binding.pendingKickoff = { purpose: "kickoff", revision: resumed.revision };
+      if (ctx.hasUI) {
+        const sent = safeSendUser(pi, ctx, resumed.record.objective);
+        if (!sent.ok) safeNotify(ctx, `/goal resume: state saved but kickoff failed: ${sent.error}`, "error");
+      } else {
+        safeNotify(ctx, `Goal resumed (${resumed.record.id}). Continue the session to start work.`, "info");
+      }
+      return;
+    }
+
+    if (cmd.kind === "edit") {
+      let objective = cmd.objective;
+      if (objective === null) {
+        if (!ctx.hasUI) {
+          ctx.ui.notify("/goal edit needs an explicit objective in headless mode: /goal edit <objective>.", "warning");
+          return;
+        }
+        const envelope = loadEnvelope(binding);
+        if (!envelope.goal) {
+          ctx.ui.notify("/goal edit: no current goal.", "warning");
+          return;
+        }
+        const edited = await ctx.ui.editor("Edit goal objective", envelope.goal.objective);
+        if (edited === undefined) return;
+        objective = edited.trim();
+        if (!objective) {
+          ctx.ui.notify("/goal edit: objective must be nonempty.", "warning");
+          return;
+        }
+      }
+      const finalObjective = objective;
+      // Commit synchronously; the only await above was the editor dialog.
+      try {
+        const envelope = loadEnvelope(binding);
+        if (!envelope.goal) {
+          safeNotify(ctx, "/goal edit: no current goal.", "warning");
+          return;
+        }
+        const next = editObjective(envelope.goal, finalObjective, clk);
+        if (!next.ok) {
+          safeNotify(ctx, `/goal edit rejected: ${next.error.message}`, "warning");
+          return;
+        }
+        const committed = binding.store.commit(envelope.revision, (c) => ({ ...c, goal: next.value, dispatch: null }));
+        if (!committed.ok) {
+          safeNotify(ctx, `/goal edit failed: ${committed.error.message}`, "error");
+          return;
+        }
+        appendEvidence(binding, COMMIT_META_TYPE, {
+          sessionId: binding.sessionId,
+          goalId: committed.value.goal!.id,
+          revision: committed.value.revision,
+        });
+        binding.controller.invalidate("edit");
+        binding.controller.resetStreakOnUserWork();
+        publishGoalStatus(binding, ctx);
+        if (ctx.hasUI && committed.value.goal!.status === "active") {
+          const sent = safeSendCustom(
+            pi,
+            {
+              customType: GOAL_CUSTOM_TYPE,
+              content: renderObjectiveUpdate(committed.value.goal!, committed.value.revision),
+              display: true,
+              details: {
+                schemaVersion: 1,
+                sessionId: binding.sessionId,
+                goalId: committed.value.goal!.id,
+                revision: committed.value.revision,
+                purpose: "objective_update",
+              },
+            },
+            { triggerTurn: true, deliverAs: "followUp" },
+          );
+          if (!sent.ok) safeNotify(ctx, `/goal edit: state saved but instruction delivery failed: ${sent.error}`, "error");
+        } else {
+          safeNotify(ctx, `Goal objective updated (${committed.value.goal!.id}). Continue the session to continue work.`, "info");
+        }
+      } catch (err) {
+        safeNotify(ctx, `/goal edit failed: ${(err as Error).message}`, "error");
+      }
+      return;
+    }
+
+    // create
+    if (cmd.kind === "create") {
+      if (cmd.tokenBudget !== null) {
+        const check = validateTokenBudget(cmd.tokenBudget);
+        if (!check.ok) {
+          safeNotify(ctx, `/goal rejected: ${check.error.message}`, "warning");
+          return;
+        }
+      }
+      // Headless replacement of an unfinished goal fails with instructions.
+      const pre = loadEnvelope(binding);
+      if (pre.goal && !ctx.hasUI) {
+        const attempt = userCreate(
+          pre.goal,
+          { objective: cmd.objective, tokenBudget: cmd.tokenBudget },
+          clk,
+          { makeId: newGoalId },
+          { confirmed: false, dialogCapable: false },
+        );
+        if (!attempt.ok) {
+          safeNotify(ctx, `/goal rejected: ${attempt.error.message}`, "warning");
+          return;
+        }
+      }
+      const doCreate = (confirmed: boolean): { ok: true; record: GoalRecord; revision: number } | { ok: false; message: string } => {
+        try {
+          const current = loadEnvelope(binding);
+          const next = userCreate(
+            current.goal,
+            { objective: (cmd as { objective: string }).objective, tokenBudget: (cmd as { tokenBudget: number | null }).tokenBudget },
+            clk,
+            { makeId: newGoalId },
+            { confirmed, dialogCapable: ctx.hasUI },
+          );
+          if (!next.ok) return { ok: false, message: next.error.message };
+          const committed = binding.store.commit(current.revision, (c) => ({
+            ...c,
+            goal: next.value,
+            cleared: false,
+            clearedAt: null,
+            chargedEntryIds: [],
+            baselineEntryCount: ctx.sessionManager.getEntries().length,
+            remainderMs: 0,
+            dispatch: null,
+          }));
+          if (!committed.ok) return { ok: false, message: committed.error.message };
+          binding.controller.invalidate("create");
+          appendEvidence(binding, COMMIT_META_TYPE, {
+            sessionId: binding.sessionId,
+            goalId: committed.value.goal!.id,
+            revision: committed.value.revision,
+          });
+          return { ok: true, record: committed.value.goal!, revision: committed.value.revision };
+        } catch (err) {
+          return { ok: false, message: (err as Error).message };
+        }
+      };
+      if (pre.goal && ctx.hasUI && ctx.mode === "tui") {
+        const confirmed = await ctx.ui.confirm(
+          "Replace current goal?",
+          `Goal ${pre.goal.id} (${pre.goal.status}) will be replaced. Transcript entries are retained.`,
+        );
+        if (!confirmed) {
+          safeNotify(ctx, "Goal creation cancelled; existing goal unchanged.", "info");
+          return;
+        }
+        const second = doCreate(true);
+        if (!second.ok) {
+          safeNotify(ctx, `/goal rejected: ${second.message}`, "warning");
+          return;
+        }
+        binding.pendingKickoff = { purpose: "kickoff", revision: second.revision };
+        publishGoalStatus(binding, ctx);
+        // Print/json modes are single-turn: persist and let the next run
+        // pick the goal up via before_agent_start instead of queuing here.
+        if (ctx.hasUI) {
+          const sent2 = safeSendUser(pi, ctx, second.record.objective);
+          if (!sent2.ok) safeNotify(ctx, `/goal: state saved but kickoff failed: ${sent2.error}`, "error");
+        } else {
+          safeNotify(ctx, `Goal created (${second.record.id}). Continue the session to start work.`, "info");
+        }
+        return;
+      }
+      const created = doCreate(false);
+      if (!created.ok) {
+        safeNotify(ctx, `/goal rejected: ${created.message}`, "warning");
+        return;
+      }
+      binding.pendingKickoff = { purpose: "kickoff", revision: created.revision };
+      publishGoalStatus(binding, ctx);
+      if (ctx.hasUI) {
+        const sent = safeSendUser(pi, ctx, created.record.objective);
+        if (!sent.ok) safeNotify(ctx, `/goal: state saved but kickoff failed: ${sent.error}`, "error");
+      } else {
+        safeNotify(ctx, `Goal created (${created.record.id}). Continue the session to start work.`, "info");
+      }
+    }
+  }
+
   pi.registerCommand(COMMAND_GOAL, {
     description: "Manage the session goal: /goal, /goal <objective>, /goal edit|pause|resume|clear",
     handler: async (args: string, ctx) => {
@@ -573,348 +985,7 @@ export default function (pi: ExtensionAPI): void {
         ctx.ui.notify(`/goal: ${parsed.error.message}`, "warning");
         return;
       }
-      const cmd = parsed.value;
-      if (cmd.kind === "show") {
-        const binding = getOrCreateBinding(ctx);
-        if (!binding) {
-          ctx.ui.notify("/goal: no saved session yet. Send a message first so Pi materializes the session file.", "warning");
-          return;
-        }
-        const envelope = loadEnvelope(binding);
-        try {
-          pi.appendEntry(GOAL_NOTICE_TYPE, { text: formatStatus(envelope.goal, envelope.revision), at: clk.nowIso() });
-        } catch {
-          // non-fatal
-        }
-        if (ctx.mode === "tui" && ctx.hasUI) {
-          await openGoalPane(ctx.ui, binding);
-        } else {
-          ctx.ui.notify(formatStatus(envelope.goal, envelope.revision), "info");
-        }
-        return;
-      }
-
-      const binding = getOrCreateBinding(ctx);
-      if (!binding) {
-        ctx.ui.notify("/goal: a saved Pi session is required. Send a message first; ephemeral sessions cannot host a goal.", "warning");
-        return;
-      }
-
-      if (cmd.kind === "clear") {
-        // Synchronous: no await before pi/ctx use (stale-runtime guard).
-        try {
-          const envelope = loadEnvelope(binding);
-          const committed = binding.store.commit(envelope.revision, (current) => ({
-            ...current,
-            goal: null,
-            dispatch: null,
-            cleared: true,
-            clearedAt: clk.nowIso(),
-            chargedEntryIds: [],
-            baselineEntryCount: null,
-            remainderMs: 0,
-          }));
-          if (!committed.ok) {
-            safeNotify(ctx, `/goal clear failed: ${committed.error.message}`, "error");
-            return;
-          }
-          binding.controller.invalidate("clear");
-          try {
-            ctx.abort();
-          } catch {
-            // Idle when no run is active; stopping is best-effort.
-          }
-          appendEvidence(binding, COMMIT_META_TYPE, {
-            sessionId: binding.sessionId,
-            goalId: null,
-            revision: committed.value.revision,
-            tombstone: true,
-          });
-          appendEvidence(binding, GOAL_NOTICE_TYPE, { text: "Goal cleared. Transcript entries retained.", at: clk.nowIso() });
-          safeNotify(ctx, "Goal cleared. Transcript entries retained.", "info");
-          refreshGoalStatus(binding, ctx.ui);
-        } catch (err) {
-          safeNotify(ctx, `/goal clear failed: ${(err as Error).message}`, "error");
-        }
-        return;
-      }
-
-      if (cmd.kind === "pause") {
-        try {
-          const envelope = loadEnvelope(binding);
-          if (!envelope.goal) {
-            safeNotify(ctx, "/goal pause: no current goal.", "warning");
-            return;
-          }
-          if (envelope.goal.status === "budget_limited") {
-            safeNotify(ctx, "/goal pause: goal is budget-limited (not paused). Raise the cap and resume to continue.", "warning");
-            return;
-          }
-          const next = pauseRecord(envelope.goal, clk, "user");
-          if (!next.ok) {
-            safeNotify(ctx, `/goal pause rejected: ${next.error.message}`, "warning");
-            return;
-          }
-          const committed = binding.store.commit(envelope.revision, (current) => ({
-            ...current,
-            goal: next.value,
-            dispatch: null,
-          }));
-          if (!committed.ok) {
-            safeNotify(ctx, `/goal pause failed: ${committed.error.message}`, "error");
-            return;
-          }
-          binding.controller.invalidate("pause");
-          try {
-            ctx.abort();
-          } catch {
-            // Idle when no run is active; stopping is best-effort.
-          }
-          appendEvidence(binding, COMMIT_META_TYPE, {
-            sessionId: binding.sessionId,
-            goalId: committed.value.goal!.id,
-            revision: committed.value.revision,
-          });
-          appendEvidence(binding, GOAL_NOTICE_TYPE, { text: `Goal paused (${committed.value.goal!.id}).`, at: clk.nowIso() });
-          safeNotify(ctx, "Goal paused.", "info");
-          refreshGoalStatus(binding, ctx.ui);
-        } catch (err) {
-          safeNotify(ctx, `/goal pause failed: ${(err as Error).message}`, "error");
-        }
-        return;
-      }
-
-      if (cmd.kind === "resume") {
-        // Synchronous commit first; only the kickoff send follows.
-        let resumed: { ok: true; record: GoalRecord; revision: number } | { ok: false; message: string };
-        try {
-          let envelope = loadEnvelope(binding);
-          if (envelope.goal?.status === "active" && (envelope.dispatch !== null || binding.controller.state.admissionDisabled || binding.controller.state.needsRecovery)) {
-            const reconciled = binding.controller.checkpointAccounting(envelope, viewOf(ctx));
-            envelope = reconciled.envelope;
-            if (reconciled.unknownUsage && envelope.goal!.tokenBudget !== null) {
-              binding.controller.disableAdmission();
-              resumed = { ok: false, message: "Cannot resume under a spending cap: persisted usage is unknown." };
-              return;
-            }
-          }
-          if (!envelope.goal) {
-            resumed = { ok: false, message: "No goal to resume." };
-          } else {
-            const recovering = envelope.dispatch !== null || binding.controller.state.needsRecovery || binding.controller.state.admissionDisabled;
-            const resumable = recovering && envelope.goal.status === "active" ? { ...envelope.goal, status: "paused" as const } : envelope.goal;
-            const next = resumeRecord(resumable, clk, { tokenBudget: cmd.tokenBudget });
-            if (!next.ok) {
-              resumed = { ok: false, message: next.error.message };
-            } else {
-              const committed = binding.store.commit(envelope.revision, (current) => ({
-                ...current,
-                goal: next.value,
-                dispatch: null,
-                baselineEntryCount: ctx.sessionManager.getEntries().length,
-              }));
-              if (!committed.ok) {
-                resumed = { ok: false, message: committed.error.message };
-              } else {
-                binding.controller.invalidate("resume");
-                binding.controller.markRecoveryComplete();
-                appendEvidence(binding, COMMIT_META_TYPE, {
-                  sessionId: binding.sessionId,
-                  goalId: committed.value.goal!.id,
-                  revision: committed.value.revision,
-                });
-                resumed = { ok: true, record: committed.value.goal!, revision: committed.value.revision };
-              }
-            }
-          }
-        } catch (err) {
-          resumed = { ok: false, message: (err as Error).message };
-        }
-        refreshGoalStatus(binding, ctx.ui);
-        if (!resumed.ok) {
-          safeNotify(ctx, `/goal resume rejected: ${resumed.message}`, "warning");
-          return;
-        }
-        binding.pendingKickoff = { purpose: "kickoff", revision: resumed.revision };
-        if (ctx.hasUI) {
-          const sent = safeSendUser(pi, ctx, resumed.record.objective);
-          if (!sent.ok) safeNotify(ctx, `/goal resume: state saved but kickoff failed: ${sent.error}`, "error");
-        } else {
-          safeNotify(ctx, `Goal resumed (${resumed.record.id}). Continue the session to start work.`, "info");
-        }
-        return;
-      }
-
-      if (cmd.kind === "edit") {
-        let objective = cmd.objective;
-        if (objective === null) {
-          if (!ctx.hasUI) {
-            ctx.ui.notify("/goal edit needs an explicit objective in headless mode: /goal edit <objective>.", "warning");
-            return;
-          }
-          const envelope = loadEnvelope(binding);
-          if (!envelope.goal) {
-            ctx.ui.notify("/goal edit: no current goal.", "warning");
-            return;
-          }
-          const edited = await ctx.ui.editor("Edit goal objective", envelope.goal.objective);
-          if (edited === undefined) return;
-          objective = edited.trim();
-          if (!objective) {
-            ctx.ui.notify("/goal edit: objective must be nonempty.", "warning");
-            return;
-          }
-        }
-        const finalObjective = objective;
-        // Commit synchronously; the only await above was the editor dialog.
-        try {
-          const envelope = loadEnvelope(binding);
-          if (!envelope.goal) {
-            safeNotify(ctx, "/goal edit: no current goal.", "warning");
-            return;
-          }
-          const next = editObjective(envelope.goal, finalObjective, clk);
-          if (!next.ok) {
-            safeNotify(ctx, `/goal edit rejected: ${next.error.message}`, "warning");
-            return;
-          }
-          const committed = binding.store.commit(envelope.revision, (c) => ({ ...c, goal: next.value, dispatch: null }));
-          if (!committed.ok) {
-            safeNotify(ctx, `/goal edit failed: ${committed.error.message}`, "error");
-            return;
-          }
-          appendEvidence(binding, COMMIT_META_TYPE, {
-            sessionId: binding.sessionId,
-            goalId: committed.value.goal!.id,
-            revision: committed.value.revision,
-          });
-          binding.controller.invalidate("edit");
-          binding.controller.resetStreakOnUserWork();
-          refreshGoalStatus(binding, ctx.ui);
-          if (ctx.hasUI && committed.value.goal!.status === "active") {
-            const sent = safeSendCustom(
-              pi,
-              {
-                customType: GOAL_CUSTOM_TYPE,
-                content: renderObjectiveUpdate(committed.value.goal!, committed.value.revision),
-                display: true,
-                details: {
-                  schemaVersion: 1,
-                  sessionId: binding.sessionId,
-                  goalId: committed.value.goal!.id,
-                  revision: committed.value.revision,
-                  purpose: "objective_update",
-                },
-              },
-              { triggerTurn: true, deliverAs: "followUp" },
-            );
-            if (!sent.ok) safeNotify(ctx, `/goal edit: state saved but instruction delivery failed: ${sent.error}`, "error");
-          } else {
-            safeNotify(ctx, `Goal objective updated (${committed.value.goal!.id}). Continue the session to continue work.`, "info");
-          }
-        } catch (err) {
-          safeNotify(ctx, `/goal edit failed: ${(err as Error).message}`, "error");
-        }
-        return;
-      }
-
-      // create
-      if (cmd.kind === "create") {
-        if (cmd.tokenBudget !== null) {
-          const check = validateTokenBudget(cmd.tokenBudget);
-          if (!check.ok) {
-            safeNotify(ctx, `/goal rejected: ${check.error.message}`, "warning");
-            return;
-          }
-        }
-        // Headless replacement of an unfinished goal fails with instructions.
-        const pre = loadEnvelope(binding);
-        if (pre.goal && !ctx.hasUI) {
-          const attempt = userCreate(
-            pre.goal,
-            { objective: cmd.objective, tokenBudget: cmd.tokenBudget },
-            clk,
-            { makeId: newGoalId },
-            { confirmed: false, dialogCapable: false },
-          );
-          if (!attempt.ok) {
-            safeNotify(ctx, `/goal rejected: ${attempt.error.message}`, "warning");
-            return;
-          }
-        }
-        const doCreate = (confirmed: boolean): { ok: true; record: GoalRecord; revision: number } | { ok: false; message: string } => {
-          try {
-            const current = loadEnvelope(binding);
-            const next = userCreate(
-              current.goal,
-              { objective: (cmd as { objective: string }).objective, tokenBudget: (cmd as { tokenBudget: number | null }).tokenBudget },
-              clk,
-              { makeId: newGoalId },
-              { confirmed, dialogCapable: ctx.hasUI },
-            );
-            if (!next.ok) return { ok: false, message: next.error.message };
-            const committed = binding.store.commit(current.revision, (c) => ({
-              ...c,
-              goal: next.value,
-              cleared: false,
-              clearedAt: null,
-              chargedEntryIds: [],
-              baselineEntryCount: ctx.sessionManager.getEntries().length,
-              remainderMs: 0,
-              dispatch: null,
-            }));
-            if (!committed.ok) return { ok: false, message: committed.error.message };
-            binding.controller.invalidate("create");
-            appendEvidence(binding, COMMIT_META_TYPE, {
-              sessionId: binding.sessionId,
-              goalId: committed.value.goal!.id,
-              revision: committed.value.revision,
-            });
-            return { ok: true, record: committed.value.goal!, revision: committed.value.revision };
-          } catch (err) {
-            return { ok: false, message: (err as Error).message };
-          }
-        };
-        if (pre.goal && ctx.hasUI && ctx.mode === "tui") {
-          const confirmed = await ctx.ui.confirm(
-            "Replace current goal?",
-            `Goal ${pre.goal.id} (${pre.goal.status}) will be replaced. Transcript entries are retained.`,
-          );
-          if (!confirmed) {
-            safeNotify(ctx, "Goal creation cancelled; existing goal unchanged.", "info");
-            return;
-          }
-          const second = doCreate(true);
-          if (!second.ok) {
-            safeNotify(ctx, `/goal rejected: ${second.message}`, "warning");
-            return;
-          }
-          binding.pendingKickoff = { purpose: "kickoff", revision: second.revision };
-          refreshGoalStatus(binding, ctx.ui);
-          // Print/json modes are single-turn: persist and let the next run
-          // pick the goal up via before_agent_start instead of queuing here.
-          if (ctx.hasUI) {
-            const sent2 = safeSendUser(pi, ctx, second.record.objective);
-            if (!sent2.ok) safeNotify(ctx, `/goal: state saved but kickoff failed: ${sent2.error}`, "error");
-          } else {
-            safeNotify(ctx, `Goal created (${second.record.id}). Continue the session to start work.`, "info");
-          }
-          return;
-        }
-        const created = doCreate(false);
-        if (!created.ok) {
-          safeNotify(ctx, `/goal rejected: ${created.message}`, "warning");
-          return;
-        }
-        binding.pendingKickoff = { purpose: "kickoff", revision: created.revision };
-        refreshGoalStatus(binding, ctx.ui);
-        if (ctx.hasUI) {
-          const sent = safeSendUser(pi, ctx, created.record.objective);
-          if (!sent.ok) safeNotify(ctx, `/goal: state saved but kickoff failed: ${sent.error}`, "error");
-        } else {
-          safeNotify(ctx, `Goal created (${created.record.id}). Continue the session to start work.`, "info");
-        }
-      }
+      await runGoalCommand(parsed.value, ctx);
     },
   });
 
@@ -927,7 +998,7 @@ export default function (pi: ExtensionAPI): void {
     }
     try {
       const binding = bindingFor(ctx);
-      if (binding) refreshGoalStatus(binding, ctx.ui);
+      if (binding) publishGoalStatus(binding, ctx);
     } catch (err) {
       if (!isStaleError(err)) throw err;
     }
@@ -1421,7 +1492,7 @@ export default function (pi: ExtensionAPI): void {
       if (!isStaleError(err)) throw err;
     });
     try {
-      refreshGoalStatus(binding, ctx.ui);
+      publishGoalStatus(binding, ctx);
     } catch (err) {
       if (!isStaleError(err)) throw err;
     }
@@ -1452,7 +1523,7 @@ export default function (pi: ExtensionAPI): void {
         if (!isStaleError(err)) throw err;
       });
     try {
-      refreshGoalStatus(binding, ctx.ui);
+      publishGoalStatus(binding, ctx);
     } catch (err) {
       if (!isStaleError(err)) throw err;
     }
@@ -1509,7 +1580,19 @@ export default function (pi: ExtensionAPI): void {
     }
   });
 
-  pi.registerMessageRenderer(GOAL_CUSTOM_TYPE, () => undefined);
-  pi.registerEntryRenderer(GOAL_NOTICE_TYPE, (entry) => new Text((entry.data as { text: string }).text, 0, 0));
-  pi.registerEntryRenderer(COMMIT_META_TYPE, (entry) => new Text(`[codex-goal-commit] ${JSON.stringify(entry.data)}`, 0, 0));
+  // Collapsed forms only; expanded (or unrecognised) content renders exactly as before.
+  pi.registerMessageRenderer(GOAL_CUSTOM_TYPE, (message, options, theme) => {
+    if (options.expanded) return undefined;
+    const line = instructionSummary(theme, messageText(message.content), keyText(EXPAND_KEYBINDING));
+    return line === null ? undefined : new BannerLine(theme, line, options.outputPad);
+  });
+  pi.registerEntryRenderer(GOAL_NOTICE_TYPE, (entry, options, theme) => {
+    const data = entry.data as NoticeData;
+    if (!options.expanded && isPauseNotice(data)) return new BannerLine(theme, pauseNoticeSummary(theme, data), NOTICE_BANNER_PADDING);
+    return new Text(data.text, 0, 0);
+  });
+  pi.registerEntryRenderer(COMMIT_META_TYPE, (entry, options, theme) => {
+    if (!options.expanded && isCommitMeta(entry.data)) return new Text(commitSummary(theme, entry.data), 0, 0);
+    return new Text(`[codex-goal-commit] ${JSON.stringify(entry.data)}`, 0, 0);
+  });
 }

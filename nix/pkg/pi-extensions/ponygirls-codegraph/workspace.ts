@@ -14,6 +14,8 @@ interface ProjectEntry {
   project: Project;
   session: CodegraphSession;
   lastCheck: { at: string; state: State } | null;
+  /** Kept until a later check succeeds, so one-line failure notices never lose their detail. */
+  lastFailure: { at: string; detail: string } | null;
 }
 
 export class CodegraphWorkspace {
@@ -93,9 +95,12 @@ export class CodegraphWorkspace {
       run: (root, args, signal) => this.boundary.run(root, args, signal),
     };
     const entry: ProjectEntry = { project, session: new CodegraphSession(boundary, project.root, (state) => {
-      if (state.phase !== "working" && state.phase !== "idle") entry.lastCheck = { at: this.now(), state };
+      const at = this.now();
+      if (state.phase !== "working" && state.phase !== "idle") entry.lastCheck = { at, state };
+      if (state.phase === "error") entry.lastFailure = { at, detail: state.detail };
+      else if (state.phase === "ready" || state.phase === "empty") entry.lastFailure = null;
       this.publish();
-    }), lastCheck: null };
+    }), lastCheck: null, lastFailure: null };
     this.entries.set(project.root, entry);
     return entry;
   }
@@ -268,6 +273,9 @@ export class CodegraphWorkspace {
       const { root, kind, commonDir } = entry.project;
       lines.push(`${root === this.defaultRoot() ? "* " : "  "}${JSON.stringify(root)} [${kind}] ${entry.session.state.phase}`);
       lines.push(`  commonDir: ${JSON.stringify(commonDir)}; last check: ${entry.lastCheck === null ? "never" : `${entry.lastCheck.at} ${entry.lastCheck.state.phase}: ${entry.lastCheck.state.detail}`}`);
+      if (entry.lastFailure !== null && entry.lastCheck !== null && entry.lastCheck.state.phase !== "error") {
+        lines.push(`  last failure: ${entry.lastFailure.at}: ${entry.lastFailure.detail}`);
+      }
       try {
         const size = await this.catalog.size(root);
         total += size.totalBytes;

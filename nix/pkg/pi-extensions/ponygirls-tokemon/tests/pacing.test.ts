@@ -109,7 +109,7 @@ test("usage freshness reaches the tool, table and badge without changing the dis
   assert.equal(row.fetchedAt, NOW.toISOString());
   assert.equal(row.ageSeconds, 600);
   assert.equal(row.stale, true);
-  assert.match(quotaLine("anthropic", report.results, now)!, /42%.*stale 10m/);
+  assert.match(quotaLine("anthropic", report.results, now)!(PLAIN_TABLE_STYLE), /42%.*stale 10m/);
   assert.match(buildTable(report.results, now, { showInvalid: false, width: null }, PLAIN_TABLE_STYLE).lines.join("\n"), /stale 10m/);
   assert.match(buildTable(report.results, now, { showInvalid: false, width: 40 }, PLAIN_TABLE_STYLE).caption!, /1 stale quota row/);
   assert.equal(requests, 4);

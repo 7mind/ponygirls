@@ -70,6 +70,8 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal(options.placement, "borderBottomLeft");
   const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
   assert.equal(factory(null, theme).render(80)[0], " ? 1 ");
+  const tagged = { bg: (color, s) => `[${color}]${s}[/${color}]`, fg: (color, s) => `<${color}>${s}</${color}>` };
+  assert.equal(factory(null, tagged).renderCompact(10), "[toolPendingBg] <warning>?</warning><text>1</text> [/toolPendingBg]");
   assert.equal((await f.call({ action: "list" }, "list")).details.total, 1);
   assert.equal((await f.call({ action: "get", id: "q1" }, "get")).details.context, "Concurrent sessions");
   assert.equal(f.messages.length, 0);

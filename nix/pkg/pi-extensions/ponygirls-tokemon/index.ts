@@ -23,7 +23,7 @@ import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } fro
 import { getTerminalColorMode, parseColor, styleText } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { providerColor } from "./src/colors.ts";
+import { readableProviderColor, type Appearance } from "./src/colors.ts";
 import { discoverTargets } from "./src/discovery.ts";
 import { FetchHttp } from "./src/http.ts";
 import { secretOf } from "./src/pi-auth.ts";
@@ -67,12 +67,13 @@ function modelsOf(ctx: ExtensionContext): Map<string, ModelReport[]> {
 interface ThemeColors {
   fg(color: "dim" | "success" | "warning" | "error", text: string): string;
   bold(text: string): string;
+  readonly appearance: Appearance;
 }
 
 function tableStyle(theme: ThemeColors): TableStyle {
   const mode = getTerminalColorMode();
   return {
-    provider: (provider, text) => styleText(text, { fg: parseColor(providerColor(provider)) }, mode),
+    provider: (provider, text) => styleText(text, { fg: parseColor(readableProviderColor(provider, theme.appearance)) }, mode),
     bold: (s) => theme.bold(s),
     dim: (s) => theme.fg("dim", s),
     success: (s) => theme.fg("success", s),
@@ -103,7 +104,7 @@ export default function (pi: ExtensionAPI): void {
     const provider = ctx.model?.provider;
     const line = provider && statusReport !== null ? quotaLine(provider, statusReport.results, new Date()) : null;
     if (line === null) ctx.ui.setWidget(STATUS_KEY, undefined);
-    else ctx.ui.setWidget(STATUS_KEY, [line], { placement: "borderTopRight" });
+    else ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({ render: () => [line(tableStyle(theme))], invalidate: () => {} }), { placement: "borderTopRight" });
   };
   const refreshStatus = (ctx: ExtensionContext): void => {
     if (ctx.mode !== "tui") return;
@@ -197,6 +198,7 @@ export default function (pi: ExtensionAPI): void {
           requestRender: () => tui.requestRender(),
           close: () => done(),
           style: tableStyle(theme),
+          theme,
           refreshEveryMs: PANE_REFRESH_MS,
         }),
       );

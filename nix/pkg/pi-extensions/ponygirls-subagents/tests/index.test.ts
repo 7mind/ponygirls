@@ -31,6 +31,7 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
       descriptions.set(t.name, t.description);
     },
     registerCommand: () => {},
+    registerMessageRenderer: () => {},
     on: (event: string, h: Handler) => handlers.set(event, h),
     sendMessage: () => { throw new Error("legacy ingress must not be used"); },
     enqueueMessage: (message: unknown, options: Parameters<ExtensionAPI["enqueueMessage"]>[1]) => sent.push({ message, options }),
@@ -46,7 +47,7 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
       getRegisteredProviderConfig: () => undefined,
       getRegisteredNativeProvider: () => undefined,
     },
-    ui: { notify: () => {}, setWidget: () => {}, theme: { bg: (_color: string, text: string) => text } },
+    ui: { notify: () => {}, setWidget: () => {}, theme: { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text } },
   };
   return { tools, schemas, descriptions, handlers, sent, ctx };
 }

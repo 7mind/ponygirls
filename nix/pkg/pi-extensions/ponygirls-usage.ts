@@ -20,13 +20,23 @@
 
 import { CancellableLoader, matchesKey, parseKey, truncateToWidth, visibleWidth, type Component, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { frameRule, frameTitle, keyHints, type KeyHint } from "@ponygirls/pi-ui";
 
-import { DEFAULT_VIEWPORT_BUDGET, WHEEL_LINES, VIEWPORT_BUDGET_STEP, clampScrollTop, clampViewportBudget, visibleRange } from "./scroll-state.ts";
+import { DEFAULT_VIEWPORT_BUDGET, WHEEL_LINES, VIEWPORT_BUDGET_STEP, clampScrollTop, clampViewportBudget, scrollPosition, visibleRange } from "./scroll-state.ts";
 import { collectUsageData, TAB_ORDER, type CollectProgress, type TabName, type UsageData } from "./ponygirls-usage-data.ts";
 import { buildInputDistribution, buildUsageRows, INPUT_DIST_COMPONENTS, measureUsageTable, renderInputDistChart, renderInputDistTable, renderUsageTable, usageTotalsRow, USAGE_TAB_DEFAULT_MODE, USAGE_TAB_LABELS, type InputDistComponentKey, type InputDistPalette, type InputDistStyle, type UsageTableLayout, type UsageTableMode, type UsageView } from "./ponygirls-usage-state.ts";
 
-/** View chrome around the scrollable content: rule, tabs, blank, footer, rule. */
-const USAGE_CHROME_LINES = 5;
+/** View chrome around the scrollable content: frame title with tabs, rule, one key-hint line. */
+const USAGE_CHROME_LINES = 3;
+
+const USAGE_TITLE = "Usage";
+const PERIOD_HINT: KeyHint = { key: "⇥/←→", action: "period" };
+const SCROLL_HINTS: readonly KeyHint[] = [
+	{ key: "↑↓/j/k", action: "scroll" },
+	{ key: "PgUp/PgDn", action: "page" },
+	{ key: "+-", action: "size" },
+	{ key: "q", action: "close" },
+];
 
 /** Half the terminal height for content, less the view chrome. */
 function defaultBudget(rows: number | undefined): number {
@@ -93,53 +103,48 @@ class UsageTableView implements Component {
 		const budget = this.effectiveBudget();
 		this.scrollTop = clampScrollTop(this.scrollTop, this.lineCount, budget);
 		const { start, end } = visibleRange(this.lineCount, this.scrollTop, budget);
-		const tabs = TAB_ORDER.map((name) =>
-			name === this.tab ? this.theme.fg("accent", `[${USAGE_TAB_LABELS[name]}]`) : this.theme.fg("dim", ` ${USAGE_TAB_LABELS[name]} `),
-		).join("  ");
-		const rule = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		const lines = [rule, fitLine(tabs, width), "", ...content.slice(start, end).map((line) => fitLine(line, width))];
-		if (this.lineCount > budget) {
-			const moreAbove = start > 0 ? "↑ " : "";
-			const moreBelow = end < this.lineCount ? " ↓" : "";
-			lines.push(this.theme.fg("dim", `${moreAbove}lines ${start + 1}–${end} of ${this.lineCount}${moreBelow}`));
-		}
-		return [...lines, "", this.theme.fg("dim", this.footerHint()), rule];
+		const right = this.lineCount > budget ? this.theme.fg("dim", scrollPosition(this.lineCount, start, end)) : undefined;
+		const tabs = { labels: TAB_ORDER.map((name) => USAGE_TAB_LABELS[name]), active: TAB_ORDER.indexOf(this.tab) };
+		return [
+			frameTitle(this.theme, width, { title: USAGE_TITLE, tabs, right }, "none").line,
+			...content.slice(start, end).map((line) => fitLine(line, width)),
+			frameRule(this.theme, width),
+			...keyHints(this.theme, width, this.hints()).lines,
+		];
 	}
 
-	private footerHint(): string {
-		const period = "[tab/←→] period";
-		const scroll = "[↑↓/j/k] scroll  [pgup/pgdn] page  [+-] size  [q] close";
-		if (this.view === "dist") return `${period}  [v] table  [c] ${this.distStyle === "chart" ? "chart" : "table"}  ${scroll}`;
-		return `${period}  [m] ${this.modes[this.tab] === "models" ? "per-model" : "aggregates"}  [v] distribution  ${scroll}`;
+	private hints(): KeyHint[] {
+		if (this.view === "dist") {
+			return [PERIOD_HINT, { key: "v", action: "table" }, { key: "c", action: this.distStyle === "chart" ? "chart" : "table" }, ...SCROLL_HINTS];
+		}
+		return [
+			PERIOD_HINT,
+			{ key: "m", action: this.modes[this.tab] === "models" ? "per-model" : "aggregates" },
+			{ key: "v", action: "distribution" },
+			...SCROLL_HINTS,
+		];
 	}
 
 	private tableContent(width: number): string[] {
 		const stats = this.data[this.tab];
 		const rows = buildUsageRows(stats, this.modes[this.tab]!);
-		const table = renderUsageTable(rows, usageTotalsRow(stats.totals), { layout: this.layout });
-		const aggregate = new Set(rows.flatMap((row, index) => (row.model === null ? [index] : [])));
-		const content: string[] = [...table.header];
-		table.rows.forEach((line, index) => {
-			const fitted = fitLine(line, width);
-			content.push(aggregate.has(index) ? this.theme.fg("accent", fitted) : fitted);
-		});
-		if (table.totals.length > 0) content.push("", ...table.totals.map((line) => this.theme.fg("accent", fitLine(line, width))));
-		return content;
+		const table = renderUsageTable(rows, usageTotalsRow(stats.totals), this.theme, { layout: this.layout });
+		return [...table.header, ...table.rows, ...table.totals];
 	}
 
 	private distContent(width: number): string[] {
 		const bins = buildInputDistribution(this.data[this.tab].inputSizes);
 		const subtitle = this.theme.fg("dim", "Input size per assistant message (ctx tokens, all models)");
 		if (this.distStyle === "table") {
-			const rendered = renderInputDistTable(bins);
+			const rendered = renderInputDistTable(bins, this.theme);
 			const content: string[] = [subtitle, "", ...rendered.header, ...rendered.rows];
-			if (rendered.totals.length > 0) content.push("", ...rendered.totals.map((line) => this.theme.fg("accent", line)));
+			if (rendered.totals.length > 0) content.push("", ...rendered.totals.map((line) => this.theme.bold(line)));
 			return content;
 	}
 		const rendered = renderInputDistChart(bins, width, this.distPalette());
 		if (rendered.totals.length === 0) return [subtitle, "", ...rendered.header];
 		const content: string[] = [subtitle, "", this.distLegend(), ...rendered.rows];
-		content.push("", ...rendered.totals.map((line) => this.theme.fg("accent", line)));
+		content.push("", ...rendered.totals.map((line) => this.theme.bold(line)));
 		return content;
 	}
 

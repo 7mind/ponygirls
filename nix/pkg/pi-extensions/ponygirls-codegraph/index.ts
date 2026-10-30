@@ -6,6 +6,7 @@ import { localCatalog } from "./projects.ts";
 import { CodegraphWorkspace } from "./workspace.ts";
 import { CG_HELP, completeCommand, parseCommand } from "./commands.ts";
 import type { CgCommand } from "./commands.ts";
+import { renderCompactBadge, stateNotice } from "./presentation.ts";
 
 const WIDGET = "ponygirls-codegraph";
 /**
@@ -26,7 +27,7 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
   let workspace: CodegraphWorkspace | undefined;
   const toolCalls = new Set<string>();
   let currentContext: ExtensionContext | undefined;
-  let lastError: string | null = null;
+  let lastNotice: string | null = null;
 
   const notify = (ctx: ExtensionContext, text: string, error: boolean) => {
     const bounded = text.length > NOTICE_LIMIT ? `${text.slice(0, NOTICE_LIMIT)}\n…truncated; target /cg status PATH for details` : text;
@@ -38,23 +39,27 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     if (ctx === undefined || ctx.mode !== "tui") return;
     const label = toolCalls.size > 0 ? `querying (${toolCalls.size}) / ${state.phase}` : state.phase;
     const detail = state.phase === "working" ? ` ${state.detail.split(":")[0]}` : "";
+    const querying = toolCalls.size > 0;
     ctx.ui.setWidget(WIDGET, (_tui, theme) => ({
       render: () => [theme.bg("selectedBg", ` CG: ${label}${detail} `)],
+      renderCompact: () => renderCompactBadge(theme, state.phase, querying),
       invalidate: () => {},
     }), { placement: "borderBottomLeft" });
   };
   const create = (ctx: ExtensionContext): CodegraphWorkspace => {
     currentContext = ctx;
-    lastError = null;
+    lastNotice = null;
     const runtime = new CodegraphWorkspace(localCatalog(process.env), localBoundary(
       process.env.PONYGIRLS_CODEGRAPH_BIN ?? "codegraph",
       process.env.PONYGIRLS_CODEGRAPH_FLOCK_BIN ?? "flock", process.env), ctx.cwd, (state) => {
       if (workspace !== runtime) return;
       render(state);
-      if (state.phase === "error" && lastError !== state.detail) {
-        lastError = state.detail;
-        notify(ctx, `Codegraph: ${state.detail}`, true);
-      } else if (state.phase !== "error") lastError = null;
+      const notice = stateNotice(state);
+      if (notice === null) lastNotice = null;
+      else if (lastNotice !== `${state.phase}:${state.detail}`) {
+        lastNotice = `${state.phase}:${state.detail}`;
+        notify(ctx, notice.text, notice.level === "error");
+      }
     }, () => new Date().toISOString());
     workspace = runtime;
     return runtime;

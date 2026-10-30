@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { lstatSync, realpathSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 function findGitMarker(directory: string): string | undefined {
 	for (;;) {
@@ -57,4 +57,19 @@ export function resolveProject(cwd: string): string {
 		if (nonRepository && !marker) return canonicalCwd;
 		throw new Error(`Cannot resolve Git project at ${canonicalCwd}: ${stderr.trim() || failure.message}`, { cause: error });
 	}
+}
+
+const GIT_DIRECTORY = ".git";
+
+/**
+ * Display name of a project identity from resolveProject: the repository's
+ * directory name for a `.git` common directory (so linked worktrees show the
+ * main repository), the name without `.git` for a bare repository, otherwise
+ * the directory name. Never the raw path.
+ */
+export function projectDisplayName(project: string): string {
+	const name = basename(project);
+	if (name === GIT_DIRECTORY) return basename(dirname(project)) || dirname(project);
+	if (name.endsWith(GIT_DIRECTORY) && name.length > GIT_DIRECTORY.length) return name.slice(0, -GIT_DIRECTORY.length);
+	return name || project;
 }

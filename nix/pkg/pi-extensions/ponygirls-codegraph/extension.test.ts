@@ -149,3 +149,72 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
     await emit("session_shutdown", { type: "session_shutdown", reason: "exit" });
   }
 });
+
+// Regression D3: "nothing indexed yet" is an info state; failures are one-line errors without JSON dumps.
+test("Pi loader: empty checkout is an info notice and failures are one-line errors; badge has a compact form", {
+  skip: !process.env.PI_CODEGRAPH_SDK_ROOT ? "set PI_CODEGRAPH_SDK_ROOT to the installed pi-monorepo" : false,
+}, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-codegraph-empty-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  execFileSync("git", ["init", "--quiet", root]);
+  const binary = join(root, "fake-codegraph");
+  const empty = { initialized: true, projectPath: root, indexPath: join(root, ".codegraph"),
+    fileCount: 0, nodeCount: 0, pendingChanges: { added: 0, modified: 0, removed: 0 },
+    index: { state: "complete", reindexRecommended: false, pendingRefs: 0, filesNeedingReindex: 0, filesWithParseErrors: 0 } };
+  await writeFile(binary, `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify(empty))});\n`);
+  await chmod(binary, 0o755);
+  const old = { binary: process.env.PONYGIRLS_CODEGRAPH_BIN, disabled: process.env.SMIND_CODEGRAPH_DISABLED };
+  process.env.PONYGIRLS_CODEGRAPH_BIN = binary;
+  delete process.env.SMIND_CODEGRAPH_DISABLED;
+  t.after(() => {
+    if (old.binary === undefined) delete process.env.PONYGIRLS_CODEGRAPH_BIN;
+    else process.env.PONYGIRLS_CODEGRAPH_BIN = old.binary;
+    if (old.disabled === undefined) delete process.env.SMIND_CODEGRAPH_DISABLED;
+    else process.env.SMIND_CODEGRAPH_DISABLED = old.disabled;
+  });
+  const sdk = process.env.PI_CODEGRAPH_SDK_ROOT!;
+  const loader = await import(pathToFileURL(join(sdk, "dist/core/extensions/loader.js")).href);
+  const loaded = await loader.loadExtensions([resolve(import.meta.dirname, "index.ts")], root);
+  assert.deepEqual(loaded.errors, []);
+  const extension = loaded.extensions[0] as Extension;
+  const notices: { text: string; level: string }[] = [];
+  type Badge = { render(width: number): string[]; renderCompact(width: number): string; invalidate(): void };
+  let badge: Badge | undefined;
+  const theme = {
+    fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+    bg: (color: string, text: string) => `[${color}]${text}[/${color}]`,
+    bold: (text: string) => text,
+  };
+  const ctx = { cwd: root, mode: "tui", hasUI: true, ui: {
+    theme,
+    setWidget(_key: string, widget: ((...args: unknown[]) => Badge) | undefined) {
+      badge = widget === undefined ? undefined : widget({}, theme);
+    },
+    notify(text: string, level: string) { notices.push({ text, level }); },
+  } } as unknown as ExtensionContext;
+  const emit = (name: string, event: object) => extension.handlers.get(name)![0](event, ctx);
+  const settle = async (done: () => boolean) => {
+    for (let n = 0; n < 200 && !done(); n++) await new Promise((wait) => setTimeout(wait, 10));
+  };
+  emit("session_start", { type: "session_start", reason: "startup" });
+  assert.equal(badge!.renderCompact(20), "[toolPendingBg] <accent>⚙</accent><text>cg</text> [/toolPendingBg]");
+  await settle(() => notices.length > 0);
+  assert.deepEqual(notices, [{ text: "Codegraph: nothing indexed in this checkout yet · /cg status for details", level: "info" }]);
+  assert.equal(badge!.render(120)[0], "[selectedBg] CG: empty [/selectedBg]");
+  assert.equal(badge!.renderCompact(20), "[toolPendingBg] <muted>◇</muted><text>cg</text> [/toolPendingBg]");
+  await emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
+
+  await writeFile(binary, `#!${process.execPath}\nprocess.stderr.write("database is locked\\nsecond line");process.exit(3);\n`);
+  notices.length = 0;
+  emit("session_start", { type: "session_start", reason: "reload" });
+  await settle(() => notices.length > 0);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0]!.level, "error");
+  assert.doesNotMatch(notices[0]!.text, /\n|Error:|\{/, "one line, no duplicated Error: prefix, no JSON");
+  assert.match(notices[0]!.text, /^Codegraph: codegraph \w+ exited 3: database is locked · \/cg status for details$/);
+  assert.equal(badge!.renderCompact(20), "[toolPendingBg] <error>✖</error><text>cg</text> [/toolPendingBg]");
+  const status = notices.length;
+  await extension.commands.get("cg")!.handler("status", ctx as never);
+  assert.match(notices.slice(status).map((n) => n.text).join("\n"), /second line/, "full detail stays available via /cg status");
+  await emit("session_shutdown", { type: "session_shutdown", reason: "exit" });
+});

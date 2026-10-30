@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { AgentInspector, AgentsScreen, TranscriptView, chatModeFor, countTree, renderHeadless, sanitizeDisplay, widgetLine, type AgentDetails, type ChatMode, type InspectorAction, type TranscriptDeps } from "../src/ui.ts";
+import { AgentInspector, AgentsScreen, TranscriptView, badgeState, chatModeFor, compactBadge, countTree, renderHeadless, sanitizeDisplay, widgetLine, type AgentDetails, type ChatMode, type InspectorAction, type TranscriptDeps } from "../src/ui.ts";
 import { PLAIN_STYLE } from "../src/display.ts";
+import { PLAIN_THEME, type UiTheme } from "@ponygirls/pi-ui";
 import type { AgentView, TranscriptSource } from "../src/supervisor.ts";
 
 const UP = "\x1b[A";
@@ -36,7 +37,7 @@ function view(overrides: Partial<AgentView> = {}): AgentView {
   };
 }
 
-function inspector(views: AgentView[], opts: { details?: AgentDetails; rows?: number } = {}): { ui: AgentInspector; actions: InspectorAction[]; closed: () => boolean } {
+function inspector(views: AgentView[], opts: { details?: AgentDetails; rows?: number; theme?: UiTheme } = {}): { ui: AgentInspector; actions: InspectorAction[]; closed: () => boolean } {
   const actions: InspectorAction[] = [];
   let closed = false;
   const ui = new AgentInspector(views, {
@@ -45,7 +46,7 @@ function inspector(views: AgentView[], opts: { details?: AgentDetails; rows?: nu
     onAction: (a) => actions.push(a),
     onClose: () => { closed = true; },
     rows: () => opts.rows ?? 40,
-    style: PLAIN_STYLE,
+    theme: opts.theme ?? PLAIN_THEME,
   });
   return { ui, actions, closed: () => closed };
 }
@@ -136,6 +137,7 @@ function transcriptView(over: Partial<TranscriptDeps> & { file?: () => { version
     rows: () => 24,
     reader: { version: () => file().version, read: () => { reads++; return file().text; } },
     style: PLAIN_STYLE,
+    theme: PLAIN_THEME,
     ...over,
   });
   return { ui, sent, reads: () => reads, back: () => back };
@@ -219,12 +221,13 @@ test("the screen switches between the list and a transcript and passes focus to 
       rows: () => 24,
       reader: { version: () => null, read: () => "" },
       style: PLAIN_STYLE,
+      theme: PLAIN_THEME,
     }),
     onAction: () => {},
     onClose: () => {},
     requestRender: () => {},
     rows: () => 24,
-    style: PLAIN_STYLE,
+    theme: PLAIN_THEME,
   });
   screen.focused = true;
   screen.handleInput(ENTER);
@@ -264,4 +267,95 @@ test("a gated agent's transcript shows each review in a gate frame where it happ
   assert.ok(inside.some((l) => l.includes("▸ review prompt")) && !inside.some((l) => l.includes("line 6")), "the review prompt is collapsed");
   assert.ok(inside.some((l) => l.includes("rubric line 1")) && !lines.some((l) => l.includes("[subagent")), "the worker's task header is not shown");
   assert.ok(!lines[at("╰─ decision")]!.includes("LONG REASON"), "the frame's footer is compact");
+});
+
+/** Zero-width OSC markers around every styled span, so widths stay real; `tags()` makes them readable. */
+const mark = (tag: string, text: string): string => `\x1b]777;${tag}\x07${text}\x1b]777;/\x07`;
+const TAG_THEME: UiTheme = {
+  fg: (color, text) => mark(color, text),
+  bg: (color, text) => mark(`bg:${color}`, text),
+  bold: (text) => mark("bold", text),
+};
+const tags = (line: string): string => line.replace(/\x1b\]777;([^\x07]*)\x07/g, "<$1>");
+
+test("D1: a non-selected row colours its outcome by the outcome, not as an error", () => {
+  const views = [view(), view({ id: "a-2", path: "/root/b", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" })];
+  const { ui } = inspector(views, { rows: 30, theme: TAG_THEME });
+  const row = tags(ui.render(120).find((l) => l.includes("/root/b") && !l.includes("workdir"))!);
+  assert.match(row, /<success>✓ succeeded<\/>/, row);
+  assert.doesNotMatch(row, /<error>/, row);
+});
+
+test("the inspector is framed: title with counts, dim column header, aligned cells, indented nesting, rule, hints last", () => {
+  const views = [
+    view({ observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" }),
+    view({ id: "a-2", path: "/root/b", observed: "running", pendingIntent: "running" }),
+    view({ id: "a-3", path: "/root/b/fix", parentId: "a-2", depth: 2, profile: "writer", isolation: "worktree", model: "kimi-k3", observed: "settled", pendingIntent: "settled", taskOutcome: "failed" }),
+  ];
+  const { ui } = inspector(views, { rows: 30, theme: TAG_THEME });
+  const lines = ui.render(120);
+  assert.equal(lines.length, 30);
+  assert.ok(lines.every((l) => visibleWidth(l) <= 120));
+  const plain = lines.map((l) => tags(l).replace(/<[^>]*>/g, ""));
+  assert.match(plain[0]!, /^── Subagents · agents 3 · running 1 ─+──$/);
+  assert.match(tags(lines[1]!), /^<dim> {2}AGENT +KIND +STATE +OUTCOME +MODEL<\/>$/);
+  const column = (header: string): number => plain[1]!.indexOf(header);
+  for (const row of plain.slice(2, 5)) {
+    assert.equal(row.indexOf(row.includes("writer") ? "writer" : "reader"), column("KIND"), row);
+  }
+  assert.equal(plain[3]!.indexOf("running"), column("STATE"));
+  assert.equal(plain[4]!.indexOf("✖ failed"), column("OUTCOME"));
+  assert.equal(plain[4]!.indexOf("kimi-k3"), column("MODEL"));
+  assert.ok(plain[4]!.startsWith("    /root/b/fix"), "nested agents are indented");
+  assert.ok(plain[3]!.includes("—"), "no outcome yet is a dash");
+  assert.match(plain[5]!, /^─+$/, "a rule separates the list from the details");
+  assert.ok(plain.some((l) => /^kind reader · none {2}model p\/m {2}state settled {2}outcome ✓ succeeded/.test(l)));
+  assert.match(tags(lines.find((l) => tags(l).includes("model"))!), /<muted>kind<\/> reader/, "detail labels are muted");
+  assert.match(plain[28]!, /^─+$/);
+  assert.match(plain[29]!, /^↑↓ select {2}⏎ transcript {2}m note {2}t task {2}i interrupt {2}c close {2}a answer {2}g gate {2}r refresh {2}esc close$/);
+});
+
+test("the selected row spans the width, keeps state and outcome colours, and uses muted rather than dim", () => {
+  const views = [view({ openQuestion: { messageId: "q", to: "governor", text: "?", deadlineAt: "" }, pendingIntent: "awaiting parent reply", observed: "awaiting_parent" }), view({ id: "a-2", path: "/root/b", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" })];
+  const { ui } = inspector(views, { rows: 30, theme: TAG_THEME });
+  const first = ui.render(100)[2]!;
+  assert.equal(visibleWidth(first), 100, "full-width selection band");
+  assert.match(tags(first), /^<bg:selectedBg><accent>▌<\/> <bold>/);
+  assert.match(tags(first), /<warning>awaiting parent reply<\/>/);
+  assert.match(tags(first), /<muted>—<\/>/);
+  assert.doesNotMatch(tags(first), /<dim>/);
+  ui.handleInput(DOWN);
+  const lines = ui.render(100);
+  assert.match(tags(lines[2]!), /^ {2}.*<dim>—<\/>/, "unselected rows may use dim");
+  assert.match(tags(lines[3]!), /<success>✓ succeeded<\/>/);
+});
+
+test("the inspector shows its scroll position in the title when the list overflows", () => {
+  const views = Array.from({ length: 12 }, (_, i) => view({ id: `a-${i}`, path: `/root/a${i}` }));
+  const { ui } = inspector(views, { rows: 24 });
+  assert.match(ui.render(90)[0]!, /── 1–4 of 12 ──$/);
+});
+
+test("the border short form is the agent glyph in the tree's state colour and the total", () => {
+  const settled = view({ observed: "settled", pendingIntent: "settled" });
+  assert.equal(badgeState([settled]), "settled");
+  assert.equal(badgeState([settled, view({ id: "a-2", observed: "queued", pendingIntent: "queued" })]), "running");
+  assert.equal(badgeState([view(), view({ id: "a-2", openQuestion: { messageId: "q", to: "/root/a", text: "?", deadlineAt: "" } })]), "attention");
+  assert.equal(compactBadge(PLAIN_THEME, [settled, settled]), " ◈2 ");
+  assert.equal(tags(compactBadge(TAG_THEME, [view()])), "<bg:toolPendingBg> <accent>◈</><text>1</> </>");
+});
+
+test("the transcript is framed with the agent path, kind and model, and its state and outcome on the right", () => {
+  const { ui } = transcriptView({ view: () => view({ observed: "settled", pendingIntent: "settled", taskOutcome: "failed" }), theme: TAG_THEME });
+  const lines = ui.render(90);
+  assert.equal(lines.length, 24);
+  const title = tags(lines[0]!);
+  assert.match(title.replace(/<[^>]*>/g, ""), /^── \/root\/a · reader · none · p\/m ─+ settled · ✖ failed ──$/);
+  assert.match(title, /<error>✖ failed<\/>/);
+  assert.match(tags(lines[1]!), /^<muted>workdir<\/> \/proj/);
+  assert.equal(tags(lines.at(-1)!).replace(/<[^>]*>/g, ""), "⏎ send a new task  ↑↓ PgUp PgDn scroll  esc back to the list");
+  assert.match(tags(lines.at(-1)!), /^<text>⏎<\/> <muted>send a new task<\/>/);
+  const narrow = ui.render(40);
+  assert.equal(narrow.length, 24, "wrapped hints shrink the viewport, not the frame");
+  assert.ok(narrow.every((l) => visibleWidth(l) <= 40));
 });

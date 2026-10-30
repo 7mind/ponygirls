@@ -3,12 +3,14 @@
  * border: the current provider's limited windows with short bars. Published
  * through setWidget under the "tokemon" key (borderTopRight, one line).
  * Last known shared quota values remain visible with an explicit stale age.
+ * Bars take their window state's colour, as in the /tokemon table.
  */
 
-import { formatUsedLimit, sortResults } from "./format.ts";
+import { formatUsedLimit, sortResults, windowState } from "./format.ts";
 import { staleLabel } from "./freshness.ts";
 import type { QuotaWindow } from "./quota.ts";
 import type { QueryResult } from "./service.ts";
+import { styleBar, type TableStyle } from "./table.ts";
 
 const BAR_WIDTH = 5;
 
@@ -35,24 +37,29 @@ function countdown(resetsAt: Date | null, now: Date): string | null {
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function windowSegment(window: QuotaWindow, now: Date): string | null {
+/** The line in a style; its text does not depend on the style. */
+export type QuotaLine = (style: TableStyle) => string;
+
+function windowSegment(window: QuotaWindow, now: Date, style: TableStyle): string | null {
   if (window.unlimited) return null;
   const used = fraction(window.used, window.limit);
   if (used === null) return `{${shortName(window.name)}/${formatUsedLimit(window)}}`;
   const filled = Math.round(Math.min(used, 1) * BAR_WIDTH);
-  const bar = "█".repeat(filled) + "░".repeat(BAR_WIDTH - filled);
+  const bar = styleBar(style, windowState(window), "█".repeat(filled) + "░".repeat(BAR_WIDTH - filled));
   const resets = countdown(window.resetsAt, now);
   return `{${shortName(window.name)}${resets === null ? "" : `/${resets}`} [${bar} ${Math.round(used * 100)}%]}`;
 }
 
-export function quotaLine(provider: string, results: QueryResult[], now: Date): string | null {
+export function quotaLine(provider: string, results: QueryResult[], now: Date): QuotaLine | null {
   const row = sortResults(results).find((r) => r.target.provider === provider);
   if (!row || row.rateLimited || row.error !== null) return null;
   const windows = row.snapshot?.windows ?? [];
   if (windows.length === 0) return null;
-  const segments = windows.map((w) => windowSegment(w, now)).filter((s): s is string => s !== null);
   const stale = staleLabel(row, now);
   const suffix = stale === null ? "" : ` ⚠ ${stale}`;
-  if (segments.length === 0) return `${provider} unlimited${suffix}`;
-  return `${provider} ${segments.join(" ")}${suffix}`;
+  return (style) => {
+    const segments = windows.map((w) => windowSegment(w, now, style)).filter((s): s is string => s !== null);
+    if (segments.length === 0) return `${provider} unlimited${suffix}`;
+    return `${provider} ${segments.join(" ")}${suffix}`;
+  };
 }

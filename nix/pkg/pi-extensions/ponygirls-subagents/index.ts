@@ -11,8 +11,9 @@ import { Type, type TSchema } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { FileRunStore } from "./src/store.ts";
-import { NoticeDelivery } from "./src/notice-delivery.ts";
-import { Supervisor, TOOL_RESULT_MAX, type CallerId } from "./src/supervisor.ts";
+import { CUSTOM_NOTICE, NoticeDelivery } from "./src/notice-delivery.ts";
+import { renderNotice, renderSpawnCall, renderSpawnResult } from "./src/render.ts";
+import { Supervisor, TOOL_RESULT_MAX, type AgentView, type CallerId } from "./src/supervisor.ts";
 import type { GateSpecInput, ReviewSpecInput } from "./src/gate.ts";
 import { instructionsFromPromptOptions, parseSelection } from "./src/instructions.ts";
 import { defaultSupervisorPolicy, validateAllowedTools, validateWorktreeRoot, type SupervisorPolicy } from "./src/policy.ts";
@@ -21,7 +22,7 @@ import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/gove
 import { prepareThroughEventBus } from "./src/delegated-call.ts";
 import { DELEGATION_GUIDELINES, gateParameters, readParameters, reviewParameters, spawnParameters, waitParameters } from "./src/tools.ts";
 import type { InstructionSet, Isolation, ResolvedModel } from "./src/types.ts";
-import { AgentsScreen, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
+import { AgentsScreen, compactBadge, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
 import { themeStyle } from "./src/display.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -133,17 +134,19 @@ function failed(e: unknown): ToolText {
 }
 
 /** Publish (or clear) the bottom-left badge; a click opens /agents. */
-function publishBadge(ui: ExtensionContext["ui"] | null, line: string | null, open: () => void): void {
+function publishBadge(ui: ExtensionContext["ui"] | null, views: AgentView[] | null, open: () => void): void {
   if (!ui) return;
-  if (line === null) {
+  if (views === null) {
     ui.setWidget(STATUS_KEY, undefined);
     return;
   }
-  const label = ui.theme.bg("toolSuccessBg", ` ${line} `);
+  const label = ui.theme.bg("toolSuccessBg", ` ${widgetLine(views)} `);
+  const compact = compactBadge(ui.theme, views);
   ui.setWidget(
     STATUS_KEY,
     () => ({
       render: () => [label],
+      renderCompact: () => compact,
       invalidate: () => {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left") return undefined;
@@ -164,7 +167,7 @@ export default function (pi: ExtensionAPI): void {
     binding.statusTimer = setTimeout(() => {
       binding.statusTimer = null;
       const views = binding.supervisor.list("user");
-      publishBadge(binding.ui, views.length > 0 ? widgetLine(views) : null, () => void openAgents("", ctx));
+      publishBadge(binding.ui, views.length > 0 ? views : null, () => void openAgents("", ctx));
     }, STATUS_THROTTLE_MS);
   }
 
@@ -269,6 +272,8 @@ export default function (pi: ExtensionAPI): void {
 
   const caller: CallerId = "governor";
 
+  pi.registerMessageRenderer(CUSTOM_NOTICE, renderNotice);
+
   pi.registerTool(
     defineTool({
       name: "spawn_agent",
@@ -285,6 +290,8 @@ export default function (pi: ExtensionAPI): void {
         })),
       }),
       executionMode: "sequential",
+      renderCall: (args, theme, context) => renderSpawnCall(args, theme, context),
+      renderResult: (result, options, theme, context) => renderSpawnResult(result, options, theme, context),
       async execute(toolCallId, params, _signal, _onUpdate, ctx) {
         try {
           const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; base_commit?: string; workspace_path?: string; result_limit?: number; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput; review?: ReviewSpecInput };
@@ -604,12 +611,13 @@ export default function (pi: ExtensionAPI): void {
             rows: () => tui.terminal.rows,
             reader: fileSessionReader,
             style,
+            theme,
           }),
           onAction: handleAction,
           onClose: finish,
           requestRender: render,
           rows: () => tui.terminal.rows,
-          style,
+          theme,
         });
         poll = setInterval(() => {
           screen.refresh();

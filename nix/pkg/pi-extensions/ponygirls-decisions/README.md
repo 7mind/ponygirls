@@ -17,7 +17,10 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
 - `/decisions` or **Ctrl+Shift+D** opens the project's pending inbox.
 - `/decisions Q12` opens a particular question, including answered history.
 - The **? N** pending-count badge lives on the editor's bottom-left border alongside
-  the existing badges. In fullscreen mode it is clickable.
+  the existing badges. In fullscreen mode it is clickable. When the border is too
+  narrow it shrinks to a compact `?N` chip.
+- The inbox frame shows `pending N` / `all` tabs and the repository name (the
+  directory owning the Git common directory, so worktrees show the main repository).
 - The inbox supports keyboard navigation, Markdown context and recommendations,
   suggested answers, and a multiline free-form answer editor. Answers are saved
   explicitly, never by merely moving the selection. Escape cancels an edit.

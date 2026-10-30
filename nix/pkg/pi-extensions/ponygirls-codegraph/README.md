@@ -94,6 +94,8 @@ fail rather than being ignored.
 The padded `CG` badge uses the theme's `selectedBg` background, evaluated during
 rendering. It shows setup/sync state and parallel query count. `ready` is the last
 completed verification, not continuous freshness or proof of MCP connectivity.
+When the border is too narrow, the compact form `cg` shows a state glyph instead:
+◇ ready (success colour), ⚙ working or querying, ✖ error, ◇ other idle phases (muted).
 The system theme may choose a terminal-default background; colored themes supply
 an explicit background. There are no animation/polling timers.
 
@@ -161,7 +163,13 @@ ROOT` otherwise. Every mutation is followed by verification. Ready requires exac
 local project/index paths, complete state, no rebuild recommendation, nonzero files
 and symbols, and no pending changes/references or missing symbols. Files with
 parse errors are reported as warnings, not a readiness failure.
-Empty/no-symbol repositories remain visibly not ready. Explicit `reindex` runs
+A checkout with nothing indexable (complete, consistent index with zero files and
+symbols) is the non-error state `empty`: queries remain unavailable, the badge shows
+`CG: empty`, and one info notice says nothing is indexed yet. Any other unready
+result (symbols without files, pending work, incomplete state) remains an error.
+Failure notices are one line; the full detail (CLI output, status JSON) is shown by
+`/cg status`, which also keeps the last failure until a later check succeeds.
+Explicit `reindex` runs
 idempotent init and full rebuild without depending on readable pre-rebuild status,
 allowing recovery after interrupted schema creation. Foreign database files are
 refused, never replaced.

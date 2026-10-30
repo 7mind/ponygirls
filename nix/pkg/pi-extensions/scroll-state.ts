@@ -29,3 +29,10 @@ export function visibleRange(lineCount: number, scrollTop: number, budget: numbe
 	const start = clampScrollTop(scrollTop, total, size);
 	return { start, end: Math.min(total, start + size) };
 }
+
+/** Frame scroll position for `[start, end)` of `lineCount`, with arrows where more lines are hidden. */
+export function scrollPosition(lineCount: number, start: number, end: number): string {
+	const moreAbove = start > 0 ? "↑ " : "";
+	const moreBelow = end < lineCount ? " ↓" : "";
+	return `${moreAbove}lines ${start + 1}–${end} of ${lineCount}${moreBelow}`;
+}

@@ -37,7 +37,23 @@ import { dirname, join } from "node:path";
 import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, SizeValue, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { Input, matchesKey, parseKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Input, matchesKey, parseKey, visibleWidth } from "@earendil-works/pi-tui";
+import { MARKER_WIDTH, fit, frameTitle, hintAt, type RenderedTitle, type Span } from "@ponygirls/pi-ui";
+
+import { effortRows, isThinkingLevel, thinkingApi, type EffortCompat, type EffortModel, type EffortRow, type ThinkingBudgets, type ThinkingLevelName } from "./ponygirls-model-picker-effort.ts";
+import {
+	EFFORT_TITLE,
+	FAVOURITE_CELL_WIDTH,
+	actionHints,
+	bodyLine,
+	compactControls,
+	effortFooter,
+	effortMeta,
+	effortRow,
+	effortTitle,
+	modelRow,
+	type ActionHint,
+} from "./ponygirls-model-picker-view.ts";
 
 import {
 	allModels,
@@ -51,6 +67,7 @@ import {
 	hitAt,
 	modelKey,
 	moveSelection,
+	OUTLINE_INSET_X,
 	outlineContentPoint,
 	parsePickerState,
 	pickerVisibleRows,
@@ -76,11 +93,16 @@ const EFFORT_CYCLE_GLYPH = "⌃E";
 /** Keycap glyphs for the controls (⌃ ctrl, ⇧ shift). */
 const MODEL_SHORTCUT_GLYPH = "⌃⇧M";
 const THINKING_SHORTCUT_GLYPH = "⌃⇧E";
-const STAR_WIDTH = 2;
 /** Mouse wheel lines per notch, matching the /perf view. */
 const WHEEL_LINES = 3;
-/** Filter line index in ModelPicker.render output (below the tab line). */
-const FILTER_LINE = 1;
+/** Filter line index in ModelPicker.render output (the tabs are in the box's top border). */
+const FILTER_LINE = 0;
+/** Effort popup width floor: fits the meter, level, and the longest sent-value text. */
+const EFFORT_MIN_WIDTH = 56;
+/** Box columns around the effort title text: "┌─ " + at least " ─" + "┐" + one spare. */
+const EFFORT_TITLE_CHROME = 7;
+/** Effort popup rows besides the level rows: borders (2), footer (1), hints (1), one spare for wrapping. */
+const EFFORT_CHROME_ROWS = 5;
 
 type PickerKind = "model" | "thinking";
 type ModelTab = "favourites" | "all";
@@ -103,18 +125,36 @@ function hasPending(): boolean {
 	return pending.model !== undefined || pending.effort !== undefined;
 }
 
-type PickerAction = "choose" | "favourite" | "cycle" | "switch" | "page-up" | "page-down" | "close";
+type PickerAction = "choose" | "favourite" | "cycle" | "switch" | "page" | "close";
+
+const MODEL_HINTS: readonly (readonly ActionHint<PickerAction>[])[] = [
+	[
+		{ key: "⏎", action: "select", command: "choose" },
+		{ key: "␣/right-click", action: "favourite", command: "favourite" },
+		{ key: EFFORT_CYCLE_GLYPH, action: "cycle effort", command: "cycle" },
+	],
+	[
+		{ key: "⇥", action: "switch tab", command: "switch" },
+		{ key: "⇞⇟", action: "page", command: "page" },
+		{ key: "⎋", action: "close", command: "close" },
+	],
+];
+
+const EFFORT_HINTS: readonly (readonly ActionHint<PickerAction>[])[] = [
+	[
+		{ key: "⏎", action: "select", command: "choose" },
+		{ key: "⎋", action: "close", command: "close" },
+	],
+];
+
+const MODEL_TABS: readonly ModelTab[] = ["favourites", "all"];
+const MODEL_TAB_LABELS: readonly string[] = ["★ Favourites", "All"];
 
 /** A styled fragment with its plain width and optional click action. */
 interface Segment {
 	plain: string;
 	styled: string;
 	action?: string;
-}
-
-/** A clickable hint button: bracketed label in accent, click zone over the brackets. */
-function hintButton(theme: Theme, label: string, action: PickerAction): Segment {
-	return { plain: `[${label}]`, styled: theme.fg("accent", `[${label}]`), action };
 }
 
 /** Join styled segments and register click hit spans in visible-width columns. */
@@ -170,13 +210,22 @@ function thinkingLevels(model: Model<any> | undefined): ModelThinkingLevel[] {
 }
 
 
-class Outlined implements Component {
+/** A popup body whose title (and tabs) live in the box's top border. */
+interface BoxedBody extends Component {
+	title(width: number): RenderedTitle;
+	selectTab?(index: number): void;
+	handleInput?(data: string): void;
+}
+
+/** Draws a box around a body: title rule on top, side rules, closing rule. Clicks on the tabs select them. */
+class Boxed implements Component {
 	private bodyHeight = 0;
 	private renderedWidth = 0;
+	private tabSpans: Span[] = [];
 
 	constructor(
-		private readonly inner: Component & { handleInput?(data: string): void },
-		private readonly border: (text: string) => string,
+		private readonly inner: BoxedBody,
+		private readonly theme: Theme,
 	) {}
 
 	invalidate(): void {
@@ -185,16 +234,17 @@ class Outlined implements Component {
 
 	render(width: number): string[] {
 		this.renderedWidth = width;
-		const innerWidth = Math.max(1, width - 4);
+		const innerWidth = Math.max(1, width - 2 * OUTLINE_INSET_X);
+		const title = this.inner.title(width);
+		this.tabSpans = title.tabSpans;
 		const body = this.inner.render(innerWidth);
 		this.bodyHeight = body.length;
-		const rule = (left: string, right: string) => this.border(left + "─".repeat(Math.max(0, width - 2)) + right);
-		const lines = body.map((line) => {
-			const fitted = truncateToWidth(line, innerWidth);
-			const gap = Math.max(0, innerWidth - visibleWidth(fitted));
-			return this.border("│") + " " + fitted + " ".repeat(gap) + " " + this.border("│");
-		});
-		return [rule("┌", "┐"), ...lines, rule("└", "┘")];
+		const side = this.theme.fg("border", "│");
+		return [
+			title.line,
+			...body.map((line) => side + fit(line, innerWidth) + side),
+			this.theme.fg("border", `└${"─".repeat(innerWidth)}┘`),
+		];
 	}
 
 	handleInput(data: string): void {
@@ -202,6 +252,11 @@ class Outlined implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.y === 0) {
+			const tab = event.type === "click" && event.button === "left" ? hintAt(this.tabSpans, event.x) : undefined;
+			if (tab !== undefined) this.inner.selectTab?.(tab);
+			return { handled: true };
+		}
 		const point = outlineContentPoint(event.x, event.y, this.renderedWidth, this.bodyHeight);
 		if (!point) return { handled: true };
 		return this.inner.handleMouse?.({ ...event, x: point.x, y: point.y }) ?? { handled: true };
@@ -267,6 +322,26 @@ class ControlsBorder implements Component {
 		return [segmentLine(this.hits, 0, 0, segments)];
 	}
 
+	/** Short form for narrow borders: model id without provider, ◆ and the (abbreviated) level. */
+	renderCompact(width: number): string {
+		const ctx = latestCtx;
+		if (!ctx) return "";
+		const level = ctx.thinkingLevel || "off";
+		const queuedModel =
+			pending.model && (ctx.model === undefined || pending.model.provider !== ctx.model.provider || pending.model.id !== ctx.model.id)
+				? pending.model.id
+				: undefined;
+		const queuedLevel = pending.effort && pending.effort !== level ? pending.effort : undefined;
+		const compact = compactControls(this.theme, width, {
+			modelId: ctx.model ? ctx.model.id : "no-model",
+			level,
+			...(queuedModel === undefined ? {} : { queuedModelId: queuedModel }),
+			...(queuedLevel === undefined ? {} : { queuedLevel }),
+		});
+		this.hits = compact.hits;
+		return compact.line;
+	}
+
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.type !== "click" || event.button !== "left") return undefined;
 		const hit = hitAt(this.hits, event.x, event.y);
@@ -276,13 +351,12 @@ class ControlsBorder implements Component {
 	}
 }
 
-class ModelPicker implements Component {
+class ModelPicker implements BoxedBody {
 	private tab: ModelTab = "favourites";
 	private readonly filter: Input;
 	private selected = 0;
-	private tabHits: Hit[] = [];
 	private hintHits: Hit[] = [];
-	private listStart = 2;
+	private listStart = FILTER_LINE + 1;
 
 	constructor(
 		private readonly theme: Theme,
@@ -295,7 +369,7 @@ class ModelPicker implements Component {
 		private readonly visibleRows: number,
 	) {
 		this.filter = new Input({
-			prompt: "filter: ",
+			prompt: theme.fg("dim", "filter "),
 			placeholder: "type to search",
 			placeholderStyle: (text) => theme.fg("dim", text),
 		});
@@ -314,22 +388,26 @@ class ModelPicker implements Component {
 		return filterModels(base, this.filter.getValue());
 	}
 
+	title(width: number): RenderedTitle {
+		return frameTitle(
+			this.theme,
+			width,
+			{ title: "Model", tabs: { labels: MODEL_TAB_LABELS, active: MODEL_TABS.indexOf(this.tab) } },
+			"box",
+		);
+	}
+
+	selectTab(index: number): void {
+		const tab = MODEL_TABS[index];
+		if (tab === undefined) return;
+		this.tab = tab;
+		this.selected = 0;
+	}
+
 	render(width: number): string[] {
 		const rows = this.visible();
 		if (this.selected >= rows.length) this.selected = Math.max(0, rows.length - 1);
-		const favouritesLabel = this.tab === "favourites" ? "[Favourite models]" : " Favourite models ";
-		const allLabel = this.tab === "all" ? "[All models]" : " All models ";
-		this.tabHits = [
-			{ line: 0, start: 0, end: visibleWidth(favouritesLabel), action: "favourites" },
-			{
-				line: 0,
-				start: visibleWidth(favouritesLabel) + 1,
-				end: visibleWidth(favouritesLabel) + 1 + visibleWidth(allLabel),
-				action: "all",
-			},
-		];
-		const tabLine = `${this.theme.fg(this.tab === "favourites" ? "accent" : "dim", favouritesLabel)} ${this.theme.fg(this.tab === "all" ? "accent" : "dim", allLabel)}`;
-		const lines = [truncateToWidth(tabLine, width), this.filter.render(width)[0] ?? ""];
+		const lines = [bodyLine(this.filter.render(Math.max(1, width - MARKER_WIDTH))[0] ?? "", width)];
 		this.listStart = lines.length;
 		const size = this.visibleRows;
 		const start = windowStart(this.selected, rows.length, size);
@@ -341,49 +419,30 @@ class ModelPicker implements Component {
 		for (let index = 0; index < size; index++) {
 			const model = shown[index];
 			if (!model) {
-				lines.push(index === 0 ? this.theme.fg("dim", this.tab === "favourites" ? "no favourites — ⇥ to All models, ␣ to mark" : "no match") : "");
+				lines.push(
+					index === 0
+						? bodyLine(this.theme.fg("dim", this.tab === "favourites" ? "no favourites — ⇥ to All models, ␣ to mark" : "no match"), width)
+						: "",
+				);
 				continue;
-		}
+			}
 			const absolute = start + index;
 			// Every Favourites-tab row is an entry; in the All tab the star means
 			// at least one entry (bare or effort-pinned) exists for the model.
-			const marked =
-				this.tab === "favourites" || this.state.favourites.some((item) => item.key === modelKey(model)) ? "* " : "  ";
-			const cursor = absolute === this.selected ? "> " : "  ";
+			const favourite = this.tab === "favourites" || this.state.favourites.some((item) => item.key === modelKey(model));
 			const effort = this.rowEffort(model);
-			const text = `${cursor}${marked}${model.provider}/${model.id}${effort ? ` • ${effort}` : ""}`;
-			const styled = absolute === this.selected ? this.theme.fg("accent", text) : text;
+			const view = { favourite, label: `${model.provider}/${model.id}`, ...(effort === undefined ? {} : { effort }) };
 			if (thumb < 0) {
-				lines.push(truncateToWidth(styled, width));
+				lines.push(modelRow(this.theme, width, view, absolute === this.selected));
 				continue;
 			}
 			const rail = index === thumb ? this.theme.fg("accent", "█") : this.theme.fg("dim", "│");
-			const clipped = truncateToWidth(styled, Math.max(0, width - 1));
-			const gap = Math.max(0, width - 1 - visibleWidth(clipped));
-			lines.push(clipped + " ".repeat(gap) + rail);
+			const rowWidth = Math.max(MARKER_WIDTH, width - 1);
+			lines.push(fit(modelRow(this.theme, rowWidth, view, absolute === this.selected), rowWidth) + rail);
 		}
-		const separator: Segment = { plain: " · ", styled: this.theme.fg("dim", " · ") };
-		this.hintHits = [];
-		lines.push(
-			segmentLine(this.hintHits, lines.length, 0, [
-				hintButton(this.theme, "⏎ select", "choose"),
-				separator,
-				hintButton(this.theme, "␣ or right-click favourite", "favourite"),
-				separator,
-				hintButton(this.theme, `${EFFORT_CYCLE_GLYPH} cycle effort`, "cycle"),
-			]),
-		);
-		lines.push(
-			segmentLine(this.hintHits, lines.length, 0, [
-				hintButton(this.theme, "⇥ switch", "switch"),
-				separator,
-				hintButton(this.theme, "⇞ page up", "page-up"),
-				separator,
-				hintButton(this.theme, "⇟ page down", "page-down"),
-				separator,
-				hintButton(this.theme, "⎋ close", "close"),
-			]),
-		);
+		const hints = actionHints(this.theme, width, MODEL_HINTS, MARKER_WIDTH);
+		this.hintHits = hints.hits.map((hit) => ({ ...hit, line: hit.line + lines.length }));
+		lines.push(...hints.lines);
 		return lines;
 	}
 
@@ -395,13 +454,10 @@ class ModelPicker implements Component {
 		if (event.type !== "click" || (event.button !== "left" && event.button !== "right")) return undefined;
 		const hint = hitAt(this.hintHits, event.x, event.y);
 		if (hint) {
-			if (event.button === "left") this.activate(hint.action as PickerAction);
-			return { handled: true };
-		}
-		const tab = hitAt(this.tabHits, event.x, event.y);
-		if (tab) {
-			this.tab = tab.action as ModelTab;
-			this.selected = 0;
+			if (event.button !== "left") return { handled: true };
+			// "⇞⇟ page": the ⇞ column pages up, the rest of the hint pages down.
+			if (hint.action === "page") this.move(event.x === hint.start ? -this.visibleRows : this.visibleRows);
+			else this.activate(hint.action as PickerAction);
 			return { handled: true };
 		}
 		// The filter is a real input with its cursor pinned at the end (append
@@ -415,7 +471,7 @@ class ModelPicker implements Component {
 		const start = windowStart(this.selected, rows.length, this.visibleRows);
 		const model = rows[start + row];
 		if (!model) return { handled: true };
-		if (event.button === "right" || event.x < STAR_WIDTH + 2) {
+		if (event.button === "right" || event.x < MARKER_WIDTH + FAVOURITE_CELL_WIDTH) {
 			this.toggle(model);
 			return { handled: true };
 		}
@@ -538,10 +594,7 @@ class ModelPicker implements Component {
 			case "switch":
 				this.switchTab();
 				break;
-			case "page-up":
-				this.move(-this.visibleRows);
-				break;
-			case "page-down":
+			case "page":
 				this.move(this.visibleRows);
 				break;
 			case "close":
@@ -555,8 +608,11 @@ class ModelPicker implements Component {
 	 * All-tab rows aggregate a model's entries and show no effort — efforts
 	 * live on entries and are edited on the Favourites tab.
 	 */
-	private rowEffort(model: FavouriteModel): string | undefined {
-		return this.tab === "favourites" ? model.effort : undefined;
+	private rowEffort(model: FavouriteModel): ThinkingLevelName | undefined {
+		if (this.tab !== "favourites" || model.effort === undefined) return undefined;
+		// parsePickerState keeps only known levels, and cycling uses the model's levels.
+		if (!isThinkingLevel(model.effort)) throw new Error(`Unknown pinned effort '${model.effort}'`);
+		return model.effort;
 	}
 
 	/**
@@ -582,38 +638,35 @@ class ModelPicker implements Component {
 	}
 }
 
-class ThinkingPicker implements Component {
+class ThinkingPicker implements BoxedBody {
 	private selected: number;
 	private hintHits: Hit[] = [];
 
 	constructor(
 		private readonly theme: Theme,
-		private readonly levels: ModelThinkingLevel[],
+		private readonly model: EffortModel | undefined,
+		private readonly rows: readonly EffortRow[],
+		private readonly footer: string,
 		current: ModelThinkingLevel,
 		private readonly onChoose: (level: ModelThinkingLevel) => void,
 		private readonly onCancel: () => void,
 	) {
-		const index = levels.indexOf(current);
+		const index = rows.findIndex((row) => row.level === current);
 		this.selected = index >= 0 ? index : 0;
 	}
 
 	invalidate(): void {}
 
+	title(width: number): RenderedTitle {
+		return effortTitle(this.theme, width, this.model);
+	}
+
 	render(width: number): string[] {
-		const lines = [this.theme.fg("accent", "Effort"), ""];
-		for (let index = 0; index < this.levels.length; index++) {
-			const level = this.levels[index]!;
-			const text = `${index === this.selected ? "> " : "  "}${level}`;
-			lines.push(truncateToWidth(index === this.selected ? this.theme.fg("accent", text) : text, width));
-		}
-		this.hintHits = [];
-		lines.push(
-			segmentLine(this.hintHits, lines.length, 0, [
-				hintButton(this.theme, "⏎ select", "choose"),
-				{ plain: " · ", styled: this.theme.fg("dim", " · ") },
-				hintButton(this.theme, "⎋ close", "close"),
-			]),
-		);
+		const lines = this.rows.map((row, index) => effortRow(this.theme, width, row, index === this.selected));
+		lines.push(bodyLine(this.theme.fg("muted", this.footer), width));
+		const hints = actionHints(this.theme, width, EFFORT_HINTS, MARKER_WIDTH);
+		this.hintHits = hints.hits.map((hit) => ({ ...hit, line: hit.line + lines.length }));
+		lines.push(...hints.lines);
 		return lines;
 	}
 
@@ -624,8 +677,8 @@ class ThinkingPicker implements Component {
 			this.activate(hint.action as PickerAction);
 			return { handled: true };
 		}
-		const level = this.levels[event.y - 2];
-		if (level) this.onChoose(level);
+		const row = this.rows[event.y];
+		if (row) this.onChoose(row.level);
 		return { handled: true };
 	}
 
@@ -635,19 +688,45 @@ class ThinkingPicker implements Component {
 			return;
 		}
 		if (matchesKey(data, "up")) this.selected = Math.max(0, this.selected - 1);
-		else if (matchesKey(data, "down")) this.selected = Math.min(this.levels.length - 1, this.selected + 1);
+		else if (matchesKey(data, "down")) this.selected = Math.min(this.rows.length - 1, this.selected + 1);
 		else if (matchesKey(data, "enter")) this.choose();
 	}
 
 	private choose(): void {
-		const level = this.levels[this.selected];
-		if (level) this.onChoose(level);
+		const row = this.rows[this.selected];
+		if (row) this.onChoose(row.level);
 	}
 
 	private activate(action: PickerAction): void {
 		if (action === "choose") this.choose();
 		else this.onCancel();
 	}
+}
+
+/** The compat flags that change what is sent for a thinking level; each API has its own compat type. */
+function effortCompat(model: Model<any>): EffortCompat | undefined {
+	const compat = model.compat;
+	if (compat === undefined) return undefined;
+	return {
+		...("forceAdaptiveThinking" in compat ? { forceAdaptiveThinking: compat.forceAdaptiveThinking } : {}),
+		...("supportsThinkingTokenBudget" in compat ? { supportsThinkingTokenBudget: compat.supportsThinkingTokenBudget } : {}),
+		...("thinkingTokenBudgetField" in compat ? { thinkingTokenBudgetField: compat.thinkingTokenBudgetField } : {}),
+	};
+}
+
+/** The model fields the effort picker explains. */
+function effortModel(model: Model<any>): EffortModel {
+	const compat = effortCompat(model);
+	return {
+		provider: model.provider,
+		id: model.id,
+		api: model.api,
+		reasoning: model.reasoning,
+		contextWindow: model.contextWindow,
+		maxTokens: model.maxTokens,
+		...(model.thinkingLevelMap === undefined ? {} : { thinkingLevelMap: model.thinkingLevelMap }),
+		...(compat === undefined ? {} : { compat }),
+	};
 }
 
 /** Run a picker dialog, registering its close handle so shortcuts can toggle or switch it. */
@@ -774,7 +853,7 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 		return thinkingLevels(model);
 	};
 	const chosen = await dialog<FavouriteModel>("model", ctx, "66%", "66%", (kind) => open(pi, kind), (tui, theme, done) =>
-		new Outlined(
+		new Boxed(
 			new ModelPicker(
 				theme,
 				models,
@@ -785,7 +864,7 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 				() => done(undefined),
 				pickerVisibleRows(tui.terminal?.rows),
 			),
-			(text) => theme.fg("border", text),
+			theme,
 		),
 	);
 	if (!chosen) return;
@@ -801,10 +880,17 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 
 async function openThinkingPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	const levels = thinkingLevels(ctx.model);
-	const chosen = await dialog<ModelThinkingLevel>("thinking", ctx, 40, 16, (kind) => open(pi, kind), (_tui, theme, done) =>
-		new Outlined(
-			new ThinkingPicker(theme, levels, ctx.thinkingLevel ?? "off", (level) => done(level), () => done(undefined)),
-			(text) => theme.fg("border", text),
+	const model = ctx.model ? effortModel(ctx.model) : undefined;
+	const budgets: ThinkingBudgets = pi.getSettings().thinkingBudgets ?? {};
+	const rows: EffortRow[] = model ? effortRows(model, levels, budgets) : [{ level: "off", meter: 0, wire: { kind: "off" } }];
+	const footer = model ? effortFooter(thinkingApi(model), model, rows) : "no model selected";
+	const meta = effortMeta(model);
+	const titleText = meta === undefined ? EFFORT_TITLE : `${EFFORT_TITLE} · ${meta}`;
+	const width = Math.max(EFFORT_MIN_WIDTH, visibleWidth(titleText) + EFFORT_TITLE_CHROME, visibleWidth(footer) + 2 * MARKER_WIDTH + 2 * OUTLINE_INSET_X);
+	const chosen = await dialog<ModelThinkingLevel>("thinking", ctx, width, rows.length + EFFORT_CHROME_ROWS, (kind) => open(pi, kind), (_tui, theme, done) =>
+		new Boxed(
+			new ThinkingPicker(theme, model, rows, footer, ctx.thinkingLevel ?? "off", (level) => done(level), () => done(undefined)),
+			theme,
 		),
 	);
 	if (!chosen) return;

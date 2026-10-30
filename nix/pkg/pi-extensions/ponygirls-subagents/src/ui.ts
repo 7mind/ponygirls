@@ -13,8 +13,9 @@
  */
 
 import { readFileSync, statSync } from "node:fs";
-import { Input, Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { PLAIN_STYLE, sanitizeDisplay, type UiStyle } from "./display.ts";
+import { Input, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { columnCells, columnHeader, compactChip, frameRule, frameTitle, keyHints, listRow, type Column, type KeyHint, type UiFg, type UiState, type UiTheme } from "@ponygirls/pi-ui";
+import { AGENT_GLYPH, OUTCOME_GLYPH, PLAIN_STYLE, outcomeTone, sanitizeDisplay, type UiStyle } from "./display.ts";
 import type { AgentView, TranscriptSource } from "./supervisor.ts";
 import { parseTranscript, renderConversation, type ReviewBlock, type TranscriptItem } from "./transcript.ts";
 
@@ -57,6 +58,18 @@ export function widgetLine(views: AgentView[]): string {
   return parts.join(" · ");
 }
 
+/** Border short form state: a question needs the user, live work runs, otherwise settled. */
+export function badgeState(views: AgentView[]): UiState {
+  if (views.some((v) => v.openQuestion !== null)) return "attention";
+  const c = countTree(views);
+  return c.running + c.queued > 0 ? "running" : "settled";
+}
+
+/** Border short form: the agent glyph in the tree's state colour and the total. */
+export function compactBadge(theme: UiTheme, views: AgentView[]): string {
+  return compactChip(theme, AGENT_GLYPH, badgeState(views), String(views.length));
+}
+
 /** Headless projection: structured text, no terminal escapes. */
 export function renderHeadless(views: AgentView[]): string {
   if (views.length === 0) return "No subagents.";
@@ -77,10 +90,22 @@ function stateText(v: AgentView): string {
   return v.pendingIntent || v.observed;
 }
 
-function outcomeStyle(style: UiStyle, outcome: string): string {
-  if (outcome === "succeeded" || outcome === "passed") return style.success(outcome);
-  if (outcome === "interrupted" || outcome === "uncertain" || outcome === "candidate_superseded" || outcome === "gate_bypassed" || outcome === "review_limit_reached") return style.warning(outcome);
-  return style.error(outcome);
+/** Glyph and outcome in the outcome's colour (classified on the raw outcome, before any padding). */
+export function outcomeLabel(theme: UiTheme, outcome: string): string {
+  const tone = outcomeTone(outcome);
+  return theme.fg(tone, `${OUTCOME_GLYPH[tone]} ${sanitizeDisplay(outcome)}`);
+}
+
+/** A question waiting on someone wins over running; other states stay uncoloured. */
+function stateTone(v: AgentView): UiFg | null {
+  if (v.openQuestion) return "warning";
+  return v.observed === "running" ? "accent" : null;
+}
+
+function stateLabel(theme: UiTheme, v: AgentView): string {
+  const text = sanitizeDisplay(stateText(v));
+  const color = stateTone(v);
+  return color ? theme.fg(color, text) : text;
 }
 
 function kindText(v: AgentView): string {
@@ -104,14 +129,54 @@ export interface InspectorDeps {
   onClose(): void;
   /** Terminal height, for sizing the list. */
   rows(): number;
-  style: UiStyle;
+  theme: UiTheme;
 }
 
 const DETAIL_RESULT_LINES = 6;
-/** Lines the inspector needs besides the list: header, separators, detail panel, hints. */
-const INSPECTOR_CHROME = 18;
-/** First list row in the inspector's rendered lines (after the header and a separator). */
+/** Lines the inspector needs besides the list: title, column header, rules, detail panel, status, hints. */
+const INSPECTOR_CHROME = 20;
+/** First list row in the inspector's rendered lines (after the title and the column header). */
 const LIST_TOP = 2;
+const COLUMN_GAP = 2;
+const PATH_WIDTH = { min: 8, max: 40 };
+const KIND_WIDTH_MAX = 18;
+const STATE_WIDTH_MAX = 26;
+const OUTCOME_WIDTH_MAX = 24;
+const MAX_INDENT = 4;
+const NO_OUTCOME = "—";
+
+const INSPECTOR_HINTS: readonly KeyHint[] = [
+  { key: "↑↓", action: "select" },
+  { key: "⏎", action: "transcript" },
+  { key: "m", action: "note" },
+  { key: "t", action: "task" },
+  { key: "i", action: "interrupt" },
+  { key: "c", action: "close" },
+  { key: "a", action: "answer" },
+  { key: "g", action: "gate" },
+  { key: "r", action: "refresh" },
+  { key: "esc", action: "close" },
+];
+
+function indentedPath(v: AgentView): string {
+  return `${"  ".repeat(Math.min(MAX_INDENT, v.depth - 1))}${sanitizeDisplay(v.path)}`;
+}
+
+function columnWidth(header: string, cells: string[], max: number): number {
+  return Math.min(max, Math.max(header.length, ...cells.map((c) => visibleWidth(c))));
+}
+
+/** Aligned columns sized to the current rows; the model takes what is left. */
+function inspectorColumns(views: AgentView[]): Column[] {
+  const outcomes = views.map((v) => (v.taskOutcome ? `${OUTCOME_GLYPH[outcomeTone(v.taskOutcome)]} ${sanitizeDisplay(v.taskOutcome)}` : NO_OUTCOME));
+  return [
+    { header: "AGENT", width: Math.max(PATH_WIDTH.min, columnWidth("AGENT", views.map(indentedPath), PATH_WIDTH.max)), align: "left" },
+    { header: "KIND", width: columnWidth("KIND", views.map(kindText), KIND_WIDTH_MAX), align: "left" },
+    { header: "STATE", width: columnWidth("STATE", views.map((v) => sanitizeDisplay(stateText(v))), STATE_WIDTH_MAX), align: "left" },
+    { header: "OUTCOME", width: columnWidth("OUTCOME", outcomes, OUTCOME_WIDTH_MAX), align: "left" },
+    { header: "MODEL", width: columnWidth("MODEL", views.map((v) => sanitizeDisplay(v.model)), Number.MAX_SAFE_INTEGER), align: "left" },
+  ];
+}
 
 /**
  * The agent tree: canonical path (nested agents indented), kind, state,
@@ -163,26 +228,27 @@ export class AgentInspector {
   }
 
   render(width: number): string[] {
-    const s = this.deps.style;
+    const t = this.deps.theme;
     const w = Math.max(40, width);
     const lines: string[] = [];
-    lines.push(fit(`${s.bold("Subagents")}  ${s.muted(widgetLine(this.views))}`, w));
-    lines.push(s.muted("─".repeat(w)));
-    if (this.views.length === 0) lines.push(s.muted("  No subagents yet."));
     const height = this.listHeight();
     this.clampScroll(height);
-    const pathWidth = Math.min(40, Math.max(8, ...this.views.map((v) => 2 * Math.min(4, v.depth - 1) + v.path.length)));
-    for (const [i, v] of this.views.entries()) {
-      if (i < this.scrollTop || i >= this.scrollTop + height) continue;
-      lines.push(this.rowLine(v, i === this.selected, pathWidth, w));
+    const shownEnd = Math.min(this.views.length, this.scrollTop + height);
+    const position = this.views.length > height ? t.fg("dim", `${this.scrollTop + 1}–${shownEnd} of ${this.views.length}`) : undefined;
+    lines.push(frameTitle(t, w, { title: "Subagents", meta: widgetLine(this.views), right: position }, "none").line);
+    if (this.views.length === 0) lines.push(t.fg("muted", "  No subagents yet."));
+    else {
+      const columns = inspectorColumns(this.views);
+      lines.push(fit(columnHeader(t, columns, COLUMN_GAP), w));
+      for (let i = this.scrollTop; i < shownEnd; i++) lines.push(this.rowLine(this.views[i]!, i === this.selected, columns, w));
     }
     const current = this.views[this.selected];
     if (current) {
-      lines.push(s.muted("─".repeat(w)));
+      lines.push(frameRule(t, w));
       lines.push(...this.detailLines(current, w));
     }
     // The screen covers the terminal: hints sit on its last lines.
-    const footer = [fit(this.statusLine ? s.warning(this.statusLine) : "", w), fit(s.muted("↑↓ select · enter transcript · m note · t task · i interrupt · c close · a answer · g gate · r refresh · esc close"), w)];
+    const footer = [fit(this.statusLine ? t.fg("warning", this.statusLine) : "", w), frameRule(t, w), ...keyHints(t, w, INSPECTOR_HINTS).lines];
     const rows = this.deps.rows();
     while (lines.length + footer.length < rows) lines.push("");
     return [...lines.slice(0, Math.max(0, rows - footer.length)), ...footer];
@@ -221,39 +287,38 @@ export class AgentInspector {
     if (this.selected >= this.scrollTop + height) this.scrollTop = this.selected - height + 1;
   }
 
-  private rowLine(v: AgentView, selected: boolean, pathWidth: number, width: number): string {
-    const s = this.deps.style;
-    const path = `${"  ".repeat(Math.min(4, v.depth - 1))}${sanitizeDisplay(v.path)}`;
+  /** Selected rows keep state and outcome colours; secondary text is muted there (dim lacks contrast on selectedBg). */
+  private rowLine(v: AgentView, selected: boolean, columns: Column[], width: number): string {
+    const t = this.deps.theme;
     const cells = [
-      `${selected ? "›" : " "} ${truncateToWidth(path, pathWidth, "…", true)}`,
-      truncateToWidth(kindText(v), 18, "…", true),
-      truncateToWidth(sanitizeDisplay(stateText(v)), 26, "…", true),
-      truncateToWidth(v.taskOutcome ?? "", 20, "…", true),
-      sanitizeDisplay(v.model),
+      indentedPath(v),
+      t.fg("muted", kindText(v)),
+      stateLabel(t, v),
+      v.taskOutcome ? outcomeLabel(t, v.taskOutcome) : t.fg(selected ? "muted" : "dim", NO_OUTCOME),
+      t.fg("muted", sanitizeDisplay(v.model)),
     ];
-    if (selected) return s.selected(truncateToWidth(cells.join("  "), width, "…", true));
-    const state = v.openQuestion ? s.warning(cells[2]!) : v.observed === "running" ? s.accent(cells[2]!) : cells[2]!;
-    const styled = [cells[0]!, s.muted(cells[1]!), state, v.taskOutcome ? outcomeStyle(s, cells[3]!) : cells[3]!, s.muted(cells[4]!)];
-    return fit(styled.join("  "), width);
+    return listRow(t, width, columnCells(columns, cells, COLUMN_GAP), selected);
   }
 
   private detailLines(v: AgentView, width: number): string[] {
-    const s = this.deps.style;
+    const t = this.deps.theme;
+    const label = (text: string): string => t.fg("muted", text);
     const details = this.deps.describe(v.id);
     const cost = v.usage.cost !== null ? ` $${v.usage.cost.toFixed(4)}` : v.usage.unknown ? " cost unknown" : "";
+    const outcome = v.taskOutcome ? outcomeLabel(t, v.taskOutcome) : t.fg("muted", "no outcome yet");
     const lines = [
-      fit(`${s.bold(sanitizeDisplay(v.path))}  ${s.muted(v.id)}`, width),
-      fit(`${kindText(v)} · ${sanitizeDisplay(v.model)} · ${stateText(v)} · ${v.taskOutcome ? outcomeStyle(s, v.taskOutcome) : "no outcome yet"} · gen ${v.generation} · in ${shortTokens(v.usage.inputTokens)} out ${shortTokens(v.usage.outputTokens)}${cost}`, width),
-      fit(s.muted(`workdir ${sanitizeDisplay(v.workdir)}`), width),
+      fit(`${t.bold(sanitizeDisplay(v.path))}  ${t.fg("dim", v.id)}`, width),
+      fit(`${label("kind")} ${kindText(v)}  ${label("model")} ${sanitizeDisplay(v.model)}  ${label("state")} ${stateLabel(t, v)}  ${label("outcome")} ${outcome}  ${label("gen")} ${v.generation}  ${label("usage")} in ${shortTokens(v.usage.inputTokens)} out ${shortTokens(v.usage.outputTokens)}${cost}`, width),
+      fit(`${label("workdir")} ${sanitizeDisplay(v.workdir)}`, width),
     ];
-    if (v.managedGateFor) lines.push(fit(s.muted(`reviews gated task ${v.managedGateFor}`), width));
-    if (v.gateTaskRunId) lines.push(fit(s.muted(`gated task ${v.gateTaskRunId}`), width));
-    if (details.question) lines.push(fit(s.warning(`question: ${sanitizeDisplay(details.question, 300)}`), width));
+    if (v.managedGateFor) lines.push(fit(`${label("reviews gated task")} ${v.managedGateFor}`, width));
+    if (v.gateTaskRunId) lines.push(fit(`${label("gated task")} ${v.gateTaskRunId}`, width));
+    if (details.question) lines.push(fit(`${t.fg("warning", "question:")} ${sanitizeDisplay(details.question, 300)}`, width));
     if (details.result) {
       const wrapped = sanitizeDisplay(details.result).split("\n").flatMap((l) => (l === "" ? [""] : wrapTextWithAnsi(l, width - 2)));
-      lines.push(s.muted("result:"));
+      lines.push(label("result:"));
       for (const l of wrapped.slice(0, DETAIL_RESULT_LINES)) lines.push(fit(`  ${l}`, width));
-      if (wrapped.length > DETAIL_RESULT_LINES) lines.push(fit(s.muted(`  … ${wrapped.length - DETAIL_RESULT_LINES} more lines (enter: transcript)`), width));
+      if (wrapped.length > DETAIL_RESULT_LINES) lines.push(fit(label(`  … ${wrapped.length - DETAIL_RESULT_LINES} more lines (⏎ transcript)`), width));
     }
     return lines;
   }
@@ -278,16 +343,16 @@ export function chatModeFor(view: AgentView, question: { messageId: string } | n
   return { kind: "task" };
 }
 
-function chatLabel(mode: ChatMode): string {
+function chatHint(mode: ChatMode): KeyHint {
   switch (mode.kind) {
     case "answer":
-      return "enter answers its question";
+      return { key: "⏎", action: "answer its question" };
     case "steer":
-      return "enter steers the running task";
+      return { key: "⏎", action: "steer the running task" };
     case "task":
-      return "enter sends a new task";
+      return { key: "⏎", action: "send a new task" };
     case "unavailable":
-      return mode.reason;
+      return { key: "⏎", action: `unavailable: ${mode.reason}` };
   }
 }
 
@@ -322,10 +387,16 @@ export interface TranscriptDeps {
   rows(): number;
   reader: SessionReader;
   style: UiStyle;
+  theme: UiTheme;
 }
 
-/** Lines the transcript view needs besides its viewport: header, separators, notice, input, hints. */
-const TRANSCRIPT_CHROME = 7;
+const TRANSCRIPT_HINTS: readonly KeyHint[] = [
+  { key: "↑↓ PgUp PgDn", action: "scroll" },
+  { key: "esc", action: "back to the list" },
+];
+
+/** Lines the transcript view needs besides its viewport and hints: title, workdir, rules, notice, input. */
+const TRANSCRIPT_CHROME = 6;
 
 /**
  * One agent's conversation, read from its native session, live while it
@@ -344,6 +415,8 @@ export class TranscriptView implements Component, Focusable {
   /** Streamed text kept until the session file shows the completed message (no flicker between them). */
   private lastStream: { text: string; version: string | null } | null = null;
   private notice = "";
+  /** Hint lines at the last render (they wrap on narrow terminals). */
+  private hintLines = 1;
   private sending = false;
   private _focused = false;
 
@@ -450,7 +523,7 @@ export class TranscriptView implements Component, Focusable {
   }
 
   private viewportHeight(): number {
-    return Math.max(5, this.deps.rows() - TRANSCRIPT_CHROME);
+    return Math.max(5, this.deps.rows() - TRANSCRIPT_CHROME - this.hintLines);
   }
 
   private bodyLines(width: number): string[] {
@@ -481,15 +554,20 @@ export class TranscriptView implements Component, Focusable {
 
   render(width: number): string[] {
     const s = this.deps.style;
+    const t = this.deps.theme;
     const w = Math.max(40, width);
     const view = this.snapshot;
+    const question = this.deps.question();
+    const mode = view ? chatModeFor(view, question) : ({ kind: "unavailable", reason: "agent no longer exists" } as ChatMode);
+    const hints = keyHints(t, w, [chatHint(mode), ...TRANSCRIPT_HINTS]).lines;
+    this.hintLines = hints.length;
     const out: string[] = [];
     if (view) {
-      const outcome = view.taskOutcome ? ` · ${outcomeStyle(s, view.taskOutcome)}` : "";
-      out.push(fit(`${s.bold(sanitizeDisplay(view.path))}  ${s.muted(`${kindText(view)} · ${sanitizeDisplay(view.model)}`)} · ${view.observed === "running" ? s.accent(stateText(view)) : stateText(view)}${outcome}`, w));
-      out.push(fit(s.muted(`workdir ${sanitizeDisplay(view.workdir)}`), w));
+      const outcome = view.taskOutcome ? ` · ${outcomeLabel(t, view.taskOutcome)}` : "";
+      out.push(frameTitle(t, w, { title: sanitizeDisplay(view.path), meta: `${kindText(view)} · ${sanitizeDisplay(view.model)}`, right: `${stateLabel(t, view)}${outcome}` }, "none").line);
+      out.push(fit(`${t.fg("muted", "workdir")} ${sanitizeDisplay(view.workdir)}`, w));
     } else {
-      out.push(fit(s.error("agent no longer exists"), w), "");
+      out.push(frameTitle(t, w, { title: "Subagent", right: t.fg("error", "agent no longer exists") }, "none").line, "");
     }
     const body = this.bodyLines(w).map((l) => fit(l, w));
     const height = this.viewportHeight();
@@ -497,15 +575,13 @@ export class TranscriptView implements Component, Focusable {
     this.scrollFromBottom = Math.min(this.scrollFromBottom, maxScroll);
     const end = body.length - this.scrollFromBottom;
     const visible = body.slice(Math.max(0, end - height), end);
-    out.push(s.muted("─".repeat(w)));
+    out.push(frameRule(t, w));
     for (let i = visible.length; i < height; i++) out.push("");
     out.push(...visible);
-    out.push(s.muted(this.scrollFromBottom > 0 ? fit(`── ${this.scrollFromBottom} more below (↓/PgDn) ${"─".repeat(w)}`, w) : "─".repeat(w)));
-    const question = this.deps.question();
+    out.push(this.scrollFromBottom > 0 ? fit(`${t.fg("border", "── ")}${t.fg("muted", `${this.scrollFromBottom} more below (↓/PgDn)`)}${t.fg("border", ` ${"─".repeat(w)}`)}`, w) : frameRule(t, w));
     out.push(fit(this.notice ? s.warning(this.notice) : question ? s.warning(`? ${sanitizeDisplay(question.text, 500).replace(/\s+/g, " ")}`) : "", w));
     out.push(...this.input.render(w));
-    const mode = view ? chatModeFor(view, question) : ({ kind: "unavailable", reason: "agent no longer exists" } as ChatMode);
-    out.push(fit(s.muted(`${chatLabel(mode)} · ↑↓ PgUp PgDn scroll · esc back to the list`), w));
+    out.push(...hints);
     return out;
   }
 }
@@ -519,7 +595,7 @@ export interface AgentsScreenDeps {
   onClose(): void;
   requestRender(): void;
   rows(): number;
-  style: UiStyle;
+  theme: UiTheme;
 }
 
 /** The /agents screen: the agent list, or one agent's transcript. */
@@ -535,7 +611,7 @@ export class AgentsScreen implements Component, Focusable {
       refresh: deps.list,
       describe: deps.describe,
       rows: deps.rows,
-      style: deps.style,
+      theme: deps.theme,
       onClose: deps.onClose,
       onAction: (action) => (action.kind === "transcript" ? this.openTranscript(action.agentId) : deps.onAction(action)),
     });

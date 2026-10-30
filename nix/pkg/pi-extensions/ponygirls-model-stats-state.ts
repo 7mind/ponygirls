@@ -1,5 +1,6 @@
-/** Pure ponygirls-model-stats logic. No Pi imports, so the tests can run under node. */
+/** Pure ponygirls-model-stats logic. No Pi runtime imports, so the tests can run under node; styling goes through the kit's UiTheme. */
 
+import { countCell, GRID_SEPARATOR, gridRule, gridSeparator, type UiFg, type UiTheme } from "@ponygirls/pi-ui";
 import {
 	DEFAULT_VIEWPORT_BUDGET,
 	MIN_VIEWPORT_BUDGET,
@@ -268,11 +269,19 @@ function isFiniteNumber(value: unknown): value is number {
 
 const FAILURE_KINDS: readonly FailureKind[] = ["aborted", "timeout", "error"];
 const FAILURE_HEADERS: Record<FailureKind, string> = { aborted: "abrt", timeout: "tout", error: "err" };
+/** Positive failure counts: aborts and timeouts warn, errors are errors. */
+const FAILURE_COLORS: Record<FailureKind, UiFg> = { aborted: "warning", timeout: "warning", error: "error" };
 /** Percentile columns per group: tok/s also shows the slow tail (p10, p1). */
 const STANDARD_LABELS: readonly (keyof MetricStats)[] = ["mean", "p50", "p90", "p99"];
 const TPS_LABELS: readonly (keyof MetricStats)[] = [...STANDARD_LABELS, "p10", "p1"];
-/** Box-drawing bar, one terminal column, so string length is the display width. */
-const COLUMN_GAP = " │ ";
+/** Cells inside one metric group are space-separated; `│` marks group boundaries only. */
+const GROUP_CELL_GAP = "  ";
+/** Every sortable header reserves room for ` ↓`, so a sort change never moves columns. */
+const SORT_ARROW_WIDTH = 2;
+
+function sortArrow(descending: boolean): string {
+	return descending ? "↓" : "↑";
+}
 
 function padLeft(text: string, width: number): string {
 	return text.length >= width ? text : `${" ".repeat(width - text.length)}${text}`;
@@ -298,12 +307,12 @@ function rate(tokensPerSec: number): string {
 }
 
 function blockWidth(widths: readonly number[]): number {
-	return widths.reduce((total, width) => total + width, 0) + COLUMN_GAP.length * (widths.length - 1);
+	return widths.reduce((total, width) => total + width, 0) + GROUP_CELL_GAP.length * (widths.length - 1);
 }
 
-/** Grow the last column so a group title cannot collide with the next group. */
+/** Grow the last column so a group title (with its sort arrow) cannot collide with the next group. */
 function fitGroupTitle(title: string, widths: number[]): void {
-	const deficit = title.length - blockWidth(widths);
+	const deficit = title.length + SORT_ARROW_WIDTH - blockWidth(widths);
 	if (deficit > 0) widths[widths.length - 1] = widths[widths.length - 1]! + deficit;
 }
 
@@ -334,17 +343,16 @@ function metricCells(
 	return values.map((value, index) => padLeft(value, widths[index]!));
 }
 
-function joinCells(cells: readonly string[]): string {
-	return cells.join(COLUMN_GAP);
-}
-
 export interface RenderedWindow {
-	/** Group titles, then the per-column header. No data rows. */
+	/** Group titles, the per-column header, and the `─┼─` rule. No data rows. */
 	header: string[];
 	rows: string[];
 }
 
+export type MetricGroupId = "ttft" | "total" | "tps";
+
 export interface MetricGroup {
+	id: MetricGroupId;
 	title: string;
 	labels: readonly (keyof MetricStats)[];
 	widths: number[];
@@ -364,7 +372,7 @@ export interface WindowsLayout {
 /** Measure every column across `summaries`: one layout keeps all tables aligned. */
 export function measureWindows(summaries: readonly WindowSummary[]): WindowsLayout {
 	const models = summaries.flatMap((summary) => summary.models);
-	const nWidth = Math.max("n".length, ...models.map((model) => String(model.responses).length));
+	const nWidth = Math.max("n".length + SORT_ARROW_WIDTH, ...models.map((model) => String(model.responses).length));
 	const failureWidths = FAILURE_KINDS.map((kind) =>
 		Math.max(
 			FAILURE_HEADERS[kind].length,
@@ -372,16 +380,16 @@ export function measureWindows(summaries: readonly WindowSummary[]): WindowsLayo
 		),
 	);
 	const groups: MetricGroup[] = [
-		{ title: "ttft s", labels: STANDARD_LABELS, widths: metricWidths(models, (model) => model.ttft, seconds, STANDARD_LABELS), pick: (model) => model.ttft, format: seconds },
-		{ title: "total s", labels: STANDARD_LABELS, widths: metricWidths(models, (model) => model.total, seconds, STANDARD_LABELS), pick: (model) => model.total, format: seconds },
-		{ title: "tok/s", labels: TPS_LABELS, widths: metricWidths(models, (model) => model.tps, rate, TPS_LABELS), pick: (model) => model.tps, format: rate },
+		{ id: "ttft", title: "ttft s", labels: STANDARD_LABELS, widths: metricWidths(models, (model) => model.ttft, seconds, STANDARD_LABELS), pick: (model) => model.ttft, format: seconds },
+		{ id: "total", title: "total s", labels: STANDARD_LABELS, widths: metricWidths(models, (model) => model.total, seconds, STANDARD_LABELS), pick: (model) => model.total, format: seconds },
+		{ id: "tps", title: "tok/s", labels: TPS_LABELS, widths: metricWidths(models, (model) => model.tps, rate, TPS_LABELS), pick: (model) => model.tps, format: rate },
 	];
 	for (const group of groups) fitGroupTitle(group.title, group.widths);
 	return {
 		nWidth,
 		failureWidths,
 		groups,
-		modelWidth: Math.max("model".length, ...models.map((model) => model.key.length)),
+		modelWidth: Math.max("model".length + SORT_ARROW_WIDTH, ...models.map((model) => model.key.length)),
 	};
 }
 
@@ -401,8 +409,8 @@ export const STATS_BUDGET_STEP = VIEWPORT_BUDGET_STEP;
 export const clampStatsBudget = clampViewportBudget;
 export const clampStatsScrollTop = clampScrollTop;
 export const statsVisibleRange = visibleRange;
-/** View chrome around the scrollable content: top/bottom rules, blank, footer. */
-export const STATS_CHROME_LINES = 4;
+/** View chrome around the scrollable content: frame title, rule, one key-hint line. */
+export const STATS_CHROME_LINES = 3;
 
 /** Half the terminal height for content, less the view chrome. Falls back to the default when the size is unknown (a stub TUI, no tty). */
 export function defaultStatsBudget(rows: number | undefined): number {
@@ -410,16 +418,58 @@ export function defaultStatsBudget(rows: number | undefined): number {
 	return clampStatsBudget(Math.floor(rows / 2) - STATS_CHROME_LINES);
 }
 
+/** The column a sort key orders by. */
+type SortColumn =
+	| { kind: "model" }
+	| { kind: "n" }
+	| { kind: "metric"; group: MetricGroupId; label: keyof MetricStats };
+
+const SORT_COLUMNS: Record<SortKeyId, SortColumn> = {
+	"tps-mean": { kind: "metric", group: "tps", label: "mean" },
+	"tps-p50": { kind: "metric", group: "tps", label: "p50" },
+	"ttft-mean": { kind: "metric", group: "ttft", label: "mean" },
+	"total-mean": { kind: "metric", group: "total", label: "mean" },
+	n: { kind: "n" },
+	model: { kind: "model" },
+};
+
+/** The active view sort, marked in the table header. */
+export interface SortOrder {
+	id: SortKeyId;
+	descending: boolean;
+}
+
+function plural(count: number, noun: string): string {
+	return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/** Bold window label, then a dim summary: models and requests (responses plus failures). */
+export function windowTitle(theme: UiTheme, summary: WindowSummary): string {
+	const title = theme.bold(theme.fg("text", summary.label));
+	if (summary.models.length === 0) return title;
+	const requests = summary.models.reduce((total, model) => total + model.responses + failureTotal(model), 0);
+	return title + theme.fg("dim", ` · ${plural(summary.models.length, "model")} · ${plural(requests, "request")}`);
+}
+
 /**
  * One window's table. Every column is as wide as its header or its widest
- * cell, and columns are separated by `│`. With a shared `layout` (see
- * {@link measureWindows}) columns keep the same width across windows; without
- * one the window is measured alone. When `width` is set and the natural table
- * is wider, the model column shrinks first; metric columns keep their content
- * width and the caller truncates the line.
+ * cell. Columns are separated by a dim `│`, except the percentile cells inside
+ * one metric group, which are separated by spaces; a `─┼─` rule closes the
+ * header. The sorted column's header is accent with the sort arrow and its
+ * values are bold. Failure counts are coloured when positive, a dim `·` when
+ * zero. With a shared `layout` (see {@link measureWindows}) columns keep the
+ * same width across windows; without one the window is measured alone. When
+ * `width` is set and the natural table is wider, the model column shrinks
+ * first; metric columns keep their content width and the caller truncates the
+ * line.
  */
-export function renderWindow(summary: WindowSummary, opts?: { layout?: WindowsLayout; width?: number }): RenderedWindow {
-	if (summary.models.length === 0) return { header: ["(no samples)"], rows: [] };
+export function renderWindow(
+	summary: WindowSummary,
+	theme: UiTheme,
+	sort: SortOrder,
+	opts?: { layout?: WindowsLayout; width?: number },
+): RenderedWindow {
+	if (summary.models.length === 0) return { header: [theme.fg("dim", "(no samples)")], rows: [] };
 
 	const layout = opts?.layout ?? measureWindows([summary]);
 	const { nWidth, failureWidths, groups } = layout;
@@ -427,30 +477,58 @@ export function renderWindow(summary: WindowSummary, opts?: { layout?: WindowsLa
 		nWidth +
 		failureWidths.reduce((total, column) => total + column, 0) +
 		groups.reduce((total, group) => total + blockWidth(group.widths), 0) +
-		COLUMN_GAP.length * (1 + failureWidths.length + groups.length);
+		GRID_SEPARATOR.length * (1 + failureWidths.length + groups.length);
 	const modelWidth = opts?.width === undefined
 		? layout.modelWidth
 		: Math.max(1, Math.min(layout.modelWidth, opts.width - fixedWidth));
 
-	const header = joinCells([
-		padRight("", modelWidth),
-		padLeft("n", nWidth),
-		...FAILURE_KINDS.map((kind, index) => padLeft(FAILURE_HEADERS[kind], failureWidths[index]!)),
-		...groups.map((group) => padRight(group.title, blockWidth(group.widths))),
-	]);
-	const subHeader = joinCells([
-		padRight("model", modelWidth),
-		padLeft("", nWidth),
-		...failureWidths.map((column) => padLeft("", column)),
-		...groups.flatMap((group) => group.labels.map((label, index) => padLeft(label, group.widths[index]!))),
-	]);
+	const column = SORT_COLUMNS[sort.id];
+	const arrow = ` ${sortArrow(sort.descending)}`;
+	const groupSorted = (group: MetricGroup): boolean => column.kind === "metric" && column.group === group.id;
+	const labelSorted = (group: MetricGroup, label: keyof MetricStats): boolean =>
+		column.kind === "metric" && column.group === group.id && column.label === label;
+	const dim = (text: string): string => theme.fg("dim", text);
+	const marked = (text: string): string => theme.bold(theme.fg("accent", text));
+	const emphasize = (text: string, sorted: boolean): string => (sorted ? theme.bold(text) : text);
+	const separator = gridSeparator(theme);
+
+	const header = [
+		" ".repeat(modelWidth),
+		column.kind === "n" ? marked(padLeft(`n${arrow}`, nWidth)) : dim(padLeft("n", nWidth)),
+		...FAILURE_KINDS.map((kind, index) => dim(padLeft(FAILURE_HEADERS[kind], failureWidths[index]!))),
+		...groups.map((group) =>
+			groupSorted(group)
+				? marked(padRight(`${group.title}${arrow}`, blockWidth(group.widths)))
+				: dim(padRight(group.title, blockWidth(group.widths))),
+		),
+	].join(separator);
+	const subHeader = [
+		column.kind === "model"
+			? marked(padRight(ellipsize(`model${arrow}`, modelWidth), modelWidth))
+			: dim(padRight(ellipsize("model", modelWidth), modelWidth)),
+		" ".repeat(nWidth),
+		...failureWidths.map((width) => " ".repeat(width)),
+		...groups.map((group) =>
+			group.labels
+				.map((label, index) => {
+					const text = padLeft(label, group.widths[index]!);
+					return labelSorted(group, label) ? marked(text) : dim(text);
+				})
+				.join(GROUP_CELL_GAP),
+		),
+	].join(separator);
+	const rule = gridRule(theme, [modelWidth, nWidth, ...failureWidths, ...groups.map((group) => blockWidth(group.widths))], "┼");
 	const rows = summary.models.map((model) =>
-		joinCells([
-			padRight(ellipsize(model.key, modelWidth), modelWidth),
-			padLeft(String(model.responses), nWidth),
-			...FAILURE_KINDS.map((kind, index) => padLeft(model.failures[kind] > 0 ? String(model.failures[kind]) : "", failureWidths[index]!)),
-			...groups.flatMap((group) => metricCells(group.pick(model), group.format, group.widths, group.labels)),
-		]),
+		[
+			emphasize(padRight(ellipsize(model.key, modelWidth), modelWidth), column.kind === "model"),
+			emphasize(padLeft(String(model.responses), nWidth), column.kind === "n"),
+			...FAILURE_KINDS.map((kind, index) => countCell(theme, model.failures[kind], failureWidths[index]!, FAILURE_COLORS[kind])),
+			...groups.map((group) =>
+				metricCells(group.pick(model), group.format, group.widths, group.labels)
+					.map((cell, index) => emphasize(cell, labelSorted(group, group.labels[index]!)))
+					.join(GROUP_CELL_GAP),
+			),
+		].join(separator),
 	);
-	return { header: [header, subHeader], rows };
+	return { header: [header, subHeader, rule], rows };
 }

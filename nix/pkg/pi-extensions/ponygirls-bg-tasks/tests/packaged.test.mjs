@@ -163,10 +163,11 @@ test("tui: /bg shows live task output without replaying control sequences, and q
     { sleep: 0.5 },
     { send: "\r" },
     { wait: "Background tasks", timeout: 15 },
-    // A loaded list row (the label alone also appears in the echoed prompt).
-    { wait: "bgt-[0-9a-f]{16}  tui-progress", timeout: 15 },
+    // A loaded list row: short id, then the label in its own styled cell (the label alone also appears in the echoed prompt).
+    { wait: "[0-9a-f]{4}…(?:\\x1b\\[[0-9;]*m| )+tui-progress", timeout: 15 },
     { send: "\r" },
-    { wait: "following live output", timeout: 15 },
+    // The detail frame's view mode for a running task.
+    { wait: "· (?:\\x1b\\[[0-9;]*m)*following", timeout: 15 },
     { wait: "tick-\\d+", timeout: 15 },
     { sleep: 1 },
     { send: "\x1b" },
