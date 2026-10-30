@@ -836,7 +836,7 @@
               PI_BG_TASKS_PYTHON = "${pkgs.python3}/bin/python3";
               PI_BG_TASKS_SHELL = "${pkgs.bash}/bin/bash";
               PI_BG_TASKS_PI = "${piWrapped}/bin/pi";
-              PI_BG_TASKS_EXTENSION = "${./nix/pkg/pi-extensions/ponygirls-bg-tasks}";
+              PI_BG_TASKS_EXTENSION = "${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-bg-tasks";
               PI_OFFLINE = "1";
               PI_TELEMETRY = "0";
             } ''
