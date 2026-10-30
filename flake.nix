@@ -741,6 +741,7 @@
           '';
           ponygirls-model-picker = pkgs.runCommand "ponygirls-model-picker-test" {
             nativeBuildInputs = [ pkgs.nodejs ];
+            PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
           } ''
             cp -r ${./nix/pkg/pi-extensions} pi-extensions
             chmod -R u+w pi-extensions
