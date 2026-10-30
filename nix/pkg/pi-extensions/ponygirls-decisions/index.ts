@@ -6,6 +6,7 @@ import { compactChip } from "@ponygirls/pi-ui";
 import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
 import { DecisionsPane } from "./src/pane.ts";
+import { CONTEXT_TYPE, contextLine, summarizeContext } from "./src/context.ts";
 
 const POLL_MS = 1000;
 const NOTICE_TYPE = "decisions-answer";
@@ -195,7 +196,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     const pending = questions.filter((q) => q.status === "pending");
     const recent = questions.filter((q) => q.status !== "pending").slice(-PAGE_SIZE);
     return { message: {
-      customType: "decisions-context", display: true,
+      customType: CONTEXT_TYPE, display: true,
       content: `Project decisions: ${pending.length} unanswered. Pending questions are not permission to proceed on their dependent work. Continue independent work; never poll in a loop waiting for the user. Use decisions list/get to read current answers before acting.\n` +
         [...pending.slice(0, PAGE_SIZE), ...recent].map((q) => `${q.id} [${q.status}] ${q.question.slice(0, 160)}`).join("\n"),
       details: { project: b.project },
@@ -250,6 +251,11 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   });
 
   pi.registerMessageRenderer(NOTICE_TYPE, (message) => new Text(plain(String(message.content)), 0, 0));
+  pi.registerMessageRenderer(CONTEXT_TYPE, (message, options, theme) => {
+    if (options.expanded || typeof message.content !== "string") return undefined;
+    const line = contextLine(summarizeContext(message.content));
+    return new Text(theme.fg("warning", line.lead) + theme.fg("muted", plain(line.detail)), 0, 0);
+  });
   pi.registerCommand("decisions", {
     description: "Decision inbox: [Qn] | answer Qn <text> | dismiss Qn | reopen Qn",
     getArgumentCompletions: (prefix) => {
