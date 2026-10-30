@@ -4,7 +4,8 @@
 One process per active Pi extension activation. It owns the session sidecar
 lock, the durable task registry, one PTY and POSIX process group per task, and
 completion outbox state. It talks to the extension over private
-newline-delimited JSON pipes (stdin: requests, stdout: replies and hints).
+newline-delimited JSON pipes (stdin: requests, stdout: replies and hints), or
+an authenticated reconnectable control socket after the stdout startup greeting.
 Diagnostics go to stderr. Linux only.
 """
 from __future__ import annotations
@@ -21,6 +22,7 @@ import os
 import secrets
 import selectors
 import signal
+import socket
 import struct
 import sys
 import termios
@@ -38,6 +40,7 @@ TERM_GRACE_MS = 5000
 KILL_WAIT_MS = 2000
 OUTPUT_DRAIN_MS = 1000
 OWNER_HANDOFF_WAIT_MS = 10000
+RECONNECT_WAIT_MS = 30000
 LOG_SYNC_INTERVAL_MS = 1000
 MAX_READ_BYTES = 32768
 MAX_LIST_ITEMS = 50
@@ -799,6 +802,50 @@ class ProtocolWriter:
         return bool(self.buf) or self.hint_pending
 
 
+class ControlSocket:
+    """Bound, authenticated owner endpoint and stable owner-death notification."""
+
+    def __init__(self, address: str, owner_pid: int):
+        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.owner_pid = owner_pid
+        self.owner_uid = os.getuid()
+        self.owner_fd: Optional[int] = None
+        try:
+            if owner_pid != os.getppid():
+                raise DomainError("INVALID_REQUEST", "owner-pid must be the supervisor's direct parent")
+            self.owner_fd = os.pidfd_open(owner_pid)
+            # Do not authenticate a reused numeric PID if the parent exited
+            # between the parent check and opening its pidfd.
+            if owner_pid != os.getppid():
+                raise DomainError("INVALID_REQUEST", "owner exited during startup")
+            if not address.startswith("@") or len(address) < 2:
+                raise DomainError("INVALID_REQUEST", "control-socket must be a Linux abstract address starting with @")
+            self.listener.bind("\0" + address[1:])
+            self.listener.listen(1)
+            self.listener.setblocking(False)
+        except BaseException:
+            self.close()
+            raise
+
+    def accept(self) -> Optional[socket.socket]:
+        try:
+            conn, _ = self.listener.accept()
+        except BlockingIOError:
+            return None
+        pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+        if (pid, uid) != (self.owner_pid, self.owner_uid):
+            conn.close()
+            return None
+        conn.setblocking(False)
+        return conn
+
+    def close(self) -> None:
+        self.listener.close()
+        if self.owner_fd is not None:
+            os.close(self.owner_fd)
+            self.owner_fd = None
+
+
 # --------------------------------------------------------------------------
 # Linux process ownership helpers
 # --------------------------------------------------------------------------
@@ -881,7 +928,8 @@ class TaskRuntime:
 
 class Supervisor:
     def __init__(self, registry: TaskRegistry, store: TaskStore, log_rel: Callable[[str], str], shell: str,
-                 activation: str, writer: ProtocolWriter, clock: Clock, in_fd: int = 0):
+                 activation: str, writer: ProtocolWriter, clock: Clock, in_fd: int = 0,
+                 control_socket: Optional[ControlSocket] = None, recovered: Optional[list] = None):
         self.registry = registry
         self.store = store
         self.log_rel = log_rel
@@ -889,7 +937,17 @@ class Supervisor:
         self.activation = activation
         self.writer = writer
         self.clock = clock
-        self.in_fd = in_fd
+        self.control_socket = control_socket
+        self.connection: Optional[socket.socket] = None
+        self.in_fd = in_fd if control_socket is None else None
+        self.out_fd: Optional[int] = None  # registered writer descriptor
+        self.detach_authorized = False
+        self.reconnect_deadline: Optional[float] = None
+        self.recovered = recovered or []
+        if control_socket is not None:
+            self.writer = ProtocolWriter(-1)
+            self.writer.broken = True
+            self.reconnect_deadline = clock.monotonic() + RECONNECT_WAIT_MS / 1000
         self.self_pid = os.getpid()
         self.runtimes: dict = {}  # task id -> TaskRuntime (unfinished only)
         self.leaders: dict = {}  # unreaped leader pid -> task id
@@ -913,29 +971,37 @@ class Supervisor:
         signal.signal(signal.SIGTERM, self._on_term_signal)
         signal.signal(signal.SIGHUP, self._on_term_signal)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        os.set_blocking(self.in_fd, False)
-        os.set_blocking(self.writer.fd, False)
         self.selector.register(self.wake_r, selectors.EVENT_READ, ("wake", None))
-        self.selector.register(self.in_fd, selectors.EVENT_READ, ("control", None))
-        out_registered = False
+        if self.control_socket is None:
+            os.set_blocking(self.in_fd, False)
+            os.set_blocking(self.writer.fd, False)
+            self.selector.register(self.in_fd, selectors.EVENT_READ, ("control", None))
+        else:
+            self.selector.register(self.control_socket.listener, selectors.EVENT_READ, ("listen", None))
+            self.selector.register(self.control_socket.owner_fd, selectors.EVENT_READ, ("owner", None))
         while not self.done:
             want_out = self.writer.wants_write() and not self.writer.broken
-            if want_out != out_registered:
-                if want_out:
-                    self.selector.register(self.writer.fd, selectors.EVENT_WRITE, ("out", None))
-                else:
-                    self.selector.unregister(self.writer.fd)
-                out_registered = want_out
+            if want_out and self.out_fd is None:
+                self.selector.register(self.writer.fd, selectors.EVENT_WRITE, ("out", None))
+                self.out_fd = self.writer.fd
+            elif not want_out and self.out_fd is not None:
+                self.selector.unregister(self.out_fd)
+                self.out_fd = None
             timeout = self._next_timeout()
             for key, _mask in self.selector.select(timeout):
                 kind, task_id = key.data
                 if kind == "wake":
                     self._drain_wake()
-                elif kind == "control":
+                elif kind == "listen":
+                    self._accept_control()
+                elif kind == "owner":
+                    self.selector.unregister(key.fd)
+                    self._owner_lost()
+                elif kind == "control" and key.fd == self.in_fd:
                     self._read_control()
                 elif kind == "pty":
                     self._read_pty(task_id)
-                elif kind == "out":
+                elif kind == "out" and key.fd == self.writer.fd:
                     self.writer.flush()
             if self.signal_shutdown is not None and self.shutting_down is None:
                 self._begin_shutdown("graceful", f"supervisor_{self.signal_shutdown}", None)
@@ -944,7 +1010,72 @@ class Supervisor:
             self._sync_logs(False)
             self._maybe_finish_teardown()
             self.writer.flush()
+            if self.control_socket is not None and self.connection is not None and self.writer.broken:
+                self._control_eof()
         self.writer.flush_until(self.clock.monotonic() + FINAL_FLUSH_MS / 1000)
+
+    def close(self) -> None:
+        """Release control resources (task cleanup is performed by run)."""
+        if self.control_socket is not None:
+            self._close_connection()
+            self.control_socket.close()
+        self.selector.close()
+        signal.set_wakeup_fd(-1)
+        os.close(self.wake_r)
+        os.close(self.wake_w)
+
+    def _accept_control(self) -> None:
+        conn = self.control_socket.accept()
+        if conn is None:
+            return
+        if self.connection is not None or self.shutting_down is not None:
+            conn.close()
+            return
+        if self.reconnect_deadline is not None and self.clock.monotonic() >= self.reconnect_deadline:
+            conn.close()
+            self._owner_lost()
+            return
+        # Separate file descriptors let the selector independently monitor
+        # reads and queued writes on the same socket.
+        try:
+            writer_fd = os.dup(conn.fileno())
+        except BaseException:
+            conn.close()
+            raise
+        self.connection = conn
+        self.in_fd = conn.fileno()
+        self.in_buf.clear()
+        self.writer = ProtocolWriter(writer_fd)
+        self.detach_authorized = False
+        self.reconnect_deadline = None
+        self.selector.register(self.in_fd, selectors.EVENT_READ, ("control", None))
+        self.writer.send({"type": "ready", "activation": self.activation, "pid": self.self_pid, "recovered": self.recovered})
+        self.recovered = []
+
+    def _close_connection(self) -> None:
+        if self.out_fd is not None:
+            self.selector.unregister(self.out_fd)
+            self.out_fd = None
+        if self.connection is not None:
+            self.selector.unregister(self.in_fd)
+            self.connection.close()
+            os.close(self.writer.fd)
+            self.connection = None
+        self.in_fd = None
+        self.in_buf.clear()
+        self.writer = ProtocolWriter(-1)
+        self.writer.broken = True
+
+    def _owner_lost(self) -> None:
+        self.reconnect_deadline = None
+        if self.shutting_down != "owner_lost":
+            self._begin_shutdown("owner_lost", None, None)
+
+    def _control_eof(self) -> None:
+        authorized = self.detach_authorized
+        self._close_connection()
+        if not authorized and self.shutting_down is None:
+            self._owner_lost()
 
     def _on_term_signal(self, signum, _frame) -> None:
         # Handlers run between bytecodes; the loop performs the actual shutdown.
@@ -971,6 +1102,8 @@ class Supervisor:
                 candidates.append(now + CLOSING_POLL_MS / 1000)
         if self.teardown_deadline is not None:
             candidates.append(self.teardown_deadline)
+        if self.reconnect_deadline is not None:
+            candidates.append(self.reconnect_deadline)
         if not candidates:
             return None
         return max(0.0, min(candidates) - now)
@@ -985,6 +1118,9 @@ class Supervisor:
         except OSError:
             chunk = b""
         if not chunk:
+            if self.control_socket is not None:
+                self._control_eof()
+                return
             self.selector.unregister(self.in_fd)
             if self.shutting_down is None:
                 self._begin_shutdown("owner_lost", None, None)
@@ -1031,11 +1167,13 @@ class Supervisor:
             args = msg.get("args")
             if not isinstance(args, dict):
                 raise DomainError("INVALID_REQUEST", "args must be an object")
+            if self.detach_authorized:
+                raise DomainError("SHUTTING_DOWN", "the owner must disconnect after detach")
             handler = {
                 "spawn": self._op_spawn, "list": self._op_list, "get": self._op_get, "read": self._op_read,
                 "signal": self._op_signal, "terminate": self._op_terminate, "notify": self._op_notify,
                 "clear": self._op_clear, "notices": self._op_notices, "receipts": self._op_receipts,
-                "shutdown": self._op_shutdown,
+                "shutdown": self._op_shutdown, "detach": self._op_detach,
             }.get(op)
             if handler is None:
                 raise DomainError("INVALID_REQUEST", f"unknown operation {op!r}")
@@ -1110,6 +1248,18 @@ class Supervisor:
             return False
 
     # ---- operations --------------------------------------------------------
+
+    def _op_detach(self, req_id: int, args: dict) -> None:
+        self._keys(args, ())
+        if self.control_socket is None:
+            raise DomainError("INVALID_REQUEST", "detach requires a control socket")
+        if self.shutting_down is not None:
+            raise DomainError("SHUTTING_DOWN", "the supervisor is shutting down")
+        if self.deferred_spawns or any(rt.waiters for rt in self.runtimes.values()):
+            raise DomainError("SESSION_BUSY", "detach requires all spawn and terminate replies to settle")
+        self._reply_ok(req_id, {})
+        self.detach_authorized = True
+        self.reconnect_deadline = self.clock.monotonic() + RECONNECT_WAIT_MS / 1000
 
     def _op_spawn(self, req_id: int, args: dict) -> Optional[dict]:
         self._keys(args, ("label", "command", "cwd", "notify"))
@@ -1550,6 +1700,8 @@ class Supervisor:
 
     def _advance_deadlines(self) -> None:
         now = self.clock.monotonic()
+        if self.reconnect_deadline is not None and now >= self.reconnect_deadline:
+            self._owner_lost()
         for rt in list(self.runtimes.values()):
             if rt.drain_deadline is not None and now >= rt.drain_deadline and not rt.pty_eof:
                 rt.drain_timed_out = True
@@ -1733,18 +1885,24 @@ def emit_line(obj: dict) -> None:
     os.write(1, (json.dumps({"v": PROTOCOL_VERSION, **obj}, separators=(",", ":")) + "\n").encode())
 
 
-def main(argv: list) -> int:
+def main(argv: list, *, clock: Optional[Clock] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sidecar", required=True)
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--activation", required=True)
     parser.add_argument("--shell", required=True)
     parser.add_argument("--handoff-wait-ms", type=int, required=True)
+    parser.add_argument("--control-socket")
+    parser.add_argument("--owner-pid", type=int)
     args = parser.parse_args(argv)
-    clock = SystemClock()
+    clock = clock if clock is not None else SystemClock()
     fs = FsOps()
     lock = OwnerLock(args.sidecar, fs)
+    control_socket = None
+    supervisor = None
     try:
+        if (args.control_socket is None) != (args.owner_pid is None):
+            raise DomainError("INVALID_REQUEST", "control-socket and owner-pid are required together")
         if not os.path.isabs(args.sidecar) or not os.path.isabs(args.shell):
             raise DomainError("INVALID_REQUEST", "sidecar and shell must be absolute paths")
         if not os.access(args.shell, os.X_OK):
@@ -1755,17 +1913,28 @@ def main(argv: list) -> int:
         lock.acquire(min(args.handoff_wait_ms, OWNER_HANDOFF_WAIT_MS), clock)
         registry = TaskRegistry(store, args.session_id, clock)
         recovered = registry.open()
+        if args.control_socket is not None:
+            control_socket = ControlSocket(args.control_socket, args.owner_pid)
     except DomainError as e:
+        lock.release()
         emit_line({"type": "fatal", "error": {"code": e.code, "message": e.message}})
         return 1
     except OSError as e:
+        lock.release()
         emit_line({"type": "fatal", "error": {"code": "STORAGE_FAILED", "message": str(e)}})
         return 1
-    emit_line({"type": "ready", "activation": args.activation, "pid": os.getpid(), "recovered": recovered})
-    supervisor = Supervisor(registry, store, store.log_rel, args.shell, args.activation, ProtocolWriter(1), clock)
     try:
+        # Binding precedes the pipe greeting: the owner may connect as soon as
+        # it sees ready. Only this startup greeting travels over stdout.
+        emit_line({"type": "ready", "activation": args.activation, "pid": os.getpid(), "recovered": recovered})
+        supervisor = Supervisor(registry, store, store.log_rel, args.shell, args.activation, ProtocolWriter(1), clock,
+                                control_socket=control_socket, recovered=recovered)
         supervisor.run()
     finally:
+        if supervisor is not None:
+            supervisor.close()
+        elif control_socket is not None:
+            control_socket.close()
         lock.release()
     return 0
 
