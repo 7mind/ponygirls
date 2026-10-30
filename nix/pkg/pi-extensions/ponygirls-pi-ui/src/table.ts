@@ -3,6 +3,7 @@
  * header and a `─┴─` rule above totals, zero shown as a dim `·`, zebra stripes.
  */
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { reopenAfterReset } from "./rows.ts";
 import type { UiFg, UiTheme } from "./theme.ts";
 
 /** Plain separator between grid cells; its width is fixed. */
@@ -29,5 +30,8 @@ export function countCell(theme: UiTheme, value: number, width: number, positive
 /** Odd data rows get the neutral panel background, padded to `width`. */
 export function zebra(theme: UiTheme, line: string, index: number, width: number): string {
   if (index % 2 === 0) return line;
-  return theme.bg("toolPendingBg", line + " ".repeat(Math.max(0, width - visibleWidth(line))));
+  const placeholder = "\u0000";
+  const styled = theme.bg("toolPendingBg", placeholder);
+  const stripe = reopenAfterReset(line, styled.slice(0, styled.indexOf(placeholder)));
+  return theme.bg("toolPendingBg", stripe + " ".repeat(Math.max(0, width - visibleWidth(line))));
 }

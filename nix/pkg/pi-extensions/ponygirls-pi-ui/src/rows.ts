@@ -15,7 +15,24 @@ export function listRow(theme: UiTheme, width: number, content: string, selected
   const body = truncateToWidth(content, w - MARKER_WIDTH, "…");
   if (!selected) return `${" ".repeat(MARKER_WIDTH)}${body}`;
   const fill = " ".repeat(Math.max(0, w - MARKER_WIDTH - visibleWidth(body)));
-  return theme.bg("selectedBg", `${theme.fg("accent", "▌")} ${theme.bold(body)}${fill}`);
+  const band = `${openingOf(theme.bg("selectedBg", SPLIT))}${openingOf(theme.bold(SPLIT))}`;
+  return theme.bg("selectedBg", `${theme.fg("accent", "▌")} ${theme.bold(reopenAfterReset(body, band))}${fill}`);
+}
+
+/** Placeholder used to read a style's opening sequence from a styling function. */
+const SPLIT = "\u0000";
+const RESET = "\x1b[0m";
+
+function openingOf(styled: string): string {
+  return styled.slice(0, styled.indexOf(SPLIT));
+}
+
+/**
+ * Truncated styled text ends its cut with a full SGR reset, which would also
+ * end an enclosing background band; reopen the band after every reset.
+ */
+export function reopenAfterReset(text: string, opening: string): string {
+  return opening === "" ? text : text.split(RESET).join(RESET + opening);
 }
 
 /** Pad or truncate styled text to exactly `width` visible columns. */

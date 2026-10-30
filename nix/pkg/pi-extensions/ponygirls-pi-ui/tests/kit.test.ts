@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
-  PLAIN_THEME, columnCells, columnHeader, compactChip, countCell, fractionState, frameRule, frameTitle, gridRule, hintAt,
+  PLAIN_THEME, columnCells, columnHeader, fit, compactChip, countCell, fractionState, frameRule, frameTitle, gridRule, hintAt,
   keyHints, listRow, stateColor, usageBar, zebra, type UiBg, type UiFg, type UiTheme,
 } from "../src/index.ts";
 
@@ -69,6 +69,17 @@ test("listRow: selected rows are a full-width band with an accent marker and bol
   assert.ok(selected.includes("\x1b[1mrow\x1b[22m"));
   assert.equal(listRow(PLAIN_THEME, 20, "row", false), "  row");
   assert.equal(visibleWidth(listRow(PLAIN_THEME, 6, "a long row", false)), 6);
+});
+
+test("listRow keeps the selection band across a truncated, reset-terminated cell", () => {
+  const cell = fit(TAGGED.fg("success", "a very long label"), 6);
+  assert.ok(cell.includes("\x1b[0m"), "pi-tui truncation emits a reset");
+  const row = listRow(TAGGED, 20, `${cell} tail`, true);
+  const afterReset = row.slice(row.lastIndexOf("\x1b[0m") + "\x1b[0m".length);
+  assert.ok(afterReset.startsWith(`${bgCode("selectedBg")}\x1b[1m`), JSON.stringify(row));
+  const striped = zebra(TAGGED, `${cell} tail`, 1, 20);
+  const afterStripeReset = striped.slice(striped.lastIndexOf("\x1b[0m") + "\x1b[0m".length);
+  assert.ok(afterStripeReset.startsWith(bgCode("toolPendingBg")), JSON.stringify(striped));
 });
 
 test("columns align styled cells and the dim header to the marker gutter", () => {
