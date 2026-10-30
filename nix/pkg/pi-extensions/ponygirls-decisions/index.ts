@@ -74,7 +74,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         const pending = questions.filter((q) => q.status === "pending").length;
         if (pending === 0) b.ctx.ui.setWidget(STATUS_KEY, undefined);
         else b.ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({
-          render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${pending} unanswered `)), width)],
+          render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${pending} `)), width)],
           invalidate() {},
           handleMouse(event) {
             if (event.type !== "click" || event.button !== "left") return;

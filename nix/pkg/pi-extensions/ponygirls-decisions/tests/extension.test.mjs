@@ -69,11 +69,29 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal(key, "decisions");
   assert.equal(options.placement, "borderBottomLeft");
   const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
-  assert.match(factory(null, theme).render(80)[0], /1 unanswered/);
+  assert.equal(factory(null, theme).render(80)[0], " ? 1 ");
   assert.equal((await f.call({ action: "list" }, "list")).details.total, 1);
   assert.equal((await f.call({ action: "get", id: "q1" }, "get")).details.context, "Concurrent sessions");
   assert.equal(f.messages.length, 0);
   assert.equal((await f.call({ action: "ask", question: "Which storage?", options: ["SQLite", "JSONL"], context: "Concurrent sessions", recommendation: "SQLite" }, "call-1")).details.id, "Q1");
+});
+
+test("agents can review answered and dismissed history with full answers through get", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Answered question", context: "Original context", options: ["Selected option"] }, "first");
+  await f.call({ action: "ask", question: "Dismissed question" }, "second");
+  await f.command("answer Q1 Selected option with explanation");
+  await f.command("dismiss Q2");
+  assert.equal((await f.call({ action: "list" }, "pending")).details.total, 0);
+  const all = (await f.call({ action: "list", status: "all" }, "history")).details.questions;
+  assert.deepEqual(all.map((q) => [q.id, q.status]), [["Q1", "answered"], ["Q2", "dismissed"]]);
+  assert.deepEqual((await f.call({ action: "list", status: "answered" }, "answered")).details.questions.map((q) => q.id), ["Q1"]);
+  assert.deepEqual((await f.call({ action: "list", status: "dismissed" }, "dismissed")).details.questions.map((q) => q.id), ["Q2"]);
+  const answer = (await f.call({ action: "get", id: "Q1" }, "answer")).details;
+  assert.equal(answer.answer, "Selected option with explanation");
+  assert.equal(answer.context, "Original context");
+  assert.deepEqual(answer.options, ["Selected option"]);
+  assert.equal((await f.call({ action: "get", id: "Q2" }, "dismissal")).details.answer, null);
 });
 
 test("answer/revision notices wake the origin once, clear badge, and retain full answer", async (t) => {

@@ -172,6 +172,7 @@ export class DecisionsPane implements Component, Focusable {
     if (this.loadError) { this.notice = "Cannot save while loading decisions fails; your draft is retained."; return; }
     try {
       this.callbacks.resolve(draft.base, draft.status, draft.answer);
+      this.detail = false;
       this.draft = null;
       this.editor = null;
       this.choices = null;

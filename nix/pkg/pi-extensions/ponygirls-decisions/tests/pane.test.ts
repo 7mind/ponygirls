@@ -73,6 +73,38 @@ test("pending inbox, wrapped Markdown detail, history toggle, and stable selecti
   assert.ok(h.renders() > 0);
 });
 
+test("saving the last pending answer returns from detail to an inbox that closes with one Escape", () => {
+  for (const mode of ["a", "1"]) {
+    const h = open([decision(1)], "Q1");
+    h.press(mode);
+    if (mode === "a") h.press("My answer");
+    h.press(SAVE);
+    assert.equal(h.records()[0]!.status, "answered");
+    assert.match(h.screen(), /pending \(0\)/);
+    assert.match(h.screen(), /No pending decisions/);
+    assert.match(h.screen(), /Esc close/);
+    assert.doesNotMatch(h.screen(), /Esc inbox/);
+    assert.equal(h.closed(), false, "saving returns to the inbox without closing it");
+    h.press(ESC);
+    assert.equal(h.closed(), true, "one Escape closes the empty inbox");
+  }
+});
+
+test("saving from detail returns to the remaining pending list and preserves history navigation", () => {
+  const h = open([decision(1), decision(2), decision(3)], "Q1");
+  h.press("1", SAVE);
+  assert.match(h.screen(), /› Q2 \[pending\]/);
+  assert.match(h.screen(), /Q3 \[pending\]/);
+  h.press(DOWN);
+  assert.match(h.screen(), /› Q3 \[pending\]/, "arrows select questions rather than scrolling obsolete detail");
+  const history = open([decision(7, { status: "answered", answer: "Existing answer" })], "Q7");
+  history.press("e", "!", SAVE);
+  assert.match(history.screen(), /all\/history/);
+  assert.match(history.screen(), /› Q7 \[answered\]/);
+  history.press(ESC);
+  assert.equal(history.closed(), true);
+});
+
 test("narrow inbox retains the full answer/dismiss/reopen keyboard hint", () => {
   const h = open();
   h.resize(14);
