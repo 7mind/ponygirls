@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { PLAIN_THEME, type UiTheme } from "@ponygirls/pi-ui";
+
 import {
 	buildInputDistribution,
 	buildUsageRows,
@@ -14,6 +16,18 @@ import {
 	USAGE_TAB_LABELS,
 } from "./ponygirls-usage-state.ts";
 import type { ModelStats, ProviderStats, TimeFilteredStats, TotalStats } from "./ponygirls-usage-data.ts";
+
+/** Wraps styled text in `<token>…</token>` (bold as `<b>`); for checking which style a cell got, not widths. */
+const TAG_THEME: UiTheme = {
+	fg: (color, text) => `<${color}>${text}</${color}>`,
+	bg: (color, text) => `<${color}>${text}</${color}>`,
+	bold: (text) => `<b>${text}</b>`,
+};
+
+/** Columns of a plain-theme line: every glyph the tables use is one column wide. */
+function visibleWidth(line: string): number {
+	return [...line].length;
+}
 
 function timeFilteredStats(overrides: Partial<TimeFilteredStats> = {}): TimeFilteredStats {
 	return {
@@ -137,25 +151,56 @@ function barsAt(line: string): number[] {
 	return indexes;
 }
 
-test("renderUsageTable aligns columns and appends totals", () => {
+function junctionsAt(line: string, junction: "┼" | "┴"): number[] {
+	const indexes: number[] = [];
+	for (let index = 0; index < line.length; index++) if (line[index] === junction) indexes.push(index);
+	return indexes;
+}
+
+test("renderUsageTable aligns columns, rules the header, and closes before totals", () => {
 	const rows = buildUsageRows(stats, "models");
-	const table = renderUsageTable(rows, usageTotalsRow(totals));
+	const table = renderUsageTable(rows, usageTotalsRow(totals), PLAIN_THEME);
+	assert.equal(table.header.length, 2);
 	assert.match(table.header[0]!, /Provider.+Model.+Sessions.+Msgs.+Cost.+Tokens/);
+	assert.match(table.header[1]!, /^─+┼─/);
 	assert.equal(table.rows.length, 5);
-	assert.equal(table.totals.length, 1);
-	assert.match(table.totals[0]!, /^Total/);
+	// A ┴ rule, then the totals row directly (no blank line).
+	assert.equal(table.totals.length, 2);
+	assert.match(table.totals[0]!, /^─+┴─/);
+	assert.match(table.totals[1]!, /^Total/);
 	const bars = barsAt(table.header[0]!);
-	assert.ok(bars.length > 0);
-	for (const line of [...table.rows, ...table.totals]) assert.deepEqual(barsAt(line), bars);
+	assert.equal(bars.length, 8);
+	for (const line of [...table.rows, table.totals[1]!]) assert.deepEqual(barsAt(line), bars);
+	assert.deepEqual(junctionsAt(table.header[1]!, "┼"), bars);
+	assert.deepEqual(junctionsAt(table.totals[0]!, "┴"), bars);
+	const width = visibleWidth(table.header[0]!);
+	for (const line of [...table.header, ...table.rows, ...table.totals]) assert.equal(visibleWidth(line), width);
 	// A shared layout keeps columns aligned for every tab.
 	const layout = measureUsageTable(rows, usageTotalsRow(totals));
-	const again = renderUsageTable(rows, usageTotalsRow(totals), { layout });
+	const again = renderUsageTable(rows, usageTotalsRow(totals), PLAIN_THEME, { layout });
 	assert.deepEqual(barsAt(again.header[0]!), bars);
+});
+
+test("renderUsageTable styles: dim header and grid, bold provider totals and totals", () => {
+	const rows = buildUsageRows(stats, "models");
+	const table = renderUsageTable(rows, usageTotalsRow(totals), TAG_THEME);
+	assert.match(table.header[0]!, /^<dim>Provider.+Cache<\/dim>$/);
+	assert.match(table.header[1]!, /^<dim>─+┼.+─<\/dim>$/);
+	assert.match(table.totals[0]!, /^<dim>─+┴.+─<\/dim>$/);
+	const [aggregate, model] = table.rows as [string, string];
+	assert.match(aggregate, /^<b>a +<\/b><dim> │ <\/dim><b> +<\/b><dim> │ <\/dim>/);
+	assert.match(model, /^a +<dim> │ <\/dim>m0 +<dim> │ <\/dim>/);
+	assert.doesNotMatch(model, /<b>|<accent>/);
+	assert.match(table.totals[1]!, /^<b>Total +<\/b><dim> │ <\/dim>/);
+	for (const line of [...table.rows, table.totals[1]!]) {
+		assert.doesNotMatch(line.replaceAll("<dim> │ </dim>", ""), /│/, "every │ is dim");
+		assert.doesNotMatch(line, /<accent>/);
+	}
 });
 
 test("renderUsageTable reports an empty period", () => {
 	const empty = timeFilteredStats();
-	const table = renderUsageTable([], usageTotalsRow(empty.totals));
+	const table = renderUsageTable([], usageTotalsRow(empty.totals), PLAIN_THEME);
 	assert.deepEqual(table, { header: ["(no usage for this period)"], rows: [], totals: [] });
 });
 
@@ -205,8 +250,12 @@ test("buildInputDistribution reports an empty period", () => {
 test("renderInputDistTable lists counts and shares, then the message total", () => {
 	const table = renderInputDistTable(
 		buildInputDistribution([sz(5000), sz(12000), sz(60000), sz(120000), sz(180000), sz(600000)]),
+		PLAIN_THEME,
 	);
 	assert.match(table.header[0]!, /Range.+Msgs.+Share/);
+	assert.deepEqual(junctionsAt(table.header[1]!, "┼"), barsAt(table.header[0]!));
+	assert.equal(visibleWidth(table.header[1]!), visibleWidth(table.header[0]!));
+	for (const line of table.rows) assert.deepEqual(barsAt(line), barsAt(table.header[0]!));
 	assert.equal(table.rows.length, 8);
 	assert.match(table.rows[0]!, /<10k.+1.+17%/);
 	assert.match(table.rows[7]!, />=500k.+1.+17%/);
@@ -214,8 +263,16 @@ test("renderInputDistTable lists counts and shares, then the message total", () 
 	assert.deepEqual(table.totals, ["6 messages"]);
 });
 
+test("renderInputDistTable styles: dim header, rule, and grid; totals left unstyled", () => {
+	const table = renderInputDistTable(buildInputDistribution([sz(5000), sz(60000)]), TAG_THEME);
+	assert.match(table.header[0]!, /^<dim>Range.+Share<\/dim>$/);
+	assert.match(table.header[1]!, /^<dim>─+┼.+─<\/dim>$/);
+	for (const line of table.rows) assert.doesNotMatch(line.replaceAll("<dim> │ </dim>", ""), /│/, "every │ is dim");
+	assert.deepEqual(table.totals, ["2 messages"]);
+});
+
 test("renderInputDistTable reports an empty period", () => {
-	assert.deepEqual(renderInputDistTable(buildInputDistribution([])), {
+	assert.deepEqual(renderInputDistTable(buildInputDistribution([]), PLAIN_THEME), {
 		header: ["(no usage for this period)"],
 		rows: [],
 		totals: [],

@@ -1,5 +1,6 @@
-/** Pure /usage table logic. No Pi imports, so the tests can run under node. */
+/** Pure /usage table logic. No Pi runtime imports, so the tests can run under node; styling goes through the kit's UiTheme. */
 
+import { GRID_SEPARATOR, gridRule, gridSeparator, type UiTheme } from "@ponygirls/pi-ui";
 import type {
 	BaseStats,
 	InputSize,
@@ -121,8 +122,6 @@ const NUMERIC_COLUMNS = [
 
 const MAX_PROVIDER_WIDTH = 18;
 const MAX_MODEL_WIDTH = 26;
-/** Box-drawing bar, one terminal column, so string length is the display width. */
-const COLUMN_GAP = " │ ";
 
 function padLeft(text: string, width: number): string {
 	return text.length >= width ? text : `${" ".repeat(width - text.length)}${text}`;
@@ -155,42 +154,61 @@ export function measureUsageTable(rows: readonly UsageTableRow[], totals: UsageT
 	};
 }
 
-function joinCells(cells: readonly string[]): string {
-	return cells.join(COLUMN_GAP);
+/** Plain header cells, dim as one line: separators and labels share the colour. */
+function gridHeader(theme: UiTheme, cells: readonly string[]): string {
+	return theme.fg("dim", cells.join(GRID_SEPARATOR));
 }
 
-function formatRow(row: UsageTableRow, layout: UsageTableLayout): string {
-	return joinCells([
+/** Data cells joined by dim `│`; `bold` styles each cell, so the separators stay dim. */
+function gridRow(theme: UiTheme, cells: readonly string[], bold: boolean): string {
+	return cells.map((cell) => (bold ? theme.bold(cell) : cell)).join(gridSeparator(theme));
+}
+
+function rowCells(row: UsageTableRow, layout: UsageTableLayout): string[] {
+	return [
 		padRight(ellipsize(row.provider, layout.providerWidth), layout.providerWidth),
 		padRight(ellipsize(row.model ?? "", layout.modelWidth), layout.modelWidth),
 		...NUMERIC_COLUMNS.map((column) => padLeft(column.value(row), column.width)),
-	]);
+	];
+}
+
+function columnWidths(layout: UsageTableLayout): number[] {
+	return [layout.providerWidth, layout.modelWidth, ...NUMERIC_COLUMNS.map((column) => column.width)];
 }
 
 export interface RenderedUsageTable {
+	/** The dim column header and its `─┼─` rule. */
 	header: string[];
 	rows: string[];
+	/** The `─┴─` rule and the bold totals row. */
 	totals: string[];
 }
 
 /**
- * One period's table: header, one line per row, and the totals block. Metric
- * columns keep fixed widths and the caller truncates overlong lines; without
- * rows the table is a note line and the caller skips totals.
+ * One period's table: dim header and `─┼─` rule, one line per row (provider
+ * totals bold), then a `─┴─` rule and the bold totals row. Every `│` is dim.
+ * Metric columns keep fixed widths and the caller truncates overlong lines;
+ * without rows the table is a note line and the caller skips totals.
  */
 export function renderUsageTable(
 	rows: readonly UsageTableRow[],
 	totals: UsageTableRow,
+	theme: UiTheme,
 	opts?: { layout?: UsageTableLayout },
 ): RenderedUsageTable {
 	if (rows.length === 0) return { header: ["(no usage for this period)"], rows: [], totals: [] };
 	const layout = opts?.layout ?? measureUsageTable(rows, totals);
-	const header = joinCells([
+	const header = gridHeader(theme, [
 		padRight("Provider", layout.providerWidth),
 		padRight("Model", layout.modelWidth),
 		...NUMERIC_COLUMNS.map((column) => padLeft(column.label, column.width)),
 	]);
-	return { header: [header], rows: rows.map((row) => formatRow(row, layout)), totals: [formatRow(totals, layout)] };
+	const widths = columnWidths(layout);
+	return {
+		header: [header, gridRule(theme, widths, "┼")],
+		rows: rows.map((row) => gridRow(theme, rowCells(row, layout), row.model === null)),
+		totals: [gridRule(theme, widths, "┴"), gridRow(theme, rowCells(totals, layout), true)],
+	};
 }
 
 /** Top-level /usage view: the cost table, or the input-size distribution. */
@@ -268,24 +286,25 @@ function distTotal(bins: readonly InputDistBin[]): number {
 }
 
 /**
- * Plain count/share table: one line per bucket plus the message total.
- * Without messages the table is a note line, mirroring renderUsageTable.
+ * Count/share table: dim header and `─┼─` rule, one line per bucket with dim
+ * `│`, plus the message total (unstyled; the caller styles totals). Without
+ * messages the table is a note line, mirroring renderUsageTable.
  */
-export function renderInputDistTable(bins: readonly InputDistBin[]): RenderedInputDist {
+export function renderInputDistTable(bins: readonly InputDistBin[], theme: UiTheme): RenderedInputDist {
 	const total = distTotal(bins);
 	if (total === 0) return { header: ["(no usage for this period)"], rows: [], totals: [] };
 	const labelWidth = Math.max("Range".length, ...bins.map((bin) => bin.label.length));
 	const countWidth = Math.max("Msgs".length, ...bins.map((bin) => String(bin.count).length));
 	const shareWidth = Math.max("Share".length, ...bins.map((bin) => formatShare(bin.pct).length));
-	const header = joinCells([
-		padRight("Range", labelWidth),
-		padLeft("Msgs", countWidth),
-		padLeft("Share", shareWidth),
-	]);
+	const header = gridHeader(theme, [padRight("Range", labelWidth), padLeft("Msgs", countWidth), padLeft("Share", shareWidth)]);
 	const rows = bins.map((bin) =>
-		joinCells([padRight(bin.label, labelWidth), padLeft(String(bin.count), countWidth), padLeft(formatShare(bin.pct), shareWidth)]),
+		gridRow(theme, [padRight(bin.label, labelWidth), padLeft(String(bin.count), countWidth), padLeft(formatShare(bin.pct), shareWidth)], false),
 	);
-	return { header: [header], rows, totals: [`${total} message${total === 1 ? "" : "s"}`] };
+	return {
+		header: [header, gridRule(theme, [labelWidth, countWidth, shareWidth], "┼")],
+		rows,
+		totals: [`${total} message${total === 1 ? "" : "s"}`],
+	};
 }
 
 /** Box-drawing bar would collide with the table separators; the chart uses full blocks. */
