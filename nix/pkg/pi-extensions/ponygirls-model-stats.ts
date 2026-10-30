@@ -46,6 +46,8 @@ import {
 	type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
+import { frameRule, frameTitle, keyHints, zebra, type KeyHint } from "@ponygirls/pi-ui";
+
 import {
 	classifyOutcome,
 	clampStatsBudget,
@@ -65,10 +67,29 @@ import {
 	statsVisibleRange,
 	summarize,
 	WEEK_MS,
+	windowTitle,
 	type StatsRecord,
 } from "./ponygirls-model-stats-state.ts";
+import { scrollPosition } from "./scroll-state.ts";
 
 const PRUNE_EVERY = 64;
+
+const STATS_TITLE = "Model performance";
+const STATS_HINTS: readonly KeyHint[] = [
+	{ key: "↑↓/j/k", action: "scroll" },
+	{ key: "PgUp/PgDn", action: "page" },
+	{ key: "+-", action: "size" },
+	{ key: "s", action: "sort" },
+	{ key: "r", action: "reverse" },
+	{ key: "q", action: "close" },
+];
+const SORT_PICKER_TITLE = "Sort by";
+const SORT_PICKER_HINTS: readonly KeyHint[] = [
+	{ key: "⏎", action: "select" },
+	{ key: "esc", action: "cancel" },
+];
+/** Box sides plus one space of padding on each side. */
+const BOX_SIDE_WIDTH = 2;
 
 function statsPath(): string {
 	const dir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
@@ -126,8 +147,14 @@ class SortPicker implements Component {
 	}
 
 	render(width: number): string[] {
-		const rule = this.theme.fg("border", "─".repeat(Math.max(1, width)));
-		return [rule, this.theme.fg("accent", "Sort by"), ...this.list.render(width), this.theme.fg("dim", "enter select · esc cancel"), rule];
+		const innerWidth = Math.max(1, width - 2 * BOX_SIDE_WIDTH);
+		const body = [...this.list.render(innerWidth), ...keyHints(this.theme, innerWidth, SORT_PICKER_HINTS).lines];
+		const side = this.theme.fg("border", "│");
+		return [
+			frameTitle(this.theme, width, { title: SORT_PICKER_TITLE }, "box").line,
+			...body.map((line) => `${side} ${fitLine(line, innerWidth)} ${side}`),
+			this.theme.fg("border", `└${"─".repeat(Math.max(0, width - 2))}┘`),
+		];
 	}
 
 	handleInput(data: string): void {
@@ -172,31 +199,29 @@ class StatsView implements Component {
 		const layout = measureWindows(this.summaries);
 		for (const windowSummary of this.summaries) {
 			if (content.length > 0) content.push("");
-			content.push(this.theme.fg("accent", fitLine(windowSummary.label, width)));
+			content.push(fitLine(windowTitle(this.theme, windowSummary), width));
 			const table = renderWindow(
 				{ ...windowSummary, models: sortModels(windowSummary.models, sort.id, sort.descending) },
+				this.theme,
+				sort,
 				{ layout, width },
 			);
-			content.push(...table.header.map((line) => this.theme.fg("dim", fitLine(line, width))));
-			table.rows.forEach((row, index) => {
-				const line = fitLine(row, width);
-				// toolPendingBg is the theme's neutral panel, a stripe rather than a selection.
-				content.push(index % 2 === 1 ? this.theme.bg("toolPendingBg", line) : line);
-			});
+			content.push(...table.header.map((line) => fitLine(line, width)));
+			table.rows.forEach((row, index) => content.push(zebra(this.theme, fitLine(row, width), index, width)));
 		}
 		this.lineCount = content.length;
 		const budget = this.effectiveBudget();
 		this.scrollTop = clampStatsScrollTop(this.scrollTop, this.lineCount, budget);
 		const { start, end } = statsVisibleRange(this.lineCount, this.scrollTop, budget);
-		const rule = this.theme.fg("border", "─".repeat(Math.max(1, width)));
 		const arrow = sort.descending ? "↓" : "↑";
-		const lines = [rule, ...content.slice(start, end)];
-		if (this.lineCount > budget) {
-			const moreAbove = start > 0 ? "↑ " : "";
-			const moreBelow = end < this.lineCount ? " ↓" : "";
-			lines.push(this.theme.fg("dim", `${moreAbove}lines ${start + 1}–${end} of ${this.lineCount}${moreBelow}`));
-		}
-		return [...lines, "", this.theme.fg("dim", `[↑↓/j/k] scroll [pgup/pgdn] page [+-] size [s] sort: ${sort.label} ${arrow} [r] reverse [q] close`), rule];
+		const right = this.lineCount > budget ? this.theme.fg("dim", scrollPosition(this.lineCount, start, end)) : undefined;
+		const title = frameTitle(this.theme, width, { title: STATS_TITLE, meta: `sort: ${sort.label} ${arrow}`, right }, "none");
+		return [
+			title.line,
+			...content.slice(start, end),
+			frameRule(this.theme, width),
+			...keyHints(this.theme, width, STATS_HINTS).lines,
+		];
 	}
 
 	handleInput(data: string): void {
