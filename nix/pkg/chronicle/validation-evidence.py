@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind explicit fast backend and retained-protocol checks to the final installed native ELF."""
+"""Bind explicit fast backend and single-version-protocol checks to the final installed native ELF."""
 import argparse
 import hashlib
 import json
@@ -37,6 +37,15 @@ def check_backend(inputs: dict, backend: dict, selected: list[str], discovered: 
         raise ValueError('missing, mismatched or incomplete fast backend subset validation')
 
 
+def check_protocol(inputs: dict, protocol: dict) -> None:
+    if (protocol['schemaVersion'] != 2 or protocol['status'] != 'passed'
+        or protocol['protocolSource'] != inputs['protocolSource']
+        or type(protocol['versions']) is not int or protocol['versions'] != 1
+        or protocol['apiVersion'] != '1.9.0'
+        or type(protocol['fixtureGroups']) is not int or protocol['fixtureGroups'] != 14):
+        raise ValueError('missing, mismatched or incomplete single-version protocol validation')
+
+
 def evidence(inputs: dict) -> dict:
     required = {'nativeArtifact', 'nativeDerivation', 'runtimeSource', 'testSource', 'backendValidation',
                 'backendDerivation', 'protocolValidation', 'protocolDerivation', 'protocolSource'}
@@ -47,17 +56,13 @@ def evidence(inputs: dict) -> dict:
     discovered = suite_names(Path(inputs['backendValidation'])/'validation-inventory.txt')
     check_backend(inputs, backend, selected, discovered)
     protocol = read(Path(inputs['protocolValidation'])/'protocol.json')
-    if (protocol['schemaVersion'] != 1 or protocol['status'] != 'passed'
-        or protocol['protocolSource'] != inputs['protocolSource'] or protocol['versions'] != 9
-        or type(protocol['fixtureGroups']) is not int or protocol['fixtureGroups'] <= 0
-        or type(protocol['retainedBranchRejections']) is not int or protocol['retainedBranchRejections'] <= 0):
-        raise ValueError('missing, mismatched or incomplete retained-version protocol validation')
+    check_protocol(inputs, protocol)
     executable = Path(inputs['nativeArtifact'])/'libexec/chronicle-server'
     digest = hashlib.sha256()
     with executable.open('rb') as stream:
         while block := stream.read(1024*1024):
             digest.update(block)
-    return {'schemaVersion': 2, 'claim': 'exact-artifact-bound-to-fast-backend-subset-and-retained-protocol',
+    return {'schemaVersion': 2, 'claim': 'exact-artifact-bound-to-fast-backend-subset-and-single-version-protocol',
             'inputs': inputs, 'nativeSha256': digest.hexdigest(), 'backend': backend, 'protocol': protocol}
 
 

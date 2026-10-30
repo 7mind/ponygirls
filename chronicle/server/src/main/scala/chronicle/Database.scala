@@ -61,7 +61,10 @@ object Jobs {
     Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,fence=fence+1,run_id=CASE WHEN state='Complete' THEN gen_random_uuid() ELSE run_id END,error=CASE WHEN state='Complete' THEN NULL ELSE error END,failure_stage=CASE WHEN state='Complete' THEN NULL ELSE failure_stage END,completed_windows=0,total_windows=NULL WHERE id=?",id)
   }
 }
-final class PostgresArchive(db: Database, config: Config) extends SessionArchive with PassageReader with MessageSearchReader {
+final class PostgresArchive(db: Database, config: Config) extends SessionArchive with PassageReader with MessageSearchReader with ContextReader {
+  private val contextReader=new PostgresContextReader(db,this)
+  def readMessageContext(reader: String,id: UUID,view: ContentView,anchor: Span,beforeBytes: Int,afterBytes: Int,materialization: ReadMaterialization): MessageContextResult =
+    contextReader.readMessageContext(reader,id,view,anchor,beforeBytes,afterBytes,materialization)
   private val messageSearch=new PostgresMessageSearch(db,this,new MessageSearchCursors)
   def searchSessionMessages(reader: String,id: UUID,view: ContentView,literal: String,cursor: Option[String],limit: Int,materialization: ReadMaterialization): SessionMessageSearchResult =
     messageSearch.searchSessionMessages(reader,id,view,literal,cursor,limit,materialization)

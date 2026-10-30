@@ -66,7 +66,7 @@ try {
     const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 180; });
     const first = fixture.calls.find(call => call.operation instanceof api.Operation_Archive).operation.query;
     assert.equal(first.expression, ''); assert.equal(first.sort, api.ArchiveSort.LastTimestamp); assert.equal(first.direction, api.SortDirection.Desc);
-    assert.ok(fixture.calls[0].operation instanceof api.Operation_Hello); assert.deepEqual(fixture.calls[0].operation.versions, ['1.8.0']);
+    assert.ok(fixture.calls[0].operation instanceof api.Operation_Hello); assert.deepEqual(fixture.calls[0].operation.versions, [api.ClientEnvelope.BaboonDomainVersion]);
     assert.equal(await page.getByRole('heading', { level: 1 }).count(), 0); assert.equal(await page.getByRole('radio').count(), 0);
     await appendUntil(page, '.archive-table-scroll', '.archive-row', 180);
     assert.equal(new Set(await page.locator('.archive-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-session-id')))).size, 180);

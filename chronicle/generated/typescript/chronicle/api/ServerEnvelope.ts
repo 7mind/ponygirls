@@ -39,7 +39,7 @@ export class ServerEnvelope implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ServerEnvelope.BaboonDomainVersion
     }
@@ -51,15 +51,15 @@ export class ServerEnvelope implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return ServerEnvelope.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.8.0"]
+    public static readonly BaboonSameInVersions = ["1.9.0"]
     public baboonSameInVersions() {
         return ServerEnvelope.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.8.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
     public baboonForwardReadable() {
         return ServerEnvelope.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.7.0", "prefix-compact": "1.8.0", "prefix-any-mode": "1.8.0", "identical": "1.8.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
     public baboonMinReaderVersions() {
         return ServerEnvelope.BaboonMinReaderVersions
     }
@@ -91,7 +91,7 @@ export class ServerEnvelope_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ServerEnvelope_JsonCodec.BaboonDomainVersion
     }

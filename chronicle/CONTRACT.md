@@ -1,20 +1,20 @@
-# Chronicle v1.8 contract (2026-10-30)
+# Chronicle v1.9 contract (2026-10-30)
 
-Authoritative schema: `models/chronicle.baboon` (`chronicle.api`, `1.8.0`), importing retained `models/chronicle-1.7.0.baboon` through `models/chronicle-1.0.0.baboon`. All nine versions' codecs remain generated; Scala generation explicitly enables deprecated encoders. Generated Scala: `generated/scala/chronicle/api/`; TypeScript: `generated/typescript/chronicle/api/`, with runtime at `generated/typescript/BaboonRuntime.ts` and `BaboonSharedRuntime.ts`. Use `Type_JsonCodec.instance.encode/decode(BaboonCodecContext.Default, value)`; do not use plain `JSON.stringify` on generated ADTs. ADTs encode as one-key objects (e.g. `{"Whoami":{}}`); enums encode their named string (`Lexical`, `Pi`, `Read`). UUID strings. Optional fields encode null. Timestamp metadata is ISO8601 string or null. Spans use UTF-8 byte offsets, half-open.
+Authoritative schema: `models/chronicle.baboon` (`chronicle.api`, `1.9.0`), the sole self-contained API model. Only this version's Scala and TypeScript codecs are generated; no historical schemas or cross-version converters are retained. Generated Scala: `generated/scala/chronicle/api/`; TypeScript: `generated/typescript/chronicle/api/`, with runtime at `generated/typescript/BaboonRuntime.ts` and `BaboonSharedRuntime.ts`. Use `Type_JsonCodec.instance.encode/decode(BaboonCodecContext.Default, value)`; do not use plain `JSON.stringify` on generated ADTs. ADTs encode as one-key objects (e.g. `{"Whoami":{}}`); enums encode their named string (`Lexical`, `Pi`, `Read`). UUID strings. Optional fields encode null. Timestamp metadata is ISO8601 string or null. Spans use UTF-8 byte offsets, half-open.
 
 ## HTTP/auth
 - `POST /api/login`: generated `LoginRequest` -> `LoginResponse`; sets `chronicle_session` HttpOnly, SameSite=Strict, Secure (configurable only for local HTTP development).
 - `POST /api/logout`: cookie + exact Origin, expires session.
 - `POST /api/session/refresh`: cookie ONLY + exact Origin, no URL parameters; renews an existing unexpired session for an enabled user, returns generated `UserInfo`, and resets the same HttpOnly/SameSite=Strict/configured-Secure cookie. `X-Chronicle-Session-Ttl-Seconds` reports the configured positive lifetime; `Cache-Control: no-store`. Cookie Max-Age and server expiry use the same lifetime (default 30 days). Renewal cannot recreate an expired, logged-out or revoked session. Extending a still-live session for the same credential and principal preserves captured MCP authority; expiry reductions, credential/principal changes and revival of an already-expired row still advance the authorization epoch. Fresh authentication and natural-expiry checks are unchanged. After a successful renewal, the visible dashboard schedules the next renewal at half the configured lifetime, capped at one day; hidden dashboards do not keep renewing. Renewal errors are visible and require explicit retry or a fresh verified connection, not a password unless authentication was actually rejected.
 - `GET /api/versions`: generated `VersionInfo`, public.
-- `GET /api/ws`: cookie ONLY and exact configured Origin; text JSON `ClientEnvelope` -> `ServerEnvelope`. First operation Hello(versions containing any supported version from `1.0.0` through `1.8.0`); select the newest mutual version for the socket's lifetime. Repeated Hello is a protocol error. VersionInfo reports current `1.8.0`, minimum `1.0.0`, supported `[1.8.0,1.7.0,1.6.0,1.5.0,1.4.0,1.3.0,1.2.0,1.1.0,1.0.0]`. No browser HTTP version header is required. Per-request cookie/session/live-user authorization. Ping/Pong nonce heartbeat; server Ping uses a fresh envelope requestId, answer Pong with SAME requestId and nonce. 20s heartbeat / 10s pong deadline. Client Ping -> Result.Pong. Hello/Ping/Pong are consumed independently of serialized application work; its per-socket queue is bounded32 and saturation returns unavailable. Queued operations reauthenticate at execution. No mutation replay on reconnect.
+- `GET /api/ws`: cookie ONLY and exact configured Origin; text JSON `ClientEnvelope` -> `ServerEnvelope`. First operation Hello(versions containing `1.9.0`); only that version is accepted for the socket's lifetime. Removed and future-only offers return `version-mismatch` without a compatibility fallback. Repeated Hello is a protocol error. VersionInfo reports current `1.9.0`, minimum `1.9.0`, supported `[1.9.0]`. No browser HTTP version header is required. Per-request cookie/session/live-user authorization. Ping/Pong nonce heartbeat; server Ping uses a fresh envelope requestId, answer Pong with SAME requestId and nonce. 20s heartbeat / 10s pong deadline. Client Ping -> Result.Pong. Hello/Ping/Pong are consumed independently of serialized application work; its per-socket queue is bounded32 and saturation returns unavailable. Queued operations reauthenticate at execution. No mutation replay on reconnect.
 - `POST /api/ingest`: bearer ONLY, Ingest scope; generated `IngestRequest` -> `IngestReceipt`; errors JSON Failure and non-2xx.
 - `POST /mcp`: bearer ONLY, Read scope (Raw additionally for raw, which is deliberately not an MCP tool). Stateless Streamable HTTP; JSON responses. Supported MCP versions 2025-11-25, 2025-06-18, 2025-03-26. GET returns 405; notifications return 202. Origin if present must match configured origin. No URL credentials anywhere.
 
 ## WS operations
 `Hello`, `Ping`, `Pong`, `Whoami`; reads `Search(SearchQuery)`, `GetSession`, `GetChunks(offset,limit)` (Result.Chunks: chunks,total,offset), `GetMessages(offset,limit)`, `GetRaw`, `Related(limit)`, `Facets(filter)`, `IngestStatus(offset,limit)`; browser-only mutations `RetryJob`, `MintToken`, `RevokeToken`, `CreateGroup`, `Invite`, `AcceptInvite(confirmSharing=true)`, `RemoveMember`, `LeaveGroup`, `DeleteGroup`, `Purge`, `Logout`; management `ListTokens`, `ListGroups`, `Receipt(mutationId)`. Result ADT branches are defined in model. Every request has UUID requestId; mutating receipts bind requestId to operation payload, changed replay conflicts. Mint returns secret exactly once; receipt lookup/replay returns token metadata with null secret (revoke/remint after uncertain outcome). Scopes `Ingest`, `Read`, `Raw`; Raw requires Read. Groups grant direct nontransitive read-only sharing. Owner must delete group rather than leave. Missing/unauthorized IDs indistinguishable. Search modes never silently degrade. Offset >=0, limits 1..100, transcript message page <=100; all results bounded. Receipt is Result.Mutation; errors Result.Error(Failure(code,message)).
 
-MCP tools: `search_sessions` (query,mode lexical|semantic|hybrid, project/gitBranch/after/before/tags, limit/offset), `get_session` (sessionId), `get_chunks` (sessionId,offset,limit), `get_messages` (sessionId,offset,limit), `related_sessions` (sessionId,limit), `list_facets` (same filters), `search_tags` (required query; same filters; limit/afterTag), `ingest_status` (offset,limit), `whoami` (no arguments). Outputs share application generated result codecs inside MCP text content. `search_tags` reuses `Result.Facets` with only `tags` populated; its empty `projects` and `branches` arrays are intentional, not evidence those values are absent. No browser operation, model version or retained-client conversion changes are involved.
+MCP tools: `search_sessions` (query,mode lexical|semantic|hybrid, project/gitBranch/after/before/tags, limit/offset), `get_session` (sessionId), `get_chunks` (sessionId,offset,limit), `get_messages` (sessionId,offset,limit), `read_message_context` (sessionId,view,anchor,beforeBytes,afterBytes), `related_sessions` (sessionId,limit), `list_facets` (same filters), `search_tags` (required query; same filters; limit/afterTag), `ingest_status` (offset,limit), `whoami` (no arguments). Outputs share application generated result codecs inside MCP text content. `search_tags` reuses `Result.Facets` with only `tags` populated; its empty `projects` and `branches` arrays are intentional, not evidence those values are absent. The tag catalog itself requires no additional browser operation or model version.
 
 ## Ingestion
 Source key = authenticated owner + collectorNamespace + discoveryRootId + format + producerSessionId + nullable subagentId; namespace persistent across collector restarts, discoveryRootId stable across root rescans. Owner is NEVER supplied. expectedRevision=0 for new source; CAS increments by one. requestId persists through retries; same payload same receipt, changed payload conflict. digest is SHA256 over UTF-8 file contents concatenated in files order (each file separately has sha256); files are relative logical paths, exact permitted JSONL UTF-8 bytes. Max defaults: 8MiB HTTP body, 16 files, 4MiB/file, 10000 messages. Messages preserve parent IDs, role and recordIndex referring to original JSONL record; display text follows the NUL projection below. Completion is Quiescent or Closed (not assistant-turn completion). Metadata missing fields null. No real source content in development tests. Upload acknowledgement means raw revision+durable job committed, not searchable yet. A newer archive head terminalizes unfinished older jobs as Failed/error `superseded-revision` and fences their workers; older Complete jobs/generations remain available to pinned views. RetryJob for a superseded revision or obsolete model profile returns conflict, never a receipt for work that cannot run. Current-head AND current target-profile eligibility are checked under owner/target→source→job locks. A retained target that is not executable by this deployment rejects NEW ingestion and retry with `unavailable` before mutation; it is never silently queued under the new model's identity. A freshly authorized, payload-bound committed ingest receipt remains observable without an executable target. Collectors retain/retry pending uploads until a fresh confirmed owner rebuild establishes the current target. Startup preserves existing targets (including opaque targets inherited from pre-owner-target archives); only genuinely new configured owners seed current.
@@ -55,7 +55,7 @@ There is no exactly-once provider-call claim across response/commit crashes: onl
 
 Old publication/search stays intact until validated atomic replacement and final live-lease acceptance. Then all obsolete derived generations for that selected source are retired; raw data, normalized revisions, receipts and job IDs are not deleted by rebuild. Retirement consent is ONE-SHOT per captured source/target epoch/profile, separate from exact revision/job/run completion: a validated superseding revision may fulfill retirement while its captured member remains Superseded. Later ordinary publications preserve the new current-policy history unless another explicit rebuild is accepted. Publication rollback also rolls back completion/retirement markers and all derived changes.
 
-Retired full-generation pins first reauthorize, then return exactly `indexed-view-retired`, never redirect to HEAD. Revision-only views, Find and raw revisions remain available. Retained APIs1.0–1.6 stay supported: unsupported optional ArchiveRow publishedFormat projects to null, never to Legacy/P1; context-aware passage/span operations return typed nonterminal `unavailable` on older APIs, leaving the socket usable.
+Retired full-generation pins first reauthorize, then return exactly `indexed-view-retired`, never redirect to HEAD. Revision-only views, Find and raw revisions remain available. Historical index-profile formats and persisted content remain readable under the current API; removing old wire codecs does not remove historical data.
 
 `GetChunks` / MCP `get_chunks` pages every published annotation in deterministic original source order, never UUID order. Read scope and live same-session ACL apply before limits. Count+rows use one REPEATABLE READ transaction and captured generation pointer; concurrent publication cannot mix generations within one page. GetSession retains its first100chunk compatibility response.
 
@@ -74,11 +74,11 @@ MCP get_session/get_chunks/get_messages accept optional `revision` and `generati
 
 Semantic search obtains at most1000 authorized, filtered chunk candidates through HNSW. Hybrid unions that ANN leg with at most1000 independently authorized lexical candidates, then applies RRF(k=60). Both modes exactly rerank retained candidates using their original full-precision PostgreSQL vector cosine distances; candidate discovery remains approximate. `total` is the exact number of distinct sessions in that candidate window, NOT the global eligible-session/match count. `countScope=CandidateWindow` and `rankingLimit=1000` (semantic) or2000 (hybrid) expose this boundary. rankingLimit bounds chunk candidates before session deduplication, not the number of hits or an assurance that the window fills. Offset must be smaller than rankingLimit; otherwise `invalid`. Pages still return at most100 sessions and offsets beyond the actual candidate-session total return empty. Search pages are not a frozen search snapshot across requests; live ACL/publication changes may change membership/order. Facets remain exact distinct-session counts over their authorized filtered published corpus, not the ANN window.
 
-Current Hybrid recomputes lexical and full-vector ranks over the candidate union, then selects each session's best fused chunk. A candidate receives lexical RRF credit only when its document satisfies the full `@@ websearch_to_tsquery('english', query)` predicate; a positive cover-density score alone is insufficient. Nonmatching ANN candidates remain eligible for the vector term, but receive zero lexical score before lexical rank assignment. In particular, lexical exclusions are not hard semantic filters. The explicit negotiated1.0 compatibility path below retains its prior scoring semantics.
+Current Hybrid recomputes lexical and full-vector ranks over the candidate union, then selects each session's best fused chunk. A candidate receives lexical RRF credit only when its document satisfies the full `@@ websearch_to_tsquery('english', query)` predicate; a positive cover-density score alone is insufficient. Nonmatching ANN candidates remain eligible for the vector term, but receive zero lexical score before lexical rank assignment. In particular, lexical exclusions are not hard semantic filters.
 
 Live ACLs, owner/reader enabled state, profile identity, published-generation equality and all structured filters apply before EACH candidate LIMIT. pgvector strict iterative scanning continues beyond rejected tuples (ef_search200, max_scan_tuples200000, scan_mem_multiplier4); the resource budget and approximate graph may still underfill selective queries. There is no unbounded application postfilter of a global topK, no unauthorized count contribution and no silent exact fallback. Full vectors remain `vector`; HNSW uses normalized `halfvec(dimensions)` expression indexing, including2048-dimensional models. Literal dimension and partial-index predicates match even under generic prepared plans.
 
-The explicit negotiated1.0 compatibility path retains the old exact full-corpus ranking/count/pagination semantics and encodes only the old SearchResult fields with the1.0 codec. It is not the1.1 ANN path and does not claim ANN performance. MCP always returns the current1.1 result shape, including scope metadata. Ingest/raw/content-view schemas are unchanged.
+There is no API-version-based exact search path or compatibility fallback. MCP and the dashboard use the same current result shape, including scope metadata. The exact search oracle retained for diagnostics is not a negotiated API.
 
 Structured tag filters apply AND across requested tags, with each tag allowed in the union of published-source metadata tags and ANY chunk's generated work tags for that same session/generation. Facets use the same published revision and live ACL; tag counts are DISTINCT sessions, not chunk occurrences. Pending mutable-head metadata never labels an older published search generation.
 
@@ -90,35 +90,32 @@ Every page reevaluates current published revisions, structured filters and live 
 
 Example: `tools/call` with `{"name":"search_tags","arguments":{"query":"postgres","limit":20,"project":"ponygirls"}}` returns generated `Facets.result.tags` entries such as `{"value":"PostgreSQL","count":3}`. Nonempty returned values of at most128 UTF-16 units can be used unchanged in `search_sessions.tags`; that existing filter still rejects empty or longer historical values even though the catalog exposes them. Pass the last value, without truncation, as `afterTag` with the same query/filters to continue. `list_facets` remains the separate top100/popularity tool.
 
-## Ingestion/provenance evolution (1.2, preparatory contract)
+## Ingestion and provenance
 
-- Persisted `TokenInfo` and `TokenResult` are unchanged. Only 1.2 token lists use `ListedToken{info:TokenInfo,source:TokenSource}` (`Issued` / `StaticConfig`). Older list responses project `.info`. Existing issued tokens are wrapped as `Issued`; static credential configuration/enforcement is a later backend implementation.
-- `JobInfo` appends required `completedWindows:i32` and `totalWindows:opt[i32]`. Old-to-new conversions use 0/null for unknown progress. Old responses omit these fields. Database reads currently return unknown progress; worker persistence is a later backend implementation.
+- Persisted `TokenInfo` and `TokenResult` are unchanged. Token lists use `ListedToken{info:TokenInfo,source:TokenSource}` (`Issued` / `StaticConfig`). Existing issued tokens are wrapped as `Issued`; static credential configuration/enforcement is a later backend implementation.
+- `JobInfo` appends required `completedWindows:i32` and `totalWindows:opt[i32]`. Unknown progress is represented as 0/null. Database reads currently return unknown progress; worker persistence is a later backend implementation.
 - `CollectorProgressUpdate` and `CollectorProgressAck` are root wire types. `CollectorCounters` includes all twelve discovery/upload counters plus `scannedBytes:i64`; phase is Discovering/Scanning/Uploading/Idle/Failed. Sequence and byte counts are i64 **decimal strings on JSON**, bigint in TypeScript / Long in Scala. `uploadedBytes` denotes ACKNOWLEDGED payload bytes only.
 - `Operation.CollectionStatus{}` / `Result.CollectionStatus{result:CollectorStatusResult}` carry owner-filtered `CollectorStatus{report,receivedAt,stale}` snapshots. These types are published now; the browser/Read handler, Ingest-only POST endpoint, 64KiB bound, owner limit100, durable monotonic sequence, and >120s staleness computation are deliberately deferred to the backend feature implementation. No placeholder healthy/empty response is supplied.
 
 ### Regeneration and negotiation
 
-Run `BABOON=<pinned 0.0.198 executable> scripts/generate.sh`. The executable hash is checked. All model signatures are frozen in `models/lock.json`; enforcement protects legacy versions. `scripts/protocol-conversions.py` runs after generation:
+Run `BABOON=<pinned 0.0.198 executable> scripts/generate.sh`. The executable hash is checked. `models/chronicle.baboon` contains every current type directly, with no version imports; `models/lock.json` locks only1.9.0. Both output trees are emitted entirely by the pinned compiler, without handwritten codec edits or post-generation conversion/whitespace rewriting. Edit this single schema in place for this owned deployment rather than adding historical API versions.
 
-1. It registers every generated Scala forward converter in the adjacent 1.0→1.1→1.2→1.3→1.4→1.5→1.6→1.7→1.8 chain; custom conversions live in `server/src/main/scala/chronicle/ApiConversions.scala`, `JobInfoConversions.scala`, `ArchiveRowConversions.scala` and `ArchiveOrderConversions.scala`.
-2. Pinned Baboon has no reverse-generation flag. The helper mirrors its structural **response-only** Scala converters, with explicit lossy projections for search count metadata, job progress/failure stage, token wrappers, the 1.5 Archive row field and unsupported optional 1.7 context-format provenance. Output is `server/src/main/scala/chronicle/protocol/DerivedConversions.scala`. No JSON field rewrite/codec cast substitutes for typed evolution.
-3. The TypeScript emitter inlines throws for unsupported nested conversions. The helper wires the five known stubs and five call sites to `protocol/typescript/conversions.ts`; semantic implementations remain outside the wiped generated directories. Unknown output fails generation/compilation rather than silently falling back. The pipeline normalizes whitespace-only lines in the emitted facade and mirrored Scala output.
+VersionInfo and browser/native workflow Hello offers use the generated current version. The dashboard and server accept only1.9.0; old/future versions are rejected explicitly. Domain↔API mappings remain separate from codecs. PostgreSQL workflow coverage exercises current Hello/Ping/token mint/list/receipt/revoke/status/search, Archive/Activity, passages/spans and MCP controls. `ProtocolEvolutionTest` and `ApiVersionCompatibilityTest` check sole-version negotiation and removed/future-version rejection. `scripts/test-codecs.sh` exercises current Scala/TypeScript golden payloads, exact i64 values, required flags and bounded context. Recorded historical wire fixtures remain immutable even when their old shapes are no longer accepted.
 
-The current dashboard offers only 1.8.0. Retained 1.0–1.7 clients use their generated codecs for the whole socket lifetime. PostgreSQL compatibility tests exercise all nine Hello/Ping/token mint/list/receipt/revoke/status/search workflows, including nonempty job status and exact legacy pagination. Context-aware passage/span reads remain available on both 1.7 and 1.8. Model usage, expression hints and the browser MCP tester remain available on 1.4–1.8; unsupported older operations fail explicitly. MCP tester responses are encoded in the negotiated version and bounded against all five supported tester versions (1.4–1.8). Its call/round ceilings derive from the256-event trace capacity (at least call+result events and a final response):127calls/128rounds, not a token/cost budget. Whole-run900seconds, context/source/result/trace byte limits, fresh authorization and cancellation still apply; multipart items may reach the trace limit sooner. `ProtocolEvolutionTest` and web `evolution.test.ts` cover typed upgrades/downgrades and exact i64 wire values. `scripts/test-codecs.sh` checks retained shared fixtures plus the 1.5 unknown/legacy/contiguous/unpublished Archive rows.
+MCP tester responses are bounded against the sole current envelope/DTO shape. Its call/round ceilings derive from the256-event trace capacity (at least call+result events and a final response):127calls/128rounds, not a token/cost budget. Whole-run900seconds, context/source/result/trace byte limits, fresh authorization and cancellation still apply; multipart items may reach the trace limit sooner.
 
 
 ## Archive and Activity (1.3)
 
 New operations are Archive(ArchiveQuery), Activity(ActivityQuery),
 ActivityJobs(ActivityJobsQuery), LocateMessage(sessionId,view,messageId); locator
-responds with Result.LocatedMessage(MessageLocation). Every previous operation,
-retained socket version and existing MCP tool remains available unchanged.
+responds with Result.LocatedMessage(MessageLocation). All current operations and existing MCP tools remain available.
 
 Archive is all authorized live raw HEADs, not the published-only Search corpus.
 Empty/metadata-only browsing never requires annotation, embeddings or an available
 semantic profile. Default mode is Hybrid; initial browsing sort is LastTimestamp Desc.
-API1.8 adds the explicit relevance preference described below.
+The explicit relevance preference is described below.
 Text membership is exact normalized HEAD literal matching in Lexical, bounded
 published ANN membership in Semantic, and the UNBOUNDED exact lexical union with
 bounded ANN in Hybrid. annChunkLimitPerOperand=1000 bounds chunks before session
@@ -173,11 +170,7 @@ retrieved-set scope. These are live keysets, not search snapshots: publication,
 ACL, ANN or query-vector changes can shift ranks and cause duplicates or omissions
 between pages; client deduplication does not guarantee complete enumeration.
 
-Typed 1.7→1.8 conversions explicitly supply false for both flags, preserving all
-retained 1.3–1.7 Archive workflows. Reverse response conversion rejects a true
-`relevanceOrdered` rather than silently relabeling its order; false drops the
-new field. All existing column enums, limits, model failures and query language
-remain unchanged. No migration, embedding/profile change or reindex is required.
+Both relevance flags are required in the current wire format; missing flags do not receive compatibility defaults. All column enums, limits, model failures and query language remain unchanged. No migration, embedding/profile change or reindex is required.
 
 ArchiveRow.head.view is archive-only HEAD; publishedView and matchedView are
 separate immutable pins. A representative matchedView does not prove that every
@@ -216,10 +209,7 @@ HEAD metadata/source format, stale revisions, profile hashes and Complete/Failed
 job states cannot substitute for this value. An explicitly legacy publication
 remains legacy while a replacement is Queued, Running or Failed.
 
-The 1.4→1.5 conversion supplies null for the new optional value. The explicit
-typed 1.5→1.4 projection drops it and converts nested values; every retained
-schema, signature and wire fixture remains frozen. No migration, re-ingestion,
-owner retargeting or generation rewrite is implicit in this API evolution.
+Historical wire fixtures remain frozen. No migration, re-ingestion, owner retargeting or generation rewrite is implicit in the single-API consolidation.
 The warning uses joined row metadata, not per-row content or passage requests.
 
 ## Agent expression predicate
@@ -244,3 +234,84 @@ Matching uses PostgreSQL `strpos(lower(message.text COLLATE pg_unicode_fast),low
 Named bounds in `SessionMessageSearchPolicy`: nonempty scalar query <=2048 UTF-8 bytes, cursor <=4096 UTF-8 bytes, limit 1..100, selected locator JSON <=64KiB including lookahead. The database measures the limited locator selection and charges it before fetching/decoding IDs, even for unrestricted browser reads; an admitted caller's source budget is also charged. Budget excess fails explicitly with `read-budget`, never silent truncation. Each database statement has a five-second deadline (or a stricter existing deadline), including authorization, lock waits and preflight; cancellation fails with `deadline`, never no-matches or partial success.
 
 Opaque base64url JSON cursors bind reader, session, full view, matching policy, exact query digest and last position, and are HMAC authenticated by the stable archive reader instance. Mismatch/tampering is invalid. Restart/replacement of that instance invalidates outstanding cursors; restart the find from its first page. No cursor authenticates a reader or overrides fresh authorization. APIs1.0–1.5 remain frozen, available and unchanged.
+
+
+## Byte-bounded message context (1.9)
+
+`Operation.ReadMessageContext{sessionId,view,anchor,beforeBytes,afterBytes}` returns
+`Result.MessageContext{result:MessageContextResult}`. `MessageContextResult` carries
+`sessionId`, the exact `view`, a resolved `anchor:PassageSourceSpan`,
+`excerpts:ContextExcerpt[]`, and nullable `previous`/`next:Span`.
+Each excerpt is `{source:PassageSourceSpan,role:str,text:str}`; source carries
+`messageId`, `messagePosition`, `start`, `end`. There is no whole-message or raw
+payload, parent ID, timestamp, snapshot, or synthesized text separator.
+
+MCP `read_message_context` requires exactly these five arguments:
+
+```json
+{"sessionId":"00000000-0000-4000-8000-000000000001","view":{"revision":1,"generationId":null},"anchor":{"messageId":"m0","start":0,"end":12},"beforeBytes":2048,"afterBytes":2048}
+```
+
+Copy `session.id`, the complete `session.view`, and one `chunk.spans` entry from
+a search hit. The existing search/session/chunk/span shapes are unchanged; a
+multi-span chunk permits independent navigation from each span. Unlike older
+MCP content tools, this tool requires a nested `view` with both fields present
+(`generationId` may be null). Unknown/missing fields are invalid. Read scope is
+sufficient; browser/Raw scope, indexing work and model requests are not needed.
+
+Offsets address archived normalized UTF-8 bytes, half-open, on Unicode-scalar
+boundaries: `0 <= start <= end <= message UTF-8 length`. A zero-width anchor is
+valid, including at a message boundary. The anchor is included in full and may
+not exceed2048bytes (`read-budget`); it is never silently clipped. Each required
+side budget is zero (direction disabled) or4..2048bytes. Positive budgets admit
+any Unicode scalar, not necessarily a grapheme cluster. Expand first within the
+anchor message, then into at most four adjacent messages per side. Stop at the
+first scalar that does not fit remaining bytes; do not skip it. Encountered
+empty messages count toward the adjacency cap. Omit a nonempty neighbor when
+no scalar fits; keep continuation at the preceding returned boundary. The
+anchor itself is always retained, including when zero-width. Return at most nine excerpts in
+source order, with the anchor message merged once and original roles/boundaries
+preserved. Every excerpt's UTF-8 bytes equal exactly its source slice; no text
+separators are injected.
+
+`previous`/`next` are zero-width spans at the outer returned boundaries, nonnull
+iff bytes or messages remain in that direction. Continue with that anchor and
+the exact same session/view, setting the other direction to zero. At a message
+start/end, navigation proceeds into the neighbor. Empty sequences advance by
+position. Boundary metadata can repeat, but continuation never repeats text.
+
+`PostgresArchive` delegates to its private `PostgresContextReader`, with one
+REPEATABLE READ source transaction, fresh same-session ACL/pin validation and a
+five-second per-statement deadline (preserving stricter configured deadlines).
+Direct numeric message location, byte lengths and scalar-boundary projections
+are bounded; only bounded exact-source excerpt text is selected. Complete
+selected JSON framing/metadata is measured and admitted before text transfer to
+the JVM. The endpoint always applies a cumulative64KiB source cap, including
+numeric source projections and excerpt framing, even with an unrestricted
+caller; admitted callers additionally consume their own cumulative budget.
+Generated serialized `Result.MessageContext` and the complete MCP tool-content
+wrapper (including its additional JSON string escaping) are each capped at128KiB. These are
+conservative initial resource limits, not measured semantic sufficiency.
+PostgreSQL may inspect/decompress full stored text internally: this bounds
+application transfer, not database CPU independently of source size.
+
+Public HTTP supplies explicit fresh bearer authentication before and after this
+new read and compares the captured global security epoch. Browser API1.9 uses
+fresh `currentBrowser` and the same epoch policy. Live MCP tester calls retain
+fresh captured-run authority through `ReadAccess.blocking`. The old two-argument
+MCP handler cannot invoke context without explicit fresh authority; the nine
+older tools retain their former behavior. Source ACL/pin validity is checked
+in the source transaction's snapshot; credential/epoch checks are delivery
+checks, not a second source snapshot. Global epoch changes can conservatively
+deny an unrelated context read. No final check can prevent revocation occurring
+after that check or retract a previously delivered result.
+
+Malformed ranges, scalar cuts and side budgets return `invalid`; absent,
+unauthorized or purged source/message/view returns `not-found`; an authorized
+retired generation returns `indexed-view-retired`; source/caller/result limits
+return `read-budget`; SQL cancellation returns `deadline`. The one-shot MCP
+runner retains named `deadline` and `indexed-view-retired` failure codes with
+a generic sanitized message and no automatic retry. Ordinary append or
+republication preserves old full pins; foreign session/revision generations
+never fall back to HEAD. APIs1.0–1.8 signatures/codecs remain frozen, and reject
+the new operation/result branch explicitly rather than fabricating compatibility.

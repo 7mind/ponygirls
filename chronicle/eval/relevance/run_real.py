@@ -19,6 +19,11 @@ from urllib.parse import urlsplit
 from bridge import Bridge, loopback
 from evaluate import ROOT, digest, facts_match, load, save, score_task
 from runtime import Run, cleanup_adopted_children, enable_subreaper, finish, identity, listener_proof, port, terminate
+from runner_integration_v3 import (WorkflowBinding, LEGACY_SOURCE_POLICY, bound_schedule,
+    publication_fingerprint, trusted_manifest, trusted_preflight, validate_codec_files, validate_seed_policy, validate_workflow_bindings)
+import workflow_v3 as trusted
+from assessment_v3 import BoundArtifact, CellInputs, assess_cell, propositions_for
+from source_observations_v3 import FrozenSources
 
 MODES = ('lexical', 'semantic', 'hybrid')
 FACT_FORMAT = 'ordered-string-values-v1'
@@ -127,7 +132,29 @@ def read_evaluation_trace(path, outcome):
         return [], {'type': type(error).__name__, 'message': str(error)}
 
 
+def write_v3_sidecar(output, actual, opaque, fixture, catalog, rubric, configuration, mapping, schedule, controller, fixed):
+    paths = dict(fixture=fixture, catalog=catalog, rubric=rubric, configuration=configuration, mapping=mapping,
+        schedule=schedule, controller=controller, fixed_retrieval=fixed, run=output / 'run.json',
+        native_outcome=output / 'native-outcome.json', outcome=output / 'outcome.json', trace=output / 'trace.jsonl')
+    missing = [name for name, path in paths.items() if not path.is_file()]
+    if missing:
+        save(output / 'assessment-v3.json', {'assessmentPolicy': 'evidence-assessment-v3', 'available': False,
+            'taskId': actual, 'opaqueId': opaque, 'missingArtifacts': missing,
+            'reason': 'actual controller artifacts unavailable; no fabricated run/prompt/trace'})
+        return
+    def artifact(path):
+        raw = path.read_bytes()
+        return BoundArtifact(raw, hashlib.sha256(raw).hexdigest())
+    artifacts = {name: artifact(path) for name, path in paths.items()}
+    artifacts.update(answer=artifact(output / 'answer.json') if (output / 'answer.json').is_file() else None,
+                     review=None, legacy_metrics=artifact(output / 'score.json'))
+    prompt = artifacts['run'].json()['prompt']
+    assessment = assess_cell(CellInputs(actual, opaque, hashlib.sha256(prompt.encode('utf-8')).hexdigest(), **artifacts))
+    save(output / 'assessment-v3.json', assessment)
+
+
 def freeze(bindings, directory):
+    policy = WorkflowBinding.parse(bindings['workflow'], 'prepare' if bindings['workflow']['batch'] is None else 'run')
     archive = directory / 'frozen'; archive.mkdir()
     sources = []
     for number, binding in enumerate(bindings['frozenInputs']):
@@ -139,10 +166,16 @@ def freeze(bindings, directory):
         sources.append({'path': str(source), 'sha256': binding['sha256'], 'saved': target.name})
     save(archive / 'index.json', sources)
     required = {str((ROOT / name).resolve()) for name in (
-        'run_real.py', 'runtime.py', 'bridge.py', 'evaluate.py', 'agent_probe.mjs', 'live_protocol.mjs', 'resolve-live-generated.mjs')}
+        'run_real.py', 'runtime.py', 'bridge.py', 'evaluate.py', 'agent_probe.mjs', 'live_protocol.mjs', 'resolve-live-generated.mjs',
+        'runner_integration_v3.py', 'workflow_v3.py', 'assessment_v3.py', 'source_observations_v3.py',
+        'probe_policy_v3.mjs', 'agent_protocol_v3.mjs')}
     required.update(str(bound(bindings[key])) for key in ('fixture', 'configTemplate', 'embeddingProof'))
     required.update(str(bound(bindings[key]['profile'])) for key in ('annotation', 'embedding'))
-    if not required.issubset({item['path'] for item in sources}):
+    required.add(str(policy.rubric.path)); policy.rubric.read()
+    if policy.batch is not None:
+        policy.batch.schedule.read(); required.add(str(policy.batch.schedule.path))
+    frozen_required = required | {str(bound(item)) for item in bindings['runtimeFiles']} | {str(bound(bindings['playwright']))}
+    if not frozen_required.issubset({item['path'] for item in sources}):
         raise ValueError('frozenInputs must include all workflow/fixture/config/profile inputs')
     workflow = directory / 'workflow'; workflow.mkdir()
     for source in sources:
@@ -152,11 +185,9 @@ def freeze(bindings, directory):
                 raise ValueError('frozen workflow input basename collision')
             target.write_bytes((archive / source['saved']).read_bytes()); target.chmod(0o400)
     project = directory / 'codec-project'; project.mkdir()
-    root = Path(bindings['generatedProject']).resolve(strict=True)
-    files = bindings['generatedFiles']
-    actual = {str(p.relative_to(root)) for p in (root / 'generated/typescript').rglob('*.ts')}
-    if actual != {entry['relativePath'] for entry in files}:
-        raise ValueError('generatedFiles must bind every generated TypeScript source')
+    root = policy.executor_codecs.project
+    files = policy.executor_codecs.declarations()
+    validate_codec_files(root, files)
     for entry in files:
         relative = Path(entry['relativePath'])
         if relative.is_absolute() or '..' in relative.parts or not str(relative).startswith('generated/typescript/'):
@@ -247,9 +278,11 @@ def clone_prepared(prepared, directory, bindings):
     if 'preparedNative' not in bindings or prior['native'] != bindings['preparedNative']:
         raise ValueError('prepared publisher native binding differs')
     bound(bindings['preparedNative'])
-    for name in ('postgres', 'fixture', 'annotation', 'embedding', 'factFormat', 'agentModel', 'generatedFiles', 'configTemplate'):
+    for name in ('postgres', 'fixture', 'annotation', 'embedding', 'factFormat', 'agentModel', 'generatedFiles', 'generatedProject', 'configTemplate'):
         if prior[name] != bindings[name]:
             raise ValueError('prepared binding differs: ' + name)
+    policy = WorkflowBinding.parse(bindings['workflow'], 'run')
+    validate_seed_policy(proof, prior, policy)
     before = data_inventory(prepared / 'data')
     if before != proof['dataFiles']:
         raise ValueError('prepared PGDATA changed')
@@ -280,6 +313,7 @@ def main():
         raise ValueError('bindings digest mismatch')
     bindings = load(args.bindings)
     validate_execution_bindings(bindings, args.phase)
+    policy = validate_workflow_bindings(bindings, args.phase)
     publication_native = bindings['native'] if args.phase == 'prepare' else bindings['preparedNative']
     if bindings['version'] != 1 or bindings['relatedPolicy'] != 'deny':
         raise ValueError('version 1 comparison requires relatedPolicy deny')
@@ -294,6 +328,10 @@ def main():
     if args.phase == 'prepare' and (args.prepared is not None or args.split is not None or args.prepared_sha256 is not None):
         parser.error('prepare accepts neither --prepared nor --split')
     tasks = validate_fixture(fixture, bindings['factFormat'], args.split if args.phase == 'run' else 'dev')
+    rubric = policy.rubric.json()
+    if rubric['policy'] != 'evidence-assessment-v3' or rubric['fixtureSha256'] != digest(fixture_path):
+        raise ValueError('V3 rubric policy/fixture binding mismatch')
+    schedule = bound_schedule(policy, fixture, modes, args.split) if args.phase == 'run' else None
     if os.geteuid() == 0:
         raise ValueError('non-root PostgreSQL operator required')
     tools = {name: bound(bindings[name]) for name in ('native', 'python', 'node', 'chromium', 'playwright')}
@@ -330,6 +368,8 @@ def main():
     directory.mkdir(mode=0o700, parents=True, exist_ok=False)
     workflow, codec_project = freeze(bindings, directory)
     fixture_path = workflow / fixture_path.name
+    rubric_path = workflow / policy.rubric.path.name
+    rubric = load(rubric_path)
     save(directory / 'bindings.json', bindings)
     seconds = matrix_seconds(tasks, modes, bindings['bootstrapSeconds'], bindings['publicationSeconds'])
     save(directory / 'budget.json', {'matrixSeconds': seconds, 'perRunSeconds': 900, 'selectedTasks': len(tasks),
@@ -347,6 +387,7 @@ def main():
         if args.phase == 'run':
             prepared = args.prepared.resolve(strict=True)
             seed = clone_prepared(prepared, directory, bindings)
+            save(directory / 'seed-policy.json', validate_seed_policy(seed, load(prepared / 'bindings.json'), policy))
         else:
             for name in ('database-password', 'browser-password', 'reader-read', 'reader-ingest', 'restricted-read', 'restricted-ingest'):
                 target = directory / name; target.write_text(secrets.token_urlsafe(48)); target.chmod(0o600)
@@ -420,8 +461,13 @@ def main():
         save(directory / 'owned.json', manifest)
         common = ['--manifest', str(directory / 'owned.json'), '--fixture', str(fixture_path), '--related-policy', 'deny']
         bridge = [str(tools['python']), str(workflow / 'bridge.py')]
+        trusted_inputs = trusted_manifest(directory, fixture_path) if policy.source_policy == trusted.POLICY else None
         if args.phase == 'prepare':
-            run.command('ingest', bridge + ['ingest', *common, '--mode', modes[0], '--principal', 'reader', '--out', str(directory / 'ingest')])
+            if policy.source_policy == LEGACY_SOURCE_POLICY:
+                run.command('ingest', bridge + ['ingest', *common, '--mode', modes[0], '--principal', 'reader', '--out', str(directory / 'ingest')])
+            else:
+                (directory / 'ingest').mkdir()
+                trusted.provision_documents(trusted_inputs, fixture, directory / 'ingest', trusted.IngestLimits.from_config(config))
             receipts = load(directory / 'ingest/receipts.json')
             ids = ','.join("'" + str(uuid.UUID(receipt['jobId'])) + "'" for receipt in receipts.values())
             last_jobs = []
@@ -436,24 +482,40 @@ def main():
             finally:
                 save(directory / 'observed-index-jobs.json', last_jobs)
         else:
-            (directory / 'ingest').mkdir()
-            shutil.copy2(prepared / 'ingest/receipts.json', directory / 'ingest/receipts.json')
-        run.command('preflight', bridge + ['preflight', *common, '--mode', modes[0], '--principal', 'reader', '--catalog',
-                    str(directory / 'ingest/receipts.json'), '--out', str(directory / 'preflight')])
+            if policy.source_policy == LEGACY_SOURCE_POLICY:
+                (directory / 'ingest').mkdir()
+                shutil.copy2(prepared / 'ingest/receipts.json', directory / 'ingest/receipts.json')
+            else:
+                shutil.copytree(prepared / 'ingest', directory / 'ingest', copy_function=shutil.copy2)
+            receipts = load(directory / 'ingest/receipts.json')
+        if policy.source_policy == LEGACY_SOURCE_POLICY:
+            run.command('preflight', bridge + ['preflight', *common, '--mode', modes[0], '--principal', 'reader', '--catalog',
+                        str(directory / 'ingest/receipts.json'), '--out', str(directory / 'preflight')])
+        else:
+            (directory / 'preflight').mkdir()
+            trusted_preflight(trusted, sql, trusted_inputs, fixture, receipts, directory / 'preflight', rubric)
         catalog_path = directory / 'preflight/catalog.json'; catalog = load(catalog_path)
-        initial = fingerprint(sql); save(directory / 'publication-before.json', initial)
+        if policy.source_policy == LEGACY_SOURCE_POLICY:
+            for task in fixture['tasks']:
+                propositions_for(fixture, rubric, task, FrozenSources.from_fixture(fixture, catalog['documents'], task['principal']),
+                    catalog['documents'], digest(fixture_path))
+        initial = publication_fingerprint(policy, sql, fingerprint); save(directory / 'publication-before.json', initial)
         if args.phase == 'run' and initial['sha256'] != seed['publicationSha256']:
             raise ValueError('cloned publication generations/profiles/vectors/jobs differ')
         if args.phase == 'run':
             results = []; controller_exits = []
-            schedule = trial_schedule(fixture, modes, args.split)
-            save(directory / 'schedule.json', {'seed': fixture['modeOrderSeed'], 'trials': schedule})
+            save(directory / 'schedule.json', {'masterScheduleSha256': policy.batch.schedule.sha256, 'trials': schedule})
             for cell in schedule:
                 mode = cell['mode']; task = next(t for t in tasks if t['id'] == cell['taskId'])
                 principal = task['principal']; selected = [task]
                 output = directory / ('baseline-' + mode + '-' + task['id'])
-                run.command(output.name, bridge + ['baseline', *common, '--mode', mode, '--principal', task['principal'],
-                    '--catalog', str(catalog_path), '--task', task['id'], '--out', str(output)])
+                if policy.source_policy == LEGACY_SOURCE_POLICY:
+                    run.command(output.name, bridge + ['baseline', *common, '--mode', mode, '--principal', task['principal'],
+                        '--catalog', str(catalog_path), '--task', task['id'], '--out', str(output)])
+                else:
+                    output.mkdir()
+                    trusted.fixed_retrieval(trusted_inputs, fixture, task, mode, catalog, output)
+                fixed_path = output / ('retrieval.json' if policy.source_policy == LEGACY_SOURCE_POLICY else 'fixed-retrieval-v3.json')
                 agent = directory / ('agent-' + mode + '-' + task['id']); agent.mkdir()
                 mapping = {str(uuid.uuid4()): task['id'] for task in selected}
                 save(agent / 'evaluator-private-map.json', mapping)
@@ -462,7 +524,8 @@ def main():
                     'playwright': str(tools['playwright']), 'chromium': str(tools['chromium']), 'tasks': projected, 'login': principal,
                     'mode': mode, 'relatedPolicy': 'deny', 'factFormat': FACT_FORMAT, 'agentModel': bindings['agentModel'],
                     'agentReasoningPolicy': bindings['agentReasoningPolicy'], 'agentMaximumOutputTokens': bindings['agentMaximumOutputTokens'],
-                    'agentRevision': bindings['agentRevision']}
+                    'agentRevision': bindings['agentRevision'], 'protocolPolicy': policy.protocol_policy,
+                    'catalogVariant': policy.catalog_variant, 'scheduleCell': cell}
                 save(agent / 'input.json', probe_input)
                 client = run.start(agent.name, [str(tools['node']), '--experimental-transform-types', '--import', str(workflow / 'resolve-live-generated.mjs'),
                     str(workflow / 'agent_probe.mjs'), str(codec_project), str(agent / 'input.json'), str(agent)])
@@ -498,12 +561,19 @@ def main():
                         result['answerSuccess'] = False
                     result.update(mode=mode, principal=principal, execution=outcome, originalAnswerSha256=digest(answer_path) if answer_path.exists() else None,
                         identityProjection={'from': opaque, 'to': actual}, fixtureSha256=digest(fixture_path), catalogSha256=digest(catalog_path))
+                    result.update(assessmentScope='unchanged score_task historical-format metrics; not V3 semantic or context-source judgment',
+                        fingerprintPolicy=policy.fingerprint_policy, sourcePolicy=policy.source_policy)
                     save(output / 'score.json', result); results.append(result)
-                current = fingerprint(sql); save(directory / ('publication-after-' + mode + '-' + task['id'] + '.json'), current)
+                    write_v3_sidecar(output, actual, opaque, fixture_path, catalog_path, rubric_path,
+                        agent / 'input.json', agent / 'evaluator-private-map.json', directory / 'schedule.json',
+                        agent / 'client-exit.json', fixed_path)
+                current = publication_fingerprint(policy, sql, fingerprint); save(directory / ('publication-after-' + mode + '-' + task['id'] + '.json'), current)
                 if current['sha256'] != initial['sha256']:
                     raise ValueError('published generations/profiles/vectors changed during comparison')
         for item in bindings['frozenInputs'] + bindings['runtimeFiles'] + [bindings[name] for name in tools]:
             bound(item)
+        validate_codec_files(policy.executor_codecs.project, policy.executor_codecs.declarations())
+        validate_codec_files(codec_project, policy.executor_codecs.declarations())
         if args.phase == 'prepare':
             summary = {'status': 'Prepared', 'publicationSha256': initial['sha256'], 'fixtureSha256': digest(fixture_path)}
             final_exit = 0
@@ -513,7 +583,10 @@ def main():
                 'claim': 'real annotation and external real embeddings; tools-only agent; same publication across declared modes',
                 'aclOracle': 'owner-only synthetic corpus, not general group-sharing authorization'}
             final_exit = 0 if summary['status'] == 'Completed' else 2
-        summary.update(publicationNative=publication_native, executorNative=bindings['native'])
+        summary.update(publicationNative=publication_native, executorNative=bindings['native'],
+            fingerprintPolicy=policy.fingerprint_policy, sourcePolicy=policy.source_policy,
+            protocolPolicy=policy.protocol_policy, catalogVariant=policy.catalog_variant,
+            strictMetricsScope='unchanged historical-format score_task; V2 remains separate assess_batch postprocessing; V3 sidecars have no invented reviews')
     except BaseException as error:
         failure = {'type': type(error).__name__, 'message': str(error)}
         if isinstance(error, (TimeoutError, subprocess.TimeoutExpired)):
@@ -531,8 +604,9 @@ def main():
         if control.returncode != 0 or re.search(r'^Database cluster state:\s+shut down$', control.stdout, re.M) is None:
             raise RuntimeError('prepared PostgreSQL control state is not shut down')
         save(directory / 'prepared.json', dict(summary, dataFiles=data_inventory(directory / 'data'),
-            preparedFiles={name: digest(directory / name) for name in ('bindings.json', 'config.json', 'profile.json', 'model-catalog.json',
-                'owned.json', 'ingest/receipts.json', 'preflight/catalog.json', 'publication-before.json', 'cleanup.json', 'pg-controldata.txt')}))
+            preparedFiles={name: digest(directory / name) for name in (
+                ['bindings.json', 'config.json', 'profile.json', 'model-catalog.json', 'owned.json', 'publication-before.json', 'cleanup.json', 'pg-controldata.txt']
+                + [str(p.relative_to(directory)) for folder in ('ingest', 'preflight') for p in sorted((directory / folder).rglob('*')) if p.is_file()])}))
     elif data_inventory(prepared / 'data') != seed['dataFiles']:
         raise ValueError('immutable prepared seed changed during run')
     save(directory / 'summary.json', summary)

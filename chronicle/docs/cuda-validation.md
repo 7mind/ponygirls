@@ -4,7 +4,7 @@ This is a synthetic, local, on-demand acceptance suite, not a benchmark and not 
 
 ## Run
 
-Provision the dependencies in `chronicle/tests/package-lock.json`, PostgreSQL with pgvector, an actual Chronicle native executable, and authenticated loopback model endpoints. Use the generated **1.1.0** codecs matching the server.
+Provision the dependencies in `chronicle/tests/package-lock.json`, PostgreSQL with pgvector, an actual Chronicle native executable, and authenticated loopback model endpoints. Use the sole current generated codecs matching the server.
 
 ```bash
 export CHRONICLE_CUDA=1
@@ -45,7 +45,7 @@ Without `CHRONICLE_CUDA=1`, the script prints an explicit skip. With it, require
 - `tests/cuda/endpoints.test.ts`: missing/wrong API credentials are rejected; native 2048-dimensional vectors are finite and nonzero; response indices correspond to input order even after reordering and changing batch size; repeat cosine exceeds 0.9999. Six labeled paraphrases retrieve their own topic at rank 1. Cyclically mismatched vectors lose by at least 0.1 cosine, and an unrelated-query control scores below every labeled positive.
 - `tests/cuda/native.test.ts`: the real native process ingests synthetic Pi transcripts encoded through the collector and Baboon codecs into real PostgreSQL. A transparent local audit relay forwards **unaltered requests and real model responses**, checking actual credential-file authentication, `query: `/`passage: ` prefixes, omission of the optional dimensions request, batch bounds, and JSON-object annotation mode. It never synthesizes annotations or vectors.
 - Every job must publish successfully. Model-generated summaries/tags must be nonempty and bounded; source spans must cover every original UTF-8 byte exactly once, in source order, reconstructing the chunk text exactly. Session source identity, indexed revision and immutable generation must agree. No simulator-specific tag names, chunk counts or exact LLM wording are assumed.
-- WebSocket negotiation requires 1.1.0. Official MCP semantic and hybrid searches must retrieve each expected topic first and return `CandidateWindow` with an explicit integral `rankingLimit`; legacy 1.0 exact compatibility is not acceptance. This identifies the bounded API semantics, not the physical PostgreSQL query plan: HNSW plan use and recall require the separate larger-corpus database validation.
+- WebSocket negotiation offers the generated `ClientEnvelope.BaboonDomainVersion` (currently1.9.0). Official MCP semantic and hybrid searches must retrieve each expected topic first and return `CandidateWindow` with an explicit integral `rankingLimit`; removed versions are not supported. This identifies the bounded API semantics, not the physical PostgreSQL query plan: HNSW plan use and recall require the separate larger-corpus database validation.
 
 These are specified-origin Behavioral-Active Good-Communication tests: the endpoint suite is Blackbox; the native suite is Effectual because it audits outgoing model-protocol requests. Printed latency/resource observations are diagnostic measurements, not correctness thresholds or throughput claims. Existing deterministic model-adapter tests remain the fast tier; this small real-model tier establishes behavior that an HTTP simulator cannot establish.
 

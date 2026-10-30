@@ -1,42 +1,10 @@
 {
-  "scheme" : 3,
-  "locks" : {
-    "chronicle.api" : [
+  "scheme": 3,
+  "locks": {
+    "chronicle.api": [
       {
-        "version" : "1.0.0",
-        "sigId" : "0eb324def9dca582720ded43eb94de6146bed5c82c7fd3c87011f4b20987f191"
-      },
-      {
-        "version" : "1.1.0",
-        "sigId" : "642d4391f248dc76eb3f943ca58ac45df95fcdda5b44707990640f4eb68a1ae8"
-      },
-      {
-        "version" : "1.2.0",
-        "sigId" : "aab52a4fd515a1089f37b8c2947ae948bc77e3509584bc9a58405590c76030a2"
-      },
-      {
-        "version" : "1.3.0",
-        "sigId" : "ae4addb60881f510fb6330aa1aee948b90f2f37e3a7db62c1b0f023f4f57dacc"
-      },
-      {
-        "version" : "1.4.0",
-        "sigId" : "e06415c8d006aa27d7b26d0c2532b40ced9be30d60e108f94a976d6da334cc8c"
-      },
-      {
-        "version" : "1.5.0",
-        "sigId" : "a8d0cea122ae162f49a624982771f32b768297cdf9f98647f8227e38392ee017"
-      },
-      {
-        "version" : "1.6.0",
-        "sigId" : "a55b09967464ecb3d0fb53af8f2e3a35965065745f03db5f5250da2ffad23a67"
-      },
-      {
-        "version" : "1.7.0",
-        "sigId" : "0236b30897b4b109d8b55762d2f9d6e9a9f392595db17879d176c6fa906ecf0a"
-      },
-      {
-        "version" : "1.8.0",
-        "sigId" : "0a06e0970913227cd271489379f42488f9bd6f5a3b72cfa738905b34cce4c64a"
+        "version": "1.9.0",
+        "sigId": "9e57c9a7de1fc687caaf07590727f28124edac5f76ee81754b24df13699a1bce"
       }
     ]
   }

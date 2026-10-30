@@ -17,14 +17,14 @@ package chronicle.api {
   }
   
   object ServerEnvelope {
-    def baboonDomainVersion: String = "1.8.0"
+    def baboonDomainVersion: String = "1.9.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#ServerEnvelope"
-    private lazy val _baboonSameInVersions: List[String] = List("1.8.0")
+    private lazy val _baboonSameInVersions: List[String] = List("1.9.0")
     def baboonSameInVersions: List[String] = _baboonSameInVersions
-    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.8.0" -> "identical")
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.9.0" -> "identical")
     def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.7.0", "prefix-compact" -> "1.8.0", "prefix-any-mode" -> "1.8.0", "identical" -> "1.8.0")
+    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.9.0", "prefix-compact" -> "1.9.0", "prefix-any-mode" -> "1.9.0", "identical" -> "1.9.0")
     def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
     def codecJson: BaboonJsonCodec[ServerEnvelope] = ServerEnvelope_JsonCodec.instance
   }

@@ -15,6 +15,14 @@ import run_real
 import runtime
 
 
+def runner_workflow():
+    return {'sourcePolicy':'archived-bridge-v1','fingerprintPolicy':'full-state-v1',
+            'protocolPolicy':'evidence-navigation-v3','catalogVariant':'context',
+            'executorCodecs':{'project':'/executor','files':[{'relativePath':'generated/typescript/current.ts','sha256':'a'*64}]},
+            'rubric':{'path':'/rubric','sha256':'b'*64},
+            'batch':{'batchId':'b','arm':'a','repeat':1,'schedule':{'path':'/master','sha256':'c'*64}}}
+
+
 class RuntimeContracts(unittest.TestCase):
     def test_requested_identity_must_match_read_token_identity(self):
         class WrongPrincipal:
@@ -47,11 +55,12 @@ class RuntimeContracts(unittest.TestCase):
             (prepared / 'data').mkdir(); (prepared / 'data/PG_VERSION').write_text('18')
             evaluate.save(prepared / 'prepared.json', {'status': 'Prepared', 'dataFiles': run_real.data_inventory(prepared / 'data'), 'preparedFiles': {}})
             evaluate.save(prepared / 'cleanup.json', {'ownedChildrenReaped': True, 'cleanupErrors': []})
-            keys = ('native', 'postgres', 'fixture', 'annotation', 'embedding', 'factFormat', 'agentModel', 'generatedFiles', 'configTemplate')
+            keys = ('native', 'postgres', 'fixture', 'annotation', 'embedding', 'factFormat', 'agentModel', 'generatedFiles', 'generatedProject', 'configTemplate')
             bindings = {key: 'same' for key in keys}
             artifact = prepared / 'publisher'; artifact.write_text('publication-native')
             bindings['native'] = {'path': str(artifact), 'sha256': evaluate.digest(artifact)}
             bindings['preparedNative'] = bindings['native']
+            bindings['workflow'] = runner_workflow()
             evaluate.save(prepared / 'bindings.json', dict(bindings, preparedNative=None))
             output = prepared / 'data/nested'; output.mkdir()
             with patch.object(run_real.shutil, 'copytree', side_effect=RuntimeError('unsafe copy attempted')) as copier:
@@ -73,12 +82,13 @@ class RuntimeContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); prepared = root / 'seed'; prepared.mkdir()
             data = prepared / 'data'; data.mkdir(); (data / 'PG_VERSION').write_text('18'); (data / 'PG_VERSION').chmod(0o600)
-            keys = ('native', 'postgres', 'fixture', 'annotation', 'embedding', 'factFormat', 'agentModel', 'generatedFiles', 'configTemplate')
+            keys = ('native', 'postgres', 'fixture', 'annotation', 'embedding', 'factFormat', 'agentModel', 'generatedFiles', 'generatedProject', 'configTemplate')
             bindings = {key: 'same' for key in keys}
             artifact = prepared / 'publisher'; artifact.write_text('publication-native')
             bindings['native'] = {'path': str(artifact), 'sha256': evaluate.digest(artifact)}
             bindings['preparedNative'] = bindings['native']
-            evaluate.save(prepared / 'bindings.json', dict(bindings, preparedNative=None))
+            bindings['workflow'] = runner_workflow()
+            evaluate.save(prepared / 'bindings.json', {key:value for key,value in dict(bindings, preparedNative=None).items() if key != 'workflow'})
             evaluate.save(prepared / 'prepared.json', {'status': 'Prepared', 'dataFiles': run_real.data_inventory(data), 'preparedFiles': {}})
             evaluate.save(prepared / 'cleanup.json', {'ownedChildrenReaped': True, 'cleanupErrors': []})
             for name in ('database-password', 'browser-password', 'password-hash', 'reader-read', 'reader-ingest', 'restricted-read', 'restricted-ingest'):
@@ -100,7 +110,7 @@ class RuntimeContracts(unittest.TestCase):
             (prepared / 'data/PG_VERSION').write_text('18')
             old_native = root / 'publisher'; old_native.write_text('publisher max')
             executor = root / 'executor'; executor.write_text('executor high')
-            keys = ('postgres', 'fixture', 'annotation', 'embedding', 'factFormat', 'agentModel', 'generatedFiles', 'configTemplate')
+            keys = ('postgres', 'fixture', 'annotation', 'embedding', 'factFormat', 'agentModel', 'generatedFiles', 'generatedProject', 'configTemplate')
             prior = {key: 'unchanged' for key in keys}
             prior['native'] = {'path': str(old_native), 'sha256': evaluate.digest(old_native)}
             evaluate.save(prepared / 'bindings.json', prior)
@@ -111,7 +121,7 @@ class RuntimeContracts(unittest.TestCase):
             for name in ('database-password', 'browser-password', 'password-hash', 'reader-read', 'reader-ingest', 'restricted-read', 'restricted-ingest'):
                 path = prepared / name; path.write_text('synthetic'); path.chmod(0o600)
             expected_metadata = {name: (prepared / name).read_bytes() for name in ('bindings.json', 'prepared.json')}
-            bindings = dict(prior, preparedNative=prior['native'], native={'path': str(executor), 'sha256': evaluate.digest(executor)})
+            bindings = dict(prior, preparedNative=prior['native'], native={'path': str(executor), 'sha256': evaluate.digest(executor)}, workflow=runner_workflow())
             output = root / 'clone'; output.mkdir()
             self.assertEqual(run_real.clone_prepared(prepared, output, bindings), proof)
             self.assertEqual(run_real.data_inventory(output / 'data'), proof['dataFiles'])

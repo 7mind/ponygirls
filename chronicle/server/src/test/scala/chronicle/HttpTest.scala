@@ -52,7 +52,7 @@ class HttpTest extends munit.FunSuite {
               def send(op: Operation): Unit= { ws.sendText(Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),op)).noSpaces,true).get(10,TimeUnit.SECONDS); () }
               def receive(): Result= { val envelope=inbox.poll(25,TimeUnit.SECONDS); assert(envelope!=null,s"response missing; close=${closed.getNow(0)}"); envelope.result }
               try {
-                send(Operation.Hello(List("1.2.0"))); assert(receive().isInstanceOf[Result.Hello])
+                send(Operation.Hello(List("1.9.0"))); assert(receive().isInstanceOf[Result.Hello])
                 val delay=19.seconds.toNanos-(System.nanoTime()-opened)
                 if(delay>0) TimeUnit.NANOSECONDS.sleep(delay)
                 send(Operation.Search(SearchQuery("slow model",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)))
@@ -96,7 +96,7 @@ class HttpTest extends munit.FunSuite {
               }
               val ws=jclient.newWebSocketBuilder().header("Origin",c.allowedOrigin).header("Cookie",s"chronicle_session=$secret").buildAsync(URI.create(s"ws://127.0.0.1:${server.address.getPort}/api/ws"),listener).get(10,TimeUnit.SECONDS)
               if(mode!="hello-timeout") {
-                val payload=if(mode=="malformed") "{}" else if(mode=="oversized") " "*65537+Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),Operation.Hello(List("1.2.0")))).noSpaces else Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),Operation.Hello(List(if(mode=="version") "unsupported" else "1.0.0")))).noSpaces
+                val payload=if(mode=="malformed") "{}" else if(mode=="oversized") " "*65537+Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),Operation.Hello(List("1.9.0")))).noSpaces else Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),Operation.Hello(List(if(mode=="version") "unsupported" else "1.9.0")))).noSpaces
                 ws.sendText(payload,true).get(10,TimeUnit.SECONDS)
               }
               (mode,ws,closed)
@@ -151,7 +151,7 @@ class HttpTest extends munit.FunSuite {
                 }
                 val ws=jclient.newWebSocketBuilder().header("Origin",c.allowedOrigin).header("Cookie",cookie).buildAsync(URI.create(base.replace("http:","ws:")+"/api/ws"),listener).get(10,TimeUnit.SECONDS)
                 def receive(): ServerEnvelope = { val text=inbox.poll(10,TimeUnit.SECONDS); assert(text!=null); Wire.decode(ServerEnvelope.codecJson,Wire.parse(text)) }
-                val hello=ClientEnvelope(UUID.randomUUID(),Operation.Hello(List("1.0.0")))
+                val hello=ClientEnvelope(UUID.randomUUID(),Operation.Hello(List("1.9.0")))
                 ws.sendText(Wire.encode(ClientEnvelope.codecJson,hello).noSpaces,true).get(10,TimeUnit.SECONDS)
                 assert(receive().result.isInstanceOf[Result.Hello])
                 val mint=ClientEnvelope(UUID.randomUUID(),Operation.MintToken("http-test",List(Scope.Read,Scope.Ingest)))
@@ -175,7 +175,7 @@ class HttpTest extends munit.FunSuite {
                   notification <- post("/mcp","""{"jsonrpc":"2.0","method":"notifications/initialized"}""",h)
                   _ <- IO(assertEquals(notification._1,Status.Accepted))
                   tools <- post("/mcp","""{"jsonrpc":"2.0","id":2,"method":"tools/list"}""",h)
-                  _ <- IO(assertEquals(Wire.parse(tools._2).hcursor.downField("result").get[List[io.circe.Json]]("tools").toOption.get.size,9))
+                  _ <- IO(assertEquals(Wire.parse(tools._2).hcursor.downField("result").get[List[io.circe.Json]]("tools").toOption.get.size,10))
                   ping <- post("/mcp","""{"jsonrpc":"2.0","id":3,"method":"ping"}""",h)
                   _ <- IO(assertEquals(ping._1,Status.Ok))
                   mixed <- post("/mcp",rpc,h++List("Cookie"->cookie))

@@ -42,13 +42,6 @@ class StaticTokenTest extends munit.FunSuite {
     val before=auth.tokens(owner).tokens.find(_.info.id==t.id).get
     assertEquals(before.source,TokenSource.StaticConfig)
     assertEquals(intercept[DomainError](auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.RevokeToken(t.id)))).code,"forbidden")
-    val protocol=new VersionedWire(new chronicle.protocol.ProtocolConversions)
-    List("1.0.0","1.1.0").foreach { version =>
-      val raw=if(version=="1.0.0") Wire.encode(chronicle.api.v1_0_0.ClientEnvelope.codecJson,chronicle.api.v1_0_0.ClientEnvelope(UUID.randomUUID(),chronicle.api.v1_0_0.Operation.RevokeToken(t.id)))
-        else Wire.encode(chronicle.api.v1_1_0.ClientEnvelope.codecJson,chronicle.api.v1_1_0.ClientEnvelope(UUID.randomUUID(),chronicle.api.v1_1_0.Operation.RevokeToken(t.id)))
-      val oldRequest=protocol.decodeClient(version,raw)
-      assertEquals(intercept[DomainError](auth.mutate(owner,oldRequest)).code,"forbidden")
-    }
     val next=Wire.secret(); Files.writeString(java.nio.file.Path.of(t.tokenFile),next)
     new Database(managed,IndexProfileCatalog.legacyOnly(managed)).initialize()
     assertEquals(intercept[DomainError](auth.bearer(old)).code,"unauthorized")

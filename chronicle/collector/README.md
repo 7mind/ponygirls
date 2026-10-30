@@ -1,6 +1,6 @@
 # Chronicle collector
 
-Independent, opt-in Node 24 user daemon. No producer SDK or runtime npm dependencies. Uses the generated Baboon 1.5 codecs in `../generated/typescript/` for ingestion, progress and acknowledgements. It never starts a harness, opens an attachment, executes a transcript command, or contacts a transcript URL.
+Independent, opt-in Node 24 user daemon. No producer SDK or runtime npm dependencies. Uses the sole current generated Baboon1.9.0 codecs in `../generated/typescript/` for ingestion, progress and acknowledgements. It never starts a harness, opens an attachment, executes a transcript command, or contacts a transcript URL.
 
 ## Build and run
 

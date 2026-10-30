@@ -34,7 +34,7 @@ export class Completion_JsonCodec {
         return Completion_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return Completion_JsonCodec.BaboonDomainVersion
     }

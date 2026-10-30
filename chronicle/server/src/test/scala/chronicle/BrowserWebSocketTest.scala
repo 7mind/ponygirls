@@ -31,13 +31,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
       Wire.decode(ServerEnvelope.codecJson,Wire.parse(text))
     }
     def request(operation: Operation): IO[Result] = IO(UUID.randomUUID()).flatMap(id => send(operation,id) *> receive.map { result => assertEquals(result.requestId,id); result.result })
-    def request16(operation: chronicle.api.v1_6_0.Operation): IO[chronicle.api.v1_6_0.Result] = IO.blocking {
-      val id=UUID.randomUUID()
-      ws.sendText(Wire.encode(chronicle.api.v1_6_0.ClientEnvelope.codecJson,chronicle.api.v1_6_0.ClientEnvelope(id,operation)).noSpaces,true).get(5,TimeUnit.SECONDS)
-      val text=inbox.poll(5,TimeUnit.SECONDS); assert(text!=null,"missing retained-client response")
-      val result=Wire.decode(chronicle.api.v1_6_0.ServerEnvelope.codecJson,Wire.parse(text))
-      assertEquals(result.requestId,id); result.result
-    }
+
   }
   private def socket(url: String,config: Config,secret: String): Resource[IO,Socket] = for {
     client <- Resource.make(IO(JClient.newHttpClient()))(c => IO.blocking(c.close()))
@@ -92,7 +86,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
     auth=new Auth(db,config)
     archive=new PostgresArchive(db,config)
     app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,java.time.Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,java.time.Clock.systemUTC()),ModelFixtures.usage(config))
-    protocol=new VersionedWire(new chronicle.protocol.ProtocolConversions)
+    protocol=new VersionedWire
     wire=new McpTestWire(protocol)
     runs <- McpTestRuns.resource(tools,model,wrap(new PostgresRunAuthorization(db,auth)),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),config.users.map(_.id).toSet,wire,IO(UUID.randomUUID()))
   } yield Fixture(config,db,auth,app,archive,protocol,wire,runs)
@@ -108,42 +102,6 @@ class BrowserWebSocketTest extends munit.FunSuite {
   private val immediateEmbedder: Embedder = new Embedder {
     def query(owner: String,text: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
     def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.pure(text.map(_ => List(1.0,0.0,0.0)))
-  }
-
-  // Regression-origin: one unsupported optional archive format must not disconnect a retained client.
-  test("BG GoodCommunication regression: retained 1.6 context archive remains usable and unsupported passage reads are nonterminal") {
-    import chronicle.api.{v1_6_0 as old}
-    (for {
-      tools <- McpTestFixtures.ordinaryTools
-      model <- McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("synthetic reply")))
-      _ <- fixture(immediateEmbedder,model,tools,identity).use { f => for {
-        data <- IO.blocking {
-          val receipt=f.archive.ingest("a",Fixtures.snapshot())
-          val claim=f.archive.claim(f.archive.knownProfiles,ClaimScope.Owner("a"),300).get
-          val chunks=Fragments.split(claim.snapshot.messages).map(chunk => IndexedChunk(chunk.copy(sessionId=claim.sessionId,summary="synthetic problem"),List(1.0,0.0,0.0)))
-          assert(f.archive.publishProblems(claim,TestPublications.from(claim,chunks)))
-          val passages=f.archive.passages("a",receipt.sessionId,0,10,None)
-          (receipt.sessionId,passages.view,passages.passages.head.id)
-        }
-        secret <- IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2)
-        _ <- server(f).use(url => socket(url,f.config,secret).use { client => for {
-          hello <- client.request16(old.Operation.Hello(List("1.6.0")))
-          _ <- IO(assert(hello.isInstanceOf[old.Result.Hello]))
-          archive <- client.request16(old.Operation.Archive(old.ArchiveQuery("",old.ArchiveSort.LastTimestamp,old.SortDirection.Desc,None,10)))
-          _ <- IO {
-            assert(archive.isInstanceOf[old.Result.Archive],archive.toString)
-            assertEquals(archive.asInstanceOf[old.Result.Archive].result.rows.head.publishedFormat,None)
-          }
-          view=old.ContentView(data._2.revision,data._2.generationId)
-          passages <- client.request16(old.Operation.GetPassages(data._1,view,0,10))
-          _ <- IO(assertEquals(passages.asInstanceOf[old.Result.Error].failure.code,"unavailable"))
-          spans <- client.request16(old.Operation.GetPassageSpans(data._1,view,data._3,0,10))
-          _ <- IO(assertEquals(spans.asInstanceOf[old.Result.Error].failure.code,"unavailable"))
-          subsequent <- client.request16(old.Operation.GetSession(data._1,None))
-          _ <- IO { assert(subsequent.isInstanceOf[old.Result.Session]); assert(!client.closed.isDone) }
-        } yield () })
-      } yield () }
-    } yield ()).unsafeRunSync()
   }
 
   test("BG GoodCommunication specified: current negotiated API retains tester catalog and run reads") {
@@ -186,7 +144,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
       _ <- fixture(embedder,model,tools,identity).use { f => server(f).use { url =>
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret => socket(url,f.config,secret).use { socket =>
           (for {
-            hello <- socket.request(Operation.Hello(List("1.4.0")))
+            hello <- socket.request(Operation.Hello(List("1.9.0")))
             _ <- IO(assert(hello.isInstanceOf[Result.Hello]))
             _ <- socket.send(Operation.Search(SearchQuery("blocked",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),1,0)),UUID.randomUUID())
             _ <- entered.get.timeout(2.seconds)
@@ -316,7 +274,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
       _ <- fixture(immediateEmbedder,model,tools,identity).use { f => server(f).use { url =>
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret => socket(url,f.config,secret).use { socket =>
           for {
-            _ <- socket.request(Operation.Hello(List("1.4.0")))
+            _ <- socket.request(Operation.Hello(List("1.9.0")))
             catalogResult <- socket.request(Operation.McpTestTools())
             catalog= catalogResult.asInstanceOf[Result.McpTestTools].result
             _ <- IO {
@@ -384,7 +342,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
       _ <- fixture(embedder,model,tools,identity).use { f => server(f).use { url =>
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret => socket(url,f.config,secret).use { socket =>
           (for {
-            _ <- socket.request(Operation.Hello(List("1.4.0")))
+            _ <- socket.request(Operation.Hello(List("1.9.0")))
             catalog <- socket.request(Operation.McpTestTools()).map(_.asInstanceOf[Result.McpTestTools].result)
             _ <- socket.send(Operation.Search(SearchQuery("blocked",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),1,0)),UUID.randomUUID())
             _ <- entered.get
@@ -419,7 +377,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
       _ <- fixture(immediateEmbedder,model,tools,gatedAuthorization(gate)).use { f => server(f).use { url =>
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret => socket(url,f.config,secret).use { socket =>
           for {
-            _ <- socket.request(Operation.Hello(List("1.4.0")))
+            _ <- socket.request(Operation.Hello(List("1.9.0")))
             catalog <- socket.request(Operation.McpTestTools()).map(_.asInstanceOf[Result.McpTestTools].result)
             id <- IO(UUID.randomUUID())
             _ <- socket.request(Operation.StartMcpTest(catalog.instanceId,id,"private synthetic prompt"))
@@ -459,7 +417,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
       _ <- fixture(immediateEmbedder,model,tools,gatedAuthorization(gate)).use { f => server(f).use { url =>
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret => socket(url,f.config,secret).use { socket =>
           for {
-            _ <- socket.request(Operation.Hello(List("1.4.0")))
+            _ <- socket.request(Operation.Hello(List("1.9.0")))
             catalog <- socket.request(Operation.McpTestTools()).map(_.asInstanceOf[Result.McpTestTools].result)
             id <- IO(UUID.randomUUID())
             _ <- socket.request(Operation.StartMcpTest(catalog.instanceId,id,"cancel queued"))
@@ -491,22 +449,27 @@ class BrowserWebSocketTest extends munit.FunSuite {
     } yield ()).unsafeRunSync()
   }
 
-  test("BG GoodCommunication: pre-Hello and old-version new controls fail without any model execution") {
+  test("BG GoodCommunication: pre-Hello controls and removed/future-version negotiation fail without any model execution") {
     (for {
       tools <- McpTestFixtures.ordinaryTools
       model <- McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("must not run")))
       _ <- fixture(immediateEmbedder,model,tools,identity).use { f => server(f).use { url =>
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret =>
-          List(None,Some("1.0.0"),Some("1.1.0"),Some("1.2.0"),Some("1.3.0")).traverse_ { version => socket(url,f.config,secret).use { socket =>
-            for {
-              _ <- version.traverse_(value => socket.request(Operation.Hello(List(value))))
-              _ <- socket.send(Operation.McpTestTools(),UUID.randomUUID())
-              failure <- socket.receive
-              _ <- IO(assertEquals(failure.result.asInstanceOf[Result.Error].failure.code,"protocol-error"))
+          socket(url,f.config,secret).use { socket => for {
+            _ <- socket.send(Operation.McpTestTools(),UUID.randomUUID())
+            failure <- socket.receive
+            _ <- IO(assertEquals(failure.result.asInstanceOf[Result.Error].failure.code,"protocol-error"))
+            closed <- IO.blocking(socket.closed.get(5,TimeUnit.SECONDS))
+            _ <- IO(assertEquals(closed,4400))
+          } yield () }
+          *> ((0 to 8).map(minor => s"1.$minor.0").toList :+ "2.0.0").traverse_ { version =>
+            socket(url,f.config,secret).use { socket => for {
+              failure <- socket.request(Operation.Hello(List(version)))
+              _ <- IO(assertEquals(failure.asInstanceOf[Result.Error].failure.code,"version-mismatch"))
               closed <- IO.blocking(socket.closed.get(5,TimeUnit.SECONDS))
-              _ <- IO(assertEquals(closed,4400))
-            } yield ()
-          }}
+              _ <- IO(assertEquals(closed,4406))
+            } yield () }
+          }
         }
       }}
       requests <- model.requests.get
@@ -524,7 +487,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
         _ <- fixture(immediateEmbedder,model,tools,gatedAuthorization(gate)).use { f => server(f).use { url =>
           IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret => socket(url,f.config,secret).use { socket =>
             for {
-              _ <- socket.request(Operation.Hello(List("1.4.0")))
+              _ <- socket.request(Operation.Hello(List("1.9.0")))
               catalog <- socket.request(Operation.McpTestTools()).map(_.asInstanceOf[Result.McpTestTools].result)
               id <- IO(UUID.randomUUID())
               _ <- socket.request(Operation.StartMcpTest(catalog.instanceId,id,"private queued"))
@@ -577,7 +540,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
       _ <- fixture(immediateEmbedder,model,tools,wrap).use { f => server(f).use { url =>
         List.fill(3)(Resource.eval(IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2)).flatMap(secret => socket(url,f.config,secret))).sequence.use { sockets =>
           (for {
-            catalogs <- sockets.traverse(socket => socket.request(Operation.Hello(List("1.4.0"))) *> socket.request(Operation.McpTestTools()).map(_.asInstanceOf[Result.McpTestTools].result))
+            catalogs <- sockets.traverse(socket => socket.request(Operation.Hello(List("1.9.0"))) *> socket.request(Operation.McpTestTools()).map(_.asInstanceOf[Result.McpTestTools].result))
             _ <- block.set(true)
             _ <- sockets.zip(catalogs).traverse_ { case (socket,catalog) =>
               List.fill(16)(UUID.randomUUID()).traverse_(run => socket.send(Operation.StartMcpTest(catalog.instanceId,run,"bounded flooded start"),UUID.randomUUID()))
@@ -615,7 +578,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret =>
           for {
             origin <- socket(url,f.config,secret).allocated
-            _ <- origin._1.request(Operation.Hello(List("1.4.0")))
+            _ <- origin._1.request(Operation.Hello(List("1.9.0")))
             catalog <- origin._1.request(Operation.McpTestTools()).map(_.asInstanceOf[Result.McpTestTools].result)
             id <- IO(UUID.randomUUID())
             _ <- hold.set(true)
@@ -626,7 +589,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
             _ <- hold.set(false); _ <- release.complete(())
             _ <- IO.sleep(100.millis)
             _ <- socket(url,f.config,secret).use { reconnected =>
-              reconnected.request(Operation.Hello(List("1.4.0"))) *> reconnected.request(Operation.ReadMcpTest(catalog.instanceId,id,0L,1)).flatMap { reply =>
+              reconnected.request(Operation.Hello(List("1.9.0"))) *> reconnected.request(Operation.ReadMcpTest(catalog.instanceId,id,0L,1)).flatMap { reply =>
                 IO(assertEquals(reply.asInstanceOf[Result.Error].failure.code,"mcp-run-uncertain"))
               }
             }
@@ -668,10 +631,10 @@ class BrowserWebSocketTest extends munit.FunSuite {
       _ <- fixture(immediateEmbedder,model,tools,identity).use { f => server(f).use { url =>
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret => socket(url,f.config,secret).use { other =>
           for {
-            _ <- other.request(Operation.Hello(List("1.4.0")))
+            _ <- other.request(Operation.Hello(List("1.9.0")))
             catalog <- other.request(Operation.McpTestTools()).map(_.asInstanceOf[Result.McpTestTools].result)
             origin <- socket(url,f.config,secret).allocated
-            _ <- origin._1.request(Operation.Hello(List("1.4.0")))
+            _ <- origin._1.request(Operation.Hello(List("1.9.0")))
             id <- IO(UUID.randomUUID())
             _ <- origin._1.request(Operation.StartMcpTest(catalog.instanceId,id,"origin run"))
             _ <- origin._2
@@ -679,7 +642,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
             _ <- IO(assertEquals(cancelled.events,Nil))
             next <- IO(UUID.randomUUID())
             _ <- other.request(Operation.StartMcpTest(catalog.instanceId,next,"other tab run"))
-            _ <- socket(url,f.config,secret).use(unrelated => unrelated.request(Operation.Hello(List("1.4.0"))).void)
+            _ <- socket(url,f.config,secret).use(unrelated => unrelated.request(Operation.Hello(List("1.9.0"))).void)
             stillActive <- runSnapshot(other,catalog.instanceId,next)
             _ <- IO(assert(stillActive.state==McpTestState.Running || stillActive.state==McpTestState.Queued))
             _ <- other.request(Operation.CancelMcpTest(catalog.instanceId,next))
@@ -700,7 +663,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
       _ <- fixture(immediateEmbedder,model,tools,identity).use { f => server(f).use { url =>
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret => socket(url,f.config,secret).use { socket =>
           for {
-            _ <- socket.request(Operation.Hello(List("1.4.0")))
+            _ <- socket.request(Operation.Hello(List("1.9.0")))
             result <- socket.request(Operation.McpTestTools())
             _ <- IO(assertEquals(result.asInstanceOf[Result.Error].failure.code,"mcp-catalog-limit"))
             pong <- socket.request(Operation.Ping("catalog-still-bounded"))
@@ -725,12 +688,12 @@ class BrowserWebSocketTest extends munit.FunSuite {
           secret <- IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2)
           mutation <- IO(UUID.randomUUID())
           original <- socket(url,f.config,secret).use { socket =>
-            socket.request(Operation.Hello(List("1.4.0"))) *> socket.send(Operation.Logout(),mutation) *> socket.receive
+            socket.request(Operation.Hello(List("1.9.0"))) *> socket.send(Operation.Logout(),mutation) *> socket.receive
           }
           replacement <- IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2)
           _ <- socket(url,f.config,replacement).use { socket =>
             for {
-              _ <- socket.request(Operation.Hello(List("1.4.0")))
+              _ <- socket.request(Operation.Hello(List("1.9.0")))
               receipt <- socket.request(Operation.Receipt(mutation))
               _ <- IO { assertEquals(original.requestId,mutation); assertEquals(receipt,original.result) }
             } yield ()
@@ -748,11 +711,11 @@ class BrowserWebSocketTest extends munit.FunSuite {
       _ <- fixture(immediateEmbedder,model,tools,identity).use { f => server(f).use { url =>
         IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2).flatMap { secret => socket(url,f.config,secret).use { observer =>
           for {
-            _ <- observer.request(Operation.Hello(List("1.4.0")))
+            _ <- observer.request(Operation.Hello(List("1.9.0")))
             source <- IO.blocking(f.archive.ingest("a",Fixtures.snapshot()))
             catalog <- observer.request(Operation.McpTestTools()).map(_.asInstanceOf[Result.McpTestTools].result)
             origin <- socket(url,f.config,secret).allocated
-            _ <- origin._1.request(Operation.Hello(List("1.4.0")))
+            _ <- origin._1.request(Operation.Hello(List("1.9.0")))
             id <- IO(UUID.randomUUID())
             _ <- origin._1.request(Operation.StartMcpTest(catalog.instanceId,id,"run during blocked SQL"))
             _ <- McpTestFixtures.await(model.requests.get)(_.nonEmpty)

@@ -28,7 +28,7 @@ class McpSourceAdmissionTest extends munit.FunSuite {
   test("BG GoodCommunication: live adapter shares all eight actual definitions, parser and successful HTTP tool content") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
     val receipt=seed(f)
     val listed=f.mcp.tools.asArray.get
-    assertEquals(f.tools.definitions.size,9)
+    assertEquals(f.tools.definitions.size,10)
     f.tools.definitions.foreach { definition =>
       val tool=listed.find(_.hcursor.get[String]("name").contains(definition.name)).get
       assertEquals(tool.hcursor.get[String]("description").toOption,Some(definition.description))

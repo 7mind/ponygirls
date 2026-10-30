@@ -2,14 +2,6 @@ import _root_.baboon.runtime.shared.{BaboonCodecsFacade, BaboonDomainVersion}
 
 package chronicle.api {
   object DomainChronicleApiFacade extends BaboonCodecsFacade {
-    locally { register(BaboonDomainVersion("chronicle.api", "1.0.0"), _root_.chronicle.api.v1_0_0.BaboonCodecsJson, _root_.chronicle.api.v1_0_0.BaboonCodecsUeba); () }
-    locally { register(BaboonDomainVersion("chronicle.api", "1.1.0"), _root_.chronicle.api.v1_1_0.BaboonCodecsJson, _root_.chronicle.api.v1_1_0.BaboonCodecsUeba); () }
-    locally { register(BaboonDomainVersion("chronicle.api", "1.2.0"), _root_.chronicle.api.v1_2_0.BaboonCodecsJson, _root_.chronicle.api.v1_2_0.BaboonCodecsUeba); () }
-    locally { register(BaboonDomainVersion("chronicle.api", "1.3.0"), _root_.chronicle.api.v1_3_0.BaboonCodecsJson, _root_.chronicle.api.v1_3_0.BaboonCodecsUeba); () }
-    locally { register(BaboonDomainVersion("chronicle.api", "1.4.0"), _root_.chronicle.api.v1_4_0.BaboonCodecsJson, _root_.chronicle.api.v1_4_0.BaboonCodecsUeba); () }
-    locally { register(BaboonDomainVersion("chronicle.api", "1.5.0"), _root_.chronicle.api.v1_5_0.BaboonCodecsJson, _root_.chronicle.api.v1_5_0.BaboonCodecsUeba); () }
-    locally { register(BaboonDomainVersion("chronicle.api", "1.6.0"), _root_.chronicle.api.v1_6_0.BaboonCodecsJson, _root_.chronicle.api.v1_6_0.BaboonCodecsUeba); () }
-    locally { register(BaboonDomainVersion("chronicle.api", "1.7.0"), _root_.chronicle.api.v1_7_0.BaboonCodecsJson, _root_.chronicle.api.v1_7_0.BaboonCodecsUeba); () }
-    locally { register(BaboonDomainVersion("chronicle.api", "1.8.0"), _root_.chronicle.api.BaboonCodecsJson, _root_.chronicle.api.BaboonCodecsUeba); () }
+    locally { register(BaboonDomainVersion("chronicle.api", "1.9.0"), _root_.chronicle.api.BaboonCodecsJson, _root_.chronicle.api.BaboonCodecsUeba); () }
   }
 }

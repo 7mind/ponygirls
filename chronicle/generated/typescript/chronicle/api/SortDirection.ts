@@ -34,7 +34,7 @@ export class SortDirection_JsonCodec {
         return SortDirection_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return SortDirection_JsonCodec.BaboonDomainVersion
     }

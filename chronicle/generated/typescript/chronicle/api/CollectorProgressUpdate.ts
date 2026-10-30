@@ -104,7 +104,7 @@ export class CollectorProgressUpdate implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return CollectorProgressUpdate.BaboonDomainVersion
     }
@@ -116,15 +116,15 @@ export class CollectorProgressUpdate implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return CollectorProgressUpdate.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
+    public static readonly BaboonSameInVersions = ["1.9.0"]
     public baboonSameInVersions() {
         return CollectorProgressUpdate.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.8.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
     public baboonForwardReadable() {
         return CollectorProgressUpdate.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.2.0", "prefix-compact": "1.2.0", "prefix-any-mode": "1.2.0", "identical": "1.2.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
     public baboonMinReaderVersions() {
         return CollectorProgressUpdate.BaboonMinReaderVersions
     }
@@ -172,7 +172,7 @@ export class CollectorProgressUpdate_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return CollectorProgressUpdate_JsonCodec.BaboonDomainVersion
     }

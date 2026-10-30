@@ -41,7 +41,6 @@ object ChroniclePlugin extends PluginDef {
   make[McpTestModel].from[OpenAIMcpTestModel]
   make[McpRunClock].from[SystemMcpRunClock]
   make[Http.WebRoot].from { () => Http.WebRoot(sys.env.get("CHRONICLE_WEB_ROOT")) }
-  make[chronicle.protocol.ProtocolConversions]
   make[VersionedWire]
   make[McpTestWire]
   make[McpRunPageEncoding].from { (wire: McpTestWire) => wire }

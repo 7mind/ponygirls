@@ -21,8 +21,8 @@ against the final changes:
   every discovered suite. Keep shared-database tests serial; PostgreSQL cases
   must execute, not skip.
 - Protocol: from `chronicle/`, run
-  `TSC="$PWD/web/node_modules/.bin/tsc" ./scripts/test-codecs.sh`. Retain every supported version
-  and negative compatibility branch.
+  `TSC="$PWD/web/node_modules/.bin/tsc" ./scripts/test-codecs.sh`. Check the sole current API and explicit removed/future-version
+  rejection; preserve current-protocol framing and error branches.
 - Dashboard: from `chronicle/web/`, run `npm run typecheck`, `npm test`, and the
   complete `npm run test:browser`, using the pinned Node/Chromium environment.
 - Collector: from `chronicle/collector/`, run `npm run typecheck` and `npm test`.

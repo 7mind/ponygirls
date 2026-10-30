@@ -32,7 +32,7 @@ final class DashboardOperationsTest extends munit.FunSuite {
     f(Context(app,auth,archive,db,config,owner,calls))
   }
   private def run(c: Context,identity: Identity,operation: Operation): Result =
-    c.app.operationVersion(identity,ClientEnvelope(UUID.randomUUID(),operation),"1.4.0").unsafeRunSync()
+    c.app.operationVersion(identity,ClientEnvelope(UUID.randomUUID(),operation),"1.9.0").unsafeRunSync()
 
   test("Blackbox-GoodCommunication: authorized completion and usage remain available through retained 1.4 without inference") { database { c =>
     c.archive.ingest("a",Fixtures.snapshot())

@@ -101,7 +101,7 @@ object McpTestFixtures {
       case McpRunItem.ToolResult(id,index,count,part) => Json.obj("ToolResult"->Json.obj("callId"->text(id),"partIndex"->number(index),"partCount"->number(count),"resultJsonPart"->text(part)))
       case McpRunItem.Response(index,count,part) => Json.obj("Response"->Json.obj("partIndex"->number(index),"partCount"->number(count),"textPart"->text(part)))
     }
-    Json.obj("frame"->Json.obj("version"->text("1.4.0"),"payload"->Json.obj("requestId"->text("ffffffff-ffff-ffff-ffff-ffffffffffff"),"result"->Json.obj("McpTestRun"->Json.obj("result"->Json.obj(
+    Json.obj("frame"->Json.obj("version"->text("1.9.0"),"payload"->Json.obj("requestId"->text("ffffffff-ffff-ffff-ffff-ffffffffffff"),"result"->Json.obj("McpTestRun"->Json.obj("result"->Json.obj(
       "instanceId"->text(snapshot.instanceId.toString),"runId"->text(snapshot.runId.toString),"state"->text(snapshot.state.toString),"observedAt"->text(snapshot.observedAt.toString),
       "events"->Json.arr(snapshot.events.map(e => Json.obj("sequence"->Json.fromLong(e.sequence),"observedAt"->text(e.observedAt.toString),"item"->item(e.item)))*),
       "lastSequence"->Json.fromLong(snapshot.lastSequence),"hasMore"->Json.fromBoolean(snapshot.hasMore),"failure"->snapshot.failure.fold(Json.Null)(f => Json.obj("code"->text(f.code),"message"->text(f.message)))

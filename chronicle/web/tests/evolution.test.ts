@@ -1,56 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BaboonCodecContext } from '../../generated/typescript/BaboonSharedRuntime.ts';
-import { CollectorCounters, CollectorProgressUpdate, CollectorProgressAck, CollectorStatus, CollectorStatusResult, CollectorPhase, CollectorProgressUpdate_JsonCodec, CollectorProgressAck_JsonCodec, Result_CollectionStatus, ServerEnvelope, ServerEnvelope_JsonCodec, JobState, TokenSource, JobInfo, JobInfo_JsonCodec, IndexingFailureStage } from '../src/api.ts';
-import { ArchiveQuery, ArchiveQuery_JsonCodec, ArchiveResult, ArchiveResult_JsonCodec, ArchiveRow, ArchiveSort, ArchiveTextScope, Completion, ContentView, Metadata, Operation_Archive, Result_Archive, SessionInfo, SortDirection, SourceFormat, SourceIdentity } from '../src/api.ts';
-import { ArchiveQuery_JsonCodec as ArchiveQueryV17_JsonCodec } from '../../generated/typescript/chronicle/api/v1_7_0/ArchiveQuery.ts';
-import { ArchiveResult_JsonCodec as ArchiveResultV17_JsonCodec } from '../../generated/typescript/chronicle/api/v1_7_0/ArchiveResult.ts';
-import { Operation_Archive as OperationArchiveV17 } from '../../generated/typescript/chronicle/api/v1_7_0/Operation.ts';
-import { Result_Archive as ResultArchiveV17 } from '../../generated/typescript/chronicle/api/v1_7_0/Result.ts';
-import { convert__operation__from__1_7_0 } from '../../generated/typescript/chronicle/api/from_1_7_0_operation.ts';
-import { JobInfo as JobInfoV11 } from '../../generated/typescript/chronicle/api/v1_1_0/JobInfo.ts';
-import { JobState as JobStateV11 } from '../../generated/typescript/chronicle/api/v1_1_0/JobState.ts';
-import { TokenInfo as TokenInfoV11 } from '../../generated/typescript/chronicle/api/v1_1_0/TokenInfo.ts';
-import { TokensResult as TokensResultV11 } from '../../generated/typescript/chronicle/api/v1_1_0/TokensResult.ts';
-import { Result_Status as StatusV11, Result_Tokens as TokensV11 } from '../../generated/typescript/chronicle/api/v1_1_0/Result.ts';
-import { StatusResult as StatusResultV11 } from '../../generated/typescript/chronicle/api/v1_1_0/StatusResult.ts';
-import { convert__result__from__1_1_0 as toV12 } from '../../generated/typescript/chronicle/api/v1_2_0/from_1_1_0_result.ts';
-import { convert__result__from__1_2_0 as toV13 } from '../../generated/typescript/chronicle/api/v1_3_0/from_1_2_0_result.ts';
-import { convert__result__from__1_3_0 as toV14 } from '../../generated/typescript/chronicle/api/v1_4_0/from_1_3_0_result.ts';
-import { convert__result__from__1_4_0 as toV15 } from '../../generated/typescript/chronicle/api/v1_5_0/from_1_4_0_result.ts';
-import { convert__result__from__1_5_0 as toV16 } from '../../generated/typescript/chronicle/api/v1_6_0/from_1_5_0_result.ts';
-import { convert__result__from__1_6_0 as toV17 } from '../../generated/typescript/chronicle/api/v1_7_0/from_1_6_0_result.ts';
-import { convert__result__from__1_7_0 as toLatest } from '../../generated/typescript/chronicle/api/from_1_7_0_result.ts';
-import type { Result as ResultV11 } from '../../generated/typescript/chronicle/api/v1_1_0/Result.ts';
-const convert__result__from__1_1_0 = (result: ResultV11) => toLatest(toV17(toV16(toV15(toV14(toV13(toV12(result)))))));
-import { SearchResult as SearchV10 } from '../../generated/typescript/chronicle/api/v1_0_0/SearchResult.ts';
-import { Result_Search as ResultSearchV10 } from '../../generated/typescript/chronicle/api/v1_0_0/Result.ts';
-import { convert__result__from__1_0_0 } from '../../generated/typescript/chronicle/api/v1_1_0/from_1_0_0_result.ts';
-import { Result_Search, Result_Status, Result_Tokens, SearchCountScope } from '../src/api.ts';
+import { CollectorCounters, CollectorProgressUpdate, CollectorProgressAck, CollectorStatus, CollectorStatusResult, CollectorPhase, CollectorProgressUpdate_JsonCodec, CollectorProgressAck_JsonCodec, Result_CollectionStatus, ServerEnvelope, ServerEnvelope_JsonCodec, JobState, JobInfo, JobInfo_JsonCodec, IndexingFailureStage } from '../src/api.ts';
 const ctx = BaboonCodecContext.Default;
 const id = '00000000-0000-4000-8000-000000000001';
-test('BG specified: generated nested evolution calls registered external custom semantics', () => {
-  const tokens = convert__result__from__1_1_0(new TokensV11(new TokensResultV11([new TokenInfoV11(id, 'issued', [], '2026-10-26T00:00:00Z', false)])));
-  assert.ok(tokens instanceof Result_Tokens); assert.equal(tokens.result.tokens[0]?.source, TokenSource.Issued);
-  const jobs = convert__result__from__1_1_0(new StatusV11(new StatusResultV11([new JobInfoV11(id, id, 1, JobStateV11.Running, 1, undefined)], 1)));
-  assert.ok(jobs instanceof Result_Status); assert.equal(jobs.result.jobs[0]?.state, JobState.Running); assert.equal(jobs.result.jobs[0]?.completedWindows, 0); assert.equal(jobs.result.jobs[0]?.totalWindows, undefined); assert.equal(jobs.result.jobs[0]!.failureStage, undefined);
-  const search = convert__result__from__1_1_0(convert__result__from__1_0_0(new ResultSearchV10(new SearchV10([], 0))));
-  assert.ok(search instanceof Result_Search); assert.equal(search.result.countScope, SearchCountScope.ExactMatches);
-});
-test('BG specified: 1.7 Archive reads and replies evolve to 1.8 column semantics without losing fields', () => {
-  const head = new SessionInfo(new ContentView(2, undefined), id, 'alice', 2, 1, new Metadata('Synthetic', 'chronicle', undefined, undefined, 'main', undefined, 'pi', undefined, '2026-10-26T00:00:00Z', undefined, ['a']), new SourceIdentity('collector', 'native', SourceFormat.Pi, 'synthetic', undefined), Completion.Quiescent, false);
-  const result = new ArchiveResult([new ArchiveRow(head, new ContentView(1, id), new ContentView(1, id), '2026-10-26T00:00:00Z', 3, ['a'], undefined, undefined)], 9007199254740993n, 'opaque-cursor', ArchiveTextScope.BoundedCandidateSets, 1000, false);
-  const latestResult = ArchiveResult_JsonCodec.instance.encode(ctx, result) as Record<string, unknown>, v17Result = { ...latestResult }; delete v17Result.relevanceOrdered;
-  const reply = toLatest(new ResultArchiveV17(ArchiveResultV17_JsonCodec.instance.decode(ctx, JSON.parse(JSON.stringify(v17Result)))));
-  assert.ok(reply instanceof Result_Archive); assert.equal(reply.result.relevanceOrdered, false); assert.equal(reply.result.total, 9007199254740993n);
-  assert.deepEqual(ArchiveResult_JsonCodec.instance.encode(ctx, reply.result), latestResult);
-  const query = new ArchiveQuery('mode:lexical original', ArchiveSort.Title, SortDirection.Asc, 'opaque-cursor', 50, false);
-  const latestQuery = ArchiveQuery_JsonCodec.instance.encode(ctx, query) as Record<string, unknown>, v17Query = { ...latestQuery }; delete v17Query.preferRelevance;
-  const read = convert__operation__from__1_7_0(new OperationArchiveV17(ArchiveQueryV17_JsonCodec.instance.decode(ctx, JSON.parse(JSON.stringify(v17Query)))));
-  assert.ok(read instanceof Operation_Archive); assert.equal(read.query.preferRelevance, false);
-  assert.deepEqual(ArchiveQuery_JsonCodec.instance.encode(ctx, read.query), latestQuery);
-});
-test('BA specified: 1.7 failure-stage encoder emits present-null or recorded stages; frozen TS decoder accepts missing as unknown', () => {
+test('BA specified: failure-stage encoder emits present-null or recorded stages; generated TS decoder accepts missing as unknown', () => {
   for (const stage of [undefined, IndexingFailureStage.Annotation, IndexingFailureStage.Embedding, IndexingFailureStage.Publication]) {
     const job = new JobInfo(id, id, 1, JobState.Failed, 1, 'synthetic', 0, undefined, stage), encoded = JobInfo_JsonCodec.instance.encode(ctx, job) as Record<string, unknown>;
     assert.equal(Object.hasOwn(encoded, 'failureStage'), true); assert.equal(encoded.failureStage, stage === undefined ? null : stage); assert.equal(JobInfo_JsonCodec.instance.decode(ctx, encoded).failureStage, stage);

@@ -1,123 +1,29 @@
 package chronicle
 
-import baboon.runtime.shared.BaboonJsonCodec
 import chronicle.api.*
-import chronicle.api.{v1_0_0 as v10, v1_1_0 as v11, v1_2_0 as v12, v1_3_0 as v13, v1_4_0 as v14,v1_6_0 as v16,v1_7_0 as v17}
-import chronicle.protocol.ProtocolConversions
-import io.circe.Json
 import java.util.UUID
 
 class ApiVersionCompatibilityTest extends munit.FunSuite {
-  private val conversions=new ProtocolConversions
-  private val protocol=new VersionedWire(conversions)
+  private val protocol=new VersionedWire
   private val id=UUID.fromString("00000000-0000-4000-8000-000000000001")
-  private val view=ContentView(2,Some(id))
-  private val filter=SearchFilter(Some("synthetic"),Some("main"),Some("2026-10-26T00:00:00Z"),None,List("λ🐎"))
-  private val versions=List("1.0.0","1.1.0","1.2.0","1.3.0","1.4.0","1.5.0","1.6.0","1.7.0","1.8.0")
-  private def round[A](codec: BaboonJsonCodec[A],json: Json): Json = {
-    val encoded=Wire.encode(codec,Wire.decode(codec,json))
-    assertEquals(encoded,json)
-    encoded
+  private val request=ClientEnvelope(id,Operation.ReadMessageContext(id,ContentView(1,Some(id)),Span("message",0,4),1024,2048))
+  private val response=ServerEnvelope(id,Result.MessageContext(MessageContextResult(id,ContentView(1,Some(id)),PassageSourceSpan("message",0,0,4),List(ContextExcerpt(PassageSourceSpan("message",0,0,4),"user","text")),None,None)))
+
+  test("BG specified: sole API accepts the current request and response without projection") {
+    assertEquals(protocol.decodeClient("1.9.0",Wire.encode(ClientEnvelope.codecJson,request)),request)
+    assertEquals(protocol.encodeServer("1.9.0",response),Wire.encode(ServerEnvelope.codecJson,response))
+    assertEquals(Wire.decode(ServerEnvelope.codecJson,protocol.encodeServer("1.9.0",response)),response)
   }
-  private def clientRound(version: String,json: Json): Json = version match {
-    case "1.0.0" => round(v10.ClientEnvelope.codecJson,json)
-    case "1.1.0" => round(v11.ClientEnvelope.codecJson,json)
-    case "1.2.0" => round(v12.ClientEnvelope.codecJson,json)
-    case "1.3.0" => round(v13.ClientEnvelope.codecJson,json)
-    case "1.4.0" => round(v14.ClientEnvelope.codecJson,json)
-    case "1.5.0" => round(chronicle.api.v1_5_0.ClientEnvelope.codecJson,json)
-    case "1.6.0" => round(v16.ClientEnvelope.codecJson,json)
-    case "1.7.0" => round(v17.ClientEnvelope.codecJson,json)
-    case "1.8.0" => round(ClientEnvelope.codecJson,json)
-  }
-  private def up17(envelope: v17.ServerEnvelope): ServerEnvelope = conversions.up1_7_0.convert[v17.ServerEnvelope,ServerEnvelope](envelope)
-  private def up16(envelope: v16.ServerEnvelope): ServerEnvelope = up17(conversions.up1_6_0.convert[v16.ServerEnvelope,v17.ServerEnvelope](envelope))
-  private def up15(envelope: chronicle.api.v1_5_0.ServerEnvelope): ServerEnvelope = up16(conversions.up1_5_0.convert[chronicle.api.v1_5_0.ServerEnvelope,v16.ServerEnvelope](envelope))
-  private def up14(envelope: v14.ServerEnvelope): ServerEnvelope = up15(conversions.up1_4_0.convert[v14.ServerEnvelope,chronicle.api.v1_5_0.ServerEnvelope](envelope))
-  private def up13(envelope: v13.ServerEnvelope): ServerEnvelope = up14(conversions.up1_3_0.convert[v13.ServerEnvelope,v14.ServerEnvelope](envelope))
-  private def up12(envelope: v12.ServerEnvelope): ServerEnvelope = up13(conversions.up1_2_0.convert[v12.ServerEnvelope,v13.ServerEnvelope](envelope))
-  private def up11(envelope: v11.ServerEnvelope): ServerEnvelope = up12(conversions.up1_1_0.convert[v11.ServerEnvelope,v12.ServerEnvelope](envelope))
-  private def serverRound(version: String,json: Json): ServerEnvelope = version match {
-    case "1.0.0" => up11(conversions.up1_0_0.convert[v10.ServerEnvelope,v11.ServerEnvelope](Wire.decode(v10.ServerEnvelope.codecJson,round(v10.ServerEnvelope.codecJson,json))))
-    case "1.1.0" => up11(Wire.decode(v11.ServerEnvelope.codecJson,round(v11.ServerEnvelope.codecJson,json)))
-    case "1.2.0" => up12(Wire.decode(v12.ServerEnvelope.codecJson,round(v12.ServerEnvelope.codecJson,json)))
-    case "1.3.0" => up13(Wire.decode(v13.ServerEnvelope.codecJson,round(v13.ServerEnvelope.codecJson,json)))
-    case "1.4.0" => up14(Wire.decode(v14.ServerEnvelope.codecJson,round(v14.ServerEnvelope.codecJson,json)))
-    case "1.5.0" => up15(Wire.decode(chronicle.api.v1_5_0.ServerEnvelope.codecJson,round(chronicle.api.v1_5_0.ServerEnvelope.codecJson,json)))
-    case "1.6.0" => up16(Wire.decode(v16.ServerEnvelope.codecJson,round(v16.ServerEnvelope.codecJson,json)))
-    case "1.7.0" => up17(Wire.decode(v17.ServerEnvelope.codecJson,round(v17.ServerEnvelope.codecJson,json)))
-    case "1.8.0" => Wire.decode(ServerEnvelope.codecJson,round(ServerEnvelope.codecJson,json))
-  }
-  test("BG specified: every retained operation uses its own codec and complete registered upgrade chain") {
-    val common=List[Operation](
-      Operation.Hello(versions),Operation.Ping("λ🐎"),Operation.Pong("heartbeat"),Operation.Whoami(),
-      Operation.Search(SearchQuery("synthetic",SearchMode.Hybrid,filter,10,20)),Operation.GetSession(id,Some(view)),
-      Operation.GetChunks(id,20,10,Some(view)),Operation.GetMessages(id,20,10,Some(view)),Operation.GetRaw(id,Some(2)),
-      Operation.Related(id,10),Operation.Facets(filter),Operation.IngestStatus(20,10),Operation.RetryJob(id),
-      Operation.ListTokens(),Operation.MintToken("synthetic",List(Scope.Read,Scope.Raw)),Operation.RevokeToken(id),
-      Operation.ListGroups(),Operation.CreateGroup("synthetic"),Operation.Invite(id,"b"),Operation.AcceptInvite(id,true),
-      Operation.RemoveMember(id,"b"),Operation.LeaveGroup(id),Operation.DeleteGroup(id),Operation.Receipt(id),Operation.Purge(id),Operation.Logout())
-    val added13=List[Operation](
-      Operation.Archive(ArchiveQuery("tag:\"λ🐎\"",ArchiveSort.Title,SortDirection.Asc,Some("synthetic-cursor"),10,false)),
-      Operation.Activity(ActivityQuery("",ActivityCollectorSort.CurrentFailed,SortDirection.Desc,None,10)),
-      Operation.ActivityJobs(ActivityJobsQuery(Some("collector"),ActivityJobScope.Historical,"",ActivityJobSort.JobId,SortDirection.Asc,None,10)),
-      Operation.LocateMessage(id,view,"u"),Operation.PreviewRetryFailed(),Operation.ApplyRetryFailed("target","selection",true))
-    versions.foreach { version =>
-      val operations=common ++ (if(version>="1.2.0") List(Operation.CollectionStatus()) else Nil) ++ (if(version>="1.3.0") added13 else Nil)
-      operations.foreach { operation =>
-        val envelope=ClientEnvelope(id,operation)
-        val request=operation match {
-          case Operation.Archive(query) if version!="1.8.0" =>
-            Wire.encode(v17.ClientEnvelope.codecJson,v17.ClientEnvelope(id,v17.Operation.Archive(v17.ArchiveQuery(query.expression,v17.ArchiveSort.parse(query.sort.toString).get,v17.SortDirection.parse(query.direction.toString).get,query.cursor,query.limit))))
-          case _ => Wire.encode(ClientEnvelope.codecJson,envelope)
-        }
-        val json=clientRound(version,request)
-        assertEquals(protocol.decodeClient(version,json),envelope,s"$version ${operation.baboonTypeIdentifier}")
-      }
-      assertEquals(Wire.negotiate(List("unsupported",version)),version)
+
+  test("BG specified: every removed API and a future API reject requests and responses explicitly") {
+    ((0 to 8).map(minor => s"1.$minor.0") ++ List("2.0.0","")).foreach { version =>
+      assertEquals(intercept[DomainError](protocol.decodeClient(version,Wire.encode(ClientEnvelope.codecJson,request))).code,"version-mismatch")
+      assertEquals(intercept[DomainError](protocol.encodeServer(version,response)).code,"version-mismatch")
     }
   }
-  test("BG specified: all retained result branches preserve pins, payloads and receipt shapes through every downgrade") {
-    val snapshot=Fixtures.snapshot()
-    val session=SessionInfo(view,id,"a",2,Some(2),snapshot.metadata,snapshot.source,snapshot.completion,false)
-    val chunks=Fragments.split(snapshot.messages).map(_.copy(sessionId=id))
-    val hit=SearchHit(session,chunks,0.5)
-    val user=UserInfo("a","alice",List(Scope.Read,Scope.Raw))
-    val token=TokenInfo(id,"synthetic",List(Scope.Read),"2026-10-26T00:00:00Z",false)
-    val common=List[Result](
-      Result.Hello(Wire.versions,user),Result.Pong("λ🐎"),Result.Ping("heartbeat"),Result.Whoami(user),
-      Result.Search(SearchResult(List(hit),1,SearchCountScope.ExactMatches,None)),Result.Session(SessionResult(session,chunks)),
-      Result.Chunks(ChunksResult(chunks,1,20,view)),Result.Messages(MessagesResult(snapshot.messages,1,20,view)),
-      Result.Raw(RawResult(snapshot.files,2)),Result.Related(RelatedResult(List(hit))),
-      Result.Facets(FacetsResult(List(Facet("synthetic",1)),List(Facet("main",1)),List(Facet("λ🐎",1)))),
-      Result.Status(StatusResult(List(JobInfo(id,id,2,JobState.Failed,1,Some("synthetic"),0,None,None)),1)),
-      Result.Tokens(TokensResult(List(ListedToken(token,TokenSource.Issued)))),Result.Token(TokenResult(token,None)),
-      Result.Groups(GroupsResult(List(GroupInfo(id,"synthetic","a",List("a","b"))),List(InviteInfo(id,id,"b","2026-10-26T00:00:00Z")))),
-      Result.Mutation(MutationReceipt(id,"synthetic",Some(id))),Result.Error(Failure("forbidden","synthetic")))
-    val count=9007199254740993L
-    val counts=JobCounts(count,0,0,count,0,0,0,0)
-    val retryCounts=RetryFailedCounts(count,1,2,3,4,5,6)
-    val added13=List[Result](
-      Result.Archive(ArchiveResult(List(ArchiveRow(session,Some(view),Some(view),None,1,List("λ🐎"),None,None)),count,None,ArchiveTextScope.ExactLexical,None,false)),
-      Result.Activity(ActivityResult("synthetic",user,count,0,counts,counts,List(ActivityCollector("collector",None,count,0,counts,counts)),count,count,None)),
-      Result.ActivityJobs(ActivityJobsResult("synthetic",List(ActivityJob(JobInfo(id,id,2,JobState.Failed,1,Some("synthetic"),0,None,None),"profile",ActivityJobClass.Current,None,false,true,"collector",session,None)),count,None)),
-      Result.LocatedMessage(MessageLocation(view,0,1)),Result.RetryFailedPreview(RetryFailedPlan("target","selection",retryCounts)),
-      Result.RetryFailed(RetryFailedResult(id,"target",count,retryCounts)))
-    versions.foreach { version =>
-      val results=common ++ (if(version>="1.2.0") List(Result.CollectionStatus(CollectorStatusResult(Nil))) else Nil) ++ (if(version>="1.3.0") added13 else Nil)
-      results.foreach { result =>
-        val envelope=ServerEnvelope(id,result)
-        assertEquals(serverRound(version,protocol.encodeServer(version,envelope)),envelope,s"$version ${result.baboonTypeIdentifier}")
-      }
-    }
-    assertEquals(Wire.encode(Chunk.codecJson,chunks.head),Wire.encode(v13.Chunk.codecJson,conversions.down1_3_0.convert[v14.Chunk,v13.Chunk](conversions.down1_4_0.convert[chronicle.api.v1_5_0.Chunk,v14.Chunk](conversions.down1_5_0.convert[v16.Chunk,chronicle.api.v1_5_0.Chunk](conversions.down1_6_0.convert[v17.Chunk,v16.Chunk](conversions.down1_7_0.convert[Chunk,v17.Chunk](chunks.head)))))))
-    assertEquals(Wire.encode(ActivityResult.codecJson,added13(1).asInstanceOf[Result.Activity].result),Wire.encode(v13.ActivityResult.codecJson,conversions.down1_3_0.convert[v14.ActivityResult,v13.ActivityResult](conversions.down1_4_0.convert[chronicle.api.v1_5_0.ActivityResult,v14.ActivityResult](conversions.down1_5_0.convert[v16.ActivityResult,chronicle.api.v1_5_0.ActivityResult](conversions.down1_6_0.convert[v17.ActivityResult,v16.ActivityResult](conversions.down1_7_0.convert[ActivityResult,v17.ActivityResult](added13(1).asInstanceOf[Result.Activity].result)))))))
-  }
-  test("BA specified: unknown versions and branches fail explicitly without substitution") {
-    val request=Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(id,Operation.ModelUsage()))
-    versions.filterNot(version => Set("1.4.0","1.5.0","1.6.0","1.7.0","1.8.0").contains(version)).foreach { version => assertEquals(intercept[DomainError](protocol.decodeClient(version,request)).code,"invalid") }
-    assertEquals(intercept[DomainError](protocol.decodeClient("future",request)).code,"version-mismatch")
-    assertEquals(intercept[DomainError](protocol.encodeServer("future",ServerEnvelope(id,Result.Pong("synthetic")))).code,"version-mismatch")
-    assertEquals(intercept[DomainError](Wire.negotiate(List("future"))).code,"version-mismatch")
+
+  test("BA specified: unsupported version rejection precedes payload decoding") {
+    assertEquals(intercept[DomainError](protocol.decodeClient("1.8.0",io.circe.Json.Null)).code,"version-mismatch")
+    assertEquals(intercept[DomainError](protocol.decodeClient("1.9.0",io.circe.Json.Null)).code,"invalid")
   }
 }

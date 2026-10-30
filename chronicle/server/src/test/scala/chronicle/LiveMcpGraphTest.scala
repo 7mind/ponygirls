@@ -76,7 +76,7 @@ final class LiveMcpGraphTest extends munit.FunSuite {
             for {
               catalog <- graph.runs.catalog(owner)
               run <- IO(UUID.randomUUID())
-              reply <- graph.rpc.execute(owner,ClientEnvelope(UUID.randomUUID(),Operation.StartMcpTest(catalog.instanceId,run,"Find the synthetic archive and read its first message.")),"1.4.0",connection)
+              reply <- graph.rpc.execute(owner,ClientEnvelope(UUID.randomUUID(),Operation.StartMcpTest(catalog.instanceId,run,"Find the synthetic archive and read its first message.")),"1.9.0",connection)
               _ <- IO(assert(reply.isInstanceOf[BrowserReply.McpRead]))
               snapshot <- McpTestFixtures.await(observe(graph.runs,owner,catalog.instanceId,run))(value => !value.state.active).timeout(10.seconds)
               _ <- IO {
@@ -85,7 +85,7 @@ final class LiveMcpGraphTest extends munit.FunSuite {
                 assertEquals(names,List("search_sessions","get_messages"))
                 assert(!snapshot.events.toString.contains("synthetic hidden reasoning"))
               }
-              frame <- graph.rpc.materialize(BrowserReply.McpRead(McpReadHandle(UUID.randomUUID(),catalog.instanceId,run,0L,256)),IO.pure(owner),"1.4.0",new VersionedWire(new chronicle.protocol.ProtocolConversions))
+              frame <- graph.rpc.materialize(BrowserReply.McpRead(McpReadHandle(UUID.randomUUID(),catalog.instanceId,run,0L,256)),IO.pure(owner),"1.9.0",new VersionedWire)
               usage <- graph.usage.read(owner)
               count <- requests.get
               _ <- IO {

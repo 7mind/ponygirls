@@ -72,7 +72,7 @@ export class ArchiveQuery implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ArchiveQuery.BaboonDomainVersion
     }
@@ -84,15 +84,15 @@ export class ArchiveQuery implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return ArchiveQuery.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.8.0"]
+    public static readonly BaboonSameInVersions = ["1.9.0"]
     public baboonSameInVersions() {
         return ArchiveQuery.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.8.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
     public baboonForwardReadable() {
         return ArchiveQuery.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.3.0", "prefix-compact": "1.3.0", "prefix-any-mode": "1.3.0", "identical": "1.8.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
     public baboonMinReaderVersions() {
         return ArchiveQuery.BaboonMinReaderVersions
     }
@@ -132,7 +132,7 @@ export class ArchiveQuery_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ArchiveQuery_JsonCodec.BaboonDomainVersion
     }

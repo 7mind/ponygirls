@@ -29,7 +29,7 @@ class McpSearchGuidanceTest extends munit.FunSuite {
   test("Blackbox-GoodCommunication: MCP discovery and model catalog expose search syntax, structured filters and bounded tag popularity") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
     val listed=rpc(f,"tools/list",Json.obj()).hcursor.get[List[Json]]("tools").toOption.get
     val definitions=f.tools.definitions
-    assertEquals(definitions.size,9)
+    assertEquals(definitions.size,10)
     val noProvider=Client[IO](_ => Resource.eval(IO.raiseError(new AssertionError("catalog discovery must not call a provider"))))
     val model=new OpenAIMcpTestModel(ModelFixtures.http(noProvider,f.config),McpTestFixtures.config)
     val request=model.request(Vector.empty,definitions)

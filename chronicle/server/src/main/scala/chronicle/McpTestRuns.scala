@@ -257,7 +257,7 @@ final class McpTestRuns private (
 
   private def failure(error: Throwable): McpRunFailure = error match {
     case error: DomainError =>
-      val codes=Set("model-http","model-output","model-output/truncated","model-output/refusal","model-output/unknown-tool","model-timeout","mcp-context-limit","mcp-result-limit","mcp-round-limit","mcp-call-limit","mcp-trace-limit","mcp-page-invariant","mcp-approval-required","read-budget","invalid","not-found")
+      val codes=Set("model-http","model-output","model-output/truncated","model-output/refusal","model-output/unknown-tool","model-timeout","mcp-context-limit","mcp-result-limit","mcp-round-limit","mcp-call-limit","mcp-trace-limit","mcp-page-invariant","mcp-approval-required","read-budget","invalid","not-found","deadline","indexed-view-retired")
       McpRunFailure(if(codes.contains(error.code)) error.code else "mcp-tool-failed","one-shot test failed; no automatic retry was performed")
     case _ => McpRunFailure("mcp-test-failed","one-shot test failed; no automatic retry was performed")
   }

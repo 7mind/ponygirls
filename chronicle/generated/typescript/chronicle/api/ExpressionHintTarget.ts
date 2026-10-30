@@ -5,12 +5,12 @@ import {ActivityJobScope, ActivityJobScope_JsonCodec} from './ActivityJobScope.j
 export type ExpressionHintTarget = ExpressionHintTarget_Archive | ExpressionHintTarget_ActivityCollectors | ExpressionHintTarget_ActivityJobs
 
 export const ExpressionHintTarget = {
-    BaboonDomainVersion: '1.8.0',
+    BaboonDomainVersion: '1.9.0',
     BaboonDomainIdentifier: 'chronicle.api',
     BaboonTypeIdentifier: 'chronicle.api/:#ExpressionHintTarget',
-    BaboonSameInVersions: ["1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"],
-    BaboonForwardReadable: { "1.8.0": "identical" } as { readonly [version: string]: string },
-    BaboonMinReaderVersions: { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" } as { readonly [tier: string]: string },
+    BaboonSameInVersions: ["1.9.0"],
+    BaboonForwardReadable: { "1.9.0": "identical" } as { readonly [version: string]: string },
+    BaboonMinReaderVersions: { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" } as { readonly [tier: string]: string },
     BaboonAdtTypeIdentifier: 'chronicle.api/:#ExpressionHintTarget',
     jsonCodec(): ExpressionHintTarget_JsonCodec {
         return ExpressionHintTarget_JsonCodec.instance
@@ -44,7 +44,7 @@ export class ExpressionHintTarget_Archive implements BaboonAdtMemberMeta, Baboon
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ExpressionHintTarget_Archive.BaboonDomainVersion
     }
@@ -56,15 +56,15 @@ export class ExpressionHintTarget_Archive implements BaboonAdtMemberMeta, Baboon
     public baboonTypeIdentifier() {
         return ExpressionHintTarget_Archive.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
+    public static readonly BaboonSameInVersions = ["1.9.0"]
     public baboonSameInVersions() {
         return ExpressionHintTarget_Archive.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.8.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
     public baboonForwardReadable() {
         return ExpressionHintTarget_Archive.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
     public baboonMinReaderVersions() {
         return ExpressionHintTarget_Archive.BaboonMinReaderVersions
     }
@@ -99,7 +99,7 @@ export class ExpressionHintTarget_Archive_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ExpressionHintTarget_Archive_JsonCodec.BaboonDomainVersion
     }
@@ -149,7 +149,7 @@ export class ExpressionHintTarget_ActivityCollectors implements BaboonAdtMemberM
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ExpressionHintTarget_ActivityCollectors.BaboonDomainVersion
     }
@@ -161,15 +161,15 @@ export class ExpressionHintTarget_ActivityCollectors implements BaboonAdtMemberM
     public baboonTypeIdentifier() {
         return ExpressionHintTarget_ActivityCollectors.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
+    public static readonly BaboonSameInVersions = ["1.9.0"]
     public baboonSameInVersions() {
         return ExpressionHintTarget_ActivityCollectors.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.8.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
     public baboonForwardReadable() {
         return ExpressionHintTarget_ActivityCollectors.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
     public baboonMinReaderVersions() {
         return ExpressionHintTarget_ActivityCollectors.BaboonMinReaderVersions
     }
@@ -204,7 +204,7 @@ export class ExpressionHintTarget_ActivityCollectors_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ExpressionHintTarget_ActivityCollectors_JsonCodec.BaboonDomainVersion
     }
@@ -265,7 +265,7 @@ export class ExpressionHintTarget_ActivityJobs implements BaboonAdtMemberMeta, B
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ExpressionHintTarget_ActivityJobs.BaboonDomainVersion
     }
@@ -277,15 +277,15 @@ export class ExpressionHintTarget_ActivityJobs implements BaboonAdtMemberMeta, B
     public baboonTypeIdentifier() {
         return ExpressionHintTarget_ActivityJobs.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
+    public static readonly BaboonSameInVersions = ["1.9.0"]
     public baboonSameInVersions() {
         return ExpressionHintTarget_ActivityJobs.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.8.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
     public baboonForwardReadable() {
         return ExpressionHintTarget_ActivityJobs.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
     public baboonMinReaderVersions() {
         return ExpressionHintTarget_ActivityJobs.BaboonMinReaderVersions
     }
@@ -322,7 +322,7 @@ export class ExpressionHintTarget_ActivityJobs_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ExpressionHintTarget_ActivityJobs_JsonCodec.BaboonDomainVersion
     }
@@ -378,7 +378,7 @@ export class ExpressionHintTarget_JsonCodec {
         }
     }
 
-    public static readonly BaboonDomainVersion = '1.8.0'
+    public static readonly BaboonDomainVersion = '1.9.0'
     public baboonDomainVersion() {
         return ExpressionHintTarget_JsonCodec.BaboonDomainVersion
     }

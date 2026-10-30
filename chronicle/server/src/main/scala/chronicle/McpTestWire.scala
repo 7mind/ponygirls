@@ -6,8 +6,8 @@ import java.util.UUID
 
 final class McpTestWire(protocol: VersionedWire) extends McpRunPageEncoding {
   private val sizingRequestId=new UUID(0L,0L)
-  val supportedVersions=List("1.4.0","1.5.0","1.6.0","1.7.0","1.8.0")
-  val versionRequirement="MCP testing requires API 1.4.0, 1.5.0, 1.6.0, 1.7.0 or 1.8.0"
+  val supportedVersions=Wire.versions.supported
+  val versionRequirement=s"MCP testing requires API ${Wire.versions.current}"
 
   def snapshot(value: McpRunSnapshot): Result.McpTestRun = Result.McpTestRun(McpTestSnapshot(
     value.instanceId,value.runId,value.state match {
@@ -31,7 +31,7 @@ final class McpTestWire(protocol: VersionedWire) extends McpRunPageEncoding {
       McpRunLimits.maximumTraceBytes,McpRunLimits.maximumEvents,McpRunLimits.pageBytes,McpRunLimits.deadlineSeconds,McpRunLimits.retentionSeconds),
     value.tools.map(tool => McpToolDefinition(tool.name,tool.description,tool.inputSchemaJson.noSpaces))))
 
-  def bytes(value: McpRunSnapshot): Long = supportedVersions.map(version => JsonUtf8Size(protocol.encodeServer(version,ServerEnvelope(sizingRequestId,snapshot(value))))).max
+  def bytes(value: McpRunSnapshot): Long = JsonUtf8Size(protocol.encodeServer(Wire.versions.current,ServerEnvelope(sizingRequestId,snapshot(value))))
 
   def encode(envelope: ServerEnvelope,version: String): Json = {
     Check(supportedVersions.contains(version),"version-mismatch",versionRequirement)

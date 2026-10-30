@@ -17,9 +17,9 @@ let
 in {
   server = source "chronicle-server-source" runtime;
   backendTests = source "chronicle-backend-tests-source" (runtime ++ [ "server/src/test" "tests" "models" "config.example.json" "scripts" ]);
-  protocol = source "chronicle-protocol-source" [ "package.json" "generated/typescript" "protocol/typescript" "models" "server/src/test/fixtures" "scripts/codec-fixtures.mjs" "web/package.json" "web/package-lock.json" ];
-  web = source "chronicle-web-source" [ "package.json" "web" "generated/typescript" "protocol/typescript" "tests/archive-expression-cases.json" "tests/recorded-yolo-profile-cases.json" "server/src/main/scala/chronicle/Http.scala" ];
-  collector = source "chronicle-collector-source" [ "package.json" "collector" "generated/typescript" "protocol/typescript" ];
+  protocol = source "chronicle-protocol-source" [ "package.json" "generated/typescript" "models" "server/src/test/fixtures" "scripts/codec-fixtures.mjs" "web/package.json" "web/package-lock.json" ];
+  web = source "chronicle-web-source" [ "package.json" "web" "generated/typescript" "tests/archive-expression-cases.json" "tests/recorded-yolo-profile-cases.json" "server/src/main/scala/chronicle/Http.scala" ];
+  collector = source "chronicle-collector-source" [ "package.json" "collector" "generated/typescript" ];
   documentation = source "chronicle-documentation-source" [ "README.md" "models" "migrations" ];
   development = lib.cleanSourceWith { name = "chronicle-development-source"; src = root; filter = clean; };
 }

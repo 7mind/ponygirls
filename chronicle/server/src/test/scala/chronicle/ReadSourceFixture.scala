@@ -25,6 +25,8 @@ private[chronicle] final class SourceProbe extends Driver {
   val activeResults=new AtomicInteger()
   private val incompleteResults=new AtomicInteger()
   private val connections=new AtomicInteger()
+  @volatile private var payloadObserver: SourceEvent.Payload => Unit = _ => ()
+  def afterPayload(observer: SourceEvent.Payload => Unit): Unit = { payloadObserver=observer }
   def observations: List[SourceEvent]=events.iterator().asScala.toList
   def url(original: String): String=prefix+original
   private def call(target: AnyRef,method: Method,args: Array[AnyRef]): AnyRef =
@@ -53,6 +55,7 @@ private[chronicle] final class SourceProbe extends Driver {
                     def invoke(proxy: AnyRef,method: Method,args: Array[AnyRef]): AnyRef = {
                       if(Set("getString","getBytes","getCharacterStream","getBinaryStream")(method.getName)) events.add(SourceEvent.Payload(sql,args(0).toString))
                       val value=call(rows,method,args)
+                      if(Set("getString","getBytes","getCharacterStream","getBinaryStream")(method.getName)) payloadObserver(SourceEvent.Payload(sql,args(0).toString))
                       if(method.getName=="next" && value==java.lang.Boolean.FALSE) exhausted=true
                       if(method.getName=="close" && !closed) { closed=true; activeResults.decrementAndGet(); if(!exhausted) incompleteResults.incrementAndGet(); events.add(SourceEvent.Closed(sql,exhausted)) }
                       value

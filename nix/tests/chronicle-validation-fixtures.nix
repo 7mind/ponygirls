@@ -39,12 +39,12 @@ let
         ''}
       '');
       protocol = pkgs.runCommand "chronicle-gate-fixture-protocol-${mode}" { } (if mode == "failed-protocol" then ''
-        echo 'CONTROL: retained protocol validation failed' >&2
+        echo 'CONTROL: single-version protocol validation failed' >&2
         exit 1
       '' else ''
         mkdir -p "$out"
         cat > "$out/protocol.json" <<'JSON'
-        ${builtins.toJSON { schemaVersion = 1; status = "passed"; versions = 9; fixtureGroups = 62; retainedBranchRejections = 26; protocolSource = toString protocolSource; }}
+        ${builtins.toJSON { schemaVersion = 2; status = "passed"; versions = 1; apiVersion = "1.9.0"; fixtureGroups = 14; protocolSource = toString protocolSource; }}
         JSON
       '');
       web = pkgs.runCommand "chronicle-gate-fixture-web-${mode}" { } (if mode == "failed-web" then ''

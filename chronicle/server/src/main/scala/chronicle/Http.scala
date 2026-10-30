@@ -66,7 +66,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
       }.flatMap { i => boundedBody(r,math.min(config.maxBodyBytes,Http.mcpBodyBytes)).flatMap { raw =>
         io.circe.parser.parse(raw) match {
           case Left(_) => IO.pure(json(Status.BadRequest,mcp.rpcError(io.circe.Json.Null,-32700,"Parse error")))
-          case Right(j) => mcp.handle(i,j).map { case None => Response[IO](Status.Accepted); case Some(response) => json(Status.Ok,response) }
+          case Right(j) => mcp.handle(i,j,app.contextReadAccess(i,IO.blocking(bearer(r)))).map { case None => Response[IO](Status.Accepted); case Some(response) => json(Status.Ok,response) }
         }
       }}
     }

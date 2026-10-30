@@ -5,7 +5,13 @@ import java.time.Instant
 import scala.collection.mutable
 import distage.*
 
-final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends SessionArchive with OwnerReindex with PassageReader with MessageSearchReader {
+final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends SessionArchive with OwnerReindex with PassageReader with MessageSearchReader with ContextReader {
+  def retireGeneration(id: UUID): Unit = synchronized { retired+=id; () }
+  def readMessageContext(reader: String,id: UUID,view: ContentView,anchor: Span,beforeBytes: Int,afterBytes: Int,materialization: ReadMaterialization): MessageContextResult = synchronized {
+    MessageContextPolicy.validate(anchor,beforeBytes,afterBytes)
+    val selected=selectView(reader,id,Some(view))
+    DummyMessageContext.read(id,selected,revisions((id,selected.revision)).messages,anchor,beforeBytes,afterBytes,materialization)
+  }
   private val messageSearchCursors=new MessageSearchCursors
   def searchSessionMessages(reader: String,id: UUID,selector: ContentView,literal: String,cursor: Option[String],limit: Int,materialization: ReadMaterialization): SessionMessageSearchResult = synchronized {
     SessionMessageSearchPolicy.validate(literal,cursor,limit)

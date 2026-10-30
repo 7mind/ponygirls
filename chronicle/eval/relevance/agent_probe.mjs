@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { appendPage, assembled, evaluationTrace, finalAnswer, terminal, uniformPrompt, conditionViolations, verifyAgentBindings, verifyAgentCatalog } from './live_protocol.mjs';
+import { appendPage, assembled, evaluationTrace, terminal, conditionViolations } from './live_protocol.mjs';
+import { verifyCatalogV3, finalAnswerV3 } from './agent_protocol_v3.mjs';
+import { verifyProbeInput, probeRunMetadata } from './probe_policy_v3.mjs';
 const [project, inputPath, output] = process.argv.slice(2);
 assert.ok(project && inputPath && output);
 const input = JSON.parse(readFileSync(inputPath, 'utf8'));
-verifyAgentBindings(input);
+verifyProbeInput(input);
 assert.ok(['lexical', 'semantic', 'hybrid'].includes(input.mode));
 assert.equal(input.factFormat, 'ordered-string-values-v1');
 assert.equal(input.relatedPolicy, 'deny');
@@ -107,22 +109,21 @@ try {
     return envelope.result;
   }
   controlRpc = rpc;
-  assert.ok(await rpc(new api.Operation_Hello(['1.7.0'])) instanceof api.Result_Hello);
+  assert.ok(await rpc(new api.Operation_Hello([api.ClientEnvelope.BaboonDomainVersion])) instanceof api.Result_Hello);
   const response = await rpc(new api.Operation_McpTestTools()); assert.ok(response instanceof api.Result_McpTestTools);
   const catalog = response.result;
   const encodedCatalog = api.McpTestCatalog_JsonCodec.instance.encode(ctx, catalog);
   save(output + '/catalog.json', encodedCatalog);
   assert.equal(catalog.model, input.agentModel);
-  verifyAgentCatalog(catalog, input);
-  assert.ok(catalog.limits.maximumRounds > 0 && catalog.limits.maximumToolCalls > 0); assert.equal(catalog.limits.deadlineSeconds, 900);
-  assert.deepEqual(catalog.tools.map(tool => tool.name).sort(), ['get_chunks', 'get_messages', 'get_session', 'ingest_status', 'list_facets', 'related_sessions', 'search_sessions', 'search_tags', 'whoami']);
+  verifyCatalogV3(encodedCatalog, input, input.catalogVariant);
   for (const task of input.tasks) {
     const directory = `${output}/${task.id}`; mkdirSync(directory, { mode: 0o700 });
     const startedAt = Date.now();
     const runId = randomUUID(), identity = { instanceId: catalog.instanceId, runId };
     activeRun = identity; activeDirectory = directory; activeCursor = 0n; cancelPromise = undefined;
-    const prompt = uniformPrompt(task, input.project, input.mode);
-    save(directory + '/run.json', { ...identity, taskId: task.id, prompt, controlAuthority: 'browser session; model receives read-only tool catalog only' });
+    const metadata = probeRunMetadata(input, task, identity, api.ClientEnvelope.BaboonDomainVersion);
+    const prompt = metadata.prompt;
+    save(directory + '/run.json', metadata);
     let events = [], pageNumber = 0, lastState = 'NotStarted', lastFailure = null, failed = null, terminalUnconfirmed = false, abortAfterTask = false, normalDrainComplete = false;
     const deadline = performance.now() + 930000;
     try {
@@ -146,7 +147,7 @@ try {
         result = await rpc(new api.Operation_ReadMcpTest(identity.instanceId, runId, cursor, 40));
       }
       if (lastState === 'Complete') {
-        const answer = finalAnswer(events, task.id);
+        const answer = finalAnswerV3(events, task.id);
         save(directory + '/answer.json', answer);
       } else failed = { type: 'model-run-failed', state: lastState, failure: lastFailure };
     } catch (error) {
@@ -160,6 +161,8 @@ try {
       }
     } finally {
       save(directory + '/events.json', events);
+      save(directory + '/native-outcome.json', { taskId: task.id, state: lastState, failure: failed, serverFailure: lastFailure,
+        claim: 'controller observation before trace normalization; raw native snapshots retained separately' });
       let trace = [];
       try {
         save(directory + '/assembled.json', assembled(events));
@@ -171,7 +174,8 @@ try {
       }
       writeFileSync(directory + '/trace.jsonl', trace.map(item => JSON.stringify(item)).join('\n') + (trace.length ? '\n' : ''), { flag: 'wx', mode: 0o600 });
       const violations = conditionViolations(trace, input.mode, input.project);
-      const outcome = { taskId: task.id, mode: input.mode, terminalUnconfirmed, traceComplete: normalDrainComplete && !abortAfterTask, state: lastState, failure: failed, conditionViolations: violations.length,
+      const outcome = { taskId: task.id, mode: input.mode, protocolPolicy: input.protocolPolicy,
+                        apiVersion: api.ClientEnvelope.BaboonDomainVersion, catalogVariant: input.catalogVariant, terminalUnconfirmed, traceComplete: normalDrainComplete && !abortAfterTask, state: lastState, failure: failed, conditionViolations: violations.length,
                         events: events.length, toolCalls: trace.length, elapsedMs: Date.now() - startedAt, claim: 'execution state is not answer correctness' };
       save(directory + '/outcome.json', outcome); summaries.push(outcome);
       if (!terminalUnconfirmed) activeRun = undefined;

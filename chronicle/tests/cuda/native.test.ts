@@ -165,7 +165,7 @@ test('Chronicle ingestion → real annotation/embedding → PostgreSQL → seman
   socket = new WebSocket(base.replace('http:', 'ws:') + '/api/ws', { headers: { Origin: base, Cookie: cookie.split(';')[0] } });
   await new Promise<void>((done, fail) => { socket!.once('open', done); socket!.once('error', fail); });
   const rpc = new Rpc(socket);
-  assert.ok(await rpc.call(new A.Operation_Hello(['1.2.0'])) instanceof A.Result_Hello);
+  assert.ok(await rpc.call(new A.Operation_Hello([A.ClientEnvelope.BaboonDomainVersion])) instanceof A.Result_Hello);
   const minted = await rpc.call(new A.Operation_MintToken('synthetic CUDA fixtures', [A.Scope.Ingest, A.Scope.Read]));
   assert.ok(minted instanceof A.Result_Token && minted.result.secret !== undefined); const token = minted.result.secret;
   const sessions = new Map<string, string>();

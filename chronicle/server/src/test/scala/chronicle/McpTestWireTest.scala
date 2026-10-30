@@ -7,7 +7,7 @@ import java.util.UUID
 import java.nio.charset.StandardCharsets.UTF_8
 
 class McpTestWireTest extends munit.FunSuite {
-  private val protocol=new VersionedWire(new chronicle.protocol.ProtocolConversions)
+  private val protocol=new VersionedWire
   private val wire=new McpTestWire(protocol)
   private val requestId=UUID.randomUUID()
   private val instance=UUID.randomUUID()
@@ -15,15 +15,15 @@ class McpTestWireTest extends munit.FunSuite {
   private val now=Instant.parse("2026-01-01T00:00:00.123456789Z")
   private def snapshot(text: String,state: McpRunState): McpRunSnapshot = McpRunSnapshot(instance,run,state,now,List(McpRunEvent(Long.MaxValue,now,McpRunItem.Response(Int.MaxValue,Int.MaxValue,text))),Long.MaxValue,true,Some(McpRunFailure("sanitized","fixed failure")))
 
-  test("BA: current tester API is supported and old pre-tester versions remain denied") {
-    assertEquals(wire.supportedVersions,List("1.4.0","1.5.0","1.6.0","1.7.0","1.8.0"))
+  test("BA: current tester API is supported and all removed and future versions remain denied") {
+    assertEquals(wire.supportedVersions,List("1.9.0"))
     assert(wire.supportedVersions.contains(Wire.versions.current))
-    List("1.0.0","1.1.0","1.2.0","1.3.0").foreach { version =>
+    ((0 to 8).map(minor => s"1.$minor.0") :+ "2.0.0").foreach { version =>
       assertEquals(intercept[DomainError](wire.encode(ServerEnvelope(requestId,wire.snapshot(snapshot("",McpRunState.Queued))),version)).code,"version-mismatch")
     }
   }
 
-  test("BA: every state, item, timestamp, counter, and failure retains API1.4 through API1.7 encoding") {
+  test("BA: every state, item, timestamp, counter, and failure retains current API encoding") {
     McpRunState.values.foreach { state =>
       val domain=snapshot("\u0085\"\\🙂",state).copy(events=List(
         McpRunEvent(1L,now,McpRunItem.ToolCall("call","provided-tool",0,1,"{\"q\":\"🙂\"}")),

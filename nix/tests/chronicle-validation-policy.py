@@ -191,4 +191,22 @@ class FastEvidencePolicyTest(unittest.TestCase):
                 with self.assertRaises(ValueError): evidence_policy.evidence(bad)
 
 
+class SingleProtocolEvidencePolicyTest(unittest.TestCase):
+    def setUp(self):
+        self.inputs = {'protocolSource': 'protocol-source'}
+        self.protocol = {'schemaVersion': 2, 'status': 'passed', 'versions': 1,
+                         'apiVersion': '1.9.0', 'fixtureGroups': 14, 'protocolSource': 'protocol-source'}
+
+    def test_exact_current_protocol_binding_accepted(self):
+        self.assertIsNone(evidence_policy.check_protocol(self.inputs, self.protocol))
+
+    def test_retained_claim_incomplete_checks_and_mismatched_sources_rejected(self):
+        for key, value in [('schemaVersion', 1), ('status', 'failed'), ('versions', 9), ('versions', True),
+                           ('apiVersion', '1.8.0'), ('fixtureGroups', 13), ('fixtureGroups', True),
+                           ('protocolSource', 'other-source')]:
+            with self.subTest(key=key, value=value):
+                with self.assertRaises(ValueError):
+                    evidence_policy.check_protocol(self.inputs, self.protocol | {key: value})
+
+
 unittest.main()

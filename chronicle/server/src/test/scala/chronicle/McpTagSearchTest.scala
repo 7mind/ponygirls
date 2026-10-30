@@ -38,8 +38,8 @@ class McpTagSearchTest extends munit.FunSuite {
     fixture { f =>
       assert(f.tools.definitions.exists(_.name=="search_tags"),"the MCP catalog must expose search_tags, not only capped list_facets")
       val names=f.tools.definitions.map(_.name)
-      assertEquals(names.distinct.size,9)
-      assertEquals(names.toSet,Set("search_sessions","get_session","get_chunks","get_messages","related_sessions","list_facets","search_tags","ingest_status","whoami"))
+      assertEquals(names.distinct.size,10)
+      assertEquals(names.toSet,Set("read_message_context","search_sessions","get_session","get_chunks","get_messages","related_sessions","list_facets","search_tags","ingest_status","whoami"))
       val tool=f.mcp.tools.asArray.get.find(_.hcursor.get[String]("name").contains("search_tags")).get
       assertEquals(tool.hcursor.downField("annotations").get[Boolean]("readOnlyHint").toOption,Some(true))
       assertEquals(tool.hcursor.downField("inputSchema").get[Boolean]("additionalProperties").toOption,Some(false))

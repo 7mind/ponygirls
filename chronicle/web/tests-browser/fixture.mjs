@@ -19,7 +19,7 @@ function fixturePage(rows, cursor, limit, key) {
 function leaseState(item) { return item.leaseExpiresAt === undefined ? 'unleased' : item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : 'expired'; }
 export class ChronicleFixture {
   user = new api.UserInfo('alice', 'alice', [api.Scope.Read, api.Scope.Raw]);
-  version = new api.VersionInfo('1.8.0', '1.0.0', ['1.8.0', '1.7.0', '1.6.0', '1.5.0', '1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']);
+  version = new api.VersionInfo(api.ClientEnvelope.BaboonDomainVersion, api.ClientEnvelope.BaboonDomainVersion, [api.ClientEnvelope.BaboonDomainVersion]);
   sockets = []; calls = []; requests = []; receipts = new Map(); tokens = []; staticTokens = []; collectors = []; collectionDenied = false;
   groups = [new api.GroupInfo(ID.group, 'Systems workshop', 'alice', ['alice', 'bob']), new api.GroupInfo(ID.otherGroup, 'Research circle', 'bob', ['bob', 'alice'])];
   invitations = [new api.InviteInfo(ID.invitation, ID.otherGroup, 'alice', '2030-01-01T00:00:00Z')];

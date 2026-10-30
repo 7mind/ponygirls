@@ -55,7 +55,7 @@ package chronicle.api {
       }
     }
   
-    def baboonDomainVersion: String = "1.8.0"
+    def baboonDomainVersion: String = "1.9.0"
     
     def baboonDomainIdentifier: String = "chronicle.api"
     

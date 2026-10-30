@@ -95,7 +95,7 @@ class Rpc {
     const socket = new WebSocket(base.replace('http:', 'ws:') + '/api/ws', { headers: { Origin: base, Cookie: cookie } });
     const client = new Rpc(socket);
     await new Promise<void>((done, fail) => { socket.once('open', done); socket.once('error', fail); });
-    assert.ok(await client.call(new A.Operation_Hello(['1.2.0']), randomUUID()) instanceof A.Result_Hello);
+    assert.ok(await client.call(new A.Operation_Hello([A.ClientEnvelope.BaboonDomainVersion]), randomUUID()) instanceof A.Result_Hello);
     return client;
   }
 }
