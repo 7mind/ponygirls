@@ -4,7 +4,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { resolveProject } from "../src/project.ts";
+import { basename } from "node:path";
+import { projectDisplayName, resolveProject } from "../src/project.ts";
 
 function temporary(t: TestContext): string {
 	const directory = mkdtempSync(join(tmpdir(), "pi-decisions-project-"));
@@ -150,4 +151,20 @@ test("missing directories and non-directory cwd inputs fail rather than inventin
 	const file = join(directory, "file");
 	writeFileSync(file, "data");
 	assert.throws(() => resolveProject(file), /not a directory/);
+});
+
+test("display names show the repository name, never a .git path; worktrees show the main repository", (t) => {
+	const directory = repository(t);
+	git(directory, ["-c", "user.name=Decisions Test", "-c", "user.email=decisions@example.invalid", "commit", "--allow-empty", "-m", "Initial"]);
+	const worktree = join(temporary(t), "linked worktree");
+	git(directory, ["worktree", "add", "-b", "linked", worktree]);
+	const name = basename(realpathSync(directory));
+	assert.equal(projectDisplayName(resolveProject(directory)), name);
+	assert.equal(projectDisplayName(resolveProject(worktree)), name);
+	const outside = join(temporary(t), "plain directory");
+	mkdirSync(outside);
+	assert.equal(projectDisplayName(resolveProject(outside)), "plain directory");
+	assert.equal(projectDisplayName("/srv/repos/pony.git"), "pony");
+	assert.equal(projectDisplayName("/"), "/");
+	assert.equal(projectDisplayName("/.git"), "/");
 });

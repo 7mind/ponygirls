@@ -10,8 +10,14 @@ import type { Decision } from "../src/store.ts";
 
 const ENTER = "\r", ESC = "\x1b", TAB = "\t", UP = "\x1b[A", DOWN = "\x1b[B";
 const SAVE = "\x13", REBASE = "\x12", PGDOWN = "\x1b[6~", END = "\x1b[F", HOME = "\x1b[H";
+// Each token gets its own 256-colour code so tests can tell which token styled what.
+const TOKENS = ["text", "muted", "dim", "accent", "border", "borderMuted", "success", "warning", "error", "mdHeading", "mdLink",
+  "mdLinkUrl", "mdCode", "mdCodeBlock", "mdCodeBlockBorder", "mdQuote", "mdQuoteBorder", "mdHr", "mdListBullet"];
+const fgCode = (token: string) => `\x1b[38;5;${TOKENS.indexOf(token) + 1}m`;
+const SELECTED_BG = "\x1b[48;5;236m";
 const theme = {
-  fg: (_token: string, s: string) => `\x1b[36m${s}\x1b[39m`,
+  fg: (token: string, s: string) => { assert.ok(TOKENS.includes(token), token); return `${fgCode(token)}${s}\x1b[39m`; },
+  bg: (token: string, s: string) => { assert.equal(token, "selectedBg"); return `${SELECTED_BG}${s}\x1b[49m`; },
   bold: (s: string) => `\x1b[1m${s}\x1b[22m`, italic: (s: string) => `\x1b[3m${s}\x1b[23m`,
   underline: (s: string) => `\x1b[4m${s}\x1b[24m`, strikethrough: (s: string) => `\x1b[9m${s}\x1b[29m`,
 } as unknown as Theme;
@@ -26,7 +32,7 @@ function decision(number: number, overrides: Partial<Decision> = {}): Decision {
   };
 }
 
-function open(items = [decision(1)], initialId: string | null = null) {
+function open(items = [decision(1)], initialId: string | null = null, projectName = "pony") {
   let records = structuredClone(items), height = 40, closed = false, renders = 0;
   let loadError: Error | null = null, saveError: Error | null = null;
   const writes: { base: Decision; status: Decision["status"]; answer: string | null }[] = [];
@@ -42,11 +48,13 @@ function open(items = [decision(1)], initialId: string | null = null) {
       records[index] = { ...records[index]!, status, answer, revision: base.revision + 1 };
     },
     requestRender: () => { renders++; }, close: () => { closed = true; },
-  }, initialId, () => height);
+  }, projectName, initialId, () => height);
   const press = (...keys: string[]) => { for (const key of keys) pane.handleInput(key); };
   const screen = (width = 100) => plain(pane.render(width).join("\n"));
+  /** The highlighted tab label in the title rule. */
+  const activeTab = (width = 100) => new RegExp(`${SELECTED_BG.replace("[", "\\[")}${fgCode("text").replace("[", "\\[")} (pending \\d+|all) `).exec(pane.render(width)[0])?.[1];
   return {
-    pane, press, screen, writes, records: () => records, setRecords: (value: Decision[]) => { records = structuredClone(value); },
+    pane, press, screen, activeTab, writes, records: () => records, setRecords: (value: Decision[]) => { records = structuredClone(value); },
     resize: (rows: number) => { height = rows; }, closed: () => closed, renders: () => renders,
     loadFails: (error: Error | null) => { loadError = error; }, saveFails: (error: Error | null) => { saveError = error; },
   };
@@ -54,20 +62,20 @@ function open(items = [decision(1)], initialId: string | null = null) {
 
 test("pending inbox, wrapped Markdown detail, history toggle, and stable selection after refresh", () => {
   const h = open([decision(1), decision(2), decision(3, { status: "answered", answer: "HISTORY-ANSWER" })]);
-  assert.match(h.screen(), /pending \(2\)/);
+  assert.equal(h.activeTab(), "pending 2");
   assert.doesNotMatch(h.screen(), /Question 3|HISTORY-ANSWER/);
   assert.match(h.screen(), /Useful context\./);
   assert.ok(h.pane.render(100).join("\n").includes("\x1b[1mUseful"), "Markdown styling is retained");
-  assert.doesNotMatch(h.screen(), /(?:36|39|22)m/, "sanitization must not leak raw SGR fragments");  assert.match(h.screen(), /Recommendation[\s\S]*Prefer the second/);
+  assert.doesNotMatch(h.screen(), /(?:38;5;\d+|39|22)m/, "sanitization must not leak raw SGR fragments");  assert.match(h.screen(), /Recommendation[\s\S]*Prefer the second/);
   h.press(DOWN);
   h.setRecords([decision(9), decision(1), decision(2), decision(3, { status: "answered", answer: "HISTORY-ANSWER" })]);
-  assert.match(h.screen(), /› Q2/);
+  assert.match(h.screen(), /▌ Q2/);
   h.press("a", "answer-two", SAVE);
   assert.equal(h.writes[0]!.base.id, "Q2");
   assert.equal(h.writes[0]!.answer, "answer-two");
   h.press(TAB);
-  assert.match(h.screen(), /all\/history/);
-  assert.match(h.screen(), /Q3 \[answered\]/);
+  assert.equal(h.activeTab(), "all");
+  assert.match(h.screen(), /Q3\s+✓ answered/);
   h.press(TAB);
   assert.doesNotMatch(h.screen(), /Q3/);
   assert.ok(h.renders() > 0);
@@ -80,10 +88,10 @@ test("saving the last pending answer returns from detail to an inbox that closes
     if (mode === "a") h.press("My answer");
     h.press(SAVE);
     assert.equal(h.records()[0]!.status, "answered");
-    assert.match(h.screen(), /pending \(0\)/);
+    assert.equal(h.activeTab(), "pending 0");
     assert.match(h.screen(), /No pending decisions/);
-    assert.match(h.screen(), /Esc close/);
-    assert.doesNotMatch(h.screen(), /Esc inbox/);
+    assert.match(h.screen(), /esc close/);
+    assert.doesNotMatch(h.screen(), /esc inbox/);
     assert.equal(h.closed(), false, "saving returns to the inbox without closing it");
     h.press(ESC);
     assert.equal(h.closed(), true, "one Escape closes the empty inbox");
@@ -93,14 +101,14 @@ test("saving the last pending answer returns from detail to an inbox that closes
 test("saving from detail returns to the remaining pending list and preserves history navigation", () => {
   const h = open([decision(1), decision(2), decision(3)], "Q1");
   h.press("1", SAVE);
-  assert.match(h.screen(), /› Q2 \[pending\]/);
-  assert.match(h.screen(), /Q3 \[pending\]/);
+  assert.match(h.screen(), /▌ Q2\s+\? pending/);
+  assert.match(h.screen(), /Q3\s+\? pending/);
   h.press(DOWN);
-  assert.match(h.screen(), /› Q3 \[pending\]/, "arrows select questions rather than scrolling obsolete detail");
+  assert.match(h.screen(), /▌ Q3\s+\? pending/, "arrows select questions rather than scrolling obsolete detail");
   const history = open([decision(7, { status: "answered", answer: "Existing answer" })], "Q7");
   history.press("e", "!", SAVE);
-  assert.match(history.screen(), /all\/history/);
-  assert.match(history.screen(), /› Q7 \[answered\]/);
+  assert.equal(history.activeTab(), "all");
+  assert.match(history.screen(), /▌ Q7\s+✓ answered/);
   history.press(ESC);
   assert.equal(history.closed(), true);
 });
@@ -199,7 +207,7 @@ test("dismiss/reopen require explicit confirmation; existing answers can be edit
   assert.equal(h.writes[1]!.status, "pending");
   assert.equal(h.writes[1]!.answer, null);
   const answered = open([decision(7, { status: "answered", answer: "Existing answer" })], "Q7");
-  assert.match(answered.screen(), /all\/history/);
+  assert.equal(answered.activeTab(), "all");
   answered.press("e", "!", SAVE);
   assert.equal(answered.writes[0]!.answer, "Existing answer!");
   assert.equal(answered.writes[0]!.status, "answered");
@@ -247,11 +255,12 @@ test("Unicode and ANSI-safe rendering covers all stored fields, Markdown and edi
   const bad = "\x1b]0;bad-title\x07\x1b]52;c;secret\x07\x1bPbad-dcs\x1b\\\x1b[2J\x1b[10;10H\x9b?1049h\x1b[31mSAFE\x1b[0m\u202e";
   const unicode = "日本語 👩🏽‍💻 café é";
   const h = open([decision(1, { question: `${unicode} ${bad}`, project: bad, context: `${bad}\n\n| a | b |\n|---|---|\n| ${unicode} | long-content |`,
-    options: [bad], recommendation: bad, status: "answered", answer: `${bad} saved` })], "Q1");
+    options: [bad], recommendation: bad, status: "answered", answer: `${bad} saved` })], "Q1", `${bad}name`);
   h.resize(60);
   const screen = h.screen(100);
   assert.match(screen, /日本語 👩🏽‍💻 café é/);
   assert.match(screen, /SAFE/);
+  assert.match(screen.split("\n")[0]!, /SAFEname/, "project name is sanitized");
   assert.doesNotMatch(screen, /bad-title|secret|bad-dcs|\u202e/);
   assert.doesNotMatch(screen, /[\x00-\x09\x0b-\x1f\x7f-\x9f]/, "only theme SGR may survive rendering");
   h.press("e");
@@ -262,4 +271,46 @@ test("Unicode and ANSI-safe rendering covers all stored fields, Markdown and edi
   h.press(SAVE);
   assert.doesNotMatch(h.writes[0]!.answer!, /\x1b|\x9b|secret|\u202e/);
   assert.match(h.writes[0]!.answer!, /SAFE pasted/);
+});
+
+test("framed inbox: tabs and repository name in the title rule, status glyphs, full-width selection, rules, labelled sections", () => {
+  const h = open([decision(1), decision(2), decision(10, { status: "answered", answer: "Done" }), decision(11, { status: "dismissed" })]);
+  const width = 90;
+  const raw = h.pane.render(width);
+  const lines = raw.map(plain);
+  assert.match(lines[0]!, /^── Decisions\s+pending 2\s+all\s+─+ pony ──$/);
+  assert.equal(visibleWidth(raw[0]!), width);
+  assert.ok(raw[0]!.includes(fgCode("dim") + "pony"), "project name is dim on the right");
+  assert.doesNotMatch(lines.join("\n"), /\.git|\/projects\//, "the raw project path is never printed");
+  assert.match(lines[1]!, /^▌ Q1\s+\? pending\s+Question 1\?\s*$/);
+  assert.equal(visibleWidth(raw[1]!), width, "selection spans the full width");
+  assert.ok(raw[1]!.startsWith(SELECTED_BG));
+  assert.ok(raw[1]!.includes(fgCode("muted") + "Q1"), "ids are muted, not dim, inside the selection band");
+  assert.ok(raw[1]!.includes(fgCode("warning") + "? pending"));
+  assert.match(lines[2]!, /^ {2}Q2\s+\? pending\s+Question 2\?$/);
+  assert.ok(raw[2]!.includes(fgCode("dim") + "Q2"), "unselected ids are dim");
+  assert.match(lines[3]!, /^─+$/, "a rule separates the list from the detail");
+  assert.equal(lines[4], "Question");
+  assert.ok(raw[4]!.includes(`\x1b[1m${fgCode("accent")}Question`), "section labels are bold accent");
+  assert.doesNotMatch(lines.join("\n"), /###/);
+  assert.match(lines.join("\n"), /\nContext\n {2}Useful context\.\s*\nOptions\n {2}1\. First option\s*\n {2}2\. Second option\s*\nRecommendation\n {2}Prefer the second option\./);
+  const rule = lines.findLastIndex((line) => /^─+$/.test(line));
+  assert.deepEqual(lines.slice(rule + 1), [
+    "↑↓ select  ⏎ detail  ⇥ pending/all  ⇞⇟ scroll detail  esc close",
+    "a/e answer  1–9/o options  d dismiss  u reopen",
+  ]);
+  assert.ok(raw[rule + 1]!.includes(fgCode("muted") + "select"), "hint actions are muted");
+  h.press(TAB);
+  const history = h.pane.render(width);
+  assert.ok(history.some((line) => line.includes(fgCode("success") + "✓ answered")));
+  assert.ok(history.some((line) => line.includes(fgCode("muted") + "– dismissed")));
+  h.press("x");
+  h.press("d");
+  const confirm = h.pane.render(width).map(plain);
+  assert.match(confirm.join("\n"), /\nQ1\s+\? pending\nDismiss this decision\?\n {2}Question 1\?/);
+  assert.equal(confirm.at(-1), "ctrl+s confirm dismiss  esc cancel");
+  h.press(ESC);
+  h.press("r");
+  const notice = h.pane.render(width);
+  assert.ok(notice.some((line) => line.startsWith(fgCode("warning") + "Refreshed.")), "notices keep the warning colour");
 });

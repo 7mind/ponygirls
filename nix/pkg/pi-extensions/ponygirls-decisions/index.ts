@@ -2,7 +2,8 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { resolveProject } from "./src/project.ts";
+import { compactChip } from "@ponygirls/pi-ui";
+import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
 import { DecisionsPane } from "./src/pane.ts";
 
@@ -75,6 +76,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         if (pending === 0) b.ctx.ui.setWidget(STATUS_KEY, undefined);
         else b.ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({
           render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${pending} `)), width)],
+          renderCompact: () => compactChip(theme, "?", "attention", String(pending)),
           invalidate() {},
           handleMouse(event) {
             if (event.type !== "click" || event.button !== "left") return;
@@ -132,7 +134,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
           },
           close: () => done(),
           requestRender: () => tui.requestRender(),
-        }, id, () => Math.max(1, tui.terminal.rows - PANE_CHROME_ROWS));
+        }, projectDisplayName(b.project), id, () => Math.max(1, tui.terminal.rows - PANE_CHROME_ROWS));
       });
     } finally {
       b.repaint = null;

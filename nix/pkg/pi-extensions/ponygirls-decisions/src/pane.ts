@@ -1,9 +1,10 @@
 /** Keyboard-only decisions inbox. Persistence/CAS belongs to the injected store callbacks. */
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
-  CURSOR_MARKER, Editor, Key, Markdown, SelectList, matchesKey, truncateToWidth, wrapTextWithAnsi,
-  type Component, type Focusable, type TUI,
+  CURSOR_MARKER, Editor, Key, Markdown, SelectList, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi,
+  type Component, type Focusable, type MarkdownTheme, type TUI,
 } from "@earendil-works/pi-tui";
+import { fit as fitCell, frameRule, frameTitle, keyHints, listRow, type KeyHint, type UiFg } from "@ponygirls/pi-ui";
 import type { Decision } from "./store.ts";
 
 export interface DecisionsPaneCallbacks {
@@ -38,6 +39,40 @@ function clean(text: string, styling: boolean): string {
 const sanitize = (text: string) => clean(text, false);
 const oneLine = (text: string) => sanitize(text).replace(/\n/g, " ");
 
+const STATUS_STYLE: Readonly<Record<Decision["status"], { glyph: string; color: UiFg }>> = {
+  pending: { glyph: "?", color: "warning" },
+  answered: { glyph: "✓", color: "success" },
+  dismissed: { glyph: "–", color: "muted" },
+};
+const statusLabel = (status: Decision["status"]) => `${STATUS_STYLE[status].glyph} ${status}`;
+/** Widest status cell: "– dismissed". */
+const STATUS_WIDTH = 11;
+const COLUMN_GAP = "   ";
+const SECTION_INDENT = "  ";
+const MAX_LIST_ROWS = 8;
+const MAX_WARNING_LINES = 2;
+const MAX_HINT_LINES = 4;
+
+const LIST_HINTS: readonly KeyHint[] = [
+  { key: "↑↓", action: "select" }, { key: "⏎", action: "detail" }, { key: "⇥", action: "pending/all" },
+  { key: "⇞⇟", action: "scroll detail" }, { key: "esc", action: "close" },
+];
+const DETAIL_HINTS: readonly KeyHint[] = [{ key: "↑↓/⇞⇟", action: "scroll" }, { key: "esc", action: "inbox" }, { key: "⇥", action: "pending/all" }];
+const ACTION_HINTS: readonly KeyHint[] = [
+  { key: "a/e", action: "answer" }, { key: "1–9/o", action: "options" }, { key: "d", action: "dismiss" }, { key: "u", action: "reopen" },
+];
+const EDITOR_HINTS: readonly KeyHint[] = [{ key: "⏎", action: "newline" }, { key: "ctrl+s", action: "save" }, { key: "esc", action: "discard" }];
+const REBASE_HINTS: readonly KeyHint[] = [{ key: "ctrl+r", action: "reload latest revision, keeping draft" }];
+const OPTIONS_HINTS: readonly KeyHint[] = [
+  { key: "↑↓/1–9", action: "choose" }, { key: "ctrl+s", action: "save" }, { key: "e", action: "edit" }, { key: "esc", action: "discard" },
+];
+
+/** A detail section: a styled label over an indented, sanitized Markdown body. */
+interface Section {
+  label: string;
+  body: string;
+}
+
 /**
  * Tab toggles pending/all. Arrows select; Enter expands detail; PgUp/PgDn
  * scroll detail. a/e edits, o or 1–9 selects options, d dismisses, u reopens.
@@ -61,18 +96,20 @@ export class DecisionsPane implements Component, Focusable {
   private notice = "";
   private loadError = "";
   private hasFocus = false;
-  private markdown: Markdown;
-  private markdownText = "";
+  private markdownTheme: MarkdownTheme;
+  private sectionCache: { key: string; lines: string[] } | null = null;
   private theme: Theme;
   private callbacks: DecisionsPaneCallbacks;
+  private projectName: string;
   private getHeight: () => number;
 
-  constructor(theme: Theme, callbacks: DecisionsPaneCallbacks, initialId: string | null, getHeight: () => number) {
+  constructor(theme: Theme, callbacks: DecisionsPaneCallbacks, projectName: string, initialId: string | null, getHeight: () => number) {
     this.theme = theme;
     this.callbacks = callbacks;
+    this.projectName = projectName;
     this.getHeight = getHeight;
     this.selectedId = initialId;
-    this.markdown = new Markdown("", 0, 0, {
+    this.markdownTheme = {
       heading: (s) => theme.fg("mdHeading", s), link: (s) => theme.fg("mdLink", s),
       linkUrl: (s) => theme.fg("mdLinkUrl", s), code: (s) => theme.fg("mdCode", s),
       codeBlock: (s) => theme.fg("mdCodeBlock", s), codeBlockBorder: (s) => theme.fg("mdCodeBlockBorder", s),
@@ -80,7 +117,7 @@ export class DecisionsPane implements Component, Focusable {
       hr: (s) => theme.fg("mdHr", s), listBullet: (s) => theme.fg("mdListBullet", s),
       bold: (s) => theme.bold(s), italic: (s) => theme.italic(s),
       strikethrough: (s) => theme.strikethrough(s), underline: (s) => theme.underline(s),
-    });
+    };
     this.refresh();
     const initial = this.items.find((d) => d.id === initialId);
     if (initial) {
@@ -96,7 +133,7 @@ export class DecisionsPane implements Component, Focusable {
     if (this.editor) this.editor.focused = value && this.draft?.mode === "editor";
   }
 
-  invalidate(): void { this.markdown.invalidate(); this.editor?.invalidate(); }
+  invalidate(): void { this.sectionCache = null; this.editor?.invalidate(); }
 
   /** Also called on every render and key event; does not replace an active draft. */
   refresh(): void {
@@ -263,22 +300,40 @@ export class DecisionsPane implements Component, Focusable {
     this.redraw();
   }
 
-  private md(text: string, width: number): string[] {
-    const safe = sanitize(text);
-    if (safe !== this.markdownText) { this.markdownText = safe; this.markdown.setText(safe); }
-    // Markdown may generate hyperlinks or decode entities: only generated SGR
-    // styling is allowed through; never replay OSC, DCS, or cursor commands.
-    return this.markdown.render(width).map((line) => clean(line, true));
+  /** Section labels are styled here; only bodies go through Markdown, so no literal headings. */
+  private sections(sections: readonly Section[], width: number): string[] {
+    const key = JSON.stringify([width, sections]);
+    if (this.sectionCache?.key === key) return this.sectionCache.lines;
+    const bodyWidth = Math.max(1, width - SECTION_INDENT.length);
+    const lines = sections.flatMap((section) => [
+      this.theme.bold(this.theme.fg("accent", oneLine(section.label))),
+      // Markdown may generate hyperlinks or decode entities: only generated SGR
+      // styling is allowed through; never replay OSC, DCS, or cursor commands.
+      ...new Markdown(sanitize(section.body), 0, 0, this.markdownTheme).render(bodyWidth).map((line) => SECTION_INDENT + clean(line, true)),
+    ]);
+    this.sectionCache = { key, lines };
+    return lines;
   }
 
-  private detailText(d: Decision): string {
+  private detailSections(d: Decision): Section[] {
     return [
-      `### Question\n\n${d.question}`,
-      d.context ? `### Context\n\n${d.context}` : "",
-      d.options.length ? `### Options\n\n${d.options.map((s, i) => `${i + 1}. ${s}`).join("\n")}` : "",
-      d.recommendation ? `### Recommendation\n\n${d.recommendation}` : "",
-      d.answer !== null ? `### Saved answer\n\n${d.answer}` : "",
-    ].filter(Boolean).join("\n\n");
+      { label: "Question", body: d.question },
+      d.context ? { label: "Context", body: d.context } : null,
+      d.options.length ? { label: "Options", body: d.options.map((s, i) => `${i + 1}. ${s}`).join("\n") } : null,
+      d.recommendation ? { label: "Recommendation", body: d.recommendation } : null,
+      d.answer !== null ? { label: "Saved answer", body: d.answer } : null,
+    ].filter((section): section is Section => section !== null);
+  }
+
+  /** Glyph and status word in the status colour, padded to `width` columns. */
+  private statusCell(status: Decision["status"], width: number): string {
+    return this.theme.fg(STATUS_STYLE[status].color, fitCell(statusLabel(status), width));
+  }
+
+  /** Short dim id, glyph+colour status, question; secondary text is muted inside the selection band. */
+  private row(item: Decision, selected: boolean, idWidth: number): string {
+    const id = this.theme.fg(selected ? "muted" : "dim", fitCell(oneLine(item.id), idWidth));
+    return [id, this.statusCell(item.status, STATUS_WIDTH), this.theme.fg("text", oneLine(item.question))].join(COLUMN_GAP);
   }
 
   private viewport(lines: string[], rows: number): string[] {
@@ -296,32 +351,40 @@ export class DecisionsPane implements Component, Focusable {
     const dim = (s: string) => this.theme.fg("dim", s);
     const draft = this.draft, d = draft?.base ?? this.current();
     const warning = [this.loadError, this.notice, this.changed() ? "Changed elsewhere; draft kept. Ctrl+R adopts latest revision." : ""].filter(Boolean).join(" ");
-    const hints = draft?.mode === "editor" ? ["Enter newline · Ctrl+S save · Esc discard", "Ctrl+R reload latest revision, keeping draft"]
-      : draft?.mode === "options" ? ["↑↓/1–9 choose · Ctrl+S save · e edit · Esc discard"]
-      : draft ? [`Ctrl+S confirm ${draft.status === "pending" ? "reopen" : "dismiss"} · Esc cancel`]
-      : [this.detail ? "↑↓/Pg↑↓ scroll · Esc inbox · Tab pending/all" : "↑↓ select · Enter detail · Tab pending/all · Esc close", "a/e answer · 1–9/o options · d dismiss · u reopen · Pg↑↓ detail"];
+    const hints: (readonly KeyHint[])[] = draft?.mode === "editor" ? [EDITOR_HINTS, REBASE_HINTS]
+      : draft?.mode === "options" ? [OPTIONS_HINTS]
+      : draft ? [[{ key: "ctrl+s", action: `confirm ${draft.status === "pending" ? "reopen" : "dismiss"}` }, { key: "esc", action: "cancel" }]]
+      : [this.detail ? DETAIL_HINTS : LIST_HINTS, ACTION_HINTS];
     const foot = [
-      ...warning ? wrapTextWithAnsi(this.theme.fg("warning", oneLine(warning)), w).slice(0, 2) : [],
-      ...hints.flatMap((s) => wrapTextWithAnsi(dim(s), w)).slice(0, w < 60 ? 4 : 2),
-    ].slice(0, Math.max(0, height - (draft?.mode === "editor" ? 3 : 1)));
-    const title = this.theme.bold(`Decisions · ${this.all ? "all/history" : "pending"} (${this.visible().length})`);
-    const out = [title];
-    let rows = Math.max(0, height - foot.length - 1);
+      ...warning ? wrapTextWithAnsi(this.theme.fg("warning", oneLine(warning)), w).slice(0, MAX_WARNING_LINES) : [],
+      ...hints.flatMap((group) => keyHints(this.theme, w, group).lines).slice(0, MAX_HINT_LINES),
+    ].slice(0, Math.max(0, height - (draft?.mode === "editor" ? 3 : 1) - 1));
+    const bottom = foot.length ? [frameRule(this.theme, w), ...foot] : [];
+    const pending = this.items.filter((item) => item.status === "pending").length;
+    const out = [frameTitle(this.theme, w, {
+      title: "Decisions",
+      tabs: { labels: [`pending ${pending}`, "all"], active: this.all ? 1 : 0 },
+      right: dim(oneLine(this.projectName)),
+    }, "none").line];
+    let rows = Math.max(0, height - bottom.length - 1);
     if (rows && !draft && !this.detail) {
       const list = this.visible();
-      const count = Math.min(Math.max(1, Math.floor(rows / 3)), 8, Math.max(1, list.length));
+      const count = Math.min(Math.max(1, Math.floor(rows / 3)), MAX_LIST_ROWS, Math.max(1, list.length));
       const index = Math.max(0, list.findIndex((item) => item.id === this.selectedId));
       const from = Math.max(0, Math.min(index - Math.floor(count / 2), list.length - count));
-      const listLines = list.slice(from, from + count).map((item) => {
-        const line = `${item.id === this.selectedId ? "›" : " "} ${oneLine(item.id)} [${item.status}] ${oneLine(item.question)}`;
-        return item.id === this.selectedId ? this.theme.fg("accent", line) : line;
+      const shown = list.slice(from, from + count);
+      const idWidth = Math.max(0, ...shown.map((item) => visibleWidth(oneLine(item.id))));
+      const listLines = shown.map((item) => {
+        const selected = item.id === this.selectedId;
+        return listRow(this.theme, w, this.row(item, selected, idWidth), selected);
       });
       out.push(...(listLines.length ? listLines : [dim("No pending decisions. Tab shows history.")]));
       rows -= listLines.length || 1;
+      if (d && rows > 1) { out.push(frameRule(this.theme, w)); rows--; }
     }
     if (!d && rows > 0 && this.detail) out.push(dim("No pending decisions. Tab shows history."));
     if (d && rows > 0) {
-      out.push(dim(`${oneLine(d.id)} · ${d.status} · ${oneLine(d.project)}`)); rows--;
+      if (draft || this.detail) { out.push(`${dim(oneLine(d.id))}${COLUMN_GAP}${this.statusCell(d.status, visibleWidth(statusLabel(d.status)))}`); rows--; }
       if (draft?.mode === "editor") {
         const lines = this.editor!.render(w);
         // The builtin editor has a five-line minimum. Crop around its cursor
@@ -334,12 +397,15 @@ export class DecisionsPane implements Component, Focusable {
         this.choices = this.makeChoices(Math.max(1, count - 1));
         const choices = this.choices.render(w).slice(0, count);
         out.push(...choices);
-        out.push(...this.viewport(this.md(`### Selected option\n\n${draft.answer ?? ""}`, w), Math.max(0, rows - choices.length)));
+        out.push(...this.viewport(this.sections([{ label: "Selected option", body: draft.answer ?? "" }], w), Math.max(0, rows - choices.length)));
       } else {
-        const text = draft ? `### ${draft.status === "pending" ? "Reopen this decision?" : "Dismiss this decision?"}\n\n${d.question}\n\nThis changes its status; it does not answer the question.` : this.detailText(d);
-        out.push(...this.viewport(this.md(text, w), rows));
+        const sections = draft ? [{
+          label: draft.status === "pending" ? "Reopen this decision?" : "Dismiss this decision?",
+          body: `${d.question}\n\nThis changes its status; it does not answer the question.`,
+        }] : this.detailSections(d);
+        out.push(...this.viewport(this.sections(sections, w), rows));
       }
     }
-    return [...out.slice(0, height - foot.length), ...foot].map(fit);
+    return [...out.slice(0, height - bottom.length), ...bottom].map(fit);
   }
 }
