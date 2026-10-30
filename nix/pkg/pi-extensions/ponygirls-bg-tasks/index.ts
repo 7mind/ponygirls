@@ -227,7 +227,9 @@ export default function bgTasks(pi: ExtensionAPI): void {
     };
     bound = self.value;
     // Recover earlier activations' records and replay their notices without waiting for a tool call.
-    if (activation.hasExistingState()) activation.backend().catch((error: unknown) => report(ctx, errorText(error), "error"));
+    if (activation.hasExistingState()) activation.backend().catch((error: unknown) => {
+      if (bound === self.value && !activation.isDisposed) report(ctx, errorText(error), "error");
+    });
     else scheduleStatus(self.value, () => bound === self.value);
   });
 

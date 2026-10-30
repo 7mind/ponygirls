@@ -1,15 +1,16 @@
 /**
  * The task-service boundary used by the tool, the viewer, and the completion
- * sender, and its production adapter: a private-pipe client of the Python
- * supervisor (one per activation).
+ * sender, and its production adapter: a reconnectable client of the Python
+ * supervisor (one client per activation).
  */
 import { spawn, type ChildProcessByStdio } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createConnection, Socket } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import type { TSchema, Static } from "typebox";
 import {
   BgTaskError, ChangedSchema, ClearReplySchema, FatalSchema, NoticePageSchema, PROTOCOL_VERSION, ReadReplySchema,
-  ReadySchema, ReceiptsReplySchema, ReplySchema, ShutdownReplySchema, SignalReplySchema, SUPERVISOR_SHUTDOWN_WAIT_MS,
+  ReadySchema, ReceiptsReplySchema, ReplySchema, ShutdownReplySchema, SignalReplySchema, SUPERVISOR_SHUTDOWN_WAIT_MS, DetachReplySchema,
   TaskPageSchema, TaskReplySchema, expect, type ClearResult, type ErrorCode, type NoticePage, type ReadWindow,
   type SignalName, type SignalResult, type SpawnRequest, type TaskId, type TaskPage, type TaskRecord,
 } from "./protocol.ts";
@@ -44,6 +45,14 @@ export interface SupervisorLaunch {
 }
 
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void };
+
+interface SupervisorTransport {
+  input: Writable;
+  output: Readable;
+  exited: Promise<void>;
+  onError: (listener: (error: Error) => void) => void;
+  unref: () => void;
+}
 const STDERR_LINES_KEPT = 20;
 
 const ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
@@ -59,7 +68,7 @@ function toError(code: string, message: string, task: TaskRecord | null): BgTask
 }
 
 export class SupervisorBackend implements TaskBackend {
-  private readonly child: ChildProcessByStdio<Writable, Readable, Readable>;
+  private readonly transport: SupervisorTransport;
   private readonly launch: SupervisorLaunch;
   private readonly pending = new Map<number, Pending>();
   private readonly listeners = new Set<(terminal: boolean) => void>();
@@ -70,34 +79,100 @@ export class SupervisorBackend implements TaskBackend {
   private lost: BgTaskError | null = null;
   private greeting: { resolve: (line: string) => void; reject: (error: Error) => void } | null = null;
   private readonly exited: Promise<void>;
-  readonly activationId: string;
+  private activationIdValue: string;
   private recoveredIds: readonly string[] = [];
 
-  private constructor(launch: SupervisorLaunch) {
+  private constructor(launch: SupervisorLaunch, activationId: string, transport: SupervisorTransport) {
     this.launch = launch;
-    this.activationId = randomUUID();
-    // Own session/process group, private pipes, explicit interpreter. Not unref'd:
-    // the pipes are the owner-liveness channel.
-    this.child = spawn(launch.python, [launch.script, "--sidecar", launch.sidecar, "--session-id", launch.sessionId,
-      "--activation", this.activationId, "--shell", launch.shell, "--handoff-wait-ms", String(launch.handoffWaitMs)],
-      { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    this.activationIdValue = activationId;
+    this.transport = transport;
     // One permanent listener per stream; setEncoding keeps multibyte characters intact across chunks.
-    this.child.stdout.setEncoding("utf8");
-    this.child.stdout.on("data", (text: string) => this.onData(text));
-    this.child.stderr.setEncoding("utf8");
-    this.child.stderr.on("data", (text: string) => {
-      for (const line of text.split("\n").filter(Boolean)) this.remember(line);
+    transport.output.setEncoding("utf8");
+    transport.output.on("data", (text: string) => this.onData(text));
+    transport.input.on("error", () => {});
+    this.exited = transport.exited;
+    void this.exited.then(() => this.markLost(new BgTaskError("SUPERVISOR_LOST", `the task supervisor connection closed${this.stderrTail.length ? `: ${this.stderrTail.join(" | ")}` : ""}`)));
+  }
+
+  private static launchProcess(launch: SupervisorLaunch, extraArgs: string[]): SupervisorBackend {
+    const activationId = randomUUID();
+    const child: ChildProcessByStdio<Writable, Readable, Readable> = spawn(launch.python,
+      [launch.script, "--sidecar", launch.sidecar, "--session-id", launch.sessionId,
+        "--activation", activationId, "--shell", launch.shell, "--handoff-wait-ms", String(launch.handoffWaitMs), ...extraArgs],
+      { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    const backend = new SupervisorBackend(launch, activationId, {
+      input: child.stdin, output: child.stdout,
+      exited: new Promise<void>((resolve) => child.once("exit", () => resolve())),
+      onError: (listener) => child.once("error", listener),
+      unref: () => {
+        child.unref();
+        for (const pipe of [child.stdin, child.stdout, child.stderr]) {
+          if (!(pipe instanceof Socket)) throw new BgTaskError("PLATFORM_UNSUPPORTED", "supervisor stdio must support unref");
+          pipe.unref();
+        }
+      },
     });
-    this.child.stdin.on("error", () => {});
-    this.exited = new Promise<void>((resolve) => this.child.once("exit", () => resolve()));
-    void this.exited.then(() => this.markLost(new BgTaskError("SUPERVISOR_LOST", `the task supervisor exited${this.stderrTail.length ? `: ${this.stderrTail.join(" | ")}` : ""}`)));
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (text: string) => {
+      for (const line of text.split("\n").filter(Boolean)) backend.remember(line);
+    });
+    return backend;
   }
 
   static async start(launch: SupervisorLaunch): Promise<SupervisorBackend> {
-    const backend = new SupervisorBackend(launch);
+    return SupervisorBackend.greet(SupervisorBackend.launchProcess(launch, []));
+  }
+
+  /** Reload replaces clients, not task ownership. The socket is scoped to this Pi process and session. */
+  static async attachOrStart(launch: SupervisorLaunch): Promise<SupervisorBackend> {
+    const address = `@pi-bg-${createHash("sha256").update(`${process.pid}\0${launch.sidecar}`).digest("hex")}`;
+    let socket: Socket;
+    try {
+      socket = await SupervisorBackend.connect(address);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ECONNREFUSED" && code !== "ENOENT") throw error;
+      const startup = await SupervisorBackend.greet(SupervisorBackend.launchProcess(launch,
+        ["--control-socket", address, "--owner-pid", String(process.pid)]));
+      // In socket mode stdout is only a startup acknowledgement, not the owner-liveness channel.
+      startup.transport.input.end();
+      startup.transport.unref();
+      socket = await SupervisorBackend.connect(address);
+    }
+    return SupervisorBackend.greet(new SupervisorBackend(launch, randomUUID(), {
+      input: socket, output: socket,
+      exited: new Promise<void>((resolve) => socket.once("close", () => resolve())),
+      onError: (listener) => socket.once("error", listener),
+      unref: () => { socket.unref(); },
+    }));
+  }
+
+  private static connect(address: string): Promise<Socket> {
+    return new Promise((resolve, reject) => {
+      const socket = createConnection({ path: `\0${address.slice(1)}` });
+      socket.once("error", reject);
+      socket.once("connect", () => {
+        socket.off("error", reject);
+        resolve(socket);
+      });
+    });
+  }
+
+  private static async greet(backend: SupervisorBackend): Promise<SupervisorBackend> {
+    try {
+      return await SupervisorBackend.readGreeting(backend);
+    } catch (error) {
+      backend.transport.input.destroy();
+      backend.transport.output.destroy();
+      backend.transport.unref();
+      throw error;
+    }
+  }
+
+  private static async readGreeting(backend: SupervisorBackend): Promise<SupervisorBackend> {
     const line = await new Promise<string>((resolve, reject) => {
       backend.greeting = { resolve, reject };
-      backend.child.once("error", (e) => reject(new BgTaskError("CONFIG_MISSING", `cannot start supervisor: ${e.message}`)));
+      backend.transport.onError((e) => reject(new BgTaskError("CONFIG_MISSING", `cannot connect to supervisor: ${e.message}`)));
       if (backend.lost) reject(backend.lost);
     });
     let message: unknown;
@@ -111,8 +186,14 @@ export class SupervisorBackend implements TaskBackend {
       await backend.exited;
       throw toError(fatal.error.code, fatal.error.message, null);
     }
-    backend.recoveredIds = expect(ReadySchema, message, "supervisor greeting").recovered;
+    const ready = expect(ReadySchema, message, "supervisor greeting");
+    backend.activationIdValue = ready.activation;
+    backend.recoveredIds = ready.recovered;
     return backend;
+  }
+
+  get activationId(): string {
+    return this.activationIdValue;
   }
 
   get recovered(): readonly string[] {
@@ -169,7 +250,7 @@ export class SupervisorBackend implements TaskBackend {
         // A protocol violation is an invariant failure: stop trusting this supervisor.
         this.remember(`protocol violation: ${error instanceof Error ? error.message : String(error)}`);
         this.markLost(error instanceof BgTaskError ? error : new BgTaskError("PROTOCOL_ERROR", String(error)));
-        this.child.stdin.end();
+        this.transport.input.end();
       }
     }
   }
@@ -200,7 +281,7 @@ export class SupervisorBackend implements TaskBackend {
     const id = this.nextId++;
     return new Promise<unknown>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.child.stdin.write(`${JSON.stringify({ v: PROTOCOL_VERSION, id, op, args })}\n`);
+      this.transport.input.write(`${JSON.stringify({ v: PROTOCOL_VERSION, id, op, args })}\n`);
     }).then((result) => expect(schema, result, `${op} result`));
   }
 
@@ -257,6 +338,18 @@ export class SupervisorBackend implements TaskBackend {
     return () => this.listeners.delete(listener);
   }
 
+  /** Explicit reload handoff; an unannounced connection loss still stops owned tasks. */
+  async detach(): Promise<void> {
+    try {
+      await this.request("detach", {}, DetachReplySchema);
+    } finally {
+      this.listeners.clear();
+      this.lossListeners.clear();
+      this.transport.input.end();
+      await this.exited;
+    }
+  }
+
   /** Graceful teardown: the supervisor stops owned tasks, commits outcomes, releases its lock, exits. */
   async shutdown(reason: ShutdownReason): Promise<void> {
     if (!this.lost) {
@@ -266,7 +359,7 @@ export class SupervisorBackend implements TaskBackend {
         if (!(error instanceof BgTaskError && error.code === "SUPERVISOR_LOST")) throw error;
       }
     }
-    this.child.stdin.end();
+    this.transport.input.end();
     let timer: NodeJS.Timeout | undefined;
     const timedOut = await Promise.race([
       this.exited.then(() => false),

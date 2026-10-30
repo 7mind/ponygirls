@@ -7,7 +7,8 @@ command, `/bg`, and completion notices that wake an idle session. Implements
 A small Python supervisor (stdlib only) owns each session's tasks: one PTY and
 one POSIX process group per task, the durable registry, and the outbox state.
 The TypeScript extension owns Pi integration, the tool, the viewer, and
-notice delivery. They talk over private newline-delimited JSON pipes.
+notice delivery. They talk over a private newline-delimited JSON control socket;
+the supervisor also supports pipes for its standalone contract tests.
 
 ## Scope
 
@@ -24,11 +25,16 @@ notice delivery. They talk over private newline-delimited JSON pipes.
   resize, and full-screen/alternate-screen programs (vim, top) are not
   rendered faithfully. Control sequences are stripped, carriage-return progress
   lines are collapsed; raw bytes stay in the log.
-- **Lifetime:** tasks do not outlive their Pi activation. Quit, `/reload`,
-  `/new`, `/resume`, and `/fork` stop the activation's tasks (TERM, then KILL),
-  keep their records and logs, and start a fresh supervisor for the next
-  session. One-shot print runs stop their tasks on exit (JSON mode shares the
-  print-mode disposal path but was not tested).
+- **Lifetime:** `/reload` replaces the extension client but preserves the
+  supervisor, running tasks, output, and pending notices. Quit, `/new`,
+  `/resume`, and `/fork` stop the session's tasks (TERM, then KILL) and retain
+  their records and logs. One-shot print runs stop their tasks on exit (JSON
+  mode shares the print-mode disposal path but was not tested).
+  A reload must reconnect within 30 s; otherwise the supervisor cleans up as
+  `dead/owner_lost` (including when the extension was removed or failed to load).
+  A handoff with unsettled spawn/terminate requests is refused with
+  `SESSION_BUSY`; failed handoffs close the old client and clean up rather than
+  leaving tasks owned by an inaccessible client.
 - **State** lives beside the native session file:
   `<session>.jsonl.bg-tasks/{owner.lock,tasks.json,tasks/<id>/terminal.log,clearing/}`
   (directories 0700, files 0600). `--no-session` is refused with
@@ -92,8 +98,11 @@ remove them.
 - No numeric group signal after sealing; no pidfd for a non-child; recovery
   never signals saved PIDs/PGIDs (traced in the real-process tests).
 - If Pi is killed (or its whole process group), the supervisor — in its own
-  session — sees pipe EOF, cleans up, records `dead/owner_lost`, and releases
-  the lock. A killed supervisor's unfinished records become
+  session — observes its owner's pidfd, cleans up, records `dead/owner_lost`,
+  and releases the lock. Unannounced control EOF also cleans up; only an
+  explicit reload handoff permits reconnection. The Linux abstract socket is
+  scoped to the Pi process and session sidecar, and verifies the connecting
+  process's PID and UID. A killed supervisor's unfinished records become
   `dead/supervisor_lost` on the next start; during an activation the next
   start is immediate (see below), so their notices need no user action.
 - Durable mutations: temp file → fsync → rename → fsync directory; directory
@@ -140,7 +149,9 @@ remove them.
   and their notices go out like any other.
 - No idle submission between an accepted explicit input and its run start, or
   during compaction.
-- Session transitions dispose the sender before teardown; a resumed session
+- Reload disposes the old sender/UI before disconnecting, then rebuilds them
+  against the same supervisor; completions during the handoff remain pending.
+  Other session transitions dispose the sender before teardown; a resumed session
   replays its own pending events and re-checks receipts against the file
   (a lost session-file suffix, or a notice that was never answered, restores
   the notice).
@@ -215,7 +226,9 @@ nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).pon
 | `transitions_test.py` | outcome decisions, terminal/recovery transitions, record validation |
 | `store_test.py` | registry contract on a memory store and the real filesystem; commit/fsync ordering; fault injection after every durability operation; lock exclusivity |
 | `supervisor_test.py` | real PTYs and process groups: TTY, exits, UTF-8 splits, signals, TERM→KILL, redirected/PTY-holding/multi-generation descendants, fork races (signal-authority tracing), Pi kill, group kill, supervisor kill, cold recovery, unconfirmed cleanup |
+| `reconnect_test.py` | real socket handoff, task identity/output, peer rejection, owner death, lease expiry, pending-operation guards |
 | `backend.test.ts` | the task-service contract on the memory dummy and the real supervisor client |
+| `reload.test.ts` | replacement clients retain task identity, controls, output, and notices; rejected handshakes/handoffs close; detached handles permit owner exit |
 | `tool.test.ts` | the public tool on both backends: pagination under inserts/clears, budgets, sanitization, errors |
 | `pi-runtime-probe.test.mjs` | pinned Pi delivery semantics (scripted provider, `pi.sendMessage()` path) |
 | `delivery.test.mjs` | the real extension in a scripted Pi runtime: idle/active/burst/opt-out, aborts, dropped follow-up, no-start retry, provider-error re-send, supervisor-loss restart, mute, crash windows, switch/fork, reload, compaction, provider retry |

@@ -32,10 +32,10 @@ function holdExtension(state) {
   };
 }
 
-async function setup(t, script, { dir = tempDir(t, "bg-delivery-"), sessionManager, ui, settings } = {}) {
+async function setup(t, script, { dir = tempDir(t, "bg-delivery-"), sessionManager, ui, settings, extensionFactories = [] } = {}) {
   const hold = { release: null, settles: 0 };
   const model = scriptedModel(script);
-  const rt = await createRuntime(t, { dir, model, extensionPaths: [EXTENSION], extensionFactories: [holdExtension(hold)], sessionManager, uiContext: ui?.ui, settings });
+  const rt = await createRuntime(t, { dir, model, extensionPaths: [EXTENSION], extensionFactories: [holdExtension(hold), ...extensionFactories], sessionManager, uiContext: ui?.ui, settings });
   rt.session.setActiveToolsByName(["bg_task", "hold"]);
   return { dir, hold, model, rt };
 }
@@ -435,19 +435,62 @@ test("switching or forking sessions never transfers task authority or notices", 
   assert.equal(forkedNotices.length, 0);
 });
 
-test("/reload stops active tasks, retains logs, re-registers one tool, and delivers the retained notice", async (t) => {
-  const f = await setup(t, (r) => (r.index === 1 ? reply(spawnCall("s", "echo before; sleep 30")) : isNotice(r) ? text("ack") : text("ok")));
+test("/reload preserves active tasks, their logs, and completion delivery", async (t) => {
+  const release = join(tempDir(t, "bg-reload-"), "release");
+  const f = await setup(t, (r) => (r.index === 1 ? reply(spawnCall("s", `echo before; while [ ! -f '${release}' ]; do sleep 0.05; done; echo after`)) : isNotice(r) ? text("ack") : text("ok")));
   await f.rt.session.prompt("go");
   const [id] = taskIdsFromResults(f.rt.session);
   await waitFor(() => registry(f.rt.session)[id].logBytes > 0 || readFileSync(join(sidecarOf(f.rt.session), "tasks", id, "terminal.log"), "utf8").includes("before"), { message: "output" });
-  await f.rt.session.reload();
-  f.rt.session.setActiveToolsByName(["bg_task", "hold"]);
-  const done = registry(f.rt.session)[id];
-  assert.deepEqual([done.state, done.reason, done.reasonDetail], ["failed", "session_shutdown", "reload"]);
+  for (let i = 0; i < 2; i++) {
+    await f.rt.session.reload();
+    f.rt.session.setActiveToolsByName(["bg_task", "hold"]);
+    assert.equal(registry(f.rt.session)[id].state, "running", "reload must not terminate the task");
+    assert.equal(deliveredEvents(f.rt.session).length, 0, "reload is not a completion");
+  }
+  writeFileSync(release, "");
+  const done = await taskFinished(f.rt.session, id);
+  assert.deepEqual([done.state, done.reason], ["completed", "exit"]);
   assert.match(readFileSync(join(sidecarOf(f.rt.session), "tasks", id, "terminal.log"), "utf8"), /before/);
   assert.equal(f.rt.session.getAllTools().filter((tool) => tool.name === "bg_task").length, 1);
   await receipt(f.rt.session, id);
   assert.equal(deliveredEvents(f.rt.session).length, 1);
+  assert.match(readFileSync(join(sidecarOf(f.rt.session), "tasks", id, "terminal.log"), "utf8"), /after/);
+  assert.deepEqual(f.rt.errors, []);
+});
+
+test("a task completing during reload is delivered by the replacement runtime", async (t) => {
+  const release = join(tempDir(t, "bg-handoff-"), "release");
+  let sidecar;
+  const pauseReload = (pi) => pi.on("session_shutdown", async (event) => {
+    if (event.reason !== "reload") return;
+    writeFileSync(release, "");
+    await waitFor(() => JSON.parse(readFileSync(join(sidecar, "tasks.json"), "utf8")).tasks[0].state === "completed",
+      { message: "completion during handoff" });
+  });
+  const f = await setup(t, (r) => r.index === 1
+    ? reply(spawnCall("s", `while [ ! -f '${release}' ]; do sleep 0.05; done; echo handoff-done`))
+    : isNotice(r) ? text("ack") : text("ok"), { extensionFactories: [pauseReload] });
+  await f.rt.session.prompt("go");
+  const [id] = taskIdsFromResults(f.rt.session);
+  sidecar = sidecarOf(f.rt.session);
+  await f.rt.session.reload();
+  await receipt(f.rt.session, id);
+  await f.rt.session.waitForIdle();
+  assert.deepEqual([registry(f.rt.session)[id].state, deliveredEvents(f.rt.session).length], ["completed", 1]);
+  assert.deepEqual(f.rt.errors, []);
+});
+
+test("quit after reload still stops the session's active tasks", async (t) => {
+  const ui = recordingUi();
+  const f = await setup(t, (r) => r.index === 1 ? reply(spawnCall("s", "sleep 300", false)) : text("ok"), { ui });
+  await f.rt.session.prompt("go");
+  const [id] = taskIdsFromResults(f.rt.session);
+  const file = join(sidecarOf(f.rt.session), "tasks.json");
+  await f.rt.session.reload();
+  await f.rt.dispose();
+  const done = JSON.parse(readFileSync(file, "utf8")).tasks.find((task) => task.id === id);
+  assert.deepEqual([done.state, done.reason, done.reasonDetail], ["failed", "session_shutdown", "quit"]);
+  assert.ok(!ui.notifications.some((notice) => notice.message.includes("ACTIVATION_DISPOSED")), "an ended activation must not report into the stale UI");
 });
 
 test("an idle completion during manual compaction waits until compaction ends", async (t) => {

@@ -147,6 +147,7 @@ export const ClearReplySchema = Type.Object({ id: Type.String(), removedBytes: T
 export interface ClearResult { id: TaskId; removedBytes: number }
 export const ReceiptsReplySchema = Type.Object({ changed: Type.Array(Type.String()) }, { additionalProperties: false });
 export const ShutdownReplySchema = Type.Object({ storageFailed: Nullable(Type.String()) }, { additionalProperties: false });
+export const DetachReplySchema = Type.Object({}, { additionalProperties: false });
 export const ErrorBodySchema = Type.Object({ code: Type.String(), message: Type.String(), task: Type.Optional(TaskRecordSchema) }, { additionalProperties: false });
 export const ReplySchema = Type.Union([
   Type.Object({ v: Type.Literal(PROTOCOL_VERSION), type: Type.Literal("reply"), id: Type.Integer(), ok: Type.Literal(true), result: Type.Unknown() }, { additionalProperties: false }),

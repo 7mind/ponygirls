@@ -1,7 +1,7 @@
 /**
  * One extension activation bound to one native Pi session: it owns that
  * session's supervisor client. Task authority never moves to another session;
- * a session switch, fork, or reload ends this activation.
+ * reload replaces the client while preserving the supervisor and its tasks.
  */
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -77,10 +77,10 @@ export class Activation {
     if (!this.starting) {
       const config = this.config.config;
       const sidecar = this.sidecar;
-      this.starting = SupervisorBackend.start({ python: config.python, script: config.script, shell: config.shell, sidecar, sessionId: this.sessionId, handoffWaitMs: OWNER_HANDOFF_WAIT_MS })
+      this.starting = SupervisorBackend.attachOrStart({ python: config.python, script: config.script, shell: config.shell, sidecar, sessionId: this.sessionId, handoffWaitMs: OWNER_HANDOFF_WAIT_MS })
         .then(async (backend) => {
           if (this.disposed) {
-            await backend.shutdown("quit");
+            this.current = backend;
             throw new BgTaskError("ACTIVATION_DISPOSED", "this extension activation has ended");
           }
           this.current = backend;
@@ -117,16 +117,21 @@ export class Activation {
     );
   }
 
-  /** Graceful end of this activation; owned tasks stop and keep their outcomes and pending notices. */
+  /** Reload hands off ownership; other transitions stop tasks and retain their outcomes. */
   async shutdown(reason: ShutdownReason): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
     if (this.restartTimer !== null) clearTimeout(this.restartTimer);
     this.restartTimer = null;
+    this.backendListeners.clear();
+    this.restartFailureListeners.clear();
     const pending = this.starting;
     if (pending) await pending.catch(() => undefined);
     const backend = this.current;
     this.current = null;
-    if (backend && !backend.isLost) await backend.shutdown(reason);
+    if (backend && !backend.isLost) {
+      if (reason === "reload") await backend.detach();
+      else await backend.shutdown(reason);
+    }
   }
 }
