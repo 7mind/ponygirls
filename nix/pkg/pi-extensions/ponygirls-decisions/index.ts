@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { Type } from "typebox";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { compactChip } from "@ponygirls/pi-ui";
 import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
@@ -254,7 +254,9 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   pi.registerMessageRenderer(CONTEXT_TYPE, (message, options, theme) => {
     if (options.expanded || typeof message.content !== "string") return undefined;
     const line = contextLine(summarizeContext(message.content));
-    return new Text(theme.fg("warning", line.lead) + theme.fg("muted", plain(line.detail)), 0, 0);
+    const box = new Box(options.outputPad, 0, (text) => theme.bg("customMessageBg", text));
+    box.addChild(new Text(theme.fg("warning", line.lead) + theme.fg("muted", plain(line.detail)), 0, 0));
+    return box;
   });
   pi.registerCommand("decisions", {
     description: "Decision inbox: [Qn] | answer Qn <text> | dismiss Qn | reopen Qn",
