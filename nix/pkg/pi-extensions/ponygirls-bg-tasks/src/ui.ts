@@ -3,29 +3,72 @@
  * renderer for completion notices. Output is a read-only, sanitized line view
  * of the PTY transcript (not a terminal emulator), read in bounded windows.
  */
-import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
+import { Key, matchesKey, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
+import {
+  MARKER_WIDTH, columnCells, columnHeader, frameRule, frameTitle, keyHints, listRow, type Column, type KeyHint, type UiFg, type UiTheme,
+} from "@ponygirls/pi-ui";
 import type { TaskBackend } from "./backend.ts";
 import {
   BgTaskError, MAX_LIST_ITEMS, MAX_READ_BYTES, isFinalized, type CompletionDetails, type SignalName, type TaskRecord,
 } from "./protocol.ts";
 import { consumableLength, decodeAndSanitize, displayValue, leadingContinuationBytes } from "./terminal-text.ts";
-import { elapsed, formatExit, noticeLabel, stateLabel } from "./tool.ts";
+import { exitCode, exitFailed, formatSize, informativeReason, shortTaskId, stateGlyph, taskStateColor } from "./present.ts";
+import { elapsed, formatExit, noticeLabel, noticeStatus, stateLabel } from "./tool.ts";
 
 /** Most log bytes held in memory by the detail view. */
 export const VIEW_WINDOW_BYTES = 131072;
 /** Bytes loaded per step when scrolling back past the window start. */
 export const VIEW_SCROLL_CHUNK_BYTES = MAX_READ_BYTES;
 export const VIEW_REFRESH_MS = 500;
-const CHROME_ROWS = 6;
+/** Rows not available to list or log lines: the panel frame, hints, message, and pi's footer. */
+const CHROME_ROWS = 9;
+/** Spaces between list columns. */
+const COLUMN_GAP = 2;
+/** Widest label, state and exit cells before they are truncated. */
+const MAX_LABEL_COLUMN = 24;
+const MAX_STATE_COLUMN = 32;
+const MAX_EXIT_COLUMN = 28;
 
-export interface ViewerStyle {
-  accent(s: string): string;
-  dim(s: string): string;
-  error(s: string): string;
-  warning(s: string): string;
-  success(s: string): string;
-  bold(s: string): string;
-  selected(s: string): string;
+const LIST_HINTS: readonly KeyHint[] = [
+  { key: "↑↓", action: "select" }, { key: "⏎", action: "open" }, { key: "t", action: "terminate" }, { key: "s", action: "signal" },
+  { key: "m", action: "mute" }, { key: "c", action: "clear" }, { key: "r", action: "refresh" }, { key: "q", action: "close" },
+];
+
+function detailHints(finished: boolean): KeyHint[] {
+  return [
+    { key: "↑ PgUp", action: "scroll" }, { key: "f End", action: finished ? "end of log" : "follow" }, { key: "t", action: "terminate" },
+    { key: "s", action: "signal" }, { key: "m", action: "mute" }, { key: "c", action: "clear" }, { key: "esc", action: "back" },
+  ];
+}
+
+interface ListColumn {
+  header: string;
+  max: number;
+}
+
+const LIST_COLUMNS: readonly ListColumn[] = [
+  { header: "TASK", max: Number.POSITIVE_INFINITY },
+  { header: "LABEL", max: MAX_LABEL_COLUMN },
+  { header: "STATE", max: MAX_STATE_COLUMN },
+  { header: "TIME", max: Number.POSITIVE_INFINITY },
+  { header: "EXIT", max: MAX_EXIT_COLUMN },
+  { header: "NOTICE", max: Number.POSITIVE_INFINITY },
+  { header: "LOG", max: Number.POSITIVE_INFINITY },
+];
+
+/** One list cell: plain text and its colour. */
+interface Cell {
+  text: string;
+  color: UiFg;
+}
+
+/**
+ * Plain text cut to `width` columns before styling: truncating styled text
+ * appends a full SGR reset, which would end the selection background mid-row.
+ */
+function clip(text: string, width: number): string {
+  if (visibleWidth(text) <= width) return text;
+  return `${sliceByColumn(text, 0, Math.max(0, width - 1), true)}…`;
 }
 
 export interface ViewerDeps {
@@ -37,7 +80,7 @@ export interface ViewerDeps {
   requestRender(): void;
   rows(): number;
   close(): void;
-  style: ViewerStyle;
+  theme: UiTheme;
   now(): number;
 }
 
@@ -245,56 +288,103 @@ export class BgInspector implements Component {
     return raw.flatMap((line) => (line === "" ? [""] : wrapTextWithAnsi(line, Math.max(10, width))));
   }
 
-  private stateText(task: TaskRecord): string {
-    const s = this.deps.style;
-    const label = stateLabel(task);
-    if (task.state === "completed") return s.success(label);
-    if (task.state === "failed") return s.error(label);
-    if (task.state === "dead") return s.warning(label);
-    return s.accent(label);
+  private stateCell(task: TaskRecord): Cell {
+    return { text: `${stateGlyph(task.state)} ${stateLabel(task)}`, color: taskStateColor(task.state) };
   }
 
-  private row(task: TaskRecord): string {
-    const now = this.deps.now();
-    const parts = [task.id, displayValue(task.label), this.stateText(task), elapsed(task, now)];
-    if (task.exit || isFinalized(task)) parts.push(formatExit(task.exit));
-    if (task.reason) parts.push(task.reason);
-    parts.push(noticeLabel(task, this.deps.noticeState(task)), `${task.logBytes} B`);
-    return parts.join("  ");
+  /** Exit evidence plus a reason only when it adds something (D5). */
+  private exitCell(task: TaskRecord, secondary: UiFg): Cell {
+    if (!task.exit && !isFinalized(task)) return { text: "—", color: secondary };
+    const reason = informativeReason(task.reason, task.exit);
+    const text = `${exitCode(task.exit)}${reason ? ` ${reason}` : ""}`;
+    if (!task.exit) return { text, color: "warning" };
+    return { text, color: exitFailed(task.exit) ? "error" : "muted" };
   }
 
-  render(width: number): string[] {
-    const s = this.deps.style;
-    const out: string[] = [];
-    const fit = (line: string) => truncateToWidth(line, width);
-    if (!this.detail) {
-      out.push(fit(s.bold("Background tasks") + s.dim("  ↑/↓ select · enter open · t terminate · s signal · m mute · c clear · r refresh · q close")));
-      if (!this.items.length) out.push(s.dim("No retained tasks in this session."));
+  private cells(task: TaskRecord, selected: boolean): Cell[] {
+    // Dim falls below readable contrast on the selection background.
+    const secondary: UiFg = selected ? "muted" : "dim";
+    return [
+      { text: shortTaskId(task.id), color: secondary },
+      { text: displayValue(task.label), color: "text" },
+      this.stateCell(task),
+      { text: elapsed(task, this.deps.now()), color: "muted" },
+      this.exitCell(task, secondary),
+      { text: noticeStatus(task, this.deps.noticeState(task)), color: "muted" },
+      { text: formatSize(task.logBytes), color: "muted" },
+    ];
+  }
+
+  private columns(): Column[] {
+    const rows = this.items.map((task) => this.cells(task, false));
+    return LIST_COLUMNS.map((column, index) => ({
+      header: column.header,
+      width: Math.min(column.max, Math.max(visibleWidth(column.header), ...rows.map((row) => visibleWidth(row[index]!.text)))),
+      align: "left",
+    }));
+  }
+
+  private renderList(width: number): string[] {
+    const th = this.deps.theme;
+    const running = this.items.filter((task) => !isFinalized(task)).length;
+    const retained = `${this.items.length}${this.nextAfter !== null ? "+" : ""} retained`;
+    const live = `${th.fg("success", "●")}${th.fg("dim", " live")}`;
+    const out = [frameTitle(th, width, { title: "Background tasks", meta: `${retained} · ${running} running`, right: live }, "none").line];
+    if (!this.items.length) out.push(th.fg("dim", `${" ".repeat(MARKER_WIDTH)}No retained tasks in this session.`));
+    else {
+      const columns = this.columns();
+      out.push(truncateToWidth(columnHeader(th, columns, COLUMN_GAP), width));
       const visible = Math.max(1, this.deps.rows() - CHROME_ROWS);
       const first = Math.max(0, Math.min(this.selected - Math.floor(visible / 2), this.items.length - visible));
       this.items.slice(first, first + visible).forEach((task, i) => {
-        const line = this.row(task);
-        out.push(fit(first + i === this.selected ? s.selected(line) : line));
+        const selected = first + i === this.selected;
+        const cells = this.cells(task, selected).map((cell, index) => th.fg(cell.color, clip(cell.text, columns[index]!.width)));
+        out.push(listRow(th, width, columnCells(columns, cells, COLUMN_GAP), selected));
       });
-      if (this.nextAfter !== null) out.push(s.dim("… more history below"));
-    } else {
-      const d = this.detail;
-      const t = d.task;
-      out.push(fit(`${s.bold(t.id)}  ${displayValue(t.label)}  ${this.stateText(t)}  ${formatExit(t.exit)}${t.reason ? `  ${t.reason}` : ""}  ${noticeLabel(t, this.deps.noticeState(t))}  ${d.size} B`));
-      if (t.state === "dead") out.push(fit(s.warning(`dead: supervision was interrupted (${t.reason}); the process outcome is unknown${t.exit ? `, root ${formatExit(t.exit)} was observed` : ""}.`)));
-      out.push(fit(s.dim(`${d.follow ? "following live output" : "paused (scrolled back)"} · ↑/PgUp scroll · f/End follow · t terminate · s signal · m mute · c clear · esc back`)));
-      const visible = Math.max(1, this.deps.rows() - CHROME_ROWS);
-      if (d.artifact) out.push(s.error(d.artifact));
+    }
+    if (this.nextAfter !== null) out.push(th.fg("dim", `${" ".repeat(MARKER_WIDTH)}… more history below`));
+    out.push(frameRule(th, width), ...keyHints(th, width, LIST_HINTS).lines);
+    return out;
+  }
+
+  /** What the log view is doing: only an unfinished task can be followed live (D6). */
+  private viewMode(d: DetailState): string {
+    const th = this.deps.theme;
+    if (isFinalized(d.task)) return th.fg("muted", d.follow ? "finished" : "scrolled back");
+    return d.follow ? th.fg("accent", "following") : th.fg("warning", "paused");
+  }
+
+  private renderDetail(width: number, d: DetailState): string[] {
+    const th = this.deps.theme;
+    const t = d.task;
+    const facts = [displayValue(t.label)];
+    if (t.exit || isFinalized(t)) {
+      const reason = informativeReason(t.reason, t.exit);
+      facts.push(`${formatExit(t.exit)}${reason ? ` (${reason})` : ""}`);
+    }
+    facts.push(noticeLabel(t, this.deps.noticeState(t)), formatSize(d.size));
+    const state = this.stateCell(t);
+    const right = `${th.fg(state.color, state.text)}${th.fg("dim", " · ")}${this.viewMode(d)}`;
+    const out = [frameTitle(th, width, { title: t.id, meta: facts.join(" · "), right }, "none").line];
+    const fit = (line: string) => truncateToWidth(line, width);
+    if (t.state === "dead") out.push(fit(th.fg("warning", `dead: supervision was interrupted (${t.reason}); the process outcome is unknown${t.exit ? `, root ${formatExit(t.exit)} was observed` : ""}.`)));
+    const visible = Math.max(1, this.deps.rows() - CHROME_ROWS);
+    if (d.artifact) out.push(th.fg("error", d.artifact));
+    else {
+      const lines = this.lines(width);
+      if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) out.push(th.fg("dim", isFinalized(t) ? "(no output was produced)" : "(no output yet)"));
       else {
-        const lines = this.lines(width);
-        if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) out.push(s.dim(isFinalized(t) ? "(no output was produced)" : "(no output yet)"));
-        else {
-          const end = Math.max(0, lines.length - (d.follow ? 0 : d.scroll));
-          out.push(...lines.slice(Math.max(0, end - visible), end).map(fit));
-        }
+        const end = Math.max(0, lines.length - (d.follow ? 0 : d.scroll));
+        out.push(...lines.slice(Math.max(0, end - visible), end).map(fit));
       }
     }
-    if (this.message) out.push(fit(s.warning(displayValue(this.message))));
+    out.push(frameRule(th, width), ...keyHints(th, width, detailHints(isFinalized(t))).lines);
+    return out;
+  }
+
+  render(width: number): string[] {
+    const out = this.detail ? this.renderDetail(width, this.detail) : this.renderList(width);
+    if (this.message) out.push(truncateToWidth(this.deps.theme.fg("warning", displayValue(this.message)), width));
     return out;
   }
 
@@ -398,12 +488,12 @@ export class BgInspector implements Component {
 }
 
 /** Renderer for completion notices: escaped labels, states, and log availability qualifiers. */
-export function renderCompletion(details: CompletionDetails | undefined, text: string, style: ViewerStyle): string[] {
-  if (!details) return [style.dim(displayValue(text))];
-  const head = style.bold(details.events.length === 1 ? "Background task finished" : `${details.events.length} background tasks finished`);
+export function renderCompletion(details: CompletionDetails | undefined, text: string, theme: UiTheme): string[] {
+  if (!details) return [theme.fg("dim", displayValue(text))];
+  const head = theme.bold(details.events.length === 1 ? "Background task finished" : `${details.events.length} background tasks finished`);
   const lines = details.events.map((e) => {
-    const state = e.state === "completed" ? style.success(e.state) : e.state === "failed" ? style.error(e.state) : style.warning(e.state);
-    return `  ${displayValue(e.taskId)}  ${state}  ${displayValue(e.reason)}  ${style.dim(`log ${displayValue(e.logPath)} (until cleared)`)}`;
+    const state = theme.fg(e.state === "completed" ? "success" : e.state === "failed" ? "error" : "warning", e.state);
+    return `  ${displayValue(e.taskId)}  ${state}  ${displayValue(e.reason)}  ${theme.fg("dim", `log ${displayValue(e.logPath)} (until cleared)`)}`;
   });
   return [head, ...lines];
 }

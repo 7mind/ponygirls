@@ -4,10 +4,16 @@ import test, { type TestContext } from "node:test";
 import type { TaskBackend } from "../src/backend.ts";
 import type { SignalName, TaskId } from "../src/protocol.ts";
 import { BgInspector, VIEW_WINDOW_BYTES, type ViewerDeps } from "../src/ui.ts";
+import { PLAIN_THEME, type UiFg, type UiTheme } from "@ponygirls/pi-ui";
 import { defer, eventually, startRealBackend } from "./fixtures.ts";
 
-const PLAIN = { accent: (s: string) => s, dim: (s: string) => s, error: (s: string) => s, warning: (s: string) => s, success: (s: string) => s, bold: (s: string) => s, selected: (s: string) => `>${s}` };
-const SGR = { accent: (s: string) => `\x1b[36m${s}\x1b[39m`, dim: (s: string) => `\x1b[2m${s}\x1b[22m`, error: (s: string) => `\x1b[31m${s}\x1b[39m`, warning: (s: string) => `\x1b[33m${s}\x1b[39m`, success: (s: string) => `\x1b[32m${s}\x1b[39m`, bold: (s: string) => `\x1b[1m${s}\x1b[22m`, selected: (s: string) => `\x1b[7m${s}\x1b[27m` };
+const PLAIN = PLAIN_THEME;
+const SGR_FG: Partial<Record<UiFg, number>> = { accent: 36, error: 31, warning: 33, success: 32 };
+const SGR: UiTheme = {
+  fg: (color, s) => `\x1b[${SGR_FG[color] ?? 2}m${s}\x1b[39m`,
+  bg: (_color, s) => `\x1b[7m${s}\x1b[27m`,
+  bold: (s) => `\x1b[1m${s}\x1b[22m`,
+};
 const ENTER = "\r";
 const ESC = "\x1b";
 const UP = "\x1b[A";
@@ -22,7 +28,7 @@ interface Harness {
   settle: () => Promise<void>;
 }
 
-async function open(t: TestContext, backend: TaskBackend, options: { style?: typeof PLAIN; confirm?: boolean; signal?: SignalName } = {}): Promise<Harness> {
+async function open(t: TestContext, backend: TaskBackend, options: { theme?: UiTheme; confirm?: boolean; signal?: SignalName } = {}): Promise<Harness> {
   let closed = false;
   const confirms: string[] = [];
   const forgotten: string[] = [];
@@ -35,7 +41,7 @@ async function open(t: TestContext, backend: TaskBackend, options: { style?: typ
     requestRender: () => {},
     rows: () => 30,
     close: () => { closed = true; },
-    style: options.style ?? PLAIN,
+    theme: options.theme ?? PLAIN,
     now: () => Date.now(),
   };
   const view = new BgInspector(deps);
@@ -108,7 +114,7 @@ test("control-sequence fixtures cannot reach Pi's terminal", async (t) => {
   ].join("");
   const task = await backend.spawn({ label: "evil \x1b]0;label-title\x07", command: `printf '${evil}\\n'`, cwd: "/", notify: false });
   await finished(backend, task.id);
-  const h = await open(t, backend, { style: SGR });
+  const h = await open(t, backend, { theme: SGR });
   await press(h, ENTER);
   const screen = h.screen();
   assert.match(screen, /plain-tail/);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { advanceStatusEpisode } from "../index.ts";
 import { defer, eventually, tempDir } from "./fixtures.ts";
 
-type BadgeFactory = () => { render(): string[]; handleMouse?: (event: unknown) => unknown };
+type BadgeFactory = () => { render(): string[]; renderCompact?: (width: number) => string; handleMouse?: (event: unknown) => unknown };
 type StatusEntry = [string, BadgeFactory | undefined, ({ placement: "borderBottomLeft" } | undefined)?];
 
 /** The published badge's first rendered line. */
@@ -36,7 +36,7 @@ test("border badge shows running tasks and clears when none remain", async (t) =
     },
     ui: {
       setWidget: (...args: StatusEntry) => { statuses.push(args); },
-      theme: { bg: (_color: string, text: string) => text },
+      theme: { bg: (color: string, text: string) => `[${color}]${text}`, fg: (color: string, text: string) => `<${color}>${text}` },
       notify: () => {},
     },
     hasUI: true,
@@ -53,8 +53,10 @@ test("border badge shows running tasks and clears when none remain", async (t) =
   const id = (spawned.details as { task: { id: string } }).task.id;
   assert.ok(id);
 
-  await eventually(async () => (statuses.some(([k, v]) => k === "bg" && v !== undefined && badgeLine(v) === " bg 1 running ") ? true : null), "running status");
+  await eventually(async () => (statuses.some(([k, v]) => k === "bg" && v !== undefined && badgeLine(v) === "[selectedBg] bg 1 running ") ? true : null), "running status");
   const mark = statuses.length;
+  const badge = statuses.findLast(([k, v]) => k === "bg" && v !== undefined)![1]!();
+  assert.equal(badge.renderCompact?.(10), "[toolPendingBg] <accent>⚙<text>1 ", "short form: neutral chip, running glyph, count");
 
   await tool.execute("terminate-1" as never, { action: "terminate", id } as never, undefined as never);
   await eventually(async () => (statuses.slice(mark).some(([k, v]) => k === "bg" && v === undefined) ? true : null), "status clear after finish");
@@ -103,7 +105,7 @@ test("a status-backend outage keeps the badge and reports once per episode", asy
     },
     ui: {
       setWidget: (...args: StatusEntry) => { statuses.push(args); },
-      theme: { bg: (_color: string, text: string) => text },
+      theme: { bg: (color: string, text: string) => `[${color}]${text}`, fg: (color: string, text: string) => `<${color}>${text}` },
       notify: () => {},
     },
     hasUI: true,
