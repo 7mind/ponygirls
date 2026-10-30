@@ -265,3 +265,13 @@ test("a gated agent's transcript shows each review in a gate frame where it happ
   assert.ok(inside.some((l) => l.includes("rubric line 1")) && !lines.some((l) => l.includes("[subagent")), "the worker's task header is not shown");
   assert.ok(!lines[at("╰─ decision")]!.includes("LONG REASON"), "the frame's footer is compact");
 });
+
+test("D1: a non-selected row colours its outcome by the outcome, not as an error", () => {
+  const tag = (name: string) => (s: string): string => `<${name}>${s}</${name}>`;
+  const style = { ...PLAIN_STYLE, success: tag("success"), error: tag("error"), warning: tag("warning") };
+  const views = [view(), view({ id: "a-2", path: "/root/b", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" })];
+  const ui = new AgentInspector(views, { refresh: () => views, describe: () => ({ result: null, question: null }), onAction: () => {}, onClose: () => {}, rows: () => 30, style });
+  const row = ui.render(120).find((l) => l.includes("/root/b") && !l.includes("workdir"))!;
+  assert.match(row, /<success>succeeded<\/success>/, row);
+  assert.doesNotMatch(row, /<error>/, row);
+});

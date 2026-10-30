@@ -13,7 +13,7 @@
  */
 
 import { readFileSync, statSync } from "node:fs";
-import { Input, Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { Input, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { PLAIN_STYLE, sanitizeDisplay, type UiStyle } from "./display.ts";
 import type { AgentView, TranscriptSource } from "./supervisor.ts";
 import { parseTranscript, renderConversation, type ReviewBlock, type TranscriptItem } from "./transcript.ts";
@@ -77,10 +77,14 @@ function stateText(v: AgentView): string {
   return v.pendingIntent || v.observed;
 }
 
+function outcomeColor(style: UiStyle, outcome: string): (s: string) => string {
+  if (outcome === "succeeded" || outcome === "passed") return style.success;
+  if (outcome === "interrupted" || outcome === "uncertain" || outcome === "candidate_superseded" || outcome === "gate_bypassed" || outcome === "review_limit_reached") return style.warning;
+  return style.error;
+}
+
 function outcomeStyle(style: UiStyle, outcome: string): string {
-  if (outcome === "succeeded" || outcome === "passed") return style.success(outcome);
-  if (outcome === "interrupted" || outcome === "uncertain" || outcome === "candidate_superseded" || outcome === "gate_bypassed" || outcome === "review_limit_reached") return style.warning(outcome);
-  return style.error(outcome);
+  return outcomeColor(style, outcome)(outcome);
 }
 
 function kindText(v: AgentView): string {
@@ -233,7 +237,9 @@ export class AgentInspector {
     ];
     if (selected) return s.selected(truncateToWidth(cells.join("  "), width, "…", true));
     const state = v.openQuestion ? s.warning(cells[2]!) : v.observed === "running" ? s.accent(cells[2]!) : cells[2]!;
-    const styled = [cells[0]!, s.muted(cells[1]!), state, v.taskOutcome ? outcomeStyle(s, cells[3]!) : cells[3]!, s.muted(cells[4]!)];
+    // Colour by the raw outcome; the padded cell no longer equals it.
+    const outcome = v.taskOutcome ? `${outcomeColor(s, v.taskOutcome)(truncateToWidth(v.taskOutcome, 20, "…"))}${" ".repeat(Math.max(0, 20 - visibleWidth(cells[3]!.trimEnd())))}` : cells[3]!;
+    const styled = [cells[0]!, s.muted(cells[1]!), state, outcome, s.muted(cells[4]!)];
     return fit(styled.join("  "), width);
   }
 
