@@ -5,7 +5,7 @@ import { formatAmount, formatResets, formatUsedLimit, usageBar, windowState } fr
 import { quotaWindow, type QuotaWindow } from "../src/quota.ts";
 import { toolReport } from "../src/report.ts";
 import type { QueryResult } from "../src/service.ts";
-import { buildTable, PLAIN_TABLE_STYLE } from "../src/table.ts";
+import { buildTable, PLAIN_TABLE_STYLE, type TableStyle } from "../src/table.ts";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const win = (name: string, used: number | null, limit: number | null, unit: string, resetsAt: Date | null = null): QuotaWindow => quotaWindow(name, used, limit, unit, resetsAt);
@@ -91,4 +91,24 @@ test("the tool report lists every provider with window states, errors, and optio
   ]);
   assert.deepEqual(report.models, { zai: [{ id: "glm-4.6", efforts: ["low", "high"] }, { id: "glm-5.3", efforts: ["off"] }] });
   assert.equal(toolReport({ refreshedAt: NOW, results: [] }, NOW, { models: null, quotas: true, context: null }).models, undefined);
+});
+
+/** Zero-width SGR tags, so padding and truncation see the same widths as the real theme. */
+const sgr = (open: number, close: number) => (s: string): string => `\x1b[${open}m${s}\x1b[${close}m`;
+const SGR_STYLE: TableStyle = { provider: (_p, s) => sgr(35, 39)(s), bold: sgr(1, 22), dim: sgr(2, 22), success: sgr(32, 39), warning: sgr(33, 39), error: sgr(31, 39) };
+const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
+const [SUCCESS, WARNING, ERROR, DIM] = ["32", "33", "31", "2"].map((code) => (text: string) => `\x1b[${code}m${text}\x1b[${code === "2" ? "22" : "39"}m`);
+
+test("usage bars take the Status thresholds' colours; layout and text stay the same", () => {
+  const results = [result("zai", [win("a (5h)", 38, 100, "%"), win("b (7d)", 93, 100, "%"), win("c (1mo)", 100, 100, "%"), { ...win("d", null, null, "requests"), unlimited: true }])];
+  const plain = buildTable(results, NOW, { showInvalid: false, width: null }, PLAIN_TABLE_STYLE);
+  const styled = buildTable(results, NOW, { showInvalid: false, width: null }, SGR_STYLE);
+  assert.ok(plain.lines.every((l) => !l.includes("\x1b")), "headless output carries no escapes");
+  // Styled cells keep trailing padding inside their escapes; visible text is otherwise identical.
+  assert.deepEqual(styled.lines.map((l) => strip(l).trimEnd()), plain.lines);
+  const row = (name: string): string => styled.lines.find((l) => strip(l).includes(name))!;
+  assert.ok(row("a (5h)").includes(SUCCESS("████") + DIM("░░░░░░")), JSON.stringify(row("a (5h)")));
+  assert.ok(row("b (7d)").includes(WARNING("█████████") + DIM("░")), JSON.stringify(row("b (7d)")));
+  assert.ok(row("c (1mo)").includes(ERROR("██████████")) && !row("c (1mo)").includes("░"));
+  assert.ok(!row("unlimited").includes("█") && !row("unlimited").includes(DIM("—")), JSON.stringify(row("unlimited")));
 });

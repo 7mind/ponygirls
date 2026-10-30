@@ -1,6 +1,7 @@
 /**
  * Hand-written Http fake with a routing table (tokemon's ScriptedTransport).
  */
+import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TransportError, type Http, type HttpMethod, type HttpResponse } from "../src/http.ts";
@@ -43,3 +44,21 @@ export const OAUTH: Credential = { kind: "oauth", secret: "test-access", refresh
 export const META_OAUTH: Credential = { kind: "oauth", secret: "test-access", refreshToken: "dca:test-identity", accountId: null };
 
 export const at = (seconds: number): string => new Date(seconds * 1000).toISOString();
+
+/** A theme stand-in tagging colours as `<token>…</token>`. */
+export const TAG_THEME = {
+  appearance: "dark" as const,
+  fg: (color: string, text: string): string => `<${color}>${text}</${color}>`,
+  bold: (text: string): string => `<b>${text}</b>`,
+};
+
+/** The first line a border widget factory renders with TAG_THEME. */
+export function renderBorderWidget(content: unknown): string {
+  assert.equal(typeof content, "function", "border widgets are component factories");
+  const component = (content as (tui: unknown, theme: typeof TAG_THEME) => { render(width: number): string[] })(undefined, TAG_THEME);
+  const lines = component.render(200);
+  assert.equal(lines.length, 1);
+  return lines[0]!;
+}
+
+export const untag = (s: string): string => s.replace(/<\/?[a-z]+>/g, "");

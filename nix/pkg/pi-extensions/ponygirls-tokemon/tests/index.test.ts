@@ -12,7 +12,7 @@ import { ENV_PROVIDER_KEYS } from "../src/discovery.ts";
 import { quotaWindow } from "../src/quota.ts";
 import { toolReport } from "../src/report.ts";
 import type { QueryResult } from "../src/service.ts";
-import { fixture } from "./scripted-http.ts";
+import { fixture, renderBorderWidget, untag } from "./scripted-http.ts";
 
 type Execute = (id: string, params: unknown, signal: undefined, onUpdate: undefined, ctx: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
 type Handler = (args: string, ctx: unknown) => Promise<void>;
@@ -76,7 +76,7 @@ test("/tokemon opens in place as a bottom panel, not a popup overlay", async () 
     const tools = new Map<string, Execute>();
     const commands = new Map<string, Handler>();
     let customOptions: unknown = "not called";
-    const noopTheme = { bold: (s: string) => s, fg: (_c: string, s: string) => s };
+    const noopTheme = { appearance: "light", bold: (s: string) => s, fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s };
     const fakeTui = { terminal: { rows: 30 }, requestRender: () => {} };
     const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
     const pi = {
@@ -178,8 +178,9 @@ test("a quota line reaches the top-right border widget with its placement", asyn
     assert.equal(widgets.length, 1);
     const [key, content, options] = widgets[0]!;
     assert.equal(key, "tokemon");
-    assert.ok(Array.isArray(content) && content.length === 1);
-    assert.match(String((content as string[])[0]), /^zai \{/);
+    const line = renderBorderWidget(content);
+    assert.match(untag(line), /^zai \{/);
+    assert.match(line, /<(success|warning|error)>█+<\/\1>/, "bars take their window state's colour");
     assert.deepEqual(options, { placement: "borderTopRight" });
   } finally {
     globalThis.fetch = savedFetch;

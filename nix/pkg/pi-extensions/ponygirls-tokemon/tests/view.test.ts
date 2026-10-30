@@ -5,6 +5,7 @@ import { quotaWindow } from "../src/quota.ts";
 import type { QueryResult, QuotaReport } from "../src/service.ts";
 import { PLAIN_TABLE_STYLE } from "../src/table.ts";
 import { TokemonView } from "../src/view.ts";
+import { PLAIN_THEME } from "@ponygirls/pi-ui";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const ESC = "\x1b";
@@ -35,6 +36,7 @@ function view(report: QuotaReport, rows = 20): { v: TokemonView; asked: number[]
     requestRender: () => {},
     close: () => { closed = true; },
     style: PLAIN_TABLE_STYLE,
+    theme: PLAIN_THEME,
     refreshEveryMs: 300_000,
   });
   return { v, asked, closed: () => closed };
@@ -84,9 +86,36 @@ test("a failed refresh is shown, not swallowed", async () => {
     requestRender: () => {},
     close: () => {},
     style: PLAIN_TABLE_STYLE,
+    theme: PLAIN_THEME,
     refreshEveryMs: 300_000,
   });
   await settle();
   assert.ok(v.render(80).some((l) => l.includes("quota refresh failed: auth.json: unreadable JSON")));
+  v.dispose();
+});
+
+test("the pane is framed: title rule with the refresh status, rule, and key hints", async () => {
+  const { v } = view({ refreshedAt: NOW, results: results(2) });
+  await settle();
+  const lines = v.render(100);
+  assert.match(lines[0]!, /^── tokemon — token quotas ─+ updated \d\d:\d\d:\d\d · next refresh in 5:00 ──$/);
+  assert.equal(visibleWidth(lines[0]!), 100);
+  assert.equal(lines.at(-2), "─".repeat(100));
+  assert.equal(lines.at(-1), "r refresh  i show invalid  m show models  ↑↓ PgUp PgDn scroll  esc close");
+  v.handleInput("i");
+  v.handleInput("m");
+  assert.equal(v.render(100).at(-1), "r refresh  i hide invalid  m hide models  ↑↓ PgUp PgDn scroll  esc close");
+  v.dispose();
+});
+
+test("wrapped key hints on a narrow terminal still fit the row budget", async () => {
+  const rows = 12;
+  const { v } = view({ refreshedAt: NOW, results: results(30) }, rows);
+  await settle();
+  const lines = v.render(50);
+  assert.ok(lines.length <= rows, `${lines.length} lines for ${rows} rows`);
+  assert.ok(lines.every((l) => visibleWidth(l) <= 50));
+  assert.deepEqual(lines.slice(-2), ["r refresh  i show invalid  m show models", "↑↓ PgUp PgDn scroll  esc close"]);
+  assert.equal(lines.at(-3), "─".repeat(50));
   v.dispose();
 });

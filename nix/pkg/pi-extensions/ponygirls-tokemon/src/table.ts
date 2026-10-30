@@ -73,6 +73,13 @@ function stateStyle(style: TableStyle, state: WindowState): (s: string) => strin
   return state === "low" ? style.warning : style.success;
 }
 
+/** A usage bar with its filled run in the window state's colour (the Status thresholds) and its empty run dim. */
+export function styleBar(style: TableStyle, state: WindowState, bar: string): string {
+  if (state === "unlimited") return bar;
+  const fill = state === "EXHAUSTED" ? style.error : state === "low" ? style.warning : style.success;
+  return bar.replace(/█+/g, (run) => fill(run)).replace(/░+/g, (run) => style.dim(run));
+}
+
 /** Per-window status lines; a row's note is shown once, on its first line. */
 function statusLines(result: QueryResult, windows: Array<QuotaWindow | null>, now: Date, style: TableStyle): CellLine[] {
   if (result.rateLimited) return windows.map(() => ({ text: rateLimitedStatus(result.retryAt, now), style: style.warning }));
@@ -99,7 +106,7 @@ function rowCells(result: QueryResult, now: Date, compact: boolean, style: Table
     [{ text: result.snapshot?.plan ?? "", style: same }],
     perWindow((w) => w.name),
     perWindow(formatUsedLimit),
-    perWindow(usageBar),
+    windows.map((w) => (w ? { text: usageBar(w), style: (bar: string) => styleBar(style, windowState(w), bar) } : { text: "—", style: same })),
     perWindow((w) => formatResets(w, now)),
     statusLines(result, windows, now, style),
   ];

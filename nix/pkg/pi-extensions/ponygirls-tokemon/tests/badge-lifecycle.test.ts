@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import extension from "../index.ts";
 import { ENV_PROVIDER_KEYS } from "../src/discovery.ts";
+import { renderBorderWidget, untag } from "./scripted-http.ts";
 
 test("badge initializes, ages while idle without polling, and stops on shutdown", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "tokemon-badge-"));
@@ -27,19 +28,19 @@ test("badge initializes, ages while idle without polling, and stops on shutdown"
     };
     const handlers = new Map<string, (event: unknown, ctx: unknown) => void>();
     extension({ registerTool: () => {}, registerCommand: () => {}, on: (event: string, handler: (event: unknown, ctx: unknown) => void) => handlers.set(event, handler) } as unknown as ExtensionAPI);
-    const widgets: Array<{ content: string[] | undefined; options: unknown }> = [];
-    const ctx = { mode: "tui", model: { provider: "anthropic" }, modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "fixture" } }) }, ui: { setWidget: (_key: string, content: string[] | undefined, options: unknown) => { widgets.push({ content, options }); } } };
+    const widgets: Array<{ content: unknown; options: unknown }> = [];
+    const ctx = { mode: "tui", model: { provider: "anthropic" }, modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "fixture" } }) }, ui: { setWidget: (_key: string, content: unknown, options: unknown) => { widgets.push({ content, options }); } } };
     const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
     handlers.get("session_start")!({}, ctx);
     await flush();
-    assert.match(widgets.at(-1)!.content![0]!, /42%/);
+    assert.match(untag(renderBorderWidget(widgets.at(-1)!.content)), /\[██░░░ 42%\]/);
     assert.deepEqual(widgets.at(-1)!.options, { placement: "borderTopRight" });
     t.mock.timers.tick(270_000);
     await flush();
     assert.equal(requests, 2, "idle redraws must not query providers");
     // The five-minute refresh may be in flight, but age must render immediately.
     t.mock.timers.tick(30_000);
-    assert.match(widgets.at(-1)!.content![0]!, /stale 5m/);
+    assert.match(untag(renderBorderWidget(widgets.at(-1)!.content)), /⚠ stale 5m$/);
     handlers.get("session_shutdown")!({}, ctx);
     await flush();
     const count = widgets.length;

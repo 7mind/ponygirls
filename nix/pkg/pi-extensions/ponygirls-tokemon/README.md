@@ -121,7 +121,12 @@ not the current time.
 `/perf`) with tokemon's table: one row group per
 account, its windows stacked inside the cells, sorted by provider and login.
 The panel takes only the rows its table needs, so the transcript stays visible
-above it. It refreshes every five minutes and shows a countdown.
+above it. It refreshes every five minutes; the title rule shows the last
+update and the countdown, and the key hints sit below a rule. Usage bars are
+coloured by the window's Status (ok `success`, low at 90 %+ `warning`, EXHAUSTED `error`;
+the empty part dim). Provider names keep their brand hue, with OKLCH lightness
+adjusted to at least 4.5:1 contrast against a reference background for the
+theme's appearance (dark `#2E3440`, light `#FBF1C7`).
 
 | Key | Action |
 |---|---|
@@ -141,7 +146,7 @@ command emits the table once as a notification.
 
 On the editor's top-right border pi shows the current provider's limited
 windows (`── ⠙ Working ────────────────── zai {5h/1:30 [██░░░ 30%]} {7d/3d:05:40 [█░░░░ 10%]} ──`: each window's
-trailing duration, reset countdown, and usage bar), refreshed
+trailing duration, reset countdown, and usage bar, coloured as in the table), refreshed
 on session start, at each turn end, on model switches, and every five minutes
 while idle. Age/reset countdowns redraw every 30 seconds without network
 requests. Last known Anthropic bars stay visible with a `⚠ stale Nm` marker;

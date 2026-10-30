@@ -10,6 +10,7 @@
  */
 
 import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { frameRule, frameTitle, keyHints, type UiTheme } from "@ponygirls/pi-ui";
 import type { QuotaReport } from "./service.ts";
 import { buildTable, type TableStyle } from "./table.ts";
 import type { ModelReport } from "./report.ts";
@@ -24,11 +25,14 @@ export interface TokemonViewDeps {
   requestRender(): void;
   close(): void;
   style: TableStyle;
+  /** Panel chrome: title rule, rule above the key hints, and the hints. */
+  theme: UiTheme;
   refreshEveryMs: number;
 }
 
-/** Title, blank, caption, and key lines around the scrolled content. */
-const CHROME_LINES = 4;
+/** Title, caption, and rule lines around the scrolled content and the key hints. */
+const CHROME_LINES = 3;
+const TITLE = "tokemon — token quotas";
 const TICK_MS = 1000;
 
 function clock(date: Date): string {
@@ -48,6 +52,8 @@ export class TokemonView implements Component {
   private showInvalid = false;
   private showModels = false;
   private scrollTop = 0;
+  /** Key hint lines at the last rendered width (they wrap on narrow terminals). */
+  private hintLines = 1;
   private nextRefreshAt: Date;
   private readonly timer: ReturnType<typeof setInterval>;
 
@@ -88,7 +94,7 @@ export class TokemonView implements Component {
   }
 
   private viewportHeight(): number {
-    return Math.max(3, this.deps.rows() - CHROME_LINES);
+    return Math.max(3, this.deps.rows() - CHROME_LINES - this.hintLines);
   }
 
   private content(width: number): { lines: string[]; caption: string | null } {
@@ -116,6 +122,15 @@ export class TokemonView implements Component {
     const w = Math.max(40, width);
     const now = this.deps.now();
     const status = this.loading ? "querying…" : this.report ? `updated ${clock(this.report.refreshedAt)} · next refresh in ${countdown(this.nextRefreshAt.getTime() - now.getTime())}` : "";
+    const t = this.deps.theme;
+    const hints = keyHints(t, w, [
+      { key: "r", action: "refresh" },
+      { key: "i", action: `${this.showInvalid ? "hide" : "show"} invalid` },
+      { key: "m", action: `${this.showModels ? "hide" : "show"} models` },
+      { key: "↑↓ PgUp PgDn", action: "scroll" },
+      { key: "esc", action: "close" },
+    ]);
+    this.hintLines = hints.lines.length;
     const { lines, caption } = this.content(w);
     // The pane is only as tall as its content (up to the terminal budget):
     // short tables leave the transcript visible below the overlay.
@@ -125,11 +140,11 @@ export class TokemonView implements Component {
     const below = lines.length - this.scrollTop - height;
     const position = this.scrollTop > 0 || below > 0 ? ` · lines ${this.scrollTop + 1}-${Math.min(lines.length, this.scrollTop + height)} of ${lines.length}` : "";
     return [
-      truncateToWidth(`${s.bold("tokemon — token quotas")}  ${s.dim(status)}`, w, "…"),
+      frameTitle(t, w, { title: TITLE, right: status === "" ? undefined : t.fg("dim", status) }, "none").line,
       ...visible.map((l) => truncateToWidth(l, w, "…")),
-      "",
       truncateToWidth(s.dim(`${caption ?? ""}${position}`), w, "…"),
-      truncateToWidth(s.dim(`r refresh · i ${this.showInvalid ? "hide" : "show"} invalid · m ${this.showModels ? "hide" : "show"} models · ↑↓ PgUp PgDn scroll · esc close`), w, "…"),
+      frameRule(t, w),
+      ...hints.lines,
     ];
   }
 
