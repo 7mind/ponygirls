@@ -701,7 +701,7 @@
           ponygirls-codex-risk-retry = pkgs.runCommand "ponygirls-codex-risk-retry-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
             PI_RETRY_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
-            PI_RETRY_GOALS_EXTENSION = "${./nix/pkg/pi-extensions/ponygirls-codex-goals}";
+            PI_RETRY_GOALS_EXTENSION = "${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-codex-goals";
             PI_OFFLINE = "1";
             PI_TELEMETRY = "0";
           } ''
