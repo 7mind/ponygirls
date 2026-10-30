@@ -113,7 +113,7 @@ let
   before = first: second: text:
     builtins.match ".*${first}.*${second}.*" text != null;
 in
-assert builtins.hashString "sha256" contexts.general == "a8e93f54a82de4aeccd453354e60c2bc4bb0ff0ab2007a4870619eead69016bf";
+assert builtins.hashString "sha256" contexts.general == "d82edc398517e05570657b6c10ca816aaf17f9f3234fd18632b8a520816246e5";
 assert general == contexts.general;
 assert defaults.smind.hm.dev.llm.commitPolicy == "no-preference";
 assert !defaults.smind.hm.dev.llm.worktrees.enable;

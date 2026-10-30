@@ -5,7 +5,10 @@ not the main checkout. Before editing, locate the main checkout and create
 its `.worktrees/` directory. Ensure `/.worktrees/` is ignored in that
 repository (prefer its shared Git `info/exclude` to avoid an unrelated
 tracked change), and verify with `git check-ignore` before adding a
-uniquely named task branch and worktree under `.worktrees/`.
+uniquely named task branch and worktree at
+`.worktrees/wt-{reponame}-{problemslug}`. Use the main checkout's directory
+name for `{reponame}` and a short, lowercase, hyphen-separated task name for
+`{problemslug}`; disambiguate the slug if that path already exists.
 If already in a dedicated task worktree, reuse it; give concurrent writers
 separate worktrees. Read-only inspection does not require a new worktree.
 Outside a Git repository, do not initialize one solely for this policy.
@@ -22,5 +25,10 @@ original main checkout. Check its current branch and working tree first;
 do not switch its branch, overwrite user changes, or resolve ambiguous
 conflicts without asking. If commits are forbidden or integration cannot
 be performed safely, leave the worktree intact and report what remains.
-Verify the integrated result, then remove only the task worktree once all
-its changes are preserved. Do not push unless explicitly requested.
+After merging, verify the integrated result, then remove the task worktree
+with `git worktree remove <path>` before declaring the task complete. Confirm
+that its directory and `git worktree list` entry are gone. Remove only your
+own task worktree, and only once all its changes are preserved; never force
+removal of a dirty worktree. If cleanup fails, report the remaining path and
+reason rather than silently leaving it behind. Do not push unless explicitly
+requested.
