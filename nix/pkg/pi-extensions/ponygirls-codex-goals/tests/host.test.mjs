@@ -13,6 +13,7 @@ const { CustomMessageComponent } = await import(pathToFileURL(join(root, "dist/m
 const { CustomEntryComponent } = await import(pathToFileURL(join(root, "dist/modes/interactive/components/custom-entry.js")));
 const { initTheme } = await import(pathToFileURL(join(root, "dist/modes/interactive/theme/theme.js")));
 const extensionPath = resolve(import.meta.dirname, "../index.ts");
+const plain = (text) => text.replace(/\x1b\[[0-9;]*m/g, "");
 const usage = { input: 2, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
 async function fixture(t, replies, options = {}) {
@@ -85,6 +86,28 @@ test("host: slash kickoff and three executions keep full instructions and answer
     assert.match(rendered, /generic host objective/);
     assert.match(rendered, /complete|completion/);
   }
+  // Collapsed by default with the extension's renderer; expanded is exactly
+  // pi's default full rendering, so every instruction stays visible.
+  const extension = f.loader.getExtensions().extensions[0];
+  const instructionRenderer = extension.messageRenderers.get("codex-goal-context");
+  for (const e of instructions) {
+    const full = new CustomMessageComponent({ role: "custom", ...e }).render(160);
+    const component = new CustomMessageComponent({ role: "custom", ...e }, instructionRenderer);
+    const collapsed = component.render(160).filter((line) => line.trim() !== "");
+    assert.equal(collapsed.length, 1);
+    assert.match(plain(collapsed[0]), /◎ goal · (kickoff|continuation \d+) · active · /);
+    component.setExpanded(true);
+    assert.deepEqual(component.render(160), full);
+  }
+  const commits = entries.filter((e) => e.type === "custom" && e.customType === "codex-goal-commit");
+  assert.ok(commits.length > 0);
+  const commitRenderer = extension.entryRenderers.get("codex-goal-commit");
+  for (const e of commits) {
+    const component = new CustomEntryComponent(e, commitRenderer);
+    assert.match(plain(component.render(160).join("\n")), new RegExp(`^ {2}· goal rev ${e.data.revision} committed`, "m"));
+    component.setExpanded(true);
+    assert.ok(component.render(160).join("\n").includes(`[codex-goal-commit] ${JSON.stringify(e.data)}`));
+  }
   const raw = readFileSync(f.manager.getSessionFile(), "utf8");
   for (const e of instructions) assert.ok(raw.includes(JSON.stringify(e.content)));
   assert.match(raw, /final report/);
@@ -105,8 +128,10 @@ test("host: lifecycle notices render their actual text", async (t) => {
   assert.ok(notice);
   initTheme("dark");
   const renderer = f.loader.getExtensions().extensions[0].entryRenderers.get("codex-goal-notice");
-  const rendered = new CustomEntryComponent(notice, renderer).render(100).join("\n");
-  assert.match(rendered, /paused/);
+  const component = new CustomEntryComponent(notice, renderer);
+  assert.match(plain(component.render(100).join("\n")), new RegExp(`◉ goal paused · rev ${notice.data.revision} · .* · /goal resume`));
+  component.setExpanded(true);
+  assert.match(component.render(100).join("\n"), new RegExp(`Goal paused \\(${notice.data.goalId}\\)\\.`));
 });
 
 test("host: an unresolved active dispatch can recover with /goal resume", async (t) => {

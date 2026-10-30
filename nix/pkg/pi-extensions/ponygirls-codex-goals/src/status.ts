@@ -5,7 +5,9 @@
  * (styling is applied at publish time; a theme switch restyles at the next
  * goal change).
  */
-import type { GoalRecord } from "./goal.ts";
+import { compactChip, type UiTheme } from "@ponygirls/pi-ui";
+import type { GoalRecord, GoalStatus } from "./goal.ts";
+import { GOAL_STATUS_LOOK } from "./presentation.ts";
 
 /** Border widget key for the bottom-left badge. */
 export const GOAL_STATUS_KEY = "goal";
@@ -19,4 +21,10 @@ export function goalStatusLine(goal: GoalRecord | null): string | null {
   if (!goal) return null;
   if (goal.status === "complete") return null;
   return `goal ${goal.status}`;
+}
+
+/** Short border form for narrow widths: the status glyph in its state colour, no label. */
+export function goalCompactBadge(theme: UiTheme, status: GoalStatus): string {
+  const look = GOAL_STATUS_LOOK[status];
+  return compactChip(theme, look.glyph, look.state, "");
 }

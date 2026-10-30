@@ -92,12 +92,28 @@ and commit metadata are custom entries (not model context). Nothing is
 deleted on clear/replace/resume/compaction; Pi's normal compaction
 manages context size.
 
+In the TUI transcript these are drawn collapsed while Pi's global expand
+toggle (`ctrl+o` by default) is off: an instruction is one line
+(`◎ goal · kickoff · active · “objective” · 24 lines ▸ ctrl+o`), a commit
+entry is a dim `· goal rev N committed`, and a pause is one
+`◉ goal paused · rev N · 6s · /goal resume` line (in the TUI the notice
+entry replaces the separate "Goal paused." status line; other modes still
+get the notification). Expanded, each shows exactly the full text it
+always had; collapsing changes only drawing, never the persisted or sent
+content.
+
 While an unfinished goal exists the editor's bottom-left border shows `goal
 <status>` (active, paused, blocked, budget_limited, usage_limited) as a
 magenta badge, next to the background-tasks and subagents badges when they
-are present; it clears when the goal completes or is cleared. Clicking the
-badge opens the `/goal` pane (status, objective, budget, and timing — the
-same pane `/goal` with no arguments opens).
+are present; when the border is too narrow it shows only the status glyph
+(`◎` active, `◉` paused, `✖` blocked/limited). The badge clears when the
+goal completes or is cleared. Clicking the badge opens the `/goal` pane —
+the same pane `/goal` with no arguments opens: status and revision in the
+title, objective, token budget (bar against the cap, or `no cap`), active
+time, and created/updated as local time with relative age. Its keys run
+the matching subcommands: `p` pause (active), `r` resume (paused, blocked,
+usage-limited; a budget-limited goal needs `/goal resume --tokens N`), `e`
+edit objective, `c` clear (after a confirmation), `esc` close.
 
 ## Persistence
 
