@@ -800,6 +800,8 @@ in
             # instructions (same-session continuation, three model tools,
             # atomic session sidecar). See nix/pkg/pi-extensions/ponygirls-codex-goals.
             "${../pkg/pi-extensions/ponygirls-codex-goals}"
+            # Persistent project questions, asynchronous answers, and a clickable inbox badge.
+            "${../pkg/pi-extensions/ponygirls-decisions}"
             # Supervisor/worker subagents: durable delegation, sandbox-brokered
             # tools, worktrees, gates, /agents inspector.
             # See nix/pkg/pi-extensions/ponygirls-subagents (optional policy

@@ -745,6 +745,25 @@
             node --test tests/host.test.mjs
             touch $out
           '';
+          ponygirls-decisions = pkgs.runCommand "ponygirls-decisions-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git ];
+            PI_DECISIONS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            export HOME=$TMPDIR
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-decisions} ponygirls-decisions
+            chmod -R u+w ponygirls-decisions
+            cd ponygirls-decisions
+            mkdir -p node_modules/@earendil-works
+            ln -s "$PI_DECISIONS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_DECISIONS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
+            ln -s "$PI_DECISIONS_SDK_ROOT/node_modules/typebox" node_modules/typebox
+            ln -s "$PI_DECISIONS_SDK_ROOT/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
+            node --test tests/*.test.ts tests/*.test.mjs
+            touch $out
+          '';
           ponygirls-tokemon = pkgs.runCommand "ponygirls-tokemon-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.python3 ];
             PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
