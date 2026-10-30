@@ -282,6 +282,8 @@
           claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
           codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
+          ponygirls-pi-ui = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = self.packages.${system}.pi-coding-agent; };
+          ponygirls-pi-extensions = pkgs.callPackage ./nix/pkg/pi-extensions/package.nix { ponygirls-pi-ui = self.packages.${system}.ponygirls-pi-ui; };
           pi-search-hub = pkgs.callPackage ./nix/pkg/pi-search-hub/package.nix { };
           codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix { src = inputs.codegraph; };
           crawl4ai-mcp = pkgs.callPackage ./nix/pkg/crawl4ai/mcp.nix { };
@@ -663,6 +665,7 @@
             chmod -R u+w ponygirls-codegraph
             cd ponygirls-codegraph
             mkdir -p node_modules/@earendil-works
+            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             ln -s "$PI_CODEGRAPH_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
             ln -s "$PI_CODEGRAPH_SDK_ROOT/node_modules/@types" node_modules/@types
             tsc -p tsconfig.json
@@ -714,15 +717,44 @@
             nativeBuildInputs = [ pkgs.nodejs ];
           } ''
             cp -r ${./nix/pkg/pi-extensions} pi-extensions
+            chmod -R u+w pi-extensions
             cd pi-extensions
+            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             node --test ponygirls-model-stats-state.test.ts
+            touch $out
+          '';
+          ponygirls-pi-ui = pkgs.runCommand "ponygirls-pi-ui-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
+            PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+          } ''
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-pi-ui} ponygirls-pi-ui
+            chmod -R u+w ponygirls-pi-ui
+            cd ponygirls-pi-ui
+            mkdir -p node_modules/@earendil-works
+            ln -s "$PI_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
+            ln -s "$PI_SDK_ROOT/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
+            node --test tests/*.test.ts
+            : ${self.packages.${system}.ponygirls-pi-extensions}
+            touch $out
+          '';
+          ponygirls-model-picker = pkgs.runCommand "ponygirls-model-picker-test" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          } ''
+            cp -r ${./nix/pkg/pi-extensions} pi-extensions
+            chmod -R u+w pi-extensions
+            cd pi-extensions
+            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            node --test ponygirls-model-picker-state.test.ts
             touch $out
           '';
           ponygirls-usage = pkgs.runCommand "ponygirls-usage-test" {
             nativeBuildInputs = [ pkgs.nodejs ];
           } ''
             cp -r ${./nix/pkg/pi-extensions} pi-extensions
+            chmod -R u+w pi-extensions
             cd pi-extensions
+            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             node --test ponygirls-usage-state.test.ts
             touch $out
           '';
@@ -736,6 +768,7 @@
             chmod -R u+w ponygirls-codex-goals
             cd ponygirls-codex-goals
             mkdir -p node_modules/@earendil-works
+            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             ln -s "$PI_GOALS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
             ln -s "$PI_GOALS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
             ln -s "$PI_GOALS_SDK_ROOT/node_modules/typebox" node_modules/typebox
@@ -756,6 +789,7 @@
             chmod -R u+w ponygirls-decisions
             cd ponygirls-decisions
             mkdir -p node_modules/@earendil-works
+            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             ln -s "$PI_DECISIONS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
             ln -s "$PI_DECISIONS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
             ln -s "$PI_DECISIONS_SDK_ROOT/node_modules/typebox" node_modules/typebox
@@ -775,6 +809,7 @@
             cd ponygirls-tokemon
             export TOKEMON_PYTHON_SOURCE=${./nix/pkg/tokemon/src}
             mkdir -p node_modules/@earendil-works
+            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             ln -s "$PI_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
             ln -s "$PI_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
             ln -s "$PI_SDK_ROOT/node_modules/@earendil-works/pi-ai" node_modules/@earendil-works/pi-ai
@@ -809,6 +844,7 @@
               chmod -R u+w ponygirls-bg-tasks
               cd ponygirls-bg-tasks
               mkdir -p node_modules/@earendil-works
+              mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
               ln -s "$PI_BG_TASKS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
               ln -s "$PI_BG_TASKS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
               ln -s "$PI_BG_TASKS_SDK_ROOT/node_modules/@earendil-works/pi-ai" node_modules/@earendil-works/pi-ai
@@ -876,6 +912,7 @@
             chmod -R u+w ponygirls-subagents
             cd ponygirls-subagents
             mkdir -p node_modules/@earendil-works
+            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             ln -s "$PI_SUBAGENTS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
             ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
             ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-ai" node_modules/@earendil-works/pi-ai
