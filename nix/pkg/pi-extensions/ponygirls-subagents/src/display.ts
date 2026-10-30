@@ -13,6 +13,24 @@ export function sanitizeDisplay(input: string, maxLength = 4000): string {
   return out.length > maxLength ? `${out.slice(0, maxLength)}…[truncated]` : out;
 }
 
+export type OutcomeTone = "success" | "warning" | "error";
+
+const SUCCESS_OUTCOMES: ReadonlySet<string> = new Set(["succeeded", "passed"]);
+const WARNING_OUTCOMES: ReadonlySet<string> = new Set(["interrupted", "uncertain", "candidate_superseded", "gate_bypassed", "review_limit_reached"]);
+
+/** Glyph per outcome class, shown before the outcome wherever it is coloured. */
+export const OUTCOME_GLYPH: Readonly<Record<OutcomeTone, string>> = { success: "✓", warning: "⚠", error: "✖" };
+
+/** The subagents glyph (border badge, transcript notices). */
+export const AGENT_GLYPH = "◈";
+
+/** Success, warning, or error class of a terminal task outcome. */
+export function outcomeTone(outcome: string): OutcomeTone {
+  if (SUCCESS_OUTCOMES.has(outcome)) return "success";
+  if (WARNING_OUTCOMES.has(outcome)) return "warning";
+  return "error";
+}
+
 /** Semantic styles the views apply; each wraps already-sanitized text. */
 export interface UiStyle {
   text(s: string): string;

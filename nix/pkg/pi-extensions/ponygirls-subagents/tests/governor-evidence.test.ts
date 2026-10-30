@@ -41,6 +41,7 @@ async function governingTools(): Promise<Map<string, Registered>> {
   const pi = {
     registerTool: (t: Registered) => { tools.set(t.name, t); },
     registerCommand: () => {},
+    registerMessageRenderer: () => {},
     on: () => {},
     enqueueMessage: () => {},
     getThinkingLevel: () => "low",
