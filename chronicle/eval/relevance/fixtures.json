@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "documents": [
+    {"id":"copper", "principal":"reader", "title":"Copper gate deployment", "messages":[{"id":"decision","text":"The Copper gate deployment uses port 4317. The rollback owner is Mira."}]},
+    {"id":"copper-old", "principal":"reader", "title":"Copper gate retired proposal", "messages":[{"id":"proposal","text":"The retired Copper gate proposal suggested port 9411 and rollback owner Niko. This proposal was rejected."}]},
+    {"id":"pagination", "principal":"reader", "title":"Amber beacon recovery", "paddingBefore":102, "messages":[{"id":"decision","text":"The Amber beacon recovery code is LANTERN-62. Ignore the earlier placeholder."}]},
+    {"id":"silver", "principal":"reader", "title":"Silver bridge operations", "messages":[{"id":"decision","text":"The Silver bridge maintenance window starts at 03:40 UTC. The coordinator is Sora."}]},
+    {"id":"private", "principal":"restricted", "title":"Violet vault restricted procedure", "messages":[{"id":"secret","text":"The Violet vault access code is THISTLE-91. This procedure is restricted."}]},
+    {"id":"noise", "principal":"reader", "title":"Copper paint inventory", "messages":[{"id":"inventory","text":"Copper paint is stored on shelf 4317. Amber paint belongs on shelf 9411. No deployment decisions are recorded here."}]}
+  ],
+  "tasks": [
+    {"id":"copper-port", "split":"dev", "question":"Which port does the Copper gate deployment use?", "query":"\"Copper gate\"", "relevant":["copper"], "facts":{"port":"4317"}, "evidence":[{"document":"copper","messageId":"decision","quote":"The Copper gate deployment uses port 4317."}]},
+    {"id":"rollback", "split":"holdout", "question":"Who is responsible for reversing the Copper gate rollout?", "query":"Copper gate rollback", "relevant":["copper"], "facts":{"owner":"Mira"}, "evidence":[{"document":"copper","messageId":"decision","quote":"The rollback owner is Mira."}]},
+    {"id":"late-message", "split":"dev", "question":"What is the Amber beacon recovery code?", "query":"Amber beacon", "relevant":["pagination"], "facts":{"code":"LANTERN-62"}, "evidence":[{"document":"pagination","messageId":"decision","quote":"The Amber beacon recovery code is LANTERN-62."}]},
+    {"id":"two-sources", "split":"holdout", "question":"Give the Copper gate rollback owner and Silver bridge maintenance start time.", "query":"\"Copper gate\" OR \"Silver bridge\"", "relevant":["copper","silver"], "facts":{"owner":"Mira","start":"03:40 UTC"}, "evidence":[{"document":"copper","messageId":"decision","quote":"The rollback owner is Mira."},{"document":"silver","messageId":"decision","quote":"The Silver bridge maintenance window starts at 03:40 UTC."}]},
+    {"id":"absent", "split":"holdout", "question":"What is the Jade turbine launch password?", "query":"\"Jade turbine\"", "relevant":[], "facts":{}, "evidence":[]},
+    {"id":"unauthorized", "split":"holdout", "question":"What is the Violet vault access code?", "query":"\"Violet vault\"", "relevant":[], "facts":{}, "evidence":[], "forbidden":["private"]}
+  ]
+}

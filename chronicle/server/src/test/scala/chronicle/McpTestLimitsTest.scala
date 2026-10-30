@@ -116,7 +116,39 @@ class McpTestLimitsTest extends munit.FunSuite {
     }
   }
 
+  List(4,9,McpRunLimits.maximumToolCalls).foreach { requiredCalls =>
+    test(s"BG regression: $requiredCalls source reads can finish before the existing trace/time bounds") {
+      (for {
+        auth <- authorization; time <- clock; tools <- ordinaryTools
+        llm <- model { request => IO.pure {
+          val observed=request.hcursor.get[Vector[Json]]("messages").toOption.get.count(_.hcursor.get[String]("role").toOption.contains("tool"))
+          if(observed<requiredCalls) toolReply(List((s"source-$observed","search",Json.obj())),None)
+          else finalReply("source-grounded final answer")
+        }}
+        _ <- runtime(tools,llm,auth,time,encoding).use { runner => runner.connection(UUID.randomUUID()).use { connection =>
+          for {
+            catalog <- runner.catalog(identity); id <- IO(UUID.randomUUID())
+            _ <- runner.start(identity,connection,catalog.instanceId,id,"retrieve all required source pages, then answer")
+            complete <- settled(runner,identity,catalog.instanceId,id)
+            finalPage <- runner.read(identity,catalog.instanceId,id,complete.lastSequence-1L,1)
+            requests <- llm.requests.get; calls <- tools.calls.get
+            _ <- IO {
+              assertEquals(complete.state,McpRunState.Complete)
+              assertEquals(complete.failure,None)
+              assertEquals(requests.size,requiredCalls+1)
+              assertEquals(calls.size,requiredCalls)
+              assertEquals(complete.lastSequence,2L*requiredCalls+1L)
+              assert(finalPage.events.exists(_.item.isInstanceOf[McpRunItem.Response]))
+            }
+          } yield ()
+        }}
+      } yield ()).unsafeRunSync()
+    }
+  }
+
   test("BG: maximum model rounds and total tool calls are hard admissions, with sequential execution") {
+    assert(2L*McpRunLimits.maximumToolCalls+1L<=McpRunLimits.maximumEvents)
+    assert(2L*(McpRunLimits.maximumToolCalls+1L)+1L>McpRunLimits.maximumEvents)
     List(1,4).foreach { callsPerRound =>
       (for {
         auth <- authorization; time <- clock
@@ -133,9 +165,10 @@ class McpTestLimitsTest extends munit.FunSuite {
             failed <- settled(runner,identity,catalog.instanceId,id)
             requests <- llm.requests.get; invocations <- tools.calls.get; counts <- serial.get
             _ <- IO {
-              assertEquals(failed.failure.map(_.code),Some(if(callsPerRound==1) "mcp-round-limit" else "mcp-call-limit"))
-              assertEquals(requests.size,if(callsPerRound==1) 4 else 3)
-              assertEquals(invocations.size,if(callsPerRound==1) 3 else 8)
+              val admittedRounds=McpRunLimits.maximumToolCalls/callsPerRound
+              assertEquals(failed.failure.map(_.code),Some("mcp-call-limit"))
+              assertEquals(requests.size,admittedRounds+1)
+              assertEquals(invocations.size,admittedRounds*callsPerRound)
               assertEquals(counts,(0,1))
             }
           } yield ()

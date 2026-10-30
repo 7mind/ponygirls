@@ -5,15 +5,17 @@ import io.circe.Json
 import java.nio.charset.StandardCharsets.UTF_8
 
 object McpRunLimits {
-  val maximumRounds = 4
-  val maximumToolCalls = 8
+  val maximumEvents = 256
+  private val minimumEventsPerToolCall = 2
+  private val minimumFinalResponseEvents = 1
+  val maximumToolCalls = (maximumEvents-minimumFinalResponseEvents)/minimumEventsPerToolCall
+  val maximumRounds = maximumToolCalls+minimumFinalResponseEvents
   val maximumPromptBytes = 16*1024
   val maximumSourceBytes = 64*1024
   val maximumResultBytes = 128*1024
   val maximumRequestBytes = 512*1024
   val maximumProviderBytes = 4*1024*1024
   val maximumTraceBytes = 1024*1024
-  val maximumEvents = 256
   val pageBytes = 48*1024
   val deadlineSeconds = 900
   val retentionSeconds = 600

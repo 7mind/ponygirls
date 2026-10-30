@@ -1,4 +1,4 @@
-{ lib, stdenv, callPackage, buildNpmPackage, fetchNpmDeps, nodejs_24, playwright-driver, makeFontsConf, dejavu_fonts }:
+{ lib, callPackage, buildNpmPackage, fetchNpmDeps, nodejs_24 }:
 let
   src = (callPackage ./source.nix { }).web;
   hashes = import ./hashes.nix;
@@ -9,7 +9,6 @@ buildNpmPackage {
   inherit src;
   nodejs = nodejs_24;
   npmRoot = "web";
-  FONTCONFIG_FILE = makeFontsConf { fontDirectories = [ dejavu_fonts ]; };
   npmDeps = fetchNpmDeps {
     name = "chronicle-web-npm-dependencies";
     src = lib.fileset.toSource {
@@ -31,9 +30,6 @@ buildNpmPackage {
     runHook preCheck
     cd web
     npm test
-    ${lib.optionalString stdenv.hostPlatform.isLinux ''
-      PLAYWRIGHT_BROWSERS_PATH=${playwright-driver.browsers} npm run test:browser
-    ''}
     cd ..
     runHook postCheck
   '';

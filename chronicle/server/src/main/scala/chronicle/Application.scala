@@ -57,6 +57,8 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case _ => IO.blocking(auth.mutate(i,e))
     }
   }
+  def searchTags(access: ReadAccess,query: TagSearchQuery): IO[Result] =
+    access.blocking(i => Result.Facets(FacetsResult(Nil,Nil,searchIndex.tags(i.user.id,query,access.materialization))))
   def read(access: ReadAccess,operation: Operation): IO[Result] = IO.defer {
     val materialization=access.materialization
     operation match {

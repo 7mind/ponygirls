@@ -1,0 +1,294 @@
+{
+  "policy": "proposition-support-v2",
+  "fixtureSha256": "c79739ea73edc3c01af9afb6e1678feb53fdefe1a355ceab669191f3339af306",
+  "fixtureId": "semantic-quality-v1",
+  "factFormat": "ordered-string-values-v1",
+  "factNormalization": "casefold-and-collapse-whitespace-only",
+  "assessmentScope": "Retrospective development amendment; prospective held-out criterion only after independent review and freeze. Not model input. No held-out result used.",
+  "tasks": {
+    "q01": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q01-value-1",
+          "valueIndex": 0,
+          "document": "d01",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "last confirmed offset"
+          ],
+          "observedContextAll": [
+            "Interrupted full-artifact uploads continue at the last confirmed offset; retransmitting the entire payload is unnecessary."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q02": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q02-value-1",
+          "valueIndex": 0,
+          "document": "d03",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "port 4319"
+          ],
+          "observedContextAll": [
+            "Alder production accepts connections on port 4319 and allows 24 concurrent workers. This is the approved configuration."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        },
+        {
+          "id": "q02-value-2",
+          "valueIndex": 1,
+          "document": "d03",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "24 concurrent workers"
+          ],
+          "observedContextAll": [
+            "Alder production accepts connections on port 4319 and allows 24 concurrent workers. This is the approved configuration."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q03": {
+      "principal": "reader",
+      "propositions": []
+    },
+    "q04": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q04-value-1",
+          "valueIndex": 0,
+          "document": "d06",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "WILLOW-73"
+          ],
+          "observedContextAll": [
+            "Juniper restoration uses recovery phrase WILLOW-73."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q05": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q05-value-1",
+          "valueIndex": 0,
+          "document": "d07",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "21 days"
+          ],
+          "observedContextAll": [
+            "Deleted notebooks remain in recoverable quarantine for 21 days before irreversible erasure."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q06": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q06-value-1",
+          "valueIndex": 0,
+          "document": "d09",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "stale revision is rejected"
+          ],
+          "observedContextAll": [
+            "Schedule edits carry the version last read. A stale revision is rejected instead of overwriting the newer roster."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q07": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q07-value-1",
+          "valueIndex": 0,
+          "document": "d11",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "encrypted disk spool"
+          ],
+          "observedContextAll": [
+            "While the remote sink is unavailable, the shipment worker spills queued batches to an encrypted disk spool. Its in-memory queue is bounded at 64 MiB."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        },
+        {
+          "id": "q07-value-2",
+          "valueIndex": 1,
+          "document": "d11",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "64 MiB"
+          ],
+          "observedContextAll": [
+            "While the remote sink is unavailable, the shipment worker spills queued batches to an encrypted disk spool. Its in-memory queue is bounded at 64 MiB."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q08": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q08-value-1",
+          "valueIndex": 0,
+          "document": "d13",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "850 ms"
+          ],
+          "observedContextAll": [
+            "The approved Birch production request deadline is 850 ms."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q09": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q09-value-1",
+          "valueIndex": 0,
+          "document": "d16",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "not copied"
+          ],
+          "observedContextAll": [
+            "Sable cache entries are not copied between regions. Only invalidation events cross the regional boundary."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        },
+        {
+          "id": "q09-value-2",
+          "valueIndex": 1,
+          "document": "d16",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "invalidation events"
+          ],
+          "observedContextAll": [
+            "Sable cache entries are not copied between regions. Only invalidation events cross the regional boundary."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q10": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q10-value-1",
+          "valueIndex": 0,
+          "document": "d18",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "Rina"
+          ],
+          "observedContextAll": [
+            "The Marlin restoration lead is Rina."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        },
+        {
+          "id": "q10-value-2",
+          "valueIndex": 1,
+          "document": "d19",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "04:15 UTC"
+          ],
+          "observedContextAll": [
+            "Marlin traffic may resume at 04:15 UTC after the restoration checks pass."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q11": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q11-value-1",
+          "valueIndex": 0,
+          "document": "d20",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "17 MiB"
+          ],
+          "observedContextAll": [
+            "A Lumen courier package may contain at most 17 MiB of payload. The limit uses binary mebibytes."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q12": {
+      "principal": "restricted",
+      "propositions": [
+        {
+          "id": "q12-value-1",
+          "valueIndex": 0,
+          "document": "d22",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "HEATHER-86"
+          ],
+          "observedContextAll": [
+            "The Vela archive recovery seal is HEATHER-86."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    },
+    "q13": {
+      "principal": "reader",
+      "propositions": []
+    },
+    "q14": {
+      "principal": "reader",
+      "propositions": []
+    },
+    "q15": {
+      "principal": "reader",
+      "propositions": []
+    },
+    "q16": {
+      "principal": "reader",
+      "propositions": [
+        {
+          "id": "q16-value-1",
+          "valueIndex": 0,
+          "document": "d24",
+          "messageId": "m",
+          "citationAnchorsAny": [
+            "provenance response team"
+          ],
+          "observedContextAll": [
+            "Prism package authenticity failures belong to the provenance response team; storage responders are not the escalation owner."
+          ],
+          "rationale": "The exact cited anchor identifies the requested value/proposition; the retrieved original message supplies its identity, decision status, unit, negation and qualifiers without requiring unrelated surrounding text in one citation."
+        }
+      ]
+    }
+  }
+}

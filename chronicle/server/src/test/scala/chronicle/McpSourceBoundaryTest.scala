@@ -132,7 +132,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
       val denied=new Database(f.config.copy(databaseUser=role),f.catalog)
       assertEquals(intercept[java.sql.SQLException](denied.transaction(c => Sql.exec(c,"CREATE TEMP TABLE forbidden(i integer)"))).getSQLState,"42501")
       val tools=new LiveMcpRunTools(new Mcp(f.application(f.config.copy(databaseUser=role))))
-      List("get_session"->args(receipt.sessionId),"get_chunks"->args(receipt.sessionId),"get_messages"->args(receipt.sessionId),"list_facets"->Json.obj(),
+      List("get_session"->args(receipt.sessionId),"get_chunks"->args(receipt.sessionId),"get_messages"->args(receipt.sessionId),"list_facets"->Json.obj(),"search_tags"->Json.obj("query"->string("")),
         "search_sessions"->query("semantic"),"related_sessions"->args(receipt.sessionId),"ingest_status"->Json.obj(),"whoami"->Json.obj()).foreach { (name,arguments) =>
         val result=tools.invoke(f.access,name,arguments,admission(f,_ => ())).unsafeRunSync()
         assertEquals(result.hcursor.get[Boolean]("isError").toOption,Some(false))
@@ -157,7 +157,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
   }}
   test("BG GoodCommunication: ordinary public MCP source reads evaluate no numeric admission, cursor, or local SQL deadline") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
     val receipt=seed(f)
-    List("get_session"->args(receipt.sessionId),"get_chunks"->args(receipt.sessionId),"get_messages"->args(receipt.sessionId),"list_facets"->Json.obj(),
+    List("get_session"->args(receipt.sessionId),"get_chunks"->args(receipt.sessionId),"get_messages"->args(receipt.sessionId),"list_facets"->Json.obj(),"search_tags"->Json.obj("query"->string("")),
       "search_sessions"->query("semantic"),"related_sessions"->args(receipt.sessionId),"ingest_status"->Json.obj(),"whoami"->Json.obj()).foreach { (name,arguments) =>
       val rpc=Json.obj("jsonrpc"->string("2.0"),"id"->Json.fromInt(1),"method"->string("tools/call"),"params"->Json.obj("name"->string(name),"arguments"->arguments))
       val result=f.mcp.handle(f.identity,rpc).unsafeRunSync().get

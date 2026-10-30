@@ -2,7 +2,7 @@
 let
   sources = callPackage ./source.nix { };
   environment = callPackage ./sbt-environment.nix { inherit squishLib; };
-in runCommand "chronicle-full-backend-validation" {
+in runCommand "chronicle-fast-backend-validation" {
   nativeBuildInputs = [ environment.tools.graal python3 ];
   LANG = "C.UTF-8";
   LC_ALL = "C.UTF-8";
@@ -13,12 +13,11 @@ in runCommand "chronicle-full-backend-validation" {
   cd source
   patchShebangs scripts
   ${environment.setup}
-  export POSTGRES_HOME=${environment.tools.postgres}
-  bash scripts/test-postgres.sh
+  bash scripts/test-fast.sh
   mkdir -p "$out"
   python3 scripts/validation-report.py --inventory target/validation-inventory.txt \
-    --reports target/test-reports --runtime-source ${sources.server} \
+    --selected-suites scripts/fast-suites.txt --reports target/test-reports --runtime-source ${sources.server} \
     --test-source ${sources.backendTests} --output "$out/backend.json"
   cp -r target/test-reports "$out/"
-  cp target/validation-inventory.txt "$out/"
+  cp target/validation-inventory.txt scripts/fast-suites.txt "$out/"
 ''

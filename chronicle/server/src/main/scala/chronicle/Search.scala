@@ -10,6 +10,8 @@ trait SearchIndex {
   def searchLegacy(reader: String,q: SearchQuery,vector: Option[List[Double]],materialization: ReadMaterialization): SearchResult
   def facets(reader: String,f: SearchFilter): FacetsResult
   def facets(reader: String,f: SearchFilter,materialization: ReadMaterialization): FacetsResult
+  def tags(reader: String,q: TagSearchQuery): List[Facet]
+  def tags(reader: String,q: TagSearchQuery,materialization: ReadMaterialization): List[Facet]
 }
 object SearchPolicy {
   val maxDimensions = 4000
@@ -51,6 +53,10 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     Check(f.tags.size<=32,"invalid","tag filter limit")
     f.tags.foreach { s => Check.text(s,128); b += "((r.metadata->'tags') @> ?::jsonb OR EXISTS(SELECT 1 FROM ch_generation_tags tagged WHERE tagged.generation=s.published AND tagged.tag=?))"; val tag=io.circe.Json.arr(io.circe.Json.fromString(s)).noSpaces; p += tag; p += s }
     (b.result().map(" AND "+_).mkString,p.result())
+  }
+  private def facetCorpus(reader: String,f: SearchFilter): SearchStatement = {
+    val (fs,p)=filter(f)
+    SearchStatement(s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs)",List(reader,reader,reader)++p)
   }
   private[chronicle] def statement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = {
     val (fs,fp)=filter(q.filter)
@@ -137,9 +143,9 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
   def facets(reader: String,f: SearchFilter,materialization: ReadMaterialization): FacetsResult = db.transaction { c =>
     c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
     materialization.begin(c)
-    val (fs,p)=filter(f)
-    val corpus=s"WITH corpus AS MATERIALIZED(SELECT s.id,s.published,r.metadata FROM ch_sources s JOIN ch_generations g ON g.id=s.published JOIN ch_revision_info r ON r.session_id=s.id AND r.revision=g.revision WHERE ${archive.visible}$fs)"
-    val args: List[Sql.Param]=List(reader,reader,reader)++p
+    val source=facetCorpus(reader,f)
+    val corpus=source.sql
+    val args=source.args
     def field(key: String): String = s"SELECT metadata->>'$key' AS value,count(DISTINCT id) AS n FROM corpus WHERE metadata->>'$key' IS NOT NULL GROUP BY value ORDER BY n DESC,value LIMIT ${SearchPolicy.facetValuesPerField}"
     val tags=s"SELECT tag AS value,count(DISTINCT id) AS n FROM (SELECT id,jsonb_array_elements_text(metadata->'tags') COLLATE \"default\" AS tag FROM corpus UNION SELECT corpus.id,ch.tag COLLATE \"default\" FROM corpus JOIN ch_generation_tags ch ON ch.generation=corpus.published) t GROUP BY tag ORDER BY n DESC,value LIMIT ${SearchPolicy.facetValuesPerField}"
     val selection=corpus+s",projects AS(${field("project")}),branches AS(${field("gitBranch")}),tags AS($tags),selected AS("+
@@ -155,5 +161,26 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     }
     def values(kind: Int): List[Facet] = rows.collect { case (`kind`,facet) => facet }
     FacetsResult(values(0),values(1),values(2))
+  }
+  def tags(reader: String,q: TagSearchQuery): List[Facet] = tags(reader,q,ReadMaterialization.unrestricted)
+  def tags(reader: String,q: TagSearchQuery,materialization: ReadMaterialization): List[Facet] = {
+    TagSearchPolicy.validate(q)
+    val corpus=facetCorpus(reader,q.filter)
+    val position=if(q.afterTag.nonEmpty) " AND tag COLLATE \"C\">? COLLATE \"C\"" else ""
+    val selection=corpus.sql+",tag_sessions AS (SELECT id,jsonb_array_elements_text(metadata->'tags') COLLATE \"C\" AS tag FROM corpus UNION "+
+      "SELECT corpus.id,ch.tag COLLATE \"C\" FROM corpus JOIN ch_generation_tags ch ON ch.generation=corpus.published) "+
+      "SELECT tag AS value,count(DISTINCT id) AS n FROM tag_sessions WHERE strpos(lower(tag COLLATE pg_unicode_fast),lower(? COLLATE pg_unicode_fast))>0"+position+
+      " GROUP BY tag ORDER BY tag COLLATE \"C\" LIMIT ?"
+    val args=corpus.args++List[Sql.Param](q.query)++q.afterTag.toList++List(q.limit)
+    db.transaction { c =>
+      c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+      materialization.begin(c)
+      materialization.selected(c,ReadSources.Selection(ReadSources.Query(selection,args),"value COLLATE \"C\"",q.limit)) { value =>
+        val cursor=value.hcursor
+        val text=cursor.get[String]("value").fold(_ => throw DomainError("projection","invalid tag value"),identity)
+        val count=cursor.get[Long]("n").fold(_ => throw DomainError("projection","invalid tag count"),TagSearchPolicy.count)
+        Facet(text,count)
+      }
+    }
   }
 }

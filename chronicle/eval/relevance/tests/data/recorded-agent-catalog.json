@@ -1,0 +1,74 @@
+{
+  "provenance": {
+    "source": "/home/pavel/work/flakes/ponygirls/.local/repro/20261029-test-gates/semantic-dev-003/agent-hybrid-q01/catalog.json",
+    "sourceSha256": "8973f950f3b098f95bf1a6878f0fb20766352f06d441c39ba07d56d9ae5df546",
+    "scope": "Generated McpTestCatalog schema and tools from a retained development capture; deployment-specific modelRevision replaced with pinned-model-revision. sourceSha256 identifies the unmodified local capture, not this sanitized fixture."
+  },
+  "catalog": {
+    "instanceId": "edc5b90d-9111-4d96-bf98-b0d51b4f8770",
+    "model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    "modelRevision": "pinned-model-revision",
+    "maximumOutputTokens": 65536,
+    "reasoningPolicy": "max",
+    "limits": {
+      "maximumRounds": 128,
+      "maximumToolCalls": 127,
+      "maximumPromptBytes": 16384,
+      "maximumSourceBytes": 65536,
+      "maximumResultBytes": 131072,
+      "maximumRequestBytes": 524288,
+      "maximumTraceBytes": 1048576,
+      "maximumEvents": 256,
+      "pageBytes": 49152,
+      "deadlineSeconds": 900,
+      "retentionSeconds": 600
+    },
+    "tools": [
+      {
+        "name": "search_sessions",
+        "description": "Search authorized archive sessions. Lexical total/countScope=ExactMatches is global. Semantic/hybrid use ANN plus full-vector reranking; total/countScope=CandidateWindow counts only retrieved sessions, not the corpus. rankingLimit bounds candidate chunks (1000 semantic, 2000 hybrid); offsets must be smaller than that bound. Filters and live ACLs apply before each candidate limit. Discover metadata values and tag popularity with list_facets. Use structured project, gitBranch, tags, after and before arguments for metadata, not query expressions.",
+        "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"query\":{\"description\":\"Lexical uses PostgreSQL websearch_to_tsquery('english', query): ordinary terms use implicit AND; quoted phrases (\\\"copper bridge\\\"); uppercase OR (copper OR bridge); leading minus exclusion (copper -bridge). No Archive expression DSL or general boolean parentheses, NOT, or field:colon parser. The dashboard yolo-profile: metadata filter is not supported here; get_session exposes source.discoveryRootId as a recorded root claim, not host or launch attestation. Put metadata in structured arguments, not query text. Semantic embeds the literal query: use natural language. Hybrid also embeds the literal query; these operators affect its lexical leg only and are not a hard semantic filter.\",\"type\":\"string\",\"maxLength\":2048},\"mode\":{\"description\":\"lexical: English full-text websearch; semantic: natural-language similarity; hybrid: semantic plus lexical ranking, with lexical operators affecting only the lexical leg.\",\"type\":\"string\",\"enum\":[\"lexical\",\"semantic\",\"hybrid\"]},\"offset\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":100000},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100},\"project\":{\"description\":\"Exact project metadata filter on the published revision; use this structured argument, not query text.\",\"type\":\"string\",\"maxLength\":2048},\"gitBranch\":{\"description\":\"Exact git branch metadata filter on the published revision; use this structured argument, not query text.\",\"type\":\"string\",\"maxLength\":2048},\"after\":{\"description\":\"Filter published-revision startedAt >= this ISO-8601 instant (inclusive).\",\"type\":\"string\",\"maxLength\":2048},\"before\":{\"description\":\"Filter published-revision startedAt <= this ISO-8601 instant (inclusive).\",\"type\":\"string\",\"maxLength\":2048},\"tags\":{\"description\":\"AND across supplied tags; each exact value matches a source metadata tag OR a current published generation tag. Use list_facets for popular values or search_tags for the searchable complete tag catalog.\",\"type\":\"array\",\"maxItems\":32,\"items\":{\"type\":\"string\",\"maxLength\":2048}}},\"required\":[\"query\",\"mode\"],\"additionalProperties\":false}"
+      },
+      {
+        "name": "get_session",
+        "description": "Read authorized session metadata and first 100 indexed fragments. source.discoveryRootId records the root claim: yolo:<validated-name> identifies a recorded named yolo profile, not host or launch attestation; native and unrecognized roots have no recorded yolo profile.",
+        "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"sessionId\":{\"type\":\"string\",\"maxLength\":2048},\"revision\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":2147483647},\"generationId\":{\"type\":\"string\",\"maxLength\":2048}},\"required\":[\"sessionId\"],\"additionalProperties\":false}"
+      },
+      {
+        "name": "get_chunks",
+        "description": "Page all authorized annotations in deterministic source order.",
+        "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"sessionId\":{\"type\":\"string\",\"maxLength\":2048},\"offset\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":2147483647},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100},\"revision\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":2147483647},\"generationId\":{\"type\":\"string\",\"maxLength\":2048}},\"required\":[\"sessionId\"],\"additionalProperties\":false}"
+      },
+      {
+        "name": "get_messages",
+        "description": "Page original normalized messages; raw agent scope is not required.",
+        "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"sessionId\":{\"type\":\"string\",\"maxLength\":2048},\"offset\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":2147483647},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100},\"revision\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":2147483647},\"generationId\":{\"type\":\"string\",\"maxLength\":2048}},\"required\":[\"sessionId\"],\"additionalProperties\":false}"
+      },
+      {
+        "name": "related_sessions",
+        "description": "Find related sessions through live authorized retrieval.",
+        "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"sessionId\":{\"type\":\"string\",\"maxLength\":2048},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100}},\"required\":[\"sessionId\"],\"additionalProperties\":false}"
+      },
+      {
+        "name": "list_facets",
+        "description": "Discover project, gitBranch and tag values after the supplied structured filters. Counts are distinct live-authorized current-published sessions containing each value. Tags union source and generation tags, deduplicated per session. Top 100 values per field, sorted count descending then value ascending; not a complete tag catalog. Tag popularity is session prevalence, not usage, request or occurrence counts.",
+        "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"project\":{\"description\":\"Exact project metadata filter on the published revision; use this structured argument, not query text.\",\"type\":\"string\",\"maxLength\":2048},\"gitBranch\":{\"description\":\"Exact git branch metadata filter on the published revision; use this structured argument, not query text.\",\"type\":\"string\",\"maxLength\":2048},\"after\":{\"description\":\"Filter published-revision startedAt >= this ISO-8601 instant (inclusive).\",\"type\":\"string\",\"maxLength\":2048},\"before\":{\"description\":\"Filter published-revision startedAt <= this ISO-8601 instant (inclusive).\",\"type\":\"string\",\"maxLength\":2048},\"tags\":{\"description\":\"AND across supplied tags; each exact value matches a source metadata tag OR a current published generation tag. Use list_facets for popular values or search_tags for the searchable complete tag catalog.\",\"type\":\"array\",\"maxItems\":32,\"items\":{\"type\":\"string\",\"maxLength\":2048}}},\"required\":[],\"additionalProperties\":false}"
+      },
+      {
+        "name": "search_tags",
+        "description": "Search tag names or browse the complete authorized published tag catalog, not conversation text. Returns a generated Facets result with only tags populated; projects and branches are intentionally empty, not evidence of absence. Each count is distinct live-authorized current-published sessions, with source and generation tags deduplicated per session. Pages are exact-value C order, not popularity order. Continue with afterTag equal to the last returned exact value until tags is empty. Pages are live, not a frozen snapshot. Existing search_sessions tag filters accept only nonempty values up to 128 UTF-16 units; empty or longer historical values remain discoverable here but cannot be passed to that older filter.",
+        "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"query\":{\"description\":\"Literal Unicode-lower substring of a tag name; empty string browses the catalog. Whitespace, %, _, quotes and backslashes are literal, not a query language. No normalization, accent folding or full case folding.\",\"type\":\"string\",\"maxLength\":2048},\"afterTag\":{\"description\":\"Exclusive exact tag-value position in C order, including an empty tag. Copy the returned value without truncation; existing request budgets still apply. Need not still exist and grants no authority.\",\"type\":\"string\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100},\"project\":{\"description\":\"Exact project metadata filter on the published revision; use this structured argument, not query text.\",\"type\":\"string\",\"maxLength\":2048},\"gitBranch\":{\"description\":\"Exact git branch metadata filter on the published revision; use this structured argument, not query text.\",\"type\":\"string\",\"maxLength\":2048},\"after\":{\"description\":\"Filter published-revision startedAt >= this ISO-8601 instant (inclusive).\",\"type\":\"string\",\"maxLength\":2048},\"before\":{\"description\":\"Filter published-revision startedAt <= this ISO-8601 instant (inclusive).\",\"type\":\"string\",\"maxLength\":2048},\"tags\":{\"description\":\"AND across supplied tags; each exact value matches a source metadata tag OR a current published generation tag. Use list_facets for popular values or search_tags for the searchable complete tag catalog.\",\"type\":\"array\",\"maxItems\":32,\"items\":{\"type\":\"string\",\"maxLength\":2048}}},\"required\":[\"query\"],\"additionalProperties\":false}"
+      },
+      {
+        "name": "ingest_status",
+        "description": "Page authorized ingestion jobs, including failures.",
+        "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"offset\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":100000},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100}},\"required\":[],\"additionalProperties\":false}"
+      },
+      {
+        "name": "whoami",
+        "description": "Show the authenticated user and scopes.",
+        "inputSchemaJson": "{\"type\":\"object\",\"properties\":{},\"required\":[],\"additionalProperties\":false}"
+      }
+    ]
+  }
+}

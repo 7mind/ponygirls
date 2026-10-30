@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind complete source-level validation to the final installed native ELF."""
+"""Bind explicit fast backend and retained-protocol checks to the final installed native ELF."""
 import argparse
 import hashlib
 import json
@@ -13,23 +13,40 @@ def read(path: Path) -> dict:
     return value
 
 
+def suite_names(path: Path) -> list[str]:
+    names = path.read_text().splitlines()
+    if not names or any(not name for name in names) or len(set(names)) != len(names):
+        raise ValueError('empty or duplicate validation inventory/selection')
+    return names
+
+
+def check_backend(inputs: dict, backend: dict, selected: list[str], discovered: list[str]) -> None:
+    if (not selected or not discovered or len(set(selected)) != len(selected)
+        or len(set(discovered)) != len(discovered) or not set(selected) <= set(discovered)
+        or backend['schemaVersion'] != 2 or backend['status'] != 'passed'
+        or backend['scope'] != 'fast-explicit-suite-subset'
+        or backend['runtimeSource'] != inputs['runtimeSource'] or backend['testSource'] != inputs['testSource']
+        or any(type(backend[key]) is not int or backend[key] != 0 for key in ['failed', 'errors', 'skipped'])
+        or type(backend['tests']) is not int or backend['tests'] <= 0
+        or type(backend['suites']) is not int or backend['suites'] != len(selected)
+        or backend['selectedSuites'] != selected
+        or type(backend['discoveredSuites']) is not int or backend['discoveredSuites'] != len(discovered)
+        or not isinstance(backend['suiteCounts'], dict) or set(backend['suiteCounts']) != set(selected)
+        or any(type(count) is not int or count <= 0 for count in backend['suiteCounts'].values())
+        or sum(backend['suiteCounts'].values()) != backend['tests']):
+        raise ValueError('missing, mismatched or incomplete fast backend subset validation')
+
+
 def evidence(inputs: dict) -> dict:
     required = {'nativeArtifact', 'nativeDerivation', 'runtimeSource', 'testSource', 'backendValidation',
                 'backendDerivation', 'protocolValidation', 'protocolDerivation', 'protocolSource'}
     if set(inputs) != required or any(not isinstance(value, str) or not value.startswith('/nix/store/') for value in inputs.values()):
         raise ValueError('invalid immutable validation input identities')
     backend = read(Path(inputs['backendValidation'])/'backend.json')
+    selected = suite_names(Path(inputs['testSource'])/'scripts/fast-suites.txt')
+    discovered = suite_names(Path(inputs['backendValidation'])/'validation-inventory.txt')
+    check_backend(inputs, backend, selected, discovered)
     protocol = read(Path(inputs['protocolValidation'])/'protocol.json')
-    if (backend['schemaVersion'] != 1 or backend['status'] != 'passed'
-        or backend['scope'] != 'full-unfiltered-postgres-protocol-concurrency'
-        or backend['runtimeSource'] != inputs['runtimeSource'] or backend['testSource'] != inputs['testSource']
-        or any(backend[key] != 0 for key in ['failed', 'errors', 'skipped'])
-        or type(backend['tests']) is not int or backend['tests'] <= 0
-        or type(backend['suites']) is not int or backend['suites'] <= 0
-        or len(backend['suiteCounts']) != backend['suites']
-        or any(type(count) is not int or count <= 0 for count in backend['suiteCounts'].values())
-        or sum(backend['suiteCounts'].values()) != backend['tests']):
-        raise ValueError('missing, mismatched or incomplete mandatory backend validation')
     if (protocol['schemaVersion'] != 1 or protocol['status'] != 'passed'
         or protocol['protocolSource'] != inputs['protocolSource'] or protocol['versions'] != 8
         or type(protocol['fixtureGroups']) is not int or protocol['fixtureGroups'] <= 0
@@ -40,7 +57,7 @@ def evidence(inputs: dict) -> dict:
     with executable.open('rb') as stream:
         while block := stream.read(1024*1024):
             digest.update(block)
-    return {'schemaVersion': 1, 'claim': 'exact-artifact-bound-to-full-source-validation',
+    return {'schemaVersion': 2, 'claim': 'exact-artifact-bound-to-fast-backend-subset-and-retained-protocol',
             'inputs': inputs, 'nativeSha256': digest.hexdigest(), 'backend': backend, 'protocol': protocol}
 
 
@@ -54,8 +71,8 @@ def main() -> None:
     if options.mode == 'create':
         options.receipt.write_text(json.dumps(expected, indent=2)+'\n')
     elif read(options.receipt) != expected:
-        raise ValueError('validation receipt does not match exact artifact/source/full-suite identities')
-    print('EXACT_ARTIFACT_FULL_VALIDATION_VERIFIED', expected['nativeSha256'])
+        raise ValueError('validation receipt does not match exact artifact/source/fast-subset/protocol identities')
+    print('EXACT_ARTIFACT_FAST_SUBSET_PROTOCOL_VERIFIED', expected['nativeSha256'])
 
 
 if __name__ == '__main__':

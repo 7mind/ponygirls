@@ -5,7 +5,7 @@ runCommand "chronicle-0.1.0" {
   nativeBuildInputs = [ makeWrapper python3 ];
   passthru = { inherit nativeArtifact web validationEvidence backendValidation protocolValidation dependencies toolchain offlineAssemblyCheck; };
   meta = {
-    description = "Validated Chronicle archive server and WebSocket dashboard";
+    description = "Chronicle archive server and WebSocket dashboard with fast validation";
     license = lib.licenses.mit;
     platforms = [ "x86_64-linux" ];
     mainProgram = "chronicle-server";

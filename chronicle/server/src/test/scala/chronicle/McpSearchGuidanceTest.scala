@@ -29,7 +29,7 @@ class McpSearchGuidanceTest extends munit.FunSuite {
   test("Blackbox-GoodCommunication: MCP discovery and model catalog expose search syntax, structured filters and bounded tag popularity") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
     val listed=rpc(f,"tools/list",Json.obj()).hcursor.get[List[Json]]("tools").toOption.get
     val definitions=f.tools.definitions
-    assertEquals(definitions.size,8)
+    assertEquals(definitions.size,9)
     val noProvider=Client[IO](_ => Resource.eval(IO.raiseError(new AssertionError("catalog discovery must not call a provider"))))
     val model=new OpenAIMcpTestModel(ModelFixtures.http(noProvider,f.config),McpTestFixtures.config)
     val request=model.request(Vector.empty,definitions)
@@ -50,7 +50,7 @@ class McpSearchGuidanceTest extends munit.FunSuite {
     includes(field("search_sessions","query"),"yolo-profile:", "not supported here", "get_session", "recorded root claim", "not host or launch attestation")
     includes(description("get_session"),"source.discoveryRootId", "recorded named yolo profile", "native", "unrecognized")
     assert(!tool("search_sessions").hcursor.downField("inputSchema").downField("properties").focus.get.asObject.get.contains("yolo-profile"))
-    List("search_sessions","list_facets").foreach { name =>
+    List("search_sessions","list_facets","search_tags").foreach { name =>
       includes(field(name,"project"),"Exact", "project")
       includes(field(name,"gitBranch"),"Exact", "branch")
       includes(field(name,"after"),"startedAt", "inclusive", "ISO-8601")
@@ -58,6 +58,9 @@ class McpSearchGuidanceTest extends munit.FunSuite {
       includes(field(name,"tags"),"AND", "exact", "source", "current published generation", "OR")
     }
     includes(description("search_sessions"),"list_facets", "project", "gitBranch", "tags", "after", "before", "structured")
+    includes(description("search_tags"),"tag names", "projects and branches", "intentionally empty", "C order", "afterTag", "live", "not a frozen snapshot", "128 UTF-16", "cannot be passed")
+    includes(field("search_tags","query"),"substring", "empty string", "literal", "No normalization")
+    includes(field("search_tags","afterTag"),"empty tag", "without truncation", "request budgets")
     includes(description("list_facets"),"distinct", "live-authorized", "current-published", "100", "count descending", "value ascending", "source", "generation", "deduplicated per session", "not a complete tag catalog", "not usage", "request", "occurrence")
     includes(rpc(f,"initialize",Json.obj("protocolVersion"->string("2025-11-25"))).hcursor.get[String]("instructions").toOption.get,
       "list_facets", "structured", "query", "untrusted", "CandidateWindow")

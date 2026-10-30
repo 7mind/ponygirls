@@ -1,0 +1,437 @@
+{
+  "fixtureId": "semantic-quality-v1",
+  "factFormat": "ordered-string-values-v1",
+  "factNormalization": "casefold-and-collapse-whitespace-only",
+  "documents": [
+    {
+      "id": "d01",
+      "principal": "reader",
+      "title": "Transfer continuation",
+      "messages": [
+        {
+          "id": "m",
+          "text": "Interrupted full-artifact uploads continue at the last confirmed offset; retransmitting the entire payload is unnecessary."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d02",
+      "principal": "reader",
+      "title": "Thumbnail delivery",
+      "messages": [
+        {
+          "id": "m",
+          "text": "For thumbnail previews only, an interrupted upload discards partial bytes and starts a new payload."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d03",
+      "principal": "reader",
+      "title": "Alder release",
+      "messages": [
+        {
+          "id": "m",
+          "text": "Alder production accepts connections on port 4319 and allows 24 concurrent workers. This is the approved configuration."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d04",
+      "principal": "reader",
+      "title": "Alder environment notes",
+      "messages": [
+        {
+          "id": "m",
+          "text": "Alder staging accepts connections on port 4318 and allows 16 concurrent workers. These settings do not apply to production."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d05",
+      "principal": "reader",
+      "title": "Alder change review",
+      "messages": [
+        {
+          "id": "m",
+          "text": "A proposal for Alder production used port 9412 and 48 concurrent workers. The review rejected this proposal."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d16",
+      "principal": "reader",
+      "title": "Sable cache transport",
+      "messages": [
+        {
+          "id": "m",
+          "text": "Sable cache entries are not copied between regions. Only invalidation events cross the regional boundary."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d17",
+      "principal": "reader",
+      "title": "Sable audit transport",
+      "messages": [
+        {
+          "id": "m",
+          "text": "Sable audit logs are copied between regions. This rule concerns logs, not cached entries."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d18",
+      "principal": "reader",
+      "title": "Marlin restoration",
+      "messages": [
+        {
+          "id": "m",
+          "text": "The Marlin restoration lead is Rina."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d19",
+      "principal": "reader",
+      "title": "Marlin traffic",
+      "messages": [
+        {
+          "id": "m",
+          "text": "Marlin traffic may resume at 04:15 UTC after the restoration checks pass."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d20",
+      "principal": "reader",
+      "title": "Lumen package policy",
+      "messages": [
+        {
+          "id": "m",
+          "text": "A Lumen courier package may contain at most 17 MiB of payload. The limit uses binary mebibytes."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d21",
+      "principal": "reader",
+      "title": "Lumen policy review",
+      "messages": [
+        {
+          "id": "m",
+          "text": "A decimal limit of 17 MB for Lumen courier payloads was proposed and rejected."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d22",
+      "principal": "restricted",
+      "title": "Vela recovery",
+      "messages": [
+        {
+          "id": "m",
+          "text": "The Vela archive recovery seal is HEATHER-86."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    },
+    {
+      "id": "d23",
+      "principal": "restricted",
+      "title": "Iris recovery",
+      "messages": [
+        {
+          "id": "m",
+          "text": "The Iris archive recovery seal is CLOVER-54."
+        }
+      ],
+      "expectedProblem": [
+        "m"
+      ],
+      "expectedContext": []
+    }
+  ],
+  "tasks": [
+    {
+      "id": "q01",
+      "split": "dev",
+      "principal": "reader",
+      "question": "After a full artifact transfer drops its connection halfway through, where does sending continue?",
+      "query": "After a full artifact transfer drops its connection halfway through, where does sending continue?",
+      "relevant": [
+        "d01"
+      ],
+      "facts": {
+        "values": [
+          "last confirmed offset"
+        ]
+      },
+      "factAliases": [
+        [
+          "last confirmed offset",
+          "the last confirmed offset",
+          "last confirmed byte offset",
+          "last acknowledged offset",
+          "last confirmed position"
+        ]
+      ],
+      "evidence": [
+        {
+          "document": "d01",
+          "messageId": "m",
+          "quote": "Interrupted full-artifact uploads continue at the last confirmed offset; retransmitting the entire payload is unnecessary."
+        }
+      ],
+      "intendedLowOverlap": true
+    },
+    {
+      "id": "q02",
+      "split": "dev",
+      "principal": "reader",
+      "question": "Which port and worker limit are approved for Alder production?",
+      "query": "Which port and worker limit are approved for Alder production?",
+      "relevant": [
+        "d03"
+      ],
+      "facts": {
+        "values": [
+          "4319",
+          "24"
+        ]
+      },
+      "factAliases": [
+        [
+          "4319",
+          "port 4319"
+        ],
+        [
+          "24",
+          "24 workers",
+          "24 concurrent workers"
+        ]
+      ],
+      "evidence": [
+        {
+          "document": "d03",
+          "messageId": "m",
+          "quote": "Alder production accepts connections on port 4319 and allows 24 concurrent workers."
+        }
+      ],
+      "intendedLowOverlap": false
+    },
+    {
+      "id": "q03",
+      "split": "dev",
+      "principal": "reader",
+      "question": "What is the Cairn turbine failover password?",
+      "query": "What is the Cairn turbine failover password?",
+      "relevant": [],
+      "facts": {
+        "values": []
+      },
+      "factAliases": [],
+      "evidence": [],
+      "intendedLowOverlap": false
+    },
+    {
+      "id": "q09",
+      "split": "holdout",
+      "principal": "reader",
+      "question": "Are Sable cache entries copied to other regions, and what crosses the boundary instead?",
+      "query": "Are Sable cache entries copied to other regions, and what crosses the boundary instead?",
+      "relevant": [
+        "d16"
+      ],
+      "facts": {
+        "values": [
+          "No",
+          "invalidation events"
+        ]
+      },
+      "factAliases": [
+        [
+          "No",
+          "not copied",
+          "no replication",
+          "cache entries are not copied between regions"
+        ],
+        [
+          "invalidation events",
+          "only invalidation events"
+        ]
+      ],
+      "evidence": [
+        {
+          "document": "d16",
+          "messageId": "m",
+          "quote": "Sable cache entries are not copied between regions. Only invalidation events cross the regional boundary."
+        }
+      ],
+      "intendedLowOverlap": false
+    },
+    {
+      "id": "q10",
+      "split": "holdout",
+      "principal": "reader",
+      "question": "Who leads Marlin restoration, and at what time may its traffic resume?",
+      "query": "Who leads Marlin restoration, and at what time may its traffic resume?",
+      "relevant": [
+        "d18",
+        "d19"
+      ],
+      "facts": {
+        "values": [
+          "Rina",
+          "04:15 UTC"
+        ]
+      },
+      "factAliases": [
+        [
+          "Rina"
+        ],
+        [
+          "04:15 UTC",
+          "04:15UTC",
+          "04:15 UTC after restoration checks pass"
+        ]
+      ],
+      "evidence": [
+        {
+          "document": "d18",
+          "messageId": "m",
+          "quote": "The Marlin restoration lead is Rina."
+        },
+        {
+          "document": "d19",
+          "messageId": "m",
+          "quote": "Marlin traffic may resume at 04:15 UTC after the restoration checks pass."
+        }
+      ],
+      "intendedLowOverlap": false
+    },
+    {
+      "id": "q11",
+      "split": "holdout",
+      "principal": "reader",
+      "question": "What is the approved Lumen courier payload limit, including its unit?",
+      "query": "What is the approved Lumen courier payload limit, including its unit?",
+      "relevant": [
+        "d20"
+      ],
+      "facts": {
+        "values": [
+          "17 MiB"
+        ]
+      },
+      "factAliases": [
+        [
+          "17 MiB",
+          "17MiB",
+          "17 mebibytes",
+          "17 binary mebibytes"
+        ]
+      ],
+      "evidence": [
+        {
+          "document": "d20",
+          "messageId": "m",
+          "quote": "A Lumen courier package may contain at most 17 MiB of payload. The limit uses binary mebibytes."
+        }
+      ],
+      "intendedLowOverlap": false
+    },
+    {
+      "id": "q12",
+      "split": "holdout",
+      "principal": "restricted",
+      "question": "What is the Vela archive recovery seal?",
+      "query": "What is the Vela archive recovery seal?",
+      "relevant": [
+        "d22"
+      ],
+      "facts": {
+        "values": [
+          "HEATHER-86"
+        ]
+      },
+      "factAliases": [
+        [
+          "HEATHER-86"
+        ]
+      ],
+      "evidence": [
+        {
+          "document": "d22",
+          "messageId": "m",
+          "quote": "The Vela archive recovery seal is HEATHER-86."
+        }
+      ],
+      "intendedLowOverlap": false
+    },
+    {
+      "id": "q13",
+      "split": "holdout",
+      "principal": "reader",
+      "question": "What is the Vela archive recovery seal?",
+      "query": "What is the Vela archive recovery seal?",
+      "relevant": [],
+      "forbidden": [
+        "d22"
+      ],
+      "facts": {
+        "values": []
+      },
+      "factAliases": [],
+      "evidence": [],
+      "intendedLowOverlap": false
+    }
+  ]
+}

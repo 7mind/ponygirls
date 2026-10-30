@@ -1,0 +1,27 @@
+[
+  {
+    "sequence": "1",
+    "observedAt": "2026-10-29T19:39:11.821894574Z",
+    "item": {
+      "ToolCall": {
+        "callId": "chatcmpl-tool-be609379e33e210d",
+        "tool": "search_sessions",
+        "partIndex": 0,
+        "partCount": 1,
+        "argumentsJsonPart": "{\"query\":\"artifact transfer connection drops halfway sending continue\",\"mode\":\"lexical\",\"project\":\"relevance-6263462f6c4946b2b0337e869d2bfc1d\",\"limit\":20}"
+      }
+    }
+  },
+  {
+    "sequence": "2",
+    "observedAt": "2026-10-29T19:39:11.924944944Z",
+    "item": {
+      "ToolResult": {
+        "callId": "chatcmpl-tool-be609379e33e210d",
+        "partIndex": 0,
+        "partCount": 1,
+        "resultJsonPart": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"Search\\\":{\\\"result\\\":{\\\"hits\\\":[],\\\"total\\\":0,\\\"countScope\\\":\\\"ExactMatches\\\",\\\"rankingLimit\\\":null}}}\"}],\"isError\":false}"
+      }
+    }
+  }
+]

@@ -18,50 +18,76 @@ GRAALVM_HOME=/path/to/graalvm ./scripts/native.sh
 
 Assembly: `target/chronicle-server.jar`; native executable: `target/native/chronicle-server`. sbt/coursier standard caches are used (`~/.sbt`, `~/.ivy2`, `~/.cache/coursier`); Nix integration supplies project-local cache homes and repository override/offline settings. No downloads are performed by the service. Generated sources are checked in and regenerated with pinned executable checksum and model lockfile.
 
-### Fast feedback, release validation and package caches
+For full manual verification on a fresh checkout, run commands inside the pinned
+shell (`nix develop .#chronicle --command bash -c '<commands>'` from the repository
+root). Provision locked JavaScript dependencies with
+`(cd chronicle/web && npm ci)` and `(cd chronicle/collector && npm ci)` using an
+approved registry/cache; this replaces local node_modules without changing the
+lockfiles. From `chronicle/`, the protocol command is
+`TSC="$PWD/web/node_modules/.bin/tsc" ./scripts/test-codecs.sh`. The shell supplies
+Python, PostgreSQL/pgvector, Node, Chromium and font configuration. Missing
+prerequisites are failures to report, not reasons to skip suites.
 
-From the repository root, `nix develop .#chronicle --command bash chronicle/scripts/test-fast.sh`
-selects the 13 named parser/codec/pure/dummy suites in `scripts/fast-suites.txt`.
-It clears the PostgreSQL URL and makes accidental PostgreSQL use fail, rather
-than silently skip. It is development feedback, **not release evidence**.
-Use `scripts/sbt.sh 'testOnly chronicle.SuiteName'` for an explicitly focused
-suite; real-database suites require an owned test database and
-`CHRONICLE_REQUIRE_POSTGRES=1`. Web and collector retain their own `npm test`
-commands; the web browser suite is `npm run test:browser`.
+### Fast Nix checks and full agent verification
+
+Routine Nix builds use the 13 explicitly named parser/codec/pure/dummy suites
+in `scripts/fast-suites.txt`, not the full PostgreSQL/concurrency/deadline suite.
+The fast command is `nix develop .#chronicle --command bash chronicle/scripts/test-fast.sh`
+from the repository root. It clears the PostgreSQL URL and makes accidental
+PostgreSQL use fail rather than silently skip. Selected-suite reports must be
+nonempty, match the allowlist/discovered inventory, and contain no failures,
+errors or skips. Their scope is explicitly a fast subset, not full validation.
 
 ```bash
-# Full backend component: every discovered suite, real PostgreSQL required:
+# Fast backend subset:
 nix build .#checks.x86_64-linux.chronicle-backend
-# Eight-version generated codec component:
+# Complete fast eight-version generated TypeScript codec matrix:
 nix build .#checks.x86_64-linux.chronicle-protocol
-# Mandatory full-source evidence bound to the exact native artifact:
+# Exact-artifact receipt for fast backend + retained-version codec checks:
 nix build .#checks.x86_64-linux.chronicle-validation
-# Supported deployment package: evidence + checked web + native wrapper:
+# Native package + fast checked dashboard + scoped evidence:
 nix build .#chronicle
-# Compile-only development artifact; NOT a deployment/release pass:
+# Compile-only artifact; no test pass implied:
 nix build .#chronicle-native-dev
 ```
 
-Backend tests remain serial because they truncate shared PostgreSQL tables and
-mutate shared profile state. The full backend gate uses unfiltered `test`,
-checks discovered-suite coverage against nonempty JUnit reports, rejects
-failures/errors/skips and records actual case counts. No production timeout or
-real deadline regression assertion is shortened for fast feedback.
+Dashboard packaging retains typechecking, bundling and its complete fast Node
+suite; Chromium is run separately, not on ordinary Nix rebuilds. Collector
+packaging retains its fast tests. The package receipt at
+`share/chronicle/validation.json` binds immutable runtime/test and validation
+identities to the final post-fixup ELF, but explicitly claims only the selected
+backend subset and retained-version codec coverage. It is not evidence that the
+full backend or browser suites passed, nor native behavioral equivalence.
 
-The supported package has a mandatory receipt at
-`share/chronicle/validation.json`, binding runtime/test sources, native and
-validation derivations, and the final installed ELF digest to full source-level
-validation. It does not claim native behavioral equivalence. UI-only changes
-reuse native/backend evidence; collector changes do not rebuild the server;
-test-only changes reuse native compilation. Generated-code, resources, schema,
-package module policy and test fixture dependencies remain explicit inputs.
+Full-suite execution is an agent responsibility, documented in repository-root
+[`AGENTS.md`](../AGENTS.md), rather than a mandatory Nix release gate. Before
+completing a Chronicle task, run the unfiltered owned-PostgreSQL backend suite,
+generated protocol checks, full dashboard Node/Chromium suites and collector
+suite. The backend command is
+`nix develop .#chronicle --command bash chronicle/scripts/test-postgres.sh`.
+Use `scripts/sbt.sh 'testOnly chronicle.SuiteName'` only for focused iteration,
+not as a substitute for final full runs. Keep shared-database tests serial and
+preserve real deadline/concurrency assertions; no timeout is shortened to make
+routine builds faster.
 
-A warm matching package build reuses validated store artifacts. A cold build
-must produce the required evidence or fail; fast-suite results and untracked
-markers cannot substitute for it. This uses ordinary Nix trusted-builder/cache
-assumptions. Arbitrary explicit service-package overrides are outside the
-factory's guarantee. See [the cache/validation contract](docs/drafts/20261028-build-validation-cache.md)
-for boundaries, measurements and limitations.
+Nix reuses checks only for matching input identities. UI-only changes reuse
+native/backend checks; collector changes do not rebuild the server; test-only
+changes reuse native compilation. Missing or malformed scoped evidence and
+failing fast checks still fail closed. Nix trusted-builder/cache assumptions
+apply; arbitrary explicit service-package overrides remain the operator's
+responsibility. See [the cache contract and historical measurements](docs/drafts/20261028-build-validation-cache.md).
+
+### Controlled search relevance experiments
+
+[`eval/relevance/README.md`](eval/relevance/README.md) describes the isolated
+HTTP/MCP ingestion, publication preflight, lexical retrieval traces and exact
+source-citation scorer. Its synthetic corpus includes distractors, pagination,
+held-out tasks and inaccessible sources. Scripted providers and evaluator gold
+controls verify workflow plumbing, not agent reasoning or semantic relevance.
+Real-agent trials need an enforced tools-only boundary. Tokenfactory trials have
+no token/cost caps; runtime deadlines and runaway-loop safeguards are separate
+execution controls. Do not tune ranking without reproducing and classifying a
+retrieval failure on fixed inputs.
 
 ### Nix dependency lock
 
@@ -123,6 +149,8 @@ The sole executable policy is `ContextAwareProblemsV1`: windows of at most64 ori
 Annotation requests require explicit `annotation.requestPolicy`; the maximum-reasoning policy retains65536 completion tokens, maximum reasoning and the configured900-second operation deadline. Both header/idle timeouts and whole-request body consumption respect the configured finite deadlines. Exact `model-output/truncated` alone permits five local attempts with identical input/policy; other failures are not locally retried. Every validated decision and accepted embedding batch is durably checkpointed before later stages, not merely buffered in memory. Source/profile/run/input/carry identities are immutable, and corruption fails closed rather than causing a hidden recomputation. Logical revision UUID bindings survive logical restore; physical xmin is not a durable identity. Summary/tag limits use Unicode scalars, and generated NUL/unpaired surrogates are rejected. Annotation metadata is untrusted; collector metadata and source provenance remain distinct. See [CONTRACT.md](CONTRACT.md) for coverage, recovery, retirement and retained-wire details.
 
 API1.1 semantic/hybrid queries require a verified compatible embedding space and use HNSW ANN candidate retrieval, followed by exact cosine reranking on stored full-precision PostgreSQL `vector` values. The HNSW expression indexes normalized `halfvec(dimensions)`, supporting1..4000 dimensions (including2048); unsupported dimensions fail configuration validation rather than silently using exact scans. API1.1 lexical queries use the GIN `@@` predicate and report exact matching-session totals. Hybrid unions up to1000 candidates per lexical/vector leg and uses RRF(k=60); semantic retains up to1000 chunk candidates. Candidate modes report `countScope=CandidateWindow`, `rankingLimit=1000` or2000, and candidate-session total—not a global total. Counts can be smaller after session deduplication, filters or graph scan budget exhaustion. Candidate offsets must be below rankingLimit. Strict iterative HNSW scanning applies live ACLs and filters before each limit (ef_search200, max_scan_tuples200000, scan_mem_multiplier4); it does not authorize global topK then postfilter. No exact fallback occurs in1.1. Negotiated1.0 sockets explicitly retain the prior exact retrieval/count/paging compatibility path and old codecs. Lexical is explicitly selectable and never silently substituted for hybrid. All API pages have a hard100 result maximum; GetSession returns the first100 indexed chunks; GetChunks/get_chunks pages every annotation in stable source order. `ContentView{revision,generationId}` binds every annotation, metadata and normalized message to the immutable source that produced it. Null view discovers current published content (or archive head if never indexed); callers then retain the returned view and reuse it for every subsequent page even if a newer generation publishes. SessionInfo separately reports current head/indexed revisions truthfully. Explicit archive-only views use a positive revision and null generationId. Raw null revision explicitly selects latest archive, while a positive revision pins bytes; files and actual revision are read atomically. Historical content is reauthorized on every operation. Accepted explicit rebuilds can retire derived generation payloads: exact full pins then return nonterminal `indexed-view-retired`, never redirect; revision-only reads/Find/raw remain available until purge. Structured tag filtering ANDs tags across the union of source metadata and all published chunk work tags; facets count distinct authorized sessions. Pending head metadata does not relabel older published search content.
+
+Agents can call MCP `search_tags` to discover tag names beyond `list_facets`' popular top100. Supply `query:""` to browse, or a literal case-insensitive Unicode-lower substring; optional project/branch/time/exact-tag filters use the same authorized published corpus as search. Results reuse the generated Facets envelope with tag values and distinct-session counts only. Pages are alphabetical (`COLLATE "C"`), at most100 entries (`limit`, default20); continue using the last exact value as `afterTag`, including an empty string, until `tags` is empty. Pages are live rather than a frozen snapshot. No model/provider call or Raw/browser privilege is required. See [CONTRACT.md](CONTRACT.md) for Unicode, historical-value, authorization and request-budget semantics.
 
 `embedding.dimensions` validates the expected response and index shape. Separately, `embedding.sendDimensions=false` omits the optional OpenAI dimensions request parameter for fixed-dimension models. Set true only for endpoints explicitly supporting requested dimensional truncation (MRL). Omitted flags in old public JSON configs mean false; new configs should always include the field. There is no400 retry/fallback, and the flag participates in profile identity.
 

@@ -19,7 +19,7 @@ let
     protocolSource = toString sources.protocol;
   };
   validationInputs = pkgs.writeText "chronicle-validation-inputs.json" (builtins.toJSON inputs);
-  validationEvidence = pkgs.runCommand "chronicle-release-validation" { nativeBuildInputs = [ python3 ]; } ''
+  validationEvidence = pkgs.runCommand "chronicle-fast-validation" { nativeBuildInputs = [ python3 ]; } ''
     mkdir -p "$out"
     python3 ${./validation-evidence.py} create --inputs ${validationInputs} --receipt "$out/validation.json"
   '';

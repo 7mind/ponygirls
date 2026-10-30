@@ -175,7 +175,7 @@ class HttpTest extends munit.FunSuite {
                   notification <- post("/mcp","""{"jsonrpc":"2.0","method":"notifications/initialized"}""",h)
                   _ <- IO(assertEquals(notification._1,Status.Accepted))
                   tools <- post("/mcp","""{"jsonrpc":"2.0","id":2,"method":"tools/list"}""",h)
-                  _ <- IO(assertEquals(Wire.parse(tools._2).hcursor.downField("result").get[List[io.circe.Json]]("tools").toOption.get.size,8))
+                  _ <- IO(assertEquals(Wire.parse(tools._2).hcursor.downField("result").get[List[io.circe.Json]]("tools").toOption.get.size,9))
                   ping <- post("/mcp","""{"jsonrpc":"2.0","id":3,"method":"ping"}""",h)
                   _ <- IO(assertEquals(ping._1,Status.Ok))
                   mixed <- post("/mcp",rpc,h++List("Cookie"->cookie))

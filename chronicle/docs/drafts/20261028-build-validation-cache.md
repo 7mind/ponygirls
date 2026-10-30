@@ -1,9 +1,36 @@
 # Chronicle build and validation cache contract
 
-Status: contract defined before implementation; implemented and the supported
-production-graph package passed full mandatory validation. A separate controlled
-artifact-cold run failed closed in web validation, as detailed below; it is not
-a successful cold-build result.
+## Current policy (2026-10-29)
+
+The user superseded the original mandatory-full-suite package policy: routine
+Nix builds use the explicit13-suite backend subset, retained-version TypeScript
+codec checks, dashboard typecheck/build/fast Node tests and collector tests.
+Full PostgreSQL/concurrency/deadline and Chromium suites are required by
+repository-root `AGENTS.md` before agents finish a Chronicle task; they are not
+a mandatory separate Nix release gate. Their commands and assertions remain
+available and unfiltered.
+
+Fast evidence must explicitly name its selected scope and suite allowlist,
+validate actual reports against discovered suites, reject missing/extra/stale
+reports and failures/errors/skips, and remain bound to immutable sources and the
+exact installed ELF. It must never carry the old full-source claim. Cached fast
+checks do not establish full-suite success or native-runtime equivalence.
+
+Source boundaries and exact-input cache reuse remain; changing the gate changes
+its evidence identity. Do not infer a measured speedup from selecting less
+coverage. Report actual compilation/cache state and counts. See `README.md` for
+current commands.
+
+## Historical policy and evidence
+
+**Everything below describes the earlier full-gate contract and its measured
+runs, not current mandatory package requirements.** Preserve these observations,
+failures and limits rather than retroactively relabeling them as fast validation.
+
+The original contract was implemented and the supported production-graph package
+passed full mandatory validation. A separate controlled artifact-cold run failed
+closed in web validation, as detailed below; it was not a successful cold-build
+result.
 Latency work does not authorize deployment,
 service restarts, active migration changes, model changes or production writes.
 The previously validated indexing candidate remains frozen in its own worktree.

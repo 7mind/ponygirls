@@ -28,7 +28,7 @@ class McpSourceAdmissionTest extends munit.FunSuite {
   test("BG GoodCommunication: live adapter shares all eight actual definitions, parser and successful HTTP tool content") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
     val receipt=seed(f)
     val listed=f.mcp.tools.asArray.get
-    assertEquals(f.tools.definitions.size,8)
+    assertEquals(f.tools.definitions.size,9)
     f.tools.definitions.foreach { definition =>
       val tool=listed.find(_.hcursor.get[String]("name").contains(definition.name)).get
       assertEquals(tool.hcursor.get[String]("description").toOption,Some(definition.description))
@@ -36,7 +36,7 @@ class McpSourceAdmissionTest extends munit.FunSuite {
       assertEquals(tool.hcursor.downField("annotations").get[Boolean]("readOnlyHint").toOption,Some(definition.readOnly))
     }
     val calls=List("search_sessions"->Json.obj("query"->string("archive"),"mode"->string("lexical")),"get_session"->args(receipt.sessionId),
-      "get_chunks"->args(receipt.sessionId),"get_messages"->args(receipt.sessionId),"related_sessions"->args(receipt.sessionId),"list_facets"->Json.obj(),"ingest_status"->Json.obj(),"whoami"->Json.obj())
+      "get_chunks"->args(receipt.sessionId),"get_messages"->args(receipt.sessionId),"related_sessions"->args(receipt.sessionId),"list_facets"->Json.obj(),"search_tags"->Json.obj("query"->string("")),"ingest_status"->Json.obj(),"whoami"->Json.obj())
     calls.foreach { (name,arguments) =>
       val actual=invoke(f,name,arguments,limited(f,maximum))
       val rpc=Json.obj("jsonrpc"->string("2.0"),"id"->Json.fromInt(1),"method"->string("tools/call"),"params"->Json.obj("name"->string(name),"arguments"->arguments))

@@ -89,6 +89,13 @@ class McpTestModelTest extends munit.FunSuite {
     }.unsafeRunSync()
   }
 
+  test("BA regression: nine read-only calls fit the existing execution resource bounds") {
+    val requiredCalls=9
+    val reply=McpToolModelCodec.reply(toolReply((0 until requiredCalls).map(i => (s"source-$i","search",Json.obj())).toList,None),definitions)
+    assertEquals(reply.calls.size,requiredCalls)
+    assertEquals(reply.response,None)
+  }
+
   test("BG: refusals, truncation, malformed choices, invalid finish/calls/IDs/argument types fail once with no retries") {
     val call=toolReply(List(("id","search",Json.obj())),None)
     val deep=List.fill(40)("{\"nested\":").mkString+"{}"+List.fill(40)("}").mkString
@@ -115,7 +122,7 @@ class McpTestModelTest extends munit.FunSuite {
       args(call,"{\"large\":\""+"x"*McpRunLimits.maximumArgumentBytes+"\"}") -> "model-output",
       field(call,"reasoning_content",Json.fromInt(42)) -> "model-output",
       field(call,"function_call",Json.obj()) -> "model-output",
-      toolReply((0 to 8).map(i => (s"id$i","search",Json.obj())).toList,None) -> "model-output"
+      toolReply((0 to McpRunLimits.maximumToolCalls).map(i => (s"id$i","search",Json.obj())).toList,None) -> "model-output"
     )
     credential.use { file => invalid.traverse_ { case (reply,expected) =>
       for {

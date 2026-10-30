@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "native": {"path": "/bound/bin/chronicle-server", "sha256": "REPLACE_WITH_SHA256"},
+  "preparedNative": null,
+  "python": {"path": "/bound/bin/python3", "sha256": "REPLACE_WITH_SHA256"},
+  "node": {"path": "/bound/bin/node", "sha256": "REPLACE_WITH_SHA256"},
+  "chromium": {"path": "/bound/bin/chrome-headless-shell", "sha256": "REPLACE_WITH_SHA256"},
+  "playwright": {"path": "/bound/node_modules/playwright-core/index.mjs", "sha256": "REPLACE_WITH_SHA256"},
+  "postgres": {
+    "tools": {
+      "postgres": {"path": "/bound/pg/bin/postgres", "sha256": "REPLACE_WITH_SHA256"},
+      "initdb": {"path": "/bound/pg/bin/initdb", "sha256": "REPLACE_WITH_SHA256"},
+      "pg_isready": {"path": "/bound/pg/bin/pg_isready", "sha256": "REPLACE_WITH_SHA256"},
+      "psql": {"path": "/bound/pg/bin/psql", "sha256": "REPLACE_WITH_SHA256"},
+      "pg_controldata": {"path": "/bound/pg/bin/pg_controldata", "sha256": "REPLACE_WITH_SHA256"}
+    },
+    "executable": {"path": "/bound/pg/bin/actual-postgres-ELF", "sha256": "REPLACE_WITH_SHA256"},
+    "launcher": null,
+    "versionNumber": "180006"
+  },
+  "fixture": {"path": "/frozen/semantic-fixtures.json", "sha256": "REPLACE_WITH_SHA256"},
+  "configTemplate": {"path": "/frozen/config.example.json", "sha256": "REPLACE_WITH_SHA256"},
+  "annotation": {
+    "profile": {"path": "/frozen/annotation-profile.json", "sha256": "REPLACE_WITH_SHA256"},
+    "credentialFile": "/private/annotation-credential",
+    "authPolicy": "bearer",
+    "ownership": "external-nonowned"
+  },
+  "embedding": {
+    "profile": {"path": "/frozen/embedding-profile.json", "sha256": "REPLACE_WITH_SHA256"},
+    "credentialFile": "/private/empty-embedding-credential",
+    "authPolicy": "token-free",
+    "ownership": "external-nonowned"
+  },
+  "embeddingProof": {"path": "/frozen/embedding-proof.json", "sha256": "REPLACE_WITH_SHA256"},
+  "expectedPolicyIdentity": "REPLACE_WITH_EXACT_SOURCE_POLICY_IDENTITY",
+  "generatedProject": "/bound/chronicle",
+  "generatedFiles": [{"relativePath": "generated/typescript/REPLACE_WITH_EVERY_GENERATED_SOURCE.ts", "sha256": "REPLACE_WITH_SHA256"}],
+  "runtimeFiles": [{"path": "/bound/REPLACE_WITH_RUNTIME_DEPENDENCY_CLOSURE_FILES", "sha256": "REPLACE_WITH_SHA256"}],
+  "frozenInputs": [{"path": "/frozen/REPLACE_WITH_ALL_WORKFLOW_FIXTURE_CONFIG_PROFILES_PROOF_FILES", "sha256": "REPLACE_WITH_SHA256"}],
+  "out": "/private/fresh-prepared-publication",
+  "modes": ["lexical", "semantic", "hybrid"],
+  "relatedPolicy": "deny",
+  "factFormat": "ordered-string-values-v1",
+  "agentModel": "REPLACE_WITH_EXACT_MCP_TEST_CATALOG_MODEL",
+  "agentReasoningPolicy": "max",
+  "agentMaximumOutputTokens": 65536,
+  "agentRevision": "REPLACE_WITH_EXACT_MCP_TEST_CATALOG_MODEL_REVISION",
+  "bootstrapSeconds": 120,
+  "publicationSeconds": 3600,
+  "environment": {}
+}

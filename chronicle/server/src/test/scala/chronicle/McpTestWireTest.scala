@@ -66,7 +66,7 @@ class McpTestWireTest extends munit.FunSuite {
     assertEquals(dto.modelRevision,"configured-revision")
     assertEquals(dto.maximumOutputTokens,65536)
     assertEquals(dto.reasoningPolicy,"max")
-    assertEquals(dto.limits,McpTestLimits(4,8,16384,65536,131072,524288,1048576,256,49152,900,600))
+    assertEquals(dto.limits,McpTestLimits(McpRunLimits.maximumRounds,McpRunLimits.maximumToolCalls,16384,65536,131072,524288,1048576,256,49152,900,600))
     val oversized=domain.copy(tools=List(tools.head.copy(description="\u0085"*10000)))
     wire.supportedVersions.foreach { version =>
       val encoded=wire.encode(ServerEnvelope(requestId,wire.catalog(domain)),version)
