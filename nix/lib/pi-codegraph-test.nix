@@ -28,7 +28,7 @@ let
       })
     ];
   }).config;
-  hasExtension = config: builtins.any (p: lib.hasSuffix "-ponygirls-codegraph" p) config.programs.pi.settings.extensions;
+  hasExtension = config: builtins.any (p: lib.hasSuffix "/ponygirls-codegraph" p) config.programs.pi.settings.extensions;
   local = evaluate { codegraph.command = "/bin/codegraph"; } true;
   absent = evaluate { } true;
   remote = evaluate { codegraph.url = "https://example.invalid/mcp"; } true;
