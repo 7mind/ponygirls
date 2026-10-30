@@ -661,6 +661,7 @@
             PI_OFFLINE = "1";
             PI_TELEMETRY = "0";
           } ''
+            export HOME="$TMPDIR"
             cp -r ${./nix/pkg/pi-extensions/ponygirls-codegraph} ponygirls-codegraph
             chmod -R u+w ponygirls-codegraph
             cd ponygirls-codegraph
