@@ -120,6 +120,49 @@ test("incomplete, stale and empty indexes are rebuilt; unhealthy results remain 
   }
 });
 
+// Regression D3: a consistent index of a checkout with nothing indexable is a state, not a failure.
+test("a complete index with no indexed files is empty, not an error; inconsistent counts stay errors", async () => {
+  class EmptyCheckoutBoundary extends MemoryBoundary {
+    async run(root: string, args: string[], signal: AbortSignal) {
+      await super.run(root, args, signal);
+      this.health.fileCount = 0;
+      this.health.nodeCount = 0;
+      return JSON.stringify(this.health);
+    }
+  }
+  const boundary = new EmptyCheckoutBoundary();
+  const session = new CodegraphSession(boundary, "/checkout", () => {});
+  for (const action of ["sync", "status", "reindex"] as const) {
+    await session.start(action);
+    assert.equal(session.state.phase, "empty", session.state.detail);
+    assert.match(session.state.detail, /^\/checkout: /);
+  }
+  class PendingEmptyBoundary extends MemoryBoundary {
+    async run(root: string, args: string[], signal: AbortSignal) {
+      await super.run(root, args, signal);
+      this.health.fileCount = 0;
+      this.health.nodeCount = 0;
+      this.health.index.pendingRefs = 1;
+      return JSON.stringify(this.health);
+    }
+  }
+  const pending = new CodegraphSession(new PendingEmptyBoundary(), "/checkout", () => {});
+  await pending.start("sync");
+  assert.equal(pending.state.phase, "error", "unresolved work in an empty index is not 'nothing indexed'");
+  class OrphanNodesBoundary extends MemoryBoundary {
+    async run(root: string, args: string[], signal: AbortSignal) {
+      await super.run(root, args, signal);
+      this.health.fileCount = 0;
+      this.health.nodeCount = 3;
+      return JSON.stringify(this.health);
+    }
+  }
+  const orphan = new CodegraphSession(new OrphanNodesBoundary(), "/checkout", () => {});
+  await orphan.start("sync");
+  assert.equal(orphan.state.phase, "error", "symbols without files are inconsistent");
+  assert.match(orphan.state.detail, /^Error: Index not ready at \/checkout\n\{/, "health JSON is kept as detail on its own line");
+});
+
 // Regression: deterministic extraction warnings must not reject a complete index.
 test("complete indexes remain ready with visible parse warnings after status, sync and reindex", async () => {
   class ParseWarningBoundary extends MemoryBoundary {
@@ -251,6 +294,20 @@ test("explicit reindex does not depend on a readable pre-rebuild status", async 
 test("production boundary refuses custom index locations before mutation", async () => {
   const boundary = localBoundary("codegraph", "flock", { ...process.env, CODEGRAPH_DIR: "../elsewhere" });
   await assert.rejects(boundary.root(process.cwd(), new AbortController().signal), /Custom CODEGRAPH_DIR/);
+});
+
+test("CLI: a fresh checkout without indexable files is empty, not an error", {
+  skip: !process.env.PONYGIRLS_CODEGRAPH_BIN ? "set PONYGIRLS_CODEGRAPH_BIN for pinned local CLI tests" : false,
+}, async (t) => {
+  const f = await cliFixture();
+  t.after(f.cleanup);
+  await rm(join(f.root, "example.ts"));
+  const session = new CodegraphSession(f.boundary, f.root, () => {});
+  await session.start("sync");
+  assert.equal(session.state.phase, "empty", session.state.detail);
+  await writeFile(join(f.root, "example.ts"), "export function hello() { return 1; }\n");
+  await session.start("sync");
+  assert.equal(session.state.phase, "ready", session.state.detail);
 });
 
 test("CLI: concurrent fresh sessions serialize and explicit rebuild recovers schemaless DB", {
