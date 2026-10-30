@@ -86,7 +86,7 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
     val invitation=c.auth.mutate(c.owner,ClientEnvelope(UUID.randomUUID(),Operation.Invite(group,"b"))).asInstanceOf[Result.Mutation].receipt.entityId.get
     val other=c.auth.browser(c.auth.login(LoginRequest("b","synthetic"))._2)
     c.auth.mutate(other,ClientEnvelope(UUID.randomUUID(),Operation.AcceptInvite(invitation,true)))
-    val q=ArchiveQuery("mode:lexical user:b",ArchiveSort.Title,SortDirection.Asc,None,100)
+    val q=ArchiveQuery("mode:lexical user:b",ArchiveSort.Title,SortDirection.Asc,None,100,false)
     assertEquals(new PostgresArchiveIndex(c.db,c.archive,c.config).browse("a",q,ArchiveExpression.parse(q.expression),Nil).rows.map(_.head.id),List(foreign.sessionId))
     val preserved=retained(c); val others=ownerRows(c,"b"); val priorReceipts=rows(c,"ch_mutations")
     val sourceRows=rows(c,"ch_sources"); val published=c.archive.session("a",first.sessionId).view

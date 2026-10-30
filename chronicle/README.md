@@ -41,7 +41,7 @@ errors or skips. Their scope is explicitly a fast subset, not full validation.
 ```bash
 # Fast backend subset:
 nix build .#checks.x86_64-linux.chronicle-backend
-# Complete fast eight-version generated TypeScript codec matrix:
+# Complete fast nine-version generated TypeScript codec matrix:
 nix build .#checks.x86_64-linux.chronicle-protocol
 # Exact-artifact receipt for fast backend + retained-version codec checks:
 nix build .#checks.x86_64-linux.chronicle-validation

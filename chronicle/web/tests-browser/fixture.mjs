@@ -19,12 +19,12 @@ function fixturePage(rows, cursor, limit, key) {
 function leaseState(item) { return item.leaseExpiresAt === undefined ? 'unleased' : item.job.state !== api.JobState.Running ? 'inactive' : item.leaseActive ? 'active' : 'expired'; }
 export class ChronicleFixture {
   user = new api.UserInfo('alice', 'alice', [api.Scope.Read, api.Scope.Raw]);
-  version = new api.VersionInfo('1.7.0', '1.0.0', ['1.7.0', '1.6.0', '1.5.0', '1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']);
+  version = new api.VersionInfo('1.8.0', '1.0.0', ['1.8.0', '1.7.0', '1.6.0', '1.5.0', '1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']);
   sockets = []; calls = []; requests = []; receipts = new Map(); tokens = []; staticTokens = []; collectors = []; collectionDenied = false;
   groups = [new api.GroupInfo(ID.group, 'Systems workshop', 'alice', ['alice', 'bob']), new api.GroupInfo(ID.otherGroup, 'Research circle', 'bob', ['bob', 'alice'])];
   invitations = [new api.InviteInfo(ID.invitation, ID.otherGroup, 'alice', '2030-01-01T00:00:00Z')];
   jobs = [new api.JobInfo(ID.job, ID.session, 2, api.JobState.Failed, 3, 'Embedding provider unavailable; archived source is preserved.', 0, undefined, undefined)];
-  archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchive = false; holdArchiveCursor = false; pendingArchive = [];
+  archiveRowCount = 1; archiveRows = undefined; archiveExcluded = new Set(); archiveFailure = null; holdArchive = false; holdArchiveCursor = false; pendingArchive = []; archiveRelevanceMissing = false;
   activityJobs = undefined; activityCollectors = undefined; collectorExpressions = new Map(); jobExpressions = new Map(); activityFailure = null;
   holdSessions = false; sessionHeadSnapshot = undefined; pendingSessions = [];
   holdCollectorCursor = false; holdJobCursor = false; pendingCollectors = []; pendingJobs = [];
@@ -63,6 +63,12 @@ export class ChronicleFixture {
     const published = index === 0 || index % 3 !== 0 ? this.view : undefined;
     return new api.ArchiveRow(head, published, undefined, index % 17 === 16 ? undefined : new Date(Date.parse('2026-10-23T09:31:00Z') - Math.floor(index / 2) * 60000).toISOString(), this.messageCount + index, index === 0 ? metadata.tags : [`tag-${index % 4}`], index === 0 ? this.jobs.find(job => job.revision === this.headRevision) : undefined, published === undefined ? undefined : this.publishedFormat);
   }
+  // Declared synthetic relevance, independent of recency: archiveAt(9) outranks the newer archiveAt(0).
+  archiveScore(row) {
+    const index = row.head.id === ID.session ? 0 : Number(row.head.id.slice(-5)) - 10000;
+    if (!Number.isInteger(index) || index < 0) throw new Error(`Fixture relevance score undeclared for ${row.head.id}`);
+    return index % 10;
+  }
   get authorizedRows() { return (this.archiveRows ?? Array.from({ length: this.archiveRowCount }, (_, index) => this.archiveAt(index))).filter(row => !this.archiveExcluded.has(row.head.id)); }
   archiveResult(query) {
     let rows = [...this.authorizedRows];
@@ -82,12 +88,19 @@ export class ChronicleFixture {
         default: throw new Error('Unknown fixture sort');
       }
     };
-    rows.sort((left, right) => { const a = value(left), b = value(right); if (a === undefined || b === undefined) return a === b ? left.head.id.localeCompare(right.head.id) : a === undefined ? 1 : -1; const order = typeof a === 'number' ? a - b : a.localeCompare(b); return (query.direction === api.SortDirection.Asc ? order : -order) || left.head.id.localeCompare(right.head.id); });
+    const textTerms = /original|migration|private-migration|missing-model/;
+    const lexical = /mode\s*:\s*lexical/i.test(query.expression), text = textTerms.test(query.expression);
+    // Fixture mini-DSL: a text term preceded by NOT is negative; relevance applies only with a positive text term.
+    const relevance = query.preferRelevance && textTerms.test(query.expression.replace(/\bNOT\s+\S+/g, ''));
+    const recency = (left, right) => left.lastTimestamp === right.lastTimestamp ? 0 : left.lastTimestamp === undefined ? 1 : right.lastTimestamp === undefined ? -1 : right.lastTimestamp.localeCompare(left.lastTimestamp);
+    if (relevance) rows.sort((left, right) => this.archiveScore(right) - this.archiveScore(left) || recency(left, right) || left.head.id.localeCompare(right.head.id));
+    else rows.sort((left, right) => { const a = value(left), b = value(right); if (a === undefined || b === undefined) return a === b ? left.head.id.localeCompare(right.head.id) : a === undefined ? 1 : -1; const order = typeof a === 'number' ? a - b : a.localeCompare(b); return (query.direction === api.SortDirection.Asc ? order : -order) || left.head.id.localeCompare(right.head.id); });
+    const binding = relevance ? 'relevance' : `${query.sort}:${query.direction}`;
+    if (query.cursor !== undefined && query.cursor.slice(0, query.cursor.lastIndexOf(':')) !== binding) throw new Error('Fixture Archive cursor binding mismatch');
     const offset = query.cursor === undefined ? 0 : Number(query.cursor.split(':').at(-1));
-    const lexical = /mode\s*:\s*lexical/i.test(query.expression), text = /original|migration|private-migration|missing-model/.test(query.expression);
     rows = rows.map(row => row.with({ matchedView: text ? lexical ? row.head.view : row.publishedView : undefined }));
-    const next = offset + query.limit < rows.length ? `${query.sort}:${query.direction}:${offset + query.limit}` : undefined;
-    return new api.ArchiveResult(rows.slice(offset, offset + query.limit), BigInt(rows.length), next, text && !lexical ? api.ArchiveTextScope.BoundedCandidateSets : api.ArchiveTextScope.ExactLexical, text && !lexical ? 1000 : undefined);
+    const next = offset + query.limit < rows.length ? `${binding}:${offset + query.limit}` : undefined;
+    return new api.ArchiveResult(rows.slice(offset, offset + query.limit), BigInt(rows.length), next, text && !lexical ? api.ArchiveTextScope.BoundedCandidateSets : api.ArchiveTextScope.ExactLexical, text && !lexical ? 1000 : undefined, relevance);
   }
   jobSession(job) {
     const metadata = job.revision === this.headRevision ? this.metadata : this.metadata.with({ title: `Historical r${job.revision} conversation`, project: `historical-project-${job.revision}`, gitBranch: `historical-branch-${job.revision}` });
@@ -208,7 +221,11 @@ export class ChronicleFixture {
         if (operation instanceof api.Operation_Archive) {
           this.searchCount++;
           if (this.archiveFailure !== null) { send(new api.Result_Error(new api.Failure('invalid', this.archiveFailure))); return; }
-          const result = this.archiveResult(operation.query), reply = () => send(new api.Result_Archive(result));
+          const result = this.archiveResult(operation.query), reply = () => {
+            if (!this.archiveRelevanceMissing) { send(new api.Result_Archive(result)); return; }
+            const wire = api.ServerEnvelope_JsonCodec.instance.encode(context, new api.ServerEnvelope(envelope.requestId, new api.Result_Archive(result)));
+            delete wire.result.Archive.result.relevanceOrdered; socket.send(JSON.stringify(wire));
+          };
           if (this.holdArchive || (this.holdArchiveCursor && operation.query.cursor !== undefined)) this.pendingArchive.push(reply); else reply();
           return;
         }

@@ -80,7 +80,7 @@ export class ArchiveQuery implements BaboonGenerated {
     public baboonSameInVersions() {
         return ArchiveQuery.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "prefix-any-mode" }
     public baboonForwardReadable() {
         return ArchiveQuery.BaboonForwardReadable
     }
@@ -93,7 +93,7 @@ export class ArchiveQuery implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.8.0 */
 export class ArchiveQuery_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ArchiveQuery): unknown {
         if (this !== ArchiveQuery_JsonCodec.lazyInstance.value) {

@@ -4,7 +4,7 @@ import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonAdtMemberMeta, Baboo
 
 
 package chronicle.api.v1_6_0 {
-  @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+  @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
   sealed trait Result extends BaboonGenerated {
     override def baboonDomainVersion: String = Result.baboonDomainVersion
     override def baboonDomainIdentifier: String = Result.baboonDomainIdentifier
@@ -15,7 +15,7 @@ package chronicle.api.v1_6_0 {
   }
   
   object Result {
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Hello(
       versions: VersionInfo,
       user: UserInfo
@@ -34,9 +34,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Hello"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -45,7 +45,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Hello] = Result.Hello_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Hello_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Hello, BaboonJsonCodec[Result.Hello]] {
       def encode(ctx: BaboonCodecContext, value: Result.Hello): Json = {
         if (this ne LazyInstance.value) {
@@ -88,7 +88,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Pong(
       nonce: String
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -106,9 +106,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Pong"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -117,7 +117,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Pong] = Result.Pong_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Pong_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Pong, BaboonJsonCodec[Result.Pong]] {
       def encode(ctx: BaboonCodecContext, value: Result.Pong): Json = {
         if (this ne LazyInstance.value) {
@@ -158,7 +158,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Whoami(
       user: UserInfo
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -176,9 +176,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Whoami"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -187,7 +187,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Whoami] = Result.Whoami_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Whoami_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Whoami, BaboonJsonCodec[Result.Whoami]] {
       def encode(ctx: BaboonCodecContext, value: Result.Whoami): Json = {
         if (this ne LazyInstance.value) {
@@ -228,7 +228,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Search(
       result: SearchResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -246,9 +246,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Search"
-      private lazy val _baboonSameInVersions: List[String] = List("1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.1.0", "prefix-any-mode" -> "1.1.0", "identical" -> "1.1.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -257,7 +257,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Search] = Result.Search_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Search_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Search, BaboonJsonCodec[Result.Search]] {
       def encode(ctx: BaboonCodecContext, value: Result.Search): Json = {
         if (this ne LazyInstance.value) {
@@ -298,7 +298,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Session(
       result: SessionResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -316,9 +316,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Session"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -327,7 +327,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Session] = Result.Session_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Session_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Session, BaboonJsonCodec[Result.Session]] {
       def encode(ctx: BaboonCodecContext, value: Result.Session): Json = {
         if (this ne LazyInstance.value) {
@@ -368,7 +368,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Chunks(
       result: ChunksResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -386,9 +386,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Chunks"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -397,7 +397,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Chunks] = Result.Chunks_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Chunks_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Chunks, BaboonJsonCodec[Result.Chunks]] {
       def encode(ctx: BaboonCodecContext, value: Result.Chunks): Json = {
         if (this ne LazyInstance.value) {
@@ -438,7 +438,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Messages(
       result: MessagesResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -456,9 +456,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Messages"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -467,7 +467,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Messages] = Result.Messages_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Messages_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Messages, BaboonJsonCodec[Result.Messages]] {
       def encode(ctx: BaboonCodecContext, value: Result.Messages): Json = {
         if (this ne LazyInstance.value) {
@@ -508,7 +508,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class SessionMessageSearch(
       result: SessionMessageSearchResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -526,9 +526,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#SessionMessageSearch"
-      private lazy val _baboonSameInVersions: List[String] = List("1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.6.0", "prefix-compact" -> "1.6.0", "prefix-any-mode" -> "1.6.0", "identical" -> "1.6.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -537,7 +537,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.SessionMessageSearch] = Result.SessionMessageSearch_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object SessionMessageSearch_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.SessionMessageSearch, BaboonJsonCodec[Result.SessionMessageSearch]] {
       def encode(ctx: BaboonCodecContext, value: Result.SessionMessageSearch): Json = {
         if (this ne LazyInstance.value) {
@@ -578,7 +578,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Raw(
       result: RawResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -596,9 +596,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Raw"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -607,7 +607,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Raw] = Result.Raw_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Raw_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Raw, BaboonJsonCodec[Result.Raw]] {
       def encode(ctx: BaboonCodecContext, value: Result.Raw): Json = {
         if (this ne LazyInstance.value) {
@@ -648,7 +648,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Related(
       result: RelatedResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -666,9 +666,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Related"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -677,7 +677,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Related] = Result.Related_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Related_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Related, BaboonJsonCodec[Result.Related]] {
       def encode(ctx: BaboonCodecContext, value: Result.Related): Json = {
         if (this ne LazyInstance.value) {
@@ -718,7 +718,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Facets(
       result: FacetsResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -736,9 +736,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Facets"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -747,7 +747,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Facets] = Result.Facets_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Facets_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Facets, BaboonJsonCodec[Result.Facets]] {
       def encode(ctx: BaboonCodecContext, value: Result.Facets): Json = {
         if (this ne LazyInstance.value) {
@@ -788,7 +788,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class CollectionStatus(
       result: CollectorStatusResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -806,9 +806,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#CollectionStatus"
-      private lazy val _baboonSameInVersions: List[String] = List("1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.2.0", "prefix-compact" -> "1.2.0", "prefix-any-mode" -> "1.2.0", "identical" -> "1.2.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -817,7 +817,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.CollectionStatus] = Result.CollectionStatus_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object CollectionStatus_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.CollectionStatus, BaboonJsonCodec[Result.CollectionStatus]] {
       def encode(ctx: BaboonCodecContext, value: Result.CollectionStatus): Json = {
         if (this ne LazyInstance.value) {
@@ -858,7 +858,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Status(
       result: StatusResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -878,7 +878,7 @@ package chronicle.api.v1_6_0 {
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Status"
       private lazy val _baboonSameInVersions: List[String] = List("1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "json-additive")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "json-additive", "1.8.0" -> "json-additive")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.2.0", "prefix-any-mode" -> "1.2.0", "identical" -> "1.2.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -887,7 +887,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Status] = Result.Status_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Status_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Status, BaboonJsonCodec[Result.Status]] {
       def encode(ctx: BaboonCodecContext, value: Result.Status): Json = {
         if (this ne LazyInstance.value) {
@@ -928,7 +928,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Tokens(
       result: TokensResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -946,9 +946,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Tokens"
-      private lazy val _baboonSameInVersions: List[String] = List("1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.2.0", "prefix-compact" -> "1.2.0", "prefix-any-mode" -> "1.2.0", "identical" -> "1.2.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -957,7 +957,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Tokens] = Result.Tokens_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Tokens_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Tokens, BaboonJsonCodec[Result.Tokens]] {
       def encode(ctx: BaboonCodecContext, value: Result.Tokens): Json = {
         if (this ne LazyInstance.value) {
@@ -998,7 +998,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Token(
       result: TokenResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1016,9 +1016,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Token"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1027,7 +1027,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Token] = Result.Token_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Token_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Token, BaboonJsonCodec[Result.Token]] {
       def encode(ctx: BaboonCodecContext, value: Result.Token): Json = {
         if (this ne LazyInstance.value) {
@@ -1068,7 +1068,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Groups(
       result: GroupsResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1086,9 +1086,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Groups"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1097,7 +1097,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Groups] = Result.Groups_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Groups_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Groups, BaboonJsonCodec[Result.Groups]] {
       def encode(ctx: BaboonCodecContext, value: Result.Groups): Json = {
         if (this ne LazyInstance.value) {
@@ -1138,7 +1138,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Mutation(
       receipt: MutationReceipt
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1156,9 +1156,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Mutation"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1167,7 +1167,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Mutation] = Result.Mutation_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Mutation_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Mutation, BaboonJsonCodec[Result.Mutation]] {
       def encode(ctx: BaboonCodecContext, value: Result.Mutation): Json = {
         if (this ne LazyInstance.value) {
@@ -1208,7 +1208,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Error(
       failure: Failure
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1226,9 +1226,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Error"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1237,7 +1237,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Error] = Result.Error_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Error_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Error, BaboonJsonCodec[Result.Error]] {
       def encode(ctx: BaboonCodecContext, value: Result.Error): Json = {
         if (this ne LazyInstance.value) {
@@ -1278,7 +1278,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Ping(
       nonce: String
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1296,9 +1296,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Ping"
-      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1307,7 +1307,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Ping] = Result.Ping_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Ping_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Ping, BaboonJsonCodec[Result.Ping]] {
       def encode(ctx: BaboonCodecContext, value: Result.Ping): Json = {
         if (this ne LazyInstance.value) {
@@ -1348,7 +1348,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Archive(
       result: ArchiveResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1377,7 +1377,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Archive] = Result.Archive_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Archive_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Archive, BaboonJsonCodec[Result.Archive]] {
       def encode(ctx: BaboonCodecContext, value: Result.Archive): Json = {
         if (this ne LazyInstance.value) {
@@ -1418,7 +1418,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Activity(
       result: ActivityResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1436,9 +1436,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#Activity"
-      private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.3.0", "identical" -> "1.3.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1447,7 +1447,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Activity] = Result.Activity_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Activity_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Activity, BaboonJsonCodec[Result.Activity]] {
       def encode(ctx: BaboonCodecContext, value: Result.Activity): Json = {
         if (this ne LazyInstance.value) {
@@ -1488,7 +1488,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class ActivityJobs(
       result: ActivityJobsResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1508,7 +1508,7 @@ package chronicle.api.v1_6_0 {
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#ActivityJobs"
       private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0", "1.5.0", "1.6.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "json-additive")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "json-additive", "1.8.0" -> "json-additive")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.3.0", "identical" -> "1.3.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1517,7 +1517,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.ActivityJobs] = Result.ActivityJobs_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object ActivityJobs_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.ActivityJobs, BaboonJsonCodec[Result.ActivityJobs]] {
       def encode(ctx: BaboonCodecContext, value: Result.ActivityJobs): Json = {
         if (this ne LazyInstance.value) {
@@ -1558,7 +1558,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class LocatedMessage(
       result: MessageLocation
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1576,9 +1576,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#LocatedMessage"
-      private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.3.0", "identical" -> "1.3.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1587,7 +1587,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.LocatedMessage] = Result.LocatedMessage_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object LocatedMessage_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.LocatedMessage, BaboonJsonCodec[Result.LocatedMessage]] {
       def encode(ctx: BaboonCodecContext, value: Result.LocatedMessage): Json = {
         if (this ne LazyInstance.value) {
@@ -1628,7 +1628,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class RetryFailedPreview(
       result: RetryFailedPlan
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1646,9 +1646,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#RetryFailedPreview"
-      private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.3.0", "identical" -> "1.3.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1657,7 +1657,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.RetryFailedPreview] = Result.RetryFailedPreview_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object RetryFailedPreview_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.RetryFailedPreview, BaboonJsonCodec[Result.RetryFailedPreview]] {
       def encode(ctx: BaboonCodecContext, value: Result.RetryFailedPreview): Json = {
         if (this ne LazyInstance.value) {
@@ -1698,7 +1698,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class RetryFailed(
       result: RetryFailedResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1716,9 +1716,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#RetryFailed"
-      private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.3.0", "identical" -> "1.3.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1727,7 +1727,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.RetryFailed] = Result.RetryFailed_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object RetryFailed_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.RetryFailed, BaboonJsonCodec[Result.RetryFailed]] {
       def encode(ctx: BaboonCodecContext, value: Result.RetryFailed): Json = {
         if (this ne LazyInstance.value) {
@@ -1768,7 +1768,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class ExpressionHints(
       result: ExpressionHintsResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1786,9 +1786,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#ExpressionHints"
-      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.4.0", "prefix-compact" -> "1.4.0", "prefix-any-mode" -> "1.4.0", "identical" -> "1.4.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1797,7 +1797,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.ExpressionHints] = Result.ExpressionHints_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object ExpressionHints_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.ExpressionHints, BaboonJsonCodec[Result.ExpressionHints]] {
       def encode(ctx: BaboonCodecContext, value: Result.ExpressionHints): Json = {
         if (this ne LazyInstance.value) {
@@ -1838,7 +1838,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class ModelUsage(
       result: ModelUsageResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1856,9 +1856,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#ModelUsage"
-      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.4.0", "prefix-compact" -> "1.4.0", "prefix-any-mode" -> "1.4.0", "identical" -> "1.4.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -1867,7 +1867,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.ModelUsage] = Result.ModelUsage_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object ModelUsage_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.ModelUsage, BaboonJsonCodec[Result.ModelUsage]] {
       def encode(ctx: BaboonCodecContext, value: Result.ModelUsage): Json = {
         if (this ne LazyInstance.value) {
@@ -1908,7 +1908,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class Passages(
       result: PassagesResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1937,7 +1937,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.Passages] = Result.Passages_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object Passages_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.Passages, BaboonJsonCodec[Result.Passages]] {
       def encode(ctx: BaboonCodecContext, value: Result.Passages): Json = {
         if (this ne LazyInstance.value) {
@@ -1978,7 +1978,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class PassageSpans(
       result: PassageSpansResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -1996,9 +1996,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#PassageSpans"
-      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.4.0", "prefix-compact" -> "1.4.0", "prefix-any-mode" -> "1.4.0", "identical" -> "1.4.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -2007,7 +2007,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.PassageSpans] = Result.PassageSpans_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object PassageSpans_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.PassageSpans, BaboonJsonCodec[Result.PassageSpans]] {
       def encode(ctx: BaboonCodecContext, value: Result.PassageSpans): Json = {
         if (this ne LazyInstance.value) {
@@ -2048,7 +2048,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class OwnerReindexPreview(
       result: OwnerReindexPlan
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -2066,9 +2066,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#OwnerReindexPreview"
-      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.4.0", "prefix-compact" -> "1.4.0", "prefix-any-mode" -> "1.4.0", "identical" -> "1.4.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -2077,7 +2077,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.OwnerReindexPreview] = Result.OwnerReindexPreview_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object OwnerReindexPreview_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.OwnerReindexPreview, BaboonJsonCodec[Result.OwnerReindexPreview]] {
       def encode(ctx: BaboonCodecContext, value: Result.OwnerReindexPreview): Json = {
         if (this ne LazyInstance.value) {
@@ -2118,7 +2118,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class OwnerReindexed(
       result: OwnerReindexResult
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -2136,9 +2136,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#OwnerReindexed"
-      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.4.0", "prefix-compact" -> "1.4.0", "prefix-any-mode" -> "1.4.0", "identical" -> "1.4.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -2147,7 +2147,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.OwnerReindexed] = Result.OwnerReindexed_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object OwnerReindexed_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.OwnerReindexed, BaboonJsonCodec[Result.OwnerReindexed]] {
       def encode(ctx: BaboonCodecContext, value: Result.OwnerReindexed): Json = {
         if (this ne LazyInstance.value) {
@@ -2188,7 +2188,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class McpTestTools(
       result: McpTestCatalog
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -2206,9 +2206,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#McpTestTools"
-      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.4.0", "prefix-compact" -> "1.4.0", "prefix-any-mode" -> "1.4.0", "identical" -> "1.4.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -2217,7 +2217,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.McpTestTools] = Result.McpTestTools_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object McpTestTools_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.McpTestTools, BaboonJsonCodec[Result.McpTestTools]] {
       def encode(ctx: BaboonCodecContext, value: Result.McpTestTools): Json = {
         if (this ne LazyInstance.value) {
@@ -2258,7 +2258,7 @@ package chronicle.api.v1_6_0 {
     }
     
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     final case class McpTestRun(
       result: McpTestSnapshot
     ) extends Result with BaboonAdtMemberMeta with BaboonGenerated {
@@ -2276,9 +2276,9 @@ package chronicle.api.v1_6_0 {
       def baboonDomainVersion: String = "1.6.0"
       def baboonDomainIdentifier: String = "chronicle.api"
       def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Result]#McpTestRun"
-      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0")
+      private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
       def baboonSameInVersions: List[String] = _baboonSameInVersions
-      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical")
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
       def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
       private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.4.0", "prefix-compact" -> "1.4.0", "prefix-any-mode" -> "1.4.0", "identical" -> "1.4.0")
       def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
@@ -2287,7 +2287,7 @@ package chronicle.api.v1_6_0 {
       @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result.McpTestRun] = Result.McpTestRun_JsonCodec.instance
     }
     
-    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+    @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
     object McpTestRun_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Result.McpTestRun, BaboonJsonCodec[Result.McpTestRun]] {
       def encode(ctx: BaboonCodecContext, value: Result.McpTestRun): Json = {
         if (this ne LazyInstance.value) {
@@ -2338,7 +2338,7 @@ package chronicle.api.v1_6_0 {
     @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[Result] = Result_JsonCodec.instance
   }
   
-  @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+  @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
   object Result_JsonCodec extends BaboonJsonCodec.BaseGenerated[Result, BaboonJsonCodec[Result]] {
     def encode(ctx: BaboonCodecContext, value: Result): Json = {
       if (this ne LazyInstance.value) {

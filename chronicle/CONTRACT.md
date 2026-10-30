@@ -1,13 +1,13 @@
-# Chronicle v1.7 contract (2026-10-28)
+# Chronicle v1.8 contract (2026-10-30)
 
-Authoritative schema: `models/chronicle.baboon` (`chronicle.api`, `1.7.0`), importing retained `models/chronicle-1.6.0.baboon` through `models/chronicle-1.0.0.baboon`. All eight versions' codecs remain generated; Scala generation explicitly enables deprecated encoders. Generated Scala: `generated/scala/chronicle/api/`; TypeScript: `generated/typescript/chronicle/api/`, with runtime at `generated/typescript/BaboonRuntime.ts` and `BaboonSharedRuntime.ts`. Use `Type_JsonCodec.instance.encode/decode(BaboonCodecContext.Default, value)`; do not use plain `JSON.stringify` on generated ADTs. ADTs encode as one-key objects (e.g. `{"Whoami":{}}`); enums encode their named string (`Lexical`, `Pi`, `Read`). UUID strings. Optional fields encode null. Timestamp metadata is ISO8601 string or null. Spans use UTF-8 byte offsets, half-open.
+Authoritative schema: `models/chronicle.baboon` (`chronicle.api`, `1.8.0`), importing retained `models/chronicle-1.7.0.baboon` through `models/chronicle-1.0.0.baboon`. All nine versions' codecs remain generated; Scala generation explicitly enables deprecated encoders. Generated Scala: `generated/scala/chronicle/api/`; TypeScript: `generated/typescript/chronicle/api/`, with runtime at `generated/typescript/BaboonRuntime.ts` and `BaboonSharedRuntime.ts`. Use `Type_JsonCodec.instance.encode/decode(BaboonCodecContext.Default, value)`; do not use plain `JSON.stringify` on generated ADTs. ADTs encode as one-key objects (e.g. `{"Whoami":{}}`); enums encode their named string (`Lexical`, `Pi`, `Read`). UUID strings. Optional fields encode null. Timestamp metadata is ISO8601 string or null. Spans use UTF-8 byte offsets, half-open.
 
 ## HTTP/auth
 - `POST /api/login`: generated `LoginRequest` -> `LoginResponse`; sets `chronicle_session` HttpOnly, SameSite=Strict, Secure (configurable only for local HTTP development).
 - `POST /api/logout`: cookie + exact Origin, expires session.
 - `POST /api/session/refresh`: cookie ONLY + exact Origin, no URL parameters; renews an existing unexpired session for an enabled user, returns generated `UserInfo`, and resets the same HttpOnly/SameSite=Strict/configured-Secure cookie. `X-Chronicle-Session-Ttl-Seconds` reports the configured positive lifetime; `Cache-Control: no-store`. Cookie Max-Age and server expiry use the same lifetime (default 30 days). Renewal cannot recreate an expired, logged-out or revoked session. Extending a still-live session for the same credential and principal preserves captured MCP authority; expiry reductions, credential/principal changes and revival of an already-expired row still advance the authorization epoch. Fresh authentication and natural-expiry checks are unchanged. After a successful renewal, the visible dashboard schedules the next renewal at half the configured lifetime, capped at one day; hidden dashboards do not keep renewing. Renewal errors are visible and require explicit retry or a fresh verified connection, not a password unless authentication was actually rejected.
 - `GET /api/versions`: generated `VersionInfo`, public.
-- `GET /api/ws`: cookie ONLY and exact configured Origin; text JSON `ClientEnvelope` -> `ServerEnvelope`. First operation Hello(versions containing any supported version from `1.0.0` through `1.7.0`); select the newest mutual version for the socket's lifetime. Repeated Hello is a protocol error. VersionInfo reports current `1.7.0`, minimum `1.0.0`, supported `[1.7.0,1.6.0,1.5.0,1.4.0,1.3.0,1.2.0,1.1.0,1.0.0]`. No browser HTTP version header is required. Per-request cookie/session/live-user authorization. Ping/Pong nonce heartbeat; server Ping uses a fresh envelope requestId, answer Pong with SAME requestId and nonce. 20s heartbeat / 10s pong deadline. Client Ping -> Result.Pong. Hello/Ping/Pong are consumed independently of serialized application work; its per-socket queue is bounded32 and saturation returns unavailable. Queued operations reauthenticate at execution. No mutation replay on reconnect.
+- `GET /api/ws`: cookie ONLY and exact configured Origin; text JSON `ClientEnvelope` -> `ServerEnvelope`. First operation Hello(versions containing any supported version from `1.0.0` through `1.8.0`); select the newest mutual version for the socket's lifetime. Repeated Hello is a protocol error. VersionInfo reports current `1.8.0`, minimum `1.0.0`, supported `[1.8.0,1.7.0,1.6.0,1.5.0,1.4.0,1.3.0,1.2.0,1.1.0,1.0.0]`. No browser HTTP version header is required. Per-request cookie/session/live-user authorization. Ping/Pong nonce heartbeat; server Ping uses a fresh envelope requestId, answer Pong with SAME requestId and nonce. 20s heartbeat / 10s pong deadline. Client Ping -> Result.Pong. Hello/Ping/Pong are consumed independently of serialized application work; its per-socket queue is bounded32 and saturation returns unavailable. Queued operations reauthenticate at execution. No mutation replay on reconnect.
 - `POST /api/ingest`: bearer ONLY, Ingest scope; generated `IngestRequest` -> `IngestReceipt`; errors JSON Failure and non-2xx.
 - `POST /mcp`: bearer ONLY, Read scope (Raw additionally for raw, which is deliberately not an MCP tool). Stateless Streamable HTTP; JSON responses. Supported MCP versions 2025-11-25, 2025-06-18, 2025-03-26. GET returns 405; notifications return 202. Origin if present must match configured origin. No URL credentials anywhere.
 
@@ -74,6 +74,8 @@ MCP get_session/get_chunks/get_messages accept optional `revision` and `generati
 
 Semantic search obtains at most1000 authorized, filtered chunk candidates through HNSW. Hybrid unions that ANN leg with at most1000 independently authorized lexical candidates, then applies RRF(k=60). Both modes exactly rerank retained candidates using their original full-precision PostgreSQL vector cosine distances; candidate discovery remains approximate. `total` is the exact number of distinct sessions in that candidate window, NOT the global eligible-session/match count. `countScope=CandidateWindow` and `rankingLimit=1000` (semantic) or2000 (hybrid) expose this boundary. rankingLimit bounds chunk candidates before session deduplication, not the number of hits or an assurance that the window fills. Offset must be smaller than rankingLimit; otherwise `invalid`. Pages still return at most100 sessions and offsets beyond the actual candidate-session total return empty. Search pages are not a frozen search snapshot across requests; live ACL/publication changes may change membership/order. Facets remain exact distinct-session counts over their authorized filtered published corpus, not the ANN window.
 
+Current Hybrid recomputes lexical and full-vector ranks over the candidate union, then selects each session's best fused chunk. A candidate receives lexical RRF credit only when its document satisfies the full `@@ websearch_to_tsquery('english', query)` predicate; a positive cover-density score alone is insufficient. Nonmatching ANN candidates remain eligible for the vector term, but receive zero lexical score before lexical rank assignment. In particular, lexical exclusions are not hard semantic filters. The explicit negotiated1.0 compatibility path below retains its prior scoring semantics.
+
 Live ACLs, owner/reader enabled state, profile identity, published-generation equality and all structured filters apply before EACH candidate LIMIT. pgvector strict iterative scanning continues beyond rejected tuples (ef_search200, max_scan_tuples200000, scan_mem_multiplier4); the resource budget and approximate graph may still underfill selective queries. There is no unbounded application postfilter of a global topK, no unauthorized count contribution and no silent exact fallback. Full vectors remain `vector`; HNSW uses normalized `halfvec(dimensions)` expression indexing, including2048-dimensional models. Literal dimension and partial-index predicates match even under generic prepared plans.
 
 The explicit negotiated1.0 compatibility path retains the old exact full-corpus ranking/count/pagination semantics and encodes only the old SearchResult fields with the1.0 codec. It is not the1.1 ANN path and does not claim ANN performance. MCP always returns the current1.1 result shape, including scope metadata. Ingest/raw/content-view schemas are unchanged.
@@ -99,11 +101,11 @@ Example: `tools/call` with `{"name":"search_tags","arguments":{"query":"postgres
 
 Run `BABOON=<pinned 0.0.198 executable> scripts/generate.sh`. The executable hash is checked. All model signatures are frozen in `models/lock.json`; enforcement protects legacy versions. `scripts/protocol-conversions.py` runs after generation:
 
-1. It registers every generated Scala forward converter in the adjacent 1.0→1.1→1.2→1.3→1.4→1.5→1.6→1.7 chain; custom conversions live in `server/src/main/scala/chronicle/ApiConversions.scala`, `JobInfoConversions.scala` and `ArchiveRowConversions.scala`.
+1. It registers every generated Scala forward converter in the adjacent 1.0→1.1→1.2→1.3→1.4→1.5→1.6→1.7→1.8 chain; custom conversions live in `server/src/main/scala/chronicle/ApiConversions.scala`, `JobInfoConversions.scala`, `ArchiveRowConversions.scala` and `ArchiveOrderConversions.scala`.
 2. Pinned Baboon has no reverse-generation flag. The helper mirrors its structural **response-only** Scala converters, with explicit lossy projections for search count metadata, job progress/failure stage, token wrappers, the 1.5 Archive row field and unsupported optional 1.7 context-format provenance. Output is `server/src/main/scala/chronicle/protocol/DerivedConversions.scala`. No JSON field rewrite/codec cast substitutes for typed evolution.
-3. The TypeScript emitter inlines throws for unsupported nested conversions. The helper wires exactly the three known stubs and three call sites to `protocol/typescript/conversions.ts`; semantic implementations remain outside the wiped generated directories. Unknown output fails generation/compilation rather than silently falling back.
+3. The TypeScript emitter inlines throws for unsupported nested conversions. The helper wires the five known stubs and five call sites to `protocol/typescript/conversions.ts`; semantic implementations remain outside the wiped generated directories. Unknown output fails generation/compilation rather than silently falling back. The pipeline normalizes whitespace-only lines in the emitted facade and mirrored Scala output.
 
-The current dashboard offers only 1.7.0. Retained 1.0–1.6 clients use their generated codecs for the whole socket lifetime. PostgreSQL compatibility tests exercise all eight Hello/Ping/token mint/list/receipt/revoke/status/search workflows, including nonempty job status and exact legacy pagination. Model usage, expression hints and the browser MCP tester remain available on 1.4–1.7; unsupported older operations fail explicitly. MCP tester responses are encoded in the negotiated version and bounded against all four supported tester versions (1.4–1.7). Its call/round ceilings derive from the256-event trace capacity (at least call+result events and a final response):127calls/128rounds, not a token/cost budget. Whole-run900seconds, context/source/result/trace byte limits, fresh authorization and cancellation still apply; multipart items may reach the trace limit sooner. `ProtocolEvolutionTest` and web `evolution.test.ts` cover typed upgrades/downgrades and exact i64 wire values. `scripts/test-codecs.sh` checks retained shared fixtures plus the 1.5 unknown/legacy/contiguous/unpublished Archive rows.
+The current dashboard offers only 1.8.0. Retained 1.0–1.7 clients use their generated codecs for the whole socket lifetime. PostgreSQL compatibility tests exercise all nine Hello/Ping/token mint/list/receipt/revoke/status/search workflows, including nonempty job status and exact legacy pagination. Context-aware passage/span reads remain available on both 1.7 and 1.8. Model usage, expression hints and the browser MCP tester remain available on 1.4–1.8; unsupported older operations fail explicitly. MCP tester responses are encoded in the negotiated version and bounded against all five supported tester versions (1.4–1.8). Its call/round ceilings derive from the256-event trace capacity (at least call+result events and a final response):127calls/128rounds, not a token/cost budget. Whole-run900seconds, context/source/result/trace byte limits, fresh authorization and cancellation still apply; multipart items may reach the trace limit sooner. `ProtocolEvolutionTest` and web `evolution.test.ts` cover typed upgrades/downgrades and exact i64 wire values. `scripts/test-codecs.sh` checks retained shared fixtures plus the 1.5 unknown/legacy/contiguous/unpublished Archive rows.
 
 
 ## Archive and Activity (1.3)
@@ -115,7 +117,8 @@ retained socket version and existing MCP tool remains available unchanged.
 
 Archive is all authorized live raw HEADs, not the published-only Search corpus.
 Empty/metadata-only browsing never requires annotation, embeddings or an available
-semantic profile. Default mode is Hybrid; default UI sort is LastTimestamp Desc.
+semantic profile. Default mode is Hybrid; initial browsing sort is LastTimestamp Desc.
+API1.8 adds the explicit relevance preference described below.
 Text membership is exact normalized HEAD literal matching in Lexical, bounded
 published ANN membership in Semantic, and the UNBOUNDED exact lexical union with
 bounded ANN in Hybrid. annChunkLimitPerOperand=1000 bounds chunks before session
@@ -123,6 +126,58 @@ deduplication, not Archive rows. NOT excludes the retrieved set, not a proof of
 semantic unrelatedness. Mode directives must be outer conjuncts; operators,
 field names and mode values are case-insensitive. Literal text and metadata
 strings use deterministic Unicode lowercase matching, except opaque owner IDs.
+
+### Relevance preference and live ordering (1.8)
+
+`ArchiveQuery` appends required `preferRelevance:bit`; `ArchiveResult` appends
+required `relevanceOrdered:bit`. The server applies relevance only when the
+preference is true and the parsed expression has at least one distinct positive
+text operand under even NOT parity. Otherwise it applies the requested existing
+`sort`/`direction`; this is an explicit preference contract, not a model fallback.
+The result reports which ordering was applied. Empty, metadata-only, mode-only
+and negative-only queries retain column ordering. Negative-only Semantic/Hybrid
+membership still requires the same embeddings as before.
+
+The dashboard initially requests this preference, retaining LastTimestamp Desc
+as its browsing tuple. A deliberate column sort disables the preference and
+remains sticky across text/mode edits, refresh and same-owner reconnect. The
+explicit relevance action reenables it without losing the remembered column
+order; clearing text or submitting metadata restores that tuple. Ordering intent
+is account-scoped tab memory, not persistent browser storage. Consumers must
+validate the returned Boolean: the pinned generated TypeScript primitive casts
+alone do not reject an absent or incorrectly typed field.
+
+Boolean membership, HEAD substring fragments, published ANN candidate sets,
+authorization and `matchedView` provenance are unchanged. For every distinct
+positive text operand, Lexical/Hybrid literal membership contributes `1/61`.
+Semantic/Hybrid contributes `1/(60+rank)`, where SQL `rank()` orders sessions by
+their nearest original full-vector cosine distance among that operand's same
+bounded ANN candidates. Chunks are deduplicated into sessions before ranking;
+equal distances share a rank. Sum contributions as PostgreSQL numeric, then order
+by score descending, last message time descending with nulls last, and UUID
+ascending. Negative operands contribute nothing; rows admitted only through
+metadata/negative branches remain with score zero. Literal HEAD membership stays
+unbounded, including stale or unindexed heads beyond the ANN chunk limit.
+
+Literal evidence is binary, not a graded full-text score. Lexical AND matches
+can all tie and therefore retain recency order; OR can reward matching more
+operands. Semantic noise is ordered, not removed. RRF scores are not confidence
+and have no acceptance threshold. Dashboard HEAD substring/per-operand retrieval
+remains distinct from MCP's published-passage websearch/RRF algorithm.
+
+Column ordering retains version2 opaque cursors. Relevance uses version3 with
+exact numeric score text and nullable timestamp, binding the exact expression,
+reader, requested column tuple and UUID. Mixed ordering versions and malformed
+numeric positions fail before embedding calls. Counts retain their existing
+retrieved-set scope. These are live keysets, not search snapshots: publication,
+ACL, ANN or query-vector changes can shift ranks and cause duplicates or omissions
+between pages; client deduplication does not guarantee complete enumeration.
+
+Typed 1.7→1.8 conversions explicitly supply false for both flags, preserving all
+retained 1.3–1.7 Archive workflows. Reverse response conversion rejects a true
+`relevanceOrdered` rather than silently relabeling its order; false drops the
+new field. All existing column enums, limits, model failures and query language
+remain unchanged. No migration, embedding/profile change or reindex is required.
 
 ArchiveRow.head.view is archive-only HEAD; publishedView and matchedView are
 separate immutable pins. A representative matchedView does not prove that every

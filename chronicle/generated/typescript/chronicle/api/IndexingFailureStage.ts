@@ -36,7 +36,7 @@ export class IndexingFailureStage_JsonCodec {
         return IndexingFailureStage_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return IndexingFailureStage_JsonCodec.BaboonDomainVersion
     }

@@ -62,11 +62,11 @@ export class Operation_Hello implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Hello.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Hello.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Hello.BaboonForwardReadable
     }
@@ -84,7 +84,7 @@ export class Operation_Hello implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Hello_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Hello): unknown {
         if (this !== Operation_Hello_JsonCodec.lazyInstance.value) {
@@ -171,11 +171,11 @@ export class Operation_Ping implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Ping.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Ping.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Ping.BaboonForwardReadable
     }
@@ -193,7 +193,7 @@ export class Operation_Ping implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Ping_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Ping): unknown {
         if (this !== Operation_Ping_JsonCodec.lazyInstance.value) {
@@ -280,11 +280,11 @@ export class Operation_Pong implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Pong.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Pong.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Pong.BaboonForwardReadable
     }
@@ -302,7 +302,7 @@ export class Operation_Pong implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Pong_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Pong): unknown {
         if (this !== Operation_Pong_JsonCodec.lazyInstance.value) {
@@ -386,11 +386,11 @@ export class Operation_Whoami implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Whoami.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Whoami.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Whoami.BaboonForwardReadable
     }
@@ -408,7 +408,7 @@ export class Operation_Whoami implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Whoami_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Whoami): unknown {
         if (this !== Operation_Whoami_JsonCodec.lazyInstance.value) {
@@ -495,11 +495,11 @@ export class Operation_Search implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Search.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Search.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Search.BaboonForwardReadable
     }
@@ -517,7 +517,7 @@ export class Operation_Search implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Search_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Search): unknown {
         if (this !== Operation_Search_JsonCodec.lazyInstance.value) {
@@ -612,11 +612,11 @@ export class Operation_GetSession implements BaboonAdtMemberMeta, BaboonGenerate
     public baboonTypeIdentifier() {
         return Operation_GetSession.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_GetSession.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_GetSession.BaboonForwardReadable
     }
@@ -634,7 +634,7 @@ export class Operation_GetSession implements BaboonAdtMemberMeta, BaboonGenerate
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_GetSession_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_GetSession): unknown {
         if (this !== Operation_GetSession_JsonCodec.lazyInstance.value) {
@@ -747,11 +747,11 @@ export class Operation_GetChunks implements BaboonAdtMemberMeta, BaboonGenerated
     public baboonTypeIdentifier() {
         return Operation_GetChunks.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_GetChunks.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_GetChunks.BaboonForwardReadable
     }
@@ -769,7 +769,7 @@ export class Operation_GetChunks implements BaboonAdtMemberMeta, BaboonGenerated
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_GetChunks_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_GetChunks): unknown {
         if (this !== Operation_GetChunks_JsonCodec.lazyInstance.value) {
@@ -886,11 +886,11 @@ export class Operation_GetMessages implements BaboonAdtMemberMeta, BaboonGenerat
     public baboonTypeIdentifier() {
         return Operation_GetMessages.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_GetMessages.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_GetMessages.BaboonForwardReadable
     }
@@ -908,7 +908,7 @@ export class Operation_GetMessages implements BaboonAdtMemberMeta, BaboonGenerat
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_GetMessages_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_GetMessages): unknown {
         if (this !== Operation_GetMessages_JsonCodec.lazyInstance.value) {
@@ -1009,11 +1009,11 @@ export class Operation_GetRaw implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_GetRaw.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_GetRaw.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_GetRaw.BaboonForwardReadable
     }
@@ -1031,7 +1031,7 @@ export class Operation_GetRaw implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_GetRaw_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_GetRaw): unknown {
         if (this !== Operation_GetRaw_JsonCodec.lazyInstance.value) {
@@ -1128,11 +1128,11 @@ export class Operation_Related implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Related.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Related.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Related.BaboonForwardReadable
     }
@@ -1150,7 +1150,7 @@ export class Operation_Related implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Related_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Related): unknown {
         if (this !== Operation_Related_JsonCodec.lazyInstance.value) {
@@ -1239,11 +1239,11 @@ export class Operation_Facets implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Facets.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Facets.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Facets.BaboonForwardReadable
     }
@@ -1261,7 +1261,7 @@ export class Operation_Facets implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Facets_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Facets): unknown {
         if (this !== Operation_Facets_JsonCodec.lazyInstance.value) {
@@ -1345,11 +1345,11 @@ export class Operation_CollectionStatus implements BaboonAdtMemberMeta, BaboonGe
     public baboonTypeIdentifier() {
         return Operation_CollectionStatus.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_CollectionStatus.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_CollectionStatus.BaboonForwardReadable
     }
@@ -1367,7 +1367,7 @@ export class Operation_CollectionStatus implements BaboonAdtMemberMeta, BaboonGe
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_CollectionStatus_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_CollectionStatus): unknown {
         if (this !== Operation_CollectionStatus_JsonCodec.lazyInstance.value) {
@@ -1462,11 +1462,11 @@ export class Operation_IngestStatus implements BaboonAdtMemberMeta, BaboonGenera
     public baboonTypeIdentifier() {
         return Operation_IngestStatus.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_IngestStatus.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_IngestStatus.BaboonForwardReadable
     }
@@ -1484,7 +1484,7 @@ export class Operation_IngestStatus implements BaboonAdtMemberMeta, BaboonGenera
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_IngestStatus_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_IngestStatus): unknown {
         if (this !== Operation_IngestStatus_JsonCodec.lazyInstance.value) {
@@ -1573,11 +1573,11 @@ export class Operation_RetryJob implements BaboonAdtMemberMeta, BaboonGenerated 
     public baboonTypeIdentifier() {
         return Operation_RetryJob.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_RetryJob.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_RetryJob.BaboonForwardReadable
     }
@@ -1595,7 +1595,7 @@ export class Operation_RetryJob implements BaboonAdtMemberMeta, BaboonGenerated 
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_RetryJob_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_RetryJob): unknown {
         if (this !== Operation_RetryJob_JsonCodec.lazyInstance.value) {
@@ -1679,11 +1679,11 @@ export class Operation_ListTokens implements BaboonAdtMemberMeta, BaboonGenerate
     public baboonTypeIdentifier() {
         return Operation_ListTokens.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_ListTokens.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_ListTokens.BaboonForwardReadable
     }
@@ -1701,7 +1701,7 @@ export class Operation_ListTokens implements BaboonAdtMemberMeta, BaboonGenerate
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_ListTokens_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_ListTokens): unknown {
         if (this !== Operation_ListTokens_JsonCodec.lazyInstance.value) {
@@ -1796,11 +1796,11 @@ export class Operation_MintToken implements BaboonAdtMemberMeta, BaboonGenerated
     public baboonTypeIdentifier() {
         return Operation_MintToken.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_MintToken.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_MintToken.BaboonForwardReadable
     }
@@ -1818,7 +1818,7 @@ export class Operation_MintToken implements BaboonAdtMemberMeta, BaboonGenerated
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_MintToken_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_MintToken): unknown {
         if (this !== Operation_MintToken_JsonCodec.lazyInstance.value) {
@@ -1907,11 +1907,11 @@ export class Operation_RevokeToken implements BaboonAdtMemberMeta, BaboonGenerat
     public baboonTypeIdentifier() {
         return Operation_RevokeToken.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_RevokeToken.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_RevokeToken.BaboonForwardReadable
     }
@@ -1929,7 +1929,7 @@ export class Operation_RevokeToken implements BaboonAdtMemberMeta, BaboonGenerat
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_RevokeToken_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_RevokeToken): unknown {
         if (this !== Operation_RevokeToken_JsonCodec.lazyInstance.value) {
@@ -2013,11 +2013,11 @@ export class Operation_ListGroups implements BaboonAdtMemberMeta, BaboonGenerate
     public baboonTypeIdentifier() {
         return Operation_ListGroups.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_ListGroups.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_ListGroups.BaboonForwardReadable
     }
@@ -2035,7 +2035,7 @@ export class Operation_ListGroups implements BaboonAdtMemberMeta, BaboonGenerate
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_ListGroups_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_ListGroups): unknown {
         if (this !== Operation_ListGroups_JsonCodec.lazyInstance.value) {
@@ -2122,11 +2122,11 @@ export class Operation_CreateGroup implements BaboonAdtMemberMeta, BaboonGenerat
     public baboonTypeIdentifier() {
         return Operation_CreateGroup.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_CreateGroup.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_CreateGroup.BaboonForwardReadable
     }
@@ -2144,7 +2144,7 @@ export class Operation_CreateGroup implements BaboonAdtMemberMeta, BaboonGenerat
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_CreateGroup_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_CreateGroup): unknown {
         if (this !== Operation_CreateGroup_JsonCodec.lazyInstance.value) {
@@ -2239,11 +2239,11 @@ export class Operation_Invite implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Invite.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Invite.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Invite.BaboonForwardReadable
     }
@@ -2261,7 +2261,7 @@ export class Operation_Invite implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Invite_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Invite): unknown {
         if (this !== Operation_Invite_JsonCodec.lazyInstance.value) {
@@ -2358,11 +2358,11 @@ export class Operation_AcceptInvite implements BaboonAdtMemberMeta, BaboonGenera
     public baboonTypeIdentifier() {
         return Operation_AcceptInvite.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_AcceptInvite.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_AcceptInvite.BaboonForwardReadable
     }
@@ -2380,7 +2380,7 @@ export class Operation_AcceptInvite implements BaboonAdtMemberMeta, BaboonGenera
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_AcceptInvite_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_AcceptInvite): unknown {
         if (this !== Operation_AcceptInvite_JsonCodec.lazyInstance.value) {
@@ -2477,11 +2477,11 @@ export class Operation_RemoveMember implements BaboonAdtMemberMeta, BaboonGenera
     public baboonTypeIdentifier() {
         return Operation_RemoveMember.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_RemoveMember.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_RemoveMember.BaboonForwardReadable
     }
@@ -2499,7 +2499,7 @@ export class Operation_RemoveMember implements BaboonAdtMemberMeta, BaboonGenera
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_RemoveMember_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_RemoveMember): unknown {
         if (this !== Operation_RemoveMember_JsonCodec.lazyInstance.value) {
@@ -2588,11 +2588,11 @@ export class Operation_LeaveGroup implements BaboonAdtMemberMeta, BaboonGenerate
     public baboonTypeIdentifier() {
         return Operation_LeaveGroup.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_LeaveGroup.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_LeaveGroup.BaboonForwardReadable
     }
@@ -2610,7 +2610,7 @@ export class Operation_LeaveGroup implements BaboonAdtMemberMeta, BaboonGenerate
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_LeaveGroup_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_LeaveGroup): unknown {
         if (this !== Operation_LeaveGroup_JsonCodec.lazyInstance.value) {
@@ -2697,11 +2697,11 @@ export class Operation_DeleteGroup implements BaboonAdtMemberMeta, BaboonGenerat
     public baboonTypeIdentifier() {
         return Operation_DeleteGroup.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_DeleteGroup.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_DeleteGroup.BaboonForwardReadable
     }
@@ -2719,7 +2719,7 @@ export class Operation_DeleteGroup implements BaboonAdtMemberMeta, BaboonGenerat
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_DeleteGroup_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_DeleteGroup): unknown {
         if (this !== Operation_DeleteGroup_JsonCodec.lazyInstance.value) {
@@ -2806,11 +2806,11 @@ export class Operation_Receipt implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Receipt.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Receipt.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Receipt.BaboonForwardReadable
     }
@@ -2828,7 +2828,7 @@ export class Operation_Receipt implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Receipt_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Receipt): unknown {
         if (this !== Operation_Receipt_JsonCodec.lazyInstance.value) {
@@ -2915,11 +2915,11 @@ export class Operation_Purge implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Purge.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Purge.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Purge.BaboonForwardReadable
     }
@@ -2937,7 +2937,7 @@ export class Operation_Purge implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Purge_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Purge): unknown {
         if (this !== Operation_Purge_JsonCodec.lazyInstance.value) {
@@ -3021,11 +3021,11 @@ export class Operation_Logout implements BaboonAdtMemberMeta, BaboonGenerated {
     public baboonTypeIdentifier() {
         return Operation_Logout.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return Operation_Logout.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.2.0": "identical", "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return Operation_Logout.BaboonForwardReadable
     }
@@ -3043,7 +3043,7 @@ export class Operation_Logout implements BaboonAdtMemberMeta, BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_Logout_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation_Logout): unknown {
         if (this !== Operation_Logout_JsonCodec.lazyInstance.value) {
@@ -3089,7 +3089,7 @@ export class Operation_Logout_JsonCodec {
 }
 
 
-/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.2.0 is deprecated, you should migrate to 1.8.0 */
 export class Operation_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Operation): unknown {
         if (this !== Operation_JsonCodec.lazyInstance.value) {

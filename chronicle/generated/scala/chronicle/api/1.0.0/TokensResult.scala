@@ -3,7 +3,7 @@ import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGenerated, Lazy}
 
 package chronicle.api.v1_0_0 {
-  @deprecated("Version 1.0.0 is deprecated, you should migrate to 1.7.0")
+  @deprecated("Version 1.0.0 is deprecated, you should migrate to 1.8.0")
   final case class TokensResult(
     tokens: List[TokenInfo]
   ) extends BaboonGenerated {
@@ -28,7 +28,7 @@ package chronicle.api.v1_0_0 {
     @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[TokensResult] = TokensResult_JsonCodec.instance
   }
   
-  @deprecated("Version 1.0.0 is deprecated, you should migrate to 1.7.0")
+  @deprecated("Version 1.0.0 is deprecated, you should migrate to 1.8.0")
   object TokensResult_JsonCodec extends BaboonJsonCodec.BaseGenerated[TokensResult, BaboonJsonCodec[TokensResult]] {
     def encode(ctx: BaboonCodecContext, value: TokensResult): Json = {
       if (this ne LazyInstance.value) {

@@ -1,93 +1,13 @@
 model chronicle.api
-version "1.7.0"
+version "1.8.0"
 
-import "1.6.0" { * } without { Operation Result JobInfo PassageFormat }
+import "1.7.0" { * } without { ArchiveQuery ArchiveResult }
 
-enum PassageFormat { Unindexed LegacyAnnotations ContiguousProblems ContextAwareProblems }
-enum IndexingFailureStage { Annotation Embedding Publication }
-data JobInfo { id: uid sessionId: uid revision: i32 state: JobState attempts: i32 error: opt[str] completedWindows: i32 totalWindows: opt[i32] failureStage: opt[IndexingFailureStage] }
-data ReindexStatusResult { requestId: uid targetProfile: str total: i64 complete: i64 superseded: i64 failed: i64 pending: i64 }
-
-root adt Operation {
-  data Hello { versions: lst[str] }
-  data Ping { nonce: str }
-  data Pong { nonce: str }
-  data Whoami {}
-  data Search { query: SearchQuery }
-  data GetSession { sessionId: uid view: opt[ContentView] }
-  data GetChunks { sessionId: uid offset: i32 limit: i32 view: opt[ContentView] }
-  data GetMessages { sessionId: uid offset: i32 limit: i32 view: opt[ContentView] }
-  data SearchSessionMessages { sessionId: uid view: ContentView literal: str cursor: opt[str] limit: i32 }
-  data GetRaw { sessionId: uid revision: opt[i32] }
-  data Related { sessionId: uid limit: i32 }
-  data Facets { filter: SearchFilter }
-  data CollectionStatus {}
-  data IngestStatus { offset: i32 limit: i32 }
-  data RetryJob { jobId: uid }
-  data ListTokens {}
-  data MintToken { name: str scopes: lst[Scope] }
-  data RevokeToken { tokenId: uid }
-  data ListGroups {}
-  data CreateGroup { name: str }
-  data Invite { groupId: uid targetId: str }
-  data AcceptInvite { invitationId: uid confirmSharing: bit }
-  data RemoveMember { groupId: uid userId: str }
-  data LeaveGroup { groupId: uid }
-  data DeleteGroup { groupId: uid }
-  data Receipt { mutationId: uid }
-  data Purge { sessionId: uid }
-  data Logout {}
-  data Archive { query: ArchiveQuery }
-  data Activity { query: ActivityQuery }
-  data ActivityJobs { query: ActivityJobsQuery }
-  data LocateMessage { sessionId: uid view: ContentView messageId: str }
-  data PreviewRetryFailed {}
-  data ApplyRetryFailed { targetProfile: str selectionHash: str confirm: bit }
-  data ExpressionHints { query: ExpressionHintQuery }
-  data ModelUsage {}
-  data GetPassages { sessionId: uid view: ContentView offset: i32 limit: i32 }
-  data GetPassageSpans { sessionId: uid view: ContentView passageId: uid offset: i32 limit: i32 }
-  data PreviewOwnerReindex {}
-  data ApplyOwnerReindex { targetProfile: str selectionHash: str confirm: bit }
-  data GetReindexStatus { requestId: uid }
-  data McpTestTools {}
-  data StartMcpTest { instanceId: uid runId: uid prompt: str }
-  data ReadMcpTest { instanceId: uid runId: uid afterSequence: i64 limit: i32 }
-  data CancelMcpTest { instanceId: uid runId: uid }
+data ArchiveQuery {
+  expression: str sort: ArchiveSort direction: SortDirection
+  cursor: opt[str] limit: i32 preferRelevance: bit
 }
-root adt Result {
-  data Hello { versions: VersionInfo user: UserInfo }
-  data Pong { nonce: str }
-  data Whoami { user: UserInfo }
-  data Search { result: SearchResult }
-  data Session { result: SessionResult }
-  data Chunks { result: ChunksResult }
-  data Messages { result: MessagesResult }
-  data SessionMessageSearch { result: SessionMessageSearchResult }
-  data Raw { result: RawResult }
-  data Related { result: RelatedResult }
-  data Facets { result: FacetsResult }
-  data CollectionStatus { result: CollectorStatusResult }
-  data Status { result: StatusResult }
-  data Tokens { result: TokensResult }
-  data Token { result: TokenResult }
-  data Groups { result: GroupsResult }
-  data Mutation { receipt: MutationReceipt }
-  data Error { failure: Failure }
-  data Ping { nonce: str }
-  data Archive { result: ArchiveResult }
-  data Activity { result: ActivityResult }
-  data ActivityJobs { result: ActivityJobsResult }
-  data LocatedMessage { result: MessageLocation }
-  data RetryFailedPreview { result: RetryFailedPlan }
-  data RetryFailed { result: RetryFailedResult }
-  data ExpressionHints { result: ExpressionHintsResult }
-  data ModelUsage { result: ModelUsageResult }
-  data Passages { result: PassagesResult }
-  data PassageSpans { result: PassageSpansResult }
-  data OwnerReindexPreview { result: OwnerReindexPlan }
-  data OwnerReindexed { result: OwnerReindexResult }
-  data ReindexStatus { result: ReindexStatusResult }
-  data McpTestTools { result: McpTestCatalog }
-  data McpTestRun { result: McpTestSnapshot }
+data ArchiveResult {
+  rows: lst[ArchiveRow] total: i64 nextCursor: opt[str]
+  textScope: ArchiveTextScope annChunkLimitPerOperand: opt[i32] relevanceOrdered: bit
 }

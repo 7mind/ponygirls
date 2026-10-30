@@ -44,13 +44,29 @@ async function appendUntil(page, scroller, selector, total) {
   assert.equal(await page.locator(selector).count(), total);
 }
 async function run(name, body) { if (process.env.CHRONICLE_BROWSER_CASE !== undefined && !name.includes(process.env.CHRONICLE_BROWSER_CASE)) return; await body(); console.log(`PASS browser UX: ${name}`); }
+const archiveQueries = fixture => fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).map(call => call.operation.query);
+const rowIds = page => page.locator('.archive-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-session-id')));
+const headerSorts = page => page.locator('.archive-table thead th').evaluateAll(items => Object.fromEntries(items.map(item => [item.getAttribute('data-column-id'), item.getAttribute('aria-sort')])));
+const columnHeaders = (sort, state) => Object.fromEntries(api.ArchiveSort_values.map(value => [value, value === sort ? state : 'none']));
+const relevanceControl = page => page.getByRole('button', { name: 'Relevance for text', exact: true });
+async function showAllColumns(page) { const controls = page.getByRole('region', { name: 'Conversations table controls', exact: true }); await controls.getByRole('button', { name: 'Columns', exact: true }).click(); await controls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await controls.getByRole('button', { name: 'Columns', exact: true }).click(); }
+async function archiveOrder(page, expected) { const output = page.getByRole('status', { name: 'Archive order', exact: true }); await until(async () => await output.textContent() === expected, `Archive order did not become: ${expected}`); }
+// Waits for the first Archive read sent after act() and for its rendered result.
+async function archiveRead(page, fixture, act, order) {
+  const before = archiveQueries(fixture).length; await act();
+  await until(() => Promise.resolve(archiveQueries(fixture).length > before), 'Archive read not sent');
+  const query = archiveQueries(fixture)[before]; await archiveOrder(page, order); await page.locator('.archive-table[aria-busy="false"]').waitFor();
+  const expected = fixture.archiveResult(query).rows.map(row => row.head.id); await until(async () => JSON.stringify((await rowIds(page)).slice(0, expected.length)) === JSON.stringify(expected), `Rows do not follow ${JSON.stringify(query.toJSON())}`);
+  return query;
+}
+function assertArchiveQuery(query, expected, message) { assert.deepEqual({ expression: query.expression, sort: query.sort, direction: query.direction, cursor: query.cursor, preferRelevance: query.preferRelevance }, { cursor: undefined, ...expected }, message); }
 try {
   // Specified: Behavioral-Active Blackbox / Good Communication, controlled synthetic WS corpus.
   await run('initial unindexed browse, 3+ pages and every global server sort', async () => {
     const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 180; });
     const first = fixture.calls.find(call => call.operation instanceof api.Operation_Archive).operation.query;
     assert.equal(first.expression, ''); assert.equal(first.sort, api.ArchiveSort.LastTimestamp); assert.equal(first.direction, api.SortDirection.Desc);
-    assert.ok(fixture.calls[0].operation instanceof api.Operation_Hello); assert.deepEqual(fixture.calls[0].operation.versions, ['1.7.0']);
+    assert.ok(fixture.calls[0].operation instanceof api.Operation_Hello); assert.deepEqual(fixture.calls[0].operation.versions, ['1.8.0']);
     assert.equal(await page.getByRole('heading', { level: 1 }).count(), 0); assert.equal(await page.getByRole('radio').count(), 0);
     await appendUntil(page, '.archive-table-scroll', '.archive-row', 180);
     assert.equal(new Set(await page.locator('.archive-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-session-id')))).size, 180);
@@ -58,7 +74,7 @@ try {
     assert.ok(await page.getByText('Unscheduled', { exact: true }).count() > 0, 'raw-only HEADs remain browsable before indexing');
     const tableControls = page.getByRole('region', { name: 'Conversations table controls', exact: true }); await tableControls.getByRole('button', { name: 'Columns', exact: true }).click(); await tableControls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await tableControls.getByRole('button', { name: 'Columns', exact: true }).click();
     await search(page, 'original source'); await until(() => Promise.resolve(fixture.calls.some(call => call.operation instanceof api.Operation_Archive && call.operation.query.expression === 'original source')), 'Text query not sent');
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).at(-1).operation.query.sort, api.ArchiveSort.LastTimestamp, 'text queries do not silently switch to relevance');
+    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).at(-1).operation.query.preferRelevance, true, 'text queries request automatic relevance by default');
     const sorts = [['Last activity', api.ArchiveSort.LastTimestamp], ['Conversation', api.ArchiveSort.Title], ['User', api.ArchiveSort.Owner], ['Project', api.ArchiveSort.Project], ['Branch', api.ArchiveSort.Branch], ['Producer', api.ArchiveSort.Producer], ['Format', api.ArchiveSort.Format], ['Model', api.ArchiveSort.Model], ['Index status', api.ArchiveSort.Status], ['Messages', api.ArchiveSort.MessageCount], ['Tags', api.ArchiveSort.Tags]];
     for (const [label, sort] of sorts) {
       const before = fixture.calls.length; await page.getByRole('button', { name: `Sort by ${label}`, exact: true }).click();
@@ -291,6 +307,89 @@ try {
     await page.locator('.connection-widget[data-state="unauthorized"]').waitFor();
     assert.equal(await page.getByRole('dialog').count(), 0, 'authorization invalidation removes the source modal and known HEAD');
     assert.equal(await page.locator('.provenance').count(), 0);
+    await context.close();
+  });
+  await run('text queries default to server relevance while order status and headers follow the result flag', async () => {
+    const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 180; }); await showAllColumns(page);
+    const browse = { expression: '', sort: api.ArchiveSort.LastTimestamp, direction: api.SortDirection.Desc, preferRelevance: true };
+    assertArchiveQuery(archiveQueries(fixture)[0], browse, 'a new owner view prefers relevance from the start');
+    await archiveOrder(page, 'Ordered by Last activity · descending'); assert.equal(await relevanceControl(page).getAttribute('aria-pressed'), 'true');
+    assert.deepEqual(await headerSorts(page), columnHeaders(api.ArchiveSort.LastTimestamp, 'descending'), 'an empty browse is column-ordered despite the relevance preference');
+    const text = await archiveRead(page, fixture, () => search(page, 'original source'), 'Ordered by relevance');
+    assertArchiveQuery(text, { ...browse, expression: 'original source' }, 'the remembered tuple and preference travel unchanged with the submitted text');
+    assert.deepEqual(await headerSorts(page), columnHeaders(undefined, 'none'), 'relevance-ordered results claim no column order on any of the 11 headers');
+    assert.equal((await rowIds(page))[0], fixture.archiveAt(9).head.id, 'a higher-scored older conversation precedes newer rows');
+    await appendUntil(page, '.archive-table-scroll', '.archive-row', 180);
+    assert.deepEqual(await rowIds(page), fixture.archiveResult(text.with({ limit: 180 })).rows.map(row => row.head.id), 'relevance pages append in one global server order without duplicates');
+    const pages = archiveQueries(fixture).filter(query => query.expression === 'original source');
+    assert.ok(pages.filter(query => query.cursor !== undefined).length >= 3); assert.ok(pages.every(query => query.preferRelevance === true && query.sort === api.ArchiveSort.LastTimestamp && query.direction === api.SortDirection.Desc), 'every cursor read keeps the first-page relevance binding');
+    for (const expression of ['project:"chronicle"', 'NOT original', 'mode:lexical']) {
+      const query = await archiveRead(page, fixture, () => search(page, expression), 'Ordered by Last activity · descending');
+      assertArchiveQuery(query, { ...browse, expression }, `${expression} still sends the unchanged preference`);
+      assert.deepEqual(await headerSorts(page), columnHeaders(api.ArchiveSort.LastTimestamp, 'descending'), `${expression} without positive text shows the remembered column tuple`);
+      assert.equal(await relevanceControl(page).getAttribute('aria-pressed'), 'true', 'the control reports the preference, not effective relevance');
+    }
+    const cleared = await archiveRead(page, fixture, () => page.getByRole('button', { name: 'Clear Search conversations', exact: true }).click(), 'Ordered by Last activity · descending');
+    assertArchiveQuery(cleared, browse);
+    await context.close();
+  });
+  await run('manual Last activity and Conversation order is sticky across text, mode, refresh and paging until relevance is requested', async () => {
+    const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 180; }); await showAllColumns(page);
+    await archiveRead(page, fixture, () => search(page, 'original source'), 'Ordered by relevance');
+    const sortBy = label => () => page.getByRole('button', { name: `Sort by ${label}`, exact: true }).click();
+    for (const [label, sort, direction, state] of [['Last activity', api.ArchiveSort.LastTimestamp, api.SortDirection.Desc, 'descending'], ['Last activity', api.ArchiveSort.LastTimestamp, api.SortDirection.Asc, 'ascending'], ['Conversation', api.ArchiveSort.Title, api.SortDirection.Asc, 'ascending'], ['Conversation', api.ArchiveSort.Title, api.SortDirection.Desc, 'descending']]) {
+      const query = await archiveRead(page, fixture, sortBy(label), `Ordered by ${label} · ${state}`);
+      assertArchiveQuery(query, { expression: 'original source', sort, direction, preferRelevance: false }, `${label} ${state} is an atomic manual choice`);
+      assert.deepEqual(await headerSorts(page), columnHeaders(sort, state)); assert.equal(await relevanceControl(page).getAttribute('aria-pressed'), 'false');
+    }
+    const manual = { sort: api.ArchiveSort.Title, direction: api.SortDirection.Desc, preferRelevance: false };
+    for (const expression of ['migration thread', 'mode:lexical migration']) {
+      const query = await archiveRead(page, fixture, () => search(page, expression), 'Ordered by Conversation · descending');
+      assertArchiveQuery(query, { ...manual, expression }, `${expression} keeps the manual column order`);
+    }
+    const refreshed = await archiveRead(page, fixture, () => page.getByRole('button', { name: 'Refresh archive', exact: true }).click(), 'Ordered by Conversation · descending');
+    assertArchiveQuery(refreshed, { ...manual, expression: 'mode:lexical migration' }, 'refresh keeps the manual column order');
+    await appendUntil(page, '.archive-table-scroll', '.archive-row', 180);
+    assert.ok(archiveQueries(fixture).filter(query => query.cursor !== undefined && query.expression === 'mode:lexical migration').every(query => query.preferRelevance === false && query.sort === api.ArchiveSort.Title && query.direction === api.SortDirection.Desc));
+    const automatic = await archiveRead(page, fixture, () => relevanceControl(page).click(), 'Ordered by relevance');
+    assertArchiveQuery(automatic, { ...manual, expression: 'mode:lexical migration', preferRelevance: true }, 'requesting relevance keeps the stored column tuple');
+    assert.deepEqual(await headerSorts(page), columnHeaders(undefined, 'none')); assert.equal(await relevanceControl(page).getAttribute('aria-pressed'), 'true');
+    const before = archiveQueries(fixture).length; await relevanceControl(page).click(); await page.waitForTimeout(150);
+    assert.equal(archiveQueries(fixture).length, before, 'pressing the active relevance preference again sends no read');
+    const metadata = await archiveRead(page, fixture, () => search(page, 'project:"chronicle"'), 'Ordered by Conversation · descending');
+    assertArchiveQuery(metadata, { ...manual, expression: 'project:"chronicle"', preferRelevance: true });
+    assert.deepEqual(await headerSorts(page), columnHeaders(api.ArchiveSort.Title, 'descending'), 'metadata-only results reveal the remembered manual tuple');
+    await context.close();
+  });
+  for (const transition of ['logout', 'expiry', 'owner']) await run(`manual order survives tab remount and same-owner reconnect; ${transition} restores relevance`, async () => {
+    const { context, page, fixture } = await scene();
+    await archiveRead(page, fixture, () => search(page, 'original source'), 'Ordered by relevance');
+    const manual = { expression: 'original source', sort: api.ArchiveSort.Title, direction: api.SortDirection.Asc, preferRelevance: false };
+    assertArchiveQuery(await archiveRead(page, fixture, () => page.getByRole('button', { name: 'Sort by Conversation', exact: true }).click(), 'Ordered by Conversation · ascending'), manual);
+    const remount = await archiveRead(page, fixture, async () => { await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor(); await page.getByRole('button', { name: 'archive', exact: true }).click(); }, 'Ordered by Conversation · ascending');
+    assertArchiveQuery(remount, manual, 'tab remount keeps the parent-owned manual order');
+    assertArchiveQuery(await archiveRead(page, fixture, () => fixture.restart(), 'Ordered by Conversation · ascending'), manual, 'same-owner reconnect keeps the manual order');
+    assert.equal(await relevanceControl(page).getAttribute('aria-pressed'), 'false');
+    const nextUser = transition === 'owner' ? 'bob' : 'alice'; let boundary = fixture.requests.length;
+    if (transition === 'owner') { fixture.user = new api.UserInfo('bob', 'bob', [api.Scope.Read, api.Scope.Raw]); fixture.restart(); }
+    else {
+      if (transition === 'logout') await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+      else { fixture.mode = 'unauthorized'; await page.getByRole('button', { name: 'Refresh archive', exact: true }).click(); }
+      await page.getByRole('button', { name: 'Sign in →', exact: true }).waitFor(); boundary = fixture.requests.length;
+      await page.getByLabel('Login', { exact: true }).fill(nextUser); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in →', exact: true }).click();
+    }
+    await page.locator('.identity').getByText(nextUser, { exact: true }).waitFor(); await page.locator('.archive-row').first().waitFor(); await archiveOrder(page, 'Ordered by Last activity · descending');
+    const reads = fixture.requests.slice(boundary).filter(request => request.userId === nextUser && request.envelope.operation instanceof api.Operation_Archive).map(request => request.envelope.operation.query);
+    assert.ok(reads.length > 0); for (const query of reads) assertArchiveQuery(query, { expression: '', sort: api.ArchiveSort.LastTimestamp, direction: api.SortDirection.Desc, preferRelevance: true }, `${transition} resets every Archive intent before the next read`);
+    assert.equal(await relevanceControl(page).getAttribute('aria-pressed'), 'true');
+    await context.close();
+  });
+  await run('an Archive frame without a boolean relevance flag stops the protocol and clears rows instead of implying column order', async () => {
+    const { context, page, fixture } = await scene();
+    fixture.archiveRelevanceMissing = true; await page.getByRole('button', { name: 'Refresh archive', exact: true }).click();
+    await page.locator('.connection-widget[data-state="protocol-error"]').waitFor();
+    assert.equal(await page.locator('.archive-row').count(), 0, 'malformed Archive metadata cannot keep or render rows');
+    assert.equal(await page.getByRole('status', { name: 'Archive order', exact: true }).filter({ hasText: 'Ordered by' }).count(), 0);
     await context.close();
   });
   await runActivityTableCases({ browser, origin: `http://127.0.0.1:${address.port}`, run, errors });

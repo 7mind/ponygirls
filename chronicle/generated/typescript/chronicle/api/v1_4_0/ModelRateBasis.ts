@@ -16,7 +16,7 @@ export function ModelRateBasis_parse(s: string): ModelRateBasis {
     return found;
 }
 
-/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.8.0 */
 export class ModelRateBasis_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ModelRateBasis): unknown {
         if (this !== ModelRateBasis_JsonCodec.lazyInstance.value) {

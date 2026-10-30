@@ -34,7 +34,7 @@ export class TokenSource_JsonCodec {
         return TokenSource_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return TokenSource_JsonCodec.BaboonDomainVersion
     }

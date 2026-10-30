@@ -12,8 +12,8 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.Search(q) if version=="1.0.0" =>
         i.requireScope(Scope.Read)
         query(ReadAccess.current(i),q,true).map(Result.Search.apply)
-      case Operation.GetPassages(id,view,_,_) if version!="1.7.0" => retainedPassageRead(i,e,id,view)
-      case Operation.GetPassageSpans(id,view,_,_,_) if version!="1.7.0" => retainedPassageRead(i,e,id,view)
+      case Operation.GetPassages(id,view,_,_) if version!="1.7.0" && version!="1.8.0" => retainedPassageRead(i,e,id,view)
+      case Operation.GetPassageSpans(id,view,_,_,_) if version!="1.7.0" && version!="1.8.0" => retainedPassageRead(i,e,id,view)
       case _ => operation(i,e)
     }
   }
@@ -33,7 +33,7 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.Archive(q) =>
         i.requireScope(Scope.Read)
         val parsed=ArchiveExpression.parse(q.expression)
-        ArchivePaging.page(q.limit); ArchivePaging.decode(q,uid)
+        ArchivePaging.page(q.limit); ArchivePaging.decode(q,uid,ArchiveExpression.relevanceOrdered(q,parsed))
         val vectors=if(parsed.mode==SearchMode.Lexical || parsed.textOperands.isEmpty) IO.pure(List.empty[ArchiveVector])
           else parsed.textOperands.traverse(text => embedder.query(uid,text).map(values => ArchiveVector(text,values))).handleErrorWith(_ => IO.raiseError(DomainError("unavailable","query embedding unavailable")))
         vectors.flatMap(values => IO.blocking(Result.Archive(archiveIndex.browse(uid,q,parsed,values))))

@@ -119,7 +119,7 @@ export class ArchiveRow implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.8.0 */
 export class ArchiveRow_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ArchiveRow): unknown {
         if (this !== ArchiveRow_JsonCodec.lazyInstance.value) {

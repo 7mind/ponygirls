@@ -301,7 +301,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
         val source=Fixtures.snapshot(); val metadata=field.update(source.metadata,"x"*50000+n)
         c.archive.ingest("a",source.copy(metadata=metadata))
       }
-      val query=ArchiveQuery("mode:lexical",field.sort,SortDirection.Asc,None,1)
+      val query=ArchiveQuery("mode:lexical",field.sort,SortDirection.Asc,None,1,false)
       val first=call(c,c.owner,Operation.Archive(query)).asInstanceOf[Result.Archive].result
       val next=query.copy(cursor=first.nextCursor)
       assert(next.cursor.nonEmpty)
@@ -343,7 +343,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     val jobs=activity.jobs(owner,jobQuery)
     val collectorQuery=ActivityQuery("",ActivityCollectorSort.CollectorId,SortDirection.Asc,None,1)
     val collectors=activity.summary(identity.user,collectorQuery)
-    val archiveQuery=ArchiveQuery("mode:lexical",ArchiveSort.Owner,SortDirection.Asc,None,1)
+    val archiveQuery=ArchiveQuery("mode:lexical",ArchiveSort.Owner,SortDirection.Asc,None,1,false)
     val index=new PostgresArchiveIndex(db,archive,configured)
     val result=index.browse(owner,archiveQuery,ArchiveExpression.parse(archiveQuery.expression),Nil)
     val frames=List(

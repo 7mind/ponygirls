@@ -1,0 +1,11 @@
+import {GroupInfo as GroupInfo__1_6_0} from '../v1_6_0/GroupInfo.js'
+import {GroupInfo as v1_7_0_GroupInfo} from './GroupInfo.js'
+
+export function convert__group_info__from__1_6_0(from: GroupInfo__1_6_0): v1_7_0_GroupInfo {
+    return new v1_7_0_GroupInfo (
+        from.id,
+        from.name,
+        from.ownerId,
+        from.members
+    )
+}

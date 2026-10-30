@@ -3,7 +3,7 @@ import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGenerated, Lazy}
 
 package chronicle.api.v1_6_0 {
-  @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+  @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
   final case class ArchiveResult(
     rows: List[ArchiveRow],
     total: Long,
@@ -32,7 +32,7 @@ package chronicle.api.v1_6_0 {
     @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[ArchiveResult] = ArchiveResult_JsonCodec.instance
   }
   
-  @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.7.0")
+  @deprecated("Version 1.6.0 is deprecated, you should migrate to 1.8.0")
   object ArchiveResult_JsonCodec extends BaboonJsonCodec.BaseGenerated[ArchiveResult, BaboonJsonCodec[ArchiveResult]] {
     def encode(ctx: BaboonCodecContext, value: ArchiveResult): Json = {
       if (this ne LazyInstance.value) {

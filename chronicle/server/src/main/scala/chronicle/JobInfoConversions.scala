@@ -1,6 +1,6 @@
 package chronicle.protocol
 
-import chronicle.api as api
+import chronicle.api.v1_7_0 as api
 import chronicle.api.v1_6_0 as v16
 import baboon.runtime.shared.{AbstractBaboonConversions,AbstractConversion}
 

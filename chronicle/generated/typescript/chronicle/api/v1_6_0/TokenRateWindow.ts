@@ -74,11 +74,11 @@ export class TokenRateWindow implements BaboonGenerated {
     public baboonTypeIdentifier() {
         return TokenRateWindow.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return TokenRateWindow.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return TokenRateWindow.BaboonForwardReadable
     }
@@ -91,7 +91,7 @@ export class TokenRateWindow implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.8.0 */
 export class TokenRateWindow_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: TokenRateWindow): unknown {
         if (this !== TokenRateWindow_JsonCodec.lazyInstance.value) {

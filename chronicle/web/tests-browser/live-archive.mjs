@@ -166,5 +166,27 @@ try {
     await page.clock.runFor(500); assert.equal(archiveCalls(fixture).filter(call => call.operation.query.expression === expression).length, 0, 'A prior-session draft was automatically replayed.');
     await context.close();
   });
+  await run('held relevance and column changes coalesce into the latest read and reject the old relevance cursor page', async () => {
+    const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 180; });
+    const input = page.getByRole('combobox', { name: 'Search conversations', exact: true }), order = page.getByRole('status', { name: 'Archive order', exact: true });
+    await input.fill('mode:lexical migration'); await input.press('Enter');
+    await until(async () => await order.textContent() === 'Ordered by relevance', 'Positive text did not use the default relevance preference.');
+    fixture.holdArchiveCursor = true; const before = archiveCalls(fixture).length;
+    await page.locator('.archive-table-scroll').evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await until(() => fixture.pendingArchive.length === 1, 'Expected a held relevance cursor read.');
+    await page.getByRole('button', { name: 'Sort by Conversation', exact: true }).click();
+    await page.getByRole('button', { name: 'Relevance for text', exact: true }).click();
+    await page.getByRole('button', { name: 'Refresh archive', exact: true }).click(); await page.waitForTimeout(100);
+    assert.equal(archiveCalls(fixture).length, before + 1, 'Sort, relevance or refresh sent an interim read while the cursor read held the permit.');
+    fixture.releaseArchive();
+    await until(() => archiveCalls(fixture).length === before + 2, 'The latest coalesced read did not dispatch.');
+    await until(async () => await order.textContent() === 'Ordered by relevance', 'The latest read did not render relevance order.');
+    const [held, latest] = archiveCalls(fixture).slice(before).map(call => call.operation.query);
+    assert.notEqual(held.cursor, undefined); assert.equal(held.preferRelevance, true); assert.equal(held.sort, api.ArchiveSort.LastTimestamp); assert.equal(held.direction, api.SortDirection.Desc);
+    assert.equal(latest.cursor, undefined); assert.equal(latest.preferRelevance, true); assert.equal(latest.sort, api.ArchiveSort.Title); assert.equal(latest.direction, api.SortDirection.Asc); assert.equal(latest.expression, 'mode:lexical migration');
+    await page.waitForTimeout(100);
+    assert.deepEqual(await page.locator('.archive-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-session-id'))), fixture.archiveResult(latest).rows.map(row => row.head.id), 'the superseded cursor page was not appended to the latest first page');
+    await context.close();
+  });
   assert.deepEqual(errors, []);
 } finally { await browser.close(); await server.close(); }

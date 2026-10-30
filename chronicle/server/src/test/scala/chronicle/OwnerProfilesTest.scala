@@ -181,13 +181,13 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     List(SearchMode.Semantic,SearchMode.Hybrid).foreach { mode =>
       assertEquals(search.search("a",query.copy(mode=mode),Some(List(1.0,0.0,0.0))).total,2)
       assertEquals(search.searchLegacy("a",query.copy(mode=mode),Some(List(1.0,0.0,0.0))).total,2)
-      val q=ArchiveQuery(s"mode:${mode.toString.toLowerCase(java.util.Locale.ROOT)} archive",ArchiveSort.Title,SortDirection.Asc,None,20)
+      val q=ArchiveQuery(s"mode:${mode.toString.toLowerCase(java.util.Locale.ROOT)} archive",ArchiveSort.Title,SortDirection.Asc,None,20,false)
       val parsed=ArchiveExpression.parse(q.expression)
       assertEquals(new PostgresArchiveIndex(db,a,c).browse("a",q,parsed,List(ArchiveVector("archive",List(1.0,0.0,0.0)))).total,2L)
     }
     val activity=new PostgresActivity(db,Clock.systemUTC()).jobs("a",ActivityJobsQuery(None,ActivityJobScope.Current,"",ActivityJobSort.JobId,SortDirection.Asc,None,20))
     assertEquals(activity.jobs.map(_.profile).distinct,List(catalog.preferred.profile)); assertEquals(activity.jobs.size,1)
-    val archiveQuery=ArchiveQuery("mode:lexical",ArchiveSort.Title,SortDirection.Asc,None,20)
+    val archiveQuery=ArchiveQuery("mode:lexical",ArchiveSort.Title,SortDirection.Asc,None,20,false)
     assertEquals(new PostgresArchiveIndex(db,a,c).browse("a",archiveQuery,ArchiveExpression.parse(archiveQuery.expression),Nil).rows.find(_.head.id==first.sessionId).get.headJob.get.state,JobState.Complete)
   }}
   test("Blackbox GoodCommunication: unknown same-dimension and incompatible published profiles are explicit availability failures") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>

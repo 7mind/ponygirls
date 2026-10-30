@@ -3,7 +3,7 @@ import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGenerated, Lazy}
 
 package chronicle.api.v1_5_0 {
-  @deprecated("Version 1.5.0 is deprecated, you should migrate to 1.7.0")
+  @deprecated("Version 1.5.0 is deprecated, you should migrate to 1.8.0")
   final case class OwnerReindexPlan(
     currentTargetProfile: String,
     targetProfile: String,
@@ -24,16 +24,16 @@ package chronicle.api.v1_5_0 {
     def baboonDomainVersion: String = "1.5.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#OwnerReindexPlan"
-    private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0")
+    private lazy val _baboonSameInVersions: List[String] = List("1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
     def baboonSameInVersions: List[String] = _baboonSameInVersions
-    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.5.0" -> "identical", "1.6.0" -> "identical", "1.7.0" -> "identical")
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.5.0" -> "identical", "1.6.0" -> "identical", "1.7.0" -> "identical", "1.8.0" -> "identical")
     def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
     private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.4.0", "prefix-compact" -> "1.4.0", "prefix-any-mode" -> "1.4.0", "identical" -> "1.4.0")
     def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
     @scala.annotation.nowarn("cat=deprecation") def codecJson: BaboonJsonCodec[OwnerReindexPlan] = OwnerReindexPlan_JsonCodec.instance
   }
   
-  @deprecated("Version 1.5.0 is deprecated, you should migrate to 1.7.0")
+  @deprecated("Version 1.5.0 is deprecated, you should migrate to 1.8.0")
   object OwnerReindexPlan_JsonCodec extends BaboonJsonCodec.BaseGenerated[OwnerReindexPlan, BaboonJsonCodec[OwnerReindexPlan]] {
     def encode(ctx: BaboonCodecContext, value: OwnerReindexPlan): Json = {
       if (this ne LazyInstance.value) {

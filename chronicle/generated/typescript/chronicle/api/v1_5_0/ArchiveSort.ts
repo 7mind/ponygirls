@@ -36,7 +36,7 @@ export function ArchiveSort_parse(s: string): ArchiveSort {
     return found;
 }
 
-/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.8.0 */
 export class ArchiveSort_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ArchiveSort): unknown {
         if (this !== ArchiveSort_JsonCodec.lazyInstance.value) {

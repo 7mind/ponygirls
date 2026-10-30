@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeList, decodeOption, decodeString}
+import io.circe.Decoder.{decodeBoolean, decodeList, decodeOption, decodeString}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 
@@ -8,7 +8,8 @@ package chronicle.api {
     total: Long,
     nextCursor: Option[String],
     textScope: ArchiveTextScope,
-    annChunkLimitPerOperand: Option[Int]
+    annChunkLimitPerOperand: Option[Int],
+    relevanceOrdered: Boolean
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ArchiveResult.baboonDomainVersion
     override def baboonDomainIdentifier: String = ArchiveResult.baboonDomainIdentifier
@@ -19,14 +20,14 @@ package chronicle.api {
   }
   
   object ArchiveResult {
-    def baboonDomainVersion: String = "1.7.0"
+    def baboonDomainVersion: String = "1.8.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#ArchiveResult"
-    private lazy val _baboonSameInVersions: List[String] = List("1.7.0")
+    private lazy val _baboonSameInVersions: List[String] = List("1.8.0")
     def baboonSameInVersions: List[String] = _baboonSameInVersions
-    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.7.0" -> "identical")
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.8.0" -> "identical")
     def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.7.0", "prefix-compact" -> "1.7.0", "prefix-any-mode" -> "1.7.0", "identical" -> "1.7.0")
+    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.7.0", "prefix-compact" -> "1.7.0", "prefix-any-mode" -> "1.7.0", "identical" -> "1.8.0")
     def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
     def codecJson: BaboonJsonCodec[ArchiveResult] = ArchiveResult_JsonCodec.instance
   }
@@ -42,7 +43,8 @@ package chronicle.api {
         "total" -> Json.fromString(value.total.toString),
         "nextCursor" -> value.nextCursor.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "textScope" -> ArchiveTextScope_JsonCodec.instance.encode(ctx, value.textScope),
-        "annChunkLimitPerOperand" -> value.annChunkLimitPerOperand.map(v => Json.fromInt(v)).getOrElse(Json.Null)
+        "annChunkLimitPerOperand" -> value.annChunkLimitPerOperand.map(v => Json.fromInt(v)).getOrElse(Json.Null),
+        "relevanceOrdered" -> Json.fromBoolean(value.relevanceOrdered)
       )
     }
     
@@ -58,7 +60,8 @@ package chronicle.api {
             nextCursor <- getField(jsonObject, "nextCursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
             textScope <- getField(jsonObject, "textScope").flatMap(v => ArchiveTextScope_JsonCodec.circeDecoder(v.hcursor))
             annChunkLimitPerOperand <- getField(jsonObject, "annChunkLimitPerOperand").flatMap(v => decodeOption(BaboonJsonCodec.decodeInt)(v.hcursor))
-          } yield ArchiveResult(rows,total,nextCursor,textScope,annChunkLimitPerOperand)
+            relevanceOrdered <- getField(jsonObject, "relevanceOrdered").flatMap(v => decodeBoolean(v.hcursor))
+          } yield ArchiveResult(rows,total,nextCursor,textScope,annChunkLimitPerOperand,relevanceOrdered)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ArchiveResult: object expected"))
       }
     }

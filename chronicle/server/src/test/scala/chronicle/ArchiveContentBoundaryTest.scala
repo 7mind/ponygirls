@@ -23,7 +23,7 @@ class ArchiveContentBoundaryTest extends munit.FunSuite {
     val request=original.copy(messages=List(Message("u",None,"user",text,None,0)),files=List(RawFile("sigma.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
     archive.ingest("a",request)
     def count(value: String): Long = {
-      val q=ArchiveQuery("mode:lexical "+value,ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)
+      val q=ArchiveQuery("mode:lexical "+value,ArchiveSort.LastTimestamp,SortDirection.Desc,None,100,false)
       index.browse("a",q,ArchiveExpression.parse(q.expression),Nil).total
     }
     val (goldSigma,goldFinal)=db.transaction(c => Sql.one(c,"SELECT ? COLLATE pg_unicode_fast ILIKE '%σ%',? COLLATE pg_unicode_fast ILIKE '%ς%'",text,text)(r => (r.getBoolean(1),r.getBoolean(2))).get)

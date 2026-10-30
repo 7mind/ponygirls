@@ -138,8 +138,14 @@ hybridScore(chunk) = 1 / (60 + vectorRankInUnion)
                   + (lexicalScore > 0 ? 1 / (60 + lexicalRankInUnion) : 0)
 ```
 
+`lexicalScore` is zero unless the document satisfies the complete
+`@@ websearch_to_tsquery('english', query)` predicate; otherwise it is the
+cover-density score. Nonmatches therefore neither receive lexical credit nor
+consume ranks ahead of positive lexical matches. A positive cover-density score
+alone is not evidence that the whole query matched.
+
 Every union candidate receives the vector term, including lexical-only candidates.
-Lexical terms can also apply to ANN candidates. This differs from retaining each
+Lexical terms can also apply to matching ANN candidates. This differs from retaining each
 leg's original membership ranks. The best chunk determines each session's score.
 There is no learned or cross-encoder reranker. A positive RRF score is not answer
 confidence; unrelated authorized neighbors can score positively.
@@ -171,9 +177,15 @@ chunk UUID for the session winner, then session UUID for session order. Its
 exact value; `score` is a display-only float, never its ranking key. This rational
 policy does not replace or reinterpret actual PostgreSQL numeric ordering.
 
-Legacy→live projection equality is checked for every oracle chunk; live→legacy
-identity/score equality is checked for every retrieved production candidate, not
-for unselected extra live rows. Actual statement execution alone does not prove
+The exhaustive cosine oracle retains the legacy Semantic statement, but its
+lexical observations and ranks use the current full-match credit policy. New
+captures identify this as `lexicalCreditPolicy`; the retained production1.0 path
+and historical captures are not rewritten.
+
+Legacy→live projection equality is checked for every oracle chunk. Retrieved
+production candidates must match oracle identities, cosine distances and
+policy-adjusted lexical observations, not raw legacy cover-density ranks. This
+check does not cover unselected extra live rows. Actual statement execution alone does not prove
 HNSW index use. Pure tests and compilation do not establish SQL runtime validity,
 planner behavior, real embedding provenance, relevance, correct abstention or
 answer synthesis. Those require the separately owned real-database evaluation.

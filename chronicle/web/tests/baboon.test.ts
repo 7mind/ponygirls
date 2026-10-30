@@ -18,8 +18,8 @@ const frame = (id: string, result: ConstructorParameters<typeof ServerEnvelope>[
 test('BG: actual generated Hello negotiation, per-request client nonce matching, server Ping correlation', () => {
   const adapter = baboonProtocol(() => '00000000-0000-4000-8000-000000000001');
   const hello = ClientEnvelope_JsonCodec.instance.decode(ctx, JSON.parse(adapter.hello()));
-  assert.ok(hello.operation instanceof Operation_Hello); assert.deepEqual(hello.operation.versions, ['1.7.0']);
-  assert.deepEqual(adapter.decode(frame(hello.requestId, new Result_Hello(new VersionInfo('1.7.0', '1.0.0', ['1.7.0', '1.6.0', '1.5.0', '1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']), new UserInfo('a', 'alice', [Scope.Read])))), { kind: 'negotiated' });
+  assert.ok(hello.operation instanceof Operation_Hello); assert.deepEqual(hello.operation.versions, ['1.8.0']);
+  assert.deepEqual(adapter.decode(frame(hello.requestId, new Result_Hello(new VersionInfo('1.8.0', '1.0.0', ['1.8.0', '1.7.0', '1.6.0', '1.5.0', '1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']), new UserInfo('a', 'alice', [Scope.Read])))), { kind: 'negotiated' });
   const ping = ClientEnvelope_JsonCodec.instance.decode(ctx, JSON.parse(adapter.ping('nonce', 123)));
   assert.deepEqual(adapter.decode(frame(ping.requestId, new Result_Pong('nonce'))), { kind: 'pong', nonce: 'nonce', at: 123 });
   const serverId = '00000000-0000-4000-8000-000000000003';
@@ -45,6 +45,11 @@ test('BG: a 1.6 dashboard requires a server that supports its exact contract', (
   const hello = ClientEnvelope_JsonCodec.instance.decode(ctx, JSON.parse(adapter.hello()));
   assert.deepEqual(adapter.decode(frame(hello.requestId, new Result_Hello(new VersionInfo('1.4.0', '1.0.0', ['1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']), new UserInfo('a', 'alice', [Scope.Read])))), { kind: 'stop', reason: 'update-required', message: 'The server no longer supports this dashboard. Reload to update.' });
 });
+test('BG: a 1.8 dashboard rejects a server whose newest supported contract is 1.7', () => {
+  const adapter = baboonProtocol(() => '00000000-0000-4000-8000-000000000001');
+  const hello = ClientEnvelope_JsonCodec.instance.decode(ctx, JSON.parse(adapter.hello()));
+  assert.deepEqual(adapter.decode(frame(hello.requestId, new Result_Hello(new VersionInfo('1.7.0', '1.0.0', ['1.7.0', '1.6.0', '1.5.0', '1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0']), new UserInfo('a', 'alice', [Scope.Read])))), { kind: 'stop', reason: 'update-required', message: 'The server no longer supports this dashboard. Reload to update.' });
+});
 test('BG: version rejection is terminal and generated ADT payloads are never flattened', () => {
   const adapter = baboonProtocol(() => '00000000-0000-4000-8000-000000000001');
   const hello = ClientEnvelope_JsonCodec.instance.decode(ctx, JSON.parse(adapter.hello()));
@@ -55,13 +60,27 @@ test('BG: version rejection is terminal and generated ADT payloads are never fla
 test('BG specified: Archive ANN chunks-per-operand metadata never caps total rows or loses i64 precision', () => {
   const adapter = baboonProtocol(() => '00000000-0000-4000-8000-000000000001'), id = '00000000-0000-4000-8000-000000000002';
   for (const result of [
-    new ArchiveResult([], 1n, undefined, ArchiveTextScope.BoundedCandidateSets, undefined),
-    new ArchiveResult([], 1n, undefined, ArchiveTextScope.BoundedCandidateSets, 0),
-    new ArchiveResult([], 1n, undefined, ArchiveTextScope.ExactLexical, 1000),
+    new ArchiveResult([], 1n, undefined, ArchiveTextScope.BoundedCandidateSets, undefined, false),
+    new ArchiveResult([], 1n, undefined, ArchiveTextScope.BoundedCandidateSets, 0, false),
+    new ArchiveResult([], 1n, undefined, ArchiveTextScope.ExactLexical, 1000, false),
   ]) assert.throws(() => adapter.decode(frame(id, new Result_Archive(result))), /candidate-set metadata/);
-  const event = adapter.decode(frame(id, new Result_Archive(new ArchiveResult([], 9007199254740993n, undefined, ArchiveTextScope.BoundedCandidateSets, 1000))));
+  const event = adapter.decode(frame(id, new Result_Archive(new ArchiveResult([], 9007199254740993n, undefined, ArchiveTextScope.BoundedCandidateSets, 1000, false))));
   assert.equal(event.kind, 'reply');
   if (event.kind !== 'reply' || !(event.result instanceof Result_Archive)) throw new Error('Expected typed Archive reply');
   assert.equal(event.result.result.total, 9007199254740993n);
   assert.equal(event.result.result.annChunkLimitPerOperand, 1000);
+});
+test('BG specified: an Archive frame is admitted only with a present boolean relevance-order flag', () => {
+  const adapter = baboonProtocol(() => '00000000-0000-4000-8000-000000000001'), id = '00000000-0000-4000-8000-000000000002';
+  const archiveFrame = (relevanceOrdered: boolean) => JSON.parse(frame(id, new Result_Archive(new ArchiveResult([], 1n, undefined, ArchiveTextScope.ExactLexical, undefined, relevanceOrdered)))) as { result: { Archive: { result: Record<string, unknown> } } };
+  for (const malformed of [undefined, null, 'true', 1]) {
+    const wire = archiveFrame(false);
+    if (malformed === undefined) delete wire.result.Archive.result.relevanceOrdered; else wire.result.Archive.result.relevanceOrdered = malformed;
+    assert.throws(() => adapter.decode(JSON.stringify(wire)), /relevance-order metadata/, `malformed relevanceOrdered ${JSON.stringify(malformed) ?? 'missing'} was admitted`);
+  }
+  for (const relevanceOrdered of [true, false]) {
+    const event = adapter.decode(JSON.stringify(archiveFrame(relevanceOrdered)));
+    if (event.kind !== 'reply' || !(event.result instanceof Result_Archive)) throw new Error('Expected typed Archive reply');
+    assert.equal(event.result.result.relevanceOrdered, relevanceOrdered);
+  }
 });

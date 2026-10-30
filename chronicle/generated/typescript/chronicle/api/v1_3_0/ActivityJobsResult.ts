@@ -71,7 +71,7 @@ export class ActivityJobsResult implements BaboonGenerated {
     public baboonSameInVersions() {
         return ActivityJobsResult.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "json-additive" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.3.0": "identical", "1.4.0": "identical", "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "json-additive", "1.8.0": "json-additive" }
     public baboonForwardReadable() {
         return ActivityJobsResult.BaboonForwardReadable
     }
@@ -84,7 +84,7 @@ export class ActivityJobsResult implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.8.0 */
 export class ActivityJobsResult_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ActivityJobsResult): unknown {
         if (this !== ActivityJobsResult_JsonCodec.lazyInstance.value) {

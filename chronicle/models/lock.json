@@ -25,6 +25,18 @@
       {
         "version" : "1.5.0",
         "sigId" : "a8d0cea122ae162f49a624982771f32b768297cdf9f98647f8227e38392ee017"
+      },
+      {
+        "version" : "1.6.0",
+        "sigId" : "a55b09967464ecb3d0fb53af8f2e3a35965065745f03db5f5250da2ffad23a67"
+      },
+      {
+        "version" : "1.7.0",
+        "sigId" : "0236b30897b4b109d8b55762d2f9d6e9a9f392595db17879d176c6fa906ecf0a"
+      },
+      {
+        "version" : "1.8.0",
+        "sigId" : "0a06e0970913227cd271489379f42488f9bd6f5a3b72cfa738905b34cce4c64a"
       }
     ]
   }

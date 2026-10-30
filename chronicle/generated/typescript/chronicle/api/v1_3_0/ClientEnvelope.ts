@@ -68,7 +68,7 @@ export class ClientEnvelope implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.3.0 is deprecated, you should migrate to 1.8.0 */
 export class ClientEnvelope_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ClientEnvelope): unknown {
         if (this !== ClientEnvelope_JsonCodec.lazyInstance.value) {

@@ -24,7 +24,7 @@ class ArchiveApplicationTest extends munit.FunSuite {
     f(config,db,archive,app,embedder)
   }
   private val reader=Identity(UserInfo("a","a",List(Scope.Read)),false,"synthetic")
-  private def query(expression: String,cursor: Option[String]): ArchiveQuery = ArchiveQuery(expression,ArchiveSort.LastTimestamp,SortDirection.Desc,cursor,100)
+  private def query(expression: String,cursor: Option[String]): ArchiveQuery = ArchiveQuery(expression,ArchiveSort.LastTimestamp,SortDirection.Desc,cursor,100,false)
   private def call(app: Application,operation: Operation): Result = app.operation(reader,ClientEnvelope(UUID.randomUUID(),operation)).unsafeRunSync()
   test("BG GoodCommunication specified: empty/metadata/mode-only/lexical reads do not invoke any model or require semantic readiness") { database { (config,db,archive,app,embedder) =>
     val receipt=archive.ingest("a",Fixtures.snapshot())

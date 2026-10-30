@@ -22,7 +22,7 @@ export function ModelPurpose_parse(s: string): ModelPurpose {
     return found;
 }
 
-/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.8.0 */
 export class ModelPurpose_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ModelPurpose): unknown {
         if (this !== ModelPurpose_JsonCodec.lazyInstance.value) {

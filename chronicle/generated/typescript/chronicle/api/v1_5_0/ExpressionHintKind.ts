@@ -20,7 +20,7 @@ export function ExpressionHintKind_parse(s: string): ExpressionHintKind {
     return found;
 }
 
-/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.8.0 */
 export class ExpressionHintKind_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ExpressionHintKind): unknown {
         if (this !== ExpressionHintKind_JsonCodec.lazyInstance.value) {

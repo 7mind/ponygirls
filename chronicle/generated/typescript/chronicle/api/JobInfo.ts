@@ -96,7 +96,7 @@ export class JobInfo implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return JobInfo.BaboonDomainVersion
     }
@@ -108,11 +108,11 @@ export class JobInfo implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return JobInfo.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return JobInfo.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.8.0": "identical" }
     public baboonForwardReadable() {
         return JobInfo.BaboonForwardReadable
     }
@@ -162,7 +162,7 @@ export class JobInfo_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return JobInfo_JsonCodec.BaboonDomainVersion
     }

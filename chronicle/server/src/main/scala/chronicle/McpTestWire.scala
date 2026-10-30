@@ -6,8 +6,8 @@ import java.util.UUID
 
 final class McpTestWire(protocol: VersionedWire) extends McpRunPageEncoding {
   private val sizingRequestId=new UUID(0L,0L)
-  val supportedVersions=List("1.4.0","1.5.0","1.6.0","1.7.0")
-  val versionRequirement="MCP testing requires API 1.4.0, 1.5.0, 1.6.0 or 1.7.0"
+  val supportedVersions=List("1.4.0","1.5.0","1.6.0","1.7.0","1.8.0")
+  val versionRequirement="MCP testing requires API 1.4.0, 1.5.0, 1.6.0, 1.7.0 or 1.8.0"
 
   def snapshot(value: McpRunSnapshot): Result.McpTestRun = Result.McpTestRun(McpTestSnapshot(
     value.instanceId,value.runId,value.state match {

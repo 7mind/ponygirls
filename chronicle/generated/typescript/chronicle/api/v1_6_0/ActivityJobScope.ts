@@ -20,7 +20,7 @@ export function ActivityJobScope_parse(s: string): ActivityJobScope {
     return found;
 }
 
-/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.8.0 */
 export class ActivityJobScope_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ActivityJobScope): unknown {
         if (this !== ActivityJobScope_JsonCodec.lazyInstance.value) {

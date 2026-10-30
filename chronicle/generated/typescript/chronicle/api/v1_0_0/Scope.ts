@@ -20,7 +20,7 @@ export function Scope_parse(s: string): Scope {
     return found;
 }
 
-/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.8.0 */
 export class Scope_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: Scope): unknown {
         if (this !== Scope_JsonCodec.lazyInstance.value) {

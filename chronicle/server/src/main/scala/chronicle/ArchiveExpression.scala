@@ -1,6 +1,6 @@
 package chronicle
 
-import chronicle.api.{SearchMode, SourceFormat, SourceIdentity}
+import chronicle.api.{ArchiveQuery, SearchMode, SourceFormat, SourceIdentity}
 import java.time.Instant
 import java.util.Locale
 
@@ -47,6 +47,16 @@ object ArchiveExpression {
     val candidateFilter=candidateConjuncts(parsed.expression).reduceLeftOption(And.apply).getOrElse(True)
     ParsedArchiveExpression(parsed.expression,parsed.mode.getOrElse(SearchMode.Hybrid),parsed.textOperands,candidateFilter)
   }
+
+  private[chronicle] def positive(value: ArchiveExpression,negated: Boolean): List[String] = value match {
+    case Text(text) => if(negated) Nil else List(text)
+    case And(left,right) => positive(left,negated)++positive(right,negated)
+    case Or(left,right) => positive(left,negated)++positive(right,negated)
+    case Not(nested) => positive(nested,!negated)
+    case _ => Nil
+  }
+  def positiveTextOperands(parsed: ParsedArchiveExpression): List[String] = positive(parsed.expression,false).distinct
+  def relevanceOrdered(query: ArchiveQuery,parsed: ParsedArchiveExpression): Boolean = query.preferRelevance && positiveTextOperands(parsed).nonEmpty
 
   private[chronicle] def predicate(field: ExpressionSyntax.Field): ArchivePredicate = field.name match {
     case "user" => ArchivePredicate.User(field.value)

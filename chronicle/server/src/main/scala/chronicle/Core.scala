@@ -20,7 +20,7 @@ object Check {
 }
 object Wire {
   val ctx = BaboonCodecContext.Default
-  val versions = VersionInfo("1.7.0", "1.0.0", List("1.7.0","1.6.0","1.5.0","1.4.0","1.3.0","1.2.0","1.1.0","1.0.0"))
+  val versions = VersionInfo("1.8.0", "1.0.0", List("1.8.0","1.7.0","1.6.0","1.5.0","1.4.0","1.3.0","1.2.0","1.1.0","1.0.0"))
   def negotiate(offered: List[String]): String = versions.supported.find(offered.contains).getOrElse(throw DomainError("version-mismatch","unsupported API version"))
   def encode[A](codec: BaboonJsonCodec[A], value: A): Json = codec.encode(ctx, value)
   def decode[A](codec: BaboonJsonCodec[A], json: Json): A = codec.decode(ctx, json).fold(_ => throw DomainError("invalid", "invalid payload"), identity)

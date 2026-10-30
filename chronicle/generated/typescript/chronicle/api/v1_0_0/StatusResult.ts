@@ -55,7 +55,7 @@ export class StatusResult implements BaboonGenerated {
     public baboonSameInVersions() {
         return StatusResult.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical", "1.1.0": "identical", "1.2.0": "json-additive", "1.3.0": "json-additive", "1.4.0": "json-additive", "1.5.0": "json-additive", "1.6.0": "json-additive", "1.7.0": "json-additive" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical", "1.1.0": "identical", "1.2.0": "json-additive", "1.3.0": "json-additive", "1.4.0": "json-additive", "1.5.0": "json-additive", "1.6.0": "json-additive", "1.7.0": "json-additive", "1.8.0": "json-additive" }
     public baboonForwardReadable() {
         return StatusResult.BaboonForwardReadable
     }
@@ -68,7 +68,7 @@ export class StatusResult implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.0.0 is deprecated, you should migrate to 1.8.0 */
 export class StatusResult_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: StatusResult): unknown {
         if (this !== StatusResult_JsonCodec.lazyInstance.value) {

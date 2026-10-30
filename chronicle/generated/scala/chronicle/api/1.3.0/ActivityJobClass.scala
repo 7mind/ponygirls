@@ -2,7 +2,7 @@ import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonEnum, Lazy}
 
 package chronicle.api.v1_3_0 {
-  @deprecated("Version 1.3.0 is deprecated, you should migrate to 1.7.0")
+  @deprecated("Version 1.3.0 is deprecated, you should migrate to 1.8.0")
   sealed trait ActivityJobClass
   
   object ActivityJobClass extends BaboonEnum[ActivityJobClass] {
@@ -29,7 +29,7 @@ package chronicle.api.v1_3_0 {
     ) 
   }
   
-  @deprecated("Version 1.3.0 is deprecated, you should migrate to 1.7.0")
+  @deprecated("Version 1.3.0 is deprecated, you should migrate to 1.8.0")
   object ActivityJobClass_JsonCodec extends BaboonJsonCodec.Base[ActivityJobClass, BaboonJsonCodec[ActivityJobClass]] {
     def encode(ctx: BaboonCodecContext, value: ActivityJobClass): Json = {
       if (this ne LazyInstance.value) {

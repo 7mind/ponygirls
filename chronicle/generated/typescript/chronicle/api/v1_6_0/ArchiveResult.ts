@@ -93,7 +93,7 @@ export class ArchiveResult implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.8.0 */
 export class ArchiveResult_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ArchiveResult): unknown {
         if (this !== ArchiveResult_JsonCodec.lazyInstance.value) {

@@ -62,7 +62,7 @@ export class TokenRateWindow implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return TokenRateWindow.BaboonDomainVersion
     }
@@ -74,11 +74,11 @@ export class TokenRateWindow implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return TokenRateWindow.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return TokenRateWindow.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.8.0": "identical" }
     public baboonForwardReadable() {
         return TokenRateWindow.BaboonForwardReadable
     }
@@ -120,7 +120,7 @@ export class TokenRateWindow_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return TokenRateWindow_JsonCodec.BaboonDomainVersion
     }

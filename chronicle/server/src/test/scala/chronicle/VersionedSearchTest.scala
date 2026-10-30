@@ -1,6 +1,6 @@
 package chronicle
 import chronicle.api.*
-import chronicle.api.{v1_0_0 as old,v1_4_0 as v14,v1_5_0 as v15,v1_6_0 as v16}
+import chronicle.api.{v1_0_0 as old,v1_4_0 as v14,v1_5_0 as v15,v1_6_0 as v16,v1_7_0 as v17}
 import cats.effect.{IO,Resource}
 import cats.effect.std.Semaphore
 import cats.effect.unsafe.implicits.global
@@ -15,7 +15,7 @@ class VersionedSearchTest extends munit.FunSuite {
   private val corpusSize=1205
   private val pageSize=100
   private val timeoutSeconds=10
-  List("1.0.0","1.1.0","1.2.0","1.3.0","1.4.0","1.5.0","1.6.0","1.7.0").foreach { selectedVersion =>
+  List("1.0.0","1.1.0","1.2.0","1.3.0","1.4.0","1.5.0","1.6.0","1.7.0","1.8.0").foreach { selectedVersion =>
   test(s"Blackbox-GoodCommunication: API$selectedVersion retains complete workflows; exact legacy pagination and current ANN scope stay distinct") {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
@@ -71,7 +71,12 @@ class VersionedSearchTest extends munit.FunSuite {
           // with each retained version's own client/server codecs on the wire.
           List(selectedVersion).foreach { version =>
             val (socket,inbox)=connection()
-            def up16(envelope: v16.ServerEnvelope): ServerEnvelope = conversions.up1_6_0.convert[v16.ServerEnvelope,ServerEnvelope](envelope)
+            def up17(envelope: v17.ServerEnvelope): ServerEnvelope = conversions.up1_7_0.convert[v17.ServerEnvelope,ServerEnvelope](envelope)
+            def up16(envelope: v16.ServerEnvelope): ServerEnvelope = up17(conversions.up1_6_0.convert[v16.ServerEnvelope,v17.ServerEnvelope](envelope))
+            def decode17(response: io.circe.Json): ServerEnvelope = {
+              val decoded=Wire.decode(v17.ServerEnvelope.codecJson,response)
+              assertEquals(Wire.encode(v17.ServerEnvelope.codecJson,decoded),response); up17(decoded)
+            }
             def up15(envelope: v15.ServerEnvelope): ServerEnvelope = up16(conversions.up1_5_0.convert[v15.ServerEnvelope,v16.ServerEnvelope](envelope))
             def decode16(response: io.circe.Json): ServerEnvelope = {
               val decoded=Wire.decode(v16.ServerEnvelope.codecJson,response)
@@ -84,7 +89,11 @@ class VersionedSearchTest extends munit.FunSuite {
               else {
                 val v16Request=conversions.up1_5_0.convert[v15.ClientEnvelope,v16.ClientEnvelope](v15Request)
                 if(version=="1.6.0") Wire.encode(v16.ClientEnvelope.codecJson,v16Request)
-                else Wire.encode(ClientEnvelope.codecJson,conversions.up1_6_0.convert[v16.ClientEnvelope,ClientEnvelope](v16Request))
+                else {
+                  val v17Request=conversions.up1_6_0.convert[v16.ClientEnvelope,v17.ClientEnvelope](v16Request)
+                  if(version=="1.7.0") Wire.encode(v17.ClientEnvelope.codecJson,v17Request)
+                  else Wire.encode(ClientEnvelope.codecJson,conversions.up1_7_0.convert[v17.ClientEnvelope,ClientEnvelope](v17Request))
+                }
               }
             }
             def decode15(response: io.circe.Json): ServerEnvelope = {
@@ -106,7 +115,7 @@ class VersionedSearchTest extends munit.FunSuite {
                 case "1.2.0" => Wire.encode(chronicle.api.v1_2_0.ClientEnvelope.codecJson,v12Request)
                 case "1.3.0" => Wire.encode(chronicle.api.v1_3_0.ClientEnvelope.codecJson,v13Request)
                 case "1.4.0" => Wire.encode(v14.ClientEnvelope.codecJson,v14Request)
-                case "1.5.0" | "1.6.0" | "1.7.0" => encode14(v14Request)
+                case "1.5.0" | "1.6.0" | "1.7.0" | "1.8.0" => encode14(v14Request)
               }
               val response=raw(socket,inbox,request)
               val current=version match {
@@ -132,7 +141,8 @@ class VersionedSearchTest extends munit.FunSuite {
                   up14(decoded)
                 case "1.5.0" => decode15(response)
                 case "1.6.0" => decode16(response)
-                case "1.7.0" =>
+                case "1.7.0" => decode17(response)
+                case "1.8.0" =>
                   val decoded=Wire.decode(ServerEnvelope.codecJson,response)
                   assertEquals(Wire.encode(ServerEnvelope.codecJson,decoded),response)
                   decoded
@@ -183,7 +193,7 @@ class VersionedSearchTest extends munit.FunSuite {
                   val encoded=version match {
                     case "1.3.0" => Wire.encode(chronicle.api.v1_3_0.ClientEnvelope.codecJson,envelope)
                     case "1.4.0" => Wire.encode(v14.ClientEnvelope.codecJson,retained)
-                    case "1.5.0" | "1.6.0" | "1.7.0" => encode14(retained)
+                    case "1.5.0" | "1.6.0" | "1.7.0" | "1.8.0" => encode14(retained)
                   }
                   val response=raw(socket,inbox,encoded)
                   val current=version match {
@@ -197,7 +207,8 @@ class VersionedSearchTest extends munit.FunSuite {
                       up14(decoded)
                     case "1.5.0" => decode15(response)
                     case "1.6.0" => decode16(response)
-                    case "1.7.0" => Wire.decode(ServerEnvelope.codecJson,response)
+                    case "1.7.0" => decode17(response)
+                    case "1.8.0" => Wire.decode(ServerEnvelope.codecJson,response)
                   }
                   assertEquals(current.requestId,requestId)
                   current.result
@@ -205,6 +216,7 @@ class VersionedSearchTest extends munit.FunSuite {
                 def invoke13(operation: chronicle.api.v1_3_0.Operation): Result=extra(operation,UUID.randomUUID())
                 val archived=invoke13(chronicle.api.v1_3_0.Operation.Archive(chronicle.api.v1_3_0.ArchiveQuery("mode:lexical",chronicle.api.v1_3_0.ArchiveSort.Title,chronicle.api.v1_3_0.SortDirection.Asc,None,10))).asInstanceOf[Result.Archive].result
                 assertEquals(archived.total,corpusSize.toLong); assertEquals(archived.rows.size,10)
+                assertEquals(archived.relevanceOrdered,false)
                 val activity=invoke13(chronicle.api.v1_3_0.Operation.Activity(chronicle.api.v1_3_0.ActivityQuery("",chronicle.api.v1_3_0.ActivityCollectorSort.CollectorId,chronicle.api.v1_3_0.SortDirection.Asc,None,10))).asInstanceOf[Result.Activity].result
                 assertEquals(activity.archiveHeads,corpusSize.toLong)
                 val jobs=invoke13(chronicle.api.v1_3_0.Operation.ActivityJobs(chronicle.api.v1_3_0.ActivityJobsQuery(None,chronicle.api.v1_3_0.ActivityJobScope.All,"",chronicle.api.v1_3_0.ActivityJobSort.JobId,chronicle.api.v1_3_0.SortDirection.Asc,None,10))).asInstanceOf[Result.ActivityJobs].result
@@ -218,7 +230,7 @@ class VersionedSearchTest extends munit.FunSuite {
                 assertEquals(retried.retried,0L); assertEquals(retried.requestId,retryId)
                 assertEquals(invoke13(chronicle.api.v1_3_0.Operation.Receipt(retryId)),Result.RetryFailed(retried))
               }
-              if(Set("1.4.0","1.5.0","1.6.0","1.7.0").contains(version)) {
+              if(Set("1.4.0","1.5.0","1.6.0","1.7.0","1.8.0").contains(version)) {
                 def invoke14(operation: v14.Operation): Result = {
                   val retained=v14.ClientEnvelope(UUID.randomUUID(),operation)
                   val encoded=if(version=="1.4.0") Wire.encode(v14.ClientEnvelope.codecJson,retained) else encode14(retained)
@@ -227,7 +239,7 @@ class VersionedSearchTest extends munit.FunSuite {
                     val decoded=Wire.decode(v14.ServerEnvelope.codecJson,response)
                     assertEquals(Wire.encode(v14.ServerEnvelope.codecJson,decoded),response)
                     up14(decoded)
-                  } else if(version=="1.5.0") decode15(response) else if(version=="1.6.0") decode16(response) else Wire.decode(ServerEnvelope.codecJson,response)
+                  } else if(version=="1.5.0") decode15(response) else if(version=="1.6.0") decode16(response) else if(version=="1.7.0") decode17(response) else Wire.decode(ServerEnvelope.codecJson,response)
                   assertEquals(current.requestId,retained.requestId)
                   current.result
                 }
@@ -235,6 +247,27 @@ class VersionedSearchTest extends munit.FunSuite {
                 assertEquals(catalog.maximumOutputTokens,65536); assertEquals(catalog.reasoningPolicy,"max")
                 assert(invoke14(v14.Operation.ModelUsage()).isInstanceOf[Result.ModelUsage])
                 assert(invoke14(v14.Operation.ExpressionHints(v14.ExpressionHintQuery(v14.ExpressionHintTarget.Archive(),"project:",8,10))).isInstanceOf[Result.ExpressionHints])
+                val message=Fixtures.snapshot().messages.head
+                val end=message.text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+                val passage=PassageInfo(UUID.randomUUID(),0,"synthetic context-aware problem",List("work"),PassagePoint(message.id,0,0),PassagePoint(message.id,0,end),end.toLong,1L,1L)
+                val generation=selected.view.generationId.get
+                db.transaction { c =>
+                  Sql.exec(c,"UPDATE ch_generations SET passage_format='ContextAwareProblems',passage_count=1 WHERE id=?",generation)
+                  Sql.exec(c,"INSERT INTO ch_problem_passages(generation,id,ordinal,initial_summary,value,span_count) VALUES(?,?,0,?,?::jsonb,1)",generation,passage.id,passage.summary,Wire.encode(PassageInfo.codecJson,passage).noSpaces)
+                  Sql.exec(c,"INSERT INTO ch_problem_spans(generation,passage_id,ordinal,message_id,message_position,start_byte,end_byte) VALUES(?,?,0,?,0,0,?)",generation,passage.id,message.id,end)
+                  Sql.exec(c,"INSERT INTO ch_problem_pieces(generation,chunk_id,passage_ordinal,piece_ordinal) SELECT generation,id,0,0 FROM ch_chunks WHERE generation=? ORDER BY ordinal LIMIT 1",generation)
+                }
+                val retainedView=v14.ContentView(selected.view.revision,selected.view.generationId)
+                val passages=invoke14(v14.Operation.GetPassages(selected.id,retainedView,0,10))
+                val spans=invoke14(v14.Operation.GetPassageSpans(selected.id,retainedView,passage.id,0,10))
+                if(version=="1.7.0" || version=="1.8.0") {
+                  assertEquals(passages,Result.Passages(PassagesResult(selected.view,PassageFormat.ContextAwareProblems,List(passage),1L,0)))
+                  assertEquals(spans,Result.PassageSpans(PassageSpansResult(selected.view,passage.id,List(PassageSourceSpan(message.id,0,0,end)),1L,0)))
+                } else {
+                  assertEquals(passages.asInstanceOf[Result.Error].failure.code,"unavailable")
+                  assertEquals(spans.asInstanceOf[Result.Error].failure.code,"unavailable")
+                }
+                assertEquals(invoke14(v14.Operation.Ping("after-passage-read")),Result.Pong("after-passage-read"))
               }
             } finally socket.abort()
           }
@@ -249,7 +282,7 @@ class VersionedSearchTest extends munit.FunSuite {
           }
           try {
             val hello=oldCall(old.Operation.Hello(List("1.0.0"))).asInstanceOf[old.Result.Hello]
-            assertEquals(hello.versions.current,"1.7.0"); assertEquals(hello.versions.minimum,"1.0.0")
+            assertEquals(hello.versions.current,"1.8.0"); assertEquals(hello.versions.minimum,"1.0.0")
             val oldFilter=old.SearchFilter(None,None,None,None,Nil)
             val pages=(0 until corpusSize by pageSize).map { offset =>
               val result=oldCall(old.Operation.Search(old.SearchQuery("archive",old.SearchMode.Semantic,oldFilter,pageSize,offset))).asInstanceOf[old.Result.Search].result
@@ -261,7 +294,7 @@ class VersionedSearchTest extends munit.FunSuite {
           val (latest,latestInbox)=connection()
           def currentCall(operation: Operation): Result = Wire.decode(ServerEnvelope.codecJson,raw(latest,latestInbox,Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),operation)))).result
           try {
-            assert(currentCall(Operation.Hello(List("1.7.0"))).isInstanceOf[Result.Hello])
+            assert(currentCall(Operation.Hello(List("1.8.0"))).isInstanceOf[Result.Hello])
             val q=SearchQuery("archive",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),pageSize,0)
             val bounded=currentCall(Operation.Search(q)).asInstanceOf[Result.Search].result
             assertEquals(bounded.countScope,SearchCountScope.CandidateWindow); assertEquals(bounded.rankingLimit,Some(SearchPolicy.candidatesPerLeg)); assert(bounded.total>=bounded.hits.size && bounded.total<=SearchPolicy.candidatesPerLeg); assertEquals(bounded.hits.size,pageSize)

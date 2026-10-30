@@ -8,7 +8,7 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-function result(): ArchiveResult { return new ArchiveResult([], 0n, undefined, ArchiveTextScope.ExactLexical, undefined); }
+function result(): ArchiveResult { return new ArchiveResult([], 0n, undefined, ArchiveTextScope.ExactLexical, undefined, false); }
 async function turn() { await new Promise<void>(resolve => setImmediate(resolve)); }
 
 test('Behavioral-Active Blackbox Atomic: one active Archive read and only the latest distinct queued read', async () => {

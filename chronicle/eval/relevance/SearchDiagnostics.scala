@@ -82,12 +82,16 @@ object SearchDiagnostics {
       WHERE live.id IS NULL OR live.generation<>ch.generation OR live.session_id<>ch.session_id
       OR live.revision<>ch.revision OR live.profile<>g.profile OR live.embedding<>ch.embedding OR live.document<>ch.document""", oracle.args*)(_.getLong(1)).get
     Check(mismatches == 0, "diagnostic-corpus", "live search projection differs from oracle")
-    val exhaustive = rows(c, oracle, s""" SELECT jsonb_build_object('id',x.id,'sessionId',x.session_id,
-      'generation',x.generation,'revision',x.revision,'lex',x.lex,'distance',x.distance,
+    // Keep the legacy cosine oracle, but observe the current full-match lexical credit policy.
+    val exhaustive = rows(c, oracle, s""",diagnostic_lexical AS(
+      SELECT *,CASE WHEN document @@ websearch_to_tsquery('english',?) THEN lex ELSE 0 END AS matched_lex FROM scored),
+      diagnostic_ranked AS(SELECT *,row_number() OVER(ORDER BY matched_lex DESC,id) AS matched_lr FROM diagnostic_lexical)
+      SELECT jsonb_build_object('id',x.id,'sessionId',x.session_id,
+      'generation',x.generation,'revision',x.revision,'lex',x.matched_lex,'distance',x.distance,
       'halfDistance',l2_normalize(x.embedding)::halfvec($dimensions) <=> l2_normalize(?::vector)::halfvec($dimensions),
-      'lr',x.lr,'vr',x.vr,'score',x.score,'scoreExact',x.score::text,'sessionWinner',winner.id=x.id,'sessionRank',winner.session_rank) AS value
-      FROM scored x JOIN (SELECT *,row_number() OVER(ORDER BY score DESC,session_id) AS session_rank FROM sessions) winner USING(session_id)
-      ORDER BY x.id""", List(vector))
+      'lr',x.matched_lr,'vr',x.vr,'score',x.score,'scoreExact',x.score::text,'sessionWinner',winner.id=x.id,'sessionRank',winner.session_rank) AS value
+      FROM diagnostic_ranked x JOIN (SELECT *,row_number() OVER(ORDER BY score DESC,session_id) AS session_rank FROM sessions) winner USING(session_id)
+      ORDER BY x.id""", List(q.query,vector))
     Check(exhaustive.size == count, "diagnostic-corpus", "oracle count mismatch")
     val plan = search.statement(request.principal, q, Some(request.vector))
     val hasLexical = q.mode == SearchMode.Hybrid && q.query.nonEmpty
@@ -183,6 +187,7 @@ object SearchDiagnostics {
           "maxCorpusChunks" -> Json.fromInt(input.maxCorpusChunks), "maxExhaustiveRows" -> Json.fromLong(maximumExhaustiveRows),
           "statementTimeoutSeconds" -> Json.fromInt(input.statementTimeoutSeconds),
           "candidateBudget" -> Json.fromInt(SearchPolicy.candidatesPerLeg), "rrfConstant" -> Json.fromInt(SearchPolicy.reciprocalRankConstant),
+          "lexicalCreditPolicy" -> Json.fromString("full-websearch-match-before-lexical-rank-v1"),
           "annOrderObservation" -> Json.fromString("membership only; half-distance tie traversal order and ANN ordinal are not observed"),
           "sessionTiePolicy" -> Json.fromString("winner: score DESC, chunk UUID ASC; session rank: score DESC, session UUID ASC"),
           "cases" -> Json.arr(cases*))

@@ -96,6 +96,23 @@ class McpSearchGuidanceTest extends munit.FunSuite {
     }
   }
 
+  test("Blackbox-GoodCommunication regression: hybrid lexical credit requires a full websearch match without excluding semantic candidates") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
+    val bridge=f.publish(Fixtures.snapshot(),"copper bridge","archive",Nil,Nil).sessionId
+    val tunnel=f.publish(Fixtures.snapshot(),"copper tunnel","archive",Nil,Nil).sessionId
+    val reciprocalRankConstant=60
+    val scoreTolerance=1e-15
+    def reciprocal(rank: Int): Double=1.0/(reciprocalRankConstant+rank)
+    List(("copper -tunnel",bridge,tunnel),("copper -bridge",tunnel,bridge)).foreach { (query,matching,nonmatching) =>
+      assertEquals(search(f,query,"lexical",Json.obj()).hits.map(_.session.id),List(matching),query)
+      val hybrid=search(f,query,"hybrid",Json.obj())
+      assertEquals(hybrid.hits.map(_.session.id).toSet,Set(bridge,tunnel),query)
+      val vectorRanks=hybrid.hits.sortBy(_.chunks.head.id.toString).zipWithIndex.map { (hit,index) => hit.session.id -> (index+1) }.toMap
+      val bySession=hybrid.hits.map(hit => hit.session.id -> hit).toMap
+      assertEqualsDouble(bySession(nonmatching).score,reciprocal(vectorRanks(nonmatching)),scoreTolerance,query)
+      assertEqualsDouble(bySession(matching).score,reciprocal(vectorRanks(matching))+reciprocal(1),scoreTolerance,query)
+    }
+  }}
+
   test("Blackbox-GoodCommunication: tags are exact AND filters across source OR current-generation tags; facets count sessions, not occurrences") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
     val original=Fixtures.snapshot(); val request=original.copy(metadata=original.metadata.copy(tags=List("shared","source")))
     val first=f.publish(request,"archive","archive",List("shared","generated","retired"),Nil)

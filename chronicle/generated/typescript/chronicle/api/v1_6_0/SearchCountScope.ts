@@ -18,7 +18,7 @@ export function SearchCountScope_parse(s: string): SearchCountScope {
     return found;
 }
 
-/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.8.0 */
 export class SearchCountScope_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: SearchCountScope): unknown {
         if (this !== SearchCountScope_JsonCodec.lazyInstance.value) {

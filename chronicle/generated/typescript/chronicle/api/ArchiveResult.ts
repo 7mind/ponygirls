@@ -9,13 +9,15 @@ export class ArchiveResult implements BaboonGeneratedLatest {
     private readonly _nextCursor: string | undefined;
     private readonly _textScope: ArchiveTextScope;
     private readonly _annChunkLimitPerOperand: number | undefined;
+    private readonly _relevanceOrdered: boolean;
 
-    constructor(rows: Array<ArchiveRow>, total: bigint, nextCursor: string | undefined, textScope: ArchiveTextScope, annChunkLimitPerOperand: number | undefined) {
+    constructor(rows: Array<ArchiveRow>, total: bigint, nextCursor: string | undefined, textScope: ArchiveTextScope, annChunkLimitPerOperand: number | undefined, relevanceOrdered: boolean) {
         this._rows = rows
         this._total = total
         this._nextCursor = nextCursor
         this._textScope = textScope
         this._annChunkLimitPerOperand = annChunkLimitPerOperand
+        this._relevanceOrdered = relevanceOrdered
     }
 
     public get rows(): Array<ArchiveRow> {
@@ -33,6 +35,9 @@ export class ArchiveResult implements BaboonGeneratedLatest {
     public get annChunkLimitPerOperand(): number | undefined {
         return this._annChunkLimitPerOperand;
     }
+    public get relevanceOrdered(): boolean {
+        return this._relevanceOrdered;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -40,31 +45,34 @@ export class ArchiveResult implements BaboonGeneratedLatest {
             total: this._total,
             nextCursor: this._nextCursor !== undefined ? this._nextCursor : undefined,
             textScope: this._textScope,
-            annChunkLimitPerOperand: this._annChunkLimitPerOperand !== undefined ? this._annChunkLimitPerOperand : undefined
+            annChunkLimitPerOperand: this._annChunkLimitPerOperand !== undefined ? this._annChunkLimitPerOperand : undefined,
+            relevanceOrdered: this._relevanceOrdered
         };
     }
 
-    public with(overrides: {rows?: Array<ArchiveRow>; total?: bigint; nextCursor?: string | undefined; textScope?: ArchiveTextScope; annChunkLimitPerOperand?: number | undefined}): ArchiveResult {
+    public with(overrides: {rows?: Array<ArchiveRow>; total?: bigint; nextCursor?: string | undefined; textScope?: ArchiveTextScope; annChunkLimitPerOperand?: number | undefined; relevanceOrdered?: boolean}): ArchiveResult {
         return new ArchiveResult(
             'rows' in overrides ? overrides.rows! : this._rows,
             'total' in overrides ? overrides.total! : this._total,
             'nextCursor' in overrides ? overrides.nextCursor! : this._nextCursor,
             'textScope' in overrides ? overrides.textScope! : this._textScope,
-            'annChunkLimitPerOperand' in overrides ? overrides.annChunkLimitPerOperand! : this._annChunkLimitPerOperand
+            'annChunkLimitPerOperand' in overrides ? overrides.annChunkLimitPerOperand! : this._annChunkLimitPerOperand,
+            'relevanceOrdered' in overrides ? overrides.relevanceOrdered! : this._relevanceOrdered
         );
     }
 
-    public static fromPlain(obj: {rows: Array<ArchiveRow>; total: bigint; nextCursor: string | undefined; textScope: ArchiveTextScope; annChunkLimitPerOperand: number | undefined}): ArchiveResult {
+    public static fromPlain(obj: {rows: Array<ArchiveRow>; total: bigint; nextCursor: string | undefined; textScope: ArchiveTextScope; annChunkLimitPerOperand: number | undefined; relevanceOrdered: boolean}): ArchiveResult {
         return new ArchiveResult(
             obj.rows,
             obj.total,
             obj.nextCursor,
             obj.textScope,
-            obj.annChunkLimitPerOperand
+            obj.annChunkLimitPerOperand,
+            obj.relevanceOrdered
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return ArchiveResult.BaboonDomainVersion
     }
@@ -76,15 +84,15 @@ export class ArchiveResult implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return ArchiveResult.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.8.0"]
     public baboonSameInVersions() {
         return ArchiveResult.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.8.0": "identical" }
     public baboonForwardReadable() {
         return ArchiveResult.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.7.0", "prefix-compact": "1.7.0", "prefix-any-mode": "1.7.0", "identical": "1.7.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.7.0", "prefix-compact": "1.7.0", "prefix-any-mode": "1.7.0", "identical": "1.8.0" }
     public baboonMinReaderVersions() {
         return ArchiveResult.BaboonMinReaderVersions
     }
@@ -105,6 +113,7 @@ export class ArchiveResult_JsonCodec {
             "nextCursor": value.nextCursor === undefined ? null : value.nextCursor,
             "textScope": ArchiveTextScope_JsonCodec.instance.encode(BaboonCodecContext.Default, value.textScope),
             "annChunkLimitPerOperand": value.annChunkLimitPerOperand === undefined ? null : value.annChunkLimitPerOperand,
+            "relevanceOrdered": value.relevanceOrdered,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): ArchiveResult {
@@ -119,10 +128,11 @@ export class ArchiveResult_JsonCodec {
             obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"] === undefined || obj["nextCursor"] === null ? undefined : obj["nextCursor"] as string,
             ArchiveTextScope_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["textScope"]),
             obj["annChunkLimitPerOperand"] === undefined || obj["annChunkLimitPerOperand"] === null ? undefined : obj["annChunkLimitPerOperand"] === undefined || obj["annChunkLimitPerOperand"] === null ? undefined : obj["annChunkLimitPerOperand"] as number,
+            obj["relevanceOrdered"] as boolean,
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return ArchiveResult_JsonCodec.BaboonDomainVersion
     }

@@ -60,7 +60,7 @@ export class TokensResult implements BaboonGenerated {
     }
 }
 
-/** @deprecated Version 1.1.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.1.0 is deprecated, you should migrate to 1.8.0 */
 export class TokensResult_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: TokensResult): unknown {
         if (this !== TokensResult_JsonCodec.lazyInstance.value) {

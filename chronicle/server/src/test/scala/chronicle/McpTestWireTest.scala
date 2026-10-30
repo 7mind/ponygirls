@@ -16,7 +16,7 @@ class McpTestWireTest extends munit.FunSuite {
   private def snapshot(text: String,state: McpRunState): McpRunSnapshot = McpRunSnapshot(instance,run,state,now,List(McpRunEvent(Long.MaxValue,now,McpRunItem.Response(Int.MaxValue,Int.MaxValue,text))),Long.MaxValue,true,Some(McpRunFailure("sanitized","fixed failure")))
 
   test("BA: current tester API is supported and old pre-tester versions remain denied") {
-    assertEquals(wire.supportedVersions,List("1.4.0","1.5.0","1.6.0","1.7.0"))
+    assertEquals(wire.supportedVersions,List("1.4.0","1.5.0","1.6.0","1.7.0","1.8.0"))
     assert(wire.supportedVersions.contains(Wire.versions.current))
     List("1.0.0","1.1.0","1.2.0","1.3.0").foreach { version =>
       assertEquals(intercept[DomainError](wire.encode(ServerEnvelope(requestId,wire.snapshot(snapshot("",McpRunState.Queued))),version)).code,"version-mismatch")

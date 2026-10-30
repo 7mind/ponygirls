@@ -28,7 +28,7 @@ export function McpTestState_parse(s: string): McpTestState {
     return found;
 }
 
-/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.8.0 */
 export class McpTestState_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: McpTestState): unknown {
         if (this !== McpTestState_JsonCodec.lazyInstance.value) {

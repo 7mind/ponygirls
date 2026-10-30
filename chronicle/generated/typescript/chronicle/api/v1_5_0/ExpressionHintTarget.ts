@@ -8,8 +8,8 @@ export const ExpressionHintTarget = {
     BaboonDomainVersion: '1.5.0',
     BaboonDomainIdentifier: 'chronicle.api',
     BaboonTypeIdentifier: 'chronicle.api/:#ExpressionHintTarget',
-    BaboonSameInVersions: ["1.4.0", "1.5.0", "1.6.0", "1.7.0"],
-    BaboonForwardReadable: { "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" } as { readonly [version: string]: string },
+    BaboonSameInVersions: ["1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"],
+    BaboonForwardReadable: { "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" } as { readonly [version: string]: string },
     BaboonMinReaderVersions: { "json-additive": "1.4.0", "prefix-compact": "1.4.0", "prefix-any-mode": "1.4.0", "identical": "1.4.0" } as { readonly [tier: string]: string },
     BaboonAdtTypeIdentifier: 'chronicle.api/:#ExpressionHintTarget',
     jsonCodec(): ExpressionHintTarget_JsonCodec {
@@ -56,11 +56,11 @@ export class ExpressionHintTarget_Archive implements BaboonAdtMemberMeta, Baboon
     public baboonTypeIdentifier() {
         return ExpressionHintTarget_Archive.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return ExpressionHintTarget_Archive.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return ExpressionHintTarget_Archive.BaboonForwardReadable
     }
@@ -78,7 +78,7 @@ export class ExpressionHintTarget_Archive implements BaboonAdtMemberMeta, Baboon
     }
 }
 
-/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.8.0 */
 export class ExpressionHintTarget_Archive_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ExpressionHintTarget_Archive): unknown {
         if (this !== ExpressionHintTarget_Archive_JsonCodec.lazyInstance.value) {
@@ -162,11 +162,11 @@ export class ExpressionHintTarget_ActivityCollectors implements BaboonAdtMemberM
     public baboonTypeIdentifier() {
         return ExpressionHintTarget_ActivityCollectors.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return ExpressionHintTarget_ActivityCollectors.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return ExpressionHintTarget_ActivityCollectors.BaboonForwardReadable
     }
@@ -184,7 +184,7 @@ export class ExpressionHintTarget_ActivityCollectors implements BaboonAdtMemberM
     }
 }
 
-/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.8.0 */
 export class ExpressionHintTarget_ActivityCollectors_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ExpressionHintTarget_ActivityCollectors): unknown {
         if (this !== ExpressionHintTarget_ActivityCollectors_JsonCodec.lazyInstance.value) {
@@ -279,11 +279,11 @@ export class ExpressionHintTarget_ActivityJobs implements BaboonAdtMemberMeta, B
     public baboonTypeIdentifier() {
         return ExpressionHintTarget_ActivityJobs.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return ExpressionHintTarget_ActivityJobs.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.5.0": "identical", "1.6.0": "identical", "1.7.0": "identical", "1.8.0": "identical" }
     public baboonForwardReadable() {
         return ExpressionHintTarget_ActivityJobs.BaboonForwardReadable
     }
@@ -301,7 +301,7 @@ export class ExpressionHintTarget_ActivityJobs implements BaboonAdtMemberMeta, B
     }
 }
 
-/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.8.0 */
 export class ExpressionHintTarget_ActivityJobs_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ExpressionHintTarget_ActivityJobs): unknown {
         if (this !== ExpressionHintTarget_ActivityJobs_JsonCodec.lazyInstance.value) {
@@ -349,7 +349,7 @@ export class ExpressionHintTarget_ActivityJobs_JsonCodec {
 }
 
 
-/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.5.0 is deprecated, you should migrate to 1.8.0 */
 export class ExpressionHintTarget_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: ExpressionHintTarget): unknown {
         if (this !== ExpressionHintTarget_JsonCodec.lazyInstance.value) {

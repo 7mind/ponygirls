@@ -20,7 +20,7 @@ export function PassageFormat_parse(s: string): PassageFormat {
     return found;
 }
 
-/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.6.0 is deprecated, you should migrate to 1.8.0 */
 export class PassageFormat_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: PassageFormat): unknown {
         if (this !== PassageFormat_JsonCodec.lazyInstance.value) {

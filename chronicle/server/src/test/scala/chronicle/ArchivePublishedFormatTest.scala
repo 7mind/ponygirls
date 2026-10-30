@@ -5,7 +5,7 @@ import java.util.UUID
 
 class ArchivePublishedFormatTest extends munit.FunSuite {
   private def browse(index: ArchiveIndex,reader: String): ArchiveResult =
-    index.browse(reader,ArchiveQuery("",ArchiveSort.Title,SortDirection.Asc,None,10),ArchiveExpression.parse(""),Nil)
+    index.browse(reader,ArchiveQuery("",ArchiveSort.Title,SortDirection.Asc,None,10,false),ArchiveExpression.parse(""),Nil)
   private def transition(service: OwnerReindex): Unit = {
     val plan=service.preview("a")
     service("a",UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true)

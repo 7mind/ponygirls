@@ -81,7 +81,7 @@ export class ActivityJobsQuery implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return ActivityJobsQuery.BaboonDomainVersion
     }
@@ -93,11 +93,11 @@ export class ActivityJobsQuery implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return ActivityJobsQuery.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"]
+    public static readonly BaboonSameInVersions = ["1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"]
     public baboonSameInVersions() {
         return ActivityJobsQuery.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.7.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.8.0": "identical" }
     public baboonForwardReadable() {
         return ActivityJobsQuery.BaboonForwardReadable
     }
@@ -143,7 +143,7 @@ export class ActivityJobsQuery_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return ActivityJobsQuery_JsonCodec.BaboonDomainVersion
     }

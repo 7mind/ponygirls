@@ -32,7 +32,7 @@ export class ModelRateBasis_JsonCodec {
         return ModelRateBasis_parse(json as string)
     }
 
-    public static readonly BaboonDomainVersion = '1.7.0'
+    public static readonly BaboonDomainVersion = '1.8.0'
     public baboonDomainVersion() {
         return ModelRateBasis_JsonCodec.BaboonDomainVersion
     }

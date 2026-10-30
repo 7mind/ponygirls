@@ -24,7 +24,7 @@ export function CollectorPhase_parse(s: string): CollectorPhase {
     return found;
 }
 
-/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.7.0 */
+/** @deprecated Version 1.4.0 is deprecated, you should migrate to 1.8.0 */
 export class CollectorPhase_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: CollectorPhase): unknown {
         if (this !== CollectorPhase_JsonCodec.lazyInstance.value) {

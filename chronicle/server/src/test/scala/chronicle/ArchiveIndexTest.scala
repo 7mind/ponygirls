@@ -22,7 +22,7 @@ class ArchiveIndexTest extends munit.FunSuite {
     val raw=messages.map(message => Json.obj("id"->Json.fromString(message.id),"text"->Json.fromString(message.text)).noSpaces).mkString("","\n","\n")
     original.copy(metadata=original.metadata.copy(title="archive row",tags=Nil),messages=messages,files=List(RawFile("source.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
   }
-  private def query(expression: String,sort: ArchiveSort,direction: SortDirection,cursor: Option[String],limit: Int): ArchiveQuery = ArchiveQuery(expression,sort,direction,cursor,limit)
+  private def query(expression: String,sort: ArchiveSort,direction: SortDirection,cursor: Option[String],limit: Int): ArchiveQuery = ArchiveQuery(expression,sort,direction,cursor,limit,false)
   private def browse(index: ArchiveIndex,reader: String,q: ArchiveQuery): ArchiveResult = {
     val parsed=ArchiveExpression.parse(q.expression)
     val vectors=if(parsed.mode==SearchMode.Lexical) Nil else parsed.textOperands.map(text => ArchiveVector(text,List(1.0,0.0,0.0)))
@@ -241,6 +241,9 @@ class ArchiveIndexTest extends munit.FunSuite {
     assertEquals(rows.size,1105); assertEquals(rows.map(_.head.id).distinct.size,1105)
     val hybrid=browse(index,"a",query("needlealpha",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100))
     assertEquals(hybrid.total,1105L); assertEquals(hybrid.annChunkLimitPerOperand,Some(1000)); assertEquals(hybrid.textScope,ArchiveTextScope.BoundedCandidateSets)
+    val ranked=browse(index,"a",query("needlealpha",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100).copy(preferRelevance=true))
+    assertEquals(ranked.total,1105L); assert(ranked.relevanceOrdered)
+    assert(ranked.rows.forall(row => row.publishedView.isEmpty && row.matchedView.contains(row.head.view)))
     val complement=browse(index,"a",query("mode:semantic NOT absent",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100))
     assertEquals(complement.total,1105L); assert(complement.rows.forall(_.matchedView.isEmpty))
   }}
@@ -272,7 +275,13 @@ class ArchiveIndexTest extends munit.FunSuite {
     val exactConfig=config.copy(jdbcUrl=config.jdbcUrl+separator+"options="+options)
     val exactDb=new Database(exactConfig,IndexProfileCatalog.legacyOnly(exactConfig))
     val exactIndex=new PostgresArchiveIndex(exactDb,new PostgresArchive(exactDb,exactConfig),exactConfig)
-    def count(body: String): Long = browse(exactIndex,"a",query("mode:semantic ("+body+")",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)).total
+    def count(body: String): Long = {
+      val q=query("mode:semantic ("+body+")",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)
+      val original=browse(exactIndex,"a",q)
+      val ranked=browse(exactIndex,"a",q.copy(preferRelevance=true))
+      assertEquals(ranked.total,original.total,body)
+      ranked.total
+    }
     assertEquals(count("project:target (foo OR bar)"),1L)
     assertEquals(count("(project:target AND foo) OR (project:target AND bar)"),0L)
     assertEquals(count("(project:target OR project:missing) NOT tag:spam foo"),1L)

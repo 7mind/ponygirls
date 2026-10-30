@@ -6,7 +6,7 @@ import { Result_Hello, Result_Ping, Result_Pong, Result_Error, Result_Search, Re
 import { SearchCountScope } from '../../../generated/typescript/chronicle/api/SearchCountScope.ts';
 import { ArchiveTextScope } from '../../../generated/typescript/chronicle/api/ArchiveTextScope.ts';
 import type { Protocol } from './types.ts';
-const API_VERSION = '1.7.0';
+const API_VERSION = '1.8.0';
 const MAX_FRAME_CHARACTERS = 8 * 1024 * 1024;
 export function baboonProtocol(nonce: () => string): Protocol<Operation, Result> {
   let helloId: string | null = null;
@@ -51,8 +51,10 @@ export function baboonProtocol(nonce: () => string): Protocol<Operation, Result>
         } else if (rankingLimit !== undefined) throw new Error('Invalid search count metadata');
       }
       if (result instanceof Result_Archive) {
-        const { total, textScope, annChunkLimitPerOperand } = result.result;
+        const { total, textScope, annChunkLimitPerOperand, relevanceOrdered } = result.result;
         if (total < 0n) throw new Error('Invalid archive total');
+        // The generated JSON decoder casts a missing or non-boolean field without checking it.
+        if (typeof relevanceOrdered !== 'boolean') throw new Error('Invalid archive relevance-order metadata');
         if (textScope === ArchiveTextScope.BoundedCandidateSets) {
           if (annChunkLimitPerOperand === undefined || !Number.isInteger(annChunkLimitPerOperand) || annChunkLimitPerOperand <= 0) throw new Error('Invalid archive candidate-set metadata');
         } else if (annChunkLimitPerOperand !== undefined) throw new Error('Invalid archive candidate-set metadata');

@@ -76,8 +76,10 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
       val (legs,legArgs)=if(q.mode==SearchMode.Hybrid && q.query.nonEmpty) {
         (s",lexical AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $lexicalPredicate$authorized ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT ${SearchPolicy.candidatesPerLeg}),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",List(EmbeddingSpaceDescriptor.from(config.embedding).id)++lexicalArgs++List(q.query))
       } else (",candidates AS(SELECT * FROM ann)",Nil)
+      // Cover-density rank can be positive even when a negated term makes the full query false.
+      val lexicalScore="CASE WHEN document @@ websearch_to_tsquery('english',?) THEN ts_rank_cd(document,websearch_to_tsquery('english',?)) ELSE 0 END"
       val score=if(q.mode==SearchMode.Semantic) "1.0-distance" else s"(CASE WHEN lex>0 THEN 1.0/(${SearchPolicy.reciprocalRankConstant}+lr) ELSE 0 END)+1.0/(${SearchPolicy.reciprocalRankConstant}+vr)"
-      SearchStatement(s"WITH $ann$legs,ranked AS(SELECT *,ts_rank_cd(document,websearch_to_tsquery('english',?)) AS lex,embedding <=> ?::vector AS distance FROM candidates),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,id) AS lr,row_number() OVER(ORDER BY distance,id) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,id)",annArgs++legArgs++List(q.query,queryVector))
+      SearchStatement(s"WITH $ann$legs,ranked AS(SELECT *,$lexicalScore AS lex,embedding <=> ?::vector AS distance FROM candidates),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,id) AS lr,row_number() OVER(ORDER BY distance,id) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,id)",annArgs++legArgs++List(q.query,q.query,queryVector))
     }
   }
   private[chronicle] def legacyStatement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = {

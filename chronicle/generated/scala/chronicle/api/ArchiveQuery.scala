@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeOption, decodeString}
+import io.circe.Decoder.{decodeBoolean, decodeOption, decodeString}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 
@@ -8,7 +8,8 @@ package chronicle.api {
     sort: ArchiveSort,
     direction: SortDirection,
     cursor: Option[String],
-    limit: Int
+    limit: Int,
+    preferRelevance: Boolean
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ArchiveQuery.baboonDomainVersion
     override def baboonDomainIdentifier: String = ArchiveQuery.baboonDomainIdentifier
@@ -19,14 +20,14 @@ package chronicle.api {
   }
   
   object ArchiveQuery {
-    def baboonDomainVersion: String = "1.7.0"
+    def baboonDomainVersion: String = "1.8.0"
     def baboonDomainIdentifier: String = "chronicle.api"
     def baboonTypeIdentifier: String = "chronicle.api/:#ArchiveQuery"
-    private lazy val _baboonSameInVersions: List[String] = List("1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0")
+    private lazy val _baboonSameInVersions: List[String] = List("1.8.0")
     def baboonSameInVersions: List[String] = _baboonSameInVersions
-    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.7.0" -> "identical")
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.8.0" -> "identical")
     def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.3.0", "identical" -> "1.3.0")
+    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.3.0", "prefix-compact" -> "1.3.0", "prefix-any-mode" -> "1.3.0", "identical" -> "1.8.0")
     def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
     def codecJson: BaboonJsonCodec[ArchiveQuery] = ArchiveQuery_JsonCodec.instance
   }
@@ -42,7 +43,8 @@ package chronicle.api {
         "sort" -> ArchiveSort_JsonCodec.instance.encode(ctx, value.sort),
         "direction" -> SortDirection_JsonCodec.instance.encode(ctx, value.direction),
         "cursor" -> value.cursor.map(v => Json.fromString(v)).getOrElse(Json.Null),
-        "limit" -> Json.fromInt(value.limit)
+        "limit" -> Json.fromInt(value.limit),
+        "preferRelevance" -> Json.fromBoolean(value.preferRelevance)
       )
     }
     
@@ -58,7 +60,8 @@ package chronicle.api {
             direction <- getField(jsonObject, "direction").flatMap(v => SortDirection_JsonCodec.circeDecoder(v.hcursor))
             cursor <- getField(jsonObject, "cursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
             limit <- getField(jsonObject, "limit").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))
-          } yield ArchiveQuery(expression,sort,direction,cursor,limit)
+            preferRelevance <- getField(jsonObject, "preferRelevance").flatMap(v => decodeBoolean(v.hcursor))
+          } yield ArchiveQuery(expression,sort,direction,cursor,limit,preferRelevance)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ArchiveQuery: object expected"))
       }
     }

@@ -48,7 +48,7 @@ def evidence(inputs: dict) -> dict:
     check_backend(inputs, backend, selected, discovered)
     protocol = read(Path(inputs['protocolValidation'])/'protocol.json')
     if (protocol['schemaVersion'] != 1 or protocol['status'] != 'passed'
-        or protocol['protocolSource'] != inputs['protocolSource'] or protocol['versions'] != 8
+        or protocol['protocolSource'] != inputs['protocolSource'] or protocol['versions'] != 9
         or type(protocol['fixtureGroups']) is not int or protocol['fixtureGroups'] <= 0
         or type(protocol['retainedBranchRejections']) is not int or protocol['retainedBranchRejections'] <= 0):
         raise ValueError('missing, mismatched or incomplete retained-version protocol validation')

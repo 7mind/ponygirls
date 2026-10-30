@@ -83,7 +83,7 @@ final class CursorWebSocketTest extends munit.FunSuite {
               try {
                 assert(request(Operation.Hello(List(Wire.versions.current))).isInstanceOf[Result.Hello])
                 List(SortDirection.Asc,SortDirection.Desc).foreach { direction =>
-                  val archive=ArchiveQuery("mode:lexical",ArchiveSort.Title,direction,None,1)
+                  val archive=ArchiveQuery("mode:lexical",ArchiveSort.Title,direction,None,1,false)
                   val first=request(Operation.Archive(archive)).asInstanceOf[Result.Archive].result
                   assertEquals(first.rows.head.head.metadata.title.length,50001)
                   assert(first.nextCursor.nonEmpty)
