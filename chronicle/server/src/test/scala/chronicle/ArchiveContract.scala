@@ -44,13 +44,51 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   private val targets=mutable.Map.empty[String,OwnerTarget]
   private val jobs=mutable.LinkedHashMap.empty[UUID,Job]
   private val acceptedWork=mutable.Map.empty[(UUID,UUID,IndexingStage,Int,Int),(String,io.circe.Json)]
+  private val annotationEpochs=mutable.Map.empty[UUID,Long]
+  private final case class Attempt(inputHash: String,fence: Long,reason: Option[String])
+  private val annotationAttempts=mutable.Map.empty[(UUID,UUID,Long,Int,Int),Attempt]
   private val failedStages=mutable.Map.empty[UUID,IndexingStage]
   def failureStage(jobId: UUID): Option[IndexingStage] = synchronized(failedStages.get(jobId))
+  def workerEvidence(jobId: UUID): WorkerEvidence = synchronized {
+    val rows=annotationAttempts.iterator.collect { case ((id,_,_,_,_),value) if id==jobId => value }.toList
+    WorkerEvidence(jobs(jobId).attempts,rows.size,rows.count(_.reason.nonEmpty))
+  }
   def expireClaim(claim: Claim): Unit = synchronized { jobs(claim.jobId).lease=Instant.EPOCH }
   def retryJob(jobId: UUID): Unit = synchronized {
     val job=jobs(jobId)
     if(job.state==JobState.Complete) { job.claim=job.claim.copy(runId=UUID.randomUUID()); failedStages.remove(jobId) }
     job.state=JobState.Queued; job.attempts=0; job.claim=job.claim.copy(fence=job.claim.fence+1); job.lease=Instant.EPOCH
+    annotationEpochs(jobId)=annotationEpochs.getOrElse(jobId,0L)+1
+  }
+  def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation = synchronized {
+    Check(valid(claim),"stale-claim","indexing claim is no longer current"); AnnotationAttempts.validate(key)
+    val epoch=annotationEpochs.getOrElse(claim.jobId,0L)
+    val previous=annotationAttempts.iterator.collect {
+      case ((job,run,e,window,attempt),value) if job==claim.jobId && run==claim.runId && e==epoch && window==key.window => (attempt,value)
+    }.toList.sortBy(_._1)
+    Check(previous.size<=AnnotationAttempts.reservationLimit && previous.map(_._1)==(1 to previous.size).toList && previous.forall(_._2.inputHash==key.inputHash),"internal","annotation attempt input identity mismatch")
+    val rejected=previous.flatMap(_._2.reason)
+    Check(rejected.size<=AnnotationAttempts.rejectionLimit,"internal","invalid annotation rejection count")
+    if(rejected.size==AnnotationAttempts.rejectionLimit) AnnotationReservation.Exhausted(rejected.last,previous.size)
+    else if(previous.size>=AnnotationAttempts.reservationLimit) AnnotationReservation.Exhausted(AnnotationAttempts.callLimitReason,previous.size)
+    else {
+      val attempt=previous.size+1
+      annotationAttempts((claim.jobId,claim.runId,epoch,key.window,attempt))=Attempt(key.inputHash,claim.fence,None)
+      AnnotationReservation.Reserved(attempt)
+    }
+  }
+  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = synchronized {
+    Check(valid(claim),"stale-claim","indexing claim is no longer current"); AnnotationAttempts.validate(key); AnnotationAttempts.validateReason(reason)
+    Check(attempt>=1 && attempt<=AnnotationAttempts.reservationLimit,"internal","invalid annotation reservation")
+    val slot=(claim.jobId,claim.runId,annotationEpochs.getOrElse(claim.jobId,0L),key.window,attempt)
+    val stored=annotationAttempts.getOrElse(slot,throw DomainError("internal","annotation rejection reservation mismatch"))
+    Check(stored.inputHash==key.inputHash && stored.fence==claim.fence && stored.reason.forall(_==reason),"internal","annotation rejection reservation mismatch")
+    val rejected=annotationAttempts.iterator.count { case ((job,run,epoch,window,_),value) =>
+      job==claim.jobId && run==claim.runId && epoch==slot._3 && window==key.window && value.reason.nonEmpty
+    }+(if(stored.reason.isEmpty) 1 else 0)
+    Check(rejected<=AnnotationAttempts.rejectionLimit,"internal","invalid annotation rejection count")
+    annotationAttempts(slot)=stored.copy(reason=Some(reason))
+    rejected
   }
   def checkpoint(claim: Claim,key: CheckpointKey): Option[io.circe.Json] = synchronized {
     Check(valid(claim),"stale-claim","indexing claim is no longer current")
@@ -126,8 +164,8 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
       val scoped=scope match { case ClaimScope.AllOwners => true; case ClaimScope.Owner(owner) => c.owner==owner }
       scoped && enabled(c.owner) && !removed(c.sessionId) && profiles(c.profile) && selected.profile==c.profile && sources.values.exists(h => h.id==c.sessionId && h.revision==c.revision)
     }
-    jobs.values.filter(j => eligible(j) && j.state==JobState.Running && !j.lease.isAfter(Instant.now()) && j.attempts>=5).foreach { j => j.state=JobState.Failed; j.claim=j.claim.copy(fence=j.claim.fence+1); failedStages.remove(j.claim.jobId) }
-    jobs.values.find(j => eligible(j) && j.attempts<5 && (j.state==JobState.Queued || (j.state==JobState.Running && !j.lease.isAfter(Instant.now())))).map { j =>
+    jobs.values.filter(j => eligible(j) && j.state==JobState.Running && !j.lease.isAfter(Instant.now()) && j.attempts>=Jobs.attemptLimit).foreach { j => j.state=JobState.Failed; j.claim=j.claim.copy(fence=j.claim.fence+1); failedStages.remove(j.claim.jobId) }
+    jobs.values.find(j => eligible(j) && j.attempts<Jobs.attemptLimit && (j.state==JobState.Queued || (j.state==JobState.Running && !j.lease.isAfter(Instant.now())))).map { j =>
       j.state=JobState.Running; j.attempts+=1; j.claim=j.claim.copy(fence=j.claim.fence+1,targetEpoch=target(j.claim.owner).epoch)
       j.lease=Instant.now().plusSeconds(leaseSeconds); j.completed=0; j.total=None; j.claim
     }
@@ -212,7 +250,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     PassageSpansResult(view,passageId,spans,passage.spanCount,offset)
   }
   def fail(c: Claim,code: String): Unit = synchronized {
-    if(valid(c)) { val j=jobs(c.jobId); j.state=if(j.attempts>=5) JobState.Failed else JobState.Queued; j.lease=Instant.EPOCH; failedStages.remove(c.jobId); () }
+    if(valid(c)) { val j=jobs(c.jobId); j.state=if(j.attempts>=Jobs.attemptLimit || AnnotationAttempts.terminal(code)) JobState.Failed else JobState.Queued; j.lease=Instant.EPOCH; failedStages.remove(c.jobId); () }
   }
   def fail(c: Claim,code: String,stage: IndexingStage): Unit = synchronized {
     if(valid(c)) { fail(c,code); failedStages(c.jobId)=stage }

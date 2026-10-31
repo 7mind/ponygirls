@@ -82,7 +82,7 @@ object RetryFailedJobs {
     Check(profile==targetProfile && hash==selectionHash && selected==totals.eligibleCurrentFailed,"conflict","retry selection changed; preview again")
     // Lease exhaustion can add Failed jobs without source locks: update only this exact captured set.
     val retried=Using.resource(c.prepareStatement("""UPDATE ch_jobs j SET state='Queued',attempts=0,lease_until=NULL,
-      fence=j.fence+1,completed_windows=0,total_windows=NULL
+      fence=j.fence+1,annotation_retry_epoch=j.annotation_retry_epoch+1,completed_windows=0,total_windows=NULL
       FROM pg_temp.ch_retry_failed_selection chosen WHERE j.id=chosen.id AND j.fence=chosen.fence AND j.state='Failed'"""))(_.executeLargeUpdate())
     Check(retried==selected,"internal","locked retry selection changed")
     Sql.exec(c,"DROP TABLE pg_temp.ch_retry_failed_selection")

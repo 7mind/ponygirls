@@ -48,7 +48,7 @@ abstract class ModelAccountingContract extends munit.FunSuite {
             assertEquals(results.take(2).map(_.swap.toOption.get.asInstanceOf[DomainError].code),List("model-output/truncated","model-output"))
             assert(results.drop(2).forall(_.isRight))
             val value=row(snapshot,ModelWorkload.IndexAnnotation)
-            assertEquals(value.inFlight,0); assertEquals(value.finishedCalls,4L); assertEquals(value.failedCalls,0L); assertEquals(value.invalidUsageCalls,1L)
+            assertEquals(value.inFlight,0); assertEquals(value.finishedCalls,4L); assertEquals(value.failedCalls,2L); assertEquals(value.invalidUsageCalls,1L)
             assertEquals(value.input.knownTokens,22L); assertEquals(value.input.reportedCalls,2L); assertEquals(value.input.unknownCalls,2L); assertEquals(value.input.tokensPerSecond,None)
             assertEquals(value.output.get.knownTokens,21L); assertEquals(value.output.get.unknownCalls,1L); assertEquals(value.reasoningSubset.get.knownTokens,9L)
           }

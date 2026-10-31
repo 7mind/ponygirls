@@ -10,6 +10,8 @@ final case class CheckpointKey(stage: IndexingStage,window: Int,part: Int,inputH
   Check(stage!=IndexingStage.Publication && window>=0 && part>=0 && inputHash.matches("[0-9a-f]{64}"),"internal","invalid checkpoint key")
 }
 trait IndexCheckpoints {
+  def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation
+  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int
   def checkpoint(claim: Claim,key: CheckpointKey): Option[Json]
   def checkpoint(claim: Claim,key: CheckpointKey,value: Json): Unit
 }

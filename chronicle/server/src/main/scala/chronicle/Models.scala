@@ -34,7 +34,9 @@ object ModelHttp {
   def transportTimeout(config: Config): FiniteDuration = config.annotation.timeoutSeconds.max(config.embedding.timeoutSeconds).seconds
 }
 final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: ModelAdmission) {
-  def post(context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json): IO[Json] = IO.defer {
+  def post(context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json): IO[Json] =
+    postDecoded(context,endpoint,credentialFile,timeout,maxBytes,payload)(identity)
+  def postDecoded[A](context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json)(decode: Json => A): IO[A] = IO.defer {
     val uri = Uri.fromString(endpoint).fold(_ => throw DomainError("config","invalid model endpoint"),identity)
     val credential = Config.credential(credentialFile)
     val base = Request[IO](Method.POST,uri).withEntity(payload.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"))
@@ -51,8 +53,8 @@ final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: Mo
         client.run(req).use { response =>
           if(!response.status.isSuccess) IO.raiseError(DomainError("model-http",s"model returned HTTP ${response.status.code}"))
           else response.body.take(maxBytes.toLong+1).compile.to(Array).flatMap { bytes => IO.uncancelable { _ =>
-            IO { Check(bytes.length<=maxBytes,"model-output","model response too large"); ModelOutput.parse(new String(bytes,UTF_8)) }
-              .flatTap(json => usage.set(ProviderUsage.parse(json,context.purpose)))
+            IO { if(bytes.length>maxBytes) throw ModelRejection.from(ModelRejectionReason.ResponseByteBound); ModelOutput.parse(new String(bytes,UTF_8)) }
+              .flatTap(json => usage.set(ProviderUsage.parse(json,context.purpose))).map(decode)
           }}
         }.timeoutTo(timeout.seconds,IO.raiseError(DomainError("model-timeout","model deadline exceeded")))
       }
@@ -60,7 +62,7 @@ final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: Mo
   }
 }
 object ModelOutput {
-  def parse(text: String): Json = io.circe.parser.parse(text).fold(_ => throw DomainError("model-output","invalid model JSON"),identity)
+  def parse(text: String): Json = io.circe.parser.parse(text).fold(_ => throw ModelRejection.from(ModelRejectionReason.ModelJsonInvalid),identity)
 }
 enum AnnotationRequestPolicy(val identity: String,val responseTokens: Int) {
   case StrictJsonSchema extends AnnotationRequestPolicy("strict-json-schema:responseTokens2048",2048)
@@ -90,52 +92,36 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
   }
 }
 final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnotator,embedder: Embedder,config: Config,profiles: IndexProfileCatalog,admission: ModelAdmission,logger: logstage.IzLogger) {
-  private val annotationAttemptLimit = 5
-  private val truncatedAnnotationCode = "model-output/truncated"
   private val leaseSeconds = 300
-  private def failureCode(error: Throwable): String = error match { case d: DomainError => d.code; case _ => "worker-fault" }
+  private final class AnnotationExhausted(val reason: String) extends RuntimeException(AnnotationAttempts.exhaustedCode) {
+    def code: String = if(reason==AnnotationAttempts.callLimitReason) AnnotationAttempts.reservationExhaustedCode else AnnotationAttempts.exhaustedCode
+  }
+  private def failureCode(error: Throwable): String = error match { case exhausted: AnnotationExhausted => exhausted.code; case d: DomainError => d.code; case _ => "worker-fault" }
   private def failureOrigin(error: Throwable): String = error.getStackTrace.find(frame => !Set("chronicle.DomainError","chronicle.DomainError$","chronicle.Check","chronicle.Check$").contains(frame.getClassName)).map(frame => s"${frame.getClassName}.${frame.getMethodName}:${frame.getLineNumber}").getOrElse("unavailable")
-  private final case class FailureDetails(reason: String,httpStatus: String)
+  private final case class FailureDetails(reason: String,httpStatus: String,structure: Json)
   private def failureDetails(error: Throwable): FailureDetails = {
     val status=error match {
       case DomainError("model-http",s"model returned HTTP $value") if value.matches("(?:1|3|4|5)[0-9]{2}") => Some(value.toInt)
       case _ => None
     }
-    val reason=if(status.nonEmpty) "http-status" else error match {
-      case DomainError("model-output","model response too large") => "response-byte-bound"
-      case DomainError("model-output","invalid model JSON") => "model-json-invalid"
-      case DomainError("model-output","missing annotation choices") => "annotation-choices-decode"
-      case DomainError("model-output","invalid annotation choice count") => "annotation-choice-count"
-      case DomainError("model-output","missing annotation finish reason") => "annotation-finish-decode"
-      case DomainError("model-output","annotation did not complete") => "annotation-finish-not-stop"
-      case DomainError("model-output","annotation refused") => "annotation-refusal-field"
-      case DomainError("model-output","missing annotation content") => "annotation-content-decode"
-      case DomainError("model-output","empty annotation content") => "annotation-content-empty"
-      case DomainError("model-output","invalid annotation window") => "annotation-window"
-      case DomainError("model-output","annotation contains non-storable Unicode") => "annotation-unicode"
-      case DomainError("model-output","unexpected annotation fields") => "annotation-fields"
-      case DomainError("model-output","missing chunks") => "annotation-chunks-decode"
-      case DomainError("model-output","invalid chunk count") => "annotation-chunk-count"
-      case DomainError("model-output","unexpected chunk fields") => "annotation-chunk-fields"
-      case DomainError("model-output","invalid first fragment") => "annotation-first-decode"
-      case DomainError("model-output","invalid last fragment") => "annotation-last-decode"
-      case DomainError("model-output","invalid summary") => "annotation-summary-decode"
-      case DomainError("model-output","invalid tags") => "annotation-tags-decode"
-      case DomainError("model-output","partition gap/overlap/range") => "annotation-partition-range"
-      case DomainError("model-output","annotation limits") => "annotation-limits"
-      case DomainError("model-output","incomplete partition") => "annotation-partition-incomplete"
-      case DomainError("model-output","missing embedding data") => "embedding-data-decode"
-      case DomainError("model-output","embedding count mismatch") => "embedding-count"
-      case DomainError("model-output","missing embedding index") => "embedding-index-decode"
-      case DomainError("model-output","invalid embedding") => "embedding-vector-decode"
-      case DomainError("model-output","invalid vector dimension/value") => "embedding-vector-validation"
-      case DomainError("model-output","invalid embedding indices") => "embedding-indices"
-      case DomainError("model-timeout","model deadline exceeded") => "model-deadline"
-      case DomainError("model-output/truncated","annotation token limit reached") => "annotation-token-limit"
-      case DomainError("stale-claim","indexing claim is no longer current") => "stale-claim"
-      case _ => "unknown"
+    val rejection=ModelRejection.classify(error)
+    val reason=rejection.map(_.reason.value).getOrElse {
+      if(status.nonEmpty) "http-status" else error match {
+        case exhausted: AnnotationExhausted => exhausted.reason
+        case DomainError("model-output","missing embedding data") => "embedding-data-decode"
+        case DomainError("model-output","embedding count mismatch") => "embedding-count"
+        case DomainError("model-output","missing embedding index") => "embedding-index-decode"
+        case DomainError("model-output","invalid embedding") => "embedding-vector-decode"
+        case DomainError("model-output","invalid vector dimension/value") => "embedding-vector-validation"
+        case DomainError("model-output","invalid embedding indices") => "embedding-indices"
+        case DomainError("model-timeout",_) => "model-deadline"
+        case DomainError("model-output/truncated",_) => "annotation-token-limit"
+        case DomainError("model-output",_) => "model-output-invalid"
+        case DomainError("stale-claim",_) => "stale-claim"
+        case _ => "unknown"
+      }
     }
-    FailureDetails(reason,status.fold("unavailable")(_.toString))
+    FailureDetails(reason,status.fold("unavailable")(_.toString),rejection.map(_.safeDetails).getOrElse(Json.obj()))
   }
   private final case class StagedFailure(stage: IndexingStage,error: Throwable) extends RuntimeException
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
@@ -155,18 +141,25 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
       }
       val code=failureCode(error)
       val exceptionClass=error.getClass.getName
-      val origin=failureOrigin(error); val details=failureDetails(error); val reason=details.reason; val httpStatus=details.httpStatus
-      IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=$stage annotationAttempt=$attempt annotationAttemptLimit=$annotationAttemptLimit code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus")) *> IO.raiseError(StagedFailure(failureStage,error))
+      val origin=failureOrigin(error); val details=failureDetails(error); val reason=details.reason; val httpStatus=details.httpStatus; val structure=details.structure.noSpaces
+      val annotationAttempt=if(attempt==0) "checkpoint" else attempt.toString
+      IO(logger.warn(s"window failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total stage=$stage annotationAttempt=$annotationAttempt annotationRejectionLimit=${AnnotationAttempts.rejectionLimit} code=$code exceptionClass=$exceptionClass origin=$origin reason=$reason httpStatus=$httpStatus structure=$structure")) *> IO.raiseError(StagedFailure(failureStage,error))
     }
-    def annotate[A](run: => IO[A],index: Int,attempt: Int): IO[(A,Int)] = IO.defer(run).map(value => (value,attempt)).handleErrorWith {
-      case error: DomainError if error.code==truncatedAnnotationCode =>
-        val retry=attempt<annotationAttemptLimit
-        val outcome=if(retry) "retry" else "exhaust"
-        IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total attempt=$attempt attemptLimit=$annotationAttemptLimit code=$truncatedAnnotationCode outcome=$outcome")) *>
-          (if(retry) IO.blocking {
-            Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current")
-          } *> annotate(run,index,attempt+1) else failed(error,index,"annotation",attempt))
-      case error => failed(error,index,"annotation",attempt)
+    def annotate[A](key: CheckpointKey,run: => IO[A],index: Int): IO[(A,Int)] = IO.blocking(archive.reserveAnnotation(claim,key)).flatMap {
+      case AnnotationReservation.Exhausted(reason,attempts) => failed(new AnnotationExhausted(reason),index,"annotation",attempts)
+      case AnnotationReservation.Reserved(attempt) => IO.defer(run).map(value => (value,attempt)).handleErrorWith {
+        case error: DomainError if Set("model-output","model-output/truncated").contains(error.code) =>
+          val details=failureDetails(error); val reason=details.reason; val structure=details.structure.noSpaces; val code=error.code
+          IO.blocking(archive.rejectAnnotation(claim,key,attempt,reason)).flatMap { rejected =>
+            IO(logger.warn(s"annotation attempt failed jobId=${claim.jobId} fence=${claim.fence} windowOrdinal=$index totalWindows=$total attempt=$attempt rejected=$rejected rejectionLimit=${AnnotationAttempts.rejectionLimit} reservationLimit=${AnnotationAttempts.reservationLimit} code=$code reason=$reason structure=$structure")) *>
+              (if(rejected==AnnotationAttempts.rejectionLimit) failed(new AnnotationExhausted(reason),index,"annotation",attempt)
+              else IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current")) *> annotate(key,run,index))
+          }
+        case error => failed(error,index,"annotation",attempt)
+      }
+    }.handleErrorWith {
+      case staged: StagedFailure => IO.raiseError(staged)
+      case error => failed(error,index,"annotation",0)
     }
     def embed(chunks: List[Chunk],index: Int,attempt: Int): IO[List[IndexedChunk]] =
       chunks.grouped(config.indexing.embeddingBatchSize).toList.zipWithIndex.traverse { (batch,part) =>
@@ -201,11 +194,14 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
         case Some(window) =>
           val input=Json.arr(window.sourceJson,state.carry.map(ProblemPassages.carryJson).getOrElse(Json.Null))
           val key=IndexCheckpoints.key(claim,IndexingStage.Annotation,index,0,ProblemPassages.identity,input)
-          val decision=windows.accepted(key)(json => ProblemPassages.decode(window,state.carry.nonEmpty,json),CheckpointJson.decision)(problemAnnotator.annotate(claim.owner,window,state.carry).flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value))))
-          windows.annotate(decision.flatMap(value => IO(ProblemPassages.accept(state,window,value))),index,1).flatMap { (delta,attempt) =>
-            windows.embed(delta.pieces.map(_.chunk).toList,index,attempt).flatMap { indexed =>
-              val next=publication.append(delta,indexed)
-              windows.report(index+1) *> loop(delta.state,next,index+1)
+          val decision=windows.accepted(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0),value => CheckpointJson.decision(value._1))(
+            windows.annotate(key,problemAnnotator.annotate(claim.owner,window,state.carry).flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value))),index))
+          decision.flatMap { (value,attempt) =>
+            IO(ProblemPassages.accept(state,window,value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted annotation state"))).flatMap { delta =>
+              windows.embed(delta.pieces.map(_.chunk).toList,index,attempt).flatMap { indexed =>
+                val next=publication.append(delta,indexed)
+                windows.report(index+1) *> loop(delta.state,next,index+1)
+              }
             }
           }
       }

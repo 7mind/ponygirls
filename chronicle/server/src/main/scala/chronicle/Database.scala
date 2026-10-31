@@ -14,7 +14,7 @@ final class Database(config: Config,val profiles: IndexProfileCatalog) {
   def initialize(): Unit = {
     transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
-    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql","009_transient_security_epoch.sql","010_index_checkpoints.sql","011_context_coverage.sql","012_reindex_cohorts.sql","013_revision_bindings.sql","014_renewable_sessions.sql").foreach { migration =>
+    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql","009_transient_security_epoch.sql","010_index_checkpoints.sql","011_context_coverage.sql","012_reindex_cohorts.sql","013_revision_bindings.sql","014_renewable_sessions.sql","015_annotation_attempts.sql").foreach { migration =>
       val stream = getClass.getResourceAsStream(s"/$migration")
       Check(stream != null,"config","missing migration resource")
       val sql = Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
@@ -51,6 +51,7 @@ object Sql {
   def json(r: ResultSet, col: String): Json = Wire.parse(r.getString(col))
 }
 object Jobs {
+  val attemptLimit=5
   val supersededRevision = "superseded-revision"
   def retry(c: Connection,owner: String,id: UUID): Unit = {
     val target=OwnerTargets.read(c,owner,true).profile
@@ -58,7 +59,7 @@ object Jobs {
     val (revision,profile)=Sql.one(c,"SELECT revision,profile FROM ch_jobs WHERE id=? FOR UPDATE",id)(r => (r.getInt(1),r.getString(2))).get
     Check(revision==head,"conflict","job superseded by a newer archive revision")
     Check(profile==target,"conflict","job superseded by the target model profile")
-    Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,fence=fence+1,run_id=CASE WHEN state='Complete' THEN gen_random_uuid() ELSE run_id END,error=CASE WHEN state='Complete' THEN NULL ELSE error END,failure_stage=CASE WHEN state='Complete' THEN NULL ELSE failure_stage END,completed_windows=0,total_windows=NULL WHERE id=?",id)
+    Sql.exec(c,"UPDATE ch_jobs SET state='Queued',attempts=0,lease_until=NULL,fence=fence+1,annotation_retry_epoch=annotation_retry_epoch+1,run_id=CASE WHEN state='Complete' THEN gen_random_uuid() ELSE run_id END,error=CASE WHEN state='Complete' THEN NULL ELSE error END,failure_stage=CASE WHEN state='Complete' THEN NULL ELSE failure_stage END,completed_windows=0,total_windows=NULL WHERE id=?",id)
   }
 }
 final class PostgresArchive(db: Database, config: Config) extends SessionArchive with PassageReader with MessageSearchReader with ContextReader {
@@ -186,18 +187,18 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     val owners=Sql.rows(c,s"SELECT t.owner FROM ch_owner_targets t JOIN ch_users u ON u.id=t.owner AND u.enabled WHERE t.profile IN($placeholders)${scoped._1} ORDER BY t.owner",(profiles.toList.sorted++scoped._2)*)(_.getString(1))
     owners.iterator.map { owner =>
       OwnerTargets.eligible(c,owner).filter(target => profiles.contains(target.profile)).flatMap { target =>
-        val exhausted=Sql.rows(c,"""SELECT s.id FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
-          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.state='Running' AND j.lease_until<clock_timestamp() AND j.attempts>=5)
+        val exhausted=Sql.rows(c,s"""SELECT s.id FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
+          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.state='Running' AND j.lease_until<clock_timestamp() AND j.attempts>=${Jobs.attemptLimit})
           ORDER BY s.id FOR UPDATE OF s SKIP LOCKED""",owner,target.profile)(_.getObject(1,classOf[UUID]))
         exhausted.foreach { id =>
-          Sql.exec(c,"UPDATE ch_jobs SET state='Failed',error='lease-exhausted',failure_stage=NULL,lease_until=NULL,fence=fence+1 WHERE session_id=? AND profile=? AND state='Running' AND lease_until<clock_timestamp() AND attempts>=5",id,target.profile)
+          Sql.exec(c,s"UPDATE ch_jobs SET state='Failed',error='lease-exhausted',failure_stage=NULL,lease_until=NULL,fence=fence+1 WHERE session_id=? AND profile=? AND state='Running' AND lease_until<clock_timestamp() AND attempts>=${Jobs.attemptLimit}",id,target.profile)
         }
-        val source=Sql.one(c,"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
-          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())))
+        val source=Sql.one(c,s"""SELECT s.id,s.revision FROM ch_sources s WHERE s.owner=? AND NOT s.tombstone AND EXISTS(
+          SELECT 1 FROM ch_jobs j WHERE j.session_id=s.id AND j.revision=s.revision AND j.profile=? AND j.attempts<${Jobs.attemptLimit} AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())))
           ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",owner,target.profile)(r => (r.getObject(1,classOf[UUID]),r.getInt(2)))
         source.flatMap { case (id,revision) =>
-          Sql.one(c,"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
-            WHERE id=(SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<5 AND (state='Queued' OR (state='Running' AND lease_until<clock_timestamp())) FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
+          Sql.one(c,s"""UPDATE ch_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?),completed_windows=0,total_windows=NULL
+            WHERE id=(SELECT id FROM ch_jobs WHERE session_id=? AND revision=? AND profile=? AND attempts<${Jobs.attemptLimit} AND (state='Queued' OR (state='Running' AND lease_until<clock_timestamp())) FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,fence,run_id""",leaseSeconds,id,revision,target.profile) { row =>
             val (snap,binding)=Sql.one(c,"SELECT snapshot,binding_id FROM ch_revisions WHERE session_id=? AND revision=?",id,revision) { r =>
               val snapshot=Wire.decode(IngestRequest.codecJson,Sql.json(r,"snapshot"))
               (snapshot,RevisionBinding.captured(r.getObject("binding_id",classOf[UUID]),id,revision,snapshot))
@@ -229,6 +230,18 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
   private def checkpointAuthority(c: Connection,claim: Claim): Unit = {
     Check(current(c,claim) && lockJob(c,claim) && Sql.one(c,s"SELECT 1 FROM ch_jobs WHERE $validJob",jobArgs(claim)*)(_ => true).contains(true) &&
       revisionMatches(c,claim),"stale-claim","indexing claim is no longer current")
+  }
+  def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation = db.transaction { c =>
+    checkpointAuthority(c,claim)
+    val attempt=AnnotationAttempts.reserve(c,claim,key)
+    checkpointAuthority(c,claim)
+    attempt
+  }
+  def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = db.transaction { c =>
+    checkpointAuthority(c,claim)
+    val rejected=AnnotationAttempts.reject(c,claim,key,attempt,reason)
+    checkpointAuthority(c,claim)
+    rejected
   }
   def checkpoint(claim: Claim,key: CheckpointKey): Option[Json] = db.transaction { c =>
     checkpointAuthority(c,claim)
@@ -282,7 +295,8 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
   def fail(claim: Claim,code: String): Unit = failAt(claim,code,None)
   def fail(claim: Claim,code: String,stage: IndexingStage): Unit = failAt(claim,code,Some(stage))
   private def failAt(claim: Claim,code: String,stage: Option[IndexingStage]): Unit = db.transaction { c =>
-    if(current(c,claim) && lockJob(c,claim)) Sql.exec(c,s"UPDATE ch_jobs SET state=CASE WHEN attempts>=5 THEN 'Failed' ELSE 'Queued' END,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,completed_windows=CASE WHEN attempts>=5 THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=5 THEN total_windows ELSE NULL END WHERE $validJob",(List[Sql.Param](code.take(64),stage.fold("")(_.toString))++jobArgs(claim))*)
+    val exhausted=AnnotationAttempts.terminal(code)
+    if(current(c,claim) && lockJob(c,claim)) Sql.exec(c,s"UPDATE ch_jobs SET state=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN 'Failed' ELSE 'Queued' END,error=?,failure_stage=NULLIF(?,''),lease_until=NULL,completed_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN completed_windows ELSE 0 END,total_windows=CASE WHEN attempts>=${Jobs.attemptLimit} OR ? THEN total_windows ELSE NULL END WHERE $validJob",(List[Sql.Param](exhausted,code.take(64),stage.fold("")(_.toString),exhausted,exhausted)++jobArgs(claim))*)
     ()
   }
   private def chunksQuery(generation: UUID,offset: Int,limit: Int): ReadSources.Query = ReadSources.Query("SELECT value FROM ch_chunks WHERE generation=? ORDER BY ordinal,id LIMIT ? OFFSET ?",List(generation,limit,offset))
