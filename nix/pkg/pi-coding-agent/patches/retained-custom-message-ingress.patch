@@ -1,5 +1,5 @@
 diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
-index 28bd362..e630215 100644
+index 28bd362..230f9fe 100644
 --- a/packages/coding-agent/src/core/agent-session.ts
 +++ b/packages/coding-agent/src/core/agent-session.ts
 @@ -364,6 +364,15 @@ interface ToolDefinitionEntry {
@@ -452,14 +452,14 @@ index 28bd362..e630215 100644
  		}
  	}
  
-@@ -2464,6 +2619,7 @@ export class AgentSession {
+@@ -2461,6 +2616,7 @@ export class AgentSession {
+ 	/**
+ 	 * Clear all queued messages and return them.
+ 	 * Useful for restoring to editor when user aborts.
++	 * Retained extension messages and their wake intents are not user input and stay; abort() cancels wakes.
  	 * @returns Object with steering and followUp arrays
  	 */
  	clearQueue(): { steering: string[]; followUp: string[] } {
-+		this._cancelCustomMessageTurn();
- 		const steering = [...this._steeringMessages];
- 		const followUp = [...this._followUpMessages];
- 		this._steeringMessages = [];
 @@ -2496,6 +2652,7 @@ export class AgentSession {
  	 * Abort current operation and wait for agent to become idle.
  	 */
@@ -556,7 +556,7 @@ index ea0790a..71c81d8 100644
  		this.runtime.appendEntry = actions.appendEntry;
  		this.runtime.setSessionName = actions.setSessionName;
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index 12ea542..2a301d6 100644
+index 12ea542..dbd5be6 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
 @@ -968,7 +968,7 @@ export interface BeforeAgentStartUserEvent extends BeforeAgentStartEventBase {
@@ -568,7 +568,7 @@ index 12ea542..2a301d6 100644
  export interface BeforeAgentStartCustomEvent extends BeforeAgentStartEventBase {
  	messageType: "custom";
  	/** The custom message that starts the run. */
-@@ -1755,6 +1755,20 @@ export interface ExtensionAPI {
+@@ -1755,6 +1755,21 @@ export interface ExtensionAPI {
  		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
  	): void;
  
@@ -576,8 +576,9 @@ index 12ea542..2a301d6 100644
 +	 * Transfer retained context to the SDK. A throw means ownership was not accepted.
 +	 * Returning means committed context or retained pending delivery, not run completion or fsync.
 +	 * Public message events follow commit; extension message transformation hooks are not replayed.
-+	 * Later delivery errors use onError and bounded retries. Cancellation clears wake intent,
-+	 * not accepted context; disposal stops pending work. Use sendMessage for the legacy pipeline.
++	 * Later delivery errors use onError and bounded retries. abort() clears wake intent, not
++	 * accepted context; clearQueue() clears only user input. Disposal stops pending work.
++	 * Use sendMessage for the legacy pipeline.
 +	 * Deferred nextTurn delivery is deliberately unsupported by this ownership contract.
 +	 * A wake requested while a prompt is being prepared waits for it; that prompt's run satisfies it.
 +	 */
@@ -589,7 +590,7 @@ index 12ea542..2a301d6 100644
  	/**
  	 * Send a user message to the agent. Always triggers a turn.
  	 * When the agent is streaming, use deliverAs to specify how to queue the message.
-@@ -2210,6 +2224,7 @@ export interface ExtensionRuntimeState {
+@@ -2210,6 +2225,7 @@ export interface ExtensionRuntimeState {
   */
  export interface ExtensionActions {
  	sendMessage: SendMessageHandler;

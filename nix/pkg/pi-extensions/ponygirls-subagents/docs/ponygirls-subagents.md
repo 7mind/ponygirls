@@ -260,9 +260,10 @@ consumes them, or a continuation is scheduled when current work would stop.
 While idle, Pi starts a coalesced turn containing the accepted notices. No user
 input or status polling is required to resume the governing model.
 
-Explicit `clearQueue()` or abort cancels the existing wake intent, not accepted
-context; it does not immediately restart the canceled run. Genuinely new child
-activity can request another turn. Shutdown revokes scheduled delivery and retries;
+An explicit abort cancels the existing wake intent, not accepted context; it does
+not immediately restart the canceled run. `clearQueue()` (for example dequeuing
+user input for editing) only clears user input and keeps the wake intent.
+Genuinely new child activity can request another turn. Shutdown revokes scheduled delivery and retries;
 the footer status independently shows tree counts.
 
 The attachment's journal cursor suppresses repeat submissions, not a durable

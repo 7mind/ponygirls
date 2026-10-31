@@ -304,22 +304,32 @@ test("disposal during a committed flush fences the remaining accepted pages", { 
   assert.equal(f.notices().length, 1, "a disposed session must not continue the old flush");
 });
 
-for (const cancel of ["clearQueue", "abort"] as const) {
-  test(`reentrant ${cancel} during idle commit cannot be overwritten by a wake intent`, { timeout: 10_000 }, async (t) => {
-    const f = await fixture(t, false, "errors", true);
-    f.session.subscribe((event) => {
-      if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === CUSTOM_NOTICE) {
-        if (cancel === "clearQueue") f.session.clearQueue();
-        else void f.session.abort();
-      }
-    });
-    f.publish("canceled during observer");
-    await until(() => f.notices().length === 1, "notice never committed");
-    await new Promise<void>((resolve) => setTimeout(resolve, 150));
-    assert.equal(f.contexts.length, 1, "cancellation must win over the in-progress ingress callback");
-    assert.ok(f.session.isIdle);
+test("reentrant abort during idle commit cannot be overwritten by a wake intent", { timeout: 10_000 }, async (t) => {
+  const f = await fixture(t, false, "errors", true);
+  f.session.subscribe((event) => {
+    if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === CUSTOM_NOTICE) void f.session.abort();
   });
-}
+  f.publish("canceled during observer");
+  await until(() => f.notices().length === 1, "notice never committed");
+  await new Promise<void>((resolve) => setTimeout(resolve, 150));
+  assert.equal(f.contexts.length, 1, "cancellation must win over the in-progress ingress callback");
+  assert.ok(f.session.isIdle);
+});
+
+// clearQueue() only returns user input to the editor (interactive dequeue); it is not cancellation.
+test("reentrant clearQueue during idle commit keeps the wake intent", { timeout: 10_000 }, async (t) => {
+  const f = await fixture(t, false, "errors", true);
+  f.session.subscribe((event) => {
+    if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === CUSTOM_NOTICE) f.session.clearQueue();
+  });
+  f.publish("dequeue during observer");
+  await until(() => f.contexts.length === 2 && f.session.isIdle, "clearQueue cancelled the wake intent");
+  await new Promise<void>((resolve) => setTimeout(resolve, 150));
+  assert.equal(f.contexts.length, 2);
+  assert.match(f.contexts[1]!, /dequeue during observer/);
+  assert.equal(f.notices().length, 1);
+  assert.deepEqual(f.errors, []);
+});
 
 test("close failure rolls back persisted and native state before retry", async (t) => {
   const f = await fixture(t, true, "errors", false);

@@ -140,6 +140,28 @@ test("real Pi: cancelling busy work retains the admitted answer without restarti
   assert.deepEqual(f.errors, []);
 });
 
+// Interactive "dequeue to edit" calls clearQueue() without abort, also when nothing is queued.
+for (const queued of [true, false]) {
+  test(`real Pi: dequeuing user input (${queued ? "with" : "without"} queued messages) keeps the answer's wake`, { timeout: 15000 }, async (t) => {
+    const f = await fixture(t, [[ask], "Independent work", [hold], "Held work done", "Continuing with the answer"]);
+    await f.session.prompt("Ask the storage question");
+    const running = f.session.prompt("Start held independent work");
+    await eventually(() => f.holds.length === 1, "held tool must start");
+    if (queued) await f.session.prompt("Queued user text", { streamingBehavior: "followUp" });
+    await f.session.prompt("/decisions answer Q1 Answer survives dequeue");
+    const restored = f.session.clearQueue();
+    assert.deepEqual(restored, { steering: [], followUp: queued ? ["Queued user text"] : [] });
+    f.holds[0].resolve();
+    await running;
+    await eventually(() => f.calls() === 5, "dequeue must not cancel the answer's wake");
+    await f.session.waitForIdle();
+    assert.match(f.contexts[4], /Answer survives dequeue/);
+    assert.doesNotMatch(f.contexts[4], /Queued user text/, "dequeued input returns to the editor, not to the model");
+    assert.equal(f.calls(), 5);
+    assert.deepEqual(f.errors, []);
+  });
+}
+
 test("real Pi: queued answer is revalidated when another session withdraws it before delivery", { timeout: 15000 }, async (t) => {
   const f = await fixture(t, [[ask], "Independent work", { waitForRelease: true, content: [] }, "Decision remains pending", "Withdrawal received"]);
   await f.session.prompt("Ask the storage question");

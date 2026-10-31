@@ -67,6 +67,7 @@ buildNpmPackage (finalAttrs: {
     # allow subagent lifecycle notices to resume their governor safely. A
     # retained wake never starts a run while a prompt is being prepared (that
     # prompt would be rejected as concurrent); the prompt's run satisfies it.
+    # Only abort() cancels retained wakes; clearQueue() clears user input only.
     ./patches/retained-custom-message-ingress.patch
   ];
 
