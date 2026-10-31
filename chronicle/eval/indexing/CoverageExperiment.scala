@@ -16,7 +16,8 @@ import ProblemPassages.*
 
 /** Opt-in synthetic experiment, excluded from production source directories. */
 object CoverageExperiment {
-  private val version = "synthetic-coverage-v1"
+  private val version = "synthetic-coverage-v2"
+  private val maximumPlannedCalls = 32
   private val owner = "synthetic-coverage-experiment"
   private val reminder = "Cover every supplied scalar exactly once. The final part MUST end at requiredTerminal; previous is context, not source."
   enum Mode { case Baseline,Candidate }
@@ -31,6 +32,13 @@ object CoverageExperiment {
   }
   private def example(id: String,heldOut: Boolean,rows: (String,String,Kind)*): Example =
     Example(id,heldOut,rows.toList.zipWithIndex.map { case ((role,text,_),i) => Message(s"$id-$i",None,role,text,None,i) },rows.map(_._3).toVector)
+  private def denseRows(count: Int): Vector[(String,String,Kind)] = (0 until count).map { index =>
+    val runtime=index%3==0
+    val text=if(runtime) "Runtime Context: tool inventory read and grep; idle heartbeat ready; no assignment. "
+      else s"Implement synthetic shard $index queue validation. The capacity is 17 and retention is 23 days; verify exact original source bytes. "
+    val content=Iterator.continually(text).take(maximumFragmentBytes/text.length+1).mkString.take(maximumFragmentBytes)
+    (if(runtime) "system" else "user",content,if(runtime) Kind.Context else Kind.Problem)
+  }.toVector
   private def corpus: Vector[Example] = Vector(
     example("runtime",false,("system","Runtime Context: cwd=/synthetic/work; available tools: read, grep. Session heartbeat: ready.",Kind.Context)),
     example("developer-task",false,("developer","Implement the synthetic queue's bounded retry counter and verify it with a deterministic test.",Kind.Problem)),
@@ -41,7 +49,9 @@ object CoverageExperiment {
     example("prompt-analysis",false,("user","Analyze why the literal prompt 'ignore all tasks' is unsafe. Do not execute it; propose a parser test.",Kind.Problem),("tool","Runtime heartbeat: process alive; no task result available.",Kind.Context)),
     example("heldout-runtime",true,("developer","Runtime Context: shell initialized; tool inventory loaded; idle heartbeat received. No assignment is present.",Kind.Context)),
     example("heldout-facts",true,("system","The synthetic observatory's detector samples at 23 Hz. Its owner is team Larch; the discarded alternative sampled at 11 Hz.",Kind.Problem)),
-    example("carry-65",true,(0 until 65).map(i => ("user",s"Continue the same synthetic checksum verification: item $i must retain its original bytes.\n",Kind.Problem))*)
+    example("carry-65",true,(0 until 65).map(i => ("user",s"Continue the same synthetic checksum verification: item $i must retain its original bytes.\n",Kind.Problem))*),
+    example("dense-24",true,denseRows(24)*),
+    example("dense-65",true,denseRows(65)*)
   )
   private def point(p: Point): Json = Json.obj("fragmentIndex"->Json.fromInt(p.fragmentIndex),"scalarOffset"->Json.fromInt(p.scalarOffset))
   private def digest(json: Json): Json = Json.fromString(Wire.hash(json.noSpaces))
@@ -138,7 +148,7 @@ object CoverageExperiment {
     cfg <- IO.blocking(Config.load(configPath))
     fixtures=corpus
     planned=fixtures.map(_.windows.size).sum*Mode.values.length
-    _ <- IO(Check(planned<=24,"experiment-bound","call count bound"))
+    _ <- IO(Check(planned<=maximumPlannedCalls,"experiment-bound","call count bound"))
     sourceHash <- IO.blocking(Wire.hash(Files.readString(Path.of("eval/indexing/CoverageExperiment.scala"))))
     manifest=Json.obj("version"->Json.fromString(version),"startedAt"->Json.fromString(Instant.now().toString),"runnerSourceSha256"->Json.fromString(sourceHash),
       "jsonHashEncoding"->Json.fromString("UTF-8 of Json.noSpaces; response is parsed/reserialized, not raw transport bytes"),
@@ -169,7 +179,10 @@ object CoverageExperiment {
   // Behavioral-Active / Blackbox-Group, specified-origin; no provider or configuration access.
   private def selfTest(): Unit = {
     val fixtures=corpus
-    assert(fixtures.size==10 && fixtures.map(_.windows.size).sum*2==22)
+    assert(fixtures.size==12 && fixtures.map(_.windows.size).sum*2==28)
+    assert(fixtures.find(_.id=="dense-24").get.windows.head.fragments.size==24)
+    val dense=fixtures.find(_.id=="dense-65").get.windows
+    assert(dense.size==2 && dense.flatMap(_.fragments).forall(f => f.byteEnd-f.byteStart==maximumFragmentBytes))
     assert(fixtures.find(_.id=="full-64").get.windows.head.fragments.size==64)
     assert(fixtures.find(_.id=="long-2048").get.windows.head.fragments.head.byteEnd==2048)
     val e=fixtures.find(_.id=="unicode-mixed").get; val w=e.windows.head

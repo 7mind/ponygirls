@@ -1,4 +1,4 @@
-# Synthetic coverage experiment v1
+# Synthetic coverage experiment v2
 
 Opt-in, quarantined live-provider experiment; not a production policy change or a
 release gate. It reads no archive/database and sends only versioned synthetic
@@ -48,15 +48,22 @@ replacement. Do not interpret partially written output as a completed run.
   decoder. Nothing is promoted into production or assigned the candidate's
   own production policy identity. `baselineAnnotationIdentity` describes only
   the baseline implementation.
-- Ten deterministic case IDs; 20 case/mode jobs and **22 planned calls**:
+- Twelve deterministic case IDs; 24 case/mode jobs and **28 planned calls**:
   runtime-only negative control, genuine developer assignment, domain facts
   without imperative, mixed Unicode (combining mark/CJK/non-BMP), exactly 64
   fragments, exactly one 2048-byte fragment, legitimate prompt-analysis plus
   runtime context, held-out runtime/developer and domain/system templates, and
-  a 65-fragment same-task source spanning two windows.
-- The three `heldOut=true` cases are predeclared independent templates, frozen
-  before any live results and not used to tune the candidate reminder. This is
-  procedural separation, not a statistical generalization guarantee.
+  a 65-fragment same-task source spanning two windows, plus dense 24- and
+  65-message mixed Problem/Context sources with every fragment exactly 2048
+  UTF-8 bytes. The dense65 source exercises the production JSON/window budget
+  and accepted carry across two windows.
+- The original three held-out templates were frozen before v1 live results.
+  V2 adds two stress templates after v1 failed to reproduce a coverage rejection;
+  the candidate reminder is unchanged, not tuned against either stress result.
+  `heldOut=true` is procedural separation, not a statistical generalization
+  guarantee. V1's baseline classified meaningless filler as Context in the
+  long2048 fixture, so its single gold mismatch alone does not establish a
+  semantic-quality improvement.
 - Each mode processes carry windows serially using its own **actual accepted
   prior response**. A failed first window blocks the dependent second window
   and counts as failure, never success. Carry contents can consequently differ
@@ -64,7 +71,8 @@ replacement. Do not interpret partially written output as a completed run.
   identical-carry comparison or a full semantic problem-boundary benchmark.
 - Jobs use bounded `parEvalMapUnordered(annotationSessions)` plus production
   annotation-session/request admission. No retries and no cost/token budget
-  cap. A finite whole-run bound is `22 * (configuredDeadline + 30) + 60`
+  cap. The call ceiling is32; this corpus plans28. A finite whole-run bound is
+  `28 * (configuredDeadline + 30) + 60`
   seconds; unfinished windows are failures. Provider unavailability is failure.
 
 The gold is a separate per-message `Kind` vector in evaluator source, never
@@ -79,7 +87,7 @@ classification. It does not grade summaries or claim real-corpus relevance.
   configuration observations, not independently verified provider identities.
 - `progress.jsonl` and stdout: one JSON line per completed case/mode job, with
   window/coverage/failure counts (plus a whole-deadline event if applicable).
-- `summary.json`: all window outcomes, coverage-valid rate over **all 22 planned
+- `summary.json`: all window outcomes, coverage-valid rate over **all 28 planned
   windows**, mismatch/unfinished/failure counts and paired mode aggregates.
   Each validated window has scalar/byte confusion vectors in order
   `[Problem→Problem, Problem→Context, Context→Problem, Context→Context]`,
