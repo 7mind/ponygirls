@@ -211,6 +211,16 @@ test("host: Pi loads the factory and persists /fast in the configured agent dire
   assert.deepEqual(JSON.parse(readFileSync(join(agentDir, PREFERENCE_FILENAME), "utf8")), { enabled: false });
 });
 
+test("/fast completes its three actions", () => {
+  const harness = new PiHarness(new MemoryPreferenceStore({ enabled: true }));
+  const complete = harness.commands.get("fast").getArgumentCompletions;
+  assert.deepEqual(complete("").map((item) => item.value), ["on", "off", "status"]);
+  assert.deepEqual(complete("o").map((item) => item.value), ["on", "off"]);
+  assert.deepEqual(complete("ST").map((item) => item.value), ["status"]);
+  assert.equal(complete("on "), null);
+  assert.equal(complete("x"), null);
+});
+
 // Filesystem-specific Effectual-GoodCommunication boundary checks.
 test("filesystem: invalid state fails instead of silently enabling priority; commands can repair it", async (t) => {
   const directory = temporaryDirectory(t);

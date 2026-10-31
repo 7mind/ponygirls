@@ -26,6 +26,7 @@ import {
   type SessionId,
 } from "./src/goal.ts";
 import { type GoalCommand, parseGoalCommand } from "./src/commands.ts";
+import { completeGoalArguments } from "./src/complete.ts";
 import { GoalPane, type GoalPaneAction, type GoalSnapshotResult } from "./src/pane.ts";
 import {
   CUSTOM_TYPE as GOAL_CUSTOM_TYPE,
@@ -979,6 +980,7 @@ export default function (pi: ExtensionAPI): void {
 
   pi.registerCommand(COMMAND_GOAL, {
     description: "Manage the session goal: /goal, /goal <objective>, /goal edit|pause|resume|clear",
+    getArgumentCompletions: completeGoalArguments,
     handler: async (args: string, ctx) => {
       const parsed = parseGoalCommand(args);
       if (!parsed.ok) {

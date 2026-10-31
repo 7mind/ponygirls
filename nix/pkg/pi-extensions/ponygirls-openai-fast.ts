@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { completeArgument, type ArgumentChoice } from "@ponygirls/pi-ui";
 
 export const PREFERENCE_FILENAME = "openai-fast.json";
 const DEFAULT_ENABLED = true;
@@ -52,6 +53,12 @@ interface RequestObservation {
   httpStatus: number | undefined;
 }
 
+const FAST_ACTIONS: readonly ArgumentChoice[] = [
+  { token: "on", label: "on", description: "request priority processing for OpenAI models (saved)", continues: false },
+  { token: "off", label: "off", description: "use the default tier (saved)", continues: false },
+  { token: "status", label: "status", description: "show the setting and the last observed tier", continues: false },
+];
+
 function isOpenAI(provider: string): boolean {
   return provider === "openai" || provider === "openai-codex";
 }
@@ -61,6 +68,7 @@ export function registerFastMode(pi: ExtensionAPI, preferences: FastPreferenceSt
 
   pi.registerCommand("fast", {
     description: "OpenAI priority processing: /fast on, off, or status (saved across sessions)",
+    getArgumentCompletions: (prefix) => completeArgument(prefix, (previous) => (previous.length === 0 ? FAST_ACTIONS : null)),
     handler: async (args, ctx) => {
       const action = args.trim().toLowerCase();
       if (action !== "" && action !== "status" && action !== "on" && action !== "off") {

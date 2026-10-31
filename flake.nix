@@ -695,6 +695,7 @@
             cp -r ${./nix/pkg/pi-extensions} pi-extensions
             chmod -R u+w pi-extensions
             cd pi-extensions
+            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             node --test ponygirls-openai-fast.test.mjs
             touch $out
           '';
