@@ -69,7 +69,7 @@ function mkPooledSup(opts: {
     rootDir: opts.dir,
     store: opts.store ?? new InMemoryRunStore(opts.rootId),
     policy,
-    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
     executors,
     workspace: opts.workspace,
     governor: opts.governor ?? (() => ({ ...testGovernor(), cwd: opts.repo })),
@@ -165,11 +165,11 @@ test("present JSON worktreeRoot is validated strictly (null/default valid)", asy
   const orig = process.env["PI_CODING_AGENT_DIR"];
   try {
     process.env["PI_CODING_AGENT_DIR"] = dir;
-    assert.equal(loadPolicy().worktreeRoot, null);
+    assert.equal(loadPolicy().policy.worktreeRoot, null);
     writeFileSync(join(dir, "subagents-policy.json"), JSON.stringify({ worktreeRoot: null }));
-    assert.equal(loadPolicy().worktreeRoot, null);
+    assert.equal(loadPolicy().policy.worktreeRoot, null);
     writeFileSync(join(dir, "subagents-policy.json"), JSON.stringify({ worktreeRoot: "/srv/nvme/wt" }));
-    assert.equal(loadPolicy().worktreeRoot, "/srv/nvme/wt");
+    assert.equal(loadPolicy().policy.worktreeRoot, "/srv/nvme/wt");
     for (const bad of ["relative/path", "", 123, true]) {
       writeFileSync(join(dir, "subagents-policy.json"), JSON.stringify({ worktreeRoot: bad }));
       assert.throws(() => loadPolicy(), /INVALID/, String(bad));
@@ -304,7 +304,7 @@ test("[git] configured-root Supervisor allocation keeps diff and retention", asy
       rootDir: join(dir, "root"),
       store: new Store("sess-git"),
       policy,
-      schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+      schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
       executors,
       workspace: new GitWorkspaceManager(),
       governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -924,7 +924,7 @@ test("managed reviewer and checks get an exact read-only candidate exception (vi
       rootDir: join(dir, "root"),
       store: new InMemoryRunStore("sess-gv"),
       policy,
-      schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+      schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
       executors,
       // Real git backend: the gate fingerprints the candidate worktree.
       workspace: new GitWorkspaceManager(),
@@ -997,7 +997,7 @@ test("pooled managed reviewer and controller check read the candidate (bwrap)", 
         rootDir: join(dir, "root"),
         store: new InMemoryRunStore("sess-gb"),
         policy,
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
         executors: { sandbox: new BwrapToolExecutor(), host: new HostToolExecutor() },
         workspace: new GitWorkspaceManager(),
         governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -1945,7 +1945,7 @@ test("historical raw-alias record proves physical A across retarget", async (t) 
       const workers: CtlWorker[] = [];
       const sup = new Supervisor({
         rootId: sid, rootDir, store: new FileRunStore(rootDir, sid), policy,
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
         executors: { sandbox: new BwrapToolExecutor(), host: new HostToolExecutor() },
         workspace: new GitWorkspaceManager(),
         governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -2189,7 +2189,7 @@ test("replaced alias proves physical A via backlink (regression)", async (t) => 
       policy.repos = [{ repoId: "r1", checkoutPath: repo, readRoots: [repo, actualA], allowWriters: true }];
       const sup = new Supervisor({
         rootId: sid, rootDir, store: new FileRunStore(rootDir, sid), policy,
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
         executors: { sandbox: rec, host: new HostToolExecutor() },
         workspace: new GitWorkspaceManager(),
         governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -2353,7 +2353,7 @@ test("exact fd-era slash leaf proves the true pool across retarget/removal", asy
         policy.repos = [{ repoId: slashId, checkoutPath: repo, readRoots: [repo, actualA], allowWriters: true }];
         const sup = new Supervisor({
           rootId: sid, rootDir, store: new FileRunStore(rootDir, sid), policy,
-          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
           executors: { sandbox: rec, host: new HostToolExecutor() },
           workspace: new GitWorkspaceManager(),
           governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -2519,7 +2519,7 @@ test("startup rollback keeps cleanup failure observable next to the primary erro
       const workers: CtlWorker[] = [];
       const sup = new Supervisor({
         rootId: id, rootDir: root, store: new InMemoryRunStore(id), policy,
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
         executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
         workspace: new MovedAsideManager(),
         governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -2634,7 +2634,7 @@ test("unprovable ordinary-dir replacement fails visibly with zero handler entry"
         policy.repos = [{ repoId: "r1", checkoutPath: repo, readRoots: [repo, actualA], allowWriters: true }];
         const sup = new Supervisor({
           rootId: sid, rootDir, store: new FileRunStore(rootDir, sid), policy,
-          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
           executors: { sandbox: rec, host: new HostToolExecutor() },
           workspace: new GitWorkspaceManager(),
           governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -2779,7 +2779,7 @@ test("a04-hashed unsafe-ID record proves the true pool after namespace transitio
         policy.repos = [{ repoId, checkoutPath: repo, readRoots: [repo, actualA], allowWriters: true }];
         const sup = new Supervisor({
           rootId: sid, rootDir, store: new FileRunStore(rootDir, sid), policy,
-          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
           executors: { sandbox: rec, host: new HostToolExecutor() },
           workspace: new GitWorkspaceManager(),
           governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -2902,7 +2902,7 @@ test("emptied backlink fails visibly with zero handler entry", async () => {
         policy.repos = [{ repoId: "r1", checkoutPath: repo, readRoots: [repo, actualA], allowWriters: true }];
         const sup = new Supervisor({
           rootId: sid, rootDir, store: new FileRunStore(rootDir, sid), policy,
-          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
           executors: { sandbox: rec, host: new HostToolExecutor() },
           workspace: new GitWorkspaceManager(),
           governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -3093,7 +3093,7 @@ test("rewritten backlink to the recorded path fails visibly with zero entry", as
         policy.repos = [{ repoId: "r1", checkoutPath: repo, readRoots: [repo, actualA], allowWriters: true }];
         const sup = new Supervisor({
           rootId: sid, rootDir, store: new FileRunStore(rootDir, sid), policy,
-          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
           executors: { sandbox: rec, host: new HostToolExecutor() },
           workspace: new GitWorkspaceManager(),
           governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -3288,7 +3288,7 @@ test("closed retargeted retained namespaces preserve proven masks and deny rewri
         const store = new FileRunStore(rootDir, sid);
         const sup = new Supervisor({
           rootId: sid, rootDir, store, policy,
-          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+          schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
           executors: { sandbox: rec, host: new HostToolExecutor() },
           workspace: new GitWorkspaceManager(),
           governor: () => ({ ...testGovernor(), cwd: repo }),
@@ -3421,7 +3421,7 @@ test("H8 recreated recorded leaf never certifies provenance by existence (reprod
       policy.repos = [{ repoId: "r1", checkoutPath: repo, readRoots: [repo, actualA], allowWriters: true }];
       const sup = new Supervisor({
         rootId: sid, rootDir, store: new FileRunStore(rootDir, sid), policy,
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 },
         executors: { sandbox: rec, host: new HostToolExecutor() },
         workspace: new GitWorkspaceManager(),
         governor: () => ({ ...testGovernor(), cwd: repo }),

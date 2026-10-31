@@ -269,6 +269,27 @@ Driven in a real terminal (tmux 3.7c, `./pi-test`, `zai/glm-5.3` and
   restarted.
 - Suite: 214 pass locally.
 
+## Configurable scheduler limits (2026-10-31)
+
+- Found in a live session: four runnable slots shared by the whole tree
+  kept nested children queued for 17+ minutes behind busy parents
+  (capacity starvation, not deadlock), and the limits were hard-coded:
+  `index.ts` never passed `schedulerLimits` to the supervisor.
+- `maxRunnable`, `maxResidentWorkers`, `maxOpenAgents` are now optional
+  policy keys (defaults 4/8/32), validated as integers within 1..64/128/1024
+  and ordered `maxRunnable <= maxResidentWorkers <= maxOpenAgents`;
+  `loadPolicy()` returns them beside the policy and the session supervisor
+  is built with them. Home Manager renders them
+  (`smind.hm.dev.llm.pi.subagentsMaxRunnable` etc.).
+- `SchedulerLimits.maxDepth` was never read by admission (only echoed in
+  capacity snapshots, as 1, while depth-2 children ran under policy
+  `maxDepth: 2`); it is removed. `SupervisorPolicy.maxDepth` is the only
+  depth limit.
+- `list_agents` (governor and children) returns `{ agents, capacity }`;
+  resident `CAPACITY_EXCEEDED` errors name `maxResidentWorkers` and carry the
+  snapshot with limits.
+- Suite: 724 pass locally.
+
 ## Not executed
 
 - The `/agents` editor dialogs (`m`, `t`, `a`); the screen itself was driven in tmux.

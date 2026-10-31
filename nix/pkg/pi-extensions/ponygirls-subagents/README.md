@@ -121,8 +121,8 @@ can pass on only what it holds. Extensions are never loaded in children.
 ## Configure
 
 `~/.pi/agent/subagents-policy.json` is optional; it registers repositories
-for `sandbox` children and sets nesting, model, and gate limits (an
-invalid file is an error, not a fallback to defaults):
+for `sandbox` children and sets nesting, model, gate, and capacity limits
+(an invalid file is an error, not a fallback to defaults):
 
 ```json
 {
@@ -142,7 +142,10 @@ invalid file is an error, not a fallback to defaults):
   "allowedTools": ["mcp__codegraph__codegraph_explore"],
   "worktreeRoot": null,
   "workspaceRoots": ["/home/user/worktrees"],
-  "workspaceOwnerCheckoutAllowed": false
+  "workspaceOwnerCheckoutAllowed": false,
+  "maxRunnable": 4,
+  "maxResidentWorkers": 8,
+  "maxOpenAgents": 32
 }
 ```
 
@@ -210,6 +213,20 @@ A sandboxed writer without a registered repository is denied
 `maxDepth` 1 (default) disables nesting; with `nesting: true` and
 `maxDepth: 2`, children receive `spawn_agent`/`interrupt_agent`/
 `close_agent` and may delegate within their own authority.
+`maxDepth` is the only depth limit (enforced when grants are intersected);
+the admission scheduler has none.
+
+`maxRunnable` (default 4, at most 64), `maxResidentWorkers` (default 8, at
+most 128), and `maxOpenAgents` (default 32, at most 1024) set the capacity
+limits described under [Capacity recovery](#capacity-recovery-and-retained-models).
+An absent key keeps its default; a value that is not an integer in range
+fails with `INVALID` naming the key. They must satisfy
+`maxRunnable <= maxResidentWorkers <= maxOpenAgents` (a running agent holds a
+resident worker and every resident worker is an open identity), otherwise
+the file is rejected rather than carrying a limit that could never bind.
+The file is read when a session starts: a running session keeps the limits
+it started with, and an invalid file makes subagents unavailable for that
+session (reported at start and by every subagent tool).
 `workspaceRoots` (absolute paths; default none) are the only places a
 `workspace_path` is accepted; a list that is not absolute paths is an
 error.
@@ -231,7 +248,9 @@ grants `mcp__codegraph__codegraph_explore` by default only when the
 `codegraph` MCP server is configured), `...WorktreeRoot` (null default keeps
 the home layout; an absolute path pools writer worktrees per session as
 above; setting it manages the file), `...WorkspaceRoots`,
-`...WorkspaceOwnerCheckoutAllowed`.
+`...WorkspaceOwnerCheckoutAllowed`, `...MaxRunnable` (default 4),
+`...MaxResidentWorkers` (default 8), `...MaxOpenAgents` (default 32; the
+ordering above is asserted at evaluation).
 
 Built-in and declarative `models.json` providers retain live access to the
 approved `~/.pi/agent/auth.json` through `PI_SUBAGENTS_HOST_AGENT_DIR`;
@@ -359,16 +378,29 @@ rebuild duplicate fencing and never re-account.
 ## Capacity recovery and retained models
 
 Before falling back to working alone, inspect `list_agents` and the capacity
-feedback. The three limits are independent:
+feedback. `list_agents` returns `{ agents, capacity }`; `capacity` holds the
+current use (`runnable`, `resident`, `queued`, `open`, `reserved`, `created`)
+and the effective `limits` (`maxRunnable`, `maxResidentWorkers`,
+`maxOpenAgents`) from the policy file (see Configure). `close_agent` returns
+the same `capacity`, and `CAPACITY_EXCEEDED` errors name the exhausted limit
+and carry it in their details. The three limits are independent and shared by
+the whole tree:
 
 - **Open identities** (`maxOpenAgents`, default 32) include ordinary agents,
   nested agents, and managed reviewers, even when idle or unloaded. A complete
   main/reviewer panel is reserved atomically. `close_agent` releases each newly
   closed identity's slot after cleanup and durable closure; waiting, eviction,
   interruption, and task completion do not. Closed identities cannot resume.
-- **Runnable slots** (default 4) park accepted work until a slot is free.
-  Wait for owned runs to settle; do not create replacement identities.
-- **Resident workers** (default 8) are evicted automatically when eligible idle
+- **Runnable slots** (`maxRunnable`, default 4) park accepted work until a
+  slot is free. Top-level children, nested children, and gate reviewers draw
+  from one pool; an agent waiting in `wait_agent` releases its slot while it
+  waits. Busy parents therefore starve queued nested children: work is not
+  deadlocked, but stays queued until running work settles. Wait for owned runs
+  to settle; do not create replacement identities. If this recurs, raise
+  `maxRunnable` (and `maxResidentWorkers` with it) in the policy file. Each
+  runnable agent is a full pi worker process: host CPU and memory and the
+  model providers' rate limits set the real ceiling.
+- **Resident workers** (`maxResidentWorkers`, default 8) are evicted automatically when eligible idle
   workers become available. Wait for running work/checkpoint capture to finish.
   Resident saturation is not open-agent exhaustion.
 

@@ -218,7 +218,7 @@ test("billing-debt repair: onChange-after-commit accounts once, no false hold (r
         store: base,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -343,7 +343,7 @@ test("billing-debt repair: nested NEW native denied while INNER debt held (real 
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
+        schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8 },
         executors,
         workspace: new DummyWorkspaceManager(),
         workerFactory: (o) => {
@@ -447,7 +447,7 @@ function makeIntakeSup(dir: string, rootId: string, store: RunStore): { sup: Sup
     store,
     policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
     workspace: new DummyWorkspaceManager(),
     workerFactory: (o: any) => new CtlWorker(o.agentId),

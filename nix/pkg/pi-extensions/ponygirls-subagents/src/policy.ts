@@ -25,6 +25,7 @@
  */
 
 import { err } from "./errors.ts";
+import { DEFAULT_LIMITS, type SchedulerLimits } from "./scheduler.ts";
 import { ISOLATION_LEVELS, type AgentProfile, type GrantSet, type Isolation, type RepoGrant } from "./types.ts";
 
 export const READER_TOOLS = ["read", "grep", "find", "ls"] as const;
@@ -51,7 +52,10 @@ export const RESERVED_CHILD_TOOLS = [
 
 export interface SupervisorPolicy {
   revision: number;
-  /** Maximum tree depth (root = 0 children at depth 1). Default 1. */
+  /**
+   * Maximum tree depth (root = 0 children at depth 1). Default 1. The only
+   * depth limit: grant intersection enforces it; the scheduler has none.
+   */
   maxDepth: number;
   /** Whether any nesting is permitted at all. */
   nesting: boolean;
@@ -167,6 +171,46 @@ export function validateWorktreeRoot(raw: unknown): string | null {
     throw err("INVALID", "worktreeRoot must be null or an absolute path");
   }
   return raw;
+}
+
+/**
+ * Upper bounds for the configurable scheduler limits. Each runnable agent is
+ * a full pi worker process, so these only reject absurd values; host CPU,
+ * memory, and provider rate limits set the practical ceiling.
+ */
+export const SCHEDULER_LIMIT_MAXIMA: SchedulerLimits = {
+  maxRunnable: 64,
+  maxResidentWorkers: 128,
+  maxOpenAgents: 1024,
+};
+
+const SCHEDULER_LIMIT_KEYS = ["maxRunnable", "maxResidentWorkers", "maxOpenAgents"] as const;
+
+/**
+ * Validate the policy file's scheduler limits. An absent key keeps its
+ * default; a present one must be an integer from 1 to its maximum. Limits
+ * that could never bind fail too: a runnable agent holds a resident worker
+ * and every resident worker is an open identity, so
+ * maxRunnable <= maxResidentWorkers <= maxOpenAgents.
+ */
+export function validateSchedulerLimits(raw: Partial<Record<keyof SchedulerLimits, unknown>>): SchedulerLimits {
+  const limits: SchedulerLimits = { ...DEFAULT_LIMITS };
+  for (const key of SCHEDULER_LIMIT_KEYS) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    const max = SCHEDULER_LIMIT_MAXIMA[key];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > max) {
+      throw err("INVALID", `policy ${key} must be an integer from 1 to ${max}; got ${JSON.stringify(value)}`);
+    }
+    limits[key] = value;
+  }
+  if (limits.maxRunnable > limits.maxResidentWorkers) {
+    throw err("INVALID", `policy maxRunnable (${limits.maxRunnable}) must not exceed maxResidentWorkers (${limits.maxResidentWorkers}): each running agent holds a resident worker`);
+  }
+  if (limits.maxResidentWorkers > limits.maxOpenAgents) {
+    throw err("INVALID", `policy maxResidentWorkers (${limits.maxResidentWorkers}) must not exceed maxOpenAgents (${limits.maxOpenAgents}): each resident worker belongs to an open identity`);
+  }
+  return limits;
 }
 
 /** Compile one full-name `*` glob (all other regex punctuation escaped). */

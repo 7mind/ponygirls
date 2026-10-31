@@ -422,7 +422,7 @@ test("all_settled without targets waits for every unfinished run", async () => {
 // -- nesting through the real tool path --------------------------------------------
 
 test("maxRunnable=1: a child spawns and waits through its tools; the wait yields the lease", async () => {
-  const { sup, byAgent } = mkSup({ limits: { maxRunnable: 1, maxDepth: 2 }, policy: (p) => { p.maxDepth = 2; p.nesting = true; } });
+  const { sup, byAgent } = mkSup({ limits: { maxRunnable: 1 }, policy: (p) => { p.maxDepth = 2; p.nesting = true; } });
   const parent = await sup.spawn("governor", { taskName: "p", message: "delegate", profile: "reader" }, "rp");
   const pw = byAgent(parent.agentId)[0]!;
   assert.ok(pw.initTools.includes("spawn_agent") && pw.initTools.includes("wait_agent"));
@@ -440,7 +440,7 @@ test("maxRunnable=1: a child spawns and waits through its tools; the wait yields
 });
 
 test("a child owner joins its active descendants before publishing its own outcome", async () => {
-  const { sup, byAgent } = mkSup({ limits: { maxDepth: 2 }, policy: (p) => { p.maxDepth = 2; p.nesting = true; } });
+  const { sup, byAgent } = mkSup({ policy: (p) => { p.maxDepth = 2; p.nesting = true; } });
   const parent = await sup.spawn("governor", { taskName: "p", message: "m", profile: "reader" }, "rp");
   const kid = await sup.spawn(parent.agentId, { taskName: "c", message: "m", profile: "reader" }, "rc");
   const kidWorker = byAgent(kid.agentId)[0]!;

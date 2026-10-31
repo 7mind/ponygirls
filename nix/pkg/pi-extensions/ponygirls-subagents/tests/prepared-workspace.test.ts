@@ -92,7 +92,6 @@ function sup(f: Fixture, opts: { policy?: (p: SupervisorPolicy) => void; workspa
         p.nesting = true;
       }
     },
-    limits: opts.nest === true ? { maxDepth: 2 } : {},
     factory: opts.factory,
     store: opts.store,
   });

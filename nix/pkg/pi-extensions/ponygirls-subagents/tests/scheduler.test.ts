@@ -3,7 +3,7 @@ import test from "node:test";
 import { AdmissionScheduler, PathRegistry } from "../src/scheduler.ts";
 
 test("runnable leases are atomic and bounded", () => {
-  const s = new AdmissionScheduler({ maxRunnable: 1, maxResidentWorkers: 1, maxOpenAgents: 10, maxDepth: 1 });
+  const s = new AdmissionScheduler({ maxRunnable: 1, maxResidentWorkers: 1, maxOpenAgents: 10 });
   const a = s.tryAcquireRunnable("a");
   assert.ok(a);
   assert.equal(s.tryAcquireRunnable("b"), null);
@@ -12,7 +12,7 @@ test("runnable leases are atomic and bounded", () => {
 });
 
 test("park releases capacity; queued acquirers are served fairly", async () => {
-  const s = new AdmissionScheduler({ maxRunnable: 1, maxResidentWorkers: 2, maxOpenAgents: 10, maxDepth: 1 });
+  const s = new AdmissionScheduler({ maxRunnable: 1, maxResidentWorkers: 2, maxOpenAgents: 10 });
   const a = s.tryAcquireRunnable("a");
   assert.ok(a);
   const { ticket, cancel } = s.acquireRunnableQueued("b");
@@ -25,7 +25,7 @@ test("park releases capacity; queued acquirers are served fairly", async () => {
 });
 
 test("resident limit returns capacity error, never self-deadlock", () => {
-  const s = new AdmissionScheduler({ maxRunnable: 4, maxResidentWorkers: 1, maxOpenAgents: 10, maxDepth: 1 });
+  const s = new AdmissionScheduler({ maxRunnable: 4, maxResidentWorkers: 1, maxOpenAgents: 10 });
   assert.ok(s.tryAcquireResident("a"));
   assert.equal(s.tryAcquireResident("b"), null);
 });

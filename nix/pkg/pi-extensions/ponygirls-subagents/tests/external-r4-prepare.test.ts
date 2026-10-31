@@ -56,7 +56,7 @@ async function realWorkerHarness(
     store: new InMemoryRunStore("root-r4"),
     policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
     workspace: new DummyWorkspaceManager() as never,
     workerFactory: (o) => {

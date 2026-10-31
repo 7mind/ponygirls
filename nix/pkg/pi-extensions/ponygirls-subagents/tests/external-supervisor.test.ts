@@ -114,7 +114,6 @@ test("nested grant non-widening: grandchild external subset of child", async () 
   const two = fakeHandle("mcp__a__two");
   const { sup } = mkSup({
     policy: (p) => { p.allowedTools = ["mcp__a__*"]; p.maxDepth = 2; p.nesting = true; },
-    limits: { maxDepth: 2 },
   });
   (sup as unknown as { opts: { governingRegistry?: () => GoverningRegistry | null } }).opts.governingRegistry = () => registryFor([one, two]);
   const top = await sup.spawn("governor", { taskName: "top", message: "m", profile: "reader" }, "nest-1");
@@ -239,7 +238,7 @@ test("process: real deterministic worker calls external via IPC with structured/
     store: new InMemoryRunStore("root-proc"),
     policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
     workspace: new DummyWorkspaceManager() as never,
     workerFactory: (o) => {

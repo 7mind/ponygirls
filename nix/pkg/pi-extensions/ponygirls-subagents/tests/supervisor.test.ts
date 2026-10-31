@@ -21,7 +21,7 @@ function setup(script: "settle-text" | "hang" | "fail" = "settle-text", limits =
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy,
-    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 2, ...limits },
+    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, ...limits },
     executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => new FakeWorker(script),
@@ -234,7 +234,7 @@ function setupWorkers(workers: FakeWorker[], limits = {}) {
     rootDir: dir,
     store: new InMemoryRunStore("root-1"),
     policy: defaultSupervisorPolicy(),
-    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1, ...limits },
+    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, ...limits },
     executors: bothExecutors(new DummyToolExecutor()),
     workspace: new DummyWorkspaceManager(),
     workerFactory: () => {

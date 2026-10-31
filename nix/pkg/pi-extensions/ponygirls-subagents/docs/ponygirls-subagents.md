@@ -27,11 +27,15 @@
 
 ## Supervisor recovery procedure
 
-1. Inspect `list_agents` and capacity feedback before solo fallback. The default
-   `maxOpenAgents` cap is 32 open identities, including idle/nested agents and
-   managed reviewers. Closing a subtree reclaims its slots after cleanup and
-   durable closure; closed identities cannot resume. Runnable saturation parks
-   work; resident saturation can clear when eligible idle workers are evicted.
+1. Inspect `list_agents` and capacity feedback before solo fallback. Its
+   `capacity` reports current use against the effective limits
+   (`maxRunnable`, `maxResidentWorkers`, `maxOpenAgents`; defaults 4, 8, 32,
+   configurable in `subagents-policy.json`). The open-agent cap counts open
+   identities, including idle/nested agents and managed reviewers. Closing a
+   subtree reclaims its slots after cleanup and durable closure; closed
+   identities cannot resume. Runnable saturation parks work (one pool for the
+   whole tree; `wait_agent` releases the waiter's slot); resident saturation
+   can clear when eligible idle workers are evicted.
 2. Reuse settled open ordinary agents with `send_message(mode="task")`. The
    governor may reuse any eligible descendant, including nested agents; capacity
    feedback lists all eligible descendants within the caller's authority. The
@@ -374,7 +378,10 @@ is not replayed. There is no crash-durable exactly-once governing-notice receipt
 - **No token/cost budgets are enforced yet.** Usage is accounted per
   agent and cumulatively (unknown usage is flagged, never treated as zero),
   but nothing stops admission on spend; the plan's budget stops are not
-  implemented. Agent count, depth, runnable and resident limits are.
+  implemented. Agent count, depth, runnable and resident limits are. Depth
+  comes from the policy's `maxDepth` alone; the scheduler limits
+  (`maxRunnable`, `maxResidentWorkers`, `maxOpenAgents`) come from the same
+  policy file, validated when a session starts.
 - **No daemon, workflows, auto-merge, sibling mesh, session takeover.**
   Deferred per the plan. Questions have deadlines; unanswered questions do
   not wait forever.

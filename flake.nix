@@ -126,6 +126,9 @@
               gateMaxRoundsCeiling = null;
               workspaceRoots = [ "/home/user/worktrees" ];
               workspaceOwnerCheckoutAllowed = true;
+              maxRunnable = 8;
+              maxResidentWorkers = 12;
+              maxOpenAgents = 40;
             };
             open = mkPolicy {
               allowAllModels = true;
@@ -139,6 +142,9 @@
               gateMaxRoundsCeiling = 3;
               workspaceRoots = [ ];
               workspaceOwnerCheckoutAllowed = false;
+              maxRunnable = 4;
+              maxResidentWorkers = 8;
+              maxOpenAgents = 32;
             };
             # HM-level wiring for subagentsAllowedTools: least-privilege
             # codegraph default only when a `codegraph` MCP server is
@@ -216,8 +222,15 @@
             worktreeManagedCustom = (evalWorktree { subagentsWorktreeRoot = "/srv/nvme/subagents-worktrees"; }).home.file ? "/home/alice/.pi/agent/subagents-policy.json";
             worktreeInvalidAssertions = (evalWorktree { subagentsWorktreeRoot = "relative/path"; }).assertions;
             worktreeEmptyAssertions = (evalWorktree { subagentsWorktreeRoot = ""; }).assertions;
+            # Scheduler limits: defaults mirror the extension (and leave the
+            # file unmanaged); a changed limit manages it; misordered limits
+            # trip the ordering assertion.
+            limitsDefault = evalWorktree { };
+            limitsCustom = evalWorktree { subagentsMaxRunnable = 8; subagentsMaxResidentWorkers = 12; };
+            limitsMisordered = evalWorktree { subagentsMaxRunnable = 10; };
+            failedLimitAssertion = assertions: builtins.any (a: !a.assertion && builtins.match ".*subagentsMaxRunnable.*" a.message != null) assertions;
           in
-          assert builtins.attrNames listed == [ "allowedModels" "allowedTools" "gateBypassAllowed" "gateMaxRoundsCeiling" "maxDepth" "nesting" "repos" "workspaceOwnerCheckoutAllowed" "workspaceRoots" "worktreeRoot" ];
+          assert builtins.attrNames listed == [ "allowedModels" "allowedTools" "gateBypassAllowed" "gateMaxRoundsCeiling" "maxDepth" "maxOpenAgents" "maxResidentWorkers" "maxRunnable" "nesting" "repos" "workspaceOwnerCheckoutAllowed" "workspaceRoots" "worktreeRoot" ];
           assert listed == {
             maxDepth = 2;
             nesting = true;
@@ -232,6 +245,9 @@
             gateMaxRoundsCeiling = null;
             workspaceRoots = [ "/home/user/worktrees" ];
             workspaceOwnerCheckoutAllowed = true;
+            maxRunnable = 8;
+            maxResidentWorkers = 12;
+            maxOpenAgents = 40;
           };
           assert open == {
             maxDepth = 1;
@@ -244,6 +260,9 @@
             gateMaxRoundsCeiling = 3;
             workspaceRoots = [ ];
             workspaceOwnerCheckoutAllowed = false;
+            maxRunnable = 4;
+            maxResidentWorkers = 8;
+            maxOpenAgents = 32;
           };
           assert absentDefault == [ ];
           assert presentDefault == [ "mcp__codegraph__codegraph_explore" ];
@@ -255,6 +274,12 @@
           assert worktreeManagedCustom == true;
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeInvalidAssertions;
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeEmptyAssertions;
+          assert [ limitsDefault.smind.hm.dev.llm.pi.subagentsMaxRunnable limitsDefault.smind.hm.dev.llm.pi.subagentsMaxResidentWorkers limitsDefault.smind.hm.dev.llm.pi.subagentsMaxOpenAgents ] == [ 4 8 32 ];
+          assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json");
+          assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
+          assert !(failedLimitAssertion limitsDefault.assertions);
+          assert !(failedLimitAssertion limitsCustom.assertions);
+          assert failedLimitAssertion limitsMisordered.assertions;
           pkgs.runCommandLocal "subagents-policy-shape-test" { } "touch $out";
       in
       {

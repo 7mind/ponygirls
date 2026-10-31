@@ -33,7 +33,7 @@ function fixture(t: TestContext, storage: Storage, limits: Partial<SchedulerLimi
   const workers: FakeWorker[] = [];
   const options = {
     rootId, rootDir, policy, governor: testGovernor,
-    schedulerLimits: { maxDepth: 2, ...limits },
+    schedulerLimits: { ...limits },
     executors: bothExecutors(new DummyToolExecutor()), workspace: new DummyWorkspaceManager(),
     workerFactory: () => {
       const worker = new FakeWorker(script(workers.length));

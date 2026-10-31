@@ -65,6 +65,20 @@ test("capacity tool descriptions explain descendant authority and reclaimable op
   } finally { rmSync(agentDir, { recursive: true, force: true }); }
 });
 
+test("list_agents reports the scheduler limits configured in the policy file", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-limits-"));
+  try {
+    writeFileSync(join(agentDir, "subagents-policy.json"), JSON.stringify({ maxRunnable: 6, maxResidentWorkers: 12, maxOpenAgents: 40 }));
+    const { tools, ctx } = await loadExtension(agentDir);
+    const res = await tools.get("list_agents")!("limits", {}, undefined, undefined, ctx);
+    assert.equal(res.isError, undefined, res.content[0]!.text);
+    const report = JSON.parse(res.content[0]!.text) as { agents: unknown[]; capacity: { runnable: number; limits: Record<string, number> } };
+    assert.deepEqual(report.agents, []);
+    assert.equal(report.capacity.runnable, 0);
+    assert.deepEqual(report.capacity.limits, { maxRunnable: 6, maxResidentWorkers: 12, maxOpenAgents: 40 });
+  } finally { rmSync(agentDir, { recursive: true, force: true }); }
+});
+
 test("an SDK without retained ingress is rejected before delegation or legacy fallback", async () => {
   const mod = await import("../index.ts");
   const unsupported = { sendMessage() { throw new Error("legacy ingress must not be used"); } } as unknown as ExtensionAPI;
@@ -127,7 +141,7 @@ test("an idle child's startup failure is displayed without another user message"
     await tools.get("spawn_agent")!("notice-child", { task_name: "notice-child", message: "unused", profile: "reader", isolation: "none" }, undefined, undefined, ctx);
     const outcome = async (): Promise<string | null> => {
       const result = await tools.get("list_agents")!("notice-status", {}, undefined, undefined, ctx);
-      return (JSON.parse(result.content[0]!.text) as { taskOutcome: string | null }[])[0]!.taskOutcome;
+      return (JSON.parse(result.content[0]!.text) as { agents: { taskOutcome: string | null }[] }).agents[0]!.taskOutcome;
     };
     const deadline = Date.now() + 10_000;
     while (await outcome() === null && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));

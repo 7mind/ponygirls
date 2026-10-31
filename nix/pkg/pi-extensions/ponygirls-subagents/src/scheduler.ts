@@ -6,6 +6,11 @@
  * never finalize the same run independently (the supervisor serializes
  * controller transitions separately). Compaction, reload, and a new root
  * turn never reset cumulative counters.
+ *
+ * Limits come from subagents-policy.json (validated by
+ * validateSchedulerLimits in policy.ts). Tree depth is not a scheduler
+ * limit: SupervisorPolicy.maxDepth, enforced by grant intersection, is its
+ * only source.
  */
 
 import { err, type ErrorCode } from "./errors.ts";
@@ -14,15 +19,24 @@ export interface SchedulerLimits {
   maxRunnable: number;
   maxResidentWorkers: number;
   maxOpenAgents: number;
-  maxDepth: number;
 }
 
 export const DEFAULT_LIMITS: SchedulerLimits = {
   maxRunnable: 4,
   maxResidentWorkers: 8,
   maxOpenAgents: 32,
-  maxDepth: 1,
 };
+
+/** Current admission use against the effective limits (list_agents, close_agent, CAPACITY_EXCEEDED details). */
+export interface CapacitySnapshot {
+  runnable: number;
+  resident: number;
+  queued: number;
+  created: number;
+  open: number;
+  reserved: number;
+  limits: SchedulerLimits;
+}
 
 export interface AgentCreationReservation {
   readonly id: number;
@@ -172,7 +186,7 @@ export class AdmissionScheduler {
     this.limits = { ...this.limits, ...next };
   }
 
-  snapshot(): { runnable: number; resident: number; queued: number; created: number; open: number; reserved: number; limits: SchedulerLimits } {
+  snapshot(): CapacitySnapshot {
     return {
       runnable: this.runnableHeld,
       resident: this.residentHeld,

@@ -16,6 +16,7 @@ import type { GoverningRegistry } from "../src/external-dispatcher.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
 import { DummyWorkspaceManager, type WorkspaceManager } from "../src/workspace.ts";
 import { defaultSupervisorPolicy, type SupervisorPolicy } from "../src/policy.ts";
+import type { SchedulerLimits } from "../src/scheduler.ts";
 import { testGovernor } from "./fake-worker.ts";
 
 type ToolHandler = (p: ToolRequest, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => Promise<{ content: string; isError: boolean }>;
@@ -123,7 +124,7 @@ export class CtlWorker implements WorkerPort {
 }
 
 export function mkSup(opts: {
-  limits?: Record<string, number>;
+  limits?: Partial<SchedulerLimits>;
   policy?: (p: SupervisorPolicy) => void;
   factory?: WorkerFactory;
   store?: RunStore;
@@ -146,7 +147,7 @@ export function mkSup(opts: {
     rootDir: dir,
     store: opts.store ?? new InMemoryRunStore("root-1"),
     policy,
-    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, maxDepth: 1, ...(opts.limits ?? {}) },
+    schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32, ...(opts.limits ?? {}) },
     executors,
     workspace: opts.workspace ?? new DummyWorkspaceManager(),
     governingRegistry: opts.governingRegistry,

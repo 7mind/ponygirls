@@ -185,7 +185,7 @@ export function childToolSpec<S>(T: TypeBuilder<S>, name: string): ToolSpec<S> {
         parameters: waitParameters(T),
       };
     case "list_agents":
-      return { description: "List the agents visible to you (your parent and your subtree).", parameters: T.Object({}) };
+      return { description: "List the agents visible to you (your parent and your subtree) and the shared admission capacity: runnable/resident/open use against the configured limits.", parameters: T.Object({}) };
     case "read_agent":
       return { description: "Read status, a result, all reviewer feedback (view=reviews after task settlement), or bounded events. Result/review text is paged with offset and nextOffset.", parameters: readParameters(T) };
     case "spawn_agent":

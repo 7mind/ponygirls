@@ -16,7 +16,8 @@ import { renderNotice, renderSpawnCall, renderSpawnResult } from "./src/render.t
 import { Supervisor, TOOL_RESULT_MAX, type AgentView, type CallerId } from "./src/supervisor.ts";
 import type { GateSpecInput, ReviewSpecInput } from "./src/gate.ts";
 import { instructionsFromPromptOptions, parseSelection } from "./src/instructions.ts";
-import { defaultSupervisorPolicy, validateAllowedTools, validateWorktreeRoot, type SupervisorPolicy } from "./src/policy.ts";
+import { defaultSupervisorPolicy, validateAllowedTools, validateSchedulerLimits, validateWorktreeRoot, type SupervisorPolicy } from "./src/policy.ts";
+import { DEFAULT_LIMITS, type SchedulerLimits } from "./src/scheduler.ts";
 import { GoverningModels } from "./src/parent-models.ts";
 import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/governing-runtime.ts";
 import { prepareThroughEventBus } from "./src/delegated-call.ts";
@@ -41,17 +42,23 @@ function agentBaseDir(): string {
   return process.env["PI_CODING_AGENT_DIR"] ?? join(homedir(), ".pi", "agent");
 }
 
+/** What the user-owned policy file configures: root authority and admission capacity. */
+export interface LoadedPolicy {
+  policy: SupervisorPolicy;
+  schedulerLimits: SchedulerLimits;
+}
+
 /**
- * Root authority from the user-owned policy file. A present but invalid
- * file is an error, never a silent fallback to defaults.
+ * Root authority and scheduler limits from the user-owned policy file. A
+ * present but invalid file is an error, never a silent fallback to defaults.
  */
-export function loadPolicy(): SupervisorPolicy {
+export function loadPolicy(): LoadedPolicy {
   const policy = defaultSupervisorPolicy();
   const path = join(agentBaseDir(), "subagents-policy.json");
-  if (!existsSync(path)) return policy;
-  let raw: Partial<SupervisorPolicy>;
+  if (!existsSync(path)) return { policy, schedulerLimits: { ...DEFAULT_LIMITS } };
+  let raw: Partial<SupervisorPolicy> & Partial<Record<keyof SchedulerLimits, unknown>>;
   try {
-    raw = JSON.parse(readFileSync(path, "utf8")) as Partial<SupervisorPolicy>;
+    raw = JSON.parse(readFileSync(path, "utf8")) as Partial<SupervisorPolicy> & Partial<Record<keyof SchedulerLimits, unknown>>;
   } catch (e) {
     throw new Error(`POLICY_DENIED: ${path} is not valid JSON: ${(e as Error).message}`);
   }
@@ -98,8 +105,9 @@ export function loadPolicy(): SupervisorPolicy {
   // a present value must be an absolute path (relative/empty/NUL rejected
   // visibly, never a silent home fallback).
   policy.worktreeRoot = validateWorktreeRoot(raw.worktreeRoot);
+  const schedulerLimits = validateSchedulerLimits(raw);
   policy.revision += 1;
-  return policy;
+  return { policy, schedulerLimits };
 }
 
 interface SessionBinding {
@@ -197,11 +205,13 @@ export default function (pi: ExtensionAPI): void {
         store.durableSeq(),
       ),
     };
+    const { policy, schedulerLimits } = loadPolicy();
     binding.supervisor = new Supervisor({
       rootId: sessionId,
       rootDir,
       store,
-      policy: loadPolicy(),
+      policy,
+      schedulerLimits,
       governor: () => ({ model: binding.model, cwd: binding.cwd, instructions: binding.instructions }),
       parentModels: new GoverningModels(() => {
         if (!binding.governingActive) throw new Error("STALE_GENERATION: governing model registry is no longer active");
@@ -347,11 +357,11 @@ export default function (pi: ExtensionAPI): void {
     defineTool({
       name: "list_agents",
       label: "List subagents",
-      description: "Return the subagent tree: id, path, profile, model, the external tools (MCP etc) it may call, observed state, pending intent, current task-run id, generation, outcome, usage, and any open question a child asked you.",
+      description: "Return the subagent tree (agents: id, path, profile, model, the external tools (MCP etc) it may call, observed state, pending intent, current task-run id, generation, outcome, usage, and any open question a child asked you) and capacity: runnable/resident/open use against the configured limits (maxRunnable, maxResidentWorkers, maxOpenAgents), shared by the whole tree.",
       parameters: Type.Object({}),
       async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
         try {
-          return ok(governing(ctx).supervisor.list(caller));
+          return ok(governing(ctx).supervisor.listWithCapacity(caller));
         } catch (e) {
           return failed(e);
         }
@@ -436,7 +446,7 @@ export default function (pi: ExtensionAPI): void {
           const target = (params as { target: string }).target;
           const supervisor = governing(ctx).supervisor;
           await supervisor.close(caller, target, `tool:${toolCallId}`);
-          return ok({ closed: target, capacity: supervisor.admissionScheduler.snapshot() });
+          return ok({ closed: target, capacity: supervisor.capacity() });
         } catch (e) {
           return failed(e);
         }

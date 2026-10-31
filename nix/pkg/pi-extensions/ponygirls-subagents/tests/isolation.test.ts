@@ -14,7 +14,6 @@ import { gateSpec, mkSup, tick } from "./ctl-worker.ts";
 import { TEST_GOVERNOR_CWD, TEST_INSTRUCTIONS, TEST_MODEL, testGovernor } from "./fake-worker.ts";
 
 const nest = {
-  limits: { maxDepth: 2 },
   policy: (p: { maxDepth: number; nesting: boolean; repos: Array<{ repoId: string; checkoutPath: string; readRoots: string[]; allowWriters: boolean }> }) => {
     p.maxDepth = 2;
     p.nesting = true;

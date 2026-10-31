@@ -33,7 +33,6 @@ class PrefixStore extends InMemoryRunStore {
 }
 
 const nesting = {
-  limits: { maxDepth: 2 },
   policy: (policy: { maxDepth: number; nesting: boolean }) => { policy.maxDepth = 2; policy.nesting = true; },
 };
 

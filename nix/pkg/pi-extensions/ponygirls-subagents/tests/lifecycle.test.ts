@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { FileRunStore } from "../src/store.ts";
 import { blocked, gateSpec, mkSup, terminals, tick } from "./ctl-worker.ts";
 
-const nest = { limits: { maxDepth: 2 }, policy: (p: { maxDepth: number; nesting: boolean }) => { p.maxDepth = 2; p.nesting = true; } };
+const nest = { policy: (p: { maxDepth: number; nesting: boolean }) => { p.maxDepth = 2; p.nesting = true; } };
 
 test("R1a interrupting a gated main while its review runs ends the task interrupted", async () => {
   const { sup, byAgent } = mkSup({});

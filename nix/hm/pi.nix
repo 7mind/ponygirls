@@ -309,6 +309,9 @@ let
     gateMaxRoundsCeiling = cfg.pi.subagentsGateMaxRoundsCeiling;
     workspaceRoots = cfg.pi.subagentsWorkspaceRoots;
     workspaceOwnerCheckoutAllowed = cfg.pi.subagentsWorkspaceOwnerCheckoutAllowed;
+    maxRunnable = cfg.pi.subagentsMaxRunnable;
+    maxResidentWorkers = cfg.pi.subagentsMaxResidentWorkers;
+    maxOpenAgents = cfg.pi.subagentsMaxOpenAgents;
   });
 
   # The managed subagents-policy.json is complete, so emit it as soon as any
@@ -325,7 +328,10 @@ let
     || cfg.pi.subagentsGateBypassAllowed
     || cfg.pi.subagentsGateMaxRoundsCeiling != 3
     || cfg.pi.subagentsWorkspaceRoots != [ ]
-    || cfg.pi.subagentsWorkspaceOwnerCheckoutAllowed;
+    || cfg.pi.subagentsWorkspaceOwnerCheckoutAllowed
+    || cfg.pi.subagentsMaxRunnable != 4
+    || cfg.pi.subagentsMaxResidentWorkers != 8
+    || cfg.pi.subagentsMaxOpenAgents != 32;
 
   # Repo-agnostic operating manual appended INSIDE Pi's system prompt (via
   # ~/.pi/agent/APPEND_SYSTEM.md, auto-discovered by the resource loader). Pi's
@@ -644,6 +650,44 @@ in
       '';
     };
 
+    smind.hm.dev.llm.pi.subagentsMaxRunnable = lib.mkOption {
+      type = lib.types.ints.between 1 64;
+      default = 4;
+      example = 8;
+      description = ''
+        Runnable slots shared by the whole subagent tree (top-level and
+        nested children and gate reviewers alike), written as `maxRunnable`
+        into `subagents-policy.json`. Accepted work beyond it stays queued
+        until a slot frees; a child waiting in `wait_agent` releases its slot.
+        Each runnable agent is a full pi worker process, so host CPU and
+        memory and the model providers' rate limits set the real ceiling.
+        Must not exceed
+        {option}`smind.hm.dev.llm.pi.subagentsMaxResidentWorkers` (asserted).
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsMaxResidentWorkers = lib.mkOption {
+      type = lib.types.ints.between 1 128;
+      default = 8;
+      example = 12;
+      description = ''
+        Loaded worker processes (running or idle) kept at once, written as
+        `maxResidentWorkers` into `subagents-policy.json`. Idle workers are
+        evicted automatically when another agent needs one. Must not exceed
+        {option}`smind.hm.dev.llm.pi.subagentsMaxOpenAgents` (asserted).
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsMaxOpenAgents = lib.mkOption {
+      type = lib.types.ints.between 1 1024;
+      default = 32;
+      description = ''
+        Open agent identities (including idle, nested and managed reviewer
+        agents), written as `maxOpenAgents` into `subagents-policy.json`.
+        `close_agent` releases identities.
+      '';
+    };
+
     # One enable flag per inference-provider extension package (see
     # `inferenceProviderPackages` in the let block). Generated from that mapping
     # so the option set and the install list cannot drift. No provider is
@@ -857,6 +901,7 @@ in
     {
       # The extension silently drops nesting below depth 2; fail fast instead.
       # A pooled worktree root must be an absolute path (never a store path).
+      # Scheduler limits must be ordered as the extension validates them.
       assertions = [
         {
           assertion = !(cfg.pi.subagentsNesting && cfg.pi.subagentsMaxDepth < 2);
@@ -865,6 +910,11 @@ in
         {
           assertion = cfg.pi.subagentsWorktreeRoot == null || (cfg.pi.subagentsWorktreeRoot != "" && lib.hasPrefix "/" cfg.pi.subagentsWorktreeRoot);
           message = "smind.hm.dev.llm.pi.subagentsWorktreeRoot must be null or an absolute path.";
+        }
+        {
+          assertion = cfg.pi.subagentsMaxRunnable <= cfg.pi.subagentsMaxResidentWorkers
+            && cfg.pi.subagentsMaxResidentWorkers <= cfg.pi.subagentsMaxOpenAgents;
+          message = "smind.hm.dev.llm.pi needs subagentsMaxRunnable <= subagentsMaxResidentWorkers <= subagentsMaxOpenAgents (the extension rejects limits that could never bind).";
         }
       ];
     }

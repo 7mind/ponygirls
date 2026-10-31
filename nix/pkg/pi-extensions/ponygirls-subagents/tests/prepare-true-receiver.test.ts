@@ -215,7 +215,7 @@ test("prepare timeout true receiver: gated positive RX strictly after parsed SDK
       return p;
     })(),
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
     workspace: new DummyWorkspaceManager(),
     workerFactory: (o) => {
@@ -436,7 +436,7 @@ test("prepare interrupt while awaiting RPC: exact positive ACK, single interrupt
       return p;
     })(),
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
-    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8, maxDepth: 1 },
+    schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
     workspace: new DummyWorkspaceManager(),
     workerFactory: (o) => {

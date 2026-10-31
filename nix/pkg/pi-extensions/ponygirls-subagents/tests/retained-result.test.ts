@@ -148,7 +148,7 @@ test("offset and length select a page; an offset beyond the text is refused", as
 });
 
 test("a child pages a descendant's large result through its own read_agent tool", async () => {
-  const { sup, byAgent } = mkSup({ limits: { maxDepth: 2 }, policy: (p) => { p.maxDepth = 2; p.nesting = true; } });
+  const { sup, byAgent } = mkSup({ policy: (p) => { p.maxDepth = 2; p.nesting = true; } });
   const parent = await sup.spawn("governor", { taskName: "p", message: "delegate", profile: "reader" }, "rp");
   await tick();
   const pw = byAgent(parent.agentId)[0]!;

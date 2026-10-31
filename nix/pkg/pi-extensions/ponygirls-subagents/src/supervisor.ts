@@ -29,7 +29,7 @@ import { GoverningToolDispatcher, type GoverningRegistry } from "./external-disp
 import { snapshotGoverningHandles } from "./governing-runtime.ts";
 import type { DelegatedCall } from "./delegated-call.ts";
 import { killAndConfirm, readProcessIdentity, verifyOwnership, type OwnershipVerdict, type ProcessIdentity } from "./process-identity.ts";
-import { AdmissionScheduler, PathRegistry, type AgentCreationReservation, type LeaseTicket } from "./scheduler.ts";
+import { AdmissionScheduler, PathRegistry, type AgentCreationReservation, type CapacitySnapshot, type LeaseTicket, type SchedulerLimits } from "./scheduler.ts";
 import { BwrapToolExecutor, HostToolExecutor, sandboxRuntimePath } from "./sandbox.ts";
 import { InMemoryRunStore, RootLock, checkpointSha256, fsyncDir, fsyncFile, type JournalKind, type JournalRecord, type ResultRef, type RunStore } from "./store.ts";
 import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, FILE_TOOLS, GATE_DECISION_TOOL, RESULT_TEXT_HARD_MAX, RESULT_TEXT_MAX, SHELL_TOOL, WRITE_TOOLS } from "./tools.ts";
@@ -344,7 +344,8 @@ export interface SupervisorOptions {
   /** The governing session at the current call: what top-level children start from. */
   governor: () => GovernorContext;
   parentModels?: ParentModels;
-  schedulerLimits?: { maxRunnable?: number; maxResidentWorkers?: number; maxOpenAgents?: number; maxDepth?: number };
+  /** Admission capacity (index.ts passes the policy file's validated limits); depth comes from policy.maxDepth only. */
+  schedulerLimits?: Partial<SchedulerLimits>;
   executors?: ToolExecutors;
   workspace?: WorkspaceManager;
   workerPath?: string;
@@ -1166,6 +1167,11 @@ export class Supervisor implements GateHost {
     return this.scheduler;
   }
 
+  /** Admission use against the effective limits, shared by the whole tree. */
+  capacity(): CapacitySnapshot {
+    return this.scheduler.snapshot();
+  }
+
   get gateController(): GateController {
     return this.gate;
   }
@@ -1268,6 +1274,11 @@ export class Supervisor implements GateHost {
     const ticket = rt.residentLease;
     rt.residentLease = null;
     this.releaseTicket(ticket);
+  }
+
+  private residentSaturation(): string {
+    const { resident, limits } = this.scheduler.snapshot();
+    return `resident worker capacity saturated (${resident} resident, maxResidentWorkers ${limits.maxResidentWorkers})`;
   }
 
   /** Resident capacity, evicting one idle worker when the house is full. */
@@ -1428,7 +1439,7 @@ export class Supervisor implements GateHost {
       try {
         resident = this.acquireResident(agentId);
         if (!resident) {
-          throw err("CAPACITY_EXCEEDED", "resident worker capacity saturated (not open-agent exhaustion); wait for running workers/checkpoints to settle so idle workers can be evicted automatically; closing an agent also releases its capacity but does not resolve uncertain or background-owned effects");
+          throw err("CAPACITY_EXCEEDED", `${this.residentSaturation()} (not open-agent exhaustion); wait for running workers/checkpoints to settle so idle workers can be evicted automatically; closing an agent also releases its capacity but does not resolve uncertain or background-owned effects`, { capacity: "resident_workers", ...this.scheduler.snapshot() });
         }
         // Bind the concrete workspace after grant intersection. A nested
         // writer gets its own worktree; parent mounts are never an allowlist.
@@ -2982,7 +2993,7 @@ export class Supervisor implements GateHost {
           model: args["model"] as SpawnParams["model"],
         }, requestId);
       case "list_agents":
-        return this.list(caller);
+        return this.listWithCapacity(caller);
       case "read_agent":
         if (args["view"] === "result" || args["view"] === "reviews") {
           const read = args["view"] === "reviews" ? this.readReviews.bind(this) : this.readResult.bind(this);
@@ -3805,6 +3816,11 @@ export class Supervisor implements GateHost {
     return out;
   }
 
+  /** The list_agents report: visible agents plus the shared admission capacity. */
+  listWithCapacity(caller: CallerId): { agents: AgentView[]; capacity: CapacitySnapshot } {
+    return { agents: this.list(caller), capacity: this.capacity() };
+  }
+
   read(caller: CallerId, target: AgentId, view: "status" | "result" | "reviews" | "events", cursor: number, limit: number, taskRunId: TaskRunId | null): ReadResult {
     const rt = this.agents.get(target);
     if (!rt) throw err("NOT_FOUND", `agent ${target} unknown`);
@@ -4328,7 +4344,7 @@ export class Supervisor implements GateHost {
       }
     }
     const resident = this.acquireResident(rt.record.id);
-    if (!resident) throw err("CAPACITY_EXCEEDED", "no resident capacity for reload");
+    if (!resident) throw err("CAPACITY_EXCEEDED", `no resident capacity for reload: ${this.residentSaturation()}`, { capacity: "resident_workers", ...this.scheduler.snapshot() });
     rt.residentLease = resident;
     let worker: WorkerPort;
     try {
