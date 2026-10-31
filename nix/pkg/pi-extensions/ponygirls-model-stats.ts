@@ -18,7 +18,10 @@
  * it appended during the rewrite — accepted for stats. /perf replaces the
  * editor with mean/p50/p90/p99 tables (tok/s also shows the slow tail, p10/p1)
  * per model for the last hour, 24 hours, and week — the same in-place custom
- * view as /usage, not an overlay. All three sections share one column layout,
+ * view as /usage, not an overlay. `e` toggles the effort breakdown: one row
+ * per model and Pi thinking level (`AssistantMessage.thinkingLevel`, stored
+ * on each record as `effort`); records written before effort was stored show
+ * as `?`. All three sections share one column layout,
  * so columns stay aligned across windows. The view is scrollable (up/down,
  * j/k, pgup/pgdn, home/end, wheel) with an adjustable viewport (+/-):
  * `Component.render(width)` never sees the allocated height, so the line
@@ -60,6 +63,7 @@ import {
 	renderWindow,
 	SORT_KEYS,
 	serializeStatsRecord,
+	type StatsBreakdown,
 	sortModels,
 	STATS_BUDGET_STEP,
 	STATS_DEFAULT_BUDGET,
@@ -69,6 +73,7 @@ import {
 	WEEK_MS,
 	windowTitle,
 	type StatsRecord,
+	type WindowSummary,
 } from "./ponygirls-model-stats-state.ts";
 import { scrollPosition } from "./scroll-state.ts";
 
@@ -83,6 +88,11 @@ const STATS_HINTS: readonly KeyHint[] = [
 	{ key: "r", action: "reverse" },
 	{ key: "q", action: "close" },
 ];
+/** The `e` hint names the breakdown it switches to; it goes before the close hint. */
+const BREAKDOWN_HINTS: Readonly<Record<StatsBreakdown, KeyHint>> = {
+	model: { key: "e", action: "by effort" },
+	effort: { key: "e", action: "by model" },
+};
 const SORT_PICKER_TITLE = "Sort by";
 const SORT_PICKER_HINTS: readonly KeyHint[] = [
 	{ key: "⏎", action: "select" },
@@ -162,12 +172,16 @@ class SortPicker implements Component {
 	}
 }
 
+/** Both breakdowns of the same records, fixed for the view lifetime. */
+type BreakdownSummaries = Readonly<Record<StatsBreakdown, readonly WindowSummary[]>>;
+
 class StatsView implements Component {
 	private readonly theme: Theme;
 	private readonly tui: TUI;
-	private readonly summaries: ReturnType<typeof summarize>;
+	private readonly summaries: BreakdownSummaries;
 	private readonly onClose: () => void;
 	private readonly requestRender: () => void;
+	private breakdown: StatsBreakdown = "model";
 	private sortIndex = 0;
 	private reversed = false;
 	private picker: OverlayHandle | undefined;
@@ -177,7 +191,7 @@ class StatsView implements Component {
 	/** Content lines from the last render; summaries are fixed for the view lifetime. */
 	private lineCount = 0;
 
-	constructor(theme: Theme, tui: TUI, summaries: ReturnType<typeof summarize>, onClose: () => void, requestRender: () => void) {
+	constructor(theme: Theme, tui: TUI, summaries: BreakdownSummaries, onClose: () => void, requestRender: () => void) {
 		this.theme = theme;
 		this.tui = tui;
 		this.summaries = summaries;
@@ -195,9 +209,10 @@ class StatsView implements Component {
 	render(width: number): string[] {
 		const content: string[] = [];
 		const sort = this.sortDirection();
+		const summaries = this.summaries[this.breakdown];
 		// One layout for all windows: columns keep the same width in every section.
-		const layout = measureWindows(this.summaries);
-		for (const windowSummary of this.summaries) {
+		const layout = measureWindows(summaries);
+		for (const windowSummary of summaries) {
 			if (content.length > 0) content.push("");
 			content.push(fitLine(windowTitle(this.theme, windowSummary), width));
 			const table = renderWindow(
@@ -215,12 +230,13 @@ class StatsView implements Component {
 		const { start, end } = statsVisibleRange(this.lineCount, this.scrollTop, budget);
 		const arrow = sort.descending ? "↓" : "↑";
 		const right = this.lineCount > budget ? this.theme.fg("dim", scrollPosition(this.lineCount, start, end)) : undefined;
-		const title = frameTitle(this.theme, width, { title: STATS_TITLE, meta: `sort: ${sort.label} ${arrow}`, right }, "none");
+		const meta = `sort: ${sort.label} ${arrow} · by ${this.breakdown}`;
+		const title = frameTitle(this.theme, width, { title: STATS_TITLE, meta, right }, "none");
 		return [
 			title.line,
 			...content.slice(start, end),
 			frameRule(this.theme, width),
-			...keyHints(this.theme, width, STATS_HINTS).lines,
+			...keyHints(this.theme, width, [...STATS_HINTS.slice(0, -1), BREAKDOWN_HINTS[this.breakdown], ...STATS_HINTS.slice(-1)]).lines,
 		];
 	}
 
@@ -234,6 +250,12 @@ class StatsView implements Component {
 		}
 		if (matchesKey(data, "s")) {
 			this.openSortPicker();
+			return;
+		}
+		if (matchesKey(data, "e")) {
+			this.breakdown = this.breakdown === "model" ? "effort" : "model";
+			this.scrollTop = 0;
+			this.requestRender();
 			return;
 		}
 		if (matchesKey(data, "r")) {
@@ -367,6 +389,7 @@ export default function (pi: ExtensionAPI): void {
 		const finishedAt = Date.now();
 		const key = `${message.provider}/${message.model}`;
 		const outcome = classifyOutcome(message.stopReason, message.errorMessage);
+		const effort = message.thinkingLevel === undefined ? {} : { effort: message.thinkingLevel };
 		const record: StatsRecord =
 			outcome === "ok"
 				? {
@@ -376,8 +399,9 @@ export default function (pi: ExtensionAPI): void {
 						ttftMs: (open.firstTokenAt ?? finishedAt) - open.startedAt,
 						totalMs: finishedAt - open.startedAt,
 						outputTokens: message.usage.output,
+						...effort,
 					}
-				: { type: "fail", ts: finishedAt, key, kind: outcome };
+				: { type: "fail", ts: finishedAt, key, kind: outcome, ...effort };
 		if (!isUsableRecord(record)) return;
 		try {
 			const path = statsPath();
@@ -394,13 +418,15 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("perf", {
-		description: "Per-model response-time distributions (last hour / 24h / week)",
+		description: "Per-model response-time distributions (last hour / 24h / week), optionally per effort",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/perf needs the interactive UI", "warning");
 				return;
 			}
-			const summaries = summarize(readRecords(), Date.now());
+			const records = readRecords();
+			const now = Date.now();
+			const summaries: BreakdownSummaries = { model: summarize(records, now, "model"), effort: summarize(records, now, "effort") };
 			// In place, replacing the editor, as /usage does. An overlay is a popup.
 			await ctx.ui.custom<void>((tui, theme, _kb, done) => new StatsView(theme, tui, summaries, () => done(), () => tui.requestRender()));
 		},

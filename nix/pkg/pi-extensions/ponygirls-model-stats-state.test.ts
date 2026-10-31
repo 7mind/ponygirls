@@ -34,6 +34,8 @@ import {
 	type SortOrder,
 	type StatsRecord,
 	type WindowSummary,
+	UNRECORDED_EFFORT,
+	compareEfforts,
 } from "./ponygirls-model-stats-state.ts";
 import { scrollPosition } from "./scroll-state.ts";
 
@@ -82,7 +84,7 @@ test("a decode span under the floor is not a stored measurement", () => {
 	assert.equal(isUsableRecord(sample({ ttftMs: 5_000, totalMs: 5_000, outputTokens: 500 })), true);
 	assert.equal(isUsableRecord(sample({ ttftMs: 12_000, totalMs: 10_000 })), false);
 	assert.equal(parseStatsLine(serializeStatsRecord(dumped)) !== undefined, true);
-	const [hour] = summarize([dumped, sample()], NOW);
+	const [hour] = summarize([dumped, sample()], NOW, "model");
 	assert.equal(hour?.models[0]?.responses, 1);
 	assert.ok((hour?.models[0]?.tps?.mean ?? 0) < 200);
 });
@@ -177,7 +179,7 @@ test("summarize windows, groups, counts failures, and sorts by activity", () => 
 		{ type: "fail", ts: NOW - 10 * 60 * 1000, key: "openai/gpt-5", kind: "timeout" },
 		sample({ ts: NOW - WEEK_MS - 1, key: "google/gemini" }),
 	];
-	const [hour, day, week] = summarize(records, NOW) as [
+	const [hour, day, week] = summarize(records, NOW, "model") as [
 		ReturnType<typeof summarize>[number],
 		ReturnType<typeof summarize>[number],
 		ReturnType<typeof summarize>[number],
@@ -232,7 +234,7 @@ const GPT5: ModelWindowStats = {
 	responses: 0,
 	failures: { aborted: 1, timeout: 0, error: 3 },
 };
-const HOUR: WindowSummary = { label: "Last hour", models: [SONNET, GPT5] };
+const HOUR: WindowSummary = { label: "Last hour", breakdown: "model", models: [SONNET, GPT5] };
 
 test("renderWindow lays out group titles, column labels, a ┼ rule, and one row per model", () => {
 	const table = renderWindow(HOUR, PLAIN_THEME, DEFAULT_SORT);
@@ -257,7 +259,7 @@ test("renderWindow lays out group titles, column labels, a ┼ rule, and one row
 	assert.deepEqual(barsAt(lines[1]!), rowBars);
 	assert.deepEqual(barsAt(lines[4]!), rowBars);
 	assert.deepEqual(junctionsAt(lines[2]!), rowBars);
-	assert.deepEqual(renderWindow({ label: "Last hour", models: [] }, PLAIN_THEME, DEFAULT_SORT), {
+	assert.deepEqual(renderWindow({ label: "Last hour", breakdown: "model", models: [] }, PLAIN_THEME, DEFAULT_SORT), {
 		header: ["(no samples)"],
 		rows: [],
 	});
@@ -317,14 +319,15 @@ test("renderWindow marks the sorted column: accent header with arrow, bold value
 
 test("windowTitle is the bold label with a dim model and request summary", () => {
 	assert.equal(windowTitle(TAG_THEME, HOUR), "<b><text>Last hour</text></b><dim> · 2 models · 7 requests</dim>");
-	assert.equal(windowTitle(PLAIN_THEME, { label: "Last week", models: [SONNET] }), "Last week · 1 model · 3 requests");
-	assert.equal(windowTitle(PLAIN_THEME, { label: "Last week", models: [] }), "Last week");
+	assert.equal(windowTitle(PLAIN_THEME, { label: "Last week", breakdown: "model", models: [SONNET] }), "Last week · 1 model · 3 requests");
+	assert.equal(windowTitle(PLAIN_THEME, { label: "Last week", breakdown: "model", models: [] }), "Last week");
 });
 
 test("renderWindow sizes each column to its content so percentiles stay separate", () => {
 	const table = renderWindow(
 		{
 			label: "Last hour",
+			breakdown: "model",
 			models: [
 				{
 					key: "xai/grok-4.7",
@@ -364,8 +367,8 @@ test("renderWindow with a shared layout aligns columns across windows", () => {
 		failures: { aborted: 0, timeout: 3, error: 0 },
 		tps: metric({ mean: 90 }),
 	};
-	const hour = { label: "Last hour", models: [short] };
-	const week = { label: "Last week", models: [short, long] };
+	const hour: WindowSummary = { label: "Last hour", breakdown: "model", models: [short] };
+	const week: WindowSummary = { label: "Last week", breakdown: "model", models: [short, long] };
 	const layout = measureWindows([hour, week]);
 	const hourTable = renderWindow(hour, PLAIN_THEME, DEFAULT_SORT, { layout });
 	const weekTable = renderWindow(week, PLAIN_THEME, DEFAULT_SORT, { layout });
@@ -377,6 +380,131 @@ test("renderWindow with a shared layout aligns columns across windows", () => {
 	assert.match(hourTable.rows[0]!, /^a\/b +│/);
 	// Measured alone, the hour table would be narrower.
 	assert.notDeepEqual(barsAt(renderWindow(hour, PLAIN_THEME, DEFAULT_SORT).rows[0]!), barsAt(hourTable.rows[0]!));
+});
+
+test("serialize/parse round-trips the effort; a mistyped effort is a malformed line", () => {
+	const ok = sample({ effort: "high" });
+	assert.deepEqual(parseStatsLine(serializeStatsRecord(ok)), ok);
+	const fail: StatsRecord = { type: "fail", ts: NOW, key: "openai/gpt-5", kind: "error", effort: "off" };
+	assert.deepEqual(parseStatsLine(serializeStatsRecord(fail)), fail);
+	// A level this code does not know is kept, not dropped from the file.
+	assert.deepEqual(parseStatsLine(serializeStatsRecord(sample({ effort: "ultra" }))), sample({ effort: "ultra" }));
+	// Records written before effort was stored carry no effort key at all.
+	assert.equal("effort" in parseStatsLine(serializeStatsRecord(sample()))!, false);
+	assert.equal(parseStatsLine('{"type":"ok","ts":1,"key":"a/b","ttftMs":1,"totalMs":2,"outputTokens":3,"effort":7}'), undefined);
+	assert.equal(parseStatsLine('{"type":"fail","ts":1,"key":"a/b","kind":"error","effort":""}'), undefined);
+});
+
+test("compareEfforts orders Pi levels, then unknown levels, then unrecorded", () => {
+	const efforts = [UNRECORDED_EFFORT, "ultra", "high", "off", "max", "minimal", "medium", "low", "xhigh"];
+	assert.deepEqual([...efforts].sort(compareEfforts), ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", UNRECORDED_EFFORT]);
+});
+
+test("summarize by effort splits each model per effort; the model breakdown aggregates them", () => {
+	const records: StatsRecord[] = [
+		sample({ key: "openai/gpt-5", effort: "high", ttftMs: 2_000, totalMs: 12_000 }),
+		sample({ key: "openai/gpt-5", effort: "high", ttftMs: 4_000, totalMs: 14_000 }),
+		sample({ key: "openai/gpt-5", effort: "low", ttftMs: 500, totalMs: 5_500 }),
+		{ type: "fail", ts: NOW, key: "openai/gpt-5", kind: "timeout", effort: "high" },
+		sample({ key: "openai/gpt-5" }),
+		sample({ key: "anthropic/claude-sonnet", effort: "off" }),
+	];
+	const [byEffort] = summarize(records, NOW, "effort");
+	assert.equal(byEffort?.breakdown, "effort");
+	// Most active row first; ties by model name, then effort.
+	assert.deepEqual(
+		byEffort?.models.map((row) => [row.key, row.effort, row.responses]),
+		[
+			["openai/gpt-5", "high", 2],
+			["anthropic/claude-sonnet", "off", 1],
+			["openai/gpt-5", "low", 1],
+			["openai/gpt-5", UNRECORDED_EFFORT, 1],
+		],
+	);
+	const high = byEffort!.models[0]!;
+	assert.deepEqual(high.failures, { aborted: 0, timeout: 1, error: 0 });
+	assert.equal(high.ttft?.mean, 3_000);
+
+	const [byModel] = summarize(records, NOW, "model");
+	assert.equal(byModel?.breakdown, "model");
+	assert.deepEqual(
+		byModel?.models.map((row) => [row.key, row.responses, "effort" in row]),
+		[
+			["openai/gpt-5", 4, false],
+			["anthropic/claude-sonnet", 1, false],
+		],
+	);
+	assert.equal(byModel!.models[0]!.failures.timeout, 1);
+});
+
+test("sortModels keeps one model's effort rows in effort order, whatever the model direction", () => {
+	const row = (key: string, effort: string): ModelWindowStats => ({
+		key,
+		effort,
+		responses: 1,
+		failures: { aborted: 0, timeout: 0, error: 0 },
+	});
+	const rows = [row("b/m", "high"), row("a/m", UNRECORDED_EFFORT), row("b/m", "low"), row("a/m", "medium")];
+	const order = (sorted: ModelWindowStats[]) => sorted.map((model) => `${model.key}@${model.effort}`);
+	assert.deepEqual(order(sortModels(rows, "model", false)), ["a/m@medium", `a/m@${UNRECORDED_EFFORT}`, "b/m@low", "b/m@high"]);
+	assert.deepEqual(order(sortModels(rows, "model", true)), ["b/m@low", "b/m@high", "a/m@medium", `a/m@${UNRECORDED_EFFORT}`]);
+	// Equal values (none measured) fall back to model, then effort.
+	assert.deepEqual(order(sortModels(rows, "tps-mean", true)), ["a/m@medium", `a/m@${UNRECORDED_EFFORT}`, "b/m@low", "b/m@high"]);
+});
+
+const HOUR_BY_EFFORT: WindowSummary = {
+	label: "Last hour",
+	breakdown: "effort",
+	models: [
+		{ ...SONNET, effort: "medium" },
+		{ ...SONNET, effort: UNRECORDED_EFFORT, responses: 1 },
+		{ ...GPT5, effort: "xhigh" },
+	],
+};
+
+test("renderWindow by effort adds an effort column after the model, unrecorded effort dim", () => {
+	const table = renderWindow(HOUR_BY_EFFORT, PLAIN_THEME, DEFAULT_SORT);
+	const lines = [...table.header, ...table.rows];
+	assert.equal(lines.length, 6);
+	assert.match(lines[1]!, /^model +│ effort │ /);
+	assert.match(lines[3]!, /^anthropic\/claude-sonnet │ medium │ +2 │/);
+	assert.match(lines[4]!, /^anthropic\/claude-sonnet │ \? +│ +1 │/);
+	assert.match(lines[5]!, /^openai\/gpt-5 +│ xhigh +│ +0 │/);
+	const rowBars = barsAt(lines[3]!);
+	// The model-breakdown bars plus one for the effort column.
+	assert.equal(rowBars.length, 8);
+	assert.ok(barsAt(lines[0]!).every((index) => rowBars.includes(index)));
+	assert.deepEqual(barsAt(lines[1]!), rowBars);
+	assert.deepEqual(junctionsAt(lines[2]!), rowBars);
+	const widths = lines.map(visibleWidth);
+	assert.ok(widths.every((width) => width === widths[0]), `widths ${widths.join(",")}`);
+	// A narrower width still shrinks only the model column.
+	const narrow = renderWindow(HOUR_BY_EFFORT, PLAIN_THEME, DEFAULT_SORT, { width: widths[0]! - 10 });
+	for (const line of [...narrow.header, ...narrow.rows]) assert.equal(visibleWidth(line), widths[0]! - 10);
+	assert.match(narrow.rows[0]!, /^anthropic\/cl… │ medium │/);
+
+	const tagged = renderWindow(HOUR_BY_EFFORT, TAG_THEME, DEFAULT_SORT);
+	assert.match(tagged.header[1]!, /<dim>effort<\/dim>/);
+	assert.match(tagged.rows[0]!, /<dim> │ <\/dim>medium<dim> │ <\/dim>/);
+	assert.match(tagged.rows[1]!, /<dim> │ <\/dim><dim>\? +<\/dim><dim> │ <\/dim>/);
+});
+
+test("windows by effort share a layout; breakdowns never mix", () => {
+	const week: WindowSummary = { ...HOUR_BY_EFFORT, label: "Last week", models: [{ ...GPT5, key: "a/b", effort: "minimal" }] };
+	const layout = measureWindows([HOUR_BY_EFFORT, week]);
+	assert.equal(layout.effortWidth, "minimal".length);
+	assert.deepEqual(
+		barsAt(renderWindow(HOUR_BY_EFFORT, PLAIN_THEME, DEFAULT_SORT, { layout }).rows[0]!),
+		barsAt(renderWindow(week, PLAIN_THEME, DEFAULT_SORT, { layout }).rows[0]!),
+	);
+	assert.equal(measureWindows([HOUR]).effortWidth, undefined);
+	assert.throws(() => measureWindows([HOUR, HOUR_BY_EFFORT]), /different breakdowns/);
+	assert.throws(() => renderWindow(HOUR, PLAIN_THEME, DEFAULT_SORT, { layout }), /needs a layout/);
+	assert.throws(() => renderWindow({ ...HOUR, breakdown: "effort" }, PLAIN_THEME, DEFAULT_SORT), /has no effort/);
+});
+
+test("windowTitle counts distinct models, not effort rows", () => {
+	assert.equal(windowTitle(PLAIN_THEME, HOUR_BY_EFFORT), "Last hour · 2 models · 9 requests");
 });
 
 test("scrollPosition shows the visible range with arrows where lines are hidden", () => {

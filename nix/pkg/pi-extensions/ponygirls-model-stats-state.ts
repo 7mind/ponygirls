@@ -11,6 +11,7 @@ import {
 	clampScrollTop,
 	visibleRange,
 } from "./scroll-state.ts";
+import { THINKING_LEVELS } from "./ponygirls-model-picker-effort.ts";
 
 export interface ResponseSample {
 	type: "ok";
@@ -23,6 +24,8 @@ export interface ResponseSample {
 	/** Request dispatch to finalized message, milliseconds. */
 	totalMs: number;
 	outputTokens: number;
+	/** See {@link FailureRecord.effort}. */
+	effort?: string;
 }
 
 export type FailureKind = "aborted" | "timeout" | "error";
@@ -32,6 +35,13 @@ export interface FailureRecord {
 	ts: number;
 	key: string;
 	kind: FailureKind;
+	/**
+	 * Pi thinking level requested for the response (`AssistantMessage.thinkingLevel`,
+	 * "off" included). Absent on records written before it was stored, or when
+	 * Pi did not report one. Any non-empty string is kept, so a level a later Pi
+	 * adds is not dropped from the file on load.
+	 */
+	effort?: string;
 }
 
 export type StatsRecord = ResponseSample | FailureRecord;
@@ -120,8 +130,16 @@ export function summarizeMetric(values: readonly number[]): MetricStats | undefi
 	};
 }
 
+/** Row grouping: one row per model, or one per model and effort. */
+export type StatsBreakdown = "model" | "effort";
+
+/** Effort cell of records that carry no effort (written before effort was stored). */
+export const UNRECORDED_EFFORT = "?";
+
 export interface ModelWindowStats {
 	key: string;
+	/** The row's effort (or {@link UNRECORDED_EFFORT}); set exactly when the window's breakdown is "effort". */
+	effort?: string;
 	responses: number;
 	failures: Record<FailureKind, number>;
 	ttft?: MetricStats;
@@ -131,29 +149,44 @@ export interface ModelWindowStats {
 
 export interface WindowSummary {
 	label: string;
+	breakdown: StatsBreakdown;
 	models: ModelWindowStats[];
 }
 
-/** Per-window, per-model aggregates over `records`, most active model first. */
-export function summarize(records: readonly StatsRecord[], now: number): WindowSummary[] {
+interface RowBucket {
+	key: string;
+	effort: string | undefined;
+	samples: ResponseSample[];
+	failures: Record<FailureKind, number>;
+}
+
+/**
+ * Per-window aggregates over `records`, most active row first: one row per
+ * model, or with the "effort" breakdown one per model and effort.
+ */
+export function summarize(records: readonly StatsRecord[], now: number, breakdown: StatsBreakdown): WindowSummary[] {
 	return WINDOWS.map((window) => {
 		const cutoff = now - window.ms;
-		const byKey = new Map<string, { samples: ResponseSample[]; failures: Record<FailureKind, number> }>();
+		const buckets = new Map<string, RowBucket>();
 		for (const record of records) {
 			if (record.ts < cutoff || !isUsableRecord(record)) continue;
-			let bucket = byKey.get(record.key);
+			const effort = breakdown === "effort" ? (record.effort ?? UNRECORDED_EFFORT) : undefined;
+			// JSON keeps the pair unambiguous whatever characters the key holds.
+			const id = JSON.stringify([record.key, effort ?? null]);
+			let bucket = buckets.get(id);
 			if (!bucket) {
-				bucket = { samples: [], failures: { aborted: 0, timeout: 0, error: 0 } };
-				byKey.set(record.key, bucket);
+				bucket = { key: record.key, effort, samples: [], failures: { aborted: 0, timeout: 0, error: 0 } };
+				buckets.set(id, bucket);
 			}
 			if (record.type === "ok") bucket.samples.push(record);
 			else bucket.failures[record.kind] += 1;
 		}
-		const models = [...byKey.entries()]
-			.map(([key, bucket]): ModelWindowStats => {
+		const models = [...buckets.values()]
+			.map((bucket): ModelWindowStats => {
 				const sampled = bucket.samples;
 				return {
-					key,
+					key: bucket.key,
+					...(bucket.effort === undefined ? {} : { effort: bucket.effort }),
 					responses: sampled.length,
 					failures: bucket.failures,
 					ttft: summarizeMetric(sampled.map((sample) => sample.ttftMs)),
@@ -163,11 +196,25 @@ export function summarize(records: readonly StatsRecord[], now: number): WindowS
 			})
 			.sort(
 				(left, right) =>
-					right.responses + failureTotal(right) - (left.responses + failureTotal(left)) ||
-					left.key.localeCompare(right.key),
+					right.responses + failureTotal(right) - (left.responses + failureTotal(left)) || compareRows(left, right),
 			);
-		return { label: window.label, models };
+		return { label: window.label, breakdown, models };
 	});
+}
+
+/** Pi's levels in ascending order, then unknown levels by name, then {@link UNRECORDED_EFFORT}. */
+export function compareEfforts(left: string | undefined, right: string | undefined): number {
+	const rank = (effort: string | undefined): number => {
+		if (effort === undefined || effort === UNRECORDED_EFFORT) return THINKING_LEVELS.length + 1;
+		const index = (THINKING_LEVELS as readonly string[]).indexOf(effort);
+		return index >= 0 ? index : THINKING_LEVELS.length;
+	};
+	return rank(left) - rank(right) || (left ?? "").localeCompare(right ?? "");
+}
+
+/** Model name ascending, then effort ascending: the tie-break of every sort. */
+function compareRows(left: ModelWindowStats, right: ModelWindowStats): number {
+	return left.key.localeCompare(right.key) || compareEfforts(left.effort, right.effort);
 }
 
 function failureTotal(model: ModelWindowStats): number {
@@ -203,20 +250,24 @@ function sortValue(model: ModelWindowStats, id: SortKeyId): number | undefined {
 	}
 }
 
-/** Missing numeric values sort last. Ties break by model name, ascending. */
+/**
+ * Missing numeric values sort last. Ties break by model name, then effort,
+ * ascending. The model sort reverses the model order only: one model's
+ * effort rows stay in ascending effort order.
+ */
 export function sortModels(models: readonly ModelWindowStats[], id: SortKeyId, descending: boolean): ModelWindowStats[] {
 	return [...models].sort((left, right) => {
 		if (id === "model") {
 			const cmp = left.key.localeCompare(right.key);
-			return descending ? -cmp : cmp;
+			return (descending ? -cmp : cmp) || compareEfforts(left.effort, right.effort);
 		}
 		const leftValue = sortValue(left, id);
 		const rightValue = sortValue(right, id);
-		if (leftValue === undefined && rightValue === undefined) return left.key.localeCompare(right.key);
+		if (leftValue === undefined && rightValue === undefined) return compareRows(left, right);
 		if (leftValue === undefined) return 1;
 		if (rightValue === undefined) return -1;
 		const diff = descending ? rightValue - leftValue : leftValue - rightValue;
-		return diff || left.key.localeCompare(right.key);
+		return diff || compareRows(left, right);
 	});
 }
 
@@ -244,17 +295,28 @@ export function parseStatsLine(line: string): StatsRecord | undefined {
 		ttftMs?: unknown;
 		totalMs?: unknown;
 		outputTokens?: unknown;
+		effort?: unknown;
 	};
 	if (!isFiniteNumber(record.ts) || typeof record.key !== "string" || !record.key.includes("/")) return undefined;
+	if (record.effort !== undefined && (typeof record.effort !== "string" || record.effort === "")) return undefined;
+	const effort = record.effort === undefined ? {} : { effort: record.effort };
 	if (record.type === "fail") {
 		return record.kind === "aborted" || record.kind === "timeout" || record.kind === "error"
-			? { type: "fail", ts: record.ts, key: record.key, kind: record.kind }
+			? { type: "fail", ts: record.ts, key: record.key, kind: record.kind, ...effort }
 			: undefined;
 	}
 	if (record.type === "ok") {
 		if (!isFiniteNumber(record.ttftMs) || !isFiniteNumber(record.totalMs) || !isFiniteNumber(record.outputTokens))
 			return undefined;
-		return { type: "ok", ts: record.ts, key: record.key, ttftMs: record.ttftMs, totalMs: record.totalMs, outputTokens: record.outputTokens };
+		return {
+			type: "ok",
+			ts: record.ts,
+			key: record.key,
+			ttftMs: record.ttftMs,
+			totalMs: record.totalMs,
+			outputTokens: record.outputTokens,
+			...effort,
+		};
 	}
 	return undefined;
 }
@@ -265,6 +327,13 @@ export function serializeStatsRecord(record: StatsRecord): string {
 
 function isFiniteNumber(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value);
+}
+
+const EFFORT_HEADER = "effort";
+
+function effortOf(model: ModelWindowStats): string {
+	if (model.effort === undefined) throw new Error(`model-stats: effort row ${model.key} has no effort`);
+	return model.effort;
 }
 
 const FAILURE_KINDS: readonly FailureKind[] = ["aborted", "timeout", "error"];
@@ -362,6 +431,8 @@ export interface MetricGroup {
 
 /** Column widths shared by several windows, so stacked tables stay aligned. */
 export interface WindowsLayout {
+	/** The effort column, present exactly for the "effort" breakdown. */
+	effortWidth: number | undefined;
 	nWidth: number;
 	failureWidths: number[];
 	groups: MetricGroup[];
@@ -371,7 +442,12 @@ export interface WindowsLayout {
 
 /** Measure every column across `summaries`: one layout keeps all tables aligned. */
 export function measureWindows(summaries: readonly WindowSummary[]): WindowsLayout {
+	const breakdowns = new Set(summaries.map((summary) => summary.breakdown));
+	if (breakdowns.size > 1) throw new Error("measureWindows: windows with different breakdowns cannot share a layout");
 	const models = summaries.flatMap((summary) => summary.models);
+	const effortWidth = breakdowns.has("effort")
+		? Math.max(EFFORT_HEADER.length, ...models.map((model) => effortOf(model).length))
+		: undefined;
 	const nWidth = Math.max("n".length + SORT_ARROW_WIDTH, ...models.map((model) => String(model.responses).length));
 	const failureWidths = FAILURE_KINDS.map((kind) =>
 		Math.max(
@@ -386,6 +462,7 @@ export function measureWindows(summaries: readonly WindowSummary[]): WindowsLayo
 	];
 	for (const group of groups) fitGroupTitle(group.title, group.widths);
 	return {
+		effortWidth,
 		nWidth,
 		failureWidths,
 		groups,
@@ -443,12 +520,13 @@ function plural(count: number, noun: string): string {
 	return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-/** Bold window label, then a dim summary: models and requests (responses plus failures). */
+/** Bold window label, then a dim summary: distinct models and requests (responses plus failures). */
 export function windowTitle(theme: UiTheme, summary: WindowSummary): string {
 	const title = theme.bold(theme.fg("text", summary.label));
 	if (summary.models.length === 0) return title;
+	const models = new Set(summary.models.map((model) => model.key)).size;
 	const requests = summary.models.reduce((total, model) => total + model.responses + failureTotal(model), 0);
-	return title + theme.fg("dim", ` · ${plural(summary.models.length, "model")} · ${plural(requests, "request")}`);
+	return title + theme.fg("dim", ` · ${plural(models, "model")} · ${plural(requests, "request")}`);
 }
 
 /**
@@ -472,8 +550,13 @@ export function renderWindow(
 	if (summary.models.length === 0) return { header: [theme.fg("dim", "(no samples)")], rows: [] };
 
 	const layout = opts?.layout ?? measureWindows([summary]);
-	const { nWidth, failureWidths, groups } = layout;
+	const { effortWidth, nWidth, failureWidths, groups } = layout;
+	if ((effortWidth !== undefined) !== (summary.breakdown === "effort"))
+		throw new Error(`renderWindow: a ${summary.breakdown} window needs a layout measured for it`);
+	/** The effort column, when present, as a prefix for every line's column list. */
+	const effortColumn = <T>(cell: (width: number) => T): T[] => (effortWidth === undefined ? [] : [cell(effortWidth)]);
 	const fixedWidth =
+		(effortWidth === undefined ? 0 : effortWidth + GRID_SEPARATOR.length) +
 		nWidth +
 		failureWidths.reduce((total, column) => total + column, 0) +
 		groups.reduce((total, group) => total + blockWidth(group.widths), 0) +
@@ -494,6 +577,7 @@ export function renderWindow(
 
 	const header = [
 		" ".repeat(modelWidth),
+		...effortColumn((width) => " ".repeat(width)),
 		column.kind === "n" ? marked(padLeft(`n${arrow}`, nWidth)) : dim(padLeft("n", nWidth)),
 		...FAILURE_KINDS.map((kind, index) => dim(padLeft(FAILURE_HEADERS[kind], failureWidths[index]!))),
 		...groups.map((group) =>
@@ -506,6 +590,7 @@ export function renderWindow(
 		column.kind === "model"
 			? marked(padRight(ellipsize(`model${arrow}`, modelWidth), modelWidth))
 			: dim(padRight(ellipsize("model", modelWidth), modelWidth)),
+		...effortColumn((width) => dim(padRight(EFFORT_HEADER, width))),
 		" ".repeat(nWidth),
 		...failureWidths.map((width) => " ".repeat(width)),
 		...groups.map((group) =>
@@ -517,10 +602,15 @@ export function renderWindow(
 				.join(GROUP_CELL_GAP),
 		),
 	].join(separator);
-	const rule = gridRule(theme, [modelWidth, nWidth, ...failureWidths, ...groups.map((group) => blockWidth(group.widths))], "┼");
+	const rule = gridRule(theme, [modelWidth, ...effortColumn((width) => width), nWidth, ...failureWidths, ...groups.map((group) => blockWidth(group.widths))], "┼");
 	const rows = summary.models.map((model) =>
 		[
 			emphasize(padRight(ellipsize(model.key, modelWidth), modelWidth), column.kind === "model"),
+			...effortColumn((width) => {
+				const effort = effortOf(model);
+				const cell = padRight(effort, width);
+				return effort === UNRECORDED_EFFORT ? dim(cell) : cell;
+			}),
 			emphasize(padLeft(String(model.responses), nWidth), column.kind === "n"),
 			...FAILURE_KINDS.map((kind, index) => countCell(theme, model.failures[kind], failureWidths[index]!, FAILURE_COLORS[kind])),
 			...groups.map((group) =>
