@@ -7,6 +7,7 @@ import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
 import { DecisionsPane } from "./src/pane.ts";
 import { CONTEXT_TYPE, contextLine, summarizeContext } from "./src/context.ts";
+import { completeDecisionArguments } from "./src/complete.ts";
 
 const POLL_MS = 1000;
 const NOTICE_TYPE = "decisions-answer";
@@ -260,11 +261,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   });
   pi.registerCommand("decisions", {
     description: "Decision inbox: [Qn] | answer Qn <text> | dismiss Qn | reopen Qn",
-    getArgumentCompletions: (prefix) => {
-      if (binding === null) return [];
-      return binding.store.list(binding.project).filter((q) => q.id.toLowerCase().startsWith(prefix.toLowerCase()))
-        .map((q) => ({ value: q.id, label: plain(summary(q)) }));
-    },
+    getArgumentCompletions: (prefix) => (binding === null ? null : completeDecisionArguments(prefix, binding.store.list(binding.project), plain)),
     handler: async (args, ctx) => {
       try {
         const b = active(ctx);

@@ -3,3 +3,4 @@ export { frameRule, frameTitle, hintAt, keyHints, type FrameTitle, type KeyHint,
 export { MARKER_WIDTH, columnCells, columnHeader, fit, fitRight, listRow, reopenAfterReset, type Column } from "./rows.ts";
 export { GRID_SEPARATOR, countCell, gridRule, gridSeparator, zebra, type RuleJunction } from "./table.ts";
 export { ATTENTION_FRACTION, compactChip, fractionState, usageBar } from "./meter.ts";
+export { completeArgument, type ArgumentChoice, type CompletionItem } from "./complete.ts";

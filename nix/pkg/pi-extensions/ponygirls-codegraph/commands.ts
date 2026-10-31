@@ -53,7 +53,37 @@ interface CommandCompletion {
   description: string;
 }
 
-export function completeCommand(prefix: string): CommandCompletion[] | null {
+/** Subdirectory names of a cwd-relative or absolute directory, or null when it cannot be listed. */
+export type DirectoryLister = (directory: string) => readonly string[] | null;
+
+/** Most directory suggestions offered at once. */
+const MAX_DIRECTORY_COMPLETIONS = 50;
+
+const PATH_TAKING = new Set(["status", "discover", "use", "sync", "reindex", "cancel", "erase"]);
+const ALL_FLAG = new Set(["status", "sync", "cancel"]);
+const ALL_COMPLETION = { label: "--all", description: "target all discovered projects" };
+const WORKSPACE_FLAG = "--workspace";
+
+/**
+ * Directory completions for an unquoted path argument: `head` is the already
+ * typed command text kept in front of the path (pi replaces the whole argument).
+ * Hidden directories appear only once their leading dot is typed.
+ */
+function directoryCompletions(head: string, path: string, directories: DirectoryLister): CommandCompletion[] {
+  if (path.startsWith('"') || path.startsWith("'") || path.startsWith("-")) return [];
+  const slash = path.lastIndexOf("/");
+  const parent = path.slice(0, slash + 1);
+  const base = path.slice(slash + 1);
+  const names = directories(parent === "" ? "." : parent);
+  if (names === null) return [];
+  return names
+    .filter((name) => name.startsWith(base) && (base.startsWith(".") || !name.startsWith(".")))
+    .sort()
+    .slice(0, MAX_DIRECTORY_COMPLETIONS)
+    .map((name) => ({ value: `${head}${parent}${name}/`, label: `${name}/`, description: "directory" }));
+}
+
+export function completeCommand(prefix: string, directories: DirectoryLister): CommandCompletion[] | null {
   const text = prefix.trimStart();
   const separator = text.search(/\s/);
   if (separator === -1) {
@@ -66,12 +96,19 @@ export function completeCommand(prefix: string): CommandCompletion[] | null {
   }
   const name = text.slice(0, separator);
   const argument = text.slice(separator).trimStart();
-  const flag = name === "init" ? "--workspace" :
-    ["status", "sync", "cancel"].includes(name) ? "--all" : null;
-  if (flag === null || !flag.startsWith(argument)) return null;
-  return [{ value: `${name} ${flag}${name === "init" ? " " : ""}`,
-    label: name === "init" ? "--workspace PATH" : flag,
-    description: name === "init" ? "explicitly opt in to a non-Git workspace" : "target all discovered projects" }];
+  const items: CommandCompletion[] = [];
+  if (name === "init") {
+    if (argument.startsWith(`${WORKSPACE_FLAG} `)) {
+      const path = argument.slice(WORKSPACE_FLAG.length + 1).trimStart();
+      items.push(...directoryCompletions(`init ${WORKSPACE_FLAG} `, path, directories));
+    } else if (WORKSPACE_FLAG.startsWith(argument)) {
+      items.push({ value: `init ${WORKSPACE_FLAG} `, label: `${WORKSPACE_FLAG} PATH`, description: "explicitly opt in to a non-Git workspace" });
+    }
+  } else if (PATH_TAKING.has(name)) {
+    if (ALL_FLAG.has(name) && "--all".startsWith(argument)) items.push({ value: `${name} --all`, ...ALL_COMPLETION });
+    items.push(...directoryCompletions(`${name} `, argument, directories));
+  }
+  return items.length === 0 ? null : items;
 }
 
 export const CG_HELP = [

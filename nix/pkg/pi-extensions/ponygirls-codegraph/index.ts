@@ -1,10 +1,11 @@
-import { resolve } from "node:path";
+import { readdirSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { localBoundary } from "./runtime.ts";
 import type { State } from "./runtime.ts";
 import { localCatalog } from "./projects.ts";
 import { CodegraphWorkspace } from "./workspace.ts";
-import { CG_HELP, completeCommand, parseCommand } from "./commands.ts";
+import { CG_HELP, completeCommand, parseCommand, type DirectoryLister } from "./commands.ts";
 import type { CgCommand } from "./commands.ts";
 import { renderCompactBadge, stateNotice } from "./presentation.ts";
 
@@ -22,6 +23,14 @@ interface DelegatedCallEvent {
   waitUntil(work: Promise<void>): void;
 }
 const NOTICE_LIMIT = 16_384;
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 export default function codegraphExtension(pi: ExtensionAPI): void {
   let workspace: CodegraphWorkspace | undefined;
@@ -153,9 +162,21 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     });
     if (command.name !== "sync" && command.name !== "reindex" && command.name !== "init") await work;
   };
+  /** Paths resolve against Pi's cwd, as the command handler does. Unreadable directories offer nothing. */
+  const listDirectories: DirectoryLister = (directory) => {
+    if (currentContext === undefined) return null;
+    const base = resolve(currentContext.cwd, directory);
+    try {
+      return readdirSync(base, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() || (entry.isSymbolicLink() && isDirectory(join(base, entry.name))))
+        .map((entry) => entry.name);
+    } catch {
+      return null;
+    }
+  };
   pi.registerCommand("cg", {
     description: "Codegraph: status, discover, use, sync, reindex, cancel, init, erase, help",
-    getArgumentCompletions: completeCommand,
+    getArgumentCompletions: (prefix) => completeCommand(prefix, listDirectories),
     handler: handle,
   });
 }
