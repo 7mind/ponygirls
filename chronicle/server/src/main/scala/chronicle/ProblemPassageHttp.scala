@@ -22,17 +22,25 @@ object ProblemPassageHttp {
   }
 
   def response(window: ProblemPassages.Window,hasPrevious: Boolean,json: Json): ProblemPassages.Decision = {
-    val choices=json.hcursor.get[List[Json]]("choices").fold(_ => throw DomainError("model-output","missing passage choices"),identity)
-    Check(choices.size==1,"model-output","invalid passage choice count")
+    import ModelRejectionReason.*
+    import ModelRejectionLocation as Location
+    import ModelRejectionDetail.*
+    val choices=json.hcursor.get[List[Json]]("choices").fold(_ => throw ModelRejection.at(ChoicesDecode,Location.Choices,
+      Shape(ModelValueShape.of(json.hcursor.downField("choices").focus))),identity)
+    if(choices.size!=1) throw ModelRejection.at(ChoiceCount,Location.Choices,Count(choices.size,1))
     val choice=choices.head.hcursor
-    val finish=choice.get[String]("finish_reason").fold(_ => throw DomainError("model-output","missing passage finish reason"),identity)
-    Check(finish!="length","model-output/truncated","passage token limit reached")
-    Check(finish=="stop","model-output","passage annotation did not complete")
+    val finish=choice.get[String]("finish_reason").fold(_ => throw ModelRejection.at(FinishDecode,Location.Finish,
+      Shape(ModelValueShape.of(choice.downField("finish_reason").focus))),identity)
+    if(finish=="length") throw ModelRejection.from(TokenLimit)
+    if(finish!="stop") throw ModelRejection.at(FinishNotStop,Location.Finish)
     val message=choice.downField("message")
-    Check(List("refusal","tool_calls","function_call").forall(field => message.downField(field).focus.forall(_.isNull)),"model-output","passage refusal or tool call")
-    val content=message.get[String]("content").fold(_ => throw DomainError("model-output","missing passage content"),identity)
-    Check(content.nonEmpty,"model-output","empty passage content")
-    ProblemPassages.decode(window,hasPrevious,ModelOutput.parse(content))
+    if(!List("refusal","tool_calls","function_call").forall(field => message.downField(field).focus.forall(_.isNull)))
+      throw ModelRejection.at(RefusalOrToolCall,Location.Message)
+    val content=message.get[String]("content").fold(_ => throw ModelRejection.at(ContentDecode,Location.Content,
+      Shape(ModelValueShape.of(message.downField("content").focus))),identity)
+    if(content.isEmpty) throw ModelRejection.at(ContentEmpty,Location.Content,TextUnits(0))
+    val decoded=io.circe.parser.parse(content).fold(_ => throw ModelRejection.at(ModelJsonInvalid,Location.Content),identity)
+    ProblemPassages.decode(window,hasPrevious,decoded)
   }
 }
 

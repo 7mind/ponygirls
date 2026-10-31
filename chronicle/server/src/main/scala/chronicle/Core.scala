@@ -10,7 +10,7 @@ import java.util.{UUID, Base64}
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
-final case class DomainError(code: String, detail: String) extends RuntimeException(code)
+case class DomainError(code: String, detail: String) extends RuntimeException(code)
 object Check {
   def apply(ok: Boolean, code: String, detail: String): Unit = if (!ok) throw DomainError(code, detail)
   def page(offset: Int, limit: Int): Unit = apply(offset >= 0 && offset <= 100000 && limit >= 1 && limit <= 100, "invalid", "invalid page bounds")

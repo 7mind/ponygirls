@@ -194,43 +194,65 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
   }
 
   def validate(window: Window,hasPrevious: Boolean,decision: Decision): Unit = {
-    Check(decision.parts.nonEmpty && decision.parts.size<=window.scalarCount,"model-output","invalid passage part count")
+    import ModelRejectionReason as Reason
+    import ModelRejectionLocation as Location
+    import ModelRejectionDetail as Detail
+    if(decision.parts.isEmpty || decision.parts.size>window.scalarCount)
+      throw ModelRejection.at(Reason.PartCount,Location.Coverage,Detail.Count(decision.parts.size,window.scalarCount))
     var next=Point(0,0); var open=hasPrevious
-    decision.parts.foreach { part =>
+    decision.parts.zipWithIndex.foreach { (part,index) =>
       def canonical(point: Point): Boolean = point==window.terminal || (point.fragmentIndex>=0 && point.fragmentIndex<window.fragments.size && point.scalarOffset>=0 && point.scalarOffset<window.fragments(point.fragmentIndex).scalarCount)
-      Check(canonical(part.start) && canonical(part.end),"model-output","noncanonical passage coordinate")
-      Check(part.start==next && (part.end.fragmentIndex>part.start.fragmentIndex || (part.end.fragmentIndex==part.start.fragmentIndex && part.end.scalarOffset>part.start.scalarOffset)),"model-output","passage gap/overlap/empty/range")
-      if(part.kind==Kind.Context) Check(!part.continuePrevious && part.summary.isEmpty && part.tags.isEmpty,"model-output","context must not invent problem metadata")
-      else {
-        Check(!part.continuePrevious || open,"model-output","continuation requires an open problem")
+      def coordinate(point: Point,location: ModelRejectionLocation): Unit = if(!canonical(point))
+        throw ModelRejection.at(Reason.NoncanonicalCoordinate,location,Detail.Item(index),Detail.Coordinate(point.fragmentIndex,point.scalarOffset),Detail.Window(window.fragments.size,window.scalarCount))
+      coordinate(part.start,Location.Start); coordinate(part.end,Location.End)
+      if(part.start!=next || !(part.end.fragmentIndex>part.start.fragmentIndex || (part.end.fragmentIndex==part.start.fragmentIndex && part.end.scalarOffset>part.start.scalarOffset)))
+        throw ModelRejection.at(Reason.PartitionRange,Location.Part,Detail.Item(index),Detail.Coordinate(part.start.fragmentIndex,part.start.scalarOffset),
+          Detail.ExpectedCoordinate(next.fragmentIndex,next.scalarOffset),Detail.Coordinate(part.end.fragmentIndex,part.end.scalarOffset))
+      if(part.kind==Kind.Context) {
+        if(part.continuePrevious || part.summary.nonEmpty || part.tags.nonEmpty)
+          throw ModelRejection.at(Reason.ContextMetadata,Location.Part,Detail.Item(index),Detail.Flag(part.continuePrevious),Detail.TextUnits(part.summary.length),Detail.Count(part.tags.size,0))
+      } else {
+        if(part.continuePrevious && !open) throw ModelRejection.at(Reason.ContinuationWithoutProblem,Location.Continuation,Detail.Item(index))
         metadata(part.summary,part.tags); open=true
       }
       next=part.end
     }
-    Check(next==window.terminal,"model-output","incomplete passage partition")
+    if(next!=window.terminal) throw ModelRejection.at(Reason.PartitionIncomplete,Location.Coverage,
+      Detail.Coordinate(next.fragmentIndex,next.scalarOffset),Detail.ExpectedCoordinate(window.terminal.fragmentIndex,window.terminal.scalarOffset),Detail.Window(window.fragments.size,window.scalarCount))
   }
 
   def decode(window: Window,hasPrevious: Boolean,json: Json): Decision = {
-    def exact(value: Json,fields: Set[String]): Unit = Check(value.asObject.exists(_.keys.toSet==fields),"model-output","unexpected passage fields")
-    def point(value: Json): Point = {
-      exact(value,Set("fragmentIndex","scalarOffset"))
-      Point(value.hcursor.get[Int]("fragmentIndex").fold(_ => throw DomainError("model-output","invalid fragment index"),x => x),
-        value.hcursor.get[Int]("scalarOffset").fold(_ => throw DomainError("model-output","invalid scalar offset"),x => x))
+    import ModelRejectionReason as Reason
+    import ModelRejectionLocation as Location
+    import ModelRejectionDetail as Detail
+    def exact(value: Json,fields: Set[String],location: ModelRejectionLocation): Unit = if(!value.asObject.exists(_.keys.toSet==fields)) {
+      val actual=value.asObject.map(_.keys.toSet).getOrElse(Set.empty)
+      throw ModelRejection.at(Reason.Fields,location,Detail.Shape(ModelValueShape.of(Some(value))),Detail.Fields((fields--actual).size,(actual--fields).size))
     }
-    exact(json,Set("parts"))
-    val parts=json.hcursor.get[Vector[Json]]("parts").fold(_ => throw DomainError("model-output","missing passage parts"),x => x).map { value =>
+    def point(value: Json,location: ModelRejectionLocation): Point = {
+      exact(value,Set("fragmentIndex","scalarOffset"),location)
+      Point(value.hcursor.get[Int]("fragmentIndex").fold(_ => throw ModelRejection.at(Reason.FragmentIndexDecode,location,
+        Detail.Shape(ModelValueShape.of(value.hcursor.downField("fragmentIndex").focus))),x => x),
+        value.hcursor.get[Int]("scalarOffset").fold(_ => throw ModelRejection.at(Reason.ScalarOffsetDecode,location,
+          Detail.Shape(ModelValueShape.of(value.hcursor.downField("scalarOffset").focus))),x => x))
+    }
+    exact(json,Set("parts"),Location.Coverage)
+    val parts=json.hcursor.get[Vector[Json]]("parts").fold(_ => throw ModelRejection.at(Reason.PartsDecode,Location.Coverage,
+      Detail.Shape(ModelValueShape.of(json.hcursor.downField("parts").focus))),x => x).map { value =>
       val cursor=value.hcursor
+      def invalid(reason: ModelRejectionReason,location: ModelRejectionLocation,field: String): Nothing =
+        throw ModelRejection.at(reason,location,Detail.Shape(ModelValueShape.of(cursor.downField(field).focus)))
       cursor.get[String]("kind").toOption match {
         case Some("Context") =>
-          exact(value,Set("kind","start","end"))
-          Part.context(point(cursor.downField("start").focus.get),point(cursor.downField("end").focus.get))
+          exact(value,Set("kind","start","end"),Location.Part)
+          Part.context(point(cursor.downField("start").focus.get,Location.Start),point(cursor.downField("end").focus.get,Location.End))
         case Some("Problem") =>
-          exact(value,Set("kind","start","end","continuePrevious","summary","tags"))
-          Part(point(cursor.downField("start").focus.get),point(cursor.downField("end").focus.get),
-            cursor.get[Boolean]("continuePrevious").fold(_ => throw DomainError("model-output","invalid passage continuation"),x => x),
-            cursor.get[String]("summary").fold(_ => throw DomainError("model-output","invalid passage summary"),x => x),
-            cursor.get[List[String]]("tags").fold(_ => throw DomainError("model-output","invalid passage tags"),x => x))
-        case _ => throw DomainError("model-output","invalid coverage kind")
+          exact(value,Set("kind","start","end","continuePrevious","summary","tags"),Location.Part)
+          Part(point(cursor.downField("start").focus.get,Location.Start),point(cursor.downField("end").focus.get,Location.End),
+            cursor.get[Boolean]("continuePrevious").fold(_ => invalid(Reason.ContinuationDecode,Location.Continuation,"continuePrevious"),x => x),
+            cursor.get[String]("summary").fold(_ => invalid(Reason.SummaryDecode,Location.Summary,"summary"),x => x),
+            cursor.get[List[String]]("tags").fold(_ => invalid(Reason.TagsDecode,Location.Tags,"tags"),x => x))
+        case _ => invalid(Reason.KindDecode,Location.Kind,"kind")
       }
     }
     val decision=Decision(parts); validate(window,hasPrevious,decision); decision
@@ -268,21 +290,35 @@ Substantive domain facts, decisions, parameters, ownership and outcomes are task
   ).noSpaces)
 
   private def metadata(summary: String,tags: List[String]): Unit = {
-    val count=textSize(summary,"model-output").scalarCount
-    Check(count>=1 && count<=summaryScalars && tags.size<=maximumTags && tags.distinct==tags &&
-      tags.forall(tag => { val count=textSize(tag,"model-output").scalarCount; count>=1 && count<=tagScalars }),"model-output","passage annotation bounds")
+    import ModelRejectionReason as Reason
+    import ModelRejectionLocation as Location
+    import ModelRejectionDetail as Detail
+    val count=textSize(summary,"model-output",Location.Summary).scalarCount
+    if(count<1 || count>summaryScalars) throw ModelRejection.at(Reason.SummaryBounds,Location.Summary,Detail.Count(count,summaryScalars))
+    if(tags.size>maximumTags) throw ModelRejection.at(Reason.TagCount,Location.Tags,Detail.Count(tags.size,maximumTags))
+    if(tags.distinct!=tags) throw ModelRejection.at(Reason.DuplicateTags,Location.Tags,Detail.Count(tags.size,tags.distinct.size))
+    tags.zipWithIndex.foreach { (tag,index) =>
+      val count=textSize(tag,"model-output",Location.Tag).scalarCount
+      if(count<1 || count>tagScalars) throw ModelRejection.at(Reason.TagBounds,Location.Tag,Detail.Item(index),Detail.Count(count,tagScalars))
+    }
   }
   private final case class TextSize(scalarCount: Int,utf8Bytes: Int)
   private[chronicle] def checkedUtf8Length(value: Long,code: String): Int = {
-    Check(value>=0 && value<=Int.MaxValue,code,"passage UTF8 length exceeds i32 coordinates")
+    if(value<0 || value>Int.MaxValue) {
+      if(code=="model-output") throw ModelRejection.at(ModelRejectionReason.Utf8Length,ModelRejectionLocation.Source,ModelRejectionDetail.Count(value,Int.MaxValue))
+      else throw DomainError(code,"passage UTF8 length exceeds i32 coordinates")
+    }
     value.toInt
   }
-  private def textSize(value: String,code: String): TextSize = {
+  private def textSize(value: String,code: String): TextSize = textSize(value,code,ModelRejectionLocation.Source)
+  private def textSize(value: String,code: String,location: ModelRejectionLocation): TextSize = {
     var index=0; var count=0; var encodedBytes=0L
     while(index<value.length) {
       val char=value.charAt(index)
-      Check(char!='\u0000' && !Character.isLowSurrogate(char),code,"non-storable passage Unicode")
-      if(Character.isHighSurrogate(char)) Check(index+1<value.length && Character.isLowSurrogate(value.charAt(index+1)),code,"non-storable passage Unicode")
+      if(char=='\u0000' || Character.isLowSurrogate(char) || (Character.isHighSurrogate(char) && !(index+1<value.length && Character.isLowSurrogate(value.charAt(index+1))))) {
+        if(code=="model-output") throw ModelRejection.at(ModelRejectionReason.Unicode,location,ModelRejectionDetail.Item(index),ModelRejectionDetail.TextUnits(value.length))
+        else throw DomainError(code,"non-storable passage Unicode")
+      }
       val cp=value.codePointAt(index)
       index+=Character.charCount(cp); count+=1; encodedBytes+=scalarBytes(cp)
     }
