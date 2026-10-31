@@ -96,8 +96,9 @@ parsed/reserialized JSON, **not raw transport bytes**; transport/JSON parse
 failures have no response hash. Per-window source hashes bind the exact JSON
 source, with previous carry hashed separately. Raw responses, message contents,
 summaries, credentials, credential paths and endpoints are never emitted.
-Failures expose only allowlisted DomainError codes/static reason labels, never
-unchecked exception messages. Output shape includes only known kinds, numeric
+Failures expose typed rejection reason tokens and bounded structural diagnostics
+when available, otherwise allowlisted DomainError codes/static reason labels;
+never unchecked exception messages. Output shape includes only known kinds, numeric
 coordinates and continuation booleans.
 
 Exit status is nonzero for any coverage failure, unfinished window or scored

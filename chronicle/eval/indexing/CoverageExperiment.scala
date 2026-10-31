@@ -75,7 +75,9 @@ object CoverageExperiment {
     Score(scalars.toVector,bytes.toVector)
   }
   private final case class Result(caseId: String,mode: Mode,index: Int,attempted: Boolean,valid: Boolean,value: Json)
-  private def failure(error: Throwable): Json = {
+  private def failure(error: Throwable): Json = ModelRejection.classify(error).map { rejection =>
+    Json.obj("code"->Json.fromString(rejection.code),"reason"->Json.fromString(rejection.reason.value),"structure"->rejection.safeDetails)
+  }.getOrElse {
     val (code,reason)=error match {
       case DomainError("model-output","incomplete passage partition") => ("model-output","partition-incomplete")
       case DomainError("model-output","noncanonical passage coordinate") => ("model-output","coordinate-noncanonical")
