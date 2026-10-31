@@ -26,7 +26,7 @@ final class Mcp(app: Application) {
   private val tagQueryField = described(str,"Literal Unicode-lower substring of a tag name; empty string browses the catalog. Whitespace, %, _, quotes and backslashes are literal, not a query language. No normalization, accent folding or full case folding.")
   private val modeField = described(Json.obj("type"->s("string"),"enum"->Json.arr(s("lexical"),s("semantic"),s("hybrid"))),"lexical: English full-text websearch; semantic: natural-language similarity; hybrid: semantic plus lexical ranking, with lexical operators affecting only the lexical leg.")
   private def tool(name: String,description: String,fields: List[(String,Json)],required: List[String]): McpRunToolDefinition = McpRunToolDefinition(name,description,
-    Json.obj("type"->s("object"),"properties"->Json.obj(fields*),"required"->Json.arr(required.map(s)*),"additionalProperties"->Json.False),true)
+    Json.obj("type"->s("object"),"properties"->Json.obj((fields :+ ("responseFormat"->Json.obj("type"->s("string"),"enum"->Json.arr(s("json"),s("text")),"description"->s("MCP presentation only: json is the unchanged default; text is an opt-in readable report with exact source blocks and canonical structuredContent. Text can reach the same complete-result byte budget sooner."))))*),"required"->Json.arr(required.map(s)*),"additionalProperties"->Json.False),true)
   val definitions: List[McpRunToolDefinition] = List(
     tool("search_sessions",s"Search authorized archive sessions. Lexical total/countScope=ExactMatches is global. Semantic/hybrid use ANN plus full-vector reranking; total/countScope=CandidateWindow counts only retrieved sessions, not the corpus. rankingLimit bounds candidate chunks (${SearchPolicy.candidatesPerLeg} semantic, ${SearchPolicy.rankingLimit(SearchMode.Hybrid)} hybrid); offsets must be smaller than that bound. Filters and live ACLs apply before each candidate limit. Discover metadata values and tag popularity with list_facets. Use structured project, gitBranch, tags, after and before arguments for metadata, not query expressions.",List("query"->queryField,"mode"->modeField)++paging++filtering,List("query","mode")),
     tool("get_session","Read authorized session metadata and first 100 indexed fragments. source.discoveryRootId records the root claim: yolo:<validated-name> identifies a recorded named yolo profile, not host or launch attestation; native and unrecognized roots have no recorded yolo profile.",List("sessionId"->str)++viewFields,List("sessionId")),
@@ -50,19 +50,26 @@ final class Mcp(app: Application) {
   private final case class TagRead(query: TagSearchQuery) extends ReadCall {
     def read(access: ReadAccess): IO[Result] = app.searchTags(access,query)
   }
-  private def toolContent(text: String,error: Boolean): Json = Json.obj("content"->Json.arr(Json.obj("type"->s("text"),"text"->s(text))),"isError"->Json.fromBoolean(error))
-  private def toolResult(result: Result): Json = {
-    val content=toolContent(Wire.encode(Result.codecJson,result).noSpaces,false)
+  private final case class PresentedRead(call: ReadCall,format: McpResponseFormat,sessionId: Option[String])
+  private def parse(name: String,arguments: Json): PresentedRead = {
+    val format=McpPresentation.format(arguments)
+    val domain=arguments.mapObject(_.remove("responseFormat"))
+    PresentedRead(toReadCall(name,domain),format,domain.hcursor.get[String]("sessionId").toOption)
+  }
+  private def toolResult(result: Result,selected: PresentedRead): Json = {
+    val content=McpPresentation.result(result,selected.format,selected.sessionId)
     result match {
       case _: Result.MessageContext => Check(JsonUtf8Size(content)<=MessageContextPolicy.maximumResultBytes,"read-budget","context MCP result exceeds byte budget")
       case _ => ()
     }
     content
   }
+  private def read(access: ReadAccess,selected: PresentedRead): IO[Json] =
+    selected.call.read(access).flatTap(_ => access.fresh.void).map(result => toolResult(result,selected)).flatTap(_ => access.fresh.void)
   def invoke(access: ReadAccess,name: String,arguments: Json): IO[Json] = IO.defer {
     Check(definitions.find(_.name==name).exists(_.readOnly),"invalid","tool is not an available read-only tool")
-    val call=scala.util.Try(toReadCall(name,arguments)).fold(_ => throw DomainError("invalid","invalid tool name or arguments"),identity)
-    call.read(access).map(toolResult).flatTap(_ => access.fresh.void)
+    val selected=scala.util.Try(parse(name,arguments)).fold(_ => throw DomainError("invalid","invalid tool name or arguments"),identity)
+    read(access,selected)
   }
   def rpcError(id: Json,code: Int,message: String): Json = Json.obj("jsonrpc"->s("2.0"),"id"->id,"error"->Json.obj("code"->Json.fromInt(code),"message"->s(message)))
   private def success(id: Json,result: Json): Json = Json.obj("jsonrpc"->s("2.0"),"id"->id,"result"->result)
@@ -86,20 +93,23 @@ final class Mcp(app: Application) {
           val params = cursor.downField("params")
           val name = params.get[String]("name").toOption
           val args = params.downField("arguments").focus.getOrElse(Json.obj())
-          val parsed = scala.util.Try(toReadCall(name.getOrElse(""),args)).toEither
+          val parsed = scala.util.Try(parse(name.getOrElse(""),args)).toEither
           parsed match {
             case Left(_) => IO.pure(Some(rpcError(rid,-32602,"Invalid tool name or arguments")))
-            case Right(call) =>
-              val access=call match {
+            case Right(selected) =>
+              val access=selected.call match {
                 case OperationRead(_: Operation.ReadMessageContext) => contextAccess
                 case _ => IO.pure(ReadAccess.current(i))
               }
-              access.flatMap(call.read).map(toolResult).attempt.map { result =>
-                val content=result match {
+              access.flatMap(read(_,selected)).attempt.map { result =>
+                val content=scala.util.Try(result match {
                   case Right(value) => value
-                  case Left(d: DomainError) => toolContent(Wire.encode(Failure.codecJson,Failure(d.code,d.detail)).noSpaces,true)
-                  case Left(_) => toolContent("{\"code\":\"unavailable\",\"message\":\"operation failed\"}",true)
-                }
+                  case Left(d: DomainError) => McpPresentation.failure(Failure(d.code,d.detail),selected.format)
+                  case Left(_) => McpPresentation.failure(Failure("unavailable","operation failed"),selected.format)
+                }).recover {
+                  case error: DomainError => McpPresentation.failure(Failure(error.code,"tool error presentation failed"),selected.format)
+                  case _ => McpPresentation.failure(Failure("unavailable","tool error presentation failed"),selected.format)
+                }.get
                 Some(success(rid,content))
               }
           }
@@ -122,7 +132,7 @@ final class Mcp(app: Application) {
       revision.map(r => { Check(r>0,"invalid","revision must be positive"); ContentView(r,generation) })
     }
     val definition=definitions.find(_.name==name).getOrElse(throw DomainError("invalid","unknown tool"))
-    val allowed=definition.inputSchemaJson.hcursor.downField("properties").focus.get.asObject.get.keys.toSet
+    val allowed=definition.inputSchemaJson.hcursor.downField("properties").focus.get.asObject.get.keys.toSet - "responseFormat"
     Check(args.asObject.get.keys.forall(allowed.contains),"invalid","unknown argument")
     name match {
       case "search_tags" =>

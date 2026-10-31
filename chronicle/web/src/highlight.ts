@@ -1,7 +1,7 @@
 export interface TextPart { text: string; highlighted: boolean }
 export interface ByteRange { start: number; end: number }
 export function highlightUtf8(text: string, ranges: readonly ByteRange[]): TextPart[] {
-  const bytes = new TextEncoder().encode(text), decoder = new TextDecoder('utf-8', { fatal: true });
+  const bytes = new TextEncoder().encode(text), decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
   const merged: ByteRange[] = [];
   for (const range of [...ranges].sort((a, b) => a.start - b.start)) {
     if (!Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 0 || range.end < range.start || range.end > bytes.length) throw new Error('Chunk span is outside the source byte range');

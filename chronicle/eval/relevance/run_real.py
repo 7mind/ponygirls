@@ -168,7 +168,7 @@ def freeze(bindings, directory):
     required = {str((ROOT / name).resolve()) for name in (
         'run_real.py', 'runtime.py', 'bridge.py', 'evaluate.py', 'agent_probe.mjs', 'live_protocol.mjs', 'resolve-live-generated.mjs',
         'runner_integration_v3.py', 'workflow_v3.py', 'assessment_v3.py', 'source_observations_v3.py',
-        'probe_policy_v3.mjs', 'agent_protocol_v3.mjs')}
+        'probe_policy_v3.mjs', 'agent_protocol_v3.mjs', 'text_presentation_v1.py', 'text_presentation_v1.mjs')}
     required.update(str(bound(bindings[key])) for key in ('fixture', 'configTemplate', 'embeddingProof'))
     required.update(str(bound(bindings[key]['profile'])) for key in ('annotation', 'embedding'))
     required.add(str(policy.rubric.path)); policy.rubric.read()

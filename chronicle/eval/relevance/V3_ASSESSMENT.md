@@ -53,8 +53,12 @@ are validated. New context reads remain explicitly pinned with required `view`.
 Every scalar endpoint is checked independently, including empty ranges inside
 emoji/combining scalars; decoding an empty slice alone is insufficient.
 
-Request fields are exactly `sessionId, view, anchor, beforeBytes, afterBytes`;
+Domain request fields are exactly `sessionId, view, anchor, beforeBytes, afterBytes`;
 result fields are exactly `sessionId, view, anchor, excerpts, previous, next`.
+MCP calls may additionally select `responseFormat: json|text`; missing means the
+existing JSON presentation. The evaluator validates and removes only this
+presentation argument from its local domain-validation copy, preserving the
+original trace arguments. Unknown formats fail closed.
 Anchor <=2048 bytes; each side is 0 or 4..2048; at most four neighboring
 messages per side. Serialized normalized result <=128 KiB is checked. Actual
 64 KiB source admission accounting, SQL 5s deadlines and fresh live authority
@@ -68,6 +72,34 @@ validate its span metadata, retain an `unsupported-source-encoding` diagnostic,
 and require an original source read rather than guessing its mapping. A valid
 single-span snippet can fully support a fact; there is no extra-read tool-name
 success requirement.
+
+### Opt-in text presentation
+
+Text-mode normalized events retain canonical `result` data and a separate
+`presentation: {policy: "mcp-text-v1", text: <actual model-visible text>}`.
+The canonical `structuredContent` is **not** itself observed source evidence.
+`text_presentation_v1.py` validates the report's policy/tool header, parses
+`Source <JSON metadata>\n<body of utf8Bytes bytes>\n` blocks by byte length,
+and matches every displayed source/summary block to the canonical identities,
+pins, roles, ranges and exact text before ordinary frozen-source checks apply.
+Missing, duplicate, additional or modified blocks fail closed. Ordinary scalar
+fields must also be complete, unique and equal to the canonical fields, including
+roles, anchors, counts and continuations. Decimal values are compared without
+binary-float rounding or underflow. Text failure reports must likewise show the
+canonical code and message; they still yield no source evidence. Stray report
+headers and conflicting navigation lines fail closed. Fake headings inside byte-framed bodies cannot
+create source observations; summaries remain annotations, not citable original
+source. These presentation checks do not substitute for frozen-source validation.
+Native projection independently verifies the complete deterministic rendered
+report before sending only that text to the model.
+
+`text_presentation_v1.mjs` retains the actual text alongside canonical results
+when normalizing native multipart events. JSON-mode trace shape is unchanged.
+The renderer fixture in `tests/data/text-presentation-v1-context.json` is an
+adversarial Scala rendering/projection example with deliberately inconsistent
+source ranges: it tests framing, **not** valid archived context or grounding.
+JSON/text comparisons must freeze their actual presentation condition and
+retain every original failure; response bytes are not provider token counts.
 
 ### Frozen rubric
 

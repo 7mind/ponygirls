@@ -45,7 +45,8 @@ class McpTagSearchTest extends munit.FunSuite {
       assertEquals(tool.hcursor.downField("inputSchema").get[Boolean]("additionalProperties").toOption,Some(false))
       assertEquals(tool.hcursor.downField("inputSchema").get[List[String]]("required").toOption,Some(List("query")))
       val fields=tool.hcursor.downField("inputSchema").downField("properties").focus.get.asObject.get.keys.toSet
-      assertEquals(fields,Set("query","afterTag","limit","project","gitBranch","after","before","tags"))
+      assertEquals(fields,Set("query","afterTag","limit","project","gitBranch","after","before","tags","responseFormat"))
+      assertEquals(tool.hcursor.downField("inputSchema").downField("properties").downField("responseFormat").get[List[String]]("enum").toOption,Some(List("json","text")))
       assertEquals(tool.hcursor.downField("inputSchema").downField("properties").downField("query").get[Int]("maxLength").toOption,Some(maximumArgumentLength))
       assertEquals(tool.hcursor.downField("inputSchema").downField("properties").downField("afterTag").downField("maxLength").focus,None)
       val description=tool.hcursor.get[String]("description").toOption.get

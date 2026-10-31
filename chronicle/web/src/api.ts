@@ -103,3 +103,5 @@ export * from '../../generated/typescript/chronicle/api/McpTestEvent.ts';
 export * from '../../generated/typescript/chronicle/api/McpTestSnapshot.ts';
 export * from '../../generated/typescript/chronicle/api/MessageSearchHit.ts';
 export * from '../../generated/typescript/chronicle/api/SessionMessageSearchResult.ts';
+export * from '../../generated/typescript/chronicle/api/ContextExcerpt.ts';
+export * from '../../generated/typescript/chronicle/api/MessageContextResult.ts';

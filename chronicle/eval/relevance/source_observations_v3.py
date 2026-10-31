@@ -1,6 +1,7 @@
 """Frozen, authorized UTF-8 source observations; evaluator-only, never agent input."""
 from dataclasses import dataclass
 from typing import Literal
+from text_presentation_v1 import PresentationIntegrityError, source_arguments
 
 MAX_ANCHOR = 2048
 MAX_SIDE = 2048
@@ -312,9 +313,18 @@ def observe_trace(task_id, trace, sources):
         require(event['taskId'] == task_id, 'opaque trace task identity mismatch')
         require(not ('result' in event and 'error' in event), 'ambiguous successful/failed result')
         if 'error' in event:
+            if type(event['error']) is dict or 'presentation' in event:
+                try:
+                    source_arguments(event)
+                except PresentationIntegrityError as error:
+                    raise EvidenceIntegrityError(str(error)) from error
             continue
         require('result' in event, 'trace result or explicit error required')
-        tool = event['tool']; result = event['result']; args = event['arguments']
+        tool = event['tool']; result = event['result']
+        try:
+            args = source_arguments(event)
+        except PresentationIntegrityError as error:
+            raise EvidenceIntegrityError(str(error)) from error
         if tool == 'read_message_context':
             observations.extend(context_observations(task_id, index, args, result, sources))
         elif tool == 'get_messages':

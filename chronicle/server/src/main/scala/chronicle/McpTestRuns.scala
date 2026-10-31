@@ -221,7 +221,7 @@ final class McpTestRuns private (
             result <- tools.invoke(access,call.name,call.arguments,admission)
             _ <- guard(key,generation)
             _ <- IO(McpRunJson.check(result,McpRunLimits.maximumResultBytes,"mcp-result-limit"))
-            _ <- appendContext(key,generation,Json.obj("role"->Json.fromString("tool"),"tool_call_id"->Json.fromString(call.id),"content"->Json.fromString(result.noSpaces)))
+            _ <- appendContext(key,generation,Json.obj("role"->Json.fromString("tool"),"tool_call_id"->Json.fromString(call.id),"content"->Json.fromString(McpPresentation.modelContent(call.arguments,result))))
             _ <- capture(key,generation,result.noSpaces,(part,index,count) => McpRunItem.ToolResult(call.id,index,count,part))
           } yield ()
         } *> rounds(key,generation,round+1,callCount+reply.calls.size,callIds ++ reply.calls.map(_.id))

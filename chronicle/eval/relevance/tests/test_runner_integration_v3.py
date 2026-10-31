@@ -108,10 +108,11 @@ class RunnerIntegrationContracts(unittest.TestCase):
             self.assertTrue(all((workflow/p.name).read_bytes()==p.read_bytes() for p in local))
             self.assertEqual((project/'generated/typescript/current.ts').read_bytes(),codec.read_bytes())
             self.assertFalse((project/'immutable-unavailable-publisher').exists())
-            missing=copy.deepcopy(inputs); missing['frozenInputs']=[item for item in missing['frozenInputs'] if item['path']!=str(root/'source_observations_v3.py')]
-            other=directory/'missing'; other.mkdir()
-            with self.assertRaisesRegex(ValueError,'frozenInputs'):
-                run_real.freeze(missing,other)
+            for name in ('source_observations_v3.py', 'text_presentation_v1.py', 'text_presentation_v1.mjs'):
+                missing=copy.deepcopy(inputs); missing['frozenInputs']=[item for item in missing['frozenInputs'] if item['path']!=str(root/name)]
+                other=directory/('missing-'+name); other.mkdir()
+                with self.subTest(dependency=name), self.assertRaisesRegex(ValueError,'frozenInputs'):
+                    run_real.freeze(missing,other)
 
     def test_v3_sidecar_preserves_strict_metrics_and_leaves_review_unavailable(self):
         inputs=cell()

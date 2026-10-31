@@ -109,4 +109,31 @@ class MessageContextHttpTest extends munit.FunSuite {
     assertEquals(f.probe.observations.collect { case SourceEvent.Query(sql,_) if sql.contains("ch_messages") => sql },before)
   }}
 
+  test("Blackbox-GoodCommunication specified: opt-in public HTTP text keeps source framing and correlated budget errors") { ReadSourceFixture.withFixture(_ => IO.pure(ProblemPublicationFixtures.vector)) { f =>
+    val original=Fixtures.snapshot(); val out=f.archive.ingest("a",original); val auth=new Auth(f.db,f.config); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
+    val token=auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.MintToken("context-text",List(Scope.Read)))).asInstanceOf[Result.Token].result
+    val base=rpc(out.sessionId,original.messages.head.id)
+    val arguments=base.hcursor.downField("params").downField("arguments").focus.get.mapObject(_.add("responseFormat",Json.fromString("text")))
+    val request=base.mapObject(_.add("params",Json.obj("name"->Json.fromString("read_message_context"),"arguments"->arguments)))
+    val response=withHttp(f)((client,url) => call(client,url,token.secret.get,request)).unsafeRunSync()
+    assertEquals(response._1,Status.Ok)
+    assertEquals(response._2.hcursor.get[Int]("id").toOption,Some(1))
+    val result=response._2.hcursor.downField("result").focus.get
+    assertEquals(result.hcursor.get[Boolean]("isError").toOption,Some(false))
+    val visible=McpPresentation.modelContent(arguments,result)
+    assert(visible.startsWith("Chronicle text v1: MessageContext\n"))
+    assert(visible.contains(original.messages.head.text.take(5)))
+    val canonical=Wire.decode(Result.codecJson,result.hcursor.downField("structuredContent").focus.get).asInstanceOf[Result.MessageContext].result
+    assertEquals(canonical.sessionId,out.sessionId); assertEquals(canonical.view,ContentView(1,None))
+    f.db.transaction(c => Sql.exec(c,"UPDATE ch_messages SET value=jsonb_set(value,'{role}',to_jsonb(repeat(chr(127),20000))) WHERE session_id=?",out.sessionId))
+    val overflow=withHttp(f)((client,url) => call(client,url,token.secret.get,request)).unsafeRunSync()
+    assertEquals(overflow._1,Status.Ok)
+    assertEquals(overflow._2.hcursor.get[Int]("id").toOption,Some(1))
+    val error=overflow._2.hcursor.downField("result").focus.get
+    assertEquals(error.hcursor.get[Boolean]("isError").toOption,Some(true))
+    assertEquals(error.hcursor.downField("structuredContent").get[String]("code").toOption,Some("mcp-result-limit"))
+    assert(McpPresentation.modelContent(arguments,error).startsWith("Chronicle text v1: Error\n"))
+    assert(JsonUtf8Size(overflow._2)<MessageContextPolicy.maximumResultBytes)
+  }}
+
 }

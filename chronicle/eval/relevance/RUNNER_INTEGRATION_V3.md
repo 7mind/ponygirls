@@ -111,7 +111,8 @@ actual prompt; it is not an independent preregistration claim.
 
 ## Freezing and validation limits
 
-`frozenInputs` must cover all 13 local Python/JS runtime files, fixture, config,
+`frozenInputs` must cover all 15 local Python/JS runtime files, including the
+Python/JS text-presentation validators, plus fixture, config,
 embedding proof, both profiles, V3 rubric and bound master schedule (run), plus
 all declared `runtimeFiles` and the Playwright entry file. External runtime
 closure declarations remain the caller's responsibility; copying declared

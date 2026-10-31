@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { decodeTextResult } from './text_presentation_v1.mjs';
 const bytes = value => Buffer.byteLength(JSON.stringify(value), 'utf8');
 export const terminal = state => !['Queued', 'Running'].includes(state);
 
@@ -58,6 +59,11 @@ export function evaluationTrace(events, taskId) {
       assert.ok(calls.has(item.callId), 'orphan tool result');
       const call = calls.get(item.callId); calls.delete(item.callId);
       const content = JSON.parse(item.text);
+      if (call.arguments.responseFormat === 'text') {
+        result.push({ ...call, ...decodeTextResult(call.tool, content, item.text) });
+        continue;
+      }
+      assert.ok(!Object.hasOwn(call.arguments, 'responseFormat') || call.arguments.responseFormat === 'json', 'unsupported response format');
       assert.ok(Array.isArray(content.content) && content.content.length === 1 && content.content[0].type === 'text');
       if (content.isError) result.push({ ...call, error: JSON.parse(content.content[0].text) });
       else {

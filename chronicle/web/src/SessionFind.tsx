@@ -8,8 +8,8 @@ import { FIND_PAGE_SIZE, validateFindLiteral, validateFindPage, type SessionFind
 import './session-find.css';
 const FIND_DISCARDED_MESSAGE = 'Find result discarded after source navigation; Find again';
 interface FindPage { result: SessionMessageSearchResult; number: number; ids: ReadonlySet<string>; cursors: ReadonlySet<string> }
-interface Props { connection: ChronicleConnection; stats: ManagerStats; ownerId: string; sessionId: string; view: ContentView; navigation: RefObject<number>; reads: SessionFindReadGate; retireIndexedView(): void; supersedeSourceNavigation(): void; select(hit: MessageSearchHit): void }
-export function SessionFind({ connection, stats, ownerId, sessionId, view, navigation, reads, retireIndexedView, supersedeSourceNavigation, select }: Props) {
+interface Props { connection: ChronicleConnection; stats: ManagerStats; ownerId: string; sessionId: string; view: ContentView; navigation: RefObject<number>; reads: SessionFindReadGate; sourceUnavailable(cause: RequestFailure): void; supersedeSourceNavigation(): void; select(hit: MessageSearchHit): void }
+export function SessionFind({ connection, stats, ownerId, sessionId, view, navigation, reads, sourceUnavailable, supersedeSourceNavigation, select }: Props) {
   const [draft, setDraft] = useState(''), [page, setPage] = useState<FindPage | null>(null), [error, setError] = useState<string | null>(null), [selected, setSelected] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null);
   const busy = useSyncExternalStore(reads.subscribe, reads.getSnapshot, reads.getSnapshot);
   const id = useId(), sequence = useRef(0), composing = useRef(false), mounted = useRef(true);
@@ -43,10 +43,10 @@ export function SessionFind({ connection, stats, ownerId, sessionId, view, navig
       if (result.nextCursor !== undefined) cursors.add(result.nextCursor);
       setPage({ result, number: previous === null ? 1 : previous.number + 1, ids, cursors });
     } catch (cause) {
-      if (cause instanceof RequestFailure && cause.code === 'indexed-view-retired' && mounted.current && currentScope.current === atScope) { sequence.current++; setDraft(''); setPage(null); setSelected(null); setNotice(null); retireIndexedView(); return; }
+      if (cause instanceof RequestFailure && cause.code === 'indexed-view-retired' && mounted.current && currentScope.current === atScope) { sequence.current++; setDraft(''); setPage(null); setSelected(null); setNotice(null); sourceUnavailable(cause); return; }
       if (!authoritative()) return;
       setPage(null); setSelected(null);
-      if (cause instanceof RequestFailure && ['forbidden', 'not-found', 'unauthorized'].includes(cause.code)) setDraft('');
+      if (cause instanceof RequestFailure && ['forbidden', 'not-found', 'unauthorized'].includes(cause.code)) { setDraft(''); sourceUnavailable(cause); }
       setError(cause instanceof Error ? cause.message : 'Find failed; restart the search.');
     } finally { release(); }
   }
