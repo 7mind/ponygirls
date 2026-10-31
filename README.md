@@ -419,6 +419,56 @@ describes this lack of end-to-end encryption.
 Notifications include only the event, agent, and shortened session identifier.
 Repository names, agent responses, and other free-form hook text are omitted.
 
+### Home Manager server hosting (Linux)
+
+Server hosting is separate from the existing MCP clients and Chronicle collector.
+Both exports are inert until explicitly enabled and require a working user
+systemd manager; they do not configure host trust, firewall rules or enrollment.
+
+- **`homeManagerModules.agenticServicesServer`** — user-owned SearXNG,
+  Crawl4AI/Redis, optional Haystack/PostgreSQL and Manure, an nginx proxy and
+  static publishing. Configure `smind.hm.services.agentic`: the state directory,
+  listener/URLs, TLS files, runtime credential paths and optional external setup
+  dependencies. SearXNG package/settings can be supplied by the consumer.
+  For example:
+
+  ```nix
+  imports = [ inputs.ponygirls.homeManagerModules.agenticServicesServer ];
+  smind.hm.services.agentic = {
+    enable = true;
+    stateDirectory = "/home/alice/.local/state/agentic-services";
+    host = { hostname = "services.example.net"; address = "127.0.0.1"; };
+    tls = { certificateFile = "/run/user/1000/services/cert.pem"; keyFile = "/run/user/1000/services/key.pem"; };
+    crawl4ai.tokenFile = "/run/user/1000/secrets/crawl4ai";
+    haystack.agentTokenFile = "/run/user/1000/secrets/haystack";
+    manure.agentTokenFile = "/run/user/1000/secrets/manure";
+  };
+  ```
+
+  Tokens remain runtime files, never Nix values. Existing operator credentials
+  are preserved and a changed agent token is refused rather than silently
+  rotated. Plain HTTP requires explicit `host.scheme = "http"` and a trusted
+  private network. Manure uses same-origin path hosting: publish trusted content
+  only. Static reads are unauthenticated; writes require a provisioned token.
+  Neither the proxy nor disabled browser hooks provide Crawl4AI egress isolation.
+
+- **`homeManagerModules.chronicleServer`** — user-owned Chronicle,
+  PostgreSQL/pgvector, password-hash provisioning and daily backups. Configure
+  `smind.hm.services.chronicle.settings` with the server's application settings,
+  plus `database.passwordFile`; the module supplies the local JDBC connection.
+  `passwords.NAME` can derive `credentials/NAME.pbkdf2` from an explicit runtime
+  password and nonsecret revision file. Annotation/embedding endpoints, users,
+  tokens and any model/GPU services remain consumer choices. `serverDependencies`
+  joins separately managed user units with restart propagation. The generated
+  `config.lib.ponygirls.chronicleServer.{proxyHttpConfig,proxyLocations}` fragments
+  can be included by an independently configured nginx listener.
+
+For existing deployments, explicitly retain `stateDirectory`, `unitPrefix`,
+listener ports, static listing/auth names and external dependencies. Changing
+those values is a migration, not a harmless module rename. In particular, retain
+all existing credential files; these modules do not migrate databases or rotate
+operator credentials. Backups retain completed dumps for 14 days.
+
 ### NixOS modules
 
 - **`nixosModules.chronicle`** — the native archive/search server, local

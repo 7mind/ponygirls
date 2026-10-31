@@ -44,5 +44,8 @@ in
       command = lib.getExe mcp;
       args = [ cfg.url ] ++ lib.optional (cfg.tokenFile != null) cfg.tokenFile;
     };
+    # Codex filters inherited stdio-server environment variables. Forward the
+    # runtime token (e.g. inside yolo) without embedding its value in settings.
+    programs.codex.settings.mcp_servers.crawl4ai.env_vars = [ "CRAWL4AI_API_TOKEN" ];
   };
 }

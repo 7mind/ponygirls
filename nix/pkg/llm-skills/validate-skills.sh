@@ -5,6 +5,7 @@ set -euo pipefail
 # Usage: validate-skills.sh skills/*/meta.yaml
 
 errors=0
+max_description_chars=1024
 
 for meta_file in "$@"; do
   skill_dir=$(dirname "$meta_file")
@@ -16,10 +17,18 @@ for meta_file in "$@"; do
   if [ -z "$name" ]; then
     echo "  ERROR: missing required 'name' field" >&2
     errors=$((errors + 1))
+  elif [ "$name" != "$(basename "$skill_dir")" ]; then
+    echo "  ERROR: name '$name' must match skill directory '$(basename "$skill_dir")'" >&2
+    errors=$((errors + 1))
   fi
 
   if [ -z "$description" ]; then
     echo "  ERROR: missing required 'description' field" >&2
+    errors=$((errors + 1))
+  elif [ "$(yq -r '.description | split("") | length' "$meta_file")" -gt "$max_description_chars" ]; then
+    # yq's string length counts bytes; splitting first counts Unicode characters,
+    # including trailing newlines command substitution strips from $description.
+    echo "  ERROR: description must not exceed $max_description_chars characters" >&2
     errors=$((errors + 1))
   fi
 

@@ -332,6 +332,10 @@
           yolo = self.packages.${system}.yolo-darwin;
         };
         checks = {
+          llm-skills = self.packages.${system}.llm-skills;
+          llm-skills-validation = import ./nix/tests/llm-skills-validation.nix { inherit pkgs; };
+          agentic-services-credentials = import ./nix/tests/agentic-services-credentials.nix { inherit pkgs; };
+          crawl4ai-hm-eval = import ./nix/tests/crawl4ai-hm-eval.nix { inherit pkgs nixpkgs; };
           chronicle-web = self.packages.${system}.chronicle-web;
           chronicle-collector = self.packages.${system}.chronicle-collector;
           default-models = defaultModelsCheck;
@@ -927,6 +931,8 @@
             touch "$out"
           '';
           chronicle-modules = import ./nix/tests/chronicle-modules.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
+          chronicle-hm-server = import ./nix/tests/chronicle-hm-server.nix { inherit pkgs; chronicleModule = self.homeManagerModules.chronicleServer; };
+          agentic-services-hm-eval = import ./nix/tests/agentic-services-hm-eval.nix { inherit pkgs inputs; agenticServicesModule = self.homeManagerModules.agenticServicesServer; };
           chronicle-models = import ./nix/tests/chronicle-models.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
           chronicle-sbt-lock = import ./nix/tests/chronicle-sbt-lock.nix { inherit pkgs; };
           # The full suite requires Linux /proc process identity and bubblewrap.
@@ -971,6 +977,7 @@
             ${pkgs.python3}/bin/python ${./nix/tests/manure-vm-audit.py} selftest
             touch $out
           '';
+          crawl4ai-startup = import ./nix/tests/crawl4ai-startup.nix { inherit pkgs; package = self.packages.${system}.crawl4ai; };
           crawl4ai-module =
             let
               crawl4aiConfig = (nixpkgs.lib.nixosSystem {
@@ -1029,6 +1036,8 @@
       })) // {
         homeManagerModules.dev-llm = import ./nix/hm/dev-llm.nix { inherit inputs; };
         homeManagerModules.chronicle = import ./nix/hm/chronicle.nix;
+        homeManagerModules.chronicleServer = import ./nix/hm/chronicle-server.nix { mkChroniclePackage = self.lib.mkChroniclePackage; };
+        homeManagerModules.agenticServicesServer = import ./nix/hm/agentic-services-server.nix { inherit inputs; };
         homeManagerModules.haystack = import ./nix/hm/haystack.nix;
         homeManagerModules.manure = import ./nix/hm/manure.nix;
         lib.mkChroniclePackage = { pkgs }: pkgs.callPackage ./nix/pkg/chronicle/server.nix { squishLib = inputs.squish.lib; };

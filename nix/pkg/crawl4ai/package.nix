@@ -120,7 +120,9 @@ let
     fastapi
     gunicorn
     httpx
-    mcp
+    # Crawl4AI 0.9.5's bridge uses the low-level decorators removed in SDK 2.
+    # Keep this server-local: other MCP clients can use nixpkgs' default SDK.
+    mcp_1
     prometheus-fastapi-instrumentator
     pydantic
     pyjwt

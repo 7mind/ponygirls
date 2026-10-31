@@ -1,0 +1,101 @@
+{
+  "crawl": "#!@STORE@\nset -euo pipefail\nexport REDIS_PASSWORD=\"$(</home/alice/.local/state/ivm-services/credentials/redis-password)\"\nexport REDISCLI_AUTH=\"$REDIS_PASSWORD\"\nready=0\nfor _ in {1..60}; do\n  if @STORE@ -h 127.0.0.1 -p 16379 ping | @STORE@ -qx PONG; then ready=1; break; fi\n  @STORE@ 1\ndone\ntest \"$ready\" = 1\nexport CRAWL4AI_API_TOKEN=\"$(</run/secrets/crawl4ai-api-token)\"\ntest -n \"$CRAWL4AI_API_TOKEN\"\nexport REDIS_HOST=127.0.0.1 REDIS_PORT=16379\nexport CRAWL4AI_ARTIFACT_DIR=/home/alice/.local/state/ivm-services/crawl4ai/outputs\nexport HOME=/home/alice/.local/state/ivm-services/crawl4ai/home CRAWL4_AI_BASE_DIRECTORY=/home/alice/.local/state/ivm-services/crawl4ai/home\nexport XDG_CACHE_HOME=/home/alice/.local/state/ivm-services/crawl4ai/cache\nexport GUNICORN_BIND=127.0.0.1:11235\nexport CRAWL4AI_HOOKS_ENABLED=false CRAWL4AI_EXECUTE_JS_ENABLED=false\nexec @STORE@\n\n",
+  "haystackAuth": {
+    "activityProjectId": "team-activity",
+    "allowedHosts": [
+      "services.example.test",
+      "legacy.services.example.test",
+      "localhost",
+      "127.0.0.1"
+    ],
+    "allowedOrigins": [
+      "https://services.example.test:8445",
+      "http://legacy.services.example.test:8085"
+    ],
+    "cookieSecure": true,
+    "insecureHttpOrigins": [
+      "http://legacy.services.example.test:8085"
+    ],
+    "rateLimit": {
+      "max": 600,
+      "windowMs": 60000
+    },
+    "users": [
+      {
+        "id": "agent",
+        "tokens": [
+          {
+            "hashFile": "/home/alice/.local/state/ivm-services/credentials/haystack-agent.sha256",
+            "id": "default"
+          }
+        ],
+        "type": "agent"
+      },
+      {
+        "id": "operator",
+        "tokens": [
+          {
+            "hashFile": "/home/alice/.local/state/ivm-services/credentials/haystack-operator.sha256",
+            "id": "default"
+          }
+        ],
+        "type": "human"
+      }
+    ]
+  },
+  "manureConfig": {
+    "allow_insecure_http": true,
+    "allowed_api_origins": [
+      "http://legacy.services.example.test:8086"
+    ],
+    "api_origin": "https://services.example.test:8446",
+    "content_mode": "path",
+    "data_dir": "/home/alice/.local/state/ivm-services/manure",
+    "listen_address": "127.0.0.1",
+    "loopback_dev": false,
+    "port": 47329,
+    "trusted_proxies": [
+      "127.0.0.1/32"
+    ],
+    "users": [
+      {
+        "id": "agent",
+        "tokens": [
+          {
+            "hashFile": "/home/alice/.local/state/ivm-services/credentials/manure-agent.sha256",
+            "id": "default"
+          }
+        ],
+        "type": "agent"
+      },
+      {
+        "id": "operator",
+        "tokens": [
+          {
+            "hashFile": "/home/alice/.local/state/ivm-services/credentials/manure-operator.sha256",
+            "id": "default"
+          }
+        ],
+        "type": "human"
+      }
+    ]
+  },
+  "postgres": "#!@STORE@\nset -euo pipefail\numask 077\nif [ ! -e /home/alice/.local/state/ivm-services/postgres/PG_VERSION ]; then\n  @STORE@ -D /home/alice/.local/state/ivm-services/postgres --auth-local=peer --auth-host=reject --encoding=UTF8 --locale=C.UTF-8\nfi\ntest \"$(</home/alice/.local/state/ivm-services/postgres/PG_VERSION)\" = 18\nexec @STORE@ -D /home/alice/.local/state/ivm-services/postgres -k /home/alice/.local/state/ivm-services/postgres-socket -c listen_addresses= -c unix_socket_permissions=0700\n\n",
+  "proxy": "pid /home/alice/.local/state/ivm-services/nginx/nginx.pid;\nerror_log stderr warn;\nevents { worker_connections 1024; }\nhttp {\n  include @STORE@;\n  access_log off;\n  map $http_upgrade $connection_upgrade { default upgrade; \"\" close; }\n  \n  client_body_temp_path /home/alice/.local/state/ivm-services/nginx/body;\n  proxy_temp_path /home/alice/.local/state/ivm-services/nginx/proxy;\n  server {\n  listen 100.64.0.2:8443 ssl;\n  listen 127.0.1.1:8443 ssl;\n  server_name services.example.test;\n  ssl_certificate /var/lib/ivm-services-tls/cert.pem;\nssl_certificate_key /var/lib/ivm-services-tls/key.pem;\nssl_protocols TLSv1.2 TLSv1.3;\n\n  if ($http_host !~* \"^services\\.example\\.test(:8443)?$\") { return 421; }\n  location / { proxy_pass http://127.0.0.1:8888; proxy_set_header Host $http_host;\nproxy_set_header X-Forwarded-Proto $scheme;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection $connection_upgrade;\nproxy_buffering off;\nproxy_cache off;\n }\n}\n\n  server {\n  listen 100.64.0.2:8444 ssl;\n  listen 127.0.1.1:8444 ssl;\n  server_name services.example.test;\n  ssl_certificate /var/lib/ivm-services-tls/cert.pem;\nssl_certificate_key /var/lib/ivm-services-tls/key.pem;\nssl_protocols TLSv1.2 TLSv1.3;\n\n  if ($http_host !~* \"^services\\.example\\.test(:8444)?$\") { return 421; }\n  client_max_body_size 16m;\nlocation / { proxy_pass http://127.0.0.1:11235; proxy_set_header Host $http_host;\nproxy_set_header X-Forwarded-Proto $scheme;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection $connection_upgrade;\nproxy_buffering off;\nproxy_cache off;\n proxy_read_timeout 1800s; }\n\n}\n\n  server {\n  listen 100.64.0.2:8445 ssl;\n  listen 127.0.1.1:8445 ssl;\n  server_name services.example.test;\n  ssl_certificate /var/lib/ivm-services-tls/cert.pem;\nssl_certificate_key /var/lib/ivm-services-tls/key.pem;\nssl_protocols TLSv1.2 TLSv1.3;\n\n  if ($http_host !~* \"^services\\.example\\.test(:8445)?$\") { return 421; }\n  root @STORE@;\nlocation / { try_files $uri $uri/ =404; add_header Cache-Control no-cache; add_header Referrer-Policy no-referrer always; add_header X-Content-Type-Options nosniff always; }\nlocation /api/ { proxy_pass http://127.0.0.1:47328; proxy_set_header Host $http_host;\nproxy_set_header X-Forwarded-Proto $scheme;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection $connection_upgrade;\nproxy_buffering off;\nproxy_cache off;\n client_max_body_size 2m; proxy_intercept_errors on; error_page 502 504 =503 @unavailable; }\nlocation /mcp { proxy_pass http://127.0.0.1:47328; proxy_set_header Host $http_host;\nproxy_set_header X-Forwarded-Proto $scheme;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection $connection_upgrade;\nproxy_buffering off;\nproxy_cache off;\n proxy_read_timeout 300s; proxy_intercept_errors on; error_page 502 504 =503 @unavailable; }\nlocation @unavailable { default_type application/json; add_header Cache-Control no-store always; return 503 '{\"error\":{\"code\":\"unavailable\",\"message\":\"service unavailable\"}}'; }\n\n}\n\n  server {\n  listen 100.64.0.2:8446 ssl;\n  listen 127.0.1.1:8446 ssl;\n  server_name services.example.test;\n  ssl_certificate /var/lib/ivm-services-tls/cert.pem;\nssl_certificate_key /var/lib/ivm-services-tls/key.pem;\nssl_protocols TLSv1.2 TLSv1.3;\n\n  if ($http_host !~* \"^services\\.example\\.test(:8446)?$\") { return 421; }\n  # Suppress native request-line errors, which can contain capability URLs.\nerror_log /dev/null;\nclient_max_body_size 4m;\nclient_header_buffer_size 4k;\nlarge_client_header_buffers 4 8k;\nlocation / { proxy_pass http://127.0.0.1:47329; proxy_set_header Host $http_host;\nproxy_set_header X-Forwarded-Proto $scheme;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection $connection_upgrade;\nproxy_buffering off;\nproxy_cache off;\n proxy_request_buffering off; proxy_read_timeout 30s; proxy_send_timeout 30s; }\n\n}\n\n  \n  server {\n  listen 100.64.0.2:8447 ssl;\n  listen 127.0.1.1:8447 ssl;\n  server_name services.example.test;\n  ssl_certificate /var/lib/ivm-services-tls/cert.pem;\nssl_certificate_key /var/lib/ivm-services-tls/key.pem;\nssl_protocols TLSv1.2 TLSv1.3;\n\n  if ($http_host !~* \"^services\\.example\\.test(:8447)?$\") { return 421; }\n  # Trusted, Tailscale-only static hosting. Reads (GET/HEAD) are open on the\n# tailnet; writes (PUT/DELETE/MKCOL) require the publish token via basic auth.\n# Before the token is provisioned the htpasswd file is absent and nginx fails\n# writes closed (403).\nroot /home/alice/.local/state/ivm-services/www;\nautoindex on;\nautoindex_format json;\nclient_max_body_size 1g;\nlocation / {\n  dav_methods PUT DELETE MKCOL;\n  create_full_put_path on;\n  limit_except GET HEAD {\n    auth_basic \"ivm publish\";\n    auth_basic_user_file /home/alice/.local/state/ivm-services/credentials/static.htpasswd;\n  }\n}\n# Read-only JSON directory listing that ignores index.html, for `ivm-publish ls`.\nlocation /.ivm-list/ {\n  alias /home/alice/.local/state/ivm-services/www/;\n  index ___none___;\n  autoindex on;\n  autoindex_format json;\n}\n\n}\n\n}\n",
+  "setup": "#!@STORE@\nset -euo pipefail\numask 077\n@STORE@ -p /home/alice/.local/state/ivm-services/{credentials,nginx,crawl4ai/{home,cache,outputs},www}\n@STORE@ -p /home/alice/.local/state/ivm-services/{postgres-socket,backups}\n\n# nginx recreates its request-body/proxy temp dirs on start; drop any left\n# non-user-owned (e.g. by a root `nginx -t`, which chowns absolute *_temp_path\n# dirs to nginx's compiled-in user) so the user worker can write them.\nfor d in /home/alice/.local/state/ivm-services/nginx/body /home/alice/.local/state/ivm-services/nginx/proxy; do\n  if [ -e \"$d\" ] && [ ! -O \"$d\" ]; then @STORE@ -rf \"$d\"; fi\ndone\n@STORE@ @STORE@ /home/alice/.local/state/ivm-services/credentials \\\n  --haystack-agent-file /run/secrets/ivm-haystack-agent-token \\\n  --manure-agent-file /run/secrets/ivm-manure-agent-token\n# Generate the nginx basic-auth file for static publishing from the agenix token.\nif [ -r /run/secrets/ivm-static-publish-token ]; then\n  hash=\"$(@STORE@ passwd -apr1 -stdin <<<\"$(</run/secrets/ivm-static-publish-token)\")\"\n  @STORE@ 'publish:%s\\n' \"$hash\" > /home/alice/.local/state/ivm-services/credentials/static.htpasswd.tmp\n  @STORE@ -f /home/alice/.local/state/ivm-services/credentials/static.htpasswd.tmp /home/alice/.local/state/ivm-services/credentials/static.htpasswd\nfi\n\n\n",
+  "timers": [
+    "ivm-haystack-backup"
+  ],
+  "units": [
+    "ivm-crawl4ai",
+    "ivm-crawl4ai-redis",
+    "ivm-haystack",
+    "ivm-haystack-backup",
+    "ivm-haystack-database",
+    "ivm-manure",
+    "ivm-postgres",
+    "ivm-searxng",
+    "ivm-services-proxy",
+    "ivm-services-setup"
+  ]
+}
