@@ -243,8 +243,6 @@ class StatsView implements Component {
 	handleInput(data: string): void {
 		if (this.picker) return;
 		if (matchesKey(data, "escape") || matchesKey(data, "q") || parseKey(data) === "q") {
-			this.picker?.hide();
-			this.picker = undefined;
 			this.onClose();
 			return;
 		}
