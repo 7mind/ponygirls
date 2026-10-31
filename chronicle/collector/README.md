@@ -126,6 +126,8 @@ The frozen v1 server stores `Quiescent` but has no field for the measured observ
 
 The private state directory is mode 0700, SQLite databases mode 0600. SQLite FULL synchronous transactions persist namespace, observations, source heads, exact pending encoded payload/digest, expected revision, request UUID and retry state before uploading. A separate SQLite exclusive daemon lock is automatically released on process death; there are no stale PID files. `--status` is read-only with respect to collection and does not need the daemon lock.
 
+SIGTERM and SIGINT use normal OS termination without waiting for an active scan, progress report or upload. Durable pending work and the daemon lock recover on restart; an upload interrupted before its local ACK is retried with the same request ID and bytes, even if the server already committed it. Shutdown does not increment retry attempts or claim that the cycle completed. No final network report is attempted; saved counters and remote progress may remain incomplete or stale.
+
 Lost acknowledgements retry the **same bytes and request ID**, including after restart. Only a valid matching generated receipt with exactly the expected next revision advances the local head. CAS conflicts stay visible and never silently adjust expected revision. Retryable network/408/429/5xx failures use capped exponential full jitter and finite attempts. Auth/protocol/invalid-receipt failures stop immediately; redirects are never followed. Uploads have a total request/body-read timeout and bounded acknowledgement size.
 
 ```bash

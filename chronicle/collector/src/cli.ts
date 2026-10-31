@@ -71,20 +71,16 @@ async function main(): Promise<void> {
       else spool.drop(arguments_.requestId, 'operator-drop');
       print(collector.status()); return;
     }
-    const controller = new AbortController();
-    const stop = (): void => { controller.abort(); };
-    process.once('SIGTERM', stop); process.once('SIGINT', stop);
-    try {
-      do {
-        const result = await collector.runOnce(Date.now()); print(result);
-        if (arguments_.operation === 'once') {
-          if (result.uploadFailures + result.quarantined + result.pending + result.stopped + result.conflicts > 0 || spool.diagnostics().some(d => d.rootId === 'reporting')) process.exitCode = 1;
-          return;
-        }
-        try { await sleep(config.pollMs, undefined, { signal: controller.signal }); }
-        catch (error) { if (!controller.signal.aborted) throw error; }
-      } while (!controller.signal.aborted);
-    } finally { process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop); }
+    // Keep OS signal termination: SQLite preserves pending work and releases the
+    // daemon lock even while a synchronous scan cannot yield to a JS handler.
+    for (;;) {
+      const result = await collector.runOnce(Date.now()); print(result);
+      if (arguments_.operation === 'once') {
+        if (result.uploadFailures + result.quarantined + result.pending + result.stopped + result.conflicts > 0 || spool.diagnostics().some(d => d.rootId === 'reporting')) process.exitCode = 1;
+        return;
+      }
+      await sleep(config.pollMs);
+    }
   } finally { if (spool !== null) spool.close(); if (lock !== null) lock.close(); }
 }
 void main().catch((error: unknown) => {
