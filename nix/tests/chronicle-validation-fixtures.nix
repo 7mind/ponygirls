@@ -44,7 +44,7 @@ let
       '' else ''
         mkdir -p "$out"
         cat > "$out/protocol.json" <<'JSON'
-        ${builtins.toJSON { schemaVersion = 2; status = "passed"; versions = 1; apiVersion = "1.9.0"; fixtureGroups = 14; protocolSource = toString protocolSource; }}
+        ${builtins.toJSON { schemaVersion = 2; status = "passed"; versions = 1; apiVersion = "1.9.0"; fixtureGroups = 16; protocolSource = toString protocolSource; }}
         JSON
       '');
       web = pkgs.runCommand "chronicle-gate-fixture-web-${mode}" { } (if mode == "failed-web" then ''

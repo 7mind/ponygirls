@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+EXPECTED_PROTOCOL_FIXTURE_GROUPS = 16
+
 
 def read(path: Path) -> dict:
     value = json.loads(path.read_text())
@@ -42,7 +44,7 @@ def check_protocol(inputs: dict, protocol: dict) -> None:
         or protocol['protocolSource'] != inputs['protocolSource']
         or type(protocol['versions']) is not int or protocol['versions'] != 1
         or protocol['apiVersion'] != '1.9.0'
-        or type(protocol['fixtureGroups']) is not int or protocol['fixtureGroups'] != 14):
+        or type(protocol['fixtureGroups']) is not int or protocol['fixtureGroups'] != EXPECTED_PROTOCOL_FIXTURE_GROUPS):
         raise ValueError('missing, mismatched or incomplete single-version protocol validation')
 
 
