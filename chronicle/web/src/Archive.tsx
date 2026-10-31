@@ -7,8 +7,7 @@ import type { ArchiveReadLane } from './archive-requests.ts';
 import { incompleteExpression } from './expression.ts';
 import { InfiniteTrigger } from './InfiniteTrigger.tsx';
 import { ScrollAnchor } from './ScrollAnchor.tsx';
-import { ExpressionEditor } from './ExpressionEditor.tsx';
-import type { FilterField } from './FilterShortcuts.tsx';
+import { ExpressionEditor, archiveFields } from './ExpressionEditor.tsx';
 import { useTableColumns, TableControls, TableColumnGroup, ColumnResize } from './TableColumns.tsx';
 import type { TableColumnSpec } from './table-widths.ts';
 import { Dialog } from './Dialog.tsx';
@@ -36,11 +35,6 @@ const columns: readonly ArchiveColumn[] = [
   { sort: ArchiveSort.Status, label: 'Index status', title: row => row.headJob === undefined ? 'Unscheduled' : row.headJob.state, render: row => <><span className={`job-state state-${row.headJob === undefined ? 'unscheduled' : row.headJob.state.toLowerCase()}`}>{row.headJob === undefined ? 'Unscheduled' : row.headJob.state}</span></> },
   { sort: ArchiveSort.MessageCount, label: 'Messages', title: row => row.messageCount.toLocaleString(), render: row => row.messageCount.toLocaleString() },
   { sort: ArchiveSort.Tags, label: 'Tags', title: row => row.tags.join(', '), render: row => <Tags tags={row.tags}/> },
-];
-const archiveFields: readonly FilterField[] = [
-  { attribute: 'project', label: 'Project' }, { attribute: 'branch', label: 'Branch' }, { attribute: 'tag', label: 'Tag' }, { attribute: 'user', label: 'User' },
-  { attribute: 'producer', label: 'Producer' }, { attribute: 'format', label: 'Format' }, { attribute: 'model', label: 'Model' }, { attribute: 'agent', label: 'Agent' }, { attribute: 'yolo-profile', label: 'Recorded yolo profile' }, { attribute: 'status', label: 'Status' },
-  { attribute: 'after', label: 'After' }, { attribute: 'before', label: 'Before' },
 ];
 const archiveColumns: readonly TableColumnSpec[] = columns.map(column => ({ id: column.sort, label: column.label,
   min: column.sort === ArchiveSort.Title ? 180 : column.sort === ArchiveSort.LastTimestamp ? 110 : 65,
@@ -82,7 +76,7 @@ export function Archive({ connection, requests, findReads, stats, user, draft, s
   function choose(id: string) { setRelatedSelection(null); setArchive(value => ({ ...value, selection: id, selectionKey: value.selectionKey + 1 })); }
   function close() { setRelatedSelection(null); setArchive(value => ({ ...value, selection: null })); }
   function submit(expression: string) { cancelTimer(); if (expression !== archive.submitted) requests.cancel(readScope); else refreshArchive(); setArchive(value => ({ ...value, submitted: expression, selection: null })); setRelatedSelection(null); }
-  return <main className="archive archive-table-page"><ExpressionEditor completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_Archive() }} value={draft} applied={archive.submitted} change={change} submit={submit} compositionChange={compositionChange} composing={composing} disabled={stats.activeId === null} fields={archiveFields} help={results.meta?.textScope === ArchiveTextScope.BoundedCandidateSets ? <p>This result uses up to {results.meta.annChunkLimitPerOperand} authorized published chunks per distinct text operand before session deduplication, not a row limit. Its total is exact under those bounded candidate sets.</p> : null}/>
+  return <main className="archive archive-table-page"><ExpressionEditor submission="live" completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_Archive() }} value={draft} applied={archive.submitted} change={change} submit={submit} compositionChange={compositionChange} composing={composing} disabled={stats.activeId === null} fields={archiveFields} help={results.meta?.textScope === ArchiveTextScope.BoundedCandidateSets ? <p>This result uses up to {results.meta.annChunkLimitPerOperand} authorized published chunks per distinct text operand before session deduplication, not a row limit. Its total is exact under those bounded candidate sets.</p> : null}/>
     {draft !== archive.submitted && <p className="tiny" role="status">{composing ? 'Finish composing to update the search.' : incomplete ? 'Complete the expression to update the search.' : 'Waiting for typing to pause…'} The last submitted expression is unchanged.</p>}
     <ScrollAnchor><div className="archive-context"><button className="text-button" aria-label="Refresh archive" onClick={refreshArchive}>Refresh ↻</button><span role="status">{results.loading ? 'Loading conversations…' : results.meta === null ? 'Archive unavailable' : `${results.meta.total.toString()} conversations · ${results.items.length} shown`}{results.refreshing ? ' · Checking access…' : ''}</span>{results.updateAvailable && <button className="text-button" onClick={results.applyUpdates}>Updates available · show latest</button>}<span className="archive-order"><output aria-label="Archive order">{results.meta === null ? '' : relevanceOrdered ? 'Ordered by relevance' : `Ordered by ${columns.find(column => column.sort === archive.sort)!.label} · ${archive.direction === SortDirection.Asc ? 'ascending' : 'descending'}`}</output><button className="text-button" aria-pressed={archive.preferRelevance} title="Order expressions with positive text by relevance. Metadata-only expressions keep the column order." onClick={() => setArchive(value => value.preferRelevance ? value : { ...value, preferRelevance: true, selection: null })}>Relevance for text</button></span></div>
       {results.error !== null && <ErrorNotice>{results.error} No fallback search was used.</ErrorNotice>}

@@ -13,10 +13,14 @@ import { ActivityJobsQuery, ActivityJobsQuery_JsonCodec } from './ActivityJobsQu
 import { ActivityJobsResult, ActivityJobsResult_JsonCodec } from './ActivityJobsResult.js';
 import { ActivityQuery, ActivityQuery_JsonCodec } from './ActivityQuery.js';
 import { ActivityResult, ActivityResult_JsonCodec } from './ActivityResult.js';
+import { ArchiveMatchKind, ArchiveMatchKind_JsonCodec } from './ArchiveMatchKind.js';
 import { ArchiveQuery, ArchiveQuery_JsonCodec } from './ArchiveQuery.js';
 import { ArchiveResult, ArchiveResult_JsonCodec } from './ArchiveResult.js';
 import { ArchiveRow, ArchiveRow_JsonCodec } from './ArchiveRow.js';
+import { ArchiveSearchEvidence, ArchiveSearchEvidence_JsonCodec } from './ArchiveSearchEvidence.js';
+import { ArchiveSearchResult, ArchiveSearchResult_JsonCodec } from './ArchiveSearchResult.js';
 import { ArchiveSort, ArchiveSort_JsonCodec } from './ArchiveSort.js';
+import { ArchiveSourceMatch, ArchiveSourceMatch_JsonCodec } from './ArchiveSourceMatch.js';
 import { ArchiveTextScope, ArchiveTextScope_JsonCodec } from './ArchiveTextScope.js';
 import { Chunk, Chunk_JsonCodec } from './Chunk.js';
 import { ChunksResult, ChunksResult_JsonCodec } from './ChunksResult.js';
@@ -123,10 +127,14 @@ class DomainChronicleApiV1_9_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(ActivityJobsResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityJobsResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityQuery_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityQuery_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ActivityResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ActivityResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ArchiveMatchKind_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ArchiveMatchKind_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ArchiveQuery_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ArchiveQuery_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ArchiveResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ArchiveResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ArchiveRow_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ArchiveRow_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ArchiveSearchEvidence_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ArchiveSearchEvidence_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ArchiveSearchResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ArchiveSearchResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ArchiveSort_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ArchiveSort_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ArchiveSourceMatch_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ArchiveSourceMatch_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ArchiveTextScope_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ArchiveTextScope_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Chunk_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Chunk_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ChunksResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ChunksResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -246,10 +254,14 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/:#ActivityJobsResult": ['1.9.0'],
         "chronicle.api/:#ActivityQuery": ['1.9.0'],
         "chronicle.api/:#ActivityResult": ['1.9.0'],
+        "chronicle.api/:#ArchiveMatchKind": ['1.9.0'],
         "chronicle.api/:#ArchiveQuery": ['1.9.0'],
         "chronicle.api/:#ArchiveResult": ['1.9.0'],
         "chronicle.api/:#ArchiveRow": ['1.9.0'],
+        "chronicle.api/:#ArchiveSearchEvidence": ['1.9.0'],
+        "chronicle.api/:#ArchiveSearchResult": ['1.9.0'],
         "chronicle.api/:#ArchiveSort": ['1.9.0'],
+        "chronicle.api/:#ArchiveSourceMatch": ['1.9.0'],
         "chronicle.api/:#ArchiveTextScope": ['1.9.0'],
         "chronicle.api/:#Chunk": ['1.9.0'],
         "chronicle.api/:#ChunksResult": ['1.9.0'],
@@ -354,6 +366,7 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Operation]#ApplyOwnerReindex": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#ApplyRetryFailed": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#Archive": ['1.9.0'],
+        "chronicle.api/[chronicle.api/:#Operation]#ArchiveSearch": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#CancelMcpTest": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#CollectionStatus": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Operation]#CreateGroup": ['1.9.0'],
@@ -397,6 +410,7 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Result]#Activity": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Result]#ActivityJobs": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Result]#Archive": ['1.9.0'],
+        "chronicle.api/[chronicle.api/:#Result]#ArchiveSearch": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Result]#Chunks": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Result]#CollectionStatus": ['1.9.0'],
         "chronicle.api/[chronicle.api/:#Result]#Error": ['1.9.0'],
@@ -441,10 +455,14 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/:#ActivityJobsResult": { '1.9.0': 'identical' },
         "chronicle.api/:#ActivityQuery": { '1.9.0': 'identical' },
         "chronicle.api/:#ActivityResult": { '1.9.0': 'identical' },
+        "chronicle.api/:#ArchiveMatchKind": { '1.9.0': 'identical' },
         "chronicle.api/:#ArchiveQuery": { '1.9.0': 'identical' },
         "chronicle.api/:#ArchiveResult": { '1.9.0': 'identical' },
         "chronicle.api/:#ArchiveRow": { '1.9.0': 'identical' },
+        "chronicle.api/:#ArchiveSearchEvidence": { '1.9.0': 'identical' },
+        "chronicle.api/:#ArchiveSearchResult": { '1.9.0': 'identical' },
         "chronicle.api/:#ArchiveSort": { '1.9.0': 'identical' },
+        "chronicle.api/:#ArchiveSourceMatch": { '1.9.0': 'identical' },
         "chronicle.api/:#ArchiveTextScope": { '1.9.0': 'identical' },
         "chronicle.api/:#Chunk": { '1.9.0': 'identical' },
         "chronicle.api/:#ChunksResult": { '1.9.0': 'identical' },
@@ -549,6 +567,7 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Operation]#ApplyOwnerReindex": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#ApplyRetryFailed": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#Archive": { '1.9.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Operation]#ArchiveSearch": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#CancelMcpTest": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#CollectionStatus": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Operation]#CreateGroup": { '1.9.0': 'identical' },
@@ -592,6 +611,7 @@ class DomainChronicleApiV1_9_0Meta implements BaboonMeta {
         "chronicle.api/[chronicle.api/:#Result]#Activity": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#ActivityJobs": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#Archive": { '1.9.0': 'identical' },
+        "chronicle.api/[chronicle.api/:#Result]#ArchiveSearch": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#Chunks": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#CollectionStatus": { '1.9.0': 'identical' },
         "chronicle.api/[chronicle.api/:#Result]#Error": { '1.9.0': 'identical' },

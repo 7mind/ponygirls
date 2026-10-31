@@ -280,6 +280,14 @@ class ArchiveIndexTest extends munit.FunSuite {
       val original=browse(exactIndex,"a",q)
       val ranked=browse(exactIndex,"a",q.copy(preferRelevance=true))
       assertEquals(ranked.total,original.total,body)
+      List(false,true).foreach { relevance =>
+        val selected=q.copy(limit=ArchiveSearchPolicy.maximumPageSize,preferRelevance=relevance)
+        val parsed=ArchiveExpression.parse(selected.expression)
+        val vectors=parsed.textOperands.map(text => ArchiveVector(text,List(1.0,0.0,0.0)))
+        val cards=exactIndex.sourceSearch("a",selected,parsed,vectors,ReadMaterialization.unrestricted)
+        assertEquals(cards.page,browse(exactIndex,"a",selected),body)
+        assertEquals(cards.page.total,ranked.total,body)
+      }
       ranked.total
     }
     assertEquals(count("project:target (foo OR bar)"),1L)

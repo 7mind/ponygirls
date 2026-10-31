@@ -1,6 +1,8 @@
 import { Goal50Fixture, api } from './goal50-fixture.mjs';
 export { api };
 export class SearchFixture extends Goal50Fixture {
+  relatedHits = [];
+  archiveSearchCount = 23; archiveSearchScope = api.ArchiveTextScope.BoundedCandidateSets; archiveSearchRelevance = true; archiveSearchFailure = null; archiveSearchTransform = result => result;
   holdSearch = false; pendingSearch = []; holdContext = false; pendingContext = []; contextFailure = null; contextTransform = result => result; searchTransform = result => result; locatorWrongPin = false; conversationFailure = null; findFailure = null; holdFind = false; pendingFind = [];
   messagesAt(revision) {
     return super.messagesAt(revision).map(message => message.id === 'm65' ? message.with({ role: 'user', text: `Exact 猫🦄 matched source r${revision}. <script>literal()</script> ` + 'continued source '.repeat(1400) }) : message.id === 'm66' ? message.with({ role: 'assistant', text: `Separate assistant source r${revision}.` }) : message);
@@ -36,6 +38,22 @@ export class SearchFixture extends Goal50Fixture {
       if (this.holdFind) this.pendingFind.push(reply); else reply(); return true;
     }
     if (this.conversationFailure !== null && operation instanceof api.Operation_GetSession) { send(new api.Result_Error(new api.Failure(this.conversationFailure, 'Pinned conversation source access removed'))); return true; }
+    if (operation instanceof api.Operation_Related) { send(new api.Result_Related(new api.RelatedResult(this.relatedHits))); return true; }
+    if (operation instanceof api.Operation_ArchiveSearch) {
+      if (this.archiveSearchFailure !== null) { send(new api.Result_Error(new api.Failure(this.archiveSearchFailure, 'Synthetic expression search unavailable'))); return true; }
+      const offset = operation.query.cursor === undefined ? 0 : Number(operation.query.cursor);
+      if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid synthetic Archive search cursor');
+      const source = this.hit, rows = Array.from({ length: this.archiveSearchCount }, (_, index) => {
+        const id = index === 0 ? this.session.id : `00000000-0000-4000-8000-${String(8000 + index).padStart(12, '0')}`;
+        const head = source.session.with({ id, view: new api.ContentView(source.session.revision, undefined), metadata: this.metadata.with({ title: `Search conversation ${index + 1}` }) });
+        return new api.ArchiveRow(head, source.session.view, source.session.view, undefined, this.messageCount, head.metadata.tags, undefined, undefined);
+      }).slice(offset, offset + operation.query.limit);
+      const chunk = source.chunks[0], evidence = rows.map(row => new api.ArchiveSearchEvidence(row.head.id, chunk.spans.slice(0, 2).map(span => new api.ArchiveSourceMatch(row.publishedView, span, api.ArchiveMatchKind.Semantic, 'source', chunk.summary))));
+      const next = offset + rows.length < this.archiveSearchCount ? String(offset + rows.length) : undefined;
+      const page = new api.ArchiveResult(rows, BigInt(this.archiveSearchCount), next, this.archiveSearchScope, this.archiveSearchScope === api.ArchiveTextScope.BoundedCandidateSets ? 1000 : undefined, this.archiveSearchRelevance);
+      const result = this.archiveSearchTransform(new api.ArchiveSearchResult(page, evidence));
+      const reply = () => send(new api.Result_ArchiveSearch(result)); if (this.holdSearch) this.pendingSearch.push(reply); else reply(); return true;
+    }
     if (operation instanceof api.Operation_Search) {
       const bounded = operation.query.mode !== api.SearchMode.Lexical, total = bounded ? 12 : 23;
       const hits = Array.from({ length: total }, (_, index) => this.hit.with({ session: this.hit.session.with({ id: index === 0 ? this.session.id : `00000000-0000-4000-8000-${String(8000 + index).padStart(12, '0')}`, metadata: this.metadata.with({ title: `Search conversation ${index + 1}` }) }) }));

@@ -2111,6 +2111,74 @@ package chronicle.api {
     }
     
     
+    final case class ArchiveSearch(
+      query: ArchiveQuery
+    ) extends Operation with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = Operation.ArchiveSearch.baboonDomainVersion
+      override def baboonDomainIdentifier: String = Operation.ArchiveSearch.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = Operation.ArchiveSearch.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = Operation.ArchiveSearch.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = Operation.ArchiveSearch.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = Operation.ArchiveSearch.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = Operation.ArchiveSearch.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = Operation.ArchiveSearch.baboonAdtType
+    }
+    
+    object ArchiveSearch {
+      def baboonDomainVersion: String = "1.9.0"
+      def baboonDomainIdentifier: String = "chronicle.api"
+      def baboonTypeIdentifier: String = "chronicle.api/[chronicle.api/:#Operation]#ArchiveSearch"
+      private lazy val _baboonSameInVersions: List[String] = List("1.9.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.9.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.9.0", "prefix-compact" -> "1.9.0", "prefix-any-mode" -> "1.9.0", "identical" -> "1.9.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "chronicle.api/:#Operation"
+      def baboonAdtType: _root_.java.lang.Class[?] = Operation.getClass
+      def codecJson: BaboonJsonCodec[Operation.ArchiveSearch] = Operation.ArchiveSearch_JsonCodec.instance
+    }
+    
+    object ArchiveSearch_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Operation.ArchiveSearch, BaboonJsonCodec[Operation.ArchiveSearch]] {
+      def encode(ctx: BaboonCodecContext, value: Operation.ArchiveSearch): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "query" -> ArchiveQuery_JsonCodec.instance.encode(ctx, value.query)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, Operation.ArchiveSearch] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              query <- getField(jsonObject, "query").flatMap(v => ArchiveQuery_JsonCodec.circeDecoder(v.hcursor))
+            } yield Operation.ArchiveSearch(query)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to ArchiveSearch: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = Operation.ArchiveSearch.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = Operation.ArchiveSearch.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = Operation.ArchiveSearch.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = Operation.ArchiveSearch.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = Operation.ArchiveSearch.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[Operation.ArchiveSearch]] = Lazy(Operation.ArchiveSearch_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[Operation.ArchiveSearch]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[Operation.ArchiveSearch] = LazyInstance.value
+    }
+    
+    
     final case class Activity(
       query: ActivityQuery
     ) extends Operation with BaboonAdtMemberMeta with BaboonGeneratedLatest {
@@ -3325,6 +3393,8 @@ package chronicle.api {
         
         case archive: Operation.Archive => Json.obj("Archive" -> Operation.Archive_JsonCodec.instance.encode(ctx, archive))
         
+        case archivesearch: Operation.ArchiveSearch => Json.obj("ArchiveSearch" -> Operation.ArchiveSearch_JsonCodec.instance.encode(ctx, archivesearch))
+        
         case activity: Operation.Activity => Json.obj("Activity" -> Operation.Activity_JsonCodec.instance.encode(ctx, activity))
         
         case activityjobs: Operation.ActivityJobs => Json.obj("ActivityJobs" -> Operation.ActivityJobs_JsonCodec.instance.encode(ctx, activityjobs))
@@ -3460,6 +3530,9 @@ package chronicle.api {
                 
                 case "Archive" =>
                   Operation.Archive_JsonCodec.instance.decode(ctx, json)
+                
+                case "ArchiveSearch" =>
+                  Operation.ArchiveSearch_JsonCodec.instance.decode(ctx, json)
                 
                 case "Activity" =>
                   Operation.Activity_JsonCodec.instance.decode(ctx, json)

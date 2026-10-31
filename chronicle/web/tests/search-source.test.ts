@@ -1,17 +1,10 @@
 // Specified contracts. Behavioral-Active Blackbox / Atomic; UI composition is checked in search-serp.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ContentView, ContextExcerpt, MessageContextResult, PassageSourceSpan, SearchCountScope, SearchResult, SearchHit, SessionInfo, Metadata, SourceIdentity, SourceFormat, Completion, Chunk, Span } from '../src/api.ts';
-import { CONTEXT_BYTES, searchPageEnd, snippetAnchor, validateContext, validateSearchPage, contextParts } from '../src/search-source.ts';
+import { ContentView, ContextExcerpt, MessageContextResult, PassageSourceSpan, Span } from '../src/api.ts';
+import { CONTEXT_BYTES, snippetAnchor, validateContext, contextParts } from '../src/search-source.ts';
 const view = new ContentView(1, 'generation'), anchor = new Span('m1', 0, 3);
 function result(): MessageContextResult { return new MessageContextResult('session', view, new PassageSourceSpan('m1', 0, 0, 3), [new ContextExcerpt(new PassageSourceSpan('m1', 0, 0, 3), 'user', '猫')], undefined, new Span('m1', 3, 3)); }
-test('BA: exact totals and bounded candidate windows have distinct paging limits', () => {
-  assert.equal(searchPageEnd(new SearchResult([], 3000, SearchCountScope.ExactMatches, undefined)), 3000);
-  assert.equal(searchPageEnd(new SearchResult([], 12, SearchCountScope.CandidateWindow, 1000)), 12);
-  assert.throws(() => searchPageEnd(new SearchResult([], 1001, SearchCountScope.CandidateWindow, 1000)), /ranking window/);
-  assert.throws(() => searchPageEnd(new SearchResult([], 12, SearchCountScope.CandidateWindow, undefined)), /ranking window/);
-  assert.throws(() => searchPageEnd(new SearchResult([], -1, SearchCountScope.ExactMatches, undefined)), /count/);
-});
 test('BA: retain complete bounded match anchors, preview historical oversized spans without fabricating source', () => {
   assert.deepEqual(snippetAnchor(anchor).toJSON(), anchor.toJSON());
   assert.deepEqual(snippetAnchor(new Span('m1', 4, 4 + CONTEXT_BYTES)).toJSON(), new Span('m1', 4, 4 + CONTEXT_BYTES).toJSON());
@@ -33,15 +26,6 @@ test('BA: same-view continuations are bounded, ordered and cannot repeat their a
   assert.throws(() => validateContext(page.with({ excerpts: [...page.excerpts].reverse() }), 'session', view, nextAnchor, 0, 4), /ordering/);
   const stalled = page.with({ excerpts: [new ContextExcerpt(new PassageSourceSpan('m1', 0, 3, 3), 'user', '')], next: nextAnchor });
   assert.throws(() => validateContext(stalled, 'session', view, nextAnchor, 0, 4), /advance/);
-});
-
-test('BA: search page validates count bounds, distinct sessions, chunk source ownership and source ranges', () => {
-  const metadata = new Metadata('Title', 'project', undefined, undefined, undefined, undefined, 'producer', undefined, undefined, undefined, []);
-  const session = new SessionInfo(view, 'session', 'reader', 1, 1, metadata, new SourceIdentity('collector', 'root', SourceFormat.Pi, 'source', undefined), Completion.Closed, false);
-  const chunk = new Chunk('chunk', session.id, 'not displayed', 'generated', [], [anchor], 1);
-  const hit = new SearchHit(session, [chunk], 1), page = new SearchResult([hit], 1, SearchCountScope.ExactMatches, undefined);
-  assert.equal(validateSearchPage(page, 0), page);
-  for (const malformed of [page.with({ total: 0 }), page.with({ hits: [hit, hit], total: 2 }), page.with({ hits: [hit.with({ chunks: [chunk.with({ sessionId: 'other' })] })] }), page.with({ hits: [hit.with({ chunks: [chunk.with({ spans: [new Span('m1', -1, 4)] })] })] })]) assert.throws(() => validateSearchPage(malformed, 0));
 });
 
 test('BA regression: context scalar and anchor endpoints are checked before source display, including zero-width previews', () => {

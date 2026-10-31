@@ -315,3 +315,65 @@ a generic sanitized message and no automatic retry. Ordinary append or
 republication preserves old full pins; foreign session/revision generations
 never fall back to HEAD. APIs1.0–1.8 signatures/codecs remain frozen, and reject
 the new operation/result branch explicitly rather than fabricating compatibility.
+
+## Archive-expression source cards (current 1.9)
+
+Browser `Operation.ArchiveSearch{query:ArchiveQuery}` returns
+`Result.ArchiveSearch{result:ArchiveSearchResult}`. The result contains the exact
+shared `page:ArchiveResult` and one ordered `ArchiveSearchEvidence{sessionId,matches}`
+per page row. Existing `Operation.Search`, `SearchQuery`, structured `SearchFilter`
+and all MCP tools are unchanged; no Archive-expression MCP tool is added.
+
+The application shares Archive expression parsing, validation and per-operand
+query embeddings with ordinary Archive browsing. One shared PostgreSQL kernel
+implements both paths: identical all-authorized-live-HEAD universe, Boolean
+membership, candidate restrictions before ANN limits, original full-distance
+ranking, keysets, i64 totals and count scope. Source cards use the same
+REPEATABLE READ transaction for page selection and evidence. The selected page
+(including lookahead and retained ANN witness IDs) is materialized once in a
+transaction-local relation; admission does not rerun candidate retrieval.
+
+Each `ArchiveSourceMatch{view,span,kind,operand,summary}` has its own immutable
+view and exact normalized-source UTF8 byte span. Literal evidence selects actual
+HEAD messages using PostgreSQL whole-field `lower`/`strpos`, never metadata
+fragments or a fabricated first chunk. Whole-field folded character coordinates
+are mapped to original scalar boundaries by bounded binary search over lengths
+of PostgreSQL-lowercased original prefixes, then converted to UTF8 byte offsets.
+Under pinned `pg_unicode_fast` default Unicode lower, U+0130 expands, while
+contextual sigma changes character value but not length; prefix lengths remain
+strictly monotone. Matches inside an expansion round outward to the original
+scalar. SQL checks the enclosing prefix-length inequalities; a violated
+projection invariant fails rather than returning an unrelated preview.
+
+Semantic evidence comes only from retained positive-operand ANN candidate IDs,
+ordered deterministically by original full distance, operand order and chunk ID.
+The selected chunk is fetched without retrieval or model calls, after validating
+its exact same-session generation/revision pin. At most two representative
+matches are returned: when both kinds exist, one literal span and one semantic
+span; otherwise up to two literals, or the first real spans from at most two
+selected candidate chunks. Representatives are bounded, not exhaustive and not
+proof of every Boolean term. Negated operands do not supply evidence (double
+negation is positive). Metadata-only, negative-only and metadata-text-only rows
+may have no evidence. HEAD and older published matches can coexist without
+pretending their revisions are identical. Summary is null for Literal and the
+selected stored chunk summary for Semantic.
+
+`ArchiveSearchPolicy` bounds page size to10 and matches per row to2. Mandatory
+cumulative source/locator admission is64KiB, including selected page metadata,
+lookahead, cursor-anchor materialization, view projections and selected complete
+chunk JSON; admission occurs before selected variable-sized fields are fetched
+or decoded. Caller source budgets are additionally charged, never enlarged.
+Serialized generated `Result.ArchiveSearch` is capped at128KiB. Every statement
+(including ACL, cursor resolution, page execution and witnesses) has a five-second
+deadline or the stricter inherited timeout. Oversized reads fail `read-budget`,
+cancellation fails `deadline`; neither truncates rows, drops required evidence,
+changes retrieval membership nor silently falls back. PostgreSQL may inspect
+full stored message bodies internally; these limits bound application transfer,
+not independent database CPU. Ordinary Archive browse retains unrestricted
+materialization and its existing page-size contract.
+
+Browser dispatch uses explicit fresh `currentBrowser` and the context-read
+captured security-epoch delivery checks, before and after the source read.
+Source ACL and immutable views are validated in the shared source snapshot;
+retired/foreign pins never redirect to HEAD. The existing final-check revocation
+race boundary remains unchanged.

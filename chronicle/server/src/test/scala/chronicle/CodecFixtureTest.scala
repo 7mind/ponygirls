@@ -86,4 +86,16 @@ class CodecFixtureTest extends munit.FunSuite {
     responses.foreach(value => assertEquals(protocol.encodeServer("1.9.0",value),Wire.encode(ServerEnvelope.codecJson,value)))
   }
 
+  test("BA specified: archive source-search goldens preserve Archive counts, independent HEAD and generation evidence pins") {
+    val requests=checkList("archive-search-clients",ClientEnvelope.codecJson)
+    val responses=checkList("archive-search-results",ServerEnvelope.codecJson)
+    assertEquals(requests.head.operation.asInstanceOf[Operation.ArchiveSearch].query.limit,10)
+    val value=responses.head.result.asInstanceOf[Result.ArchiveSearch].result
+    assertEquals(value.page.total,9007199254740993L)
+    assertEquals(value.evidence.head.matches.map(_.kind),List(ArchiveMatchKind.Literal,ArchiveMatchKind.Semantic))
+    assertEquals(value.evidence.head.matches.map(_.view.revision),List(2,1))
+    assertEquals(value.evidence.map(_.sessionId),value.page.rows.map(_.head.id))
+    assertEquals(responses.last.result.asInstanceOf[Result.ArchiveSearch].result.evidence,Nil)
+  }
+
 }

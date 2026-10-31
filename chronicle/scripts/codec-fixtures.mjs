@@ -22,7 +22,7 @@ for (const [name, codec] of [
   fixtureGroups++;
 }
 // Historical golden files are immutable evidence; exercise only shapes present in the sole current API.
-for (const prefix of ['api14', 'api16', 'api17', 'api18', 'api19']) {
+for (const prefix of ['api14', 'api16', 'api17', 'api18', 'api19', 'archive-search']) {
   for (const [suffix, codec] of [['clients', ClientEnvelope_JsonCodec.instance], ['results', ServerEnvelope_JsonCodec.instance]]) {
     const name = `${prefix}-${suffix}`, golden = fixture(name);
     const decoded = JSON.parse(golden).map(value => codec.decode(ctx, value));

@@ -1,29 +1,48 @@
-import { SearchCountScope, Span, type ContentView, type ContextExcerpt, type MessageContextResult, type SearchResult } from './api.ts';
+import { ArchiveMatchKind, ArchiveTextScope, Span, type ArchiveSearchResult, type ContentView, type ContextExcerpt, type MessageContextResult } from './api.ts';
 import { highlightUtf8, type TextPart } from './highlight.ts';
-import { requireContentView } from './source-view.ts';
+import { requireContentView, sameContentView } from './source-view.ts';
 export const SEARCH_PAGE_SIZE = 10;
 export const SNIPPET_BYTES = 512;
 export const CONTEXT_BYTES = 2048;
 const MAX_CONTEXT_EXCERPTS = 9;
-export function searchPageEnd(result: SearchResult): number {
-  if (!Number.isSafeInteger(result.total) || result.total < 0 || result.hits.length > SEARCH_PAGE_SIZE) throw new Error('Invalid search page count.');
-  if (result.countScope === SearchCountScope.ExactMatches) {
-    if (result.rankingLimit !== undefined) throw new Error('Exact search unexpectedly returned a candidate limit.');
-    return result.total;
-  }
-  if (result.countScope !== SearchCountScope.CandidateWindow || result.rankingLimit === undefined || !Number.isSafeInteger(result.rankingLimit) || result.rankingLimit <= 0 || result.total > result.rankingLimit) throw new Error('Invalid bounded search ranking window.');
-  return Math.min(result.total, result.rankingLimit);
+export interface SearchSourceFailure { code: string | null; message: string }
+export function sourceFailureAffectsView(failed: ContentView, selected: ContentView, code: string | null): boolean {
+  return sameContentView(failed, selected) || (code !== null && ['forbidden', 'not-found', 'unauthorized', 'authorization-changed'].includes(code));
 }
-export function validateSearchPage(result: SearchResult, offset: number): SearchResult {
-  const end = searchPageEnd(result);
-  if ((result.hits.length > 0 && offset + result.hits.length > end) || (result.countScope === SearchCountScope.CandidateWindow && offset >= result.rankingLimit!)) throw new Error('Search page exceeds its ranking window.');
+const MAX_REPRESENTATIVE_MATCHES = 2;
+const MAX_ARCHIVE_TOTAL = 9_223_372_036_854_775_807n;
+function validateView(view: ContentView): void {
+  if (!Number.isSafeInteger(view.revision) || view.revision <= 0 || (view.generationId !== undefined && (typeof view.generationId !== 'string' || view.generationId.length === 0))) throw new Error('Invalid archive search source view.');
+}
+export function validateArchiveSearchPage(result: ArchiveSearchResult, cursor: string | undefined): ArchiveSearchResult {
+  const page = result.page;
+  if (typeof page.total !== 'bigint' || page.total < 0n || page.total > MAX_ARCHIVE_TOTAL || page.rows.length > SEARCH_PAGE_SIZE || BigInt(page.rows.length) > page.total) throw new Error('Invalid archive search page count.');
+  if (typeof page.relevanceOrdered !== 'boolean' || (page.nextCursor !== undefined && (typeof page.nextCursor !== 'string' || page.nextCursor.length === 0 || page.nextCursor === cursor || page.rows.length === 0))) throw new Error('Invalid archive search ordering or cursor.');
+  if (page.textScope === ArchiveTextScope.ExactLexical) {
+    if (page.annChunkLimitPerOperand !== undefined) throw new Error('Exact archive search unexpectedly returned an ANN limit.');
+  } else if (page.textScope !== ArchiveTextScope.BoundedCandidateSets || !Number.isSafeInteger(page.annChunkLimitPerOperand) || page.annChunkLimitPerOperand! <= 0) throw new Error('Invalid archive search candidate scope.');
+  if (result.evidence.length !== page.rows.length) throw new Error('Archive search evidence does not cover its result page.');
   const ids = new Set<string>();
-  for (const hit of result.hits) {
-    if (!hit.session.id || ids.has(hit.session.id) || !Number.isSafeInteger(hit.session.view.revision) || hit.session.view.revision <= 0) throw new Error('Invalid or duplicate search session identity.');
-    ids.add(hit.session.id);
-    for (const chunk of hit.chunks) {
-      if (chunk.sessionId !== hit.session.id) throw new Error('Search chunk belongs to another source session.');
-      for (const span of chunk.spans) snippetAnchor(span);
+  for (const [index, row] of page.rows.entries()) {
+    const evidence = result.evidence[index]!;
+    validateView(row.head.view);
+    if (!row.head.id || ids.has(row.head.id) || row.head.view.revision !== row.head.revision || row.head.view.generationId !== undefined || evidence.sessionId !== row.head.id) throw new Error('Invalid or duplicate archive search source identity.');
+    ids.add(row.head.id);
+    if (row.publishedView !== undefined) {
+      validateView(row.publishedView);
+      if (row.publishedView.generationId === undefined || row.publishedView.revision > row.head.revision || row.head.indexedRevision !== row.publishedView.revision) throw new Error('Invalid archive search published view.');
+    }
+    if (row.matchedView !== undefined) {
+      validateView(row.matchedView);
+      if (!sameContentView(row.matchedView, row.head.view) && (row.publishedView === undefined || !sameContentView(row.matchedView, row.publishedView))) throw new Error('Invalid archive search representative view.');
+    }
+    if (evidence.matches.length > MAX_REPRESENTATIVE_MATCHES) throw new Error('Archive search returned too many representative matches.');
+    for (const match of evidence.matches) {
+      validateView(match.view); snippetAnchor(match.span);
+      if (typeof match.operand !== 'string' || match.operand.length === 0 || (match.summary !== undefined && typeof match.summary !== 'string')) throw new Error('Invalid archive search operand or annotation.');
+      if (match.kind === ArchiveMatchKind.Literal) {
+        if (!sameContentView(match.view, row.head.view) || match.summary !== undefined) throw new Error('Literal archive search evidence must retain its HEAD source pin.');
+      } else if (match.kind !== ArchiveMatchKind.Semantic || row.publishedView === undefined || !sameContentView(match.view, row.publishedView)) throw new Error('Semantic archive search evidence must retain its published source pin.');
     }
   }
   return result;

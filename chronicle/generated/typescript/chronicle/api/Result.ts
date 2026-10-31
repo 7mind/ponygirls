@@ -3,6 +3,7 @@ import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 import {ActivityJobsResult, ActivityJobsResult_JsonCodec} from './ActivityJobsResult.js'
 import {ActivityResult, ActivityResult_JsonCodec} from './ActivityResult.js'
 import {ArchiveResult, ArchiveResult_JsonCodec} from './ArchiveResult.js'
+import {ArchiveSearchResult, ArchiveSearchResult_JsonCodec} from './ArchiveSearchResult.js'
 import {ChunksResult, ChunksResult_JsonCodec} from './ChunksResult.js'
 import {CollectorStatusResult, CollectorStatusResult_JsonCodec} from './CollectorStatusResult.js'
 import {ExpressionHintsResult, ExpressionHintsResult_JsonCodec} from './ExpressionHintsResult.js'
@@ -34,7 +35,7 @@ import {TokensResult, TokensResult_JsonCodec} from './TokensResult.js'
 import {UserInfo, UserInfo_JsonCodec} from './UserInfo.js'
 import {VersionInfo, VersionInfo_JsonCodec} from './VersionInfo.js'
 
-export type Result = Result_Hello | Result_Pong | Result_Whoami | Result_Search | Result_Session | Result_Chunks | Result_Messages | Result_SessionMessageSearch | Result_MessageContext | Result_Raw | Result_Related | Result_Facets | Result_CollectionStatus | Result_Status | Result_Tokens | Result_Token | Result_Groups | Result_Mutation | Result_Error | Result_Ping | Result_Archive | Result_Activity | Result_ActivityJobs | Result_LocatedMessage | Result_RetryFailedPreview | Result_RetryFailed | Result_ExpressionHints | Result_ModelUsage | Result_Passages | Result_PassageSpans | Result_OwnerReindexPreview | Result_OwnerReindexed | Result_ReindexStatus | Result_McpTestTools | Result_McpTestRun
+export type Result = Result_Hello | Result_Pong | Result_Whoami | Result_Search | Result_Session | Result_Chunks | Result_Messages | Result_SessionMessageSearch | Result_MessageContext | Result_Raw | Result_Related | Result_Facets | Result_CollectionStatus | Result_Status | Result_Tokens | Result_Token | Result_Groups | Result_Mutation | Result_Error | Result_Ping | Result_Archive | Result_ArchiveSearch | Result_Activity | Result_ActivityJobs | Result_LocatedMessage | Result_RetryFailedPreview | Result_RetryFailed | Result_ExpressionHints | Result_ModelUsage | Result_Passages | Result_PassageSpans | Result_OwnerReindexPreview | Result_OwnerReindexed | Result_ReindexStatus | Result_McpTestTools | Result_McpTestRun
 
 export const Result = {
     BaboonDomainVersion: '1.9.0',
@@ -2327,6 +2328,114 @@ export class Result_Archive_JsonCodec {
     }
 }
 
+export class Result_ArchiveSearch implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#ArchiveSearch' as const;
+    private readonly _result: ArchiveSearchResult;
+
+    constructor(result: ArchiveSearchResult) {
+        this._result = result
+    }
+
+    public get result(): ArchiveSearchResult {
+        return this._result;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            result: this._result
+        };
+    }
+
+    public with(overrides: {result?: ArchiveSearchResult}): Result_ArchiveSearch {
+        return new Result_ArchiveSearch(
+            'result' in overrides ? overrides.result! : this._result
+        );
+    }
+
+    public static fromPlain(obj: {result: ArchiveSearchResult}): Result_ArchiveSearch {
+        return new Result_ArchiveSearch(
+            obj.result
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return Result_ArchiveSearch.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_ArchiveSearch.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#ArchiveSearch'
+    public baboonTypeIdentifier() {
+        return Result_ArchiveSearch.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.9.0"]
+    public baboonSameInVersions() {
+        return Result_ArchiveSearch.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
+    public baboonForwardReadable() {
+        return Result_ArchiveSearch.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
+    public baboonMinReaderVersions() {
+        return Result_ArchiveSearch.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_ArchiveSearch.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Result_ArchiveSearch_JsonCodec {
+        return Result_ArchiveSearch_JsonCodec.instance
+    }
+}
+
+export class Result_ArchiveSearch_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Result_ArchiveSearch): unknown {
+        if (this !== Result_ArchiveSearch_JsonCodec.lazyInstance.value) {
+          return Result_ArchiveSearch_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "result": ArchiveSearchResult_JsonCodec.instance.encode(BaboonCodecContext.Default, value.result),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Result_ArchiveSearch {
+        if (this !== Result_ArchiveSearch_JsonCodec .lazyInstance.value) {
+            return Result_ArchiveSearch_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Result_ArchiveSearch (
+            ArchiveSearchResult_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["result"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return Result_ArchiveSearch_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Result_ArchiveSearch_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Result]#ArchiveSearch'
+    public baboonTypeIdentifier() {
+        return Result_ArchiveSearch_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Result'
+    public baboonAdtTypeIdentifier() {
+        return Result_ArchiveSearch_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Result_ArchiveSearch_JsonCodec())
+    public static get instance(): Result_ArchiveSearch_JsonCodec {
+        return Result_ArchiveSearch_JsonCodec.lazyInstance.value
+    }
+}
+
 export class Result_Activity implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public readonly $type = 'chronicle.api/[chronicle.api/:#Result]#Activity' as const;
     private readonly _result: ActivityResult;
@@ -3909,6 +4018,9 @@ export class Result_JsonCodec {
             if (value instanceof Result_Archive) {
                 return { "Archive": Result_Archive_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof Result_ArchiveSearch) {
+                return { "ArchiveSearch": Result_ArchiveSearch_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
             if (value instanceof Result_Activity) {
                 return { "Activity": Result_Activity_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
@@ -3982,6 +4094,7 @@ export class Result_JsonCodec {
                 case "Error": return Result_Error_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Ping": return Result_Ping_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Archive": return Result_Archive_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "ArchiveSearch": return Result_ArchiveSearch_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Activity": return Result_Activity_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "ActivityJobs": return Result_ActivityJobs_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "LocatedMessage": return Result_LocatedMessage_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])

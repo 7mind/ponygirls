@@ -4,13 +4,14 @@ import chronicle.api.*
 import io.circe.Json
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.UTF_8
-import java.sql.{Connection,ResultSet}
+import java.sql.{Connection,ResultSet,SQLException}
 import java.util.{Base64,UUID}
 import scala.util.Try
 
 final case class ArchiveVector(operand: String,values: List[Double])
 trait ArchiveIndex {
   def browse(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector]): ArchiveResult
+  def sourceSearch(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],materialization: ReadMaterialization): ArchiveSearchResult
 }
 private[chronicle] final case class ArchiveSql(text: String,args: List[Sql.Param])
 private[chronicle] final case class ArchiveCursor(query: String,sort: String,direction: String,owner: String,last: Option[String],id: UUID,anchor: Option[RevisionSortAnchor],relevanceScore: Option[String])
@@ -66,7 +67,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
   import ArchiveExpression.*
   private val unicode = "COLLATE \"pg_unicode_fast\""
   private val columns = "c.*"
-  private final case class PageRow(value: ArchiveRow,key: Option[String],relevanceScore: Option[String])
+  private final case class PageRow(value: ArchiveRow,key: Option[String],relevanceScore: Option[String],witnesses: List[ArchiveSemanticWitness])
   private def literal(value: String): String = "%"+value.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"
   private def insensitive(column: String,value: String): ArchiveSql = ArchiveSql(s"COALESCE(lower(($column) $unicode)=lower(? $unicode),false)",List(value))
   private def predicate(value: ArchivePredicate): ArchiveSql = value match {
@@ -126,21 +127,24 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
         case Some(timestamp) => ArchiveSql("(r.relevance<?::numeric OR (r.relevance=?::numeric AND (r.sort_key<?::numeric OR r.sort_key IS NULL OR (r.sort_key=?::numeric AND r.id>?))))",List(score,score,timestamp,timestamp,value.id))
       }
   }
-  private def resolve(c: Connection,reader: String,query: ArchiveQuery,position: ArchiveCursor): ArchiveCursor = position.anchor match {
+  private def resolve(c: Connection,reader: String,query: ArchiveQuery,position: ArchiveCursor,materialization: Option[ReadMaterialization]): ArchiveCursor = position.anchor match {
     case None => position
     case Some(anchor) =>
       val expression=sort(query)._1
-      val key=Sql.one(c,s"""SELECT $expression FROM (
+      val selection=ReadSources.Query(s"""SELECT $expression AS sort_value FROM (
         SELECT s.owner,i.metadata FROM ch_sources s
         JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=?
-        WHERE s.id=? AND ${archive.visible}) c""",anchor.revision,position.id,reader,reader,reader)(r => Option(r.getString(1)))
+        WHERE s.id=? AND ${archive.visible}) c""",List(anchor.revision,position.id,reader,reader,reader))
+      materialization.foreach(_.admit(ReadSources.bytes(c,selection)))
+      val key=Sql.one(c,selection.sql,selection.args*)(r => Option(r.getString(1)))
         .getOrElse(throw DomainError("conflict","sort cursor anchor unavailable; restart query"))
       position.copy(last=RevisionSortAnchor.resolve(anchor,key),anchor=None)
   }
   private[chronicle] def statement(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],position: Option[ArchiveCursor]): ArchiveSql =
-    if(relevanceOrdered(query,parsed)) rankedStatement(reader,query,parsed,vectors,position) else columnStatement(reader,query,parsed,vectors,position)
+    compile(reader,query,parsed,vectors,position,false)
 
-  private def rankedStatement(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],position: Option[ArchiveCursor]): ArchiveSql = {
+  private def compile(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],position: Option[ArchiveCursor],witnesses: Boolean): ArchiveSql = {
+    val ranked=relevanceOrdered(query,parsed)
     val corpus=s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,s.published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,g.passage_format AS published_format,
       j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.failure_stage,j.completed_windows,j.total_windows,
       ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT tag FROM ch_generation_tags WHERE generation=s.published) tag_values ORDER BY lower(tag $unicode),tag) AS tags
@@ -161,7 +165,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
         val dimensions=SearchPolicy.dimensions(config)
         val vector=vectors.find(_.operand==operand).getOrElse(throw DomainError("unavailable","query embedding unavailable"))
         val value=SearchPolicy.vector(vector.values,config)
-        ctes+=s"a$index AS MATERIALIZED(SELECT ch.session_id,ch.revision,ch.generation,ch.embedding <=> ?::vector AS distance FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (SELECT true FROM corpus c WHERE c.id=ch.session_id AND c.published=ch.generation AND (${restrictions.text}) OFFSET 0) ORDER BY l2_normalize(ch.embedding)::halfvec($dimensions) <=> l2_normalize(?::vector)::halfvec($dimensions) LIMIT ${SearchPolicy.candidatesPerLeg})"
+        ctes+=s"a$index AS MATERIALIZED(SELECT ch.id,ch.session_id,ch.revision,ch.generation,ch.embedding <=> ?::vector AS distance FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (SELECT true FROM corpus c WHERE c.id=ch.session_id AND c.published=ch.generation AND (${restrictions.text}) OFFSET 0) ORDER BY l2_normalize(ch.embedding)::halfvec($dimensions) <=> l2_normalize(?::vector)::halfvec($dimensions) LIMIT ${SearchPolicy.candidatesPerLeg})"
         args+=value; args+=EmbeddingSpaceDescriptor.from(config.embedding).id; args++=restrictions.args; args+=value
       }
     }
@@ -172,10 +176,10 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       ArchiveSql(parts.mkString("("," OR ",")"),Nil)
     }
     val compiled=expression(parsed.expression,membership)
-    val positives=positiveTextOperands(parsed).map(parsed.textOperands.indexOf)
+    val positives=positive(parsed.expression,false).distinct.map(parsed.textOperands.indexOf)
     val terms=List.newBuilder[String]; terms+="0::numeric"
     val joins=List.newBuilder[String]
-    positives.foreach { index =>
+    if(ranked) positives.foreach { index =>
       if(lexical) terms+=s"CASE WHEN EXISTS(SELECT 1 FROM l$index WHERE id=c.id) THEN 1::numeric/(${SearchPolicy.reciprocalRankConstant}+1) ELSE 0 END"
       if(semantic) {
         ctes+=s"r$index AS MATERIALIZED(SELECT session_id,rank() OVER(ORDER BY nearest) AS rank FROM (SELECT session_id,min(distance) AS nearest FROM a$index GROUP BY session_id) nearest_session)"
@@ -183,57 +187,22 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
         terms+=s"COALESCE(1::numeric/(${SearchPolicy.reciprocalRankConstant}+r$index.rank),0)"
       }
     }
-    def any(prefix: String,column: String,enabled: Boolean): String = if(enabled) positives.map(i => s"EXISTS(SELECT 1 FROM $prefix$i WHERE $column=c.id)").mkString("("," OR ",")") else "false"
-    val lexicalMatch=any("l","id",lexical)
-    val semanticMatch=any("a","session_id",semantic)
-    val score=terms.result().mkString("+")
-    ctes+=s"matched AS MATERIALIZED(SELECT $columns,to_json(c.tags) AS tag_values,c.last_timestamp_order AS sort_key,($score) AS relevance,CASE WHEN $lexicalMatch THEN c.revision WHEN $semanticMatch THEN c.indexed_revision END AS matched_revision,CASE WHEN NOT $lexicalMatch AND $semanticMatch THEN c.generation END AS matched_generation FROM corpus c ${joins.result().mkString(" ")} WHERE (${compiled.text}))"
-    args++=compiled.args
-    val cursor=seekRelevance(position)
-    ArchiveSql("WITH "+ctes.result().mkString(",")+s" SELECT counted.total,page.*,page.sort_key::text AS sort_value,page.relevance::text AS relevance_value FROM (SELECT count(*) AS total FROM matched) counted LEFT JOIN LATERAL(SELECT r.* FROM matched r WHERE (${cursor.text}) ORDER BY r.relevance DESC,r.sort_key DESC NULLS LAST,r.id LIMIT ?) page ON true ORDER BY page.relevance DESC,page.sort_key DESC NULLS LAST,page.id",args.result()++cursor.args++List(query.limit+1))
-  }
-
-  private def columnStatement(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],position: Option[ArchiveCursor]): ArchiveSql = {
-    val corpus=s"""corpus AS MATERIALIZED(SELECT s.id,s.owner,s.revision,s.published,i.metadata,i.source,i.completion,i.redacted,i.last_timestamp,i.last_timestamp_order,i.message_count,g.revision AS indexed_revision,g.id AS generation,g.passage_format AS published_format,
-      j.id AS job_id,j.state AS job_state,j.attempts AS job_attempts,j.error AS job_error,j.failure_stage,j.completed_windows,j.total_windows,
-      ARRAY(SELECT tag FROM (SELECT jsonb_array_elements_text(i.metadata->'tags') AS tag UNION SELECT tag FROM ch_generation_tags WHERE generation=s.published) tag_values ORDER BY lower(tag $unicode),tag) AS tags
-      FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision
-      JOIN ch_owner_targets profile ON profile.owner=s.owner LEFT JOIN ch_generations g ON g.id=s.published
-      LEFT JOIN ch_jobs j ON j.session_id=s.id AND j.revision=s.revision AND j.profile=profile.profile WHERE ${archive.visible})"""
-    val ctes=List.newBuilder[String]; ctes+=corpus
-    val args=List.newBuilder[Sql.Param]; args++=List(reader,reader,reader)
-    val semantic=parsed.mode!=SearchMode.Lexical
-    val lexical=parsed.mode!=SearchMode.Semantic
-    val restrictions=expression(parsed.candidateFilter,_ => throw DomainError("query","text in candidate metadata restriction"))
-    parsed.textOperands.zipWithIndex.foreach { case (operand,index) =>
-      if(lexical) {
-        ctes+=s"l$index AS MATERIALIZED(SELECT c.id FROM corpus c WHERE EXISTS(SELECT 1 FROM ch_archive_fragments fragment WHERE fragment.session_id=c.id AND fragment.revision=c.revision AND lower(fragment.value $unicode) LIKE lower(? $unicode) ESCAPE '\\'))"
-        args+=literal(operand)
-      }
-      if(semantic) {
-        val dimensions=SearchPolicy.dimensions(config)
-        val vector=vectors.find(_.operand==operand).getOrElse(throw DomainError("unavailable","query embedding unavailable"))
-        ctes+=s"a$index AS MATERIALIZED(SELECT ch.session_id,ch.revision,ch.generation FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (SELECT true FROM corpus c WHERE c.id=ch.session_id AND c.published=ch.generation AND (${restrictions.text}) OFFSET 0) ORDER BY l2_normalize(ch.embedding)::halfvec($dimensions) <=> l2_normalize(?::vector)::halfvec($dimensions) LIMIT ${SearchPolicy.candidatesPerLeg})"
-        args+=EmbeddingSpaceDescriptor.from(config.embedding).id; args++=restrictions.args; args+=SearchPolicy.vector(vector.values,config)
-      }
-    }
-    def membership(operand: String): ArchiveSql = {
-      val index=parsed.textOperands.indexOf(operand)
-      Check(index>=0,"query","unregistered text operand")
-      val parts=(if(lexical) List(s"EXISTS(SELECT 1 FROM l$index WHERE id=c.id)") else Nil)++(if(semantic) List(s"EXISTS(SELECT 1 FROM a$index WHERE session_id=c.id)") else Nil)
-      ArchiveSql(parts.mkString("("," OR ",")"),Nil)
-    }
-    val compiled=expression(parsed.expression,membership)
-    val positives=positive(parsed.expression,false).distinct.map(parsed.textOperands.indexOf)
     def any(prefix: String,column: String,enabled: Boolean): String = if(enabled && positives.nonEmpty) positives.map(i => s"EXISTS(SELECT 1 FROM $prefix$i WHERE $column=c.id)").mkString("("," OR ",")") else "false"
     val lexicalMatch=any("l","id",lexical)
     val semanticMatch=any("a","session_id",semantic)
-    val (sortKey,numeric)=sort(query)
-    ctes+=s"matched AS MATERIALIZED(SELECT $columns,to_json(c.tags) AS tag_values,$sortKey AS sort_key,CASE WHEN $lexicalMatch THEN c.revision WHEN $semanticMatch THEN c.indexed_revision END AS matched_revision,CASE WHEN NOT $lexicalMatch AND $semanticMatch THEN c.generation END AS matched_generation FROM corpus c WHERE (${compiled.text}))"
+    val score=terms.result().mkString("+")
+    val (columnKey,numeric)=sort(query)
+    val sortKey=if(ranked) "c.last_timestamp_order" else columnKey
+    ctes+=s"matched AS MATERIALIZED(SELECT $columns,to_json(c.tags) AS tag_values,$sortKey AS sort_key,($score) AS relevance,CASE WHEN $lexicalMatch THEN c.revision WHEN $semanticMatch THEN c.indexed_revision END AS matched_revision,CASE WHEN NOT $lexicalMatch AND $semanticMatch THEN c.generation END AS matched_generation FROM corpus c ${joins.result().mkString(" ")} WHERE (${compiled.text}))"
     args++=compiled.args
-    val cursor=seek(position,numeric,query.direction)
-    val direction=if(query.direction==SortDirection.Asc) "ASC" else "DESC"
-    ArchiveSql("WITH "+ctes.result().mkString(",")+s" SELECT counted.total,page.*,page.sort_key::text AS sort_value FROM (SELECT count(*) AS total FROM matched) counted LEFT JOIN LATERAL(SELECT r.* FROM matched r WHERE (${cursor.text}) ORDER BY r.sort_key $direction NULLS LAST,r.id LIMIT ?) page ON true ORDER BY page.sort_key $direction NULLS LAST,page.id",args.result()++cursor.args++List(query.limit+1))
+    val cursor=if(ranked) seekRelevance(position) else seek(position,numeric,query.direction)
+    val direction=if(ranked || query.direction==SortDirection.Desc) "DESC" else "ASC"
+    def order(alias: String): String = (if(ranked) s"$alias.relevance DESC," else "")+s"$alias.sort_key $direction NULLS LAST,$alias.id"
+    val references=if(witnesses && semantic && positives.nonEmpty) {
+      val candidates=positives.map(i => s"SELECT $i AS operand,id,revision,generation,distance FROM a$i WHERE session_id=page.id").mkString(" UNION ALL ")
+      s"(SELECT coalesce(jsonb_agg(to_jsonb(w)), '[]'::jsonb) FROM (SELECT operand,id,revision,generation FROM ($candidates) candidates ORDER BY distance,operand,id LIMIT ${ArchiveSearchPolicy.maximumMatches}) w)"
+    } else "'[]'::jsonb"
+    ArchiveSql("WITH "+ctes.result().mkString(",")+s" SELECT counted.total,page.*,page.sort_key::text AS sort_value,page.relevance::text AS relevance_value,$references AS witnesses FROM (SELECT count(*) AS total FROM matched) counted LEFT JOIN LATERAL(SELECT r.* FROM matched r WHERE (${cursor.text}) ORDER BY ${order("r")} LIMIT ?) page ON true ORDER BY ${order("page")}",args.result()++cursor.args++List(query.limit+1))
   }
   private def row(r: ResultSet): ArchiveRow = {
     val id=r.getObject("id",classOf[UUID])
@@ -248,6 +217,24 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
   }
   def browse(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector]): ArchiveResult = db.transaction { c =>
     c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+    execute(c,reader,query,parsed,vectors,None)._1
+  }
+  def sourceSearch(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],materialization: ReadMaterialization): ArchiveSearchResult = {
+    ArchiveSearchPolicy.page(query.limit)
+    val bounded=ArchiveSearchPolicy.materialization(materialization)
+    try db.transaction { c =>
+      c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
+      Sql.exec(c,"SELECT set_config('statement_timeout',least(coalesce(nullif(setting::bigint,0),?),?)::text,true) FROM pg_settings WHERE name='statement_timeout'",ArchiveSearchPolicy.statementDeadlineMillis,ArchiveSearchPolicy.statementDeadlineMillis)
+      val (page,selected)=execute(c,reader,query,parsed,vectors,Some(bounded))
+      val evidence=selected.map { value =>
+        ArchiveSearchEvidence(value.value.head.id,ArchiveSearchWitnesses.read(c,archive,reader,value.value,parsed,value.witnesses,bounded))
+      }
+      ArchiveSearchPolicy.result(ArchiveSearchResult(page,evidence))
+    } catch {
+      case error: SQLException if error.getSQLState=="57014" => throw DomainError("deadline","archive search statement deadline exceeded")
+    }
+  }
+  private def execute(c: Connection,reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],materialization: Option[ReadMaterialization]): (ArchiveResult,List[PageRow]) = {
     ArchivePaging.page(query.limit)
     val bounded=parsed.mode!=SearchMode.Lexical && parsed.textOperands.nonEmpty
     if(bounded) {
@@ -255,11 +242,23 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
       SearchPolicy.configure(c)
     }
     val ranked=relevanceOrdered(query,parsed)
-    val position=ArchivePaging.decode(query,reader,ranked).map(resolve(c,reader,query,_))
-    val sql=statement(reader,query,parsed,vectors,position)
-    val rows=Sql.rows(c,sql.text,sql.args*) { r =>
-      val result=Option(r.getObject("id",classOf[UUID])).map(_ => PageRow(row(r),Option(r.getString("sort_value")),if(ranked) Some(r.getString("relevance_value")) else None))
+    val position=ArchivePaging.decode(query,reader,ranked).map(resolve(c,reader,query,_,materialization))
+    val sql=compile(reader,query,parsed,vectors,position,materialization.nonEmpty)
+    def decode(r: ResultSet): (Long,Option[PageRow]) = {
+      val result=Option(r.getObject("id",classOf[UUID])).map { _ =>
+        val refs=if(materialization.isEmpty) Nil else ArchiveSearchWitnesses.decode(Sql.json(r,"witnesses"))
+        PageRow(row(r),Option(r.getString("sort_value")),if(ranked) Some(r.getString("relevance_value")) else None,refs)
+      }
       (r.getLong("total"),result)
+    }
+    val rows=materialization match {
+      case None => Sql.rows(c,sql.text,sql.args*)(decode)
+      case Some(admission) =>
+        // Keep the page in a transaction-local relation so witnesses and the count come from the same ANN execution.
+        Sql.exec(c,"CREATE TEMP TABLE ch_archive_search_page ON COMMIT DROP AS "+sql.text,sql.args*)
+        val bytes=Sql.one(c,"SELECT coalesce(sum(octet_length(convert_to(to_jsonb(p)::text,'UTF8'))::numeric),0) FROM ch_archive_search_page p")(r => ReadSources.checked(r.getBigDecimal(1))).get
+        admission.admit(bytes)
+        Sql.rows(c,"SELECT * FROM ch_archive_search_page ORDER BY "+(if(ranked) "relevance DESC," else "")+"sort_key "+(if(ranked || query.direction==SortDirection.Desc) "DESC" else "ASC")+" NULLS LAST,id")(decode)
     }
     val page=rows.flatMap(_._2)
     val values=page.take(query.limit)
@@ -269,6 +268,6 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
         case None => ArchivePaging.cursor(query,reader,row.key,row.value.head.id,row.value.head.view.revision)
       }
     } else None
-    ArchiveResult(values.map(_.value),rows.head._1,next,if(bounded) ArchiveTextScope.BoundedCandidateSets else ArchiveTextScope.ExactLexical,if(bounded) Some(SearchPolicy.candidatesPerLeg) else None,ranked)
+    (ArchiveResult(values.map(_.value),rows.head._1,next,if(bounded) ArchiveTextScope.BoundedCandidateSets else ArchiveTextScope.ExactLexical,if(bounded) Some(SearchPolicy.candidatesPerLeg) else None,ranked),values)
   }
 }

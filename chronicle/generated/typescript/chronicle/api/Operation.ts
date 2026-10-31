@@ -10,7 +10,7 @@ import {SearchFilter, SearchFilter_JsonCodec} from './SearchFilter.js'
 import {SearchQuery, SearchQuery_JsonCodec} from './SearchQuery.js'
 import {Span, Span_JsonCodec} from './Span.js'
 
-export type Operation = Operation_Hello | Operation_Ping | Operation_Pong | Operation_Whoami | Operation_Search | Operation_GetSession | Operation_GetChunks | Operation_GetMessages | Operation_SearchSessionMessages | Operation_ReadMessageContext | Operation_GetRaw | Operation_Related | Operation_Facets | Operation_CollectionStatus | Operation_IngestStatus | Operation_RetryJob | Operation_ListTokens | Operation_MintToken | Operation_RevokeToken | Operation_ListGroups | Operation_CreateGroup | Operation_Invite | Operation_AcceptInvite | Operation_RemoveMember | Operation_LeaveGroup | Operation_DeleteGroup | Operation_Receipt | Operation_Purge | Operation_Logout | Operation_Archive | Operation_Activity | Operation_ActivityJobs | Operation_LocateMessage | Operation_PreviewRetryFailed | Operation_ApplyRetryFailed | Operation_ExpressionHints | Operation_ModelUsage | Operation_GetPassages | Operation_GetPassageSpans | Operation_PreviewOwnerReindex | Operation_ApplyOwnerReindex | Operation_GetReindexStatus | Operation_McpTestTools | Operation_StartMcpTest | Operation_ReadMcpTest | Operation_CancelMcpTest
+export type Operation = Operation_Hello | Operation_Ping | Operation_Pong | Operation_Whoami | Operation_Search | Operation_GetSession | Operation_GetChunks | Operation_GetMessages | Operation_SearchSessionMessages | Operation_ReadMessageContext | Operation_GetRaw | Operation_Related | Operation_Facets | Operation_CollectionStatus | Operation_IngestStatus | Operation_RetryJob | Operation_ListTokens | Operation_MintToken | Operation_RevokeToken | Operation_ListGroups | Operation_CreateGroup | Operation_Invite | Operation_AcceptInvite | Operation_RemoveMember | Operation_LeaveGroup | Operation_DeleteGroup | Operation_Receipt | Operation_Purge | Operation_Logout | Operation_Archive | Operation_ArchiveSearch | Operation_Activity | Operation_ActivityJobs | Operation_LocateMessage | Operation_PreviewRetryFailed | Operation_ApplyRetryFailed | Operation_ExpressionHints | Operation_ModelUsage | Operation_GetPassages | Operation_GetPassageSpans | Operation_PreviewOwnerReindex | Operation_ApplyOwnerReindex | Operation_GetReindexStatus | Operation_McpTestTools | Operation_StartMcpTest | Operation_ReadMcpTest | Operation_CancelMcpTest
 
 export const Operation = {
     BaboonDomainVersion: '1.9.0',
@@ -3470,6 +3470,114 @@ export class Operation_Archive_JsonCodec {
     }
 }
 
+export class Operation_ArchiveSearch implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'chronicle.api/[chronicle.api/:#Operation]#ArchiveSearch' as const;
+    private readonly _query: ArchiveQuery;
+
+    constructor(query: ArchiveQuery) {
+        this._query = query
+    }
+
+    public get query(): ArchiveQuery {
+        return this._query;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            query: this._query
+        };
+    }
+
+    public with(overrides: {query?: ArchiveQuery}): Operation_ArchiveSearch {
+        return new Operation_ArchiveSearch(
+            'query' in overrides ? overrides.query! : this._query
+        );
+    }
+
+    public static fromPlain(obj: {query: ArchiveQuery}): Operation_ArchiveSearch {
+        return new Operation_ArchiveSearch(
+            obj.query
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return Operation_ArchiveSearch.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_ArchiveSearch.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#ArchiveSearch'
+    public baboonTypeIdentifier() {
+        return Operation_ArchiveSearch.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.9.0"]
+    public baboonSameInVersions() {
+        return Operation_ArchiveSearch.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.9.0": "identical" }
+    public baboonForwardReadable() {
+        return Operation_ArchiveSearch.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.9.0", "prefix-compact": "1.9.0", "prefix-any-mode": "1.9.0", "identical": "1.9.0" }
+    public baboonMinReaderVersions() {
+        return Operation_ArchiveSearch.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_ArchiveSearch.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Operation_ArchiveSearch_JsonCodec {
+        return Operation_ArchiveSearch_JsonCodec.instance
+    }
+}
+
+export class Operation_ArchiveSearch_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Operation_ArchiveSearch): unknown {
+        if (this !== Operation_ArchiveSearch_JsonCodec.lazyInstance.value) {
+          return Operation_ArchiveSearch_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "query": ArchiveQuery_JsonCodec.instance.encode(BaboonCodecContext.Default, value.query),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Operation_ArchiveSearch {
+        if (this !== Operation_ArchiveSearch_JsonCodec .lazyInstance.value) {
+            return Operation_ArchiveSearch_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Operation_ArchiveSearch (
+            ArchiveQuery_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["query"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.9.0'
+    public baboonDomainVersion() {
+        return Operation_ArchiveSearch_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'chronicle.api'
+    public baboonDomainIdentifier() {
+        return Operation_ArchiveSearch_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'chronicle.api/[chronicle.api/:#Operation]#ArchiveSearch'
+    public baboonTypeIdentifier() {
+        return Operation_ArchiveSearch_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'chronicle.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_ArchiveSearch_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Operation_ArchiveSearch_JsonCodec())
+    public static get instance(): Operation_ArchiveSearch_JsonCodec {
+        return Operation_ArchiveSearch_JsonCodec.lazyInstance.value
+    }
+}
+
 export class Operation_Activity implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public readonly $type = 'chronicle.api/[chronicle.api/:#Operation]#Activity' as const;
     private readonly _query: ActivityQuery;
@@ -5473,6 +5581,9 @@ export class Operation_JsonCodec {
             if (value instanceof Operation_Archive) {
                 return { "Archive": Operation_Archive_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof Operation_ArchiveSearch) {
+                return { "ArchiveSearch": Operation_ArchiveSearch_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
             if (value instanceof Operation_Activity) {
                 return { "Activity": Operation_Activity_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
@@ -5561,6 +5672,7 @@ export class Operation_JsonCodec {
                 case "Purge": return Operation_Purge_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Logout": return Operation_Logout_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Archive": return Operation_Archive_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "ArchiveSearch": return Operation_ArchiveSearch_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Activity": return Operation_Activity_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "ActivityJobs": return Operation_ActivityJobs_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "LocateMessage": return Operation_LocateMessage_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])

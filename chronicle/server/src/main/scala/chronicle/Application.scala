@@ -19,11 +19,9 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.Whoami() | Operation.Search(_) => read(ReadAccess.current(i),e.operation)
       case Operation.Archive(q) =>
         i.requireScope(Scope.Read)
-        val parsed=ArchiveExpression.parse(q.expression)
-        ArchivePaging.page(q.limit); ArchivePaging.decode(q,uid,ArchiveExpression.relevanceOrdered(q,parsed))
-        val vectors=if(parsed.mode==SearchMode.Lexical || parsed.textOperands.isEmpty) IO.pure(List.empty[ArchiveVector])
-          else parsed.textOperands.traverse(text => embedder.query(uid,text).map(values => ArchiveVector(text,values))).handleErrorWith(_ => IO.raiseError(DomainError("unavailable","query embedding unavailable")))
-        vectors.flatMap(values => IO.blocking(Result.Archive(archiveIndex.browse(uid,q,parsed,values))))
+        archivePlan(uid,q).flatMap { (parsed,values) => IO.blocking(Result.Archive(archiveIndex.browse(uid,q,parsed,values))) }
+      case request: Operation.ArchiveSearch =>
+        contextReadAccess(i,IO.blocking(db.transaction(c => auth.currentBrowser(c,i)))).flatMap(access => read(access,request))
       case Operation.ExpressionHints(q) => i.requireScope(Scope.Read); IO.blocking(Result.ExpressionHints(hints.hints(uid,q)))
       case Operation.ModelUsage() => usage.read(i).map(Result.ModelUsage.apply)
       case Operation.GetPassages(id,view,offset,limit) => i.requireScope(Scope.Read); IO.blocking(Result.Passages(archive.passages(uid,id,offset,limit,Some(view))))
@@ -64,6 +62,11 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
         Result.Whoami(identity.user)
       }
       case Operation.Search(q) => query(access,q).map(Result.Search.apply)
+      case Operation.ArchiveSearch(q) =>
+        ArchiveSearchPolicy.page(q.limit)
+        access.identity.flatMap(i => archivePlan(i.user.id,q)).flatMap { (parsed,values) =>
+          access.blocking(i => Result.ArchiveSearch(archiveIndex.sourceSearch(i.user.id,q,parsed,values,materialization)))
+        }
       case Operation.GetSession(id,view) => access.blocking(i => Result.Session(archive.readSession(i.user.id,id,view,materialization)))
       case Operation.GetChunks(id,offset,limit,view) => access.blocking(i => Result.Chunks(archive.pageChunks(i.user.id,id,offset,limit,view,materialization)))
       case Operation.ReadMessageContext(id,view,anchor,beforeBytes,afterBytes) => access.blocking(i => Result.MessageContext(archive.readMessageContext(i.user.id,id,view,anchor,beforeBytes,afterBytes,materialization)))
@@ -79,6 +82,13 @@ final class Application(archive: PostgresArchive,searchIndex: SearchIndex,embedd
       case Operation.IngestStatus(offset,limit) => access.blocking(i => Result.Status(archive.statuses(i.user.id,offset,limit,materialization)))
       case _ => IO.raiseError(DomainError("invalid","operation is not a source read tool"))
     }
+  }
+  private def archivePlan(reader: String,q: ArchiveQuery): IO[(ParsedArchiveExpression,List[ArchiveVector])] = IO.defer {
+    val parsed=ArchiveExpression.parse(q.expression)
+    ArchivePaging.page(q.limit); ArchivePaging.decode(q,reader,ArchiveExpression.relevanceOrdered(q,parsed))
+    val vectors=if(parsed.mode==SearchMode.Lexical || parsed.textOperands.isEmpty) IO.pure(List.empty[ArchiveVector])
+      else parsed.textOperands.traverse(text => embedder.query(reader,text).map(values => ArchiveVector(text,values))).handleErrorWith(_ => IO.raiseError(DomainError("unavailable","query embedding unavailable")))
+    vectors.map(values => (parsed,values))
   }
   private def query(access: ReadAccess,q: SearchQuery): IO[SearchResult] = IO.defer {
     SearchPolicy.validateQuery(q,false)

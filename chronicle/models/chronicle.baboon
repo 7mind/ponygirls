@@ -117,6 +117,7 @@ root adt Operation {
   data Purge { sessionId: uid }
   data Logout {}
   data Archive { query: ArchiveQuery }
+  data ArchiveSearch { query: ArchiveQuery }
   data Activity { query: ActivityQuery }
   data ActivityJobs { query: ActivityJobsQuery }
   data LocateMessage { sessionId: uid view: ContentView messageId: str }
@@ -159,6 +160,7 @@ root adt Result {
   data Error { failure: Failure }
   data Ping { nonce: str }
   data Archive { result: ArchiveResult }
+  data ArchiveSearch { result: ArchiveSearchResult }
   data Activity { result: ActivityResult }
   data ActivityJobs { result: ActivityJobsResult }
   data LocatedMessage { result: MessageLocation }
@@ -394,3 +396,9 @@ data MessageContextResult {
   sessionId: uid view: ContentView anchor: PassageSourceSpan excerpts: lst[ContextExcerpt]
   previous: opt[Span] next: opt[Span]
 }
+
+
+enum ArchiveMatchKind { Literal Semantic }
+data ArchiveSourceMatch { view: ContentView span: Span kind: ArchiveMatchKind operand: str summary: opt[str] }
+data ArchiveSearchEvidence { sessionId: uid matches: lst[ArchiveSourceMatch] }
+data ArchiveSearchResult { page: ArchiveResult evidence: lst[ArchiveSearchEvidence] }
