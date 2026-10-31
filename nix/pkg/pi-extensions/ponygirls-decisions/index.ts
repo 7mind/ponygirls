@@ -94,7 +94,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         pi.enqueueMessage({
           customType: NOTICE_TYPE, content: notice(q), display: true,
           details: { project: b.project, id: q.id, revision: q.revision },
-        }, { triggerTurn: true, deliverAs: "followUp" });
+        }, { triggerTurn: true, deliverAs: "steer" });
         // Admission is remembered in memory; persisted messages are the receipt on reload.
         b.delivered.add(key);
       }

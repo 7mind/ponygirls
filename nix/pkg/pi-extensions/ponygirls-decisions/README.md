@@ -61,8 +61,10 @@ current answer. Repeated calls with the same project/session/tool-call identity
 are idempotent. Separate questions receive separate IDs even if their text matches.
 
 An open requesting session receives a visible answer message automatically,
-including the exact question and answer. Busy sessions queue it as a follow-up;
-idle sessions wake. An answer admitted while a user prompt is being prepared
+including the exact question and answer. A busy session receives it at the next
+turn boundary: after the current tool batch's results (never between a tool call
+and its result), so the next model request in the same run sees it; if the run
+would otherwise stop, it continues with the answer. Idle sessions wake. An answer admitted while a user prompt is being prepared
 (for example during asynchronous input handlers, or on resume before the first
 prompt) is committed ahead of that prompt and joins its run instead of starting a
 competing run that would reject the prompt. Abort clears wake intent but

@@ -104,7 +104,7 @@ test("answer/revision notices wake the origin once, clear badge, and retain full
   assert.equal(f.messages.length, 1);
   assert.equal(f.messages[0].message.display, true);
   assert.match(f.messages[0].message.content, /SQLite with transactions/);
-  assert.deepEqual(f.messages[0].options, { triggerTurn: true, deliverAs: "followUp" });
+  assert.deepEqual(f.messages[0].options, { triggerTurn: true, deliverAs: "steer" });
   assert.equal(f.widgets.at(-1)[1], undefined);
   f.tick();
   assert.equal(f.messages.length, 1);
