@@ -113,11 +113,13 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     }
   };
 
+  const current = (ctx: ExtensionContext): Binding | null =>
+    binding !== null && binding.sessionId === ctx.sessionManager.getSessionId() && binding.ctx.cwd === ctx.cwd ? binding : null;
+
   const active = (ctx: ExtensionContext): Binding => {
-    if (binding === null || binding.sessionId !== ctx.sessionManager.getSessionId() || binding.ctx.cwd !== ctx.cwd) {
-      throw new Error("Decisions is not initialized for this session; /reload and check storage errors");
-    }
-    return binding;
+    const b = current(ctx);
+    if (b === null) throw new Error("Decisions is not initialized for this session; /reload and check storage errors");
+    return b;
   };
 
   const openPane = async (b: Binding, id: string | null): Promise<void> => {
@@ -177,12 +179,13 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   });
 
   pi.on("context", (event, ctx) => {
-    const b = active(ctx);
+    // Pi forwards the original messages when a context handler throws, so an unbound session fails closed here.
+    const b = current(ctx);
     return { messages: event.messages.map((message) => {
       if (message.role !== "custom" || message.customType !== NOTICE_TYPE) return message;
       const data = message.details as { project?: unknown; id?: unknown } | undefined;
       try {
-        if (!data || data.project !== b.project || typeof data.id !== "string") throw new Error("Unbound decision notification");
+        if (b === null || !data || data.project !== b.project || typeof data.id !== "string") throw new Error("Unbound decision notification");
         return { ...message, content: notice(b.store.get(b.project, data.id)) };
       } catch {
         return { ...message, content: "Decision verification is unavailable. Historical answers in this notification are not current evidence. Do not act on them until decisions get succeeds." };

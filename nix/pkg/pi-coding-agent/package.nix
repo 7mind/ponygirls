@@ -64,7 +64,9 @@ buildNpmPackage (finalAttrs: {
     ./patches/border-widgets.patch
     ./patches/footer-options.patch
     # Retain accepted extension messages across flush failures/cancellation;
-    # allow subagent lifecycle notices to resume their governor safely.
+    # allow subagent lifecycle notices to resume their governor safely. A
+    # retained wake never starts a run while a prompt is being prepared (that
+    # prompt would be rejected as concurrent); the prompt's run satisfies it.
     ./patches/retained-custom-message-ingress.patch
   ];
 

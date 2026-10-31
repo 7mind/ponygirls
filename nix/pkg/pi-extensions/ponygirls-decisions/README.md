@@ -62,8 +62,11 @@ are idempotent. Separate questions receive separate IDs even if their text match
 
 An open requesting session receives a visible answer message automatically,
 including the exact question and answer. Busy sessions queue it as a follow-up;
-idle sessions wake. Cancellation clears wake intent but retains the admitted
-answer in context. This uses this repository's retained-message API patch, as
+idle sessions wake. An answer admitted while a user prompt is being prepared
+(for example during asynchronous input handlers, or on resume before the first
+prompt) is committed ahead of that prompt and joins its run instead of starting a
+competing run that would reject the prompt. Cancellation clears wake intent but
+retains the admitted answer in context. This uses this repository's retained-message API patch, as
 well as its editor-border badge patch. Another open session can answer using the same inbox. Other
 sessions' questions do not automatically wake the current agent. Resuming the
 requesting session reconciles resolved questions against persisted notification
@@ -76,8 +79,9 @@ questions and recent resolutions discoverable. It is not a substitute for readin
 the full, current answer before acting. Notification snapshots are revalidated
 against storage for every model request, including low-level follow-ups: a queued
 answer withdrawn elsewhere is replaced with the current pending state. The
-transcript preserves the original event. If verification fails, the request sees
-an explicit unavailable state instead of the historical answer. This is a
+transcript preserves the original event. If verification fails, including when
+the extension could not bind at session start, the request sees an explicit
+unavailable state instead of the historical answer. This is a
 request-time snapshot, not revocation of an already-running action. Answers never
 expand the authorization of the original question.
 

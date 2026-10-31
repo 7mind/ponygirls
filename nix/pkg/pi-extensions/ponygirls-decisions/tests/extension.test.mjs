@@ -19,6 +19,7 @@ function fixture(t) {
   let tick;
   let watching = false;
   let unavailable = false;
+  let projectFailure = false;
   const pi = {
     on: (name, fn) => handlers.set(name, fn),
     registerTool: (value) => { tool = value; },
@@ -48,12 +49,12 @@ function fixture(t) {
       return list(project);
     };
     return store;
-  }, projectFor: () => "project-a",
+  }, projectFor: () => { if (projectFailure) throw new Error("test project resolution failed"); return "project-a"; },
     watch: (refresh) => { tick = refresh; watching = true; return () => { watching = false; }; } });
   t.after(() => { handlers.get("session_shutdown")({}, ctx); rmSync(dir, { recursive: true, force: true }); });
   const start = () => handlers.get("session_start")({}, ctx);
   return { path, ctx, entries, messages, widgets, notifications, start, tick: () => tick(), watching: () => watching,
-    setUnavailable: (value) => { unavailable = value; },
+    setUnavailable: (value) => { unavailable = value; }, failProject: () => { projectFailure = true; },
     call: (params, id) => tool.execute(id, params, undefined, () => {}, ctx),
     command: (text) => commands.get("decisions").handler(text, ctx), handlers };
 }
@@ -196,4 +197,17 @@ test("list paginates summaries, filter defaults pending, shutdown stops the watc
   f.handlers.get("session_shutdown")({}, f.ctx);
   assert.equal(f.watching(), false);
   assert.doesNotThrow(() => f.tick(), "stopped callback must not access disposed storage");
+});
+
+test("a failed session start never lets historical answers reach the provider", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Proceed?" }, "question");
+  await f.command("answer Q1 Historical approval");
+  const original = { role: "custom", ...f.messages[0].message };
+  f.failProject();
+  assert.throws(() => f.start(), /project resolution failed/);
+  // Pi reports a throwing context handler and sends the messages unchanged, so failure must be expressed in the result.
+  const transformed = f.handlers.get("context")({ messages: [original] }, f.ctx);
+  assert.match(transformed.messages[0].content, /verification is unavailable/);
+  assert.doesNotMatch(transformed.messages[0].content, /Historical approval/);
 });

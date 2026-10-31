@@ -10,17 +10,31 @@ const root = process.env.PI_DECISIONS_SDK_ROOT;
 assert.ok(root, "PI_DECISIONS_SDK_ROOT must point to pinned pi-monorepo; host tests may not silently skip");
 const sdk = await import(pathToFileURL(join(root, "dist/index.js")));
 const { createAssistantMessageEventStream } = await import(pathToFileURL(join(root, "node_modules/@earendil-works/pi-ai/dist/utils/event-stream.js")));
+const { Type } = await import(pathToFileURL(join(root, "node_modules/typebox/build/index.mjs")));
 const extensionPath = resolve(import.meta.dirname, "../index.ts");
 const ask = { type: "toolCall", id: "ask-1", name: "decisions", arguments: { action: "ask", question: "Which storage?", context: "Concurrent Pi sessions", options: ["SQLite", "JSONL"], recommendation: "SQLite, for atomic IDs" } };
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
-async function fixture(t, replies) {
-  const dir = mkdtempSync(join(tmpdir(), "decisions-host-"));
+const hold = { type: "toolCall", id: "hold-1", name: "hold", arguments: {} };
+
+// `hold` blocks until released; `inputDelayMs` models an asynchronous input handler of another extension.
+async function fixture(t, replies, { dir = mkdtempSync(join(tmpdir(), "decisions-host-")), sessionFile, inputDelayMs = 0 } = {}) {
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
   const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+  const holds = [];
   const loader = new sdk.DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager, additionalExtensionPaths: [extensionPath],
-    noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true });
+    noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true,
+    extensionFactories: [(pi) => {
+      if (inputDelayMs > 0) pi.on("input", async () => { await new Promise((r) => setTimeout(r, inputDelayMs)); });
+      pi.registerTool({ name: "hold", label: "Hold", description: "Blocks until the test releases it", parameters: Type.Object({}),
+        async execute() {
+          const held = Promise.withResolvers();
+          holds.push(held);
+          await held.promise;
+          return { content: [{ type: "text", text: "held work finished" }], details: undefined };
+        } });
+    }] });
   await loader.reload();
   assert.deepEqual(loader.getExtensions().errors, []);
   const runtime = await sdk.ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
@@ -50,20 +64,33 @@ async function fixture(t, replies) {
       } else queueMicrotask(finish);
       return stream;
     } });
-  const manager = sdk.SessionManager.create(dir, dir);
+  const manager = sessionFile === undefined ? sdk.SessionManager.create(dir, dir) : sdk.SessionManager.open(sessionFile, dir);
   const { session } = await sdk.createAgentSession({ cwd: dir, agentDir: dir, modelRuntime: runtime,
     model: runtime.getModel("decisions-fixture", "scripted"), thinkingLevel: "off", settingsManager, resourceLoader: loader,
-    sessionManager: manager, tools: ["decisions"] });
+    sessionManager: manager, tools: ["decisions", "hold"] });
   const errors = [];
   await session.bindExtensions({ mode: "rpc", onError: (error) => errors.push(error) });
-  session.setActiveToolsByName(["decisions"]);
+  session.setActiveToolsByName(["decisions", "hold"]);
   t.after(async () => {
+    for (const held of holds) held.resolve();
     await session.abort(); session.dispose();
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
     rmSync(dir, { recursive: true, force: true });
   });
-  return { dir, session, manager, errors, calls: () => calls, contexts, release: () => { assert.ok(release); release(); } };
+  return { dir, session, manager, errors, calls: () => calls, contexts, holds, release: () => { assert.ok(release); release(); } };
 }
+
+function answerExternally(dir, answer) {
+  const store = new SqliteDecisionStore(join(dir, "decisions", "questions.sqlite"));
+  try {
+    const q = store.get(dir, "Q1");
+    store.resolve(dir, q.id, q.revision, "answered", answer);
+  } finally {
+    store.close();
+  }
+}
+
+const providerRoles = (context) => JSON.parse(context).messages.map((m) => m.role);
 
 async function eventually(check, message) {
   const deadline = Date.now() + 7000;
@@ -144,4 +171,68 @@ test("real Pi: another connection answers while origin remains open; polling del
   await f.session.waitForIdle();
   assert.match(f.contexts[2], /Use SQLite; retain all answers/);
   assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: an answer during tool execution never splits a tool call from its result and continues the run", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, [[ask], "Independent work", [hold], "Held work done", "Continuing with the answer"]);
+  await f.session.prompt("Ask the storage question");
+  const running = f.session.prompt("Start held independent work");
+  await eventually(() => f.holds.length === 1, "held tool must start");
+  await f.session.prompt("/decisions answer Q1 Answer during a tool call");
+  f.holds[0].resolve();
+  await running;
+  await eventually(() => f.calls() === 5, "the answer must continue the run");
+  await f.session.waitForIdle();
+  const branch = f.manager.getBranch();
+  for (const [index, entry] of branch.entries()) {
+    if (entry.type !== "message" || entry.message.role !== "assistant" || entry.message.stopReason !== "toolUse") continue;
+    assert.equal(branch[index + 1]?.message?.role, "toolResult", "nothing may be persisted between a tool call and its result");
+  }
+  const last = JSON.parse(f.contexts[4]).messages;
+  assert.equal(last.at(-1).role, "user");
+  assert.match(JSON.stringify(last.at(-1)), /Answer during a tool call/);
+  assert.equal(f.calls(), 5);
+  assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: an answer admitted while a prompt is being prepared joins that prompt instead of rejecting it", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, [[ask], "Independent work", { waitForRelease: true, content: [{ type: "text", text: "Prompt answered with the decision" }] }], { inputDelayMs: 300 });
+  await f.session.prompt("Ask the storage question");
+  const prompt = f.session.prompt("New user request").then(() => "accepted", (error) => `rejected: ${error.message}`);
+  await new Promise((r) => setTimeout(r, 50));
+  await f.session.prompt("/decisions answer Q1 Answer during preparation");
+  // Hold the next request past the prompt's preparation, as a real provider would.
+  await eventually(() => f.calls() === 3, "a model request must start");
+  await new Promise((r) => setTimeout(r, 400));
+  f.release();
+  assert.equal(await prompt, "accepted");
+  await f.session.waitForIdle();
+  await new Promise((r) => setTimeout(r, 200));
+  await f.session.waitForIdle();
+  assert.equal(f.calls(), 3, "the committed answer joins the user's run; no separate wake request");
+  assert.match(f.contexts[2], /Answer during preparation/);
+  assert.match(f.contexts[2], /New user request/);
+  assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: resuming with an undelivered answer folds it into an immediate first prompt", { timeout: 15000 }, async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "decisions-host-"));
+  const first = await fixture(t, [[ask], "Independent work"], { dir });
+  await first.session.prompt("Ask the storage question");
+  const sessionFile = first.manager.getSessionFile();
+  first.session.dispose();
+  answerExternally(dir, "Answered while the session was closed");
+  const resumed = await fixture(t, [{ waitForRelease: true, content: [{ type: "text", text: "Resumed with the answer" }] }], { dir, sessionFile, inputDelayMs: 20 });
+  const prompt = resumed.session.prompt("Initial request").then(() => "accepted", (error) => `rejected: ${error.message}`);
+  await eventually(() => resumed.calls() === 1, "a model request must start");
+  await new Promise((r) => setTimeout(r, 100));
+  resumed.release();
+  assert.equal(await prompt, "accepted");
+  await resumed.session.waitForIdle();
+  await new Promise((r) => setTimeout(r, 200));
+  await resumed.session.waitForIdle();
+  assert.equal(resumed.calls(), 1);
+  assert.match(resumed.contexts[0], /Answered while the session was closed/);
+  assert.match(resumed.contexts[0], /Initial request/);
+  assert.deepEqual(resumed.errors, []);
 });
