@@ -267,6 +267,20 @@ package tree from `PI_SUBAGENTS_SDK_ROOT`, which the home-manager pi wrapper
 sets to the exact pi derivation (`nix/hm/pi.nix`); without it spawning fails
 explicitly.
 
+Pi `/reload` rebinds the new extension runtime to the existing process-local
+supervisor instead of terminating workers. Active child conversations and
+provider requests continue, completion notices emitted during reload are
+retained, and subsequent provider requests use the current `auth.json` or the
+current parent model registry. Thus switching the authenticated account for the
+same provider does not replace the child identity or transcript. An account
+that cannot access the selected model fails on the next request; credentials
+and models are never silently substituted. An unattached reload handoff expires
+after 30 seconds, and a changed/invalid policy intentionally replaces the live
+supervisor so new authority and limits take effect. Session switching, quit, and
+process exit remain terminal for live workers (durable recovery still applies).
+Generation-scoped governing external tools reject calls made during the detach
+gap; native child tools and provider requests continue independently.
+
 ## The /agents screen
 
 `/agents` opens a full-screen view of the tree: path (nested agents

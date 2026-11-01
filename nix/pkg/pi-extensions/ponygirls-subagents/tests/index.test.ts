@@ -116,6 +116,49 @@ test("wait_agent returns promptly when its tool call is aborted", async () => {
   }
 });
 
+test("a reload handoff that is never reattached retires its supervisor lease", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-reload-timeout-"));
+  let replacement: Awaited<ReturnType<typeof loadExtension>> | null = null;
+  try {
+    const first = await loadExtension(agentDir);
+    await first.handlers.get("session_start")!({}, first.ctx);
+    await first.handlers.get("session_shutdown")!({ reason: "reload" }, first.ctx);
+    const { RELOAD_HANDOFF_TIMEOUT_MS } = await import("../index.ts");
+    t.mock.timers.tick(RELOAD_HANDOFF_TIMEOUT_MS);
+    replacement = await loadExtension(agentDir);
+    await replacement.handlers.get("session_start")!({}, replacement.ctx);
+    const result = await replacement.tools.get("list_agents")!("after-timeout", {}, undefined, undefined, replacement.ctx);
+    assert.equal(result.isError, undefined, result.content[0]!.text);
+  } finally {
+    if (replacement) await replacement.handlers.get("session_shutdown")!({ reason: "quit" }, replacement.ctx);
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("a policy-changing reload replaces the supervisor and applies new limits", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-policy-reload-"));
+  let second: Awaited<ReturnType<typeof loadExtension>> | null = null;
+  try {
+    writeFileSync(join(agentDir, "subagents-policy.json"), JSON.stringify({ maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 32 }));
+    const first = await loadExtension(agentDir);
+    await first.handlers.get("session_start")!({}, first.ctx);
+    const before = await first.tools.get("list_agents")!("before-policy-reload", {}, undefined, undefined, first.ctx);
+    assert.equal((JSON.parse(before.content[0]!.text) as { capacity: { limits: { maxRunnable: number } } }).capacity.limits.maxRunnable, 4);
+    writeFileSync(join(agentDir, "subagents-policy.json"), JSON.stringify({ maxRunnable: 6, maxResidentWorkers: 12, maxOpenAgents: 40 }));
+    await first.handlers.get("session_shutdown")!({ reason: "reload" }, first.ctx);
+
+    second = await loadExtension(agentDir);
+    await second.handlers.get("session_start")!({}, second.ctx);
+    const after = await second.tools.get("list_agents")!("after-policy-reload", {}, undefined, undefined, second.ctx);
+    assert.deepEqual((JSON.parse(after.content[0]!.text) as { capacity: { limits: Record<string, number> } }).capacity.limits,
+      { maxRunnable: 6, maxResidentWorkers: 12, maxOpenAgents: 40 });
+  } finally {
+    if (second) await second.handlers.get("session_shutdown")!({ reason: "quit" }, second.ctx);
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
 test("notices already in the journal are not redelivered when a session is attached again", async () => {
   const agentDir = mkdtempSync(join(tmpdir(), "subagents-ext-"));
   try {

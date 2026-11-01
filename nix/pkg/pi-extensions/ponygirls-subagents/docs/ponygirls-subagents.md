@@ -74,6 +74,39 @@
 See [Capacity recovery and retained models](../README.md#capacity-recovery-and-retained-models)
 for the tool example and limit defaults.
 
+## Extension reload and provider accounts
+
+Pi `/reload` detaches the old extension runtime but keeps the process-local
+supervisor and workers alive. The newly loaded runtime reattaches the current
+model registry, delegated-tool event bus, UI status, and notice sink. Journal
+notices produced in the detach/attach gap retain their cursor and are delivered
+once after reattachment. If no compatible runtime reattaches within 30 seconds,
+the detached binding retires itself and shuts the subtree down rather than
+orphaning workers. Switching sessions or quitting is immediately terminal. A
+reload that changes or invalidates `subagents-policy.json` is also terminal for
+the live subtree so the replacement supervisor applies the new authority and
+scheduler limits; durable files remain available to recovery.
+
+A retained worker keeps its native Pi conversation and selected model across
+`/reload`. Built-in and declarative providers read the approved host
+`auth.json` on each provider request, so changing the authenticated account is
+used by the next request without replacing the worker or transcript.
+Parent-registered portable providers likewise resolve credentials through the
+current governing model registry for every request. That registry remains
+available during the bounded handoff and is replaced with the newly attached
+registry after reload.
+The account itself is not persisted in subagent state. If the replacement
+account cannot use the selected provider/model, the next request fails visibly;
+there is no fallback to the previous credential, another account, or another
+model.
+
+This handoff is process-local. A Pi process exit cannot preserve a live network
+request or worker process; the durable recovery procedure above applies on the
+next start. Governing-session external tools are generation-scoped: a new such
+tool call during the detach gap is rejected without effects, and after reload
+they become available once a fresh governing subagent tool context has been
+captured. Native child tools and provider requests do not have that dependency.
+
 ## Isolation
 
 Chosen per child with `spawn_agent`'s `isolation`; a child is never less

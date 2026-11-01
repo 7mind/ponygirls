@@ -107,6 +107,24 @@ test("a change published during submission is drained without reentrancy or dupl
   assert.deepEqual(sink.messages.map((m) => m.details.cursor), [1, 2]);
 });
 
+test("detachment preserves the cursor and delivers gap notices only to the next attachment", async () => {
+  const journal = new Journal();
+  const oldSink = new Sink();
+  const newSink = new Sink();
+  const delivery = new NoticeDelivery(journal, oldSink, 0);
+  journal.append("before reload");
+  delivery.changed();
+  delivery.detach();
+  journal.append("during reload");
+  delivery.changed();
+  await tick();
+  assert.deepEqual(oldSink.messages, []);
+  delivery.attach(newSink);
+  await tick();
+  assert.deepEqual(newSink.messages.map((message) => message.content[0]!.text), ["[subagents]\nbefore reload\nduring reload"]);
+  assert.equal(newSink.messages[0]!.details.cursor, 2);
+});
+
 test("disposal fences scheduled and future delivery", async () => {
   const journal = new Journal();
   const sink = new Sink();

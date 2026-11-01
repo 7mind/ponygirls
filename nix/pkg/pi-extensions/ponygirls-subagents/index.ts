@@ -11,7 +11,7 @@ import { Type, type TSchema } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { FileRunStore } from "./src/store.ts";
-import { CUSTOM_NOTICE, NoticeDelivery } from "./src/notice-delivery.ts";
+import { CUSTOM_NOTICE, NoticeDelivery, type NoticeSink } from "./src/notice-delivery.ts";
 import { renderNotice, renderSpawnCall, renderSpawnResult } from "./src/render.ts";
 import { Supervisor, TOOL_RESULT_MAX, type AgentView, type CallerId } from "./src/supervisor.ts";
 import type { GateSpecInput, ReviewSpecInput } from "./src/gate.ts";
@@ -36,6 +36,7 @@ const STATUS_KEY = "agents";
 /** How often an open /agents screen re-reads state and transcripts. */
 const SCREEN_POLL_MS = 500;
 const STATUS_THROTTLE_MS = 250;
+export const RELOAD_HANDOFF_TIMEOUT_MS = 30_000;
 const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "src", "worker.ts");
 
 function agentBaseDir(): string {
@@ -112,11 +113,14 @@ export function loadPolicy(): LoadedPolicy {
 
 interface SessionBinding {
   sessionId: string;
+  rootDir: string;
   supervisor: Supervisor;
   /** Latest governing tool context (live getters, revoked on reload/replacement). */
   governingBaseCtx: object | null;
   /** Binding active until session shutdown (revokes external dispatch). */
   governingActive: boolean;
+  /** Parent-provider registry remains usable during a bounded reload handoff. */
+  providerActive: boolean;
   /** The governing session's model at its latest tool call (what children inherit). */
   model: ResolvedModel | null;
   modelRegistry: ExtensionContext["modelRegistry"];
@@ -127,6 +131,24 @@ interface SessionBinding {
   notices: NoticeDelivery;
   ui: ExtensionContext["ui"] | null;
   statusTimer: ReturnType<typeof setTimeout> | null;
+  currentCtx: ExtensionContext | null;
+  prepareDelegatedCall: (call: Parameters<typeof prepareThroughEventBus>[1]) => ReturnType<typeof prepareThroughEventBus>;
+  onSupervisorChange: () => void;
+  handoffTimer: ReturnType<typeof setTimeout> | null;
+  finishHandoff: (() => void) | null;
+  policyFingerprint: string;
+  retiring: Promise<void> | null;
+}
+
+interface ProcessRuntimeState {
+  bindings: Map<string, SessionBinding>;
+}
+
+const PROCESS_RUNTIME = Symbol.for("ponygirls.subagents.process-runtime.v1");
+
+function processRuntime(): ProcessRuntimeState {
+  const root = globalThis as typeof globalThis & Record<symbol, ProcessRuntimeState | undefined>;
+  return root[PROCESS_RUNTIME] ??= { bindings: new Map() };
 }
 
 type ToolText = { content: Array<{ type: "text"; text: string }>; details: Record<string, never>; isError?: true };
@@ -169,14 +191,85 @@ function publishBadge(ui: ExtensionContext["ui"] | null, views: AgentView[] | nu
 export default function (pi: ExtensionAPI): void {
   if (typeof pi.enqueueMessage !== "function") throw new Error("UNSUPPORTED_SDK: subagent notices require this flake's retained-ingress Pi patch");
   const bindings = new Map<string, SessionBinding>();
+  const durableBindings = processRuntime().bindings;
 
-  function refreshStatus(binding: SessionBinding, ctx: ExtensionContext): void {
+  function refreshStatus(binding: SessionBinding): void {
     if (binding.statusTimer) return;
     binding.statusTimer = setTimeout(() => {
       binding.statusTimer = null;
       const views = binding.supervisor.list("user");
-      publishBadge(binding.ui, views.length > 0 ? views : null, () => void openAgents("", ctx));
+      const ctx = binding.currentCtx;
+      publishBadge(binding.ui, views.length > 0 ? views : null, () => { if (ctx) void openAgents("", ctx); });
     }, STATUS_THROTTLE_MS);
+  }
+
+  function noticeSink(ctx: ExtensionContext): NoticeSink {
+    return {
+      submit: (message) => pi.enqueueMessage(message, { triggerTurn: true, deliverAs: "steer" }),
+      error: (error) => ctx.ui.notify(`subagents: notice delivery failed: ${String(error)}`, "error"),
+    };
+  }
+
+  function attach(binding: SessionBinding, ctx: ExtensionContext): SessionBinding {
+    if (binding.retiring) throw new Error("NOT_RUNNING: detached supervisor retirement is still in progress");
+    if (binding.handoffTimer) clearTimeout(binding.handoffTimer);
+    binding.handoffTimer = null;
+    const finishHandoff = binding.finishHandoff;
+    binding.finishHandoff = null;
+    binding.modelRegistry = ctx.modelRegistry;
+    binding.cwd = ctx.cwd;
+    binding.ui = ctx.ui;
+    binding.currentCtx = ctx;
+    binding.governingActive = true;
+    binding.providerActive = true;
+    binding.prepareDelegatedCall = (call) => prepareThroughEventBus(pi.events, call);
+    finishHandoff?.();
+    binding.onSupervisorChange = () => {
+      if (!binding.governingActive) return;
+      refreshStatus(binding);
+      binding.notices.changed();
+    };
+    binding.notices.attach(noticeSink(ctx));
+    bindings.set(binding.sessionId, binding);
+    refreshStatus(binding);
+    return binding;
+  }
+
+  function finishDetachedHandoff(binding: SessionBinding): void {
+    if (binding.handoffTimer) clearTimeout(binding.handoffTimer);
+    binding.handoffTimer = null;
+    const finish = binding.finishHandoff;
+    binding.finishHandoff = null;
+    finish?.();
+  }
+
+  function retireDetachedBinding(binding: SessionBinding): void {
+    if (binding.retiring) return;
+    binding.providerActive = false;
+    binding.prepareDelegatedCall = async () => { throw new Error("STALE_GENERATION: extension runtime did not reattach"); };
+    finishDetachedHandoff(binding);
+    binding.notices.dispose();
+    const retirement = binding.supervisor.shutdown();
+    binding.retiring = retirement;
+    void retirement.then(() => {
+      if (durableBindings.get(binding.rootDir) === binding) durableBindings.delete(binding.rootDir);
+      binding.retiring = null;
+    }, (error) => {
+      console.error(`subagents: failed to retire detached root ${binding.sessionId}:`, error);
+    });
+  }
+
+  function beginReloadHandoff(binding: SessionBinding): void {
+    const ready = new Promise<void>((resolve) => { binding.finishHandoff = resolve; });
+    binding.prepareDelegatedCall = (call) => ready.then(async () => {
+      const prepared = binding.prepareDelegatedCall(call);
+      return prepared === null ? call.args : await prepared;
+    });
+    binding.handoffTimer = setTimeout(() => {
+      if (binding.governingActive) return;
+      retireDetachedBinding(binding);
+    }, RELOAD_HANDOFF_TIMEOUT_MS);
+    binding.handoffTimer.unref?.();
   }
 
   /** The session's supervisor; throws (no fallback) when the root store cannot be opened. */
@@ -186,26 +279,30 @@ export default function (pi: ExtensionAPI): void {
     const existing = bindings.get(sessionId);
     if (existing) {
       existing.ui = ctx.ui;
+      existing.currentCtx = ctx;
       return existing;
     }
+    const rootDir = join(agentBaseDir(), "subagents", sessionId);
+    const durable = durableBindings.get(rootDir);
+    if (durable) return attach(durable, ctx);
     const sdkRoot = process.env["PI_SUBAGENTS_SDK_ROOT"];
     if (!sdkRoot) throw new Error("SANDBOX_UNAVAILABLE: PI_SUBAGENTS_SDK_ROOT is not set; workers cannot load the pi SDK");
-    const rootDir = join(agentBaseDir(), "subagents", sessionId);
     const store = new FileRunStore(rootDir, sessionId);
     const binding: SessionBinding = {
-      sessionId, supervisor: null as unknown as Supervisor, model: null, modelRegistry: ctx.modelRegistry, cwd: ctx.cwd, instructions: null,
-      ui: ctx.ui, statusTimer: null, governingBaseCtx: null, governingActive: true,
+      sessionId, rootDir, supervisor: null as unknown as Supervisor, model: null, modelRegistry: ctx.modelRegistry, cwd: ctx.cwd, instructions: null,
+      ui: ctx.ui, statusTimer: null, currentCtx: ctx, governingBaseCtx: null, governingActive: true, providerActive: true,
+      prepareDelegatedCall: (call) => prepareThroughEventBus(pi.events, call),
+      onSupervisorChange: () => {}, handoffTimer: null, finishHandoff: null,
+      policyFingerprint: "", retiring: null,
       // Start at the journal end: history from an earlier attachment is not redelivered.
       notices: new NoticeDelivery(
         { noticesSince: (cursor, limit) => binding.supervisor.noticesSince(cursor, limit) },
-        {
-          submit: (message) => pi.enqueueMessage(message, { triggerTurn: true, deliverAs: "steer" }),
-          error: (error) => ctx.ui.notify(`subagents: notice delivery failed: ${String(error)}`, "error"),
-        },
+        noticeSink(ctx),
         store.durableSeq(),
       ),
     };
     const { policy, schedulerLimits } = loadPolicy();
+    binding.policyFingerprint = JSON.stringify({ policy, schedulerLimits });
     binding.supervisor = new Supervisor({
       rootId: sessionId,
       rootDir,
@@ -214,7 +311,7 @@ export default function (pi: ExtensionAPI): void {
       schedulerLimits,
       governor: () => ({ model: binding.model, cwd: binding.cwd, instructions: binding.instructions }),
       parentModels: new GoverningModels(() => {
-        if (!binding.governingActive) throw new Error("STALE_GENERATION: governing model registry is no longer active");
+        if (!binding.providerActive) throw new Error("STALE_GENERATION: governing model registry is no longer active");
         return binding.modelRegistry;
       }),
       governingRegistry: () => {
@@ -244,18 +341,15 @@ export default function (pi: ExtensionAPI): void {
           baseCtx: () => binding.governingBaseCtx,
         };
       },
-      prepareDelegatedCall: (call) => prepareThroughEventBus(pi.events, call),
+      prepareDelegatedCall: (call) => binding.prepareDelegatedCall(call),
       workerPath: WORKER_PATH,
       sdkRoot,
       deterministic: false,
       hostAgentDir: agentBaseDir(),
-      onChange: () => {
-        if (!binding.governingActive) return;
-        refreshStatus(binding, ctx);
-        binding.notices.changed();
-      },
+      onChange: () => binding.onSupervisorChange(),
     });
-    bindings.set(sessionId, binding);
+    durableBindings.set(rootDir, binding);
+    attach(binding, ctx);
     // Runs left unfinished by a previous process settle before any new
     // command is accepted (recover() holds the controller chain).
     if (binding.supervisor.needsRecovery) {
@@ -644,6 +738,9 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("session_start", async (_event, ctx) => {
     try {
+      const sessionId = ctx.sessionManager.getSessionId();
+      const retiring = sessionId ? durableBindings.get(join(agentBaseDir(), "subagents", sessionId))?.retiring : null;
+      if (retiring) await retiring;
       bindingFor(ctx);
     } catch (e) {
       ctx.ui.notify(`subagents unavailable: ${(e as Error).message}`, "error");
@@ -669,18 +766,40 @@ export default function (pi: ExtensionAPI): void {
     binding.supervisor.cancelCallerWaits(caller);
   });
 
-  pi.on("session_shutdown", async (_event, ctx) => {
+  pi.on("session_shutdown", async (event, ctx) => {
     const sessionId = ctx.sessionManager.getSessionId();
     const binding = bindings.get(sessionId);
     if (!binding) return;
     bindings.delete(sessionId);
     binding.governingActive = false;
-    binding.notices.dispose();
     binding.governingBaseCtx = null;
+    binding.currentCtx = null;
+    binding.onSupervisorChange = () => {};
+    binding.notices.detach();
     if (binding.statusTimer) clearTimeout(binding.statusTimer);
+    binding.statusTimer = null;
     publishBadge(binding.ui, null, () => {});
-    // Switching sessions cancels and joins the live subtree, closes owned
-    // tool jobs, and preserves durable state.
+    binding.ui = null;
+    let preserve = event.reason === "reload";
+    if (preserve) {
+      try {
+        const loaded = loadPolicy();
+        preserve = JSON.stringify(loaded) === binding.policyFingerprint;
+      } catch {
+        preserve = false;
+      }
+    }
+    if (preserve) {
+      beginReloadHandoff(binding);
+      return;
+    }
+    durableBindings.delete(binding.rootDir);
+    binding.providerActive = false;
+    binding.prepareDelegatedCall = async () => { throw new Error("STALE_GENERATION: extension runtime is shutting down"); };
+    finishDetachedHandoff(binding);
+    binding.notices.dispose();
+    // Switching sessions, quitting, or a policy-changing reload cancels and
+    // joins the live subtree, closes owned tool jobs, and preserves durable state.
     await binding.supervisor.shutdown();
   });
 }

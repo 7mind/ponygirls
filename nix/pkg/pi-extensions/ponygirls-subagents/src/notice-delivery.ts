@@ -31,7 +31,8 @@ export class NoticeDelivery {
   private failures = 0;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly source: NoticeSource;
-  private readonly sink: NoticeSink;
+  private sink: NoticeSink;
+  private attached = true;
 
   constructor(source: NoticeSource, sink: NoticeSink, cursor: number) {
     this.source = source;
@@ -40,14 +41,14 @@ export class NoticeDelivery {
   }
 
   changed(): void {
-    if (this.scheduled || this.disposed) return;
+    if (this.scheduled || this.disposed || !this.attached) return;
     if (this.retryTimer !== undefined) clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
     this.scheduled = true;
     // Publishing a journal record may still be updating supervisor state.
     queueMicrotask(() => {
       try {
-        while (!this.disposed) {
+        while (!this.disposed && this.attached) {
           const { lines, cursor } = this.source.noticesSince(this.cursor, NOTICE_BATCH);
           if (lines.length > 0) {
             this.sink.submit({
@@ -65,7 +66,7 @@ export class NoticeDelivery {
         try { this.sink.error(error); }
         catch (reporterError) { console.error("subagents: notice delivery error reporter failed:", error, reporterError); }
         this.failures++;
-        if (this.failures < NOTICE_MAX_ATTEMPTS && !this.disposed) {
+        if (this.failures < NOTICE_MAX_ATTEMPTS && !this.disposed && this.attached) {
           this.retryTimer = setTimeout(() => {
             this.retryTimer = undefined;
             this.changed();
@@ -77,9 +78,22 @@ export class NoticeDelivery {
     });
   }
 
-  dispose(): void {
-    this.disposed = true;
+  detach(): void {
+    this.attached = false;
     if (this.retryTimer !== undefined) clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
+  }
+
+  attach(sink: NoticeSink): void {
+    if (this.disposed) return;
+    this.sink = sink;
+    this.attached = true;
+    this.failures = 0;
+    this.changed();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.detach();
   }
 }
