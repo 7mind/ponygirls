@@ -23,7 +23,7 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Add Recorded yolo profile filter', exact: true }).count(), 1);
   await page.getByRole('button', { name: 'Search syntax', exact: true }).click(); assert.match(await page.locator('.expression-help-content').textContent(), /recorded subagent ID/); assert.match(await page.locator('.expression-help-content').textContent(), /yolo-profile:.*case-sensitive.*recorded claim/s); await search.fill(''); await search.press('Enter');
   for (const [title, expected] of [['Subagent title without recorded ID', 'Main · no recorded subagent ID'], ['Main title with recorded subagent', 'Subagent · recorded-child']]) {
-    await page.getByRole('button', { name: title, exact: true }).click(); await page.getByText('Provenance & metadata', { exact: true }).click();
+    await page.getByRole('button', { name: title, exact: true }).click(); await page.getByRole('button', { name: 'Provenance & metadata', exact: true }).click();
     assert.equal(await page.locator('.provenance-details .recorded-agent').textContent(), expected); assert.equal(await page.locator('.provenance-details dt').filter({ hasText: /^Recorded yolo profile$/ }).locator('xpath=following-sibling::dd[1]').textContent(), title.startsWith('Subagent') ? 'Named_1.2' : 'not recorded'); assert.match(await page.locator('.provenance-details').textContent(), /Producer.*synthetic-harness.*Source format.*Pi.*Recorded source model.*recorded-source-model/s); await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
   }
   await page.getByRole('button', { name: 'activity', exact: true }).click(); const editor = page.getByRole('region', { name: 'Indexing job metadata search', exact: true }), input = editor.getByRole('combobox');

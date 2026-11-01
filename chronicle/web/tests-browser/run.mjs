@@ -280,13 +280,11 @@ try {
     assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetPassages).every(call => call.operation.view.revision === 1 && call.operation.view.generationId === fixture.viewAt(1).generationId), 'publication must not substitute another generation into the pinned annotation list');
     await scrollEnd(page, '.conversation-source');
     await page.locator('#message-m41 pre').waitFor(); assert.match(await page.locator('#message-m41 pre').textContent(), /Synthetic source message 41/);
-    await page.getByRole('button', { name: 'Request raw records' }).click();
-    await page.locator('.raw-source details summary').click(); await page.locator('.raw-source pre').waitFor();
-    assert.equal(await page.locator('.raw-source pre').innerText(), '{"revision":1}');
-    assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetRaw).every(call => call.operation.revision === 1));
+    assert.equal(await page.getByRole('button', { name: 'Request raw records' }).count(), 0);
+    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetRaw).length, 0, 'Raw scope does not expose raw dashboard reads');
     fixture.restart(); await page.getByText('Viewing source r2', { exact: true }).waitFor();
     await page.locator('#message-m1 pre').waitFor(); assert.match(await page.locator('#message-m1 pre').textContent(), /HEAD r2 changed/);
-    await context.close(); console.log('PASS browser: source/chunks/raw stay revision/generation-pinned across publication; reconnect reauthorizes the current selected snapshot');
+    await context.close(); console.log('PASS browser: normalized source/passages stay revision/generation-pinned without raw dashboard reads across publication; reconnect reauthorizes the current selected snapshot');
   }
   {
     const { context, page, fixture } = await scene(fixture => { fixture.resumedSource = true; fixture.annotationCount = 205; fixture.winnerBeyondFirstPage = true; fixture.rawDenied = false; });
@@ -296,8 +294,8 @@ try {
     await page.getByText('Archive-only view · no annotations', { exact: true }).waitFor();
     await page.locator('#message-m1 pre').waitFor(); assert.match(await page.locator('#message-m1 pre').textContent(), /HEAD r2 changed/);
     assert.equal(await page.locator('.passage-list .passage').count(), 0);
-    await page.getByRole('button', { name: 'Request raw records' }).click(); await page.locator('.raw-source details summary').click();
-    assert.equal(await page.locator('.raw-source pre').textContent(), '{"revision":2}');
+    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetRaw).length, 0);
+    assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetMessages).at(-1).operation.view.generationId === undefined);
     fixture.publishedRevision = 2; await refreshArchive(page);
     await page.getByText('HEAD r2 / index r2', { exact: true }).waitFor();
     await page.getByText('Archive-only view · no annotations', { exact: true }).waitFor();
@@ -310,17 +308,37 @@ try {
     assert.equal(latestChunks.view.generationId, fixture.viewAt(2).generationId);
     await context.close(); console.log('PASS browser: explicit latest archive is independent of indexing; generation-mismatched annotations stay hidden until explicit resync');
   }
-  for (const kind of ['messages', 'chunks', 'raw']) {
+  // Specified: both Read-only and Raw-capable users get normalized messages,
+  // while real source denial still clears the pinned transcript without fallback.
+  for (const rawScope of [false, true]) {
+    const { context, page, fixture } = await scene(fixture => {
+      fixture.user = new api.UserInfo('alice', 'alice', rawScope ? [api.Scope.Read, api.Scope.Raw] : [api.Scope.Read]);
+      fixture.sourceDenied = false;
+      fixture.goal50Operation = (operation, _envelope, send) => {
+        if (fixture.sourceDenied && operation instanceof api.Operation_GetMessages) { send(new api.Result_Error(new api.Failure('forbidden', 'Selected normalized source access denied'))); return true; }
+        return false;
+      };
+    });
+    await openConversation(page); await page.locator('.original-message').first().waitFor();
+    assert.equal(await page.locator('.raw-source,.raw-permission').count(), 0);
+    assert.equal(await page.getByRole('button', { name: /Request raw records|Back to messages/ }).count(), 0);
+    fixture.sourceDenied = true;
+    await page.getByRole('button', { name: 'Reload source snapshot ↻', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Selected normalized source access denied' }).waitFor();
+    assert.equal(await page.locator('.original-message,.find-hits button').count(), 0);
+    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetRaw).length, 0);
+    assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_GetMessages).every(call => call.operation.view.revision === 1 && call.operation.view.generationId === fixture.viewAt(1).generationId));
+    await context.close(); console.log(`PASS browser: normalized-only source with Raw scope ${rawScope}; source denial clears pinned messages without raw fallback`);
+  }
+  for (const kind of ['messages', 'chunks']) {
     const { context, page } = await scene(fixture => {
       fixture.resumedSource = true; fixture.rawDenied = false;
       if (kind === 'messages') fixture.messageViewOverride = fixture.viewAt(2);
       if (kind === 'chunks') fixture.chunksViewOverride = fixture.viewAt(2);
-      if (kind === 'raw') fixture.rawRevisionOverride = 2;
     });
     await search(page); await openConversation(page);
-    if (kind === 'raw') await page.getByRole('button', { name: 'Request raw records' }).click();
-    await page.getByRole('alert').filter({ hasText: kind === 'raw' ? 'Raw source revision changed unexpectedly' : 'Source revision or annotation generation changed unexpectedly' }).waitFor();
-    assert.equal(await page.locator(kind === 'messages' ? '.original-message' : kind === 'chunks' ? '.passage-list .passage' : '.raw-source pre').count(), 0);
+    await page.getByRole('alert').filter({ hasText: 'Source revision or annotation generation changed unexpectedly' }).waitFor();
+    assert.equal(await page.locator(kind === 'messages' ? '.original-message' : '.passage-list .passage').count(), 0);
     await context.close(); console.log(`PASS browser: mismatched ${kind} response pin fails closed before rendering source content`);
   }
   {
@@ -361,10 +379,9 @@ try {
   assert.equal(await page.locator('.transcript mark').first().textContent(), '猫🦄');
   assert.equal(await page.locator('.original-message script').count(), 0);
   assert.match(await page.locator('#message-m2 pre').textContent(), /<script>alert\("untrusted transcript"\)<\/script>/, 'untrusted source is displayed literally');
-  await page.getByRole('button', { name: 'Request raw records' }).click();
-  await page.getByRole('alert').filter({ hasText: 'Raw permission denied' }).waitFor();
-  assert.equal(await page.locator('.raw-source pre').count(), 0);
-  await page.getByRole('button', { name: 'Back to messages' }).click();
+  assert.equal(await page.getByRole('button', { name: /Request raw records|Back to messages/ }).count(), 0);
+  assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_GetRaw).length, 0);
+  assert.equal(await page.locator('.raw-source,.raw-permission').count(), 0);
   await page.getByRole('button', { name: /A passage on a later bounded source page/ }).click();
   await page.locator('#message-m65 mark').waitFor();
   assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_LocateMessage && envelope.operation.messageId === 'm65'));
@@ -408,7 +425,7 @@ try {
   await page.locator('.conversation-intro').getByRole('heading', { name: 'Following the migration thread' }).waitFor();
   await page.locator('.transcript .original-message pre').first().waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile layout must not overflow');
-  await context.close(); console.log('PASS browser: keyboard search, UTF-8 locator navigation, bounded paging, raw denial, literal source, management forms, indexing retry, silent blackhole resync, lifecycle/server restart, responsive modal');
+  await context.close(); console.log('PASS browser: keyboard search, UTF-8 locator navigation, bounded paging, normalized-only source, literal source, management forms, indexing retry, silent blackhole resync, lifecycle/server restart, responsive modal');
   for (const mode of ['unauthorized', 'version']) {
     const { context, page, fixture } = await scene(); await search(page); await openConversation(page); fixture.mode = mode; fixture.restart();
     const state = mode === 'version' ? 'update-required' : 'unauthorized';

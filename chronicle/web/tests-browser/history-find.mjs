@@ -21,6 +21,35 @@ async function group(name, body) { if (process.env.HISTORY_CASE !== undefined &&
 const calls = fixture => fixture.calls.filter(call => call.operation instanceof api.Operation_SearchSessionMessages);
 async function find(scene, literal) { await scene.input.fill(literal); await scene.finder.getByRole('button', { name: 'Find messages', exact: true }).click(); }
 try {
+  // Specified UX contract: compact chrome leaves source text as the primary surface.
+  await group('compact source chrome uses pinned overlays and never exposes raw dashboard operations', async () => {
+    for (const width of [1440, 390, 320]) {
+      const s = await scene(() => {}, width, 'light'), { page, fixture, finder } = s;
+      assert.equal(await page.locator('.dialog-heading .meta').count(), 1, 'Session metadata belongs in the top bar');
+      assert.equal(await page.locator('.dialog-heading .source-view-actions').count(), 1);
+      assert.equal(await page.getByRole('heading', { name: 'Source conversation', exact: true }).isVisible(), false);
+      assert.equal(await page.getByRole('button', { name: /Request raw records|Back to messages/ }).count(), 0);
+      assert.equal(await page.locator('.raw-permission,.raw-source').count(), 0);
+      assert.equal(await page.getByRole('heading', { name: /Context-aware problems|Original messages/ }).count(), 0);
+      const metadata = page.getByRole('button', { name: 'Provenance & metadata', exact: true });
+      await metadata.click(); await page.locator('.provenance-details:popover-open').waitFor();
+      await metadata.click();
+      const before = await finder.boundingBox();
+      await page.locator('.conversation-source').evaluate(element => { element.scrollTop = 300; });
+      const after = await finder.boundingBox(); assert.equal(after.y, before.y, 'Find stays over the conversation when it scrolls');
+      const geometry = await page.evaluate(() => {
+        const find = document.querySelector('.session-find').getBoundingClientRect(), frame = document.querySelector('.conversation-source-frame').getBoundingClientRect(), count = document.querySelector('.source-message-count').getBoundingClientRect();
+        return { findTop: find.top - frame.top, findRight: frame.right - find.right, findHeight: find.height, countBottom: frame.bottom - count.bottom, countRight: frame.right - count.right, document: document.documentElement.scrollWidth, viewport: innerWidth };
+      });
+      assert.ok(geometry.findTop >= 0 && geometry.findTop <= 12 && geometry.findRight <= 20, JSON.stringify(geometry));
+      assert.ok(geometry.findHeight <= 60, JSON.stringify(geometry));
+      assert.ok(geometry.countBottom >= 0 && geometry.countBottom <= 12 && geometry.countRight <= 20, JSON.stringify(geometry));
+      assert.ok(geometry.document <= geometry.viewport, JSON.stringify(geometry));
+      assert.equal(await finder.getByRole('button', { name: 'Next matches', exact: true }).getAttribute('title'), 'Next matching messages');
+      assert.equal(fixture.calls.some(call => call.operation instanceof api.Operation_GetRaw), false);
+      await s.context.close();
+    }
+  });
   await group('whole unindexed selected revision, literal fragments beyond100, paged locators and same-pin source navigation', async () => {
     const s = await scene(() => {}, 1440, 'light'), { context, page, fixture, finder, input } = s;
     assert.ok(await page.locator('.original-message').count() < 100); assert.equal(await page.locator('#message-m131').count(), 0);
@@ -28,7 +57,7 @@ try {
     await finder.getByRole('button', { name: 'Find messages', exact: true }).click();
     const first = finder.getByRole('button', { name: 'Message 131 · m131', exact: true }); await first.waitFor();
     const request = calls(fixture)[0].operation; assert.equal(request.literal, FIND_LITERAL); assert.equal(request.limit, 40); assert.equal(request.view.revision, 2); assert.equal(request.view.generationId, undefined);
-    assert.equal(await finder.locator('.find-hits button').count(), 40); assert.match(await finder.textContent(), /40 matching messages on page 1/); assert.doesNotMatch(await finder.textContent(), /45 matching|45 occurrences/);
+    assert.equal(await finder.locator('.find-hits button').count(), 40); assert.match(await finder.textContent(), /40 matching messages · page 1/); assert.doesNotMatch(await finder.textContent(), /45 matching|45 occurrences/);
     // HEAD/published changes must not silently repin this active finder.
     fixture.headRevision = 3; fixture.publishedRevision = 3;
     await first.click(); await page.locator('#message-m131 pre').waitFor();
@@ -139,11 +168,11 @@ try {
     await finder.getByRole('alert').waitFor(); assert.equal(await finder.locator('.find-hits button').count(), 0); assert.equal(await finder.getByRole('button', { name: 'Next matches', exact: true }).isDisabled(), true); await s.context.close();
   });
   for (const change of ['pin', 'session', 'navigation', 'disconnect', 'source-acl', 'same-owner-auth', 'account']) await group(`private draft/results and pending replies fenced on ${change}`, async () => {
-    const s = await scene(fixture => { fixture.holdFind = true; }, 1440, 'light'), { page, fixture, finder, input } = s;
+    const s = await scene(fixture => { fixture.holdFind = true; if (change === 'navigation') fixture.indexed = true; }, 1440, 'light'), { page, fixture, finder, input } = s;
     await find(s, FIND_LITERAL); await fixture.waitCall(api.Operation_SearchSessionMessages, 1);
     if (change === 'pin') await page.getByRole('button', { name: 'Reload source snapshot ↻', exact: true }).click();
     else if (change === 'session') { await page.getByRole('button', { name: 'Close conversation', exact: true }).click(); await page.locator('.archive-row .table-title').first().click(); }
-    else if (change === 'navigation') await page.getByRole('button', { name: 'Request raw records', exact: true }).click();
+    else if (change === 'navigation') await page.locator('.passage-list .passage').first().click();
     else if (change === 'source-acl') { fixture.sourceDenied = true; fixture.findFailure = 'forbidden'; }
     else if (change === 'disconnect') { fixture.restart(); await page.clock.runFor(200); }
     else { fixture.mode = 'unauthorized'; fixture.restart(); await page.clock.runFor(200); await page.getByRole('heading', { name: 'Sign in', exact: true }).waitFor(); }
