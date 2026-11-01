@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { api } from './goal50-fixture.mjs';
-const TEXT_CONTRAST = 4.5, CONTROL_CONTRAST = 3, GEOMETRY_TOLERANCE = 1, USAGE_TABLE_MIN_WIDTH = 720, ACTIVITY_MAX_WIDTH = 1500;
+const TEXT_CONTRAST = 4.5, CONTROL_CONTRAST = 3, GEOMETRY_TOLERANCE = 1, USAGE_TABLE_MIN_WIDTH = 720;
 async function measure(page, phase) {
   return page.evaluate(label => {
     const geometry = element => { if (element === null) return null; const bounds = element.getBoundingClientRect(), style = getComputedStyle(element); return { left: bounds.left, right: bounds.right, width: bounds.width, client: element.clientWidth, scroll: element.scrollWidth, overflow: style.overflowX }; };
@@ -49,7 +49,7 @@ export async function runActivityLayoutCases(scene, activity) {
           assert.ok(phase.document <= phase.viewport, `${name}: document overflow ${JSON.stringify(phase)}`);
           assert.equal(phase.main.overflow, 'visible'); assert.ok(!['hidden', 'clip'].includes(phase.documentOverflow)); assert.ok(!['hidden', 'clip'].includes(phase.bodyOverflow));
           if (phase.table !== null) assert.ok(phase.table.width >= USAGE_TABLE_MIN_WIDTH);
-          if (width > ACTIVITY_MAX_WIDTH) { assert.equal(phase.main.width, ACTIVITY_MAX_WIDTH); assert.equal(phase.main.left, (width - ACTIVITY_MAX_WIDTH) / 2); }
+          assert.equal(phase.main.width, width); assert.equal(phase.main.left, 0);
           assert.ok(phase.main.left >= -GEOMETRY_TOLERANCE && phase.main.right <= phase.viewport + GEOMETRY_TOLERANCE, `${name}: main escaped viewport ${JSON.stringify(phase)}`);
         }
         if (width <= USAGE_TABLE_MIN_WIDTH) { assert.ok(horizontal.scroll > horizontal.client); assert.ok(horizontal.left > 0); }

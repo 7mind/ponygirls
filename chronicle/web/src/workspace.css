@@ -1,0 +1,6 @@
+.app-shell{--workspace-gutter:22px;--workspace-top-gap:14px}
+.dashboard-page,.global-mutation-notices{width:100%;max-width:none;min-width:0;margin:0;padding:0 var(--workspace-gutter)}
+.dashboard-page{padding-top:var(--workspace-top-gap)}
+.context-help{display:inline-flex;align-self:center}.context-help>button{width:28px;height:28px;padding:0;border-radius:50%}
+@media(max-width:850px){.app-shell{--workspace-gutter:14px;--workspace-top-gap:12px}}
+@media(max-width:640px){.app-shell{--workspace-gutter:10px;--workspace-top-gap:10px}}
