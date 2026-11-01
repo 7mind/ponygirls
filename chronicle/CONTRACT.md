@@ -194,14 +194,26 @@ the pinned PostgreSQL18.6 and can be installed by a non-superuser database owner
 Whole fields/messages are lowercased in PostgreSQL before fragmentation; original
 normalized content and spans are unchanged. A lexical-version marker rebuilds
 obsolete fragments transactionally. Content paging has no100000 offset ceiling;
-GetMessages seeks by indexed position. Migration016 rebuilds the canonical GIN
-trigram index on the already-lowered `value` column. Membership uses
-`value LIKE lower(pattern COLLATE pg_unicode_fast)`, without lowercasing every
-candidate fragment again. This preserves whole-field folding before slicing;
-raw, unfolded `ILIKE` indexing remains unsupported due to the observed Unicode
-false-negative constraint. The canonical name and migration006 declaration stay
-consistent, so repeated initialization and missing-index recovery retain the
-stored-column representation.
+GetMessages seeks by indexed position. After normalization backfill, migration017
+replaces the canonical trigram GIN with `GIN(value gin_trgm_ops) WHERE head_candidate`.
+The non-null mask defaults TRUE for every fragment insertion, including older
+writers and historical rebuilds. Source revision updates mark the selected HEAD
+and prune unlocked obsolete candidates; locked or rebuilt historical TRUE extras
+are permitted. Every query still requires authorized source/revision equality:
+the mask is a complete candidate superset, not authority to identify HEAD.
+Historical fragments, original source data, content pins and lexical version1
+remain unchanged. Restart cleanup and missing-index recovery retain the current
+partial stored-column representation. Index creation and its completion marker
+commit together; failed normalization backfill defers the migration.
+
+Membership uses `value LIKE lower(pattern COLLATE pg_unicode_fast)`, without
+lowercasing every candidate again. Operands containing at least two distinct
+known ASCII alphanumeric trigrams materialize their exact candidate matches
+before the corpus join; other operands retain per-source EXISTS early exit.
+This is an access policy, not a different matching rule. Both paths preserve
+whole-field folding before slicing, escaping, Boolean membership and provenance.
+Raw, unfolded `ILIKE` indexing remains unsupported due to the observed Unicode
+false-negative constraint.
 
 ## Published generation format (1.5)
 

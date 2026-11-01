@@ -75,11 +75,11 @@ class ArchiveProjectionTest extends munit.FunSuite {
     assertEquals(archive.messages("a",out.sessionId,0,100,Some(ContentView(1,None))).messages,request.messages)
     db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE session_id=? AND value=?",out.sessionId,text)(_.getInt(1)),Some(1)))
   }}
-  test("BG GoodCommunication specified: later credential failure rolls back index replacement and migration marker") { database { (config,db,archive) =>
+  test("BG GoodCommunication specified: credential failure prevents the post-backfill index migration") { database { (config,db,archive) =>
     db.transaction { c =>
       Sql.exec(c,"DROP INDEX ch_archive_fragments_lower_trgm")
       Sql.exec(c,"CREATE INDEX ch_archive_fragments_lower_trgm ON ch_archive_fragments USING gin((lower(value COLLATE pg_unicode_fast)) gin_trgm_ops)")
-      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=16")
+      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=17")
     }
     def indexIdentity = db.transaction(c => Sql.one(c,"SELECT c.oid,c.relfilenode,pg_get_expr(i.indexprs,i.indrelid) FROM pg_class c JOIN pg_index i ON i.indexrelid=c.oid WHERE c.oid='ch_archive_fragments_lower_trgm'::regclass")(r => (r.getLong(1),r.getLong(2),Option(r.getString(3))))).get
     val legacy=indexIdentity
@@ -87,21 +87,22 @@ class ArchiveProjectionTest extends munit.FunSuite {
     try {
       val broken=config.copy(users=config.users.map(_.copy(passwordHashFile=directory.resolve("absent").toString)))
       intercept[java.nio.file.NoSuchFileException](new Database(broken,db.profiles).initialize())
-      assertEquals(indexIdentity,legacy,"later initialization failure must restore the original index bytes and identity")
-      db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=16")(_.getInt(1)),Some(0)))
+      assertEquals(indexIdentity,legacy,"credential failure must leave the original index bytes and identity unchanged")
+      db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=17")(_.getInt(1)),Some(0)))
       db.initialize()
       assert(indexIdentity._1!=legacy._1)
       assertEquals(indexIdentity._3,Option.empty[String])
     } finally Files.deleteIfExists(directory)
   }}
-  test("BG GoodCommunication regression: initialize recreates a missing stored-column GIN after migration16") { database { (config,db,archive) =>
+  test("BG GoodCommunication regression: initialize recreates a missing stored-column GIN after migration17") { database { (config,db,archive) =>
     db.transaction { c =>
-      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=16")(_.getInt(1)),Some(1))
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=17")(_.getInt(1)),Some(1))
       Sql.exec(c,"DROP INDEX ch_archive_fragments_lower_trgm")
     }
     db.initialize()
     db.transaction { c =>
       assertEquals(Sql.one(c,"SELECT pg_get_expr(indexprs,indrelid) FROM pg_index WHERE indexrelid='ch_archive_fragments_lower_trgm'::regclass")(r => Option(r.getString(1))),Some(Option.empty[String]),"recovery must restore the current stored-column representation")
+      assertEquals(Sql.one(c,"SELECT pg_get_expr(indpred,indrelid) FROM pg_index WHERE indexrelid='ch_archive_fragments_lower_trgm'::regclass")(_.getString(1)),Some("head_candidate"))
     }
   }}
   test("BG GoodCommunication regression: initialize repairs obsolete and missing whole-field projections, then preserves bytes and GIN identity") { database { (config,db,archive) =>
@@ -115,13 +116,13 @@ class ArchiveProjectionTest extends munit.FunSuite {
     db.transaction { c =>
       Sql.exec(c,"DROP INDEX ch_archive_fragments_lower_trgm")
       Sql.exec(c,"CREATE INDEX ch_archive_fragments_lower_trgm ON ch_archive_fragments USING gin((lower(value COLLATE pg_unicode_fast)) gin_trgm_ops)")
-      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=16")
+      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=17")
     }
     val legacyIndex=indexIdentity
     db.transaction { c =>
       Sql.exec(c,"UPDATE ch_revision_info SET lexical_version=0 WHERE session_id=?",receipt.sessionId)
       Sql.exec(c,"DELETE FROM ch_archive_fragments WHERE session_id=?",receipt.sessionId)
-      ArchiveProjection.fragments(text).zipWithIndex.foreach { case (value,ordinal) => Sql.exec(c,"INSERT INTO ch_archive_fragments VALUES(?,1,?,?)",receipt.sessionId,ordinal,value) }
+      ArchiveProjection.fragments(text).zipWithIndex.foreach { case (value,ordinal) => Sql.exec(c,"INSERT INTO ch_archive_fragments(session_id,revision,ordinal,value) VALUES(?,1,?,?)",receipt.sessionId,ordinal,value) }
       Sql.exec(c,"DELETE FROM ch_revision_info WHERE session_id=?",missing.sessionId)
       Sql.exec(c,"DELETE FROM ch_messages WHERE session_id=?",missing.sessionId)
       Sql.exec(c,"DELETE FROM ch_archive_fragments WHERE session_id=?",missing.sessionId)
@@ -145,7 +146,7 @@ class ArchiveProjectionTest extends munit.FunSuite {
       assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE session_id=? AND value LIKE '%ς%'",receipt.sessionId)(_.getInt(1)),Some(0))
     }
   }}
-  test("Effectual GoodCommunication specified: initialization preserves its migrated index across bounded backfill failure and resume") { database { (config,db,archive) =>
+  test("Effectual GoodCommunication specified: initialization defers its index migration until bounded backfill succeeds") { database { (config,db,archive) =>
     val original=Fixtures.snapshot()
     def indexIdentity = db.transaction(c => Sql.one(c,"SELECT c.oid,c.relfilenode FROM pg_class c WHERE c.oid='ch_archive_fragments_lower_trgm'::regclass")(r => (r.getLong(1),r.getLong(2)))).get
     db.transaction { c =>
@@ -155,7 +156,7 @@ class ArchiveProjectionTest extends munit.FunSuite {
         Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision) VALUES(?,'a',?,1)",id,s"backfill-$number")
         Sql.exec(c,"INSERT INTO ch_revisions VALUES(?,1,?::jsonb)",id,Wire.encode(IngestRequest.codecJson,request).noSpaces)
       }
-      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version IN(6,16)")
+      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version IN(6,17)")
       Sql.exec(c,"DROP INDEX ch_archive_fragments_lower_trgm")
       Sql.exec(c,"CREATE INDEX ch_archive_fragments_lower_trgm ON ch_archive_fragments USING gin((lower(value COLLATE pg_unicode_fast)) gin_trgm_ops)")
       Sql.exec(c,"ALTER TABLE ch_archive_fragments ADD CONSTRAINT projection_reject CHECK(value<>'projection-reject')")
@@ -163,19 +164,67 @@ class ArchiveProjectionTest extends munit.FunSuite {
     val legacy=indexIdentity
     try {
       intercept[java.sql.SQLException](db.initialize())
-      assert(indexIdentity._1!=legacy._1)
+      assertEquals(indexIdentity,legacy)
       db.transaction { c =>
         assertEquals(Sql.one(c,"SELECT count(*) FROM ch_revision_info")(_.getInt(1)),Some(4))
         assertEquals(Sql.one(c,"SELECT count(*) FROM ch_messages WHERE session_id=?",new UUID(0,5))(_.getInt(1)),Some(0))
         assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=6")(_.getInt(1)),Some(0))
-        assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=16")(_.getInt(1)),Some(1))
-        assertEquals(Sql.one(c,"SELECT indexprs IS NULL FROM pg_index WHERE indexrelid='ch_archive_fragments_lower_trgm'::regclass")(_.getBoolean(1)),Some(true))
+        assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=17")(_.getInt(1)),Some(0))
+        assertEquals(Sql.one(c,"SELECT indexprs IS NULL FROM pg_index WHERE indexrelid='ch_archive_fragments_lower_trgm'::regclass")(_.getBoolean(1)),Some(false))
       }
     } finally db.transaction(c => Sql.exec(c,"ALTER TABLE ch_archive_fragments DROP CONSTRAINT projection_reject"))
+    db.initialize()
     val migrated=indexIdentity
-    db.initialize(); db.initialize()
-    assertEquals(indexIdentity,migrated,"backfill retry must not rebuild the already committed index migration")
+    assert(migrated._1!=legacy._1)
+    db.initialize()
+    assertEquals(indexIdentity,migrated,"repeated startup must preserve the committed post-backfill migration")
     db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_revision_info")(_.getInt(1)),Some(5)))
+  }}
+  test("Effectual GoodCommunication specified: populated column-less archive with prior migration16 upgrades without changing fragment bytes") { database { (config,db,archive) =>
+    val request=Fixtures.snapshot(); val out=archive.ingest("a",request)
+    archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
+    def fragments = db.transaction(c => Sql.rows(c,"SELECT revision,ordinal,value FROM ch_archive_fragments WHERE session_id=? ORDER BY revision,ordinal",out.sessionId)(r => (r.getInt(1),r.getInt(2),r.getString(3))))
+    val before=fragments
+    db.transaction { c =>
+      Sql.exec(c,"DROP TRIGGER ch_archive_head_candidates ON ch_sources")
+      Sql.exec(c,"ALTER TABLE ch_archive_fragments DROP COLUMN head_candidate CASCADE")
+      Sql.exec(c,"CREATE INDEX ch_archive_fragments_lower_trgm ON ch_archive_fragments USING gin((lower(value COLLATE pg_unicode_fast)) gin_trgm_ops)")
+      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=17")
+      Sql.exec(c,"INSERT INTO ch_schema_migrations VALUES(16) ON CONFLICT DO NOTHING")
+    }
+    db.initialize(); db.initialize()
+    assertEquals(fragments,before)
+    db.transaction { c =>
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version IN(16,17)")(_.getInt(1)),Some(2))
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments f JOIN ch_sources s ON s.id=f.session_id AND s.revision=f.revision WHERE NOT head_candidate")(_.getInt(1)),Some(0))
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE session_id=? AND revision=1 AND head_candidate",out.sessionId)(_.getInt(1)),Some(0))
+    }
+    assertEquals(archive.messages("a",out.sessionId,0,100,Some(ContentView(1,None))).messages,request.messages)
+  }}
+  test("Effectual GoodCommunication specified: migration failure rolls back the partial index, mask changes and marker together") { database { (config,db,archive) =>
+    val request=Fixtures.snapshot(); val out=archive.ingest("a",request)
+    archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
+    db.transaction { c =>
+      Sql.exec(c,"UPDATE ch_archive_fragments SET head_candidate=true WHERE session_id=? AND revision=1",out.sessionId)
+      Sql.exec(c,"DROP INDEX ch_archive_fragments_lower_trgm")
+      Sql.exec(c,"CREATE INDEX ch_archive_fragments_lower_trgm ON ch_archive_fragments USING gin((lower(value COLLATE pg_unicode_fast)) gin_trgm_ops)")
+      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=17")
+      Sql.exec(c,"ALTER TABLE ch_schema_migrations ADD CONSTRAINT reject_head_migration CHECK(version<>17)")
+    }
+    def identity = db.transaction(c => Sql.one(c,"SELECT ix.oid,ix.relfilenode,pg_get_expr(i.indexprs,i.indrelid) FROM pg_class ix JOIN pg_index i ON i.indexrelid=ix.oid WHERE ix.oid='ch_archive_fragments_lower_trgm'::regclass")(r => (r.getLong(1),r.getLong(2),Option(r.getString(3))))).get
+    val legacy=identity
+    val flags=db.transaction(c => Sql.rows(c,"SELECT revision,ordinal,head_candidate FROM ch_archive_fragments WHERE session_id=? ORDER BY revision,ordinal",out.sessionId)(r => (r.getInt(1),r.getInt(2),r.getBoolean(3))))
+    try {
+      assertEquals(intercept[java.sql.SQLException](db.initialize()).getSQLState,"23514")
+      assertEquals(identity,legacy)
+      db.transaction { c =>
+        assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=17")(_.getInt(1)),Some(0))
+        assertEquals(Sql.rows(c,"SELECT revision,ordinal,head_candidate FROM ch_archive_fragments WHERE session_id=? ORDER BY revision,ordinal",out.sessionId)(r => (r.getInt(1),r.getInt(2),r.getBoolean(3))),flags)
+      }
+    } finally db.transaction(c => Sql.exec(c,"ALTER TABLE ch_schema_migrations DROP CONSTRAINT reject_head_migration"))
+    db.initialize()
+    assert(identity._1!=legacy._1)
+    db.transaction(c => assertEquals(Sql.one(c,"SELECT pg_get_expr(indpred,indrelid) FROM pg_index WHERE indexrelid='ch_archive_fragments_lower_trgm'::regclass")(_.getString(1)),Some("head_candidate")))
   }}
   test("Effectual GoodCommunication specified: failed ingest rolls back every projection and receipt") { database { (config,db,archive) =>
     db.transaction(c => Sql.exec(c,"ALTER TABLE ch_archive_fragments ADD CONSTRAINT projection_reject CHECK(value<>'projection-reject')"))
@@ -222,8 +271,8 @@ class ArchiveProjectionTest extends munit.FunSuite {
           statement.execute(s"CREATE DATABASE $database OWNER $role")
           try Using.resource(DriverManager.getConnection(jdbc,role,"")) { connection =>
             Using.resource(connection.createStatement()) { setup =>
-              setup.execute("CREATE TABLE ch_revisions(session_id uuid,revision integer,PRIMARY KEY(session_id,revision)); CREATE TABLE ch_generations(id uuid PRIMARY KEY); CREATE TABLE ch_chunks(generation uuid,value jsonb); CREATE TABLE ch_schema_migrations(version integer PRIMARY KEY)")
-              List("/006_archive_projection.sql","/016_stored_lower_archive_index.sql").foreach { file =>
+              setup.execute("CREATE TABLE ch_users(id text PRIMARY KEY); CREATE TABLE ch_sources(id uuid PRIMARY KEY,revision integer NOT NULL); CREATE TABLE ch_revisions(session_id uuid,revision integer,PRIMARY KEY(session_id,revision)); CREATE TABLE ch_generations(id uuid PRIMARY KEY); CREATE TABLE ch_chunks(generation uuid,value jsonb); CREATE TABLE ch_schema_migrations(version integer PRIMARY KEY)")
+              List("/006_archive_projection.sql","/017_head_literal_candidates.sql").foreach { file =>
                 val stream=getClass.getResourceAsStream(file)
                 Check(stream!=null,"test","missing migration resource")
                 val migration=Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
@@ -232,7 +281,7 @@ class ArchiveProjectionTest extends munit.FunSuite {
             }
             assertEquals(Sql.one(connection,"SELECT rolsuper FROM pg_roles WHERE rolname=current_user")(_.getBoolean(1)),Some(false))
             assertEquals(Sql.one(connection,"SELECT extversion FROM pg_extension WHERE extname='pg_trgm'")(_.getString(1)),Some("1.6"))
-            assertEquals(Sql.one(connection,"SELECT count(*) FROM ch_schema_migrations WHERE version=16")(_.getInt(1)),Some(1))
+            assertEquals(Sql.one(connection,"SELECT count(*) FROM ch_schema_migrations WHERE version=17")(_.getInt(1)),Some(1))
             assertEquals(Sql.one(connection,"SELECT indexprs IS NULL FROM pg_index WHERE indexrelid='ch_archive_fragments_lower_trgm'::regclass")(_.getBoolean(1)),Some(true))
           } finally statement.execute(s"DROP DATABASE $database")
         } finally statement.execute(s"DROP ROLE $role")

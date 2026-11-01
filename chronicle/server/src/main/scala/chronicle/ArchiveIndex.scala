@@ -5,7 +5,7 @@ import io.circe.Json
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.{Connection,ResultSet,SQLException}
-import java.util.{Base64,UUID}
+import java.util.{Base64,Locale,UUID}
 import scala.util.Try
 
 final case class ArchiveVector(operand: String,values: List[Double])
@@ -67,6 +67,10 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
   import ArchiveExpression.*
   private val unicode = "COLLATE \"pg_unicode_fast\""
   private val columns = "c.*"
+  private val trigramWidth=3
+  private val minimumGlobalTrigrams=2
+  private def globalLiteralCandidates(value: String): Boolean =
+    value.sliding(trigramWidth).filter(_.forall(ch => ch>='a' && ch<='z' || ch>='A' && ch<='Z' || ch>='0' && ch<='9')).map(_.toLowerCase(Locale.ROOT)).distinct.take(minimumGlobalTrigrams).size==minimumGlobalTrigrams
   private final case class PageRow(value: ArchiveRow,key: Option[String],relevanceScore: Option[String],witnesses: List[ArchiveSemanticWitness])
   private def literal(value: String): String = "%"+value.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"
   private def insensitive(column: String,value: String): ArchiveSql = ArchiveSql(s"COALESCE(lower(($column) $unicode)=lower(? $unicode),false)",List(value))
@@ -159,7 +163,11 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     parsed.textOperands.zipWithIndex.foreach { case (operand,index) =>
       if(lexical) {
         // Lexical v1 already folds whole fields before fragmentation; folding again transforms every candidate on reads.
-        ctes+=s"l$index AS MATERIALIZED(SELECT c.id FROM corpus c WHERE EXISTS(SELECT 1 FROM ch_archive_fragments fragment WHERE fragment.session_id=c.id AND fragment.revision=c.revision AND fragment.value LIKE lower(? $unicode) ESCAPE '\\'))"
+        // Keep single-key and unextractable patterns on the early-exit path; bind multi-key scans before the corpus join.
+        if(globalLiteralCandidates(operand)) {
+          ctes+=s"g$index AS MATERIALIZED(SELECT fragment.session_id,fragment.revision FROM ch_archive_fragments fragment WHERE fragment.head_candidate AND fragment.value LIKE lower(? $unicode) ESCAPE '\\')"
+          ctes+=s"l$index AS MATERIALIZED(SELECT DISTINCT c.id FROM corpus c JOIN g$index fragment ON fragment.session_id=c.id AND fragment.revision=c.revision)"
+        } else ctes+=s"l$index AS MATERIALIZED(SELECT c.id FROM corpus c WHERE EXISTS(SELECT 1 FROM ch_archive_fragments fragment WHERE fragment.head_candidate AND fragment.session_id=c.id AND fragment.revision=c.revision AND fragment.value LIKE lower(? $unicode) ESCAPE '\\'))"
         args+=literal(operand)
       }
       if(semantic) {
