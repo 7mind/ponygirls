@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { showAllTableColumns } from './table-controls.mjs';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
@@ -49,7 +50,7 @@ const rowIds = page => page.locator('.archive-row').evaluateAll(rows => rows.map
 const headerSorts = page => page.locator('.archive-table thead th').evaluateAll(items => Object.fromEntries(items.map(item => [item.getAttribute('data-column-id'), item.getAttribute('aria-sort')])));
 const columnHeaders = (sort, state) => Object.fromEntries(api.ArchiveSort_values.map(value => [value, value === sort ? state : 'none']));
 const relevanceControl = page => page.getByRole('button', { name: 'Relevance for text', exact: true });
-async function showAllColumns(page) { const controls = page.getByRole('region', { name: 'Conversations table controls', exact: true }); await controls.getByRole('button', { name: 'Columns', exact: true }).click(); await controls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await controls.getByRole('button', { name: 'Columns', exact: true }).click(); }
+async function showAllColumns(page) { await showAllTableColumns(page, 'Conversations'); }
 async function archiveOrder(page, expected) { const output = page.getByRole('status', { name: 'Archive order', exact: true }); await until(async () => await output.textContent() === expected, `Archive order did not become: ${expected}`); }
 // Waits for the first Archive read sent after act() and for its rendered result.
 async function archiveRead(page, fixture, act, order) {
@@ -72,7 +73,7 @@ try {
     assert.equal(new Set(await page.locator('.archive-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-session-id')))).size, 180);
     assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).every(call => call.operation.query.limit <= 100));
     assert.ok(await page.getByText('Unscheduled', { exact: true }).count() > 0, 'raw-only HEADs remain browsable before indexing');
-    const tableControls = page.getByRole('region', { name: 'Conversations table controls', exact: true }); await tableControls.getByRole('button', { name: 'Columns', exact: true }).click(); await tableControls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await tableControls.getByRole('button', { name: 'Columns', exact: true }).click();
+    await showAllColumns(page);
     await search(page, 'original source'); await until(() => Promise.resolve(fixture.calls.some(call => call.operation instanceof api.Operation_Archive && call.operation.query.expression === 'original source')), 'Text query not sent');
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).at(-1).operation.query.preferRelevance, true, 'text queries request automatic relevance by default');
     const sorts = [['Last activity', api.ArchiveSort.LastTimestamp], ['Conversation', api.ArchiveSort.Title], ['User', api.ArchiveSort.Owner], ['Project', api.ArchiveSort.Project], ['Branch', api.ArchiveSort.Branch], ['Producer', api.ArchiveSort.Producer], ['Format', api.ArchiveSort.Format], ['Model', api.ArchiveSort.Model], ['Index status', api.ArchiveSort.Status], ['Messages', api.ArchiveSort.MessageCount], ['Tags', api.ArchiveSort.Tags]];

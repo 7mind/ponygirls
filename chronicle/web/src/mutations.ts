@@ -29,6 +29,8 @@ export function validateMutationResult(operation: Operation, result: Result, req
 export interface MutationState {
   busy: boolean; error: string | null; errorCode: string | null; message: string | null; uncertain: Uncertain | null;
   canRecover: boolean; token: TokenResult | null; retryFailed: RetryFailedResult | null; ownerReindexed: OwnerReindexResult | null; lostTokenId: string | null; revision: number;
+  toast: { id: string; message: string } | null;
+  dismissToast(id: string): void;
   run(operation: Operation, label: string): Promise<boolean>;
   recover(): Promise<void>;
   retryConfirmedAbsent(): Promise<void>;
@@ -38,11 +40,13 @@ export function useMutations(connection: MutationConnection, userId: string | nu
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null), [errorCode, setErrorCode] = useState<string | null>(null), [message, setMessage] = useState<string | null>(null);
   const [uncertain, setUncertain] = useState<Uncertain | null>(null), [token, setToken] = useState<TokenResult | null>(null), [retryFailed, setRetryFailed] = useState<{ owner: string; epoch: number; result: RetryFailedResult } | null>(null), [lostToken, setLostToken] = useState<{ id: string; owner: string } | null>(null), [revision, setRevision] = useState(0);
   const [ownerReindexed, setOwnerReindexed] = useState<{ owner: string; epoch: number; result: OwnerReindexResult } | null>(null);
+  // Ephemeral confirmations are separate from persistent, actionable receipt guidance.
+  const [toast, setToast] = useState<{ id: string; message: string; owner: string; epoch: number } | null>(null);
   const currentUser = useRef(userId), currentConnection = useRef(connection), epoch = useRef(0), inFlight = useRef(false);
   if (currentUser.current !== userId || currentConnection.current !== connection) epoch.current++;
   currentUser.current = userId; currentConnection.current = connection;
-  useEffect(() => connection.onInvalidate(() => { epoch.current++; setToken(null); setMessage(null); setRetryFailed(null); setOwnerReindexed(null); setErrorCode(null); }), [connection]);
-  useEffect(() => { setRetryFailed(null); setOwnerReindexed(null); setErrorCode(null); }, [connection, userId]);
+  useEffect(() => connection.onInvalidate(() => { epoch.current++; setToken(null); setMessage(null); setToast(null); setRetryFailed(null); setOwnerReindexed(null); setErrorCode(null); }), [connection]);
+  useEffect(() => { setRetryFailed(null); setOwnerReindexed(null); setToast(null); setErrorCode(null); }, [connection, userId]);
   useEffect(() => {
     if (userId !== null && uncertain !== null && uncertain.owner !== userId) {
       setUncertain(null); setToken(null); setLostToken(null); setError('An uncertain mutation belongs to the previous account. Reconcile it from that account before retrying it.');
@@ -51,7 +55,7 @@ export function useMutations(connection: MutationConnection, userId: string | nu
   async function send(operation: Operation, label: string, id: string, owner: string) {
     if (inFlight.current) return false;
     const requestEpoch = epoch.current, bulk = (operation instanceof Operation_ApplyRetryFailed || operation instanceof Operation_ApplyOwnerReindex);
-    inFlight.current = true; setBusy(true); setError(null); setErrorCode(null); setMessage(null); setToken(null); setRetryFailed(null); setOwnerReindexed(null); setLostToken(null);
+    inFlight.current = true; setBusy(true); setError(null); setErrorCode(null); setMessage(null); setToast(null); setToken(null); setRetryFailed(null); setOwnerReindexed(null); setLostToken(null);
     try {
       const result = validateMutationResult(operation, await connection.request(operation, { mutation: true, receiptId: id }), id);
       if (currentUser.current !== null && currentUser.current !== owner) return false;
@@ -63,7 +67,7 @@ export function useMutations(connection: MutationConnection, userId: string | nu
       }
       if (result instanceof Result_OwnerReindexed) setOwnerReindexed({ owner, epoch: requestEpoch, result: result.result });
       else if (result instanceof Result_RetryFailed) setRetryFailed({ owner, epoch: requestEpoch, result: result.result });
-      else setMessage(`${label} completed.`);
+      else if (!(result instanceof Result_Token) || result.result.secret !== undefined) setToast({ id, message: `${label} completed.`, owner, epoch: requestEpoch });
       setRevision(n => n + 1); return true;
     } catch (cause) {
       if (bulk && currentUser.current !== null && currentUser.current !== owner) return false;
@@ -94,8 +98,8 @@ export function useMutations(connection: MutationConnection, userId: string | nu
         if (!(result instanceof Result_Token) || result.result.secret !== undefined) throw new Error('Token receipt must contain metadata without a secret');
         setLostToken({ id: result.result.token.id, owner: uncertain.owner });
       } else if (!(result instanceof Result_Mutation) || result.receipt.requestId !== uncertain.id) throw new Error('Receipt identity mismatch');
-      setUncertain(null);
-      if (!(result instanceof Result_RetryFailed) && !(result instanceof Result_OwnerReindexed)) setMessage(`${uncertain.label} committed. Receipt ${uncertain.id}.`);
+      setUncertain(null); setMessage(null);
+      if (result instanceof Result_Mutation) setToast({ id: uncertain.id, message: `${uncertain.label} committed. Receipt ${uncertain.id}.`, owner: uncertain.owner, epoch: requestEpoch });
       setRevision(n => n + 1);
     } catch (cause) {
       if (bulk && (currentUser.current !== uncertain.owner || epoch.current !== requestEpoch)) return;
@@ -113,5 +117,5 @@ export function useMutations(connection: MutationConnection, userId: string | nu
     if (uncertain === null || !uncertain.absent || currentUser.current !== uncertain.owner) return;
     await send(uncertain.operation, uncertain.label, uncertain.id, uncertain.owner);
   }
-  return { busy, error, errorCode, message, uncertain, canRecover: userId !== null && uncertain !== null && uncertain.owner === userId, token, retryFailed: retryFailed !== null && retryFailed.owner === userId && retryFailed.epoch === epoch.current ? retryFailed.result : null, ownerReindexed: ownerReindexed !== null && ownerReindexed.owner === userId && ownerReindexed.epoch === epoch.current ? ownerReindexed.result : null, lostTokenId: lostToken !== null && lostToken.owner === userId ? lostToken.id : null, revision, run, recover, retryConfirmedAbsent, dismissSecret: () => setToken(null) };
+  return { busy, error, errorCode, message, toast: toast !== null && toast.owner === userId && toast.epoch === epoch.current ? toast : null, dismissToast: id => setToast(current => current?.id === id ? null : current), uncertain, canRecover: userId !== null && uncertain !== null && uncertain.owner === userId, token, retryFailed: retryFailed !== null && retryFailed.owner === userId && retryFailed.epoch === epoch.current ? retryFailed.result : null, ownerReindexed: ownerReindexed !== null && ownerReindexed.owner === userId && ownerReindexed.epoch === epoch.current ? ownerReindexed.result : null, lostTokenId: lostToken !== null && lostToken.owner === userId ? lostToken.id : null, revision, run, recover, retryConfirmedAbsent, dismissSecret: () => setToken(null) };
 }

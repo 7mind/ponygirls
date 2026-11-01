@@ -78,5 +78,17 @@ export function ColumnResize({ column, layout }: { column: SizedColumn; layout: 
   }}/>;
 }
 export function TableControls({ name, layout }: { name: string; layout: TableLayout }) {
-  return <div className="table-controls" role="region" aria-label={`${name} table controls`}><button type="button" onClick={layout.fitWidth}>Fit to width</button><button type="button" onClick={layout.fitContent}>Fit to content</button><Popover className="table-column-menu" label="Columns" panelClassName="table-column-panel"><button type="button" onClick={layout.showAll}>Show all columns</button><button type="button" onClick={layout.compact}>Compact columns</button>{layout.specs.map(spec => <label key={spec.id}><input type="checkbox" checked={layout.columns.some(column => column.spec.id === spec.id)} disabled={spec.required} onChange={event => layout.toggle(spec.id, event.target.checked)}/>{spec.label}</label>)}</Popover></div>;
+  return <div className="table-controls" role="region" aria-label={`${name} table controls`}>
+    <Popover className="table-options" label={<span aria-hidden="true">⋯</span>} ariaLabel={`${name} table options`} panelClassName="table-options-panel">
+      <div role="group" aria-label={`${name} table options`}>
+        <button type="button" onClick={layout.fitWidth}>Fit to width</button>
+        <button type="button" onClick={layout.fitContent}>Fit to content</button>
+        <details className="table-column-options"><summary>Columns</summary>
+          <button type="button" onClick={layout.showAll}>Show all columns</button>
+          <button type="button" onClick={layout.compact}>Compact columns</button>
+          {layout.specs.map(spec => <label key={spec.id}><input type="checkbox" checked={layout.columns.some(column => column.spec.id === spec.id)} disabled={spec.required} onChange={event => layout.toggle(spec.id, event.target.checked)}/>{spec.label}</label>)}
+        </details>
+      </div>
+    </Popover>
+  </div>;
 }

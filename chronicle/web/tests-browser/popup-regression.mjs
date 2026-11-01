@@ -66,7 +66,7 @@ try {
     const syntax = page.getByRole('button', { name: 'Search syntax', exact: true });
     const themeButton = page.getByRole('button', { name: 'Theme settings', exact: true });
     const health = page.getByRole('button', { name: /^Connection:/ });
-    const archiveColumns = page.getByRole('region', { name: 'Conversations table controls', exact: true }).getByRole('button', { name: 'Columns', exact: true });
+    const archiveColumns = page.getByRole('region', { name: 'Conversations table controls', exact: true }).getByRole('button', { name: 'Conversations table options', exact: true });
     await open(syntax); await open(archiveColumns); await open(themeButton); await open(health); await open(syntax);
     const search = page.getByRole('combobox', { name: 'Search conversations', exact: true });
     await search.focus(); assert.equal(await page.locator('.transient-popover:popover-open').count(), 0); assert.equal(await search.evaluate(element => element === document.activeElement), true);
@@ -77,13 +77,13 @@ try {
     const collectorDetails = page.locator('.activity-collector-row .activity-row-details').first().getByRole('button', { name: 'Details', exact: true });
     const jobDetails = page.locator('.activity-job-row .activity-row-details').first().getByRole('button', { name: 'Details', exact: true });
     const jobPanel = page.locator('.activity-job-row .activity-detail-panel').first();
-    const columns = page.getByRole('region', { name: 'Indexing jobs table controls', exact: true }).getByRole('button', { name: 'Columns', exact: true });
+    const columns = page.getByRole('region', { name: 'Indexing jobs table controls', exact: true }).getByRole('button', { name: 'Indexing jobs table options', exact: true });
     await page.locator('.activity-jobs').evaluate(element => element.scrollIntoView({ block: 'start' }));
     await open(jobDetails); const jobGeometry = await assertGeometry(jobPanel);
     await page.screenshot({ path: `${output}/${name}-job.png` });
     // Original regression assertion: a later sticky Actions cell must not win hit tests.
     assert.ok(jobGeometry.probes.every(probe => probe.owned));
-    await open(columns); assert.equal(await jobPanel.isVisible(), false, 'Opening Columns must dismiss preceding Details');
+    await open(columns); assert.equal(await jobPanel.isVisible(), false, 'Opening table options must dismiss preceding Details');
     await open(collectorDetails); const collectorGeometry = await assertGeometry(page.locator('.activity-collector-row .activity-detail-panel').first());
     await page.screenshot({ path: `${output}/${name}-collector.png` });
     for (const trigger of [page.getByRole('button', { name: 'About these snapshots', exact: true }), page.getByRole('region', { name: 'Collector metadata search', exact: true }).getByRole('button', { name: 'Metadata fields', exact: true }), page.getByRole('button', { name: 'About owner-wide indexing retries', exact: true }), themeButton, health, page.getByRole('region', { name: 'Indexing job metadata search', exact: true }).getByRole('button', { name: 'Metadata fields', exact: true }), jobDetails]) await open(trigger);
@@ -91,10 +91,10 @@ try {
     if (width <= 640) { assert.ok(jobGeometry.height <= 750); await jobPanel.getByRole('button', { name: 'Close', exact: true }).click(); assert.equal(await jobPanel.isVisible(), false); }
     else await jobDetails.press('Escape');
     // Native keyboard activation, tab order, Escape and focus return.
-    await columns.focus(); await columns.press('Enter'); await page.locator('.table-column-panel:popover-open').waitFor();
-    await page.keyboard.press('Tab'); assert.equal(await page.locator('.table-column-panel:popover-open').evaluate(element => element.contains(document.activeElement)), true);
+    await columns.focus(); await columns.press('Enter'); await page.locator('.table-options-panel:popover-open').waitFor();
+    await page.keyboard.press('Tab'); assert.equal(await page.locator('.table-options-panel:popover-open').evaluate(element => element.contains(document.activeElement)), true);
     await page.keyboard.press('Escape'); assert.equal(await columns.evaluate(element => element === document.activeElement), true);
-    await columns.press('Space'); await page.locator('.table-column-panel:popover-open').waitFor(); await page.keyboard.press('Escape');
+    await columns.press('Space'); await page.locator('.table-options-panel:popover-open').waitFor(); await page.keyboard.press('Escape');
     await open(columns); await page.mouse.click(2, 2);
     await page.waitForFunction(() => document.querySelectorAll('.transient-popover:popover-open').length === 0);
     await page.waitForFunction(element => element.getAttribute('aria-expanded') === 'false', await columns.elementHandle());
@@ -105,7 +105,7 @@ try {
     if (width === 1440) {
       await page.setViewportSize({ width, height: 800 });
       await columns.evaluate(element => { window.scrollBy(0, element.getBoundingClientRect().top - 400); }); await page.clock.runFor(50);
-      const scrollingPanel = await open(columns);
+      const scrollingPanel = await open(columns); await scrollingPanel.locator('summary').filter({ hasText: /^Columns$/ }).click(); await page.clock.runFor(50);
       const scrollTarget = await scrollingPanel.evaluate(element => { const maximum = element.scrollHeight - element.clientHeight; if (maximum <= 0) throw new Error('Scroll regression requires constrained popup'); element.scrollTop = Math.min(80, maximum); return element.scrollTop; });
       await page.clock.runFor(50);
       assert.equal(await scrollingPanel.evaluate(element => element.scrollTop), scrollTarget, 'Scrolling popup contents must not reset scroll position during anchor measurement');

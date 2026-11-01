@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { showAllTableColumns } from './table-controls.mjs';
 import { ChronicleFixture, api } from './fixture.mjs';
 
 async function until(predicate, message) { for (let attempt = 0; attempt < 150; attempt++) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 50)); } throw new Error(message); }
@@ -47,7 +48,7 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     page.on('pageerror', error => errors.push(error.message)); if (configure !== null) await configure(fixture, page);
     await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`); await page.locator('.archive-row').first().waitFor();
     await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-overview').waitFor();
-    for (const name of ['Collectors', 'Indexing jobs']) { const controls = page.getByRole('region', { name: `${name} table controls`, exact: true }); await controls.getByRole('button', { name: 'Columns', exact: true }).click(); await controls.getByRole('button', { name: 'Show all columns', exact: true }).click(); await controls.getByRole('button', { name: 'Columns', exact: true }).click(); }
+    for (const name of ['Collectors', 'Indexing jobs']) await showAllTableColumns(page, name);
     return { context, page, fixture };
   }
   for (const mismatch of [{ label: 'inner request ID', button: 'Return wrong inner request ID' }, { label: 'target profile', button: 'Return wrong target profile' }, { label: 'result type', button: 'Return wrong result type' }]) await run(`bulk hook unverified ${mismatch.label} retains original uncertainty and blocks new writes`, async () => {
