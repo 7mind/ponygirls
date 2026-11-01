@@ -24,6 +24,9 @@ async function scene(viewport, configure) {
   await page.clock.install(); await fixture.install(page); await page.goto(`${origin}/tests-browser/goal50.html`);
   await page.locator('.archive-row').first().waitFor(); await page.getByRole('button', { name: 'mcp', exact: true }).click();
   await page.getByRole('region', { name: 'Current MCP test catalog', exact: true }).waitFor();
+  assert.equal(await page.locator('.mcp-tool-reference').getAttribute('open'), null, 'Optional schemas start collapsed');
+  await page.locator('.mcp-tool-reference > summary').click();
+  await page.getByRole('group', { name: 'MCP tools', exact: true }).waitFor();
   return { context, page, fixture };
 }
 async function group(name, body) { await body(); console.log(`PASS browser tool-catalog: ${name}`); }
