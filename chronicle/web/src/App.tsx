@@ -37,7 +37,7 @@ function LoginPanel({ connection }: { connection: ChronicleConnection }) {
     finally { setPending(false); }
   }
   return <main className="login-layout"><div className="login-story"><span className="eyebrow">SESSION ARCHIVE</span><h1>Archive</h1><p>Search archived agent sessions and read their source messages.</p><div className="story-rule"/></div>
-    <section className="login-card"><span className="eyebrow">ACCOUNT</span><h2>Sign in</h2><p>Sign in with your configured account. Your browser uses a revocable, HttpOnly session cookie.</p>
+    <section className="login-card"><span className="eyebrow">ACCOUNT</span><h2>Sign in</h2>
       <form onSubmit={event => void submit(event)}><label>Login<input name="login" autoComplete="username" required maxLength={200}/></label><label>Password<input name="password" type="password" autoComplete="current-password" required maxLength={1000}/></label><button className="primary" disabled={pending}>{pending ? 'Signing in…' : 'Sign in →'}</button></form>
       {error && <ErrorNotice>{error}</ErrorNotice>}
     </section></main>;

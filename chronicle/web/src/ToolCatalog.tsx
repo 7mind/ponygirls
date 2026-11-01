@@ -24,7 +24,7 @@ export function ToolCatalog({ tools }: { tools: readonly McpToolDefinition[] }) 
     button.focus();
   }
   return <section className="tool-catalog" aria-label="Actual tool catalog">
-    <div className="tool-catalog-heading"><h3>Actual tool catalog ({tools.length})</h3><span className="tiny">Current server definitions</span></div>
+    <div className="tool-catalog-heading"><h3>Tools ({tools.length})</h3></div>
     <div className="tool-catalog-layout">
       <div className="tool-catalog-list" role="group" aria-label="MCP tools">{tools.map(tool => <button type="button" key={tool.name} aria-pressed={tool.name === selected.name} onClick={() => selectTool(tool.name)}><code>{tool.name}</code></button>)}</div>
       <div className="tool-catalog-inspector">
@@ -33,8 +33,8 @@ export function ToolCatalog({ tools }: { tools: readonly McpToolDefinition[] }) 
           <button ref={schemaButton} type="button" role="tab" id={`${id}-schema-tab`} aria-controls={`${id}-schema-panel`} aria-selected={tab === 'schema'} tabIndex={tab === 'schema' ? 0 : -1} onKeyDown={keydown} onClick={() => selectTab('schema')}>SCHEMA</button>
           <button ref={examplesButton} type="button" role="tab" id={`${id}-examples-tab`} aria-controls={`${id}-examples-panel`} aria-selected={tab === 'examples'} tabIndex={tab === 'examples' ? 0 : -1} onKeyDown={keydown} onClick={() => selectTab('examples')}>EXAMPLES</button>
         </div>
-        <div className="tool-catalog-panel" role="tabpanel" id={`${id}-schema-panel`} aria-labelledby={`${id}-schema-tab`} hidden={tab !== 'schema'}><p className="tiny">Input JSON Schema · supplied by the current server catalog</p><pre tabIndex={0} aria-label="Input JSON Schema">{schema}</pre></div>
-        <div className="tool-catalog-panel" role="tabpanel" id={`${id}-examples-panel`} aria-labelledby={`${id}-examples-tab`} hidden={tab !== 'examples'}>{example === null ? <p>No curated example is available for this tool. Consult its current schema.</p> : <><p className="tiny">Synthetic JSON-RPC request · not executed. Replace the example session UUID with an authorized session ID. The current schema is authoritative.</p><pre tabIndex={0} aria-label="Example JSON-RPC request">{JSON.stringify(example, null, 2)}</pre></>}</div>
+        <div className="tool-catalog-panel" role="tabpanel" id={`${id}-schema-panel`} aria-labelledby={`${id}-schema-tab`} hidden={tab !== 'schema'}><pre tabIndex={0} aria-label="Input JSON Schema">{schema}</pre></div>
+        <div className="tool-catalog-panel" role="tabpanel" id={`${id}-examples-panel`} aria-labelledby={`${id}-examples-tab`} hidden={tab !== 'examples'}>{example === null ? <p>No curated example is available for this tool. Consult its current schema.</p> : <><p className="tiny">Example only · not executed. Replace session UUIDs with authorized IDs.</p><pre tabIndex={0} aria-label="Example JSON-RPC request">{JSON.stringify(example, null, 2)}</pre></>}</div>
       </div>
     </div>
   </section>;
