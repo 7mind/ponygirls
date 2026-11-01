@@ -1,0 +1,25 @@
+.original-message[data-role]{border-left:3px solid var(--rule);background:var(--paper)}
+.original-message[data-role=user]{border-left-color:var(--notice-accent)}
+.original-message[data-role=assistant]{border-left-color:var(--success)}
+.original-message[data-role=tool],.original-message[data-role=toolresult]{border-left-color:var(--warning-accent)}
+.original-message[data-role=system],.original-message[data-role=developer]{border-left-color:var(--muted)}
+.original-message[data-role=user] header>strong{color:var(--notice-accent)}
+.original-message[data-role=assistant] header>strong{color:var(--success)}
+.original-message[data-role=tool] header>strong,.original-message[data-role=toolresult] header>strong{color:var(--warning-ink)}
+.message-content{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:12px;line-height:1.65;min-width:0;overflow-wrap:anywhere}
+.original-message .message-content pre{font-family:inherit;font-size:inherit;line-height:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+.message-content-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;margin:0 0 6px;font-size:10px;color:var(--muted)}
+.message-content .small-button{font-family:inherit;font-size:10px;padding:3px 7px}
+.message-copy{display:inline-flex;align-items:center;gap:7px;flex-wrap:wrap}
+.copy-error{font-size:11px;color:var(--error-ink)}
+.message-highlight-label{font-size:10px}
+.message-code{border:1px solid var(--rule);border-radius:4px;margin:8px 0;overflow:hidden;background:var(--table-heading)}
+.message-code-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 9px;border-bottom:1px solid var(--rule);color:var(--muted);font-size:10px;overflow-wrap:anywhere}
+.message-code-bar>span:first-child{min-width:0}
+.original-message .message-code pre{padding:10px 12px;white-space:pre;overflow-x:auto;max-width:100%;tab-size:2}
+.message-formatted-text{white-space:pre-wrap}
+.message-formatted-text code{font-family:inherit;font-size:inherit;border:1px solid var(--rule);background:var(--table-heading);padding:0 3px;border-radius:3px}
+.message-markdown-heading{font-weight:700;margin:8px 0 4px}
+.message-markdown-quote{border-left:2px solid var(--muted);padding-left:12px;color:var(--muted)}
+.message-markdown-item{padding-left:12px;text-indent:-12px}
+@media(max-width:640px){.message-content{font-size:11px}.message-code-bar{flex-wrap:wrap;gap:5px}}
