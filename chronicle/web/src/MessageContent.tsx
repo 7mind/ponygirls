@@ -4,6 +4,16 @@ import { highlightUtf8 } from './highlight.ts';
 import { inlineParts, messageBlocks } from './message-format.ts';
 import './message-content.css';
 
+const MAX_FORMATTED_CHARACTERS = 20_000;
+const MAX_FORMATTED_LINES = 500;
+
+function formattingLimit(text: string): boolean {
+  if (text.length > MAX_FORMATTED_CHARACTERS) return true;
+  let lines = 1;
+  for (const char of text) { if (char === '\n' && ++lines > MAX_FORMATTED_LINES) return true; }
+  return false;
+}
+
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false), [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -12,6 +22,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
     return () => window.clearTimeout(timer);
   }, [copied]);
   async function copy() {
+    setCopied(false);
     try { await navigator.clipboard.writeText(text); setCopied(true); setError(null); }
     catch { setError('Clipboard unavailable. Select and copy the text manually.'); }
   }
@@ -48,9 +59,9 @@ export function MessageContent({ text, spans }: { text: string; spans: readonly 
   let parts;
   try { parts = highlightUtf8(text, spans); }
   catch (cause) { error = cause instanceof Error ? cause.message : 'Invalid source span'; parts = [{ text, highlighted: false }]; }
-  const highlighting = spans.length > 0;
-  return <div className="message-content"><div className="message-content-actions"><CopyButton text={text} label="Copy message"/>{highlighting ? <span className="message-highlight-label">Source highlights</span> : <button type="button" className="small-button" onClick={() => setSource(value => !value)}>{source ? 'Formatted view' : 'Source text'}</button>}</div>
+  const highlighting = spans.length > 0, limited = formattingLimit(text);
+  return <div className="message-content"><div className="message-content-actions"><CopyButton text={text} label="Copy message"/>{highlighting || limited ? <span className="message-highlight-label">{highlighting ? 'Source highlights' : 'Large message · source text'}</span> : <button type="button" className="small-button" onClick={() => setSource(value => !value)}>{source ? 'Formatted view' : 'Source text'}</button>}</div>
     {error !== null && <p className="copy-error" role="alert">{error}. Showing unchanged source without highlighting.</p>}
-    {source || highlighting ? <pre className="message-source-text">{parts.map((part, index) => part.highlighted ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>)}</pre> : messageBlocks(text).map((block, index) => block.kind === 'code' ? <div className="message-code" key={index}><div className="message-code-bar"><span>{block.language || 'code'}</span><CopyButton text={block.text} label="Copy code"/></div><pre><code>{block.text}</code></pre></div> : <FormattedText key={index} text={block.text}/>)}
+    {source || highlighting || limited ? <pre className="message-source-text">{parts.map((part, index) => part.highlighted ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>)}</pre> : messageBlocks(text).map((block, index) => block.kind === 'code' ? <div className="message-code" key={index}><div className="message-code-bar"><span>{block.language || 'code'}</span><CopyButton text={block.text} label="Copy code"/></div><pre><code>{block.text}</code></pre></div> : <FormattedText key={index} text={block.text}/>)}
   </div>;
 }

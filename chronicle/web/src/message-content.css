@@ -21,5 +21,5 @@
 .message-formatted-text code{font-family:inherit;font-size:inherit;border:1px solid var(--rule);background:var(--table-heading);padding:0 3px;border-radius:3px}
 .message-markdown-heading{font-weight:700;margin:8px 0 4px}
 .message-markdown-quote{border-left:2px solid var(--muted);padding-left:12px;color:var(--muted)}
-.message-markdown-item{padding-left:12px;text-indent:-12px}
+.message-formatted-text ul,.message-formatted-text ol{margin:4px 0;padding-left:28px}
 @media(max-width:640px){.message-content{font-size:11px}.message-code-bar{flex-wrap:wrap;gap:5px}}

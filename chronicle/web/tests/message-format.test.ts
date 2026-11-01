@@ -22,6 +22,10 @@ test('adjacent code blocks and plain text are not joined or reformatted', () => 
 test('operators and incomplete delimiter runs stay literal', () => {
   for (const text of ['2 * 3 * 4', '```ts', '``', '** spaced **', 'a*b*c']) assert.deepEqual(inlineParts(text), [{ kind: 'text', text }]);
 });
+test('inline code is opaque to surrounding emphasis parsing', () => {
+  assert.deepEqual(inlineParts('*`*`'), [{ kind: 'text', text: '*' }, { kind: 'code', text: '*' }]);
+  assert.deepEqual(inlineParts('*Use `*` as wildcard*'), [{ kind: 'text', text: '*Use ' }, { kind: 'code', text: '*' }, { kind: 'text', text: ' as wildcard*' }]);
+});
 test('untrusted delimiter and whitespace runs finish within a subprocess deadline', () => {
   const module = new URL('../src/message-format.ts', import.meta.url).href;
   const result = spawnSync(process.execPath, ['--experimental-transform-types', '--input-type=module', '-e', `import { messageBlocks, inlineParts } from ${JSON.stringify(module)}; for (const text of [String.fromCharCode(96).repeat(300000) + 'x', '\\n'.repeat(300000)]) { messageBlocks(text); inlineParts(text); }`], { timeout: 5000, encoding: 'utf8' });

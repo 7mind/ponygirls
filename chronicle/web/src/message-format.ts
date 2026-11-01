@@ -28,8 +28,8 @@ export function messageBlocks(text: string): MessageBlock[] {
   return blocks;
 }
 
-export function inlineParts(text: string): InlinePart[] {
-  const parts: InlinePart[] = [], tokens = [...text.matchAll(/`+|\*+|\n/g)];
+function delimiterParts(text: string, mode: 'code' | 'emphasis'): InlinePart[] {
+  const parts: InlinePart[] = [], tokens = [...text.matchAll(mode === 'code' ? /`+|\n/g : /\*+|\n/g)];
   const closers = new Map<string, number>(), nextClosing = new Map<number, number>();
   for (let index = tokens.length - 1; index >= 0; index--) {
     const token = tokens[index]!, delimiter = token[0], start = token.index;
@@ -51,4 +51,9 @@ export function inlineParts(text: string): InlinePart[] {
   }
   if (offset < text.length || parts.length === 0) parts.push({ kind: 'text', text: text.slice(offset) });
   return parts;
+}
+
+export function inlineParts(text: string): InlinePart[] {
+  // Code bodies are opaque: emphasis delimiters inside them are literal source.
+  return delimiterParts(text, 'code').flatMap(part => part.kind === 'text' ? delimiterParts(part.text, 'emphasis') : [part]);
 }
