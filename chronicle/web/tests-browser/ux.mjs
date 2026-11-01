@@ -248,8 +248,8 @@ try {
       assert.ok(visible.top >= 0 && visible.bottom <= visible.height, `${label} must be visible without scrolling: ${JSON.stringify(visible)}`);
     }
     await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
-    assert.match(await page.locator('.activity-about-content').innerText(), /Browser HTTP\/socket availability is not collector or worker health/);
-    assert.match(await page.locator('.activity-about-content').innerText(), /in-flight page chains finish/);
+    assert.match(await page.locator('.activity-about-content').innerText(), /Browser connectivity is not collector or worker health/);
+    assert.match(await page.locator('.activity-about-content').innerText(), /Connected pages refresh every 4 seconds/);
     await context.close();
   });
   await run('late HEAD metadata cannot downgrade the pinned source view or explicit latest action', async () => {
