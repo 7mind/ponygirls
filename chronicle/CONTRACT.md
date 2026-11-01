@@ -364,13 +364,20 @@ lookahead, cursor-anchor materialization, view projections and selected complete
 chunk JSON; admission occurs before selected variable-sized fields are fetched
 or decoded. Caller source budgets are additionally charged, never enlarged.
 Serialized generated `Result.ArchiveSearch` is capped at128KiB. Every statement
-(including ACL, cursor resolution, page execution and witnesses) has a five-second
-deadline or the stricter inherited timeout. Oversized reads fail `read-budget`,
+(including ACL, cursor resolution, page execution and witnesses) has a thirty-second
+deadline or the stricter inherited timeout. Browser source-search requests have a
+sixty-second transport deadline, allowing for query embeddings and multiple bounded
+source statements; ordinary browser request deadlines are unchanged. These are
+per-statement and transport budgets, not a single database transaction deadline. Oversized reads fail `read-budget`,
 cancellation fails `deadline`; neither truncates rows, drops required evidence,
 changes retrieval membership nor silently falls back. PostgreSQL may inspect
 full stored message bodies internally; these limits bound application transfer,
-not independent database CPU. Ordinary Archive browse retains unrestricted
-materialization and its existing page-size contract.
+not independent database CPU. Lexical/Hybrid text execution sets transaction-local
+`work_mem` to at least16MB (preserving a higher inherited setting) to reduce lossy
+trigram bitmap rechecks, without forcing GIN or correlated scans for every query. PostgreSQL applies this budget per plan node,
+not per request or process; it is not a global memory cap. Ordinary Archive browse
+shares this memory policy, retaining unrestricted materialization and its existing
+page-size contract.
 
 Browser dispatch uses explicit fresh `currentBrowser` and the context-read
 captured security-epoch delivery checks, before and after the source read.

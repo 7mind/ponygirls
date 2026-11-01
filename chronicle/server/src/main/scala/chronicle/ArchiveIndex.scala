@@ -237,6 +237,8 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
   private def execute(c: Connection,reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector],materialization: Option[ReadMaterialization]): (ArchiveResult,List[PageRow]) = {
     ArchivePaging.page(query.limit)
     val bounded=parsed.mode!=SearchMode.Lexical && parsed.textOperands.nonEmpty
+    if(parsed.mode!=SearchMode.Semantic && parsed.textOperands.nonEmpty)
+      ArchiveSearchPolicy.configureLexical(c)
     if(bounded) {
       IndexProfiles.semantic(c,reader,archive.visible,EmbeddingSpaceDescriptor.from(config.embedding))
       SearchPolicy.configure(c)

@@ -8,9 +8,11 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Clock
 import java.util.UUID
 import java.util.concurrent.{CompletableFuture,TimeUnit}
+import scala.concurrent.duration.*
 
 // Specified blackbox/GoodCommunication cases: exact PostgreSQL Unicode, ANN, isolation and admission semantics.
 class ArchiveSearchTest extends munit.FunSuite {
+  override val munitTimeout=45.seconds
   private final case class Fixture(config: Config,db: Database,archive: PostgresArchive,index: PostgresArchiveIndex) {
     def vectors(parsed: ParsedArchiveExpression): List[ArchiveVector] = if(parsed.mode==SearchMode.Lexical) Nil else parsed.textOperands.map(value => ArchiveVector(value,List(1.0,0.0,0.0)))
     def search(q: ArchiveQuery,reader: String): ArchiveSearchResult = {
@@ -167,6 +169,49 @@ class ArchiveSearchTest extends munit.FunSuite {
     val q=query("mode:lexical needle"); val parsed=ArchiveExpression.parse(q.expression)
     assertEquals(intercept[DomainError](f.index.sourceSearch("a",q,parsed,Nil,caller)).code,"read-budget")
     assertEquals(calls,3); assert(consumed>0)
+  }}
+  test("lexical memory policy is transaction-local and does not change the connection default") { database { f =>
+    f.db.transaction { c =>
+      val original=Sql.one(c,"SHOW work_mem")(_.getString(1)).get
+      Sql.exec(c,"SET LOCAL work_mem='64kB'")
+      ArchiveSearchPolicy.configureLexical(c)
+      assertEquals(Sql.one(c,"SHOW work_mem")(_.getString(1)),Some("16MB"))
+      Sql.exec(c,"SET LOCAL work_mem='32MB'")
+      ArchiveSearchPolicy.configureLexical(c)
+      assertEquals(Sql.one(c,"SHOW work_mem")(_.getString(1)),Some("32MB"))
+      c.commit()
+      assertEquals(Sql.one(c,"SHOW work_mem")(_.getString(1)),Some(original))
+    }
+  }}
+  test("archive search tolerates a six-second database wait without exceeding its finite statement budget") { database { f =>
+    f.archive.ingest("a",snapshot(List("needle")))
+    val locked=new CompletableFuture[Boolean]
+    val lock=CompletableFuture.runAsync(() => f.db.transaction { c =>
+      Sql.exec(c,"LOCK TABLE ch_archive_fragments IN ACCESS EXCLUSIVE MODE")
+      locked.complete(true)
+      Thread.sleep(6000)
+    })
+    locked.get(5,TimeUnit.SECONDS)
+    try {
+      val start=System.nanoTime()
+      assertEquals(f.search(query("mode:lexical needle"),"a").page.total,1L)
+      val elapsed=(System.nanoTime()-start)/1000000
+      assert(elapsed>=5000 && elapsed<15000,s"unexpected database wait duration: $elapsed ms")
+    } finally lock.get(15,TimeUnit.SECONDS)
+  }}
+  test("default archive search deadline expires after thirty seconds and remains observable") { database { f =>
+    f.archive.ingest("a",snapshot(List("needle")))
+    f.db.transaction { c =>
+      Sql.exec(c,"LOCK TABLE ch_archive_fragments IN ACCESS EXCLUSIVE MODE")
+      val start=System.nanoTime()
+      val waiting=CompletableFuture.supplyAsync(() => {
+        try { f.search(query("mode:lexical needle"),"a"); None }
+        catch { case error: DomainError => Some(error.code) }
+      })
+      assertEquals(waiting.get(35,TimeUnit.SECONDS),Some("deadline"))
+      val elapsed=(System.nanoTime()-start)/1000000
+      assert(elapsed>=29000 && elapsed<35000,s"unexpected default statement deadline: $elapsed ms")
+    }
   }}
   test("stricter inherited SQL deadlines cover witness lock waits and remain observable") { database { f =>
     f.archive.ingest("a",snapshot(List("needle")))

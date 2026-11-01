@@ -10,7 +10,13 @@ object ArchiveSearchPolicy {
   val maximumMatches=2
   val maximumSourceBytes=64L*1024
   val maximumResultBytes=128L*1024
-  val statementDeadlineMillis=5000
+  val statementDeadlineMillis=30000
+  // Per plan node, not per request: avoid lossy trigram bitmaps without changing the database-wide setting.
+  val minimumLexicalWorkMemory="16MB"
+  def configureLexical(c: Connection): Unit = {
+    Sql.exec(c,"SELECT set_config('work_mem',greatest(pg_size_bytes(current_setting('work_mem')),pg_size_bytes(?))::text||'B',true)",minimumLexicalWorkMemory)
+    ()
+  }
   def page(limit: Int): Unit = Check(limit>=1 && limit<=maximumPageSize,"invalid","invalid archive search page bounds")
   def materialization(caller: ReadMaterialization): ReadMaterialization = {
     var consumed=0L

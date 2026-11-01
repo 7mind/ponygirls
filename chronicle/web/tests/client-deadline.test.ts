@@ -18,7 +18,7 @@ import { Clock, FakeSocket, Page } from './fakes.ts';
 const ctx = BaboonCodecContext.Default;
 const frame = (id: string, result: Result) => JSON.stringify(ServerEnvelope_JsonCodec.instance.encode(ctx, new ServerEnvelope(id, result)));
 const decode = (data: string) => ClientEnvelope_JsonCodec.instance.decode(ctx, JSON.parse(data));
-const query = () => new ArchiveQuery('controlled query', ArchiveSort.LastTimestamp, SortDirection.Desc, undefined, 20, true);
+const query = () => new ArchiveQuery('controlled query', ArchiveSort.LastTimestamp, SortDirection.Desc, undefined, 10, true);
 const searchResult = () => new ArchiveSearchResult(new ArchiveResult([], 0n, undefined, ArchiveTextScope.ExactLexical, undefined, true), []);
 async function turn() { await new Promise<void>(resolve => setImmediate(resolve)); }
 
