@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS ch_archive_fragments(
   FOREIGN KEY(session_id,revision) REFERENCES ch_revisions(session_id,revision) ON DELETE CASCADE
 );
 DROP INDEX IF EXISTS ch_archive_fragments_trgm;
-CREATE INDEX IF NOT EXISTS ch_archive_fragments_lower_trgm ON ch_archive_fragments USING gin((lower(value COLLATE pg_unicode_fast)) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ch_archive_fragments_lower_trgm ON ch_archive_fragments USING gin(value gin_trgm_ops);
 CREATE TABLE IF NOT EXISTS ch_generation_tags(
   generation uuid NOT NULL REFERENCES ch_generations(id) ON DELETE CASCADE,
   tag text COLLATE "pg_unicode_fast" NOT NULL,

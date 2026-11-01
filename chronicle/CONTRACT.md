@@ -194,9 +194,14 @@ the pinned PostgreSQL18.6 and can be installed by a non-superuser database owner
 Whole fields/messages are lowercased in PostgreSQL before fragmentation; original
 normalized content and spans are unchanged. A lexical-version marker rebuilds
 obsolete fragments transactionally. Content paging has no100000 offset ceiling;
-GetMessages seeks by indexed position. The trigram index is on
-lower(value COLLATE pg_unicode_fast), not raw ILIKE, due to an observed
-raw-index Unicode false-negative constraint.
+GetMessages seeks by indexed position. Migration016 rebuilds the canonical GIN
+trigram index on the already-lowered `value` column. Membership uses
+`value LIKE lower(pattern COLLATE pg_unicode_fast)`, without lowercasing every
+candidate fragment again. This preserves whole-field folding before slicing;
+raw, unfolded `ILIKE` indexing remains unsupported due to the observed Unicode
+false-negative constraint. The canonical name and migration006 declaration stay
+consistent, so repeated initialization and missing-index recovery retain the
+stored-column representation.
 
 ## Published generation format (1.5)
 

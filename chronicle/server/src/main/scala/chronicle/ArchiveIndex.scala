@@ -158,7 +158,8 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     val restrictions=expression(parsed.candidateFilter,_ => throw DomainError("query","text in candidate metadata restriction"))
     parsed.textOperands.zipWithIndex.foreach { case (operand,index) =>
       if(lexical) {
-        ctes+=s"l$index AS MATERIALIZED(SELECT c.id FROM corpus c WHERE EXISTS(SELECT 1 FROM ch_archive_fragments fragment WHERE fragment.session_id=c.id AND fragment.revision=c.revision AND lower(fragment.value $unicode) LIKE lower(? $unicode) ESCAPE '\\'))"
+        // Lexical v1 already folds whole fields before fragmentation; folding again transforms every candidate on reads.
+        ctes+=s"l$index AS MATERIALIZED(SELECT c.id FROM corpus c WHERE EXISTS(SELECT 1 FROM ch_archive_fragments fragment WHERE fragment.session_id=c.id AND fragment.revision=c.revision AND fragment.value LIKE lower(? $unicode) ESCAPE '\\'))"
         args+=literal(operand)
       }
       if(semantic) {
