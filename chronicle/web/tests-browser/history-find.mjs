@@ -31,20 +31,24 @@ try {
       assert.equal(await page.getByRole('button', { name: /Request raw records|Back to messages/ }).count(), 0);
       assert.equal(await page.locator('.raw-permission,.raw-source').count(), 0);
       assert.equal(await page.getByRole('heading', { name: /Context-aware problems|Original messages/ }).count(), 0);
+      assert.equal(await page.locator('.conversation-passages .pane-heading').count(), 0, 'Do not reserve a redundant sidebar heading row');
+      assert.ok(await finder.locator('label').evaluate(element => element.getBoundingClientRect().height <= 1), 'Find label is accessible without reserving a visible row');
       const metadata = page.getByRole('button', { name: 'Provenance & metadata', exact: true });
+      assert.equal(await metadata.textContent(), 'Info', 'Use a font-portable metadata label');
       await metadata.click(); await page.locator('.provenance-details:popover-open').waitFor();
       await metadata.click();
+      const geometry = await page.evaluate(() => {
+        const find = document.querySelector('.session-find').getBoundingClientRect(), frame = document.querySelector('.conversation-source-frame').getBoundingClientRect(), count = document.querySelector('.source-message-count').getBoundingClientRect(), related = document.querySelector('.related > summary').getBoundingClientRect();
+        return { findTop: find.top - frame.top, findRight: frame.right - find.right, findHeight: find.height, relatedTop: related.top - frame.top, countBottom: frame.bottom - count.bottom, countRight: frame.right - count.right, document: document.documentElement.scrollWidth, viewport: innerWidth };
+      });
+      assert.ok(geometry.findTop >= 0 && geometry.findTop <= 12 && geometry.findRight <= 20, JSON.stringify(geometry));
+      assert.ok(geometry.findHeight <= 42, JSON.stringify(geometry));
+      if (width === 1440) assert.ok(geometry.relatedTop < geometry.findTop + geometry.findHeight, 'Related remains accessible alongside Find, without a blank full-width search row');
+      assert.ok(geometry.countBottom >= 0 && geometry.countBottom <= 12 && geometry.countRight <= 20, JSON.stringify(geometry));
+      assert.ok(geometry.document <= geometry.viewport, JSON.stringify(geometry));
       const before = await finder.boundingBox();
       await page.locator('.conversation-source').evaluate(element => { element.scrollTop = 300; });
       const after = await finder.boundingBox(); assert.equal(after.y, before.y, 'Find stays over the conversation when it scrolls');
-      const geometry = await page.evaluate(() => {
-        const find = document.querySelector('.session-find').getBoundingClientRect(), frame = document.querySelector('.conversation-source-frame').getBoundingClientRect(), count = document.querySelector('.source-message-count').getBoundingClientRect();
-        return { findTop: find.top - frame.top, findRight: frame.right - find.right, findHeight: find.height, countBottom: frame.bottom - count.bottom, countRight: frame.right - count.right, document: document.documentElement.scrollWidth, viewport: innerWidth };
-      });
-      assert.ok(geometry.findTop >= 0 && geometry.findTop <= 12 && geometry.findRight <= 20, JSON.stringify(geometry));
-      assert.ok(geometry.findHeight <= 60, JSON.stringify(geometry));
-      assert.ok(geometry.countBottom >= 0 && geometry.countBottom <= 12 && geometry.countRight <= 20, JSON.stringify(geometry));
-      assert.ok(geometry.document <= geometry.viewport, JSON.stringify(geometry));
       assert.equal(await finder.getByRole('button', { name: 'Next matches', exact: true }).getAttribute('title'), 'Next matching messages');
       assert.equal(fixture.calls.some(call => call.operation instanceof api.Operation_GetRaw), false);
       await s.context.close();

@@ -7,5 +7,5 @@
 .conversation-panes{display:grid;grid-template-columns:minmax(220px,30%) minmax(0,1fr);min-height:0;flex:1;overflow:hidden}
 .conversation-passages,.conversation-source{min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
 .conversation-passages{border-right:1px solid var(--rule);background:var(--passage-surface)}
-.conversation-source-frame{position:relative;min-width:0;min-height:0;overflow:hidden;background:var(--paper)}.conversation-source{height:100%;padding-top:calc(var(--source-find-height,40px) + 14px);padding-bottom:36px;background:var(--paper)}
+.conversation-source-frame{container-type:inline-size;position:relative;min-width:0;min-height:0;overflow:hidden;background:var(--paper)}.conversation-source{height:100%;padding-top:0;padding-bottom:36px;background:var(--paper)}
 @media(max-width:640px){.conversation-panes{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(100px,27%) minmax(0,1fr)}.conversation-passages{border-right:0;border-bottom:1px solid var(--rule)}.dialog-heading{padding:6px 10px}.dialog-top-bar{gap:5px}.dialog-top-bar .meta{width:100%}.dialog-top-bar .source-view-actions{margin-left:0}.conversation-dialog{border-radius:3px}}
