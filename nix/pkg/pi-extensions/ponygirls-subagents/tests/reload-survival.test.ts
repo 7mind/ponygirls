@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, type TextContent, type ToolCall } from "@earendil-works/pi-ai";
 import {
   createAgentSession, DefaultResourceLoader, initTheme, ModelRuntime, SessionManager, SettingsManager,
   type AgentSession,
@@ -34,7 +34,7 @@ async function within<T>(promise: Promise<T>, message: string): Promise<T> {
   }
 }
 
-function assistant(model: { api: string; provider: string; id: string }, content: Array<Record<string, unknown>>, stopReason: "toolUse" | "stop") {
+function assistant(model: { api: string; provider: string; id: string }, content: Array<TextContent | ToolCall>, stopReason: "toolUse" | "stop") {
   const stream = createAssistantMessageEventStream();
   stream.push({ type: "done", reason: stopReason, message: {
     role: "assistant", content, api: model.api, provider: model.provider, model: model.id,
