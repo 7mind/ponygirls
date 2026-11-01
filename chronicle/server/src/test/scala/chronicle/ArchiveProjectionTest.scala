@@ -75,6 +75,12 @@ class ArchiveProjectionTest extends munit.FunSuite {
     def indexIdentity = db.transaction(c => Sql.one(c,"SELECT c.oid,c.relfilenode FROM pg_class c WHERE c.oid='ch_archive_fragments_lower_trgm'::regclass")(r => (r.getLong(1),r.getLong(2)))).get
     val expectedFragments=fragments
     db.transaction { c =>
+      Sql.exec(c,"DROP INDEX ch_archive_fragments_lower_trgm")
+      Sql.exec(c,"CREATE INDEX ch_archive_fragments_lower_trgm ON ch_archive_fragments USING gin((lower(value COLLATE pg_unicode_fast)) gin_trgm_ops)")
+      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=16")
+    }
+    val legacyIndex=indexIdentity
+    db.transaction { c =>
       Sql.exec(c,"UPDATE ch_revision_info SET lexical_version=0 WHERE session_id=?",receipt.sessionId)
       Sql.exec(c,"DELETE FROM ch_archive_fragments WHERE session_id=?",receipt.sessionId)
       ArchiveProjection.fragments(text).zipWithIndex.foreach { case (value,ordinal) => Sql.exec(c,"INSERT INTO ch_archive_fragments VALUES(?,1,?,?)",receipt.sessionId,ordinal,value) }
@@ -84,6 +90,8 @@ class ArchiveProjectionTest extends munit.FunSuite {
     }
     db.initialize()
     val upgradedIndex=indexIdentity
+    assert(upgradedIndex._1!=legacyIndex._1,s"startup must replace the populated legacy expression GIN: legacy=$legacyIndex current=$upgradedIndex")
+    db.transaction(c => assertEquals(Sql.one(c,"SELECT indexprs IS NULL FROM pg_index WHERE indexrelid='ch_archive_fragments_lower_trgm'::regclass")(_.getBoolean(1)),Some(true),"upgraded canonical GIN must index the stored column, not lower(value)"))
     assertEquals(fragments,expectedFragments,"startup must restore exactly the whole-field-lowered fragments")
     db.initialize()
     assertEquals(indexIdentity,upgradedIndex,"repeated initialize must preserve canonical index OID and relfilenode")
