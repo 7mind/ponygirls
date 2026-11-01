@@ -13,7 +13,7 @@ const server = await createServer({ root: fileURLToPath(new URL('..', import.met
 await server.listen();
 const browser = await chromium.launch({ headless: true }), results = [], errors = [];
 const code = 'const animal = "猫🦄";\nconsole.log(animal);\n';
-const text = '# A terminal transcript\n\nUse **immutable revisions** and `exact bytes`.\n\n```typescript\n' + code + '```\n\n<script>window.transcriptExecuted = true</script>\n[jump](javascript:alert(1))';
+const text = '# A terminal transcript\r\n\r\nUse **immutable revisions** and `exact bytes`.\r\n1. Deploy\r\n2. Verify\r\n\r\n2 * 3 * 4\r\n\r\n```typescript\r\n' + code + '```\r\n\r\n<script>window.transcriptExecuted = true</script>\r\n[jump](javascript:alert(1))';
 try {
   for (const theme of ['light', 'dark']) for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme, permissions: ['clipboard-read', 'clipboard-write'] });
@@ -25,7 +25,11 @@ try {
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`);
     await page.locator('.archive-row .table-title').first().click();
     const message = page.locator('#message-m2'); await message.waitFor();
+    assert.equal(await message.getByRole('heading', { name: 'A terminal transcript', exact: true }).count(), 1);
+    assert.equal(await message.getByRole('listitem').count(), 2);
+    assert.match(await message.textContent(), /2 \* 3 \* 4/);
     await message.getByRole('button', { name: 'Copy message', exact: true }).click();
+    await message.getByRole('status', { name: 'Clipboard status', exact: true }).filter({ hasText: 'Message copied' }).waitFor();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), text);
     await message.getByRole('button', { name: 'Copy code', exact: true }).click();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), code);
@@ -41,6 +45,13 @@ try {
     const colors = await page.evaluate(() => ['m1', 'm2'].map(id => getComputedStyle(document.querySelector(`#message-${id}`)).borderLeftColor));
     assert.notEqual(colors[0], colors[1], 'Roles have distinct color accents, with textual role labels retained');
     await message.screenshot({ path: `${output}/${theme}-${width}.png` });
+    await page.evaluate(() => Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async () => { throw new DOMException('Synthetic clipboard denial', 'NotAllowedError'); } }));
+    await message.getByRole('button', { name: 'Copy message', exact: true }).click();
+    await message.getByRole('alert').filter({ hasText: 'Clipboard unavailable' }).waitFor();
+    await page.evaluate(() => { delete navigator.clipboard.writeText; });
+    await message.getByRole('button', { name: 'Copy message', exact: true }).click();
+    assert.equal(await message.getByRole('alert').count(), 0);
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), text);
     const bounds = await message.evaluate(element => ({ width: element.scrollWidth, available: element.clientWidth, document: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(bounds.width <= bounds.available + 1 && bounds.document <= bounds.viewport, JSON.stringify(bounds));
     await page.locator('.passage-list .passage').first().click();

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { Span } from './api.ts';
 import { highlightUtf8 } from './highlight.ts';
 import { inlineParts, messageBlocks } from './message-format.ts';
@@ -15,20 +15,32 @@ function CopyButton({ text, label }: { text: string; label: string }) {
     try { await navigator.clipboard.writeText(text); setCopied(true); setError(null); }
     catch { setError('Clipboard unavailable. Select and copy the text manually.'); }
   }
-  return <span className="message-copy"><button type="button" className="small-button" aria-label={label} onClick={() => void copy()}>{copied ? 'Copied' : label}</button>{error !== null && <span className="copy-error" role="alert">{error}</span>}</span>;
+  return <span className="message-copy"><button type="button" className="small-button" aria-label={label} onClick={() => void copy()}>{copied ? 'Copied' : label}</button><span className="sr-only" role="status" aria-label="Clipboard status">{copied ? label === 'Copy message' ? 'Message copied' : 'Code copied' : ''}</span>{error !== null && <span className="copy-error" role="alert">{error}</span>}</span>;
 }
 function InlineText({ text }: { text: string }) {
   return <>{inlineParts(text).map((part, index) => part.kind === 'code' ? <code key={index}>{part.text}</code> : part.kind === 'strong' ? <strong key={index}>{part.text}</strong> : part.kind === 'emphasis' ? <em key={index}>{part.text}</em> : <span key={index}>{part.text}</span>)}</>;
 }
 function FormattedText({ text }: { text: string }) {
-  if (!/^(?:#{1,6}\s|>\s?|\s*(?:[-+*]|\d+\.)\s)|`[^`\n]+`|\*[^*\n]+\*/m.test(text)) return <pre>{text}</pre>;
-  return <div className="message-formatted-text">{text.split('\n').map((line, index) => {
-    const heading = /^(#{1,6})\s+(.+)$/.exec(line), quote = /^>\s?(.*)$/.exec(line), list = /^(\s*)([-+*]|\d+\.)\s+(.+)$/.exec(line);
-    if (heading !== null) return <div key={index} className="message-markdown-heading" role="heading" aria-level={Math.min(6, heading[1]!.length + 2)}><InlineText text={heading[2]!}/></div>;
-    if (quote !== null) return <div key={index} className="message-markdown-quote"><InlineText text={quote[1]!}/></div>;
-    if (list !== null) return <div key={index} className="message-markdown-item"><span aria-hidden="true">{list[1]}{list[2]} </span><InlineText text={list[3]!}/></div>;
-    return <div key={index}>{line.length === 0 ? <br/> : <InlineText text={line}/>}</div>;
-  })}</div>;
+  const lines = text.split(/\r?\n/), listPattern = /^[ \t]*([-+*]|\d+\.)[ \t]+(.+)$/;
+  const formatted = lines.some(line => /^(?:#{1,6}[ \t]+|>[ \t]?)/.test(line) || listPattern.test(line) || inlineParts(line).some(part => part.kind !== 'text'));
+  if (!formatted) return <pre>{text}</pre>;
+  const content: ReactNode[] = [];
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!, heading = /^(#{1,6})[ \t]+(.+)$/.exec(line), quote = /^>[ \t]?(.*)$/.exec(line), list = listPattern.exec(line);
+    if (heading !== null) content.push(<div key={index} className="message-markdown-heading" role="heading" aria-level={Math.min(6, heading[1]!.length + 2)}><InlineText text={heading[2]!}/></div>);
+    else if (quote !== null) content.push(<div key={index} className="message-markdown-quote"><InlineText text={quote[1]!}/></div>);
+    else if (list !== null) {
+      const start = index, ordered = /\d/.test(list[1]!), items: ReactNode[] = [];
+      let item: RegExpExecArray | null = list;
+      while (item !== null && /\d/.test(item[1]!) === ordered) {
+        items.push(<li key={index} value={ordered ? Number.parseInt(item[1]!, 10) : undefined}><InlineText text={item[2]!}/></li>);
+        index++; item = index < lines.length ? listPattern.exec(lines[index]!) : null;
+      }
+      index--;
+      content.push(ordered ? <ol key={start} start={Number.parseInt(list[1]!, 10)}>{items}</ol> : <ul key={start}>{items}</ul>);
+    } else content.push(<div key={index}>{line.length === 0 ? <br/> : <InlineText text={line}/>}</div>);
+  }
+  return <div className="message-formatted-text">{content}</div>;
 }
 export function MessageContent({ text, spans }: { text: string; spans: readonly Span[] }) {
   const [source, setSource] = useState(false);
