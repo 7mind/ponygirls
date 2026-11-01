@@ -62,7 +62,7 @@ try {
     assert.equal(calls(fixture, api.Operation_ArchiveSearch).length, 0); await submit(page); await ready(page);
     let query = calls(fixture, api.Operation_ArchiveSearch).at(-1).query;
     assert.equal(query.expression, expression); assert.equal(query.limit, 10); assert.equal(query.cursor, undefined); assert.equal(query.sort, api.ArchiveSort.LastTimestamp); assert.equal(query.direction, api.SortDirection.Desc); assert.equal(query.preferRelevance, true);
-    assert.match(await page.locator('.search-count').textContent(), /23 matching conversations.*exact lexical\/metadata membership/);
+    assert.match(await page.locator('.search-count').textContent(), /23 matching conversations.*exact lexical\/metadata/);
     await page.getByRole('button', { name: 'Next results', exact: true }).click(); await page.getByRole('button', { name: 'Search conversation 11', exact: true }).waitFor(); assert.equal(calls(fixture, api.Operation_ArchiveSearch).at(-1).query.cursor, '10');
     for (const value of ['mode:lexical changed', '(tag:"architecture" OR tag:"migration") AND NOT producer:"codex"', 'after:"2026-10-02" before:"2026-10-25"']) {
       const before = calls(fixture, api.Operation_ArchiveSearch).length;
@@ -72,7 +72,10 @@ try {
     for (const mode of ['semantic', 'hybrid']) {
       fixture.archiveSearchScope = api.ArchiveTextScope.BoundedCandidateSets; fixture.archiveSearchCount = mode === 'semantic' ? 12 : 1003;
       await input.fill(`mode:${mode} source`); assert.equal(await page.locator('.search-card').count(), 0); await submit(page); await ready(page);
-      assert.match(await page.locator('.search-count').textContent(), new RegExp(`${fixture.archiveSearchCount} matching conversations.*1000 candidate chunks per operand, not a row cap`));
+      assert.match(await page.locator('.search-count').textContent(), new RegExp(`${fixture.archiveSearchCount} matching conversations.*bounded semantic candidates.*1000 chunks/operand`));
+      await page.getByRole('button', { name: 'Search syntax', exact: true }).click();
+      await page.getByText('Up to 1000 published chunks per text operand, not a row cap. Hybrid also includes exact lexical HEAD matches.', { exact: true }).waitFor();
+      await page.keyboard.press('Escape');
       await page.getByRole('button', { name: 'Next results', exact: true }).click(); await page.getByRole('button', { name: 'Search conversation 11', exact: true }).waitFor(); assert.equal(await page.locator('.search-card').count(), mode === 'semantic' ? 2 : 10); assert.equal(await page.getByRole('button', { name: 'Next results', exact: true }).isDisabled(), mode === 'semantic');
       await page.getByRole('button', { name: 'Previous results', exact: true }).click(); await ready(page); assert.equal(calls(fixture, api.Operation_ArchiveSearch).at(-1).query.cursor, undefined);
     }
@@ -103,7 +106,7 @@ try {
       f.archiveSearchTransform = result => result.with({ page: result.page.with({ rows: result.page.rows.map(row => row.with({ head: row.head.with({ indexedRevision: undefined }), publishedView: undefined, matchedView: undefined })) }), evidence: result.evidence.map(evidence => evidence.with({ matches: [] })) });
     });
     await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('project:"chronicle" AND NOT tag:"archived"'); await submit(page); await page.locator('.search-card').first().waitFor();
-    assert.equal(calls(fixture, api.Operation_ReadMessageContext).length, 0); assert.equal(await page.locator('.search-excerpt').count(), 0); assert.match(await page.locator('.search-card').first().textContent(), /not indexed.*No positive message spans/s);
+    assert.equal(calls(fixture, api.Operation_ReadMessageContext).length, 0); assert.equal(await page.locator('.search-excerpt').count(), 0); assert.match(await page.locator('.search-card').first().textContent(), /not indexed.*No positive source spans/s);
     await page.getByRole('button', { name: 'Search conversation 1', exact: true }).click(); await page.locator('.original-message').first().waitFor();
     const request = calls(fixture, api.Operation_GetSession).at(-1); assert.equal(request.view.revision, fixture.session.revision); assert.equal(request.view.generationId, undefined); assert.equal(calls(fixture, api.Operation_LocateMessage).length, 0); await context.close();
   });
@@ -132,6 +135,8 @@ try {
     const { page, fixture, context } = await scene(); await submit(page); await ready(page);
     assert.equal(calls(fixture, api.Operation_GetSession).length, 0); assert.equal(calls(fixture, api.Operation_GetMessages).length, 0);
     const card = page.locator('.search-card').first(), excerpt = card.locator('.search-excerpt').first();
+    assert.doesNotMatch(await page.getByRole('main', { name: 'Search', exact: true }).innerText(), /representative source is not proof|Separate messages are never joined into a quote|Highlighted bytes are the returned source span|Up to two representative positive source spans/);
+    assert.match(await card.innerText(), /Semantic retrieval source.*representative 1 of 2.*source r1.*generation/s);
     assert.equal(await excerpt.locator('strong').textContent(), 'user'); assert.equal(await excerpt.locator('mark').textContent(), 'Exact 猫🦄 matched');
     assert.match(await card.textContent(), /Generated annotation: GENERATED summary not source/); assert.doesNotMatch(await card.textContent(), /POISON joined chunk text/);
     assert.equal(await card.locator('script').count(), 0); assert.match(await excerpt.locator('pre').textContent(), /<script>literal\(\)<\/script>/);
@@ -340,7 +345,7 @@ try {
   });
   await group('oversized historical source span explicitly labels partial bounded preview', async () => {
     const { page, fixture, context } = await scene(f => { f.archiveSearchTransform = result => withSpan(result, new api.Span('m65', 0, 22000)); });
-    await submit(page); await ready(page); assert.match(await page.locator('.search-card').textContent(), /Partial preview.*not the full match/); const request = calls(fixture, api.Operation_ReadMessageContext)[0]; assert.equal(request.anchor.start, request.anchor.end); assert.equal(Buffer.byteLength(await page.locator('.search-excerpt pre').textContent()), 512); await context.close();
+    await submit(page); await ready(page); assert.match(await page.locator('.search-card').textContent(), /Partial preview.*source span exceeds 2048 bytes/); const request = calls(fixture, api.Operation_ReadMessageContext)[0]; assert.equal(request.anchor.start, request.anchor.end); assert.equal(Buffer.byteLength(await page.locator('.search-excerpt pre').textContent()), 512); await context.close();
   });
   for (const width of [320, 390, 768, 1440]) for (const theme of ['light', 'dark']) await group(`responsive ${width}px ${theme}`, async () => {
     const { page, context } = await scene(undefined, width, theme); await submit(page); await ready(page);

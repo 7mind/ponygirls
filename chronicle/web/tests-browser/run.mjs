@@ -84,9 +84,9 @@ try {
     assert.equal(await page.getByRole('link', { name: 'Chronicle home', exact: true }).textContent(), 'C·chronicle');
     assert.equal(await page.locator('footer.app-footer').innerText(), 'Chronicle');
     await page.getByRole('button', { name: 'access', exact: true }).click();
-    await page.getByRole('heading', { name: 'Access management', exact: true, level: 1 }).waitFor();
+    await page.getByRole('main', { name: 'Access management', exact: true }).waitFor();
     await page.getByRole('button', { name: 'activity', exact: true }).click();
-    await page.getByRole('heading', { name: 'Ingestion activity', exact: true, level: 1 }).waitFor();
+    await page.getByRole('main', { name: 'Activity', exact: true }).waitFor();
     await context.close(); console.log('PASS browser: neutral task headings, empty states and branding');
   }
   // Regression: loopback HTTP is trustworthy; non-loopback HTTP is not.
@@ -114,7 +114,7 @@ try {
     await page.getByRole('button', { name: 'access', exact: true }).click();
     const configured = page.locator('.token-row').filter({ hasText: 'Configured collector' });
     await configured.getByText('StaticConfig', { exact: true }).waitFor();
-    assert.match(await configured.innerText(), /read only/);
+    assert.match(await configured.innerText(), /Managed in server configuration; read-only here/);
     assert.equal(await configured.locator('button, input, textarea').count(), 0);
     assert.equal(await page.locator('.token-secret').count(), 0);
     const issued = page.locator('.token-row').filter({ hasText: 'Issued collector' });
@@ -188,7 +188,10 @@ try {
     await page.getByRole('button', { name: 'activity', exact: true }).click();
     await page.getByRole('heading', { name: 'No matching collectors', exact: true }).waitFor();
     assert.equal(await page.getByText('alice-private-collector', { exact: true }).count(), 0);
-    assert.match(await page.getByRole('region', { name: 'Collectors', exact: true }).innerText(), /Collection configuration and progress remain unknown/);
+    assert.match(await page.getByRole('region', { name: 'Collectors', exact: true }).innerText(), /0 matching \/ 0 owner collectors · 0 loaded/);
+    await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
+    assert.match(await page.locator('.activity-about [popover]').innerText(), /Missing, Idle or stale reports do not establish collection completion/);
+    await page.keyboard.press('Escape');
     assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_Activity));
     assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs));
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_CollectionStatus || call.operation instanceof api.Operation_IngestStatus).length, 0);

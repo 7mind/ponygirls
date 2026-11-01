@@ -28,8 +28,11 @@ try {
     assert.equal(await table.locator('tbody tr').filter({ hasText: 'DocumentEmbedding' }).locator('td').nth(1).locator('strong').textContent(), 'Unknown');
     assert.equal(await table.locator('tbody tr').filter({ hasText: 'QueryEmbedding' }).locator('td').nth(1).locator('strong').textContent(), '0 TPS');
     assert.equal(await table.locator('tbody tr').filter({ hasText: 'DocumentEmbedding' }).locator('td').nth(2).textContent(), 'N/A');
-    const explanation = await page.locator('.model-usage').textContent();
-    assert.match(explanation, /Finished includes failed and cancelled/); assert.match(explanation, /malformed provider-reported usage, not annotation validation/); assert.match(explanation, /sample age may exceed the window/);
+    assert.doesNotMatch(await page.locator('.model-usage').innerText(), /In flight counts|Unknown is unavailable|Reasoning is included in output/, 'Measurement reference is optional, not a banner before the data');
+    await page.getByRole('button', { name: 'About usage measurements', exact: true }).click();
+    const explanation = await page.locator('.model-usage [popover]').innerText();
+    assert.match(explanation, /Finished includes failed and cancelled/); assert.match(explanation, /malformed provider usage, not annotation validation/); assert.match(explanation, /Last reported samples may be older than the window/); assert.match(explanation, /Unknown is unavailable, not zero/); assert.match(explanation, /Reasoning is included in output/);
+    await page.keyboard.press('Escape');
     assert.deepEqual(errors, []); await page.locator('.model-usage').screenshot({ path: `${output}/${theme}.png` }); await context.close(); console.log(`PASS usage presentation ${theme}: instantaneous, empty rolling window, old sample, unknown, known zero, N/A`);
   }
 } finally { await browser.close(); await server.close(); }
