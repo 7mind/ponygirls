@@ -54,20 +54,47 @@ class ArchiveProjectionTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](archive.locateMessage("a",out.sessionId,view,"absent")).code,"not-found")
     assertEquals(intercept[DomainError](archive.locateMessage("a",out.sessionId,ContentView(2,None),"u")).code,"not-found")
   }}
-  test("BG GoodCommunication regression: obsolete lexical projections rebuild whole-field folding without changing normalized content") { database { (config,db,archive) =>
-    val original=Fixtures.snapshot(); val text="aΣ"+"\u0301"*5000+"b"
+  test("Effectual GoodCommunication regression: canonical lexical GIN indexes the stored Unicode column, not a redundant lower expression") { database { (config,db,archive) =>
+    db.transaction { c =>
+      val (expression,key,valueAttribute,indexCollation,columnCollation,operatorClass,method,keyCount,valid,ready)=Sql.one(c,"SELECT pg_get_expr(i.indexprs,i.indrelid),i.indkey::text,a.attnum,ic.collname,ac.collname,op.opcname,am.amname,i.indnatts,i.indisvalid,i.indisready FROM pg_index i JOIN pg_class ix ON ix.oid=i.indexrelid JOIN pg_am am ON am.oid=ix.relam JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attname='value' JOIN pg_collation ic ON ic.oid=i.indcollation[0] JOIN pg_collation ac ON ac.oid=a.attcollation JOIN pg_opclass op ON op.oid=i.indclass[0] WHERE i.indexrelid='ch_archive_fragments_lower_trgm'::regclass AND i.indrelid='ch_archive_fragments'::regclass") { r =>
+        (Option(r.getString(1)),r.getString(2),r.getInt(3),r.getString(4),r.getString(5),r.getString(6),r.getString(7),r.getInt(8),r.getBoolean(9),r.getBoolean(10))
+      }.get
+      assertEquals(expression,Option.empty[String],"canonical GIN must have pg_index.indexprs IS NULL: fragments are already whole-field lowered")
+      assertEquals(key,valueAttribute.toString,"indkey must reference ch_archive_fragments.value, not expression attribute 0")
+      assertEquals(indexCollation,"pg_unicode_fast"); assertEquals(columnCollation,"pg_unicode_fast")
+      assertEquals(operatorClass,"gin_trgm_ops"); assertEquals(method,"gin"); assertEquals(keyCount,1)
+      assert(valid && ready,"canonical stored-column GIN must be valid and ready")
+    }
+  }}
+  test("BG GoodCommunication regression: initialize repairs obsolete and missing whole-field projections, then preserves bytes and GIN identity") { database { (config,db,archive) =>
+    val original=Fixtures.snapshot(); val text="aΣ"+"\u0301"*5000+"b İSTANBUL KELVIN %_\\"
     val request=original.copy(metadata=original.metadata.copy(title=text),messages=original.messages.map(_.copy(text=text)))
     val receipt=archive.ingest("a",request)
+    val missing=archive.ingest("a",request.copy(requestId=UUID.randomUUID(),source=request.source.copy(collectorNamespace="missing-"+UUID.randomUUID())))
+    def fragments = db.transaction(c => Sql.rows(c,"SELECT session_id,revision,ordinal,value FROM ch_archive_fragments ORDER BY session_id,revision,ordinal")(r => (r.getObject(1,classOf[UUID]),r.getInt(2),r.getInt(3),r.getString(4))))
+    def indexIdentity = db.transaction(c => Sql.one(c,"SELECT c.oid,c.relfilenode FROM pg_class c WHERE c.oid='ch_archive_fragments_lower_trgm'::regclass")(r => (r.getLong(1),r.getLong(2)))).get
+    val expectedFragments=fragments
     db.transaction { c =>
       Sql.exec(c,"UPDATE ch_revision_info SET lexical_version=0 WHERE session_id=?",receipt.sessionId)
       Sql.exec(c,"DELETE FROM ch_archive_fragments WHERE session_id=?",receipt.sessionId)
       ArchiveProjection.fragments(text).zipWithIndex.foreach { case (value,ordinal) => Sql.exec(c,"INSERT INTO ch_archive_fragments VALUES(?,1,?,?)",receipt.sessionId,ordinal,value) }
+      Sql.exec(c,"DELETE FROM ch_revision_info WHERE session_id=?",missing.sessionId)
+      Sql.exec(c,"DELETE FROM ch_messages WHERE session_id=?",missing.sessionId)
+      Sql.exec(c,"DELETE FROM ch_archive_fragments WHERE session_id=?",missing.sessionId)
     }
-    ArchiveProjection.backfill(db); ArchiveProjection.backfill(db)
-    assertEquals(archive.messages("a",receipt.sessionId,0,100,Some(ContentView(1,None))).messages,request.messages)
-    assertEquals(archive.raw("a",receipt.sessionId,Some(1)).files,request.files)
+    db.initialize()
+    val upgradedIndex=indexIdentity
+    assertEquals(fragments,expectedFragments,"startup must restore exactly the whole-field-lowered fragments")
+    db.initialize()
+    assertEquals(indexIdentity,upgradedIndex,"repeated initialize must preserve canonical index OID and relfilenode")
+    assertEquals(fragments,expectedFragments,"repeated initialize must not rewrite canonical fragments")
+    List(receipt,missing).foreach { out =>
+      assertEquals(archive.messages("a",out.sessionId,0,100,Some(ContentView(1,None))).messages,request.messages)
+      assertEquals(archive.raw("a",out.sessionId,Some(1)).files,request.files)
+    }
     db.transaction { c =>
-      assertEquals(Sql.one(c,"SELECT lexical_version FROM ch_revision_info WHERE session_id=?",receipt.sessionId)(_.getInt(1)),Some(ArchiveProjection.lexicalVersion))
+      assertEquals(Sql.rows(c,"SELECT lexical_version FROM ch_revision_info ORDER BY session_id")(_.getInt(1)),List.fill(2)(ArchiveProjection.lexicalVersion))
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE convert_to(value,'UTF8')<>convert_to(lower(value COLLATE pg_unicode_fast),'UTF8')")(_.getInt(1)),Some(0))
       assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE session_id=? AND value LIKE '%σ%'",receipt.sessionId)(_.getInt(1)),Some(2))
       assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE session_id=? AND value LIKE '%ς%'",receipt.sessionId)(_.getInt(1)),Some(0))
     }
