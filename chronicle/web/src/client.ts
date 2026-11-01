@@ -1,6 +1,7 @@
-import { BaboonCodecContext, LoginRequest, LoginRequest_JsonCodec, LoginResponse_JsonCodec, Failure_JsonCodec, type LoginResponse, type Operation, type Result } from './api.ts';
+import { BaboonCodecContext, LoginRequest, LoginRequest_JsonCodec, LoginResponse_JsonCodec, Failure_JsonCodec, Operation_ArchiveSearch, type LoginResponse, type Operation, type Result } from './api.ts';
 import type { ConnectionManager } from './transport/manager.ts';
 export type ChronicleConnection = ConnectionManager<Operation, Result>;
+const ARCHIVE_SEARCH_TIMEOUT_MILLIS = 60_000;
 export async function login(fetcher: typeof fetch, username: string, password: string): Promise<LoginResponse> {
   const response = await fetcher('/api/login', {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -14,7 +15,9 @@ export async function login(fetcher: typeof fetch, username: string, password: s
   return LoginResponse_JsonCodec.instance.decode(BaboonCodecContext.Default, json);
 }
 export async function read<T>(connection: ChronicleConnection, operation: Operation, extract: (result: Result) => T | null): Promise<T> {
-  const result = await connection.request(operation, { mutation: false, receiptId: null });
+  const result = await connection.request(operation, operation instanceof Operation_ArchiveSearch
+    ? { mutation: false, receiptId: null, timeoutMillis: ARCHIVE_SEARCH_TIMEOUT_MILLIS }
+    : { mutation: false, receiptId: null });
   const value = extract(result);
   if (value === null) throw new Error('The server returned an unexpected result type');
   return value;

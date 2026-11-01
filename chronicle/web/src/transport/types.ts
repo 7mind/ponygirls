@@ -85,7 +85,10 @@ export interface Dependencies<Operation, Result> {
   protocol: () => Protocol<Operation, Result>;
   config: ConnectionConfig;
 }
-export type RequestOptions = { mutation: boolean; receiptId: string | null } | { mutation: false; receiptId: null; delivery: 'once' };
+export type RequestOptions =
+  | { mutation: boolean; receiptId: string | null }
+  | { mutation: false; receiptId: null; delivery: 'once' }
+  | { mutation: false; receiptId: null; timeoutMillis: number };
 export class RequestFailure extends Error {
   readonly outcome: 'failed' | 'uncertain';
   readonly receiptId: string | null;

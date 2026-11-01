@@ -74,7 +74,7 @@ export class ConnectionManager<Operation, Result> {
         this.pending.delete(id);
         pending.reject(this.failure('delivery' in options && options.delivery === 'once' ? 'Request deadline exceeded; one-shot delivery is unknown and must not be automatically repeated' : 'Request deadline exceeded; reload reads or look up the mutation receipt', 'timeout', options));
         this.stale(channel, 'request timeout');
-      }, this.deps.config.requestTimeout);
+      }, 'timeoutMillis' in options ? options.timeoutMillis : this.deps.config.requestTimeout);
       this.pending.set(id, { socketId: channel.id, generation: this.generation, timer, options, resolve, reject });
       try { channel.socket.send(channel.protocol.request(id, operation)); }
       catch { this.failChannel(channel, 'Send failed'); this.dead(channel, 1006, 'Send failed', false); }
