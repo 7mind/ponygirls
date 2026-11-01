@@ -210,4 +210,57 @@ class ArchiveHeadCandidateTest extends munit.FunSuite {
     }
     assertEquals(archive.messages("a",out.sessionId,0,100,Some(ContentView(1,None))).messages,first.messages)
   }}
+
+  test("Effectual GoodCommunication regression: actual same-source backfill DELETE and late reinsert remain complete across a concurrent HEAD advance") { database { (config,db,archive,index) =>
+    val first=initial("barrierhistoryneedle K"+"x"*5000); val out=archive.ingest("a",first)
+    val before=db.transaction(c => fragments(c,out.sessionId))
+    val next=revision(first,List("barriercurrentneedle İ"+"y"*5000),1)
+    val suffix=UUID.randomUUID().toString.replace("-","")
+    val function="hc_backfill_gate_"+suffix; val trigger="hc_backfill_pause_"+suffix
+    val barrierKey=1729013371L
+    val application="head-candidate-backfill-"+suffix
+    val backfillConfig=config.copy(jdbcUrl=config.jdbcUrl+"&ApplicationName="+application)
+    val backfillDb=new Database(backfillConfig,db.profiles)
+    db.transaction { c =>
+      Sql.exec(c,"UPDATE ch_revision_info SET lexical_version=0 WHERE session_id=? AND revision=1",out.sessionId)
+      Sql.exec(c,s"CREATE FUNCTION $function() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN PERFORM pg_advisory_xact_lock($barrierKey::bigint); RETURN OLD; END;'")
+      Sql.exec(c,s"CREATE TRIGGER $trigger BEFORE DELETE ON ch_archive_fragments FOR EACH ROW WHEN (OLD.session_id='${out.sessionId}'::uuid AND OLD.revision=1) EXECUTE FUNCTION $function()")
+    }
+    val executor=Executors.newFixedThreadPool(2)
+    try {
+      val backfilling=db.transaction { gate =>
+        Sql.exec(gate,"SELECT pg_advisory_xact_lock(?)",barrierKey)
+        val actualBackfill=executor.submit(new Callable[Unit] { def call(): Unit=ArchiveProjection.backfill(backfillDb) })
+        def deletingAtBarrier: Boolean = db.transaction(c => Sql.one(c,"SELECT EXISTS(SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid WHERE l.locktype='advisory' AND NOT l.granted AND l.classid::bigint=0 AND l.objid::bigint=? AND l.objsubid=1 AND a.datname=current_database() AND a.application_name=? AND a.query LIKE 'DELETE FROM ch_archive_fragments%')",barrierKey,application)(_.getBoolean(1)).get)
+        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(3)
+        var paused=deletingAtBarrier
+        while(!paused && !actualBackfill.isDone && System.nanoTime()<deadline) paused=deletingAtBarrier
+        if(!paused && actualBackfill.isDone) actualBackfill.get(1,TimeUnit.SECONDS)
+        assert(paused,"actual ArchiveProjection.backfill must reach the fixture's BEFORE DELETE advisory wait; overlap is established from pg_locks, not sleep/timing")
+        val advancing=executor.submit(new Callable[IngestReceipt] { def call(): IngestReceipt=archive.ingest("a",next) })
+        assertEquals(advancing.get(5,TimeUnit.SECONDS).revision,2,"ingest must commit while backfill owns the obsolete revision/DELETE row locks")
+        assert(deletingAtBarrier,"backfill must still be paused behind the held gate after HEAD advance, not have timed out or finished")
+        db.transaction(c => complete(c,out.sessionId))
+        // Gate commit releases only this test's advisory lock; the real backfill
+        // then deletes/reinserts revision1 while the public HEAD is already2.
+        actualBackfill
+      }
+      backfilling.get(5,TimeUnit.SECONDS) // Surface actual backfill failures, not just executor termination.
+      db.transaction { c =>
+        assertEquals(fragments(c,out.sessionId).filter(_._1==1),before,"real late reinsert must preserve historical fragment values/ordinals")
+        complete(c,out.sessionId)
+        assertEquals(Sql.one(c,"SELECT lexical_version FROM ch_revision_info WHERE session_id=? AND revision=1",out.sessionId)(_.getInt(1)),Some(ArchiveProjection.lexicalVersion))
+        assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE session_id=? AND revision=1 AND head_candidate AND value LIKE '%barrierhistoryneedle%'",out.sessionId)(_.getInt(1)),Some(1),"late real backfill creates a permitted DEFAULT TRUE historical candidate")
+      }
+      assertEquals(ids(index,"a","barrierhistoryneedle"),Set.empty[UUID],"late historical TRUE extras must not leak into current-HEAD search")
+      assertEquals(ids(index,"a","barriercurrentneedle"),Set(out.sessionId))
+      List((1,first),(2,next)).foreach { case (number,request) =>
+        assertEquals(archive.messages("a",out.sessionId,0,100,Some(ContentView(number,None))).messages,request.messages)
+        assertEquals(archive.raw("a",out.sessionId,Some(number)).files,request.files)
+      }
+    } finally {
+      try { executor.shutdownNow(); assert(executor.awaitTermination(12,TimeUnit.SECONDS),"owned backfill/ingest tasks must terminate after barrier release") }
+      finally db.transaction { c => Sql.exec(c,s"DROP TRIGGER $trigger ON ch_archive_fragments"); Sql.exec(c,s"DROP FUNCTION $function()") }
+    }
+  }}
 }
