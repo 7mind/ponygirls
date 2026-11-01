@@ -4,6 +4,7 @@ import { highlightUtf8 } from './highlight.ts';
 import { inlineParts, messageBlocks } from './message-format.ts';
 import './message-content.css';
 
+const COPIED_FEEDBACK_MS = 2000;
 const MAX_FORMATTED_CHARACTERS = 20_000;
 const MAX_FORMATTED_LINES = 500;
 
@@ -18,7 +19,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false), [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 2000);
+    const timer = window.setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS);
     return () => window.clearTimeout(timer);
   }, [copied]);
   async function copy() {

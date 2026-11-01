@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import './mutation-toast.css';
 
+const NOTIFICATION_DURATION_MS = 6000;
+
 function notificationHost() { return document.querySelector<HTMLDialogElement>('dialog:modal') ?? document.body; }
 
 export function MutationToast({ message, dismiss }: { message: string; dismiss(): void }) {
@@ -16,7 +18,7 @@ export function MutationToast({ message, dismiss }: { message: string; dismiss()
     return () => observer.disconnect();
   }, []);
   const [hovered, setHovered] = useState(false), [focused, setFocused] = useState(false);
-  const remaining = useRef(6000), onDismiss = useRef(dismiss);
+  const remaining = useRef(NOTIFICATION_DURATION_MS), onDismiss = useRef(dismiss);
   onDismiss.current = dismiss;
   const paused = hovered || focused;
   useEffect(() => {
