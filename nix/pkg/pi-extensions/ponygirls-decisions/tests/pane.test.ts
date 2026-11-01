@@ -48,7 +48,7 @@ function open(items = [decision(1)], initialId: string | null = null, projectNam
       records[index] = { ...records[index]!, status, answer, revision: base.revision + 1 };
     },
     requestRender: () => { renders++; }, close: () => { closed = true; },
-  }, projectName, initialId, () => height);
+  }, projectName, initialId, () => height, "current");
   const press = (...keys: string[]) => { for (const key of keys) pane.handleInput(key); };
   const screen = (width = 100) => plain(pane.render(width).join("\n"));
   /** The highlighted tab label in the title rule. */
@@ -79,6 +79,27 @@ test("pending inbox, wrapped Markdown detail, history toggle, and stable selecti
   h.press(TAB);
   assert.doesNotMatch(h.screen(), /Q3/);
   assert.ok(h.renders() > 0);
+});
+
+test("only questions originating in this session are marked in pending, history, and detail", () => {
+  const items = [decision(1, { sessionId: "current" }), decision(2),
+    decision(3, { sessionId: "current", status: "answered", answer: "Saved answer" }),
+    decision(4, { status: "dismissed" })];
+  const h = open(items);
+  assert.match(h.screen(), /Q1\s+\? pending\s+\[this session\]\s+Question 1/);
+  assert.match(h.screen(), /Q2\s+\? pending\s+Question 2/);
+  h.press(TAB);
+  assert.match(h.screen(), /Q3\s+✓ answered\s+\[this session\]\s+Question 3/);
+  assert.match(h.screen(), /Q4\s+– dismissed\s+Question 4/);
+  h.press(ENTER);
+  assert.match(h.screen(), /Q1\s+\? pending\s+\[this session\]/);
+  assert.match(h.screen(), /Originating session\n\s+current/);
+  const other = open(items, "Q2");
+  assert.doesNotMatch(other.screen(), /\[this session\]/);
+  assert.match(other.screen(), /Originating session\n\s+session/);
+  for (const width of [20, 40, 80]) {
+    assert.ok(h.pane.render(width).every((line) => visibleWidth(line) <= width));
+  }
 });
 
 test("saving the last pending answer returns from detail to an inbox that closes with one Escape", () => {

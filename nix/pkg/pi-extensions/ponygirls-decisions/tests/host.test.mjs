@@ -102,12 +102,16 @@ async function eventually(check, message) {
 }
 
 test("real Pi: async ask returns, answer wakes idle agent, receipt survives reload", { timeout: 15000 }, async (t) => {
-  const f = await fixture(t, [[ask], "Continuing independent work", "Answer received"]);
+  const f = await fixture(t, [[ask], "Continuing independent work", "Answer received", "Resumed summary checked"]);
   await f.session.prompt("Ask which storage, then continue independent work");
   assert.equal(f.calls(), 2);
   const toolResult = f.manager.getEntries().find((e) => e.type === "message" && e.message.role === "toolResult");
   assert.equal(toolResult.message.details.id, "Q1");
   assert.equal(toolResult.message.details.status, "pending");
+  assert.equal(toolResult.message.details.sessionId, f.manager.getSessionId());
+  const store = new SqliteDecisionStore(join(f.dir, "decisions", "questions.sqlite"));
+  try { assert.equal(store.get(f.dir, "Q1").sessionId, f.manager.getSessionId()); }
+  finally { store.close(); }
   await f.session.prompt("/decisions answer Q1 SQLite with transactions");
   await eventually(() => f.calls() === 3, "answer must wake idle origin");
   await f.session.waitForIdle();
@@ -120,6 +124,8 @@ test("real Pi: async ask returns, answer wakes idle agent, receipt survives relo
   await f.session.waitForIdle();
   assert.equal(f.calls(), 3, "reload must not re-wake for a persisted answer receipt");
   assert.equal(receipts().length, 1);
+  await f.session.prompt("Check the resumed decisions summary");
+  assert.match(f.contexts[3], /Q1 \[answered\] \[this session\] Which storage\?/);
   assert.deepEqual(f.errors, []);
 });
 
@@ -260,6 +266,7 @@ test("real Pi: resuming with an undelivered answer folds it into an immediate fi
   await resumed.session.waitForIdle();
   assert.equal(resumed.calls(), 1);
   assert.match(resumed.contexts[0], /Answered while the session was closed/);
+  assert.match(resumed.contexts[0], /Q1 \[answered\] \[this session\] Which storage\?/);
   assert.match(resumed.contexts[0], /Initial request/);
   assert.deepEqual(resumed.errors, []);
 });

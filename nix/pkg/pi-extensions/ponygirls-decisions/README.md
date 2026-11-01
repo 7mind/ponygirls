@@ -21,6 +21,8 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
   narrow it shrinks to a compact `?N` chip.
 - The inbox frame shows `pending N` / `all` tabs and the repository name (the
   directory owning the Git common directory, so worktrees show the main repository).
+  Questions originating in the active session carry a `[this session]` marker in
+  both tabs and in detail. Detail also shows the full originating session ID.
 - The inbox supports keyboard navigation, Markdown context and recommendations,
   suggested answers, and a multiline free-form answer editor. Answers are saved
   explicitly, never by merely moving the selection. Escape cancels an edit.
@@ -59,6 +61,9 @@ Call `decisions` with `action: "list"` to read pending summaries. `status` may b
 default, maximum 50). `action: "get", id: "Q12"` retrieves full context and the
 current answer. Repeated calls with the same project/session/tool-call identity
 are idempotent. Separate questions receive separate IDs even if their text matches.
+List summaries and full `get` results include the originating `sessionId` and an
+`isCurrentSession` flag computed for the active session. The per-run project
+summary also marks matching questions with `[this session]`.
 
 An open requesting session receives a visible answer message automatically,
 including the exact question and answer. A busy session receives it at the next
@@ -99,7 +104,10 @@ symlinks, and linked worktrees share one sequence, Q1, Q2, …. Outside Git, the
 canonical working directory is the project. Different repositories are isolated.
 Moving a repository to a different canonical path creates a different identity.
 IDs are never reused after dismissal or reopening. Questions are external to
-session branches: forks and `/new` do not roll back project decisions.
+session branches: forks and `/new` do not roll back project decisions. The saved
+`sessionId` is the session that originally asked, not the session that later
+answered or reopened it. Resuming that session restores its `[this session]`
+markers; a new or forked session does not inherit them.
 
 Concurrent writes allocate IDs atomically. Answer changes compare the question
 revision, so a stale editor cannot silently overwrite someone else's answer.

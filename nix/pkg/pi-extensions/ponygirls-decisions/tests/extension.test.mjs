@@ -97,6 +97,33 @@ test("agents can review answered and dismissed history with full answers through
   assert.equal((await f.call({ action: "get", id: "Q2" }, "dismissal")).details.answer, null);
 });
 
+test("origin session is persisted and current-session markers follow session switches and resume", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Origin question" }, "own");
+  await f.command("answer Q1 Keep the origin");
+  f.entries.push({ type: "custom_message", ...f.messages[0].message });
+  const assertSession = async (sessionId, expected) => {
+    f.ctx.sessionManager.getSessionId = () => sessionId;
+    f.start();
+    const listed = (await f.call({ action: "list", status: "all" }, "list")).details.questions;
+    assert.equal(listed[0].sessionId, "origin");
+    assert.equal(listed[0].isCurrentSession, expected);
+    const result = await f.call({ action: "get", id: "Q1" }, "get");
+    assert.equal(result.details.sessionId, "origin");
+    assert.equal(result.details.isCurrentSession, expected);
+    assert.equal(JSON.parse(result.content[0].text).isCurrentSession, expected);
+    const content = f.handlers.get("before_agent_start")({}, f.ctx).message.content;
+    assert.match(content, expected ? /Q1 \[answered\] \[this session\] Origin question/ : /Q1 \[answered\] Origin question/);
+    if (!expected) assert.doesNotMatch(content, /\[this session\]/);
+    await f.command("");
+    assert.match(f.notifications.at(-1).message, expected ? /Q1 \[answered\] \[this session\]/ : /Q1 \[answered\] Origin question/);
+  };
+  await assertSession("origin", true);
+  await assertSession("other", false);
+  assert.equal(f.messages.length, 1, "another session must not be woken for the origin's question");
+  await assertSession("origin", true);
+});
+
 test("answer/revision notices wake the origin once, clear badge, and retain full answer", async (t) => {
   const f = fixture(t); f.start();
   await f.call({ action: "ask", question: "Pick" }, "call");

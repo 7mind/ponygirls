@@ -25,8 +25,8 @@ function questionId(text: string): string {
   return text.toUpperCase();
 }
 
-function summary(q: Decision): string {
-  return `${q.id} [${q.status}] ${q.question}`;
+function summary(q: Decision, sessionId: string): string {
+  return `${q.id} [${q.status}]${q.sessionId === sessionId ? " [this session]" : ""} ${q.question}`;
 }
 
 function notice(q: Decision): string {
@@ -138,7 +138,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
           },
           close: () => done(),
           requestRender: () => tui.requestRender(),
-        }, projectDisplayName(b.project), id, () => Math.max(1, tui.terminal.rows - PANE_CHROME_ROWS));
+        }, projectDisplayName(b.project), id, () => Math.max(1, tui.terminal.rows - PANE_CHROME_ROWS), b.sessionId);
       });
     } finally {
       b.repaint = null;
@@ -202,7 +202,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     return { message: {
       customType: CONTEXT_TYPE, display: true,
       content: `Project decisions: ${pending.length} unanswered. Pending questions are not permission to proceed on their dependent work. Continue independent work; never poll in a loop waiting for the user. Use decisions list/get to read current answers before acting.\n` +
-        [...pending.slice(0, PAGE_SIZE), ...recent].map((q) => `${q.id} [${q.status}] ${q.question.slice(0, 160)}`).join("\n"),
+        [...pending.slice(0, PAGE_SIZE), ...recent].map((q) => summary({ ...q, question: q.question.slice(0, 160) }, b.sessionId)).join("\n"),
       details: { project: b.project },
     } };
   });
@@ -237,14 +237,18 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
       }
       if (params.action === "get") {
         if (params.id === undefined) throw new Error("id is required for get");
-        const q = b.store.get(b.project, questionId(params.id));
+        const decision = b.store.get(b.project, questionId(params.id));
+        const q = { ...decision, isCurrentSession: decision.sessionId === b.sessionId };
         return { content: [{ type: "text", text: JSON.stringify(q, null, 2) }], details: q };
       }
       const status = params.status ?? "pending";
       const offset = params.offset ?? 0;
       const limit = params.limit ?? PAGE_SIZE;
       const all = b.store.list(b.project).filter((q) => status === "all" || q.status === status);
-      const questions = all.slice(offset, offset + limit).map((q) => ({ id: q.id, question: q.question, status: q.status, revision: q.revision }));
+      const questions = all.slice(offset, offset + limit).map((q) => ({
+        id: q.id, question: q.question, status: q.status, revision: q.revision,
+        sessionId: q.sessionId, isCurrentSession: q.sessionId === b.sessionId,
+      }));
       const result = { project: b.project, total: all.length, questions, nextOffset: offset + questions.length < all.length ? offset + questions.length : null };
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: result };
     },
@@ -285,7 +289,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         const id = text === "" ? null : questionId(text);
         if (id !== null) b.store.get(b.project, id);
         if (ctx.mode === "tui") await openPane(b, id);
-        else ctx.ui.notify(plain(id === null ? b.store.list(b.project).map(summary).join("\n") || "No project questions" : JSON.stringify(b.store.get(b.project, id), null, 2)), "info");
+        else ctx.ui.notify(plain(id === null ? b.store.list(b.project).map((q) => summary(q, b.sessionId)).join("\n") || "No project questions" : JSON.stringify(b.store.get(b.project, id), null, 2)), "info");
       } catch (error) {
         ctx.ui.notify(`Decisions: ${plain(error instanceof Error ? error.message : String(error))}`, "error");
       }

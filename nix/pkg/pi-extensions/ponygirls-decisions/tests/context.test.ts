@@ -13,6 +13,11 @@ test("the context message collapses to its unanswered ids and resolved count", (
   assert.equal(line.detail, " · Q1 Q2 · 1 recently resolved · context for the model ▸ ctrl+o");
 });
 
+test("current-session markers preserve pending IDs and resolved counts", () => {
+  assert.deepEqual(summarizeContext("Q1 [pending] [this session] Current question\nQ2 [answered] [this session] Resolved question\nQ3 [dismissed] Other session"),
+    { pending: ["Q1"], resolved: 2 });
+});
+
 test("question text that merely looks like a status line inside a question is not counted twice", () => {
   const summary = summarizeContext("Project decisions: 1 unanswered.\nQ4 [pending] Is Q5 [answered] related?");
   assert.deepEqual(summary, { pending: ["Q4"], resolved: 0 });

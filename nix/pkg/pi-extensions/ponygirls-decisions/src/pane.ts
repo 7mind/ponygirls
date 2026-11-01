@@ -102,12 +102,14 @@ export class DecisionsPane implements Component, Focusable {
   private callbacks: DecisionsPaneCallbacks;
   private projectName: string;
   private getHeight: () => number;
+  private sessionId: string;
 
-  constructor(theme: Theme, callbacks: DecisionsPaneCallbacks, projectName: string, initialId: string | null, getHeight: () => number) {
+  constructor(theme: Theme, callbacks: DecisionsPaneCallbacks, projectName: string, initialId: string | null, getHeight: () => number, sessionId: string) {
     this.theme = theme;
     this.callbacks = callbacks;
     this.projectName = projectName;
     this.getHeight = getHeight;
+    this.sessionId = sessionId;
     this.selectedId = initialId;
     this.markdownTheme = {
       heading: (s) => theme.fg("mdHeading", s), link: (s) => theme.fg("mdLink", s),
@@ -322,6 +324,7 @@ export class DecisionsPane implements Component, Focusable {
       d.options.length ? { label: "Options", body: d.options.map((s, i) => `${i + 1}. ${s}`).join("\n") } : null,
       d.recommendation ? { label: "Recommendation", body: d.recommendation } : null,
       d.answer !== null ? { label: "Saved answer", body: d.answer } : null,
+      { label: "Originating session", body: d.sessionId },
     ].filter((section): section is Section => section !== null);
   }
 
@@ -330,10 +333,14 @@ export class DecisionsPane implements Component, Focusable {
     return this.theme.fg(STATUS_STYLE[status].color, fitCell(statusLabel(status), width));
   }
 
+  private sessionLabel(item: Decision): string {
+    return item.sessionId === this.sessionId ? this.theme.fg("accent", "[this session]") : "";
+  }
+
   /** Short dim id, glyph+colour status, question; secondary text is muted inside the selection band. */
   private row(item: Decision, selected: boolean, idWidth: number): string {
     const id = this.theme.fg(selected ? "muted" : "dim", fitCell(oneLine(item.id), idWidth));
-    return [id, this.statusCell(item.status, STATUS_WIDTH), this.theme.fg("text", oneLine(item.question))].join(COLUMN_GAP);
+    return [id, this.statusCell(item.status, STATUS_WIDTH), this.sessionLabel(item), this.theme.fg("text", oneLine(item.question))].filter(Boolean).join(COLUMN_GAP);
   }
 
   private viewport(lines: string[], rows: number): string[] {
@@ -384,7 +391,10 @@ export class DecisionsPane implements Component, Focusable {
     }
     if (!d && rows > 0 && this.detail) out.push(dim("No pending decisions. Tab shows history."));
     if (d && rows > 0) {
-      if (draft || this.detail) { out.push(`${dim(oneLine(d.id))}${COLUMN_GAP}${this.statusCell(d.status, visibleWidth(statusLabel(d.status)))}`); rows--; }
+      if (draft || this.detail) {
+        out.push([dim(oneLine(d.id)), this.statusCell(d.status, visibleWidth(statusLabel(d.status))), this.sessionLabel(d)].filter(Boolean).join(COLUMN_GAP));
+        rows--;
+      }
       if (draft?.mode === "editor") {
         const lines = this.editor!.render(w);
         // The builtin editor has a five-line minimum. Crop around its cursor
