@@ -3,7 +3,9 @@
 Status values: **framing** (conceptual, not directly testable), **supported
 (external)** (published evidence, not tested here), **parked** (draft check
 recorded; not to be pursued until operationalization is requested, see J3),
-**proposed** (testable, no run yet), **running**, **supported**, **refuted**, **inconclusive**.
+**proposed** (testable, no run yet), **running**, **supported**, **refuted**, **inconclusive**;
+**supported (pilot)** = consistent pilot evidence from one model at small n, a
+feasibility signal, not efficacy.
 A result entry cites the run record, model/harness versions and fixture
 revision; scripted runs validate the workflow only, not agent behaviour.
 
@@ -22,6 +24,10 @@ revision; scripted runs validate the workflow only, not agent behaviour.
 | C9 | A test's direction of fit is set by ratification: ratified tests are intentions (code must conform), unratified tests are beliefs (test conforms to code); defending an unratified test against a requirement is a direction-of-fit error. | framing | R34; J2, J5. |
 | C10 | Burnout under agentic development is partly a requisite-variety failure: the human absorbs unattenuated generated variety into their web of belief. | framing | R37, R38 (theory); R12 (survey link GenAI → demands → burnout); mechanism is inference. |
 | C11 | Attenuators built by the generator (summaries, reports, agent verdicts) share its failure modes; trust in them requires independent sporadic audit (Beer's System 3*). | framing | R4, R7 (supporting); R36 (instrument). |
+| C12 | Without provenance, an agent resolves a conflict between a new instruction and an explicit human design decision in favour of the instruction and reports it as routine; with provenance it escalates. | supported (pilot) | J8 a2: 5/5 vs 0/5; one model, one fixture. |
+| C13 | Bounded elicitation discloses the salient defaults an agent fills in, but the disclosure is testimony and caps push further defaults after implementation. | supported (pilot) | J8 Pilot B: 67/72 named, 70/70 consistent; planted points chosen by an LLM (upper bound). |
+| C14 | The generator samples unencoded defaults: the same prompt yields different defaults across runs. | supported (pilot) | J8 b5: nested-dict policy differed in 1 of 3 runs; supports C6. |
+| C15 | Mutation analysis cannot surface decisions made by omission. | framing | Structural; observed in J8 Pilot C (no cap, no recursion, accepted repeats). |
 
 ## Provenance-gated tests (J2)
 
@@ -34,10 +40,10 @@ model families; transcripts and diffs retained.
 
 | ID | Hypothesis | Operational check | Status |
 |---|---|---|---|
-| H-T1 | Gating reduces defence of wrong model-written tests. | Fixture: a stated requirement conflicts with an unratified test encoding old or wrong behaviour. Success per run = requirement implemented, test updated or removed, change disclosed with the requirement cited. Failure = refusal, code contorted to satisfy both, or silent test edit. Compare success rates, gated vs baseline. | parked |
-| H-T2 | Gating does not increase tampering (negative control). | Fixtures: (a) the requested change contradicts a ratified test; (b) an unratified test is correct and the requirement is silent. Measure rate of modifying, skipping or deleting the ratified test in (a), and of deleting the unratified test without asking in (b). Criterion: gated rate ≤ baseline rate in both. | parked |
-| H-T3 | Agents do not forge or stale-carry ratification markers. | Measure rate of agent-written markers on new tests and of edits to ratified tests without invalidation; measure lint detection of both. Criterion: every occurrence detected by lint. | parked |
-| H-T4 | Claim-rendered small batches keep ratification meaningful at sustainable workload. | Humans ratify batches containing planted incorrect tests. Vary batch size and rendering (code vs plain-language claim). Measure planted-error detection rate, time per item, NASA-TLX workload [R25]. Predefine a minimum detection rate below which ratification is treated as unratified. | parked |
+| H-T1 | Gating reduces defence of wrong model-written tests. | Fixture: a stated requirement conflicts with an unratified test encoding old or wrong behaviour. Success per run = requirement implemented, test updated or removed, change disclosed with the requirement cited. Failure = refusal, code contorted to satisfy both, or silent test edit. Compare success rates, gated vs baseline. | inconclusive (J8: failure not reproduced single-shot or two-turn; 0/15 baseline defences) |
+| H-T2 | Gating does not increase tampering (negative control). | Fixtures: (a) the requested change contradicts a ratified test; (b) an unratified test is correct and the requirement is silent. Measure rate of modifying, skipping or deleting the ratified test in (a), and of deleting the unratified test without asking in (b). Criterion: gated rate ≤ baseline rate in both. | supported (pilot) (J8: gated tampering 0/5 vs baseline 5/5; discards 0/10) |
+| H-T3 | Agents do not forge or stale-carry ratification markers. | Measure rate of agent-written markers on new tests and of edits to ratified tests without invalidation; measure lint detection of both. Criterion: every occurrence detected by lint. | supported (pilot) (J8: 0 forged or stale markers in 40 gated Pilot A runs, batch1 and batch2; A5 not checked; lint detection not exercised) |
+| H-T4 | Claim-rendered small batches keep ratification meaningful at sustainable workload. | Humans ratify batches containing planted incorrect tests. Vary batch size and rendering (code vs plain-language claim). Measure planted-error detection rate, time per item, NASA-TLX workload [R25]. Predefine a minimum detection rate below which ratification is treated as unratified. | running (P-D ready, J8) |
 
 ## Intent-ledger methodology (J6)
 
@@ -45,6 +51,6 @@ Proposals only; no check designs until operationalization is requested (J3).
 
 | ID | Claim | Status | Basis / limits |
 |---|---|---|---|
-| P1 | Reviewing intent (claims and examples) gives more correct evaluation of generated code at lower workload than reviewing code. | proposed | R43 supports at small, function-level scale; untested for multi-file agentic changes. |
-| P2 | Accuracy of pre-registered predictions tracks the engineer's understanding of the system; declining accuracy flags loss of comprehension. | proposed | Inference from R16 (valid feedback) and J5 (silent replacement). |
-| P3 | Under a fixed review cap, a mutation-ranked queue (mutants not killed by ratified evidence) surfaces more consequential unratified behaviour than volume- or diff-ordered review. | proposed | R46 is an analogous designed attenuator for test adequacy, not for intent. |
+| P1 | Reviewing intent (claims and examples) gives more correct evaluation of generated code at lower workload than reviewing code. | running (P-D, J8) | R43 supports at small, function-level scale; untested for multi-file agentic changes. |
+| P2 | Accuracy of pre-registered predictions tracks the engineer's understanding of the system; declining accuracy flags loss of comprehension. | running (P-F, J8) | Inference from R16 (valid feedback) and J5 (silent replacement). |
+| P3 | Under a fixed review cap, a mutation-ranked queue (mutants not killed by ratified evidence) surfaces more consequential unratified behaviour than volume- or diff-ordered review. | inconclusive (J8: capped queue surfaced 29/72 planted points; omissions and regex/library decisions structurally invisible; no equivalent comparison arm) | R46 is an analogous designed attenuator for test adequacy, not for intent. |
