@@ -10,3 +10,8 @@ node_modules
 haystack/server/dist/
 haystack/web/dist/
 haystack/server/dist-test/
+# Common sbt build outputs (including per-project targets).
+**/target/
+project/project/
+.bsp/
+.metals/

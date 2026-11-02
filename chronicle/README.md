@@ -16,7 +16,19 @@ BABOON=/path/to/baboon ./scripts/generate.sh
 GRAALVM_HOME=/path/to/graalvm ./scripts/native.sh
 ```
 
-Assembly: `target/chronicle-server.jar`; native executable: `target/native/chronicle-server`. sbt/coursier standard caches are used (`~/.sbt`, `~/.ivy2`, `~/.cache/coursier`); Nix integration supplies project-local cache homes and repository override/offline settings. No downloads are performed by the service. Generated sources are checked in and regenerated with pinned executable checksum and model lockfile. `models/chronicle.baboon` is the only self-contained API schema (1.9.0); edit it in place for this owned deployment. No retained-version codecs, conversion chains or post-generation rewriting are used.
+The active sbt build lives at the repository root. `scripts/sbt.sh` selects
+`chronicleServer`; it does not create a second dependency universe. Other project
+IDs are `contracts` (Scala2 generated code), `losslessJson`, `manureStorage`, and
+`root` (aggregate). From the repository root, use
+`nix develop .#backend --command bash scripts/backend-sbt.sh test` for aggregate
+JVM tests or pass `losslessJson/test` and `manureStorage/test` for the foundation
+modules. `nix build .#checks.x86_64-linux.backend-foundation` runs complete
+foundation-module tests offline with nonempty inventory-bound reports; its
+receipt is separate from Chronicle's fast subset and is not native acceptance.
+Chronicle tests fork with `chronicle/` as their working directory so existing
+fixture/config paths retain their meaning.
+
+Assembly: `target/chronicle-server.jar` (relative to `chronicle/`); native executable: `target/native/chronicle-server`. sbt/coursier standard caches are used (`~/.sbt`, `~/.ivy2`, `~/.cache/coursier`); Nix integration supplies project-local cache homes and repository override/offline settings. No downloads are performed by the service. Generated sources are checked in and regenerated with pinned executable checksum and model lockfile. `models/chronicle.baboon` is the only self-contained API schema (1.9.0); edit it in place for this owned deployment. No retained-version codecs, conversion chains or post-generation rewriting are used.
 
 For full manual verification on a fresh checkout, run commands inside the pinned
 shell (`nix develop .#chronicle --command bash -c '<commands>'` from the repository
@@ -96,12 +108,12 @@ From the Ponygirls repository root:
 ```bash
 nix build .#chronicle
 nix build --no-link .#packages.x86_64-linux.chronicle.offlineAssemblyCheck
-nix run .#chronicle-update-sbt-lock -- "$PWD/chronicle/deps.lock.json"
+nix run .#chronicle-update-sbt-lock -- "$PWD/deps.lock.json"
 ```
 
-Pinned Squish reconstructs the Coursier cache from `deps.lock.json`, verifying each public artifact separately. The compiler build uses a fresh home, offline Coursier and a file-only Maven repository, including launcher bootstrap; Nix fetches the locked artifacts before that build. The pinned sbt launcher, Graal toolchain, native flags and PostgreSQL-required checks are unchanged. Squish's default sbt/JDK are not used.
+Pinned Squish reconstructs the Coursier cache from the repository-root `deps.lock.json`, verifying each public artifact separately. The compiler build uses a fresh home, offline Coursier and a file-only Maven repository, including launcher bootstrap; Nix fetches the locked artifacts before that build. The pinned sbt launcher, Graal toolchain, native flags and PostgreSQL-required checks are unchanged. Squish's default sbt/JDK are not used.
 
-The update command runs `lockfile-config.json` only in a disposable filtered source copy, with separate tool/bootstrap and project caches. Never run the upstream generator in a working project: it deletes build targets. Failures before publication leave the selected lock untouched, and failed work is retained. After interruption or a cleanup failure, inspect the destination before retrying: atomic publication may already have completed. Review the lock diff and rerun the offline/native checks after dependency changes.
+The update command runs the common repository-root `lockfile-config.json` only in a disposable filtered source copy, with separate tool/bootstrap and project caches. Never run the upstream generator in a working project: it deletes build targets. Failures before publication leave the selected lock untouched, and failed work is retained. After interruption or a cleanup failure, inspect the destination before retrying: atomic publication may already have completed. Review the lock diff and rerun the offline/native checks after dependency changes.
 
 Consumers with a dedicated package set should use `ponygirls.lib.mkChroniclePackage { pkgs = chroniclePkgs; }`, which supplies the pinned Squish library without changing that package set. Update an existing direct caller and its Ponygirls pin together; an older pin does not expose this factory.
 

@@ -11,9 +11,10 @@ in runCommand "chronicle-fast-backend-validation" {
   cp -r ${sources.backendTests} source
   chmod -R u+w source
   cd source
-  patchShebangs scripts
+  patchShebangs scripts chronicle/scripts
   ${environment.setup}
-  bash scripts/test-fast.sh
+  bash chronicle/scripts/test-fast.sh
+  cd chronicle
   mkdir -p "$out"
   python3 scripts/validation-report.py --inventory target/validation-inventory.txt \
     --selected-suites scripts/fast-suites.txt --reports target/test-reports --runtime-source ${sources.server} \
