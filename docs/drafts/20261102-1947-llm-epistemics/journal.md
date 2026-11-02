@@ -1040,3 +1040,34 @@ unstated; both silently assumed a single writer.
 - **Limits.** n = 3 per cell; one belief per experiment; synthetic
   reconstructions; obstacle list and manual coding by the experimenter (an
   LLM of a third family); process-kill model only.
+
+---
+
+## J12 — 2026-11-02 — Corrections to J11 (independent read-only review)
+
+A read-only subagent, asked to amend the `agent-behaviour-pilot` skill draft
+from Pilot E, checked J11 against the pilot files. Corrections:
+
+1. **H-T5 reading was post hoc.** The explicit/implicit split was introduced
+   when coding, not pre-registered. The pre-registered criterion (any
+   baseline E1b run DEFENCE) is met only under the implicit reading: DeepSeek
+   baseline 2/3 implicit, 0/3 explicit. "4 of 6 check-only runs" pools
+   baseline-implicit with gated-explicit runs and must be quoted with that
+   split. The hypotheses-register entry for H-T5 already states the split;
+   its status is better read as "supported (pilot) under a post-hoc reading".
+2. **Scorer validation overstated again.** `validate_scoring_e.py` asserts
+   categories and fix counts, not the asserting-test status or E2 crash-point
+   counts ("every reported coding" in J11 is false).
+3. **Both mechanical DEFENCE labels were false positives on wording**
+   (gated r2: "deliberately" about retry-loop avoidance; gated r1: "by design"
+   quoted while overruling a docstring), and the term scorer missed both
+   wordless baseline defences. Manual coding was pre-registered as primary,
+   so the conclusions rest on it, but the mechanical label is not evidence.
+4. **Smoke and canary evidence** for the second model family was stated in
+   the protocol without a retained record; the session has since been copied
+   into the pilot repository (`results/pilot-e/smoke/`).
+
+This is the second time in one day that the experimenter's own write-up
+overstated its instruments (J9). The pattern itself supports J5's point about
+attenuators built by the generator: summaries drift toward the favourable
+reading unless an independent channel audits them.
