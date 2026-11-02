@@ -29,7 +29,9 @@ in {
   # deliberately retain their existing Chronicle-relative layouts and identities.
   server = backendSource "chronicle-server-source" runtime;
   backendTests = backendSource "chronicle-backend-tests-source" (runtime ++ tests);
-  manurePosix = backendSource "manure-posix-source" [ "manure/server/src/main/c" ];
+  manurePosix = backendSource "manure-posix-source" [ "manure/server/src/main/c"
+    "manure/server/src/main/java/manure/storage/PosixNative.java"
+    "manure/server/src/main/java/manure/storage/NativeFailure.java" ];
   manureAcceptance = backendSource "manure-posix-acceptance-source" (common ++ manure ++ manureScripts);
   foundation = backendSource "backend-foundation-source" (common ++ shared ++ [ "shared/lossless-json/src/test" "manure/server/src" "scripts/backend-foundation-report.py" ]);
   backendDevelopment = backendSource "backend-development-source" (runtime ++ tests ++ [ "shared/lossless-json/src/test" "manure/server/src" ]);
