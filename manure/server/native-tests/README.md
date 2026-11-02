@@ -13,7 +13,9 @@ The runner compiles with strict warnings, checks the checked-in `javac -h`
 header, and runs the JVM with `-Xcheck:jni`. It creates and removes only owned
 temporary payloads. `mkfifo`, `mknod`, Python 3, and a genuine `/proc` are
 required tools/prerequisites; creating an owned device node is explicitly
-skipped if the environment denies `mknod`. No existing device is opened.
+skipped if the environment denies `mknod`. That privileged-node check is
+supplemental, not the separate Scala device-contract acceptance fixture.
+No existing device is opened by this runner.
 ASan preloading is scoped to JVM processes. LeakSanitizer is disabled because
 of JVM process-lifetime allocations; the test separately checks fd counts
 on repeated error paths. Do not mix incompatible host/Nix sanitizer runtimes.
@@ -26,13 +28,18 @@ Higher-level dual tests belong at the Scala filesystem interface.
 The tests cover raw invalid-UTF8 and Unicode names, no-follow traversal,
 component/NUL/range validation, existing regular-file IO, nonblocking FIFO
 rejection, optional owned-device rejection, large positional offsets,
-read-only failures, fsync/rename/unlink, pinned inode lifetime, bounded
+read-only failures, 64-bit size/truncate (sparse grow, shrink and regrow),
+fsync/rename/unlink, pinned inode lifetime, bounded
 independent directory enumeration, closed descriptors, cleanup on failure,
 per-instance and cross-process claim contention, Python claim-namespace
 interoperability, and SIGKILL claim release. They do **not** establish the
 publication/recovery state machine, physical power-loss durability, or the
 actual Graal static-musl executable. The JVM runner uses `--shared`; static
 runtime acceptance is separate.
+
+Retained invalid-prerequisite setup-failure transcripts are in
+`verification/setup-failures.md`; final-source strict/sanitizer/analyzer logs,
+commands and input digests are in `verification/20261102-size-truncate/`.
 
 ## Boundary assumptions
 

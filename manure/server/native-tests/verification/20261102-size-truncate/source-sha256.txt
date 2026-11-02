@@ -1,0 +1,6 @@
+18b03fc08274d50fabc4fcd4cd7dd46994ca81b65c72da78d8316249d4f705bf  manure/server/src/main/c/posix_native.c
+ddd83aa8b1eebeb2a25b52a3837580259360ab301002f7c2fd57ee6b1a293012  manure/server/src/main/c/manure_storage_PosixNative.h
+b1bcec74a2cb3a188249b16c20efe294a20070f0456ef236e5130d776b0edfed  manure/server/src/main/java/manure/storage/NativeFailure.java
+c05bd11553a1a641d3c485e603b6b8e7e664174e0c7459de56d39a56117e7ae1  manure/server/src/main/java/manure/storage/PosixNative.java
+41df4ab4498a81d21c4a4b62019efa748d580ac676d54681422bf223c8108da8  manure/server/native-tests/NativeSelfTest.java
+38ac73750a239724129e154625f89042b78c1f65516e7c46de516c509b6fe35d  manure/server/native-tests/run.sh

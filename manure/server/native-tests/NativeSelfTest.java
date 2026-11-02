@@ -96,6 +96,11 @@ public final class NativeSelfTest {
                 int file = api.createFile(sub, b("unicode-雪-🐴"));
                 try {
                     check(api.kind(sub, b("unicode-雪-🐴")) == PosixNative.REGULAR);
+                    check(api.size(file) == 0);
+                    api.truncate(file, 0);
+                    check(api.size(file) == 0);
+                    fails(22, "truncate", () -> api.truncate(file, -1));
+                    fails(22, "truncate", () -> api.truncate(file, Long.MIN_VALUE));
                     fails(17, "createFile", () -> api.createFile(sub, b("unicode-雪-🐴")));
                     api.write(file, 3, b("abc"));
                     check(Arrays.equals(api.read(file, 0, 10), new byte[]{0, 0, 0, 'a', 'b', 'c'}));
@@ -111,25 +116,55 @@ public final class NativeSelfTest {
                     fails(22, "write", () -> api.write(file, 0, null));
                     api.write(file, 0x100000003L, b("large-offset"));
                     check(Arrays.equals(api.read(file, 0x100000003L, 12), b("large-offset")));
+                    check(api.size(file) == 0x10000000fL);
+                    api.truncate(file, 0x200000005L); // grow a sparse inode beyond 32-bit limits
+                    check(api.size(file) == 0x200000005L);
+                    check(Arrays.equals(api.read(file, 0x200000002L, 8), new byte[3]));
+                    check(Arrays.equals(api.read(file, 0x100000003L, 12), b("large-offset")));
+                    api.truncate(file, 5); // discard the sparse tail and the final 'c'
+                    check(api.size(file) == 5);
+                    check(Arrays.equals(api.read(file, 0, 12), new byte[]{0, 0, 0, 'a', 'b'}));
+                    check(api.read(file, 0x100000003L, 12).length == 0);
+                    api.truncate(file, 8); // discarded bytes must not reappear on regrowth
+                    check(api.size(file) == 8);
+                    check(Arrays.equals(api.read(file, 3, 8), new byte[]{'a', 'b', 0, 0, 0}));
                     api.sync(file);
                     int opened = api.openFile(sub, b("unicode-雪-🐴"), false);
                     try {
                         check(Arrays.equals(api.identity(file), api.identity(opened)));
                         fails(9, "write", () -> api.write(opened, 0, b("x")));
+                        check(api.size(opened) == 8);
+                        fails(22, "truncate", () -> api.truncate(opened, 0)); // Linux RO ftruncate
+                        fails(22, "truncate", () -> api.truncate(opened, 8));
+                        fails(22, "truncate", () -> api.truncate(opened, -1));
+                        check(api.size(opened) == 8);
                     } finally { api.close(opened); }
                     int writable = api.openFile(sub, b("unicode-雪-🐴"), true);
-                    try { api.write(writable, 0, b("yes")); }
-                    finally { api.close(writable); }
+                    try {
+                        api.truncate(writable, 0);
+                        check(api.size(writable) == 0 && api.size(file) == 0);
+                        api.write(writable, 0, b("yes"));
+                        check(api.size(writable) == 3 && api.size(file) == 3);
+                    } finally { api.close(writable); }
                     check(Arrays.equals(api.read(file, 0, 3), b("yes")));
                     api.move(sub, b("unicode-雪-🐴"), r, b("moved"));
                     check(api.kind(r, b("moved")) == PosixNative.REGULAR);
                     api.unlink(r, b("moved"), false);
                     // Open descriptors pin the inode even after unlink; no pathname fallback.
                     check(Arrays.equals(api.read(file, 0, 3), b("yes")));
+                    check(api.size(file) == 3);
+                    api.truncate(file, 2); // works on the pinned unlinked inode
+                    check(api.size(file) == 2 && Arrays.equals(api.read(file, 0, 3), b("ye")));
                 } finally { api.close(file); }
                 fails(9, "close", () -> api.close(file));
                 fails(9, "read", () -> api.read(file, 0, 1));
                 fails(9, "identity", () -> api.identity(file));
+                fails(9, "size", () -> api.size(file));
+                fails(9, "truncate", () -> api.truncate(file, 0));
+                fails(9, "size", () -> api.size(-1));
+                fails(9, "truncate", () -> api.truncate(-1, 0));
+                fails(21, "size", () -> api.size(sub));
+                fails(21, "truncate", () -> api.truncate(sub, 0));
                 fails(21, "read", () -> api.read(sub, 0, 1));
                 fails(21, "write", () -> api.write(sub, 0, b("x")));
                 fails(21, "openFile", () -> api.openFile(r, b("sub"), false));
