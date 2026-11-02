@@ -102,6 +102,25 @@ Start with the [server README](chronicle/README.md) and
 are separate Home Manager opt-ins; neither deployment nor real-history uploads
 happen during builds/tests.
 
+### Shared Scala backend foundation
+
+The active JVM build and dependency lock live at repository root. Use the
+pinned shell and explicit project tasks:
+
+```bash
+nix develop .#backend --command bash scripts/backend-sbt.sh 'losslessJson/test' 'manureStorage/test'
+nix build .#checks.x86_64-linux.backend-foundation
+```
+
+`shared/lossless-json` provides validated, lossless JSON values for future
+Baboon payload boundaries. `manure/server` contains a confined-filesystem
+capability probe, **not a replacement artifact server**; missing durable-store
+primitives refuse activation explicitly. Chronicle retains its documented
+build/test commands through the common build. Haystack and Manure's existing
+backends remain active until their separate ports and data migrations are ready.
+The owned services target one current Baboon contract; legacy wire compatibility
+is not a migration requirement.
+
 ### Agent content
 
 | Package | What it is |
