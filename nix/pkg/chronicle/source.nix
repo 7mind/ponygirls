@@ -20,6 +20,8 @@ let
   # Shared JVM inputs participate in consumer identities. Never include the full
   # repository: Manure/Haystack UIs, data and unrelated tooling are not inputs.
   shared = [ "shared/lossless-json/src/main" ];
+  manure = [ "manure/server/src" "manure/server/native-image" ];
+  manureScripts = [ "scripts/manure-native-image.sh" "scripts/manure-probe-classpath.sh" ];
   runtime = common ++ shared ++ [ "chronicle/generated/scala" "chronicle/server/src/main" "chronicle/migrations" ];
   tests = [ "chronicle/server/src/test" "chronicle/tests" "chronicle/models" "chronicle/config.example.json" "chronicle/scripts" ];
 in {
@@ -27,6 +29,10 @@ in {
   # deliberately retain their existing Chronicle-relative layouts and identities.
   server = backendSource "chronicle-server-source" runtime;
   backendTests = backendSource "chronicle-backend-tests-source" (runtime ++ tests);
+  manurePosix = backendSource "manure-posix-source" [ "manure/server/src/main/c"
+    "manure/server/src/main/java/manure/storage/PosixNative.java"
+    "manure/server/src/main/java/manure/storage/NativeFailure.java" ];
+  manureAcceptance = backendSource "manure-posix-acceptance-source" (common ++ manure ++ manureScripts);
   foundation = backendSource "backend-foundation-source" (common ++ shared ++ [ "shared/lossless-json/src/test" "manure/server/src" "scripts/backend-foundation-report.py" ]);
   backendDevelopment = backendSource "backend-development-source" (runtime ++ tests ++ [ "shared/lossless-json/src/test" "manure/server/src" ]);
   protocol = source "chronicle-protocol-source" [ "package.json" "generated/typescript" "models" "server/src/test/fixtures" "scripts/codec-fixtures.mjs" "web/package.json" "web/package-lock.json" ];
