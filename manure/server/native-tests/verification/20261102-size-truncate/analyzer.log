@@ -1,0 +1,1 @@
+PASS gcc -fanalyzer strict syntax check
