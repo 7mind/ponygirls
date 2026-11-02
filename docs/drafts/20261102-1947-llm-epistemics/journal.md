@@ -313,3 +313,323 @@ source.
 - Only a human act — writing or ratifying — brings synthesised detail
   under intent. Unratified tests stay useful as change detectors, outside the
   bridge.
+
+---
+
+## J5 — 2026-11-02 — Quine's web of belief and Beer's variety engineering
+
+### User input (verbatim)
+
+> Now, I want to invoke Quine himself. So, an engineer has a network of beliefs
+> regarding the code which is not yet created. Once the code is generated - the
+> existing network should be tested - and, perhaps, modified - and this is the
+> crux of the wellness and burnout - to limit the flow of information through
+> human head and make this process manageable. Also here I would like to invoke
+> Beer and his vision on information reduction/expansion between the levels of
+> a viable system. Do I still make sense?
+
+### Assessment
+
+Yes. The two invocations connect through one result: every good regulator of a
+system must be a model of that system [R38]. The engineer's web of belief is
+the regulator's model; the law of requisite variety [R37] says the regulator's
+variety must match the variety that matters; Beer's answer is that the match is
+achieved by designed attenuation and amplification between levels, not by
+effort [R35, R36]. Burnout, in these terms, is the human trying to reach
+requisite variety by absorbing unattenuated variety into the web (inference,
+not evidence).
+
+**Quine — holds, with two corrections.**
+
+- *What works.* Generated code, as observed through tests, reading and runtime,
+  is recalcitrant experience at the periphery of the web [R30, R31]. A conflict
+  underdetermines what to revise — the test, the code, the requirement or the
+  engineer's understanding [R33]. J2's failure mode is a revision choice: the
+  model protects the test and declines to revise the code. Ratification is an
+  explicit entrenchment ordering: ratified claims sit near the centre and are
+  revised last; unratified claims sit at the periphery and are revised first.
+  Minimal mutilation [R31] is close to the wellness criterion: keep each
+  revision local.
+- *Correction 1 — direction of fit.* Quine's web is descriptive: it fits itself
+  to the world. The engineer's web also contains intentions, which the world
+  must fit. Anscombe's shopping list [R34]: a mismatch between the list and the
+  purchases is a fault in the purchases; a mismatch between a detective's
+  record and the purchases is a fault in the record. Unlike nature, code is
+  malleable, so each conflict has three resolutions: revise the belief (accept
+  the generated decision, i.e. ratify it), revise the code (reject it), or
+  revise the intent (deliberately). A purely Quinean posture defaults to the
+  first — the web conforms to whatever was generated. Applied to tests: a
+  ratified test has the direction of fit of an intention (the code must
+  conform); an unratified test has that of a belief (the test conforms to the
+  code — a characterization). J2's defended test is a direction-of-fit error.
+- *Correction 2 — moderate holism suffices.* Quine later called his original
+  statement of holism "needlessly strong" [R32]. Duhem's local version [R33] —
+  a failed test indicts a group of hypotheses, not one — is all this needs.
+- *Risk — silent replacement.* The pre-generation web is often thin. The
+  generated code can replace the web instead of testing it: the engineer's
+  beliefs become whatever was generated, anchored on the first concrete
+  artifact [R41]. The failure is not only overload but unnoticed substitution.
+
+**Beer — holds; partly prior art; two corrections.**
+
+- *Mapping.* Agents ≈ System 1 operations; the engineer ≈ the metasystem
+  (Systems 3–5). Upward attenuation: exception reporting, aggregation,
+  ratification candidates. Downward amplification: policy (AGENTS.md), types,
+  ratified tests, invariants — each expands into many generated decisions.
+  Recursion: subsystems made self-regulating (types, tests, mechanical checks)
+  let the human model only interfaces; information hiding [R40] is variety
+  attenuation.
+- *Prior art.* Lässig [R39] already applies requisite variety, VSM
+  attenuation/amplification and the good-regulator theorem to agentic coding
+  ("human on the loop", harness engineering, Lean "go see"). The Beer step
+  alone is not new. What that article (as read) does not address is the
+  epistemic quality of the attenuators.
+- *Correction 1 — "limit the flow" is insufficient.* Attenuation already
+  happens: skimming, rubber-stamping, trusting a green suite; interviewed
+  developers use test results as guarantees of correctness [R42]. The defect is
+  accidental, unprincipled attenuation. Attenuators must be designed against a
+  criterion; here the criterion is intent — what reaches the human is the
+  variety relevant to the ratified core of the web.
+- *Correction 2 — the attenuators are built by the generator.* Summaries,
+  reports and QA-agent verdicts are model testimony [R4] with correlated errors
+  [R7]; an attenuator sharing the generator's failure modes filters out the
+  wrong things. Beer's own instruments fit: System 3* — sporadic direct audit
+  that bypasses the reporting channel — calibrates trust in the attenuators;
+  the algedonic channel — alarms that bypass filtering — carries, for example,
+  ratified-test failures or invariant violations straight to the human.
+
+**Convergence.** Ratification is both: in Quine's terms it assigns
+entrenchment; in Beer's terms it is the human's amplifier (one ratified claim
+governs many generated decisions) and the attenuation criterion (what does not
+touch ratified claims need not reach the human). The wellness mechanism, as a
+hypothesis: the human's work becomes maintaining a small, entrenched core of
+the web while agents absorb peripheral variety under independent audit.
+
+---
+
+## J6 — 2026-11-02 — Operational methodology proposal: the intent ledger
+
+### User input (verbatim)
+
+> Now, I think it's time to attack the primary problem: the engineer writes a
+> specification (prompt), the prompt turns into the code, engineer tries to
+> understand/evaluate and their mind blows. So, what could we propose - as an
+> operational methodology? Anything worth turning into skills? Which components
+> we might need - skills, harness extensions - what could save the engineer?
+> How do we build, test and revise the network (or graph) of the beliefs? Do we
+> need to visualize the graph?
+
+### Assessment and proposal
+
+Status: proposal for discussion; nothing built.
+
+**Core move.** Stop asking the engineer to understand the expansion. The
+engineer maintains a small compressed artifact — the *intent ledger*, the
+ratified core of the web (J5) — and machines measure the expansion against it.
+Human attention goes only to conflicts with the core, consequential defaults not
+yet covered by it, and a small random audit. Everything else is absorbed below
+the human.
+
+**Constraints from prior art.**
+
+- Spec-driven tools moved the overload into markdown: verbose, repetitive
+  specs; a small bug became 4 user stories with 16 acceptance criteria; the
+  reviewer would "rather review code"; the agent took descriptions of existing
+  classes as a new specification [R45]. The ledger must stay compressed and
+  capped, the model may propose but not inflate it, and direction of fit must be
+  explicit (the last failure is C9's direction-of-fit error).
+- Test-driven intent clarification: 15 programmers were significantly more
+  likely to evaluate generated code correctly and reported significantly less
+  cognitive load [R43]. Small, function-level evidence that ratifying examples
+  beats reading code.
+- Specification validation is the bottleneck; the user is the only oracle for
+  specification correctness [R44].
+- Diff-scoped mutation testing with filtering, per-review caps and selection by
+  historical usefulness works at Google scale [R46] — an existing, designed
+  attenuator.
+
+**The belief graph (minimal data model).**
+
+- *Claim*: one observable sentence; direction (intent | belief); authority
+  (ratified | unratified | unknown); scope (interface or code region).
+- *Decision*: a default the generator filled in (unencoded detail, J4), with a
+  consequence class; unratified until accepted.
+- *Evidence*: test, type or contract, proof, execution observation, review;
+  with an independence class (human-written | other model family |
+  same generator | mechanical) and a content digest.
+- *Edges*: supports, depends-on, contradicts, implements.
+- *Status is derived, not asserted*: supported, unsupported or contradicted,
+  computed from evidence as in a justification-based truth maintenance system
+  [R48]; retracting a node propagates "unsupported" to its dependents.
+- Stored as plain text in the repository, reviewable in diffs; agents write
+  only to a staging area; only a human command ratifies. This journal and its
+  hypotheses register are a manual instance of the same structure.
+
+**Per-change process.**
+
+1. *Elicit before generating.* The agent restates the prompt as at most N
+   atomic claims, lists the defaults it intends to fill (ranked by
+   consequence) and asks only material questions. The engineer edits and
+   ratifies, and pre-registers one to three predictions ("only module X
+   changes", "no schema migration"). This gives the encoder the decoder's view
+   (J4), prevents silent replacement of the web (J5) and creates the feedback
+   loop intuition needs (J1, [R16]).
+2. *Generate with bindings.* Each change cites the claims it serves; new
+   defaults become decision nodes; ratified regions are write-guarded.
+3. *Verify mechanically.* Run the evidence and derive status. Diff-scoped
+   mutation analysis against ratified evidence only: surviving mutants mark
+   behaviour not constrained by intent; mutants killed only by unratified tests
+   are ratification candidates; mutants surviving everything mark unconstrained
+   behaviour.
+4. *Report the web delta, attenuated*, in fixed priority: (a) alarms —
+   contradicted ratified claims and violated predictions (a surprise means the
+   web or the code is wrong; both matter); (b) a capped queue of consequential
+   unratified decisions and mutation-derived candidates, rendered as "when X,
+   then Y"; (c) one random audit item (System 3*) the attenuator classed as
+   fine; (d) counts only for everything else.
+5. *Revise.* Each item exits one of three ways — ratify (revise the belief),
+   reject (revise the code), revise the intent — with a recorded reason;
+   propagation marks dependents for re-verification.
+6. *Calibrate.* Log escapes (defects later traced to items filtered out) and
+   audit findings; tune caps and thresholds. Persistent audit findings mean the
+   attenuator is untrustworthy and human sampling must rise.
+
+**Testing the web.**
+
+- Support is not testing. Claims are tested by attempted refutation: list the
+  defeaters that would make a claim false and eliminate them [R47] — property
+  tests, mutation, adversarial inputs — rather than adding confirming tests.
+- Evidence counts toward a ratified claim only if independent of the
+  generator: human-written, mechanical or another model family.
+- The engineer's web is itself tested by the pre-registered predictions.
+  Prediction accuracy over time is a cheap calibration measure of the
+  engineer's model of the system — a measure of understanding that does not
+  require reading code.
+
+**Skills versus harness.** Procedure goes into skills; anything that must hold
+under goal pressure goes into the harness, because instructions alone fail
+(J2's misfiring anti-tampering norm; agents ignoring specifications [R45]).
+
+- Skills: (1) an *intent-ledger protocol* for agents — elicitation, default
+  disclosure, bindings, delta report, no self-ratification; (2) a human-invoked
+  *ratification review* — the J2 sorting skill generalised to claims and
+  decisions, mutation-ranked, capped batches; (3) an amendment adding an
+  Authority axis to `constructive-test-taxonomy` [L1]. Overlap check: no
+  similar Haystack skill drafts found by text search (best effort, 2026-11-02).
+- Harness extensions: (1) ledger store and a human-only `/ratify` command that
+  writes digests; (2) an entrenchment guard — Pi `tool_call` handlers can block
+  calls [L3] — with a turn-end or pre-commit digest check as backstop, because
+  shell edits bypass tool-level guards; (3) a diff-scoped mutation runner
+  against ratified evidence; (4) the delta and queue view with caps and alarm
+  notifications; (5) an audit sampler and escape log; (6) provenance links to
+  archived sessions [L4].
+
+**Visualisation.** Not the whole graph. The graph is a machine structure;
+humans need views:
+
+- the ranked queue — the primary interface;
+- the per-change delta;
+- the local neighbourhood and impact set of one claim under revision (depth
+  one or two);
+- an intent-coverage map over the code tree: ratified, unratified-only,
+  unconstrained — where the engineer is working without intent coverage.
+
+Node-link diagrams of large, dense graphs lose readability [R49], and a
+whole-graph view gives an illusion of overview — another expansion. A
+visualisation is itself an attenuator and must be designed against intent.
+
+**Risks.** Ledger inflation (the spec-driven failure); claims are themselves
+model-decoded and their ratification can be rubber-stamped; mutation analysis
+is costly and tooling varies by language; net benefit is unmeasured, and the
+best direct evidence [R43] is small and function-level.
+
+**Smallest slice, if operationalised.** Elicitation with default disclosure and
+predictions, test ratification from J2, and a mutation-ranked queue — no graph
+store yet.
+
+---
+
+## J7 — 2026-11-02 — Pilot phase: intent check, pilot set, risk mitigations
+
+### User input (verbatim)
+
+> Perhaps at this point you may want to run several pilot experiments to test
+> the ideas and think what we could do to alleviate the risks - and keep the
+> whole methodology human-tractable. Well, do you have enough of my intent ?
+
+### Assessment
+
+Enough intent to design the pilots, not enough to run them. The answer follows
+the J6 elicitation step: compressed restatement, disclosed defaults, at most
+three material questions. Nothing runs until the restatement is ratified.
+
+**Intent restatement (pending ratification, decision Q8).**
+
+- I1 Goal: make LLM-accelerated development sustainable for the engineer —
+  less overload and burnout — without losing epistemic control over whether
+  the code matches intent.
+- I2 Engineer attention goes to compressed intent (ratified claims, tests,
+  decisions); machines check the generated expansion against it.
+- I3 Model-produced artifacts have no authority over intent until a human
+  ratifies them.
+- I4 The methodology's own overhead must stay human-tractable; if it
+  recreates overload, it has failed.
+- I5 Now: test the ideas in small pilots and design risk mitigations before
+  building tools.
+- I6 Record everything in the journal with references; claims stay
+  evidence-based.
+
+**Defaults applied unless overridden.**
+
+- D1 Pilots are feasibility and instrument checks, not efficacy evidence.
+- D2 Agent pilots use throwaway synthetic fixtures with planted decision
+  points, giving mechanical ground truth instead of LLM judges (C4, C8). They
+  live outside ponygirls; only protocols and results enter the journal.
+- D3 Subject models: employer-hosted model families (not billed to us);
+  paid models only if approved (decision Q10).
+- D4 The user's real skills, AGENTS.md and harness stay untouched.
+- D5 About five runs per cell.
+- D6 No human-side pilot without the user's participation (decision Q9).
+
+**Feasibility observed 2026-11-02.** The pinned nixpkgs provides mutmut 3.8.0,
+pytest 9.1.1, hypothesis 6.168.1, cargo-mutants 27.1.0 and Node.js 24.21.0.
+Model families available: Anthropic and OpenAI Codex (paid), and employer-hosted
+DeepSeek, GLM, Qwen, Kimi, Nemotron and others (not billed to us).
+
+**Pilot set.**
+
+| ID | Question | Setup (sketch) | Needs the user | Cannot show |
+|---|---|---|---|---|
+| P-A | Do provenance markers plus the symmetric non-authority rule reduce defended wrong tests without increasing tampering or marker forgery? (H-T1–H-T3) | Python fixture; scenarios: unratified wrong test vs explicit requirement; ratified test vs violating request; unratified correct test with silent requirement; add-a-test next to marked tests. Baseline (current policy excerpt) vs gated. Outcomes coded from diffs and final reports. | No | Real-world rates; human perception |
+| P-B | Can elicitation stay within a budget (≤7 claims, ≤5 defaults, ≤3 questions) while disclosing the consequential defaults the diff actually contains? | About eight tasks with planted decision points (rounding, error policy, ordering, …); agent writes the sheet, then implements; disclosure recall measured against the planted points. | No | Disclosure quality on unplanted decisions |
+| P-C | Does a diff-scoped, capped, mutation-ranked queue surface planted unintended behaviour within the cap, at acceptable cost? (P3) | mutmut on P-B outputs against ratified fixture tests; queue length, runtime, planted behaviours surfaced. | No | Usefulness to a human |
+| P-D | Does ratification stay meaningful at a tractable workload? (H-T4, P1) | ~40 min: three batches of eight items with disclosed planted errors; code vs claim rendering; time, catches, raw NASA-TLX [R25]. | Yes | Generalisation beyond n=1 |
+| P-F | Is pre-registered prediction cheap, and does its hit rate track understanding? (P2) | Two weeks of real work; one to three predictions per agent task, hit or miss afterwards. | Yes | Causality |
+
+**Risk mitigations to keep the methodology human-tractable.**
+
+1. *Attention budget as a hard constraint* — per change (for example ≤10
+   minutes, ≤7 queue items) and per day. Overflow shrinks the change (split
+   it); it never enlarges the review. Small batches are the control variable.
+2. *Depth proportional to risk* — trivial changes get alarms only; standard
+   changes get elicitation and a capped queue; critical changes get
+   predictions, mutation analysis and audit. This answers the "sledgehammer"
+   failure [R45].
+3. *Hard caps on generated artifacts* — the agent must prioritise, not
+   enumerate; exceeding a cap is a defect report, not a longer document.
+4. *Consented canary items* — planted known-wrong items in real queues measure
+   rubber-stamping continuously, as threat image projection does in airport
+   screening [R50]. A falling catch rate shrinks batches or pauses the
+   methodology.
+5. *Kill criteria fixed in advance* — stop or simplify if human time per
+   change exceeds the no-methodology baseline, if the canary catch rate falls
+   below a threshold, or if the ledger grows faster than it is pruned.
+6. *Enforcement in the harness only for the few invariants that matter* — no
+   self-ratification, ratified regions write-guarded; everything else stays
+   advisory to keep the system light.
+7. *Pilot hygiene* — mechanical ground truth, held-out scenarios, recorded
+   model and harness versions, and no efficacy claims from n=1 or scripted
+   runs.
+
+**Open decisions:** Q8 (ratify I1–I6), Q9 (human participation in P-D and
+P-F), Q10 (subject models, including paid ones).
