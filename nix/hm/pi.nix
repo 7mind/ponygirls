@@ -851,6 +851,8 @@ in
             "${piExtensions}/ponygirls-codex-goals"
             # Persistent project questions, asynchronous answers, and a clickable inbox badge.
             "${piExtensions}/ponygirls-decisions"
+            # Automatic reversible context archival; /context-archive on opts in (default off).
+            "${piExtensions}/ponygirls-context-archive"
             # Supervisor/worker subagents: durable delegation, sandbox-brokered
             # tools, worktrees, gates, /agents inspector.
             # See nix/pkg/pi-extensions/ponygirls-subagents (optional policy

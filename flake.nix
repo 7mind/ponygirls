@@ -810,6 +810,27 @@
             node --test tests/host.test.mjs
             touch $out
           '';
+          ponygirls-context-archive = pkgs.runCommand "ponygirls-context-archive-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            export HOME=$TMPDIR
+            sdk=${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-context-archive} context-archive
+            chmod -R u+w context-archive
+            cd context-archive
+            mkdir -p node_modules/@earendil-works
+            ln -s "$sdk" node_modules/@earendil-works/pi-coding-agent
+            for package in pi-ai pi-agent-core pi-tui; do
+              ln -s "$sdk/node_modules/@earendil-works/$package" node_modules/@earendil-works/$package
+            done
+            ln -s "$sdk/node_modules/typebox" node_modules/typebox
+            ln -s "$sdk/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
+            node --test tests/*.test.mjs
+            touch $out
+          '';
           ponygirls-decisions = pkgs.runCommand "ponygirls-decisions-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git ];
             PI_DECISIONS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
