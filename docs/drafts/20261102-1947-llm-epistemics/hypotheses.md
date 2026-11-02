@@ -16,7 +16,9 @@ revision; scripted runs validate the workflow only, not agent behaviour.
 | C3 | Model self-reports of their process are unreliable. | supported (external) | R4; contrived multiple-choice settings. |
 | C4 | Model errors are correlated across models; model-on-model review is weak corroboration. | supported (external) | R7 (benchmark level), R15 (human analogue). |
 | C5 | Delegation erodes the comprehension needed for oversight. | supported (external) | R5; novices learning a new library, not experts in familiar code. |
-| C6 | Generated code embeds decisions without an intentional author. | framing | Conceptual; motivates provenance tracking. |
+| C6 | Code generation is generative lossy decoding of intent: unencoded detail is synthesised from the model's prior, yielding decisions without an intentional author (revised in J4). | framing | R28 (LMs as compressors); structural analogy, not a theorem about code generation. |
+| C7 | At low rate, output realism trades against fidelity to intent; fluent, idiomatic output is not evidence of fidelity. | framing | R26, R27 hold for formal sources/distortion measures; transfer to code is analogy. Consistent with C2. |
+| C8 | Model-generated tests check consistency between two decodings of one message, not fidelity to intent; for synthesised detail they carry almost no information about intent. | framing | R9 (oracles capture actual behaviour), R7 (correlated errors). |
 
 ## Provenance-gated tests (J2)
 
