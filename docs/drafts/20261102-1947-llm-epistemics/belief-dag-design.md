@@ -29,9 +29,10 @@ whole-graph visualisation (J6, [R49]); mandatory formalisation (it is per node
 and proportional to risk, J7 mitigation 2); defence against an adversarial
 agent (threat model: J2's imitative, goal-pressured, non-adversarial agent);
 replacing J2 test ratification (J2-ratified tests stay, as agent-layer
-evidence ranked below beliefs, §3); any efficacy claim. The Q11 pilot tests
-H-T5 on example §9a, B2 on example §9b, whether the dialogue caps hold at
-belief level, and the M1 measures of §8.
+evidence ranked below beliefs, §3); any efficacy claim. The Q11 pilot (Pilot E) tests H-T5 on a
+reconstruction of example §9a and B2 on a variant of example §9b, plus the
+caps of a one-round refinement sheet; the dialogue protocol as a whole and
+the M1 measures of §8 are not yet piloted.
 
 ## 2. Data model
 
@@ -291,17 +292,21 @@ handled by scenario 2's obligation. S2 question the agent should ask: "while
 the user types a draft, wake now or after it is sent?"
 
 Agent layer before the fix (J10): five delivery paths do not wake the
-harness; for three, agent-written tests assert hand-off to the next input.
+harness; for three, existing tests assert hand-off to the next input (who
+wrote those tests was not established; agent authorship is likely, not
+shown).
 
 | Element | Authority | Trace | Derived |
 |---|---|---|---|
-| tests asserting hand-off to the next input | proposed (agent-written) or unknown | none to a ratified node → orphans | passing evidence, oracle class same-generator, for candidate decision `D-hold`: "hold notices until the next input" |
+| tests asserting hand-off to the next input | unknown (provenance not established) | none to a ratified node → orphans | passing evidence, oracle class same-generator, for candidate decision `D-hold`: "hold notices until the next input" |
 | `D-hold` | proposed | — | `contradicts` G-wake scenario 1 → alarm (I2) |
 | `G-wake` | ratified | — | contradicted on five paths, three of them pinned by tests |
 
 In the field the agent called the three paths "deliberate: the design hands
 the notice to your next input, and the existing tests check that it does" —
-unratified artefacts cited as intent against a ratified belief (I2; H-T5).
+unratified artefacts cited as intent against a belief the user had stated
+in the prompt; in the design, that belief would be ratified and I2 would
+apply (H-T5).
 The design requires one alarm:
 
 ```
