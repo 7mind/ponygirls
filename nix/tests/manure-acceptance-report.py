@@ -55,7 +55,8 @@ class AcceptanceReportTest(unittest.TestCase):
                      log('one').replace('no publish/recovery claim', 'all tests passed'),
                      log('one') + '\n' + log('two'), log('one') + '\nRUNTIME: late',
                      log('one').replace('PASS: one', 'PASS:'),
-                     log('one').replace('PASS: one', 'PASS:   ')]:
+                     log('one').replace('PASS: one', 'PASS:   '),
+                     log('one', '2 FILESYSTEM  contracts; no publish/recovery claim')]:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 report.inventory(text)
 

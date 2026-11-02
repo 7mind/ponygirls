@@ -26,7 +26,7 @@ def inventory(text: str) -> list[str]:
             if declared is not None or index != len(lines) - 1:
                 raise ValueError('summary must occur exactly once, at end of log')
             declared = int(summary[1])
-        elif 'filesystem contract' in line or not line.startswith('PASS: ') or not line[6:].strip() or line[6:] != line[6:].strip():
+        elif re.search(r'\bfilesystem[\s-]+contracts?\b', line, re.I) or not line.startswith('PASS: ') or not line[6:].strip() or line[6:] != line[6:].strip():
             raise ValueError(f'malformed acceptance summary/case: {line}')
         else:
             cases.append(line[6:])
