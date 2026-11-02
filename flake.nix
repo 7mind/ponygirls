@@ -284,9 +284,8 @@
       in
       {
         # One pinned JVM/toolchain environment for all common-build modules.
-        devShells.backend = pkgs.mkShell ({
-          inputsFrom = [ self.devShells.${system}.chronicle ];
-        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        devShells.backend = self.devShells.${system}.chronicle.overrideAttrs (_:
+          pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           MANURE_POSIX_LIBRARY = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).shared}/lib/libmanure_posix.so";
           MANURE_POSIX_STATIC = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).static}/lib";
         });
