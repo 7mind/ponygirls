@@ -19,6 +19,9 @@ revision; scripted runs validate the workflow only, not agent behaviour.
 | C6 | Code generation is generative lossy decoding of intent: unencoded detail is synthesised from the model's prior, yielding decisions without an intentional author (revised in J4). | framing | R28 (LMs as compressors); structural analogy, not a theorem about code generation. |
 | C7 | At low rate, output realism trades against fidelity to intent; fluent, idiomatic output is not evidence of fidelity. | framing | R26, R27 hold for formal sources/distortion measures; transfer to code is analogy. Consistent with C2. |
 | C8 | Model-generated tests check consistency between two decodings of one message, not fidelity to intent; for synthesised detail they carry almost no information about intent. | framing | R9 (oracles capture actual behaviour), R7 (correlated errors). |
+| C9 | A test's direction of fit is set by ratification: ratified tests are intentions (code must conform), unratified tests are beliefs (test conforms to code); defending an unratified test against a requirement is a direction-of-fit error. | framing | R34; J2, J5. |
+| C10 | Burnout under agentic development is partly a requisite-variety failure: the human absorbs unattenuated generated variety into their web of belief. | framing | R37, R38 (theory); R12 (survey link GenAI → demands → burnout); mechanism is inference. |
+| C11 | Attenuators built by the generator (summaries, reports, agent verdicts) share its failure modes; trust in them requires independent sporadic audit (Beer's System 3*). | framing | R4, R7 (supporting); R36 (instrument). |
 
 ## Provenance-gated tests (J2)
 
