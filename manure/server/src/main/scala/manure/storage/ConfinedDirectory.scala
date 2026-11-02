@@ -1,255 +1,336 @@
 package manure.storage
 
 import java.io.IOException
-import java.nio.ByteBuffer
-import java.nio.channels.FileChannel
+import java.nio.CharBuffer
+import java.nio.channels.ClosedChannelException
+import java.nio.charset.{Charset, CodingErrorAction, StandardCharsets}
 import java.nio.file.*
-import java.nio.file.attribute.{BasicFileAttributeView, PosixFilePermissions}
+import java.security.MessageDigest
 import scala.jdk.CollectionConverters.*
-import scala.util.Using
 
-/** A validated, nonempty sequence of literal names; not a URL decoder or manifest policy. */
-final class RelativeName private (private[storage] val components: Vector[String]):
-  override def toString: String = components.mkString("/")
+/** Literal UTF-8 components, not URL decoding, Unicode normalization or manifest policy. */
+final class RelativeName private (private[storage] val components: Vector[Array[Byte]], val value: String):
+  override def toString: String = value
 
 object RelativeName:
   def parse(value: String): RelativeName =
     val parts = value.split("/", -1).toVector
     require(parts.forall(p => p.nonEmpty && p != "." && p != ".." &&
       !p.contains('\\') && !p.contains('\u0000')), "invalid relative name")
-    new RelativeName(parts)
-
-final class MissingPrimitive(val primitives: Vector[String])
-  extends UnsupportedOperationException(primitives.mkString("Missing confined primitives: ", ", ", ""))
+    new RelativeName(parts.map(PosixErrors.utf8), value)
 
 final class RootReplaced extends IOException("storage root identity changed")
+final class RootAlreadyClaimed extends IOException("physical storage root already claimed in this network namespace")
+final class OpenFileHandles extends IOException("close refused: storage file handles remain open")
 
-/** Public JDK feasibility boundary, NOT a durable artifact store.
+enum ExistingFileAccess:
+  case ReadOnly, ReadWrite
+
+/** Linux descriptor authority, not a complete durable artifact store.
   *
-  * Authority is attached to open directory descriptors, not normalized path prefixes.
-  * Opening rejects symlinks in *every* root component (including parent aliases).
-  * Each operation reopens the root component-wise and checks its provider fileKey;
-  * subsequent operations still use the original descriptor, never the checked pathname.
-  * Concurrent renames cannot redirect authority to the replacement root. An already
-  * opened inode remains authorized even if moved elsewhere; this is not revocation.
-  *
-  * New file handles permit IO/force on a known regular inode, even after name replacement.
-  * Existing-file opens are deliberately absent: SDS cannot fstat a returned channel to
-  * exclude devices/FIFOs atomically. No public JDK mkdirat/physical-root exclusive claim
-  * exists. Those operations fail explicitly, before filesystem effects. Directory force
-  * uses a descriptor-relative dot open; provider support and crash durability must be
-  * validated separately (a successful force is not a full publication boundary).
-  * Not safe as a complete server backend; requireDurableStore always refuses activation.
+  * The explicitly injected native bridge owns no-follow traversal, type-safe pinned regular
+  * opens (O_PATH + trusted procfs), mkdirat, fsync, renameat and raw-name unlink. Opening
+  * automatically claims the physical dev/ino in the current Linux network namespace.
+  * New directory operations revalidate the configured root before using the original fd.
+  * File handles remain pinned after renames/unlink; root close refuses until all close.
+  * Same-UID hostile inode moves/hardlinks are outside this boundary. These primitives
+  * do not implement publication, metadata transactions or crash recovery.
   */
 final class ConfinedDirectory private (
-  rootPath: Path,
-  root: SecureDirectoryStream[Path],
-  identity: AnyRef
+  bridge: PosixNative,
+  rootPath: Array[Byte],
+  root: Int,
+  identity: Vector[Long],
+  claim: Int
 ) extends AutoCloseable:
+  import PosixErrors.call
   private var closed = false
+  private var files = 0
 
-  def requireDurableStore(): Unit = throw new MissingPrimitive(ConfinedDirectory.missingPrimitives)
-  /** Linux-provider feasibility operation: open dot relative to the pinned descriptor,
-    * then force that channel. No absolute path or reflection fallback. Unsupported
-    * providers fail explicitly. This does not force children or acquire ownership.
-    */
   def forceRootDirectory(): Unit = synchronized {
     checked()
-    forceAt(root)
+    call(bridge.sync(root))
   }
 
   def forceDirectory(name: RelativeName): Unit = synchronized {
     checked()
-    withComponents(name.components)(forceAt)
+    withComponents(name.components)(fd => call(bridge.sync(fd)))
   }
 
-  def createDirectory(name: RelativeName): Unit = throw new MissingPrimitive(Vector("mkdirat"))
-  def claimExclusiveRoot(): Unit = throw new MissingPrimitive(Vector("kernel-lifetime physical-root claim"))
-  def openExistingFile(name: RelativeName): Nothing =
-    throw new MissingPrimitive(Vector("descriptor fstat/type-checked existing-file open"))
+  /** Create one directory; its parent must already exist. No recursive path fallback. */
+  def createDirectory(name: RelativeName): Unit = synchronized {
+    checked()
+    withParent(name)((parent, leaf) => call(bridge.mkdir(parent, leaf)))
+  }
 
-  /** No overwrites or reopening by name; caller owns and must close the returned handle.
-    * File force does NOT persist the parent directory entry.
-    */
+  /** CREATE_NEW, 0600; caller owns the pinned regular handle. */
   def createFile(name: RelativeName): ConfinedFile = synchronized {
     checked()
-    withParent(name) { (parent, leaf) =>
-      val options = Set[OpenOption](StandardOpenOption.CREATE_NEW, StandardOpenOption.READ,
-        StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).asJava
-      val channel = parent.newByteChannel(leaf, options,
-        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
-      channel match
-        case file: FileChannel => new ConfinedFile(file)
-        case other =>
-          other.close()
-          // Do not clean up by name: another writer may have replaced it.
-          throw new MissingPrimitive(Vector("FileChannel force on created handle"))
-    }
+    acquireFile(name)((parent, leaf) => bridge.createFile(parent, leaf))
   }
 
-  /** SDS.move specifies atomic rename, not durable rename, no-replace, or a publish commit.
-    * It moves the named entry itself, including a symlink; it never traverses that entry.
-    * Replacing an existing destination is provider-specific. No precheck disguises this.
+  /** Existing regular inode only; no FIFO/device open to discover its type.
+    * Requires the native bridge's trusted procfs fd-reopen facility, with no fallback.
+    */
+  def openExistingFile(name: RelativeName, access: ExistingFileAccess): ConfinedFile = synchronized {
+    checked()
+    acquireFile(name)((parent, leaf) => bridge.openFile(parent, leaf, access == ExistingFileAccess.ReadWrite))
+  }
+
+  private def acquireFile(name: RelativeName)(open: (Int, Array[Byte]) => Int): ConfinedFile =
+    var fd = -1
+    try
+      // Assign before temporary parent fds close: a close failure must not leak the file.
+      withParent(name) { (parent, leaf) => fd = call(open(parent, leaf)) }
+      val file = new ConfinedFile(bridge, fd, () => synchronized { files -= 1 })
+      files += 1
+      file
+    catch
+      case error: Throwable =>
+        if fd >= 0 then PosixErrors.suppress(error)(call(bridge.close(fd)))
+        throw error
+
+  /** Atomic entry rename, including symlink entries. Replaces destinations under POSIX
+    * rules; not no-replace, not durable rename, and not a publish acknowledgement.
     */
   def move(source: RelativeName, destination: RelativeName): Unit = synchronized {
     checked()
     withParent(source) { (from, leaf) =>
-      withParent(destination) { (to, target) => from.move(leaf, to, target) }
+      withParent(destination) { (to, target) => call(bridge.move(from, leaf, to, target)) }
     }
   }
 
-  /** Unlink one non-directory entry (including symlinks) without following it. */
   def deleteFile(name: RelativeName): Unit = synchronized {
     checked()
-    withParent(name)((parent, leaf) => parent.deleteFile(leaf))
+    withParent(name)((parent, leaf) => call(bridge.unlink(parent, leaf, false)))
   }
 
-  /** Bounded, descriptor-relative cleanup. Symlinks are unlinked, never traversed.
-    * Concurrent structural changes may cause IOException and leave partial cleanup;
-    * no retry through a pathname and no durability acknowledgement is made.
+  /** Inclusive finite entry/depth limits; the named root counts as one. Names returned by
+    * readdir remain raw bytes (including invalid UTF-8), never decoded and re-encoded.
+    * Structural races can fail or leave partial cleanup; no pathname retry or link walk.
     */
   def removeTree(name: RelativeName, maxEntries: Int, maxDepth: Int): Unit = synchronized {
     require(maxEntries > 0 && maxDepth > 0, "positive cleanup bounds required")
     checked()
-    var remaining = maxEntries
-    def remove(parent: SecureDirectoryStream[Path], leaf: Path, depth: Int): Unit =
-      if remaining == 0 || depth > maxDepth then throw new IOException("cleanup bound exceeded")
-      remaining -= 1
-      val attributes = parent.getFileAttributeView(leaf, classOf[BasicFileAttributeView],
-        LinkOption.NOFOLLOW_LINKS).readAttributes()
-      if attributes.isDirectory then
-        Using.resource(parent.newDirectoryStream(leaf, LinkOption.NOFOLLOW_LINKS)) { child =>
-          child.iterator().asScala.foreach(entry => remove(child, entry.getFileName, depth + 1))
-        }
-        parent.deleteDirectory(leaf)
-      else parent.deleteFile(leaf)
-    withParent(name)((parent, leaf) => remove(parent, leaf, 1))
+    // Reserve the root, then reserve every enumerated child before descending. The
+    // combined raw-name arrays, not just each individual batch, stay within the budget.
+    var remaining = maxEntries - 1
+    final class Frame(val parent: Int, val leaf: Array[Byte], val fd: Int,
+      val depth: Int, val entries: Array[Array[Byte]]):
+      var next = 0
+    val stack = scala.collection.mutable.ArrayBuffer.empty[Frame]
+    def visit(parent: Int, leaf: Array[Byte], depth: Int): Unit =
+      if depth > maxDepth then throw new IOException("cleanup bound exceeded")
+      if call(bridge.kind(parent, leaf)) == PosixNative.DIRECTORY then
+        val child = call(bridge.openDirectory(parent, leaf))
+        try
+          // One extra entry detects overflow, never silently truncates enumeration.
+          val entries = call(bridge.entries(child, remaining + 1))
+          if entries.length > remaining then throw new IOException("cleanup bound exceeded")
+          remaining -= entries.length
+          stack += new Frame(parent, leaf, child, depth, entries)
+        catch
+          case error: Throwable =>
+            PosixErrors.suppress(error)(call(bridge.close(child)))
+            throw error
+      else call(bridge.unlink(parent, leaf, false))
+    withParent(name) { (parent, leaf) =>
+      try
+        visit(parent, leaf, 1)
+        while stack.nonEmpty do
+          val frame = stack.last
+          if frame.next < frame.entries.length then
+            if frame.depth >= maxDepth then throw new IOException("cleanup bound exceeded")
+            val entry = frame.entries(frame.next)
+            frame.next += 1
+            visit(frame.fd, entry, frame.depth + 1)
+          else
+            // Remove ownership before close, including a close that reports an error.
+            stack.remove(stack.size - 1)
+            call(bridge.close(frame.fd))
+            call(bridge.unlink(frame.parent, frame.leaf, true))
+      catch
+        case error: Throwable =>
+          stack.reverseIterator.foreach(frame => PosixErrors.suppress(error)(call(bridge.close(frame.fd))))
+          throw error
+    }
   }
 
   private def checked(): Unit =
-    if closed then throw new java.nio.channels.ClosedChannelException
-    Using.resource(ConfinedDirectory.openRoot(rootPath)) { current =>
-      if ConfinedDirectory.fileKey(current) != identity then throw new RootReplaced
+    if closed then throw new ClosedChannelException
+    withFd(call(bridge.openRoot(rootPath))) { current =>
+      if call(bridge.identity(current)).toVector != identity then throw new RootReplaced
     }
 
-  private def withParent[A](name: RelativeName)(f: (SecureDirectoryStream[Path], Path) => A): A =
-    withComponents(name.components.init)(parent =>
-      f(parent, rootPath.getFileSystem.getPath(name.components.last)))
+  private def withParent[A](name: RelativeName)(f: (Int, Array[Byte]) => A): A =
+    withComponents(name.components.init)(parent => f(parent, name.components.last))
 
-  private def withComponents[A](components: Vector[String])(f: SecureDirectoryStream[Path] => A): A =
-    def walk(current: SecureDirectoryStream[Path], rest: Vector[String]): A =
-      if rest.isEmpty then f(current)
-      else Using.resource(current.newDirectoryStream(rootPath.getFileSystem.getPath(rest.head),
-        LinkOption.NOFOLLOW_LINKS))(child => walk(child, rest.tail))
-    walk(root, components)
+  private def withComponents[A](components: Vector[Array[Byte]])(f: Int => A): A =
+    // Iterative traversal avoids stack exhaustion from deep untrusted relative names.
+    var current = root
+    var owned = false
+    try
+      components.foreach { component =>
+        val next = call(bridge.openDirectory(current, component))
+        if owned then
+          try call(bridge.close(current))
+          catch
+            case error: Throwable =>
+              // close is consumed even on error; never retry a possibly reused fd.
+              owned = false
+              PosixErrors.suppress(error)(call(bridge.close(next)))
+              throw error
+        current = next
+        owned = true
+      }
+      val result = f(current)
+      if owned then
+        owned = false
+        call(bridge.close(current))
+      result
+    catch
+      case error: Throwable =>
+        if owned then PosixErrors.suppress(error)(call(bridge.close(current)))
+        throw error
 
-  private def forceAt(directory: SecureDirectoryStream[Path]): Unit =
-    val options = Set[OpenOption](StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS).asJava
-    // Internal dot is intentional: unlike payload dots, this cannot select an ancestor.
-    Using.resource(directory.newByteChannel(rootPath.getFileSystem.getPath("."), options)) { channel =>
-      channel match
-        case file: FileChannel => file.force(true)
-        case _ => throw new MissingPrimitive(Vector("FileChannel force on directory handle"))
-    }
+  private def withFd[A](fd: Int)(f: Int => A): A = PosixErrors.withFd(bridge, fd)(f)
 
+  /** Refusal retains root and claim. Once closing starts, both fds are consumed exactly
+    * once even if close reports an error; the error is propagated, never called success.
+    * All root work is serialized; file work retains ownership through its handle count.
+    */
   override def close(): Unit = synchronized {
     if !closed then
+      if files != 0 then throw new OpenFileHandles
       closed = true
-      root.close()
+      var failure: Throwable = null
+      try call(bridge.close(root))
+      catch case error: Throwable => failure = error
+      try call(bridge.close(claim))
+      catch
+        case error: Throwable =>
+          if failure == null then failure = error else failure.addSuppressed(error)
+      if failure != null then throw failure
   }
 
 object ConfinedDirectory:
-  val missingPrimitives: Vector[String] = Vector(
-    "mkdirat", "kernel-lifetime physical-root claim",
-    "descriptor fstat/type-checked existing-file open"
-  )
-
-  /** Read-only provider preflight on the filesystem root; no payload directory required.
-    * Success proves only descriptor support and a non-null fileKey, not store feasibility.
+  /** Existing root only. Claim precedes payload effects. Claim names interoperate with
+    * Python: manure- + SHA256(unsigned decimal dev + ':' + unsigned decimal ino).
+    * Abstract AF_UNIX claims are confined to this Linux network namespace, not global.
     */
-  def checkProvider(anchor: Path): Unit =
-    Using.resource(openRoot(anchor.toAbsolutePath.getRoot)) { directory =>
-      fileKey(directory)
-      ()
-    }
-
-  /** Root must already exist; does not create directories or acquire exclusive ownership. */
-  def open(path: Path): ConfinedDirectory =
+  def open(path: Path, bridge: PosixNative): ConfinedDirectory =
+    require(path.getFileSystem == FileSystems.getDefault, "default filesystem required")
+    // Path's roundtrip must use the same byte encoding as the explicit native ABI.
+    // A non-UTF8 Unix filesystem charset could otherwise roundtrip a different inode.
+    require(Option(System.getProperty("sun.jnu.encoding")).map(Charset.forName)
+      .contains(StandardCharsets.UTF_8), "UTF-8 filesystem filename encoding required")
     val absolute = path.toAbsolutePath
-    // Never normalize away dot components before no-follow traversal.
+    // UnixPath may retain undecodable raw bytes which toString replaces with U+FFFD.
+    // Reject before native open: encoding that display string could claim a sibling inode.
+    require(absolute.getFileSystem.getPath(absolute.toString) == absolute,
+      "root must round-trip through its Unicode representation")
     require(absolute.iterator().asScala.forall(p => p.toString != "." && p.toString != ".."),
       "dot root components forbidden")
-    val directory = openRoot(absolute)
-    try new ConfinedDirectory(absolute, directory, fileKey(directory))
-    catch
-      case error: Throwable =>
-        try directory.close()
-        catch case closeError: Throwable => error.addSuppressed(closeError)
-        throw error
-
-  private def fileKey(directory: SecureDirectoryStream[Path]): AnyRef =
-    val key = directory.getFileAttributeView(classOf[BasicFileAttributeView]).readAttributes().fileKey()
-    if key == null then throw new MissingPrimitive(Vector("stable physical directory fileKey"))
-    key
-
-  private def openRoot(path: Path): SecureDirectoryStream[Path] =
-    val initial = Files.newDirectoryStream(path.getRoot)
-    val secure = initial match
-      case directory: SecureDirectoryStream[Path] => directory
-      case other =>
-        other.close()
-        throw new MissingPrimitive(Vector(s"SecureDirectoryStream (provider returned ${other.getClass.getName})"))
-    var current = secure
+    val encoded = PosixErrors.utf8(absolute.toString)
+    val root = PosixErrors.call(bridge.openRoot(encoded))
+    var claim = -1
     try
-      path.iterator().asScala.foreach { component =>
-        val next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS)
-        try current.close()
-        catch
-          case error: Throwable =>
-            try next.close()
-            catch case closeError: Throwable => error.addSuppressed(closeError)
-            throw error
-        current = next
-      }
-      current
+      val identity = PosixErrors.call(bridge.identity(root)).toVector
+      if identity.size != 2 then throw new IOException("invalid physical root identity")
+      val key = identity.map(java.lang.Long.toUnsignedString).mkString(":")
+      val digest = MessageDigest.getInstance("SHA-256").digest(PosixErrors.utf8(key))
+      val claimName = "manure-" + digest.map(b => f"${b & 0xff}%02x").mkString
+      claim = PosixErrors.call(bridge.claim(PosixErrors.utf8(claimName)))
+      new ConfinedDirectory(bridge, encoded, root, identity, claim)
     catch
       case error: Throwable =>
-        try current.close()
-        catch case closeError: Throwable => error.addSuppressed(closeError)
+        if claim >= 0 then PosixErrors.suppress(error)(PosixErrors.call(bridge.close(claim)))
+        PosixErrors.suppress(error)(PosixErrors.call(bridge.close(root)))
         throw error
 
-/** A newly created, pinned regular file. No methods resolve its old pathname again.
-  * Methods are serialized per handle; close ends authority. Not a durable receipt.
-  */
-final class ConfinedFile private[storage] (channel: FileChannel) extends AutoCloseable:
+/** Pinned regular inode; no method resolves the old payload pathname. */
+final class ConfinedFile private[storage] (
+  bridge: PosixNative,
+  fd: Int,
+  released: () => Unit
+) extends AutoCloseable:
+  private var closed = false
+  private def ensureOpen(): Unit = if closed then throw new ClosedChannelException
+
   def write(offset: Long, bytes: Array[Byte]): Unit = synchronized {
     ensureOpen()
     require(offset >= 0 && offset <= Long.MaxValue - bytes.length, "invalid write range")
-    val buffer = ByteBuffer.wrap(bytes)
-    var position = offset
-    while buffer.hasRemaining do
-      val count = channel.write(buffer, position)
-      if count <= 0 then throw new IOException("file write made no progress")
-      position += count
+    PosixErrors.call(bridge.write(fd, offset, bytes))
   }
 
   def read(offset: Long, maxBytes: Int): Array[Byte] = synchronized {
     ensureOpen()
     require(offset >= 0 && maxBytes >= 0 && offset <= Long.MaxValue - maxBytes, "invalid read range")
-    val buffer = ByteBuffer.allocate(maxBytes)
-    var position = offset
-    var eof = false
-    while buffer.hasRemaining && !eof do
-      val count = channel.read(buffer, position)
-      if count == -1 then eof = true
-      else if count == 0 then throw new IOException("file read made no progress")
-      else position += count
-    java.util.Arrays.copyOf(buffer.array(), buffer.position())
+    PosixErrors.call(bridge.read(fd, offset, maxBytes))
   }
 
-  private def ensureOpen(): Unit =
-    if !channel.isOpen then throw new java.nio.channels.ClosedChannelException
+  def size(): Long = synchronized {
+    ensureOpen()
+    PosixErrors.call(bridge.size(fd))
+  }
 
-  /** Force the open inode only; never substitutes for parent-directory fsync. */
-  def forceFile(): Unit = synchronized { channel.force(true) }
-  override def close(): Unit = synchronized { channel.close() }
+  /** Exact ftruncate semantics: may shrink or extend; requires a writable handle. */
+  def truncate(size: Long): Unit = synchronized {
+    ensureOpen()
+    require(size >= 0, "invalid file size")
+    PosixErrors.call(bridge.truncate(fd, size))
+  }
+
+  def forceFile(): Unit = synchronized {
+    ensureOpen()
+    PosixErrors.call(bridge.sync(fd))
+  }
+
+  override def close(): Unit = synchronized {
+    if !closed then
+      closed = true
+      try PosixErrors.call(bridge.close(fd))
+      finally released() // Linux close consumes the fd even when reporting an error.
+  }
+
+private[storage] object PosixErrors:
+  def utf8(value: String): Array[Byte] =
+    require(!value.contains('\u0000'), "NUL forbidden")
+    val encoder = StandardCharsets.UTF_8.newEncoder()
+      .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+    try
+      val bytes = encoder.encode(CharBuffer.wrap(value))
+      val result = new Array[Byte](bytes.remaining())
+      bytes.get(result)
+      result
+    catch case _: java.nio.charset.CharacterCodingException =>
+      throw new IllegalArgumentException("invalid Unicode name")
+
+  /** Fixed labels only: never include payloads, user names, root paths or native strerror. */
+  def call[A](body: => A): A =
+    try body
+    catch
+      case failure: NativeFailure =>
+        val mapped: IOException = failure.errno() match
+          case 1 | 13 => new AccessDeniedException("storage entry")
+          case 2 => new NoSuchFileException("storage entry")
+          case 17 => new FileAlreadyExistsException("storage entry")
+          case 20 => new NotDirectoryException("storage entry")
+          case 39 => new DirectoryNotEmptyException("storage entry")
+          case 40 => new FileSystemLoopException("storage entry")
+          case 98 => new RootAlreadyClaimed
+          case n => new IOException(s"POSIX storage operation failed (errno $n)")
+        throw mapped
+
+  def suppress(error: Throwable)(cleanup: => Unit): Unit =
+    try cleanup
+    catch case closeError: Throwable => error.addSuppressed(closeError)
+
+  def withFd[A](bridge: PosixNative, fd: Int)(f: Int => A): A =
+    val result = try f(fd)
+    catch
+      case error: Throwable =>
+        suppress(error)(call(bridge.close(fd)))
+        throw error
+    call(bridge.close(fd))
+    result

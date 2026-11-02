@@ -1,75 +1,97 @@
 package manure.storage
 
-import java.io.IOException
-import java.nio.charset.StandardCharsets.UTF_8
-import java.nio.file.*
-import scala.jdk.CollectionConverters.*
+import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 import scala.util.Using
 
-/** Synthetic standalone JVM/native entrypoint using the actual implementation, no MUnit.
-  * Exit 2 means exercised capabilities passed but full durable activation was refused.
-  * Any unexpected exception/assertion exits unsuccessfully without the REFUSED marker.
+/** Explicit loader boundary, never a shared/static or provider fallback. Test scope only. */
+private[storage] final case class ProbeRuntime(bridge: PosixNative, childCommand: Vector[String])
+private[storage] object ProbeRuntime:
+  def shared(library: String): ProbeRuntime =
+    require(Path.of(library).isAbsolute, "absolute shared library path required")
+    val java = Path.of(System.getProperty("java.home"), "bin", "java").toString
+    ProbeRuntime(PosixNative.shared(library), Vector(java, "--enable-native-access=ALL-UNNAMED", "-cp", System.getProperty("java.class.path"),
+      "manure.storage.FilesystemCapabilityProbe", "--shared", library))
+
+  def linked(): ProbeRuntime =
+    val executable = ProcessHandle.current().info().command().orElseThrow()
+    ProbeRuntime(PosixNative.linked(), Vector(executable, "--linked"))
+
+/** Synthetic standalone JVM/native entrypoint; runs the identical OS contracts as MUnit.
+  * Successful completion exits zero. This is primitive acceptance, not durable activation.
+  * Internal subprocess modes operate only on parent-owned temporary fixture paths.
   */
 object FilesystemCapabilityProbe:
   def main(args: Array[String]): Unit =
-    require(args.isEmpty, "no paths/arguments accepted: synthetic temporary storage only")
-    println(s"RUNTIME: ${System.getProperty("java.vm.name")} ${System.getProperty("java.version")}")
-    // Refuse unsupported native providers before even provisioning synthetic payload dirs.
-    ConfinedDirectory.checkProvider(Path.of("."))
-    val temp = Files.createTempDirectory("manure-capability-probe-")
-    try
-      val root = Files.createDirectory(temp.resolve("root"))
-      val outside = Files.createDirectory(temp.resolve("outside"))
-      val sentinel = Files.writeString(outside.resolve("sentinel"), "untouched")
-      Files.createDirectories(root.resolve("staging/id/tree/資料"))
-      Files.createDirectory(root.resolve("live"))
-      val source = RelativeName.parse("staging/id/tree/資料/馬💩.txt")
-      Using.resource(ConfinedDirectory.open(root)) { directory =>
-        Using.resource(directory.createFile(source)) { file =>
-          val payload = "hello 馬".getBytes(UTF_8)
-          file.write(0, payload)
-          file.forceFile()
-          assert(file.read(0, 100).toVector == payload.toVector)
+    val (runtime, rest) = args.toVector match
+      case "--shared" +: library +: tail => (ProbeRuntime.shared(library), tail)
+      case "--linked" +: tail => (ProbeRuntime.linked(), tail)
+      case _ => throw new IllegalArgumentException("explicit --shared /absolute/library or --linked required")
+    rest match
+      case Vector() =>
+        println(s"RUNTIME: ${System.getProperty("java.vm.name")} ${System.getProperty("java.version")}")
+        val cases = new FilesystemBehavior(runtime.bridge, runtime.childCommand).cases
+        cases.foreach { (label, body) =>
+          body()
+          println(s"PASS: $label")
         }
-        directory.forceDirectory(RelativeName.parse("staging/id/tree/資料"))
-        directory.forceDirectory(RelativeName.parse("staging/id/tree"))
-        directory.move(RelativeName.parse("staging/id/tree"), RelativeName.parse("live/id"))
-        directory.forceDirectory(RelativeName.parse("staging/id"))
-        directory.forceDirectory(RelativeName.parse("live"))
-        directory.forceRootDirectory()
-        assert(Files.readString(root.resolve("live/id/資料/馬💩.txt")) == "hello 馬")
-        Files.createSymbolicLink(root.resolve("live/id/escape"), outside)
-        expectIOException {
-          val escaped = directory.createFile(RelativeName.parse("live/id/escape/new"))
-          escaped.close()
+        println(s"PASS: ${cases.size} filesystem contracts; no publish/recovery claim")
+      case Vector("--try-root", root) =>
+        try Using.resource(ConfinedDirectory.open(Path.of(root), runtime.bridge))(_.forceRootDirectory())
+        catch case _: RootAlreadyClaimed => System.exit(3)
+      case Vector("--reject-existing", root, leaf) =>
+        Using.resource(ConfinedDirectory.open(Path.of(root), runtime.bridge)) { directory =>
+          Vector(ExistingFileAccess.ReadOnly, ExistingFileAccess.ReadWrite).foreach { access =>
+            try
+              directory.openExistingFile(RelativeName.parse(leaf), access).close()
+              throw new AssertionError("nonregular existing file was accepted")
+            catch case _: java.io.IOException => ()
+          }
         }
-        directory.removeTree(RelativeName.parse("live/id"), 100, 16)
-        assert(Files.readString(sentinel) == "untouched")
-        assert(!Files.exists(outside.resolve("new")))
-        Files.move(root, temp.resolve("old-root"))
-        Files.createDirectory(root)
-        try
-          directory.createFile(RelativeName.parse("must-not-exist")).close()
-          throw new AssertionError("replacement root was accepted")
-        catch case _: RootReplaced => ()
-        assert(!Files.exists(root.resolve("must-not-exist")))
-        println("PASS: descriptor IO/file force, descriptor-dot directory force, Unicode, atomic move, no-follow, non-traversing cleanup, root replacement")
-        try
-          directory.requireDurableStore()
-          throw new AssertionError("durable-store gate unexpectedly passed")
-        catch
-          case missing: MissingPrimitive =>
-            assert(missing.primitives == ConfinedDirectory.missingPrimitives)
-            println(s"REFUSED: ${missing.getMessage}")
-      }
-    finally
-      Using.resource(Files.walk(temp)) { entries =>
-        entries.iterator().asScala.toVector.sortBy(_.getNameCount).reverse.foreach(Files.deleteIfExists(_))
-      }
-    System.exit(2)
+      case Vector("--hold-root", root) =>
+        Using.resource(ConfinedDirectory.open(Path.of(root), runtime.bridge)) { _ =>
+          println("READY")
+          System.out.flush()
+          Thread.sleep(60000)
+        }
+      case _ => throw new IllegalArgumentException("invalid synthetic probe arguments")
 
-  private def expectIOException(body: => Unit): Unit =
+private[storage] object ProbeChildren:
+  def start(command: Vector[String], mode: String, root: Path): Process =
+    new ProcessBuilder((command ++ Vector(mode, root.toString))*).redirectErrorStream(true).start()
+
+  def exit(command: Vector[String], mode: String, root: Path): Int =
+    exit(command ++ Vector(mode, root.toString))
+
+  def rejectExisting(command: Vector[String], root: Path, leaf: String): Int =
+    exit(command ++ Vector("--reject-existing", root.toString, leaf))
+
+  def exit(command: Vector[String]): Int =
+    // No unread pipe: inherited JVM diagnostics must not deadlock a successful child.
+    val child = new ProcessBuilder(command*).redirectErrorStream(true)
+      .redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
     try
-      body
-      throw new AssertionError("symlink parent was accepted")
-    catch case _: IOException => ()
+      assert(child.waitFor(15, TimeUnit.SECONDS), "child deadline exceeded")
+      child.exitValue()
+    finally stop(child)
+
+  def ready(child: Process): Unit =
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
+    val output = new java.io.ByteArrayOutputStream
+    var ready = false
+    while !ready && child.isAlive && System.nanoTime() < deadline do
+      val available = child.getInputStream.available()
+      if available > 0 then
+        val bytes = child.getInputStream.readNBytes(math.min(available, 4096))
+        output.write(bytes)
+        assert(output.size() <= 16384, "child readiness output bound exceeded")
+        ready = output.toString(java.nio.charset.StandardCharsets.UTF_8).linesIterator.contains("READY")
+      else Thread.sleep(10)
+    assert(ready, "child did not acquire claim by deadline")
+
+  def stop(child: Process): Unit =
+    if child.isAlive then child.destroyForcibly()
+    assert(child.waitFor(15, TimeUnit.SECONDS), "child kill/reap deadline exceeded")
+    child.getInputStream.close()
+    child.getOutputStream.close()
+    child.getErrorStream.close()
