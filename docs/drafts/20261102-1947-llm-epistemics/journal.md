@@ -222,3 +222,19 @@ Registered H-T1..H-T4 in the [hypotheses register](hypotheses.md): correction
 effect, tampering negative control, marker integrity, ratification quality and
 workload. Nothing implemented yet; marker syntax, policy text and the sorting
 skill await decisions.
+
+---
+
+## J3 — 2026-11-02 — Scope correction (corrects J2 "Methodology step")
+
+### User input (verbatim)
+
+> I did not ask you to build. So far I want you to provide assessments to
+> several thought - when we'll try to operationalize. Not yet.
+
+### Note
+
+Current phase: assessment of the user's theses only. J2's "Methodology step"
+and the operational checks in the hypotheses register went beyond the request;
+H-T1..H-T4 are parked as provisional sketches, not plans. No implementation,
+experiment or skill work until operationalization is explicitly requested.
