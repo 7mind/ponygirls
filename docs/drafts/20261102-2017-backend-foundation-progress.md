@@ -65,4 +65,12 @@ Foundation slice implemented and verified. The Haystack/Manure server ports, sha
 | Nix package/policies/modules | Actual package plus foundation, source, reporter, receipt-layout, validation, lock and HM/NixOS checks | Passed; package receipt retains explicit fast-only scope |
 | Manure native filesystem | Exact hashed actual native probe, independently rerun | Rejected missing SecureDirectoryStream before payload creation; **not accepted for a durable store** |
 
-Consumed backend/build/test inputs were checked unchanged from full-run source `0ee1687aaf4295c8ca528b72b01210f73c6c55f1`; dependency-lock bytes and flake pins are unchanged. Later merges preserve unrelated main-checkout epistemics documents. Final integration and clean worktree removal are the remaining bookkeeping steps; their receipts follow. Do not declare the full service ports or native Manure feasibility complete.
+Consumed backend/build/test inputs were checked unchanged from full-run source `0ee1687aaf4295c8ca528b72b01210f73c6c55f1`; dependency-lock bytes and flake pins are unchanged. Later merges preserve unrelated main-checkout epistemics documents. Do not declare the full service ports or native Manure feasibility complete.
+
+## Integration receipt
+
+Foundation commits were fast-forwarded into the original clean `main` checkout at `e7519fb3`. On main, Nix re-resolved/reused the exact verified Chronicle package, foundation check and receipt-layout check identities; the checkout remained clean. Unrelated epistemics-journal commits were merged without editing their content.
+
+All three writer worktrees were clean, their HEADs were ancestors of main, and their directories/Git registrations were removed without force. Meaningful source-bound evidence, initial failures, final native probes, full reports and all background logs were copied to the main checkout's ignored `debug/backend-foundation-evidence/` before removal.
+
+This tracked receipt precedes removal of the integration worktree itself. The final generated local receipt `debug/backend-foundation-evidence/completion.json` records its post-removal directory/registration checks and final main commit. No service activation, live-data migration or push occurred.
