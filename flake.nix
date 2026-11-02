@@ -973,6 +973,11 @@
             python3 ${./nix/tests/manure-toolchain-routing.py} ${./scripts/manure-native-image.sh} ${./manure/server/native-image/PosixLinkFeature.java}
             touch "$out"
           '';
+          manure-acceptance-policy = pkgs.runCommand "manure-acceptance-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            python3 ${./nix/tests/manure-acceptance-report.py} ${./scripts/manure-acceptance-report.py} ${./nix/tests/fixtures/manure-posix-acceptance}
+            touch "$out"
+          '';
+          manure-direct-jni = pkgs.callPackage ./nix/pkg/manure/direct-jni.nix { };
           manure-posix-acceptance = pkgs.callPackage ./nix/pkg/manure/posix-acceptance.nix { squishLib = inputs.squish.lib; };
           backend-source = import ./nix/tests/backend-source.nix { inherit pkgs; };
           chronicle-sbt-lock = import ./nix/tests/chronicle-sbt-lock.nix { inherit pkgs; };

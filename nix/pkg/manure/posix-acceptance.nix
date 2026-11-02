@@ -35,11 +35,12 @@ in runCommand "manure-posix-jvm-static-musl-acceptance" {
     cat "$out/native.log"; exit 1;
   }
   cat "$out/native.log"
-  # Same discovered, nonempty behavior inventory on both runtimes, no skips.
-  grep '^PASS: ' "$out/jvm.log" > jvm-cases
-  grep '^PASS: ' "$out/native.log" > native-cases
-  test -s jvm-cases
-  cmp jvm-cases native-cases
+  # Validation code is separate from the native executable's filtered sources.
+  python3 ${../../../scripts/manure-acceptance-report.py} \
+    --jvm "$out/jvm.log" --native "$out/native.log" --source '${source}' \
+    --toolchain '${environment.tools.graal}' --artifact "$out/manure-posix-probe" \
+    --artifact "$MANURE_POSIX_LIBRARY" --artifact "$MANURE_POSIX_STATIC/libmanure_posix.a" \
+    --output "$out/acceptance.json"
   sha256sum "$out/manure-posix-probe" "$MANURE_POSIX_LIBRARY" \
     "$MANURE_POSIX_STATIC/libmanure_posix.a" > "$out/artifacts.sha256"
   printf '%s\n' '${source}' > "$out/acceptance-source"

@@ -38,6 +38,13 @@ assert !(selected tests "manure/server/src/main/c/posix_native.c" "regular");
 assert selected sources.manureAcceptance "manure/server/native-image/PosixLinkFeature.java" "regular";
 assert selected sources.manureAcceptance "scripts/manure-native-image.sh" "regular";
 assert !(selected sources.manurePosix "manure/server/src/main/scala/example.scala" "regular");
+assert selected sources.manureDirectJni "manure/server/native-tests/NativeSelfTest.java" "regular";
+assert selected sources.manureDirectJni "manure/server/src/main/c/posix_native.c" "regular";
+assert selected sources.manureDirectJni "manure/server/src/main/java/manure/storage/PosixNative.java" "regular";
+assert !(selected sources.manureDirectJni "manure/server/native-tests/verification/jvm-strict.log" "regular");
+assert !(selected sources.manureDirectJni "manure/server/native-tests/run.sh" "regular");
+assert !(selected sources.manureAcceptance "manure/server/native-tests/NativeSelfTest.java" "regular");
+assert !(selected sources.manureAcceptance "scripts/manure-acceptance-report.py" "regular");
 # Protocol remains rooted at Chronicle: TypeScript and fixture-script relative
 # paths must not silently move with the JVM build.
 assert selected protocol "generated/typescript/chronicle/api/index.ts" "regular";

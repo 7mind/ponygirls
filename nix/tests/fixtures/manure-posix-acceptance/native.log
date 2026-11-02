@@ -1,0 +1,28 @@
+RUNTIME: Substrate VM 25.0.4.1.1
+PASS: literal names reject all traversal syntax without normalization
+PASS: new handle reads offset writes, EOF and Unicode; force is file-only
+PASS: symlink root and symlink ancestor are rejected on initial open
+PASS: symlink payload parent and existing symlink leaf cannot redirect creation
+PASS: physical root replacement refuses operations before touching replacement
+PASS: ancestor replacement with symlink refuses root revalidation
+PASS: an open file remains pinned after leaf replacement and parent/root renames
+PASS: descriptor-relative directory rename supports staging to live but cannot fsync commit
+PASS: rename cannot traverse destination parent symlink; symlink source is moved, not followed
+PASS: cleanup unlinks symlinks and never descends into their targets
+PASS: cleanup bounds abort explicitly without claiming completion
+PASS: cleanup exact inclusive entry/depth bounds succeed
+PASS: root close refuses live pinned handles and retains claim after unlink and root rename
+PASS: close is idempotent; closed directory and file reject IO
+PASS: mkdirat and existing regular-file handles support Unicode and readonly access
+PASS: existing opens reject symlinks, directories and FIFO without blocking
+PASS: existing device inode is rejected without an IO open
+PASS: existing handles stay pinned when their name becomes a symlink
+PASS: cleanup retains raw invalid-UTF8 names and rejects oversized batches
+PASS: kernel claims contend across processes, inode rename aliases, and failed root close
+PASS: kernel claims release after owning process is killed, without lockfile cleanup
+PASS: errno mapping is stable and never includes user-controlled paths
+PASS: raw invalid-UTF8 root Path cannot silently select a Unicode replacement sibling
+PASS: physical root claims interoperate with Python stdlib in both directions
+PASS: cleanup handles 1500 descriptor-relative levels without call-stack dependence
+PASS: pinned file size and truncate shrink, extend, reject readonly and closed handles
+PASS: 26 filesystem contracts; no publish/recovery claim
