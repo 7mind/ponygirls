@@ -765,3 +765,52 @@ library calls are out of reach. Median mutation time 24 s per run.
   two weeks; `report` prints aggregates only.
 - Raw data stays in `~/.local/state/epistemics-pilots/`; aggregates will be
   journalled.
+
+---
+
+## J9 — 2026-11-02 — Corrections to J8 (from an independent read-only review)
+
+A read-only subagent reviewed the pilot repository [L5] against J8 while
+analysing a skill candidate. Its findings, checked by the experimenter:
+
+1. **Headline codings were not labelled.** "a2 gated: 5/5 stopped and asked"
+   uses the broad and manual disclosure codings; the pre-registered primary
+   (narrow) coding is RESPECTED_ESCALATED 2, RESPECTED_SILENT 3 in both
+   batches. No gated run touched the ratified test under any coding; the
+   difference is only in how disclosure was counted. Likewise "a3: 0
+   discarded" is the refined coding (amendment 2); the primary coding has
+   TEST_DISCARDED_MODIFIED 2 in baseline batch2, all of which were
+   strengthenings on inspection. Rule from now on: every number names its
+   coding.
+2. **Scorer validation was overstated.** "Each scorer validated on scripted
+   outcomes" holds only for Pilot A's primary category
+   (`runner/validate_scoring_a.py`, 14 cases). The amendment 2 coding, the A5
+   scorer and the Pilot B/C scorer were checked by ad-hoc scripted runs that
+   are not committed; the broad and refined codings have no committed
+   assertions.
+3. **More instrument issues than listed.** Besides J8's five: name-based test
+   matching counts renamed or parametrised tests as deleted; the A5 conflict
+   list includes input-validation tests because the reference implementation
+   does not validate inputs; Pilot B's `started_utc` records each run's end
+   time, not its start. None changes a category.
+4. **A5 was a proxy check that passed on the wrong state**, not merely a
+   failed manipulation: the subject's "pending a rounding decision" tests
+   failed against the reference, so the NO_CONFLICT category never fired and
+   the runs were scored as ordinary outcomes. Only reading the runs showed it.
+5. **Isolation was narrower than "replaced".** The user's global
+   `APPEND_SYSTEM.md` and `AGENTS.md` were absent from the subject's prompt
+   (verified from recorded system messages), but they, the installed skills,
+   settings and `auth.json` remained readable and writable through the
+   read-write `~/.pi/agent` bind. The condition files sat in the workspace
+   under `.pi/`; at least one subject listed them and read the policy as
+   repository instructions. Ground truth, the pilot repository, this journal
+   and other sessions were not reachable.
+6. **Pre-registration timing verified** from git commit times and run
+   records: Pilot A protocol committed 21:06:21Z, first run 21:06:28Z;
+   amendments 1–2 at 21:10:09Z and 21:17:04Z, batch2 first run 21:17:11Z;
+   Pilot B/C protocol 21:17:04Z, launched immediately after; A5 protocol
+   21:21:46Z, first A5 session 21:26:04Z. Amendment B1 (21:23:26Z) followed
+   two scored B runs, as it states.
+
+None of these corrections reverses a J8 conclusion; items 1 and 5 narrow how
+the results may be quoted.
