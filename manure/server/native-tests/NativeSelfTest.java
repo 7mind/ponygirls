@@ -16,14 +16,14 @@ import java.util.concurrent.TimeUnit;
  * Every payload, symlink, FIFO and optional device belongs to this owned temp tree.
  */
 public final class NativeSelfTest {
-    private static int assertions;
+    private int assertions;
     private static byte[] b(String value) { return value.getBytes(StandardCharsets.UTF_8); }
-    private static void check(boolean condition) {
+    private void check(boolean condition) {
         ++assertions;
         if (!condition) throw new AssertionError("native contract assertion " + assertions);
     }
     @FunctionalInterface private interface Action { void run() throws Exception; }
-    private static void fails(int errno, String label, Action action) throws Exception {
+    private void fails(int errno, String label, Action action) throws Exception {
         try { action.run(); throw new AssertionError("expected " + label + " errno " + errno); }
         catch (NativeFailure failure) {
             check(failure.errno == errno && failure.errno() == errno);
@@ -45,12 +45,15 @@ public final class NativeSelfTest {
     private static Process tool(String... command) throws Exception {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.environment().remove("LD_PRELOAD"); // ASan is scoped to the JNI JVM, not host tools.
-        return builder.redirectError(ProcessBuilder.Redirect.DISCARD).start();
+        return builder.redirectError(ProcessBuilder.Redirect.INHERIT).start();
     }
     private static long fdCount() throws Exception {
         try (var paths = Files.list(Path.of("/proc/self/fd"))) { return paths.count(); }
     }
     public static void main(String[] args) throws Exception {
+        new NativeSelfTest().run(args);
+    }
+    private void run(String[] args) throws Exception {
         PosixNative api = load(args);
         if (args.length > 2 && args[2].equals("hold")) {
             int fd = api.claim(b(args[3]));
@@ -190,11 +193,12 @@ public final class NativeSelfTest {
             fails(22, "openFile", () -> api.openFile(r, b("fifo"), true));
             // Owned device node only. A real device rejection is tested when mknod is permitted.
             Process node = tool("mknod", temp.resolve("device").toString(), "c", "1", "3");
-            if (node.waitFor() == 0) {
+            int nodeExit = node.waitFor();
+            if (nodeExit == 0) {
                 fails(22, "openFile", () -> api.openFile(r, b("device"), false));
                 fails(22, "openFile", () -> api.openFile(r, b("device"), true));
                 api.unlink(r, b("device"), false);
-            } else System.out.println("SKIP owned device node: mknod privilege unavailable");
+            } else System.out.println("SKIP optional owned device fixture unavailable: mknod exit status " + nodeExit);
             // Repeated error paths must not leak O_PATH pins or procfs/listing descriptors.
             api.entries(r, 10); fdCount();
             long before = fdCount();
