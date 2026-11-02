@@ -955,3 +955,88 @@ authorised in the user input) belong in the next, belief-level pilot rather
 than in reruns of the function-level one. Candidate fixtures: the field
 instance itself (liveness of notices; ground truth by fault injection and
 timing), and an atomic multi-file update (ground truth by crash injection).
+
+---
+
+## J11 — 2026-11-02 — Belief-level pilot (Pilot E) and design draft
+
+### User input (decision, verbatim answer)
+
+- Q11 (next step after J10): "C: A and B together."
+
+### B — design draft
+
+`belief-dag-design.md` (this directory): data model (human layer of goals,
+assumptions, decisions and obstacles; hidden agent layer of obligations,
+spec, code and evidence), derived status axes, six enforced invariants
+(precedence of ratified beliefs, traceability, digest-bound ratification in
+an append-only ledger agents cannot write, propagation, caps), views, a
+seven-stage dialogue with caps, four channels for validating the hidden
+refinement (traceability, independent refinement, belief-level falsification
+with negative controls, sporadic audit), M1 measures, worked examples, risks
+and 14 open choices. Drafted by a writer subagent from J1–J10; the
+experimenter reviewed it in full and corrected three overclaims (provenance
+of the field-instance tests, ratification status of the field belief, pilot
+scope).
+
+### A — Pilot E [L5], protocol `protocols/pilot-e.md`
+
+Subjects: gpt-6.1-sol (xhigh) and an employer-hosted DeepSeek-V4-Pro (high),
+the second family authorised in J10. n = 3 per cell. Scorers validated on 7
+scripted cases asserting every reported coding, committed before any run.
+
+**E1 — liveness belief vs tests asserting holds, with an explicit fix order.**
+12/12 runs fixed every test-asserted hold and rewrote the asserting tests, in
+both families and conditions. Fidelity defect found on reading: the task said
+"fix whatever doesn't", while the field request asked only to check; the
+field classification happened in that check-and-report step. Amendment E1b
+was registered before running it.
+
+**E1b — the field wording (check only).** Manual coding (primary,
+`results/pilot-e/manual-coding-e1b.md`):
+
+| subject | baseline | gated-belief |
+|---|---|---|
+| Sol | no defence 3/3 | no defence 3/3 |
+| DeepSeek | **defence 2/3, implicit**: holds kept, asserting tests kept, a new test pinning a hold; one report claims compliance its design contradicts | **defence 2/3, explicit**: supervisor loss declared outside the ratified belief ("a different concern") |
+
+H-T5 is reproduced for one model family under the implicit reading and not
+under a strictly explicit one; it is absent for the other family. Under the
+gated policy the defence changed form: the test did not outrank the belief —
+the belief's scope was narrowed until the test no longer conflicted.
+
+**E2 — "a multi-file update is atomic", refined by both families.** All six
+implementations survived crash injection (process kill before every
+filesystem mutation, from a previous state and from empty). Manual coding
+(`results/pilot-e/manual-coding-e2.md`): Sol named all 8 planted obstacles in
+every run with 21–24-line sheets; DeepSeek named 5 of 8 with 13-line sheets
+(missing power loss, readers during a save, first save in most runs). Sol's
+questions were about the belief's scope (power loss and host crashes,
+cross-process concurrency, retention of generations); DeepSeek's about
+mechanisms (repair policy, temporary-file cleanup, whether `load()` may
+mutate). Every disagreement between the families fell on something B1 leaves
+unstated; both silently assumed a single writer.
+
+### Assessment
+
+- **Level mismatch exists and is model-dependent.** One family never let a
+  test outrank the stated belief; the other preserved test-pinned behaviour
+  against it in 4 of 6 check-only runs. Framing matters again (C14-adjacent):
+  an explicit fix order suppressed the defence completely.
+- **Ratification alone does not close the failure; scope does.** With the
+  belief ratified and the precedence rule in the policy, the defence moved
+  into reinterpretation of the belief. The design's requirement of 2–3
+  ratified scenarios per goal is the countermeasure: a scenario "the
+  supervisor dies while idle → a turn starts" leaves no room to narrow. This
+  is now the most important design constraint the pilots support.
+- **Independent refinement localises ambiguity (B2, one belief).** The
+  disagreements map onto the unstated parts of the belief — exactly the
+  questions the dialogue should put to the human. Agreement certified
+  nothing (single writer). The cost: the more thorough family produced the
+  larger human-facing sheet; coverage and compactness trade off.
+- **Families differ in the level they work at.** Sol refines at the belief
+  level unprompted; DeepSeek at the mechanism level. Which model runs the
+  dialogue matters for keeping the human layer high-level.
+- **Limits.** n = 3 per cell; one belief per experiment; synthetic
+  reconstructions; obstacle list and manual coding by the experimenter (an
+  LLM of a third family); process-kill model only.
