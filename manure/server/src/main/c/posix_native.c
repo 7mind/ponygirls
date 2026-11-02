@@ -103,14 +103,17 @@ static int stat_fd(int fd, struct stat *st) {
     do { r = fstat(fd, st); } while (r < 0 && errno == EINTR);
     return r;
 }
-static int regular_fd(JNIEnv *env, int fd, const char *op) {
-    struct stat st;
+static int regular_stat(JNIEnv *env, int fd, const char *op, struct stat *st) {
     if (!valid_fd(env, fd, op)) return 0;
-    if (stat_fd(fd, &st) < 0) { failure(env, errno, op); return 0; }
-    if (!S_ISREG(st.st_mode)) {
-        failure(env, S_ISDIR(st.st_mode) ? EISDIR : EINVAL, op); return 0;
+    if (stat_fd(fd, st) < 0) { failure(env, errno, op); return 0; }
+    if (!S_ISREG(st->st_mode)) {
+        failure(env, S_ISDIR(st->st_mode) ? EISDIR : EINVAL, op); return 0;
     }
     return 1;
+}
+static int regular_fd(JNIEnv *env, int fd, const char *op) {
+    struct stat st;
+    return regular_stat(env, fd, op, &st);
 }
 static int valid_range(JNIEnv *env, jlong offset, jsize length, const char *op) {
     if (offset < 0 || length < 0 || offset > INT64_MAX - (int64_t)length) {
@@ -382,6 +385,24 @@ JNIEXPORT void JNICALL JNI_METHOD(write)(JNIEnv *env, jobject self, jint fd, jlo
         done += (size_t)n;
     }
     free(data);
+}
+JNIEXPORT jlong JNICALL JNI_METHOD(size)(JNIEnv *env, jobject self, jint fd) {
+    UNUSED_SELF;
+    const char *op = "size";
+    struct stat st;
+    if (!regular_stat(env, fd, op, &st)) return -1;
+    if (st.st_size < 0 || (uintmax_t)st.st_size > (uintmax_t)INT64_MAX) {
+        failure(env, EOVERFLOW, op); return -1;
+    }
+    return (jlong)st.st_size;
+}
+JNIEXPORT void JNICALL JNI_METHOD(truncate)(JNIEnv *env, jobject self, jint fd, jlong size) {
+    UNUSED_SELF;
+    const char *op = "truncate";
+    if (!valid_range(env, size, 0, op) || !regular_fd(env, fd, op)) return;
+    int r;
+    do { r = ftruncate(fd, (off_t)size); } while (r < 0 && errno == EINTR);
+    if (r < 0) failure(env, errno, op);
 }
 JNIEXPORT void JNICALL JNI_METHOD(sync)(JNIEnv *env, jobject self, jint fd) {
     UNUSED_SELF;

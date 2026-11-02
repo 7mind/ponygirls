@@ -105,6 +105,22 @@ JNIEXPORT void JNICALL Java_manure_storage_PosixNative_write
 
 /*
  * Class:     manure_storage_PosixNative
+ * Method:    size
+ * Signature: (I)J
+ */
+JNIEXPORT jlong JNICALL Java_manure_storage_PosixNative_size
+  (JNIEnv *, jobject, jint);
+
+/*
+ * Class:     manure_storage_PosixNative
+ * Method:    truncate
+ * Signature: (IJ)V
+ */
+JNIEXPORT void JNICALL Java_manure_storage_PosixNative_truncate
+  (JNIEnv *, jobject, jint, jlong);
+
+/*
+ * Class:     manure_storage_PosixNative
  * Method:    sync
  * Signature: (I)V
  */

@@ -50,6 +50,10 @@ public final class PosixNative {
     public native byte[] read(int fd, long offset, int maxBytes) throws NativeFailure;
     /** Completes all positional writes or throws; failure may follow partial progress. */
     public native void write(int fd, long offset, byte[] bytes) throws NativeFailure;
+    /** Current regular-file byte length, including holes. */
+    public native long size(int fd) throws NativeFailure;
+    /** Changes regular-file length; nonnegative signed 64-bit byte length only. */
+    public native void truncate(int fd, long size) throws NativeFailure;
     public native void sync(int fd) throws NativeFailure;
     public native void move(int sourceParent, byte[] source, int destinationParent,
                             byte[] destination) throws NativeFailure;
