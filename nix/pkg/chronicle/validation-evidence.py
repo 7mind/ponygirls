@@ -54,7 +54,7 @@ def evidence(inputs: dict) -> dict:
     if set(inputs) != required or any(not isinstance(value, str) or not value.startswith('/nix/store/') for value in inputs.values()):
         raise ValueError('invalid immutable validation input identities')
     backend = read(Path(inputs['backendValidation'])/'backend.json')
-    selected = suite_names(Path(inputs['testSource'])/'scripts/fast-suites.txt')
+    selected = suite_names(Path(inputs['testSource'])/'chronicle/scripts/fast-suites.txt')
     discovered = suite_names(Path(inputs['backendValidation'])/'validation-inventory.txt')
     check_backend(inputs, backend, selected, discovered)
     protocol = read(Path(inputs['protocolValidation'])/'protocol.json')

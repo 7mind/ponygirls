@@ -2,8 +2,8 @@
 let
   runtime = pkgs.runCommand "chronicle-gate-fixture-runtime" { } "mkdir -p $out";
   tests = pkgs.runCommand "chronicle-gate-fixture-tests" { } ''
-    mkdir -p "$out/scripts"
-    echo chronicle.SyntheticTest > "$out/scripts/fast-suites.txt"
+    mkdir -p "$out/chronicle/scripts"
+    echo chronicle.SyntheticTest > "$out/chronicle/scripts/fast-suites.txt"
   '';
   protocolSource = pkgs.runCommand "chronicle-gate-fixture-protocol-source" { } "mkdir -p $out";
   native = pkgs.runCommand "chronicle-gate-fixture-native" { } ''
