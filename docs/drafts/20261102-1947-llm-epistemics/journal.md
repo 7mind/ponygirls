@@ -546,3 +546,90 @@ best direct evidence [R43] is small and function-level.
 **Smallest slice, if operationalised.** Elicitation with default disclosure and
 predictions, test ratification from J2, and a mutation-ranked queue — no graph
 store yet.
+
+---
+
+## J7 — 2026-11-02 — Pilot phase: intent check, pilot set, risk mitigations
+
+### User input (verbatim)
+
+> Perhaps at this point you may want to run several pilot experiments to test
+> the ideas and think what we could do to alleviate the risks - and keep the
+> whole methodology human-tractable. Well, do you have enough of my intent ?
+
+### Assessment
+
+Enough intent to design the pilots, not enough to run them. The answer follows
+the J6 elicitation step: compressed restatement, disclosed defaults, at most
+three material questions. Nothing runs until the restatement is ratified.
+
+**Intent restatement (pending ratification, decision Q8).**
+
+- I1 Goal: make LLM-accelerated development sustainable for the engineer —
+  less overload and burnout — without losing epistemic control over whether
+  the code matches intent.
+- I2 Engineer attention goes to compressed intent (ratified claims, tests,
+  decisions); machines check the generated expansion against it.
+- I3 Model-produced artifacts have no authority over intent until a human
+  ratifies them.
+- I4 The methodology's own overhead must stay human-tractable; if it
+  recreates overload, it has failed.
+- I5 Now: test the ideas in small pilots and design risk mitigations before
+  building tools.
+- I6 Record everything in the journal with references; claims stay
+  evidence-based.
+
+**Defaults applied unless overridden.**
+
+- D1 Pilots are feasibility and instrument checks, not efficacy evidence.
+- D2 Agent pilots use throwaway synthetic fixtures with planted decision
+  points, giving mechanical ground truth instead of LLM judges (C4, C8). They
+  live outside ponygirls; only protocols and results enter the journal.
+- D3 Subject models: employer-hosted model families (not billed to us);
+  paid models only if approved (decision Q10).
+- D4 The user's real skills, AGENTS.md and harness stay untouched.
+- D5 About five runs per cell.
+- D6 No human-side pilot without the user's participation (decision Q9).
+
+**Feasibility observed 2026-11-02.** The pinned nixpkgs provides mutmut 3.8.0,
+pytest 9.1.1, hypothesis 6.168.1, cargo-mutants 27.1.0 and Node.js 24.21.0.
+Model families available: Anthropic and OpenAI Codex (paid), and employer-hosted
+DeepSeek, GLM, Qwen, Kimi, Nemotron and others (not billed to us).
+
+**Pilot set.**
+
+| ID | Question | Setup (sketch) | Needs the user | Cannot show |
+|---|---|---|---|---|
+| P-A | Do provenance markers plus the symmetric non-authority rule reduce defended wrong tests without increasing tampering or marker forgery? (H-T1–H-T3) | Python fixture; scenarios: unratified wrong test vs explicit requirement; ratified test vs violating request; unratified correct test with silent requirement; add-a-test next to marked tests. Baseline (current policy excerpt) vs gated. Outcomes coded from diffs and final reports. | No | Real-world rates; human perception |
+| P-B | Can elicitation stay within a budget (≤7 claims, ≤5 defaults, ≤3 questions) while disclosing the consequential defaults the diff actually contains? | About eight tasks with planted decision points (rounding, error policy, ordering, …); agent writes the sheet, then implements; disclosure recall measured against the planted points. | No | Disclosure quality on unplanted decisions |
+| P-C | Does a diff-scoped, capped, mutation-ranked queue surface planted unintended behaviour within the cap, at acceptable cost? (P3) | mutmut on P-B outputs against ratified fixture tests; queue length, runtime, planted behaviours surfaced. | No | Usefulness to a human |
+| P-D | Does ratification stay meaningful at a tractable workload? (H-T4, P1) | ~40 min: three batches of eight items with disclosed planted errors; code vs claim rendering; time, catches, raw NASA-TLX [R25]. | Yes | Generalisation beyond n=1 |
+| P-F | Is pre-registered prediction cheap, and does its hit rate track understanding? (P2) | Two weeks of real work; one to three predictions per agent task, hit or miss afterwards. | Yes | Causality |
+
+**Risk mitigations to keep the methodology human-tractable.**
+
+1. *Attention budget as a hard constraint* — per change (for example ≤10
+   minutes, ≤7 queue items) and per day. Overflow shrinks the change (split
+   it); it never enlarges the review. Small batches are the control variable.
+2. *Depth proportional to risk* — trivial changes get alarms only; standard
+   changes get elicitation and a capped queue; critical changes get
+   predictions, mutation analysis and audit. This answers the "sledgehammer"
+   failure [R45].
+3. *Hard caps on generated artifacts* — the agent must prioritise, not
+   enumerate; exceeding a cap is a defect report, not a longer document.
+4. *Consented canary items* — planted known-wrong items in real queues measure
+   rubber-stamping continuously, as threat image projection does in airport
+   screening [R50]. A falling catch rate shrinks batches or pauses the
+   methodology.
+5. *Kill criteria fixed in advance* — stop or simplify if human time per
+   change exceeds the no-methodology baseline, if the canary catch rate falls
+   below a threshold, or if the ledger grows faster than it is pruned.
+6. *Enforcement in the harness only for the few invariants that matter* — no
+   self-ratification, ratified regions write-guarded; everything else stays
+   advisory to keep the system light.
+7. *Pilot hygiene* — mechanical ground truth, held-out scenarios, recorded
+   model and harness versions, and no efficacy claims from n=1 or scripted
+   runs.
+
+**Open decisions:** Q8 (ratify I1–I6), Q9 (human participation in P-D and
+P-F), Q10 (subject models, including paid ones).
