@@ -26,7 +26,7 @@ Codegraph exploration again refused daemon PID-namespace ownership; direct sourc
 
 ## Execution evidence
 
-Implementation and verification in progress; no deployment or migration performed.
+Foundation slice implemented and verified. The Haystack/Manure server ports, shared search extraction and database consolidation are not completed by this slice. No deployment or live-data migration performed.
 
 - `e21afb9b00ab5bcce55b91c67898db8e83be5fc5` merged: dependency-free `shared/lossless-json`. Writer ran clean pinned-shell compilation and 35 MUnit cases; parent integrated Nix check confirmed the same 35 cases with zero failures/errors/skips.
 - Baseline full backend task `bgt-0e8137e2dac7c433` completed: 952 cases, 110 suites, zero failures/errors/skips. Parent validated inventory/XML with `chronicle/scripts/validation-report.py` and moved reports/inventory to `debug/backend-foundation-evidence/chronicle-baseline/` before the post-refactor run.
@@ -48,4 +48,21 @@ Implementation and verification in progress; no deployment or migration performe
 - Final collector/relevance task `bgt-a8982268d21320ce` passed again: collector typecheck/125 cases and Python relevance/172 cases.
 - Parent confirmed unchanged consumed backend inputs, unchanged dependency-lock bytes versus the old Chronicle-local lock, unchanged flake pins and all local links in root/Chronicle READMEs and the migration plan.
 
-Background task logs are retained by the session harness. Only final full web command `bgt-a1d7bff190959d0d`, final integration and clean worktree removal remain pending at this checkpoint. Do not declare the full ports or native Manure feasibility complete.
+- Final web task `bgt-a1d7bff190959d0d` completed successfully: typecheck, 147 Node cases and the complete unfiltered `npm run test:browser` command, including its final tab-layout leg. The baseline header timeout did not recur; its cause is not established and no UI assertion/deadline/source was changed. Browser case counts are not exported as a single machine inventory, so no aggregate browser-case count is claimed.
+- Raw logs for all nine owned background tasks, including the unsuccessful baseline, are preserved under `debug/backend-foundation-evidence/background-logs/`. Full backend/protocol XML, source-bound native probe artifacts and local regression reproduction are preserved alongside them.
+
+## Final verification summary
+
+| Scope | Command / evidence | Result |
+|---|---|---|
+| Chronicle backend, before/after | `nix develop .#chronicle --command bash chronicle/scripts/test-postgres.sh`; separate fresh inventory/XML per run | Each 952 cases / 110 suites, zero failures/errors/skips |
+| Shared modules | `nix build --no-link .#checks.x86_64-linux.backend-foundation` | 35 JSON + 17 filesystem cases; JVM only |
+| Current codecs | Pinned `chronicle/scripts/test-codecs.sh` with dashboard TSC; isolated regeneration diff | 16 TS fixture groups + 17 Scala cases / three suites; regenerated trees/lock identical |
+| Dashboard | Pinned shell: `npm run typecheck`, `npm test`, complete `npm run test:browser` | 147 Node cases and full browser command passed; earlier baseline timeout retained |
+| Collector | Pinned shell: `npm run typecheck`, `npm test` | 125 cases passed |
+| Relevance harness | `python3 -m unittest discover -s chronicle/eval/relevance/tests -v` | 172 cases passed; no semantic-quality claim |
+| Actual Chronicle native artifact | Focused `indexing-recovery.test.ts` against verified installed ELF | One workflow passed, no fallback/production data |
+| Nix package/policies/modules | Actual package plus foundation, source, reporter, receipt-layout, validation, lock and HM/NixOS checks | Passed; package receipt retains explicit fast-only scope |
+| Manure native filesystem | Exact hashed actual native probe, independently rerun | Rejected missing SecureDirectoryStream before payload creation; **not accepted for a durable store** |
+
+Consumed backend/build/test inputs were checked unchanged from full-run source `0ee1687aaf4295c8ca528b72b01210f73c6c55f1`; dependency-lock bytes and flake pins are unchanged. Later merges preserve unrelated main-checkout epistemics documents. Final integration and clean worktree removal are the remaining bookkeeping steps; their receipts follow. Do not declare the full service ports or native Manure feasibility complete.
