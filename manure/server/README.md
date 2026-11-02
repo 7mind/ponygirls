@@ -29,7 +29,9 @@ prerequisite is a failure, not a request to use a weaker backend.
 ### Runtime/trust assumptions
 
 Linux with the required syscalls, abstract sockets, and a trusted procfs fd-reopen
-facility is required. The existing-file bridge deliberately uses procfs only to
+facility is required. Current Nix packaging and runtime evidence target x86_64-linux.
+All cooperating writers for a data root must share the claim's network namespace.
+Mount topology is trusted: no-follow does not forbid bind mounts or nested mounts. The existing-file bridge deliberately uses procfs only to
 reopen an already pinned, verified regular inode; it is not an absolute payload-path
 fallback. The mount/process namespace and procfs must not be controlled by an
 attacker able to replace that facility. Native code verifies the procfs boundary;
@@ -62,6 +64,9 @@ only after that close attempt completes; root close attempts both its descriptor
 propagates errors (including suppressed errors), and cannot subsequently use them.
 Repeated successful/consumed closes are idempotent. Open failures and intermediate
 traversal close failures clean up owned descriptors without unsafe unlink-by-name.
+This lifetime accounts for bridge-owned files only. Future metadata connections and
+background workers must participate in the root-scoped lifecycle before publication
+or recovery can safely release ownership.
 
 ## Identical JVM/native behavior contracts
 
@@ -126,3 +131,30 @@ static-native acceptance, integrated Nix packaging, power-cut consistency or liv
 deployment. The integration worktree owns the actual native/linkage receipt and
 artifact/source binding. Previous public-JDK static SDS refusal is historical
 baseline evidence, not a blocker imposed on this explicit POSIX implementation.
+
+## Integrated native acceptance
+
+The pinned Nix check now builds the glibc shared JNI library and musl static archive,
+compares regenerated JNI headers with the Java ABI, and executes the same **26
+contracts on both the JVM and the actual static-musl ELF**, with zero required skips.
+The parent independently reran the final ELF outside the builder, exit 0:
+`da94bbff8e7af38c8d5ce8314da78e84fb714873d05670691035c24ff2971302`.
+Its program headers contain no interpreter and its dynamic section has no dependency.
+
+A separate Nix check runs **1,257 direct JNI assertions** against the production shared
+library with `-Xcheck:jni`. Parent strict and ASan/UBSan runs also passed 1,257 assertions
+each. An additional owned-device `mknod` fixture was unavailable (observed exit 1);
+mandatory existing-device rejection uses `/dev/null` and passed on both runtimes.
+The acceptance parser rejects empty/duplicate/mismatched inventories and failure/skip
+markers; summary lines are not individual cases. Build-only hosted registration is
+isolated behind an exact Graal CE 25.4.4.1.1 guard and invokes that Java home's tools.
+
+```sh
+nix build .#checks.x86_64-linux.manure-posix-acceptance
+nix build .#checks.x86_64-linux.manure-direct-jni
+nix build .#checks.x86_64-linux.manure-toolchain-routing .#checks.x86_64-linux.manure-acceptance-policy
+```
+
+Receipts bind source, toolchain, runtime inventories and artifact digests. This proves
+these primitives on the tested filesystem/runtime, not complete publish durability,
+PostgreSQL coordination, deployment acceptance or support on every mount.

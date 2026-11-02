@@ -110,12 +110,14 @@ pinned shell and explicit project tasks:
 ```bash
 nix develop .#backend --command bash scripts/backend-sbt.sh 'losslessJson/test' 'manureStorage/test'
 nix build .#checks.x86_64-linux.backend-foundation
+nix build .#checks.x86_64-linux.manure-posix-acceptance .#checks.x86_64-linux.manure-direct-jni
 ```
 
 `shared/lossless-json` provides validated, lossless JSON values for future
-Baboon payload boundaries. `manure/server` contains a confined-filesystem
-capability probe, **not a replacement artifact server**; missing durable-store
-primitives refuse activation explicitly. Chronicle retains its documented
+Baboon payload boundaries. `manure/server` provides Linux POSIX/JNI confined-filesystem
+primitives, verified on both JVM/shared-library and static-musl native runtimes,
+**not a replacement artifact server**. Publish ordering, metadata and recovery
+remain separate implementation work. Chronicle retains its documented
 build/test commands through the common build. Haystack and Manure's existing
 backends remain active until their separate ports and data migrations are ready.
 The owned services target one current Baboon contract; legacy wire compatibility

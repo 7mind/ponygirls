@@ -74,3 +74,12 @@ Foundation commits were fast-forwarded into the original clean `main` checkout a
 All three writer worktrees were clean, their HEADs were ancestors of main, and their directories/Git registrations were removed without force. Meaningful source-bound evidence, initial failures, final native probes, full reports and all background logs were copied to the main checkout's ignored `debug/backend-foundation-evidence/` before removal.
 
 This tracked receipt precedes removal of the integration worktree itself. The final generated local receipt `debug/backend-foundation-evidence/completion.json` records its post-removal directory/registration checks and final main commit. No service activation, live-data migration or push occurred.
+
+## Subsequent POSIX bridge
+
+The public-JDK capability refusal above is preserved as historical evidence, not a
+fundamental stack limitation. A subsequent user-requested [POSIX/JNI bridge](20261102-2246-posix-bridge.md)
+now passes the same 26 filesystem contracts on the JVM and actual static-musl native
+artifact, including directory creation, existing-file verification and root ownership.
+It resolves that primitive gap without a weaker fallback. Full artifact-store publish,
+metadata and recovery semantics, service ports and deployment remain separate work.

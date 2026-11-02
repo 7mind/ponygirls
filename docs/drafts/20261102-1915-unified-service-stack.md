@@ -1,6 +1,6 @@
 # Unified service stack and reusable hybrid search — migration plan
 
-Status: implementation approved; foundation/feasibility slice in progress. No deployment or live-data migration approved.
+Status: common-build/JSON foundation and explicit POSIX/JNI primitive slice verified; complete service ports and migrations remain planned. No deployment or live-data migration approved.
 
 **User clarification (2026-11-02): backward API/codec compatibility is not required; there are no independent deployments.** Target one current Baboon contract, update owned clients in the same rollout, and do not build legacy adapters/version dispatch. Existing stored data, credentials, authorization and durability remain migration requirements.
 
@@ -212,7 +212,7 @@ Dependency graph: 0 -> 1; 1 -> 2, 3, 4a, 5; 4a -> 4b; 3/4b/5 -> 6 for their resp
 
 ## 9. First implementation slice and outstanding choices
 
-The foundation slice now has an active common build, a reusable lossless JSON module and an explicitly incomplete confined-filesystem adapter/probe. See the [execution log](20261102-2017-backend-foundation-progress.md) for verification. Actual static-musl Graal execution refuses `SecureDirectoryStream` before payload creation; JVM capability success does not establish native support. The complete Manure store still requires directory creation, opened-object verification and physical-root ownership primitives. Do not enable it as a server backend or claim Stage 4a acceptance from passing JVM tests.
+The foundation slice has an active common build and reusable lossless JSON module; its [initial execution log](20261102-2017-backend-foundation-progress.md) preserves the public-JDK-only probe's actual static-musl `SecureDirectoryStream` refusal. That limited the implementation, not the chosen stack. The user-requested [POSIX/JNI follow-up](20261102-2246-posix-bridge.md) replaces the provider dependency with explicit descriptor operations, regular-file verification and physical-root ownership. Its same 26 filesystem contracts pass on the JVM and actual static-musl artifact, independently rerun by the parent. This resolves the primitive/provider gap, not the complete Stage 4a gate: PostgreSQL coordination, quota/receipt correctness, publish ordering and crash-window recovery remain separate work. Do not enable it as a server backend.
 
 Approved current task: **Stage 0 plus the smallest Stage 1 foundation**: executable data invariants, reusable lossless JSON boundary and one active common build. An early descriptor-safe filesystem feasibility investigation can run alongside this; Stage 4a remains the later complete JVM/native acceptance gate, not a claim that an exploratory spike validates the port. This task should not switch running services, move databases or enable embeddings. After those gates, implement Haystack's current-contract port first and continue Manure separately.
 
@@ -235,4 +235,4 @@ Read-only research was delegated separately for Haystack contracts, Manure stora
 
 Planning validation: 34 local repository links checked successfully; separate Haystack/general and Manure reviewers completed read-only review, with material corrections incorporated; staged whitespace/diff checks passed. Application suites were not run for this documentation-only change. Implementation milestones above retain their own mandatory execution gates.
 
-The planning-only skill review proposed no draft because no migration procedure had been executed. Implementation follow-up has since reproduced a JVM/native filesystem capability divergence; its separately reviewed inert skill candidate and evidence are recorded in the execution log. This does not establish a completed migration or a working native filesystem remedy.
+The planning-only skill review proposed no draft because no migration procedure had been executed. Implementation follow-up has since reproduced a JVM/native filesystem capability divergence; its separately reviewed inert skill candidate and evidence are recorded in the execution log. The subsequent explicit POSIX/JNI bridge now supplies a tested native primitive implementation, with both the refusal and successful counterexample preserved. Neither result establishes a completed service migration.
