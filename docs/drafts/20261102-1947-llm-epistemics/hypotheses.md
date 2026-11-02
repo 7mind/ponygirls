@@ -32,6 +32,7 @@ revision; scripted runs validate the workflow only, not agent behaviour.
 | B2 | Independent refinement of the same belief by a second model family localises ambiguity in the belief (disagreement = underspecification). | supported (pilot) (J11 E2: every inter-family disagreement fell on an unstated part of the belief; shared single-writer assumption uncertified; one belief, n = 3 per family) | J10; limited by correlated errors (C4). |
 | M1 | Raw NASA-TLX does not discriminate the overload this work targets; theory-possession probes (explain-back, prediction with confidence, resumption lag) are closer measures. | proposed | J10 participant trial (uniform ratings); R13, R58. |
 | B3 | Ratified scenarios, not ratification alone, prevent belief-level defence: without scenarios, an agent bound by precedence narrows the belief's scope to keep a conflicting artifact. | proposed | J11 E1b gated DeepSeek r1–r2. |
+| H-O1 | Stating the objective (maintainer understanding per unit of attention) changes agent behaviour in ways the derived rules alone do not: smaller human-facing output at equal coverage, belief-level questions, earlier disclosure, no narrowing of stated beliefs. | proposed | J14; motivated by rule-following without purpose in J8 and J11; vendor guidance [R10]. |
 
 ## Provenance-gated tests (J2)
 

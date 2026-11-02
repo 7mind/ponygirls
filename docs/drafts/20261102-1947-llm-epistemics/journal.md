@@ -1105,3 +1105,40 @@ reading unless an independent channel audits them.
   about whose intent a test encodes; they may increase deference to tests
   (H-T6, proposed). The rules distinguish observed, inferred and intended
   state, but the agent classified test-asserted behaviour as intended.
+
+---
+
+## J14 — 2026-11-02 — The objective behind the rules
+
+### User input (verbatim)
+
+> Addition: what I meant is the epistemic rules behind the agent's objective
+> -- intended to make the human survive the cognitive overload
+
+### Assessment
+
+- **Not done.** Subjects received rules derived from the objective (test
+  provenance, caps, belief precedence, alternatives), never the objective
+  itself: the maintainer's attention is the scarce resource, and success is
+  what the human correctly believes per unit of attention.
+- **Pilot evidence of rule-following without the purpose:** default caps
+  filled to the limit in 10/18 sheets, then about six more defaults disclosed
+  after implementation (J8); a precedence rule satisfied by narrowing the
+  belief (J11); a thorough family producing 21–24-line sheets that are correct
+  by the rules and costly by the purpose (J11). Vendor guidance recommends
+  stating the motivation behind instructions so the model can generalise from
+  it [R10].
+- **Draft objective charter** (for testing, not adoption): objective —
+  maximise the maintainer's correct understanding per unit of attention;
+  rules — stated beliefs are the authority on intent and are never narrowed
+  to fit artifacts; surface only belief-changing items (conflicts,
+  unmade consequential choices, surprises); ask at the maintainer's level;
+  mark claims observed / inferred / assumed; prefer fewer decisive items and
+  propose a split when the honest list is long; propose alternatives that keep
+  a belief that cannot hold, and ask.
+- **Risk:** rhetorical compliance without behavioural change; measure
+  behaviour (defence rate, sheet size at equal coverage, level of questions,
+  timing of disclosure), not wording.
+- **Plan change:** E1c (decision Q12, option 1) gains two conditions,
+  objective charter and charter plus ratified scenarios, with E2- and B-style
+  measures added to the defence measure.
