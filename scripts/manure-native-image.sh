@@ -14,9 +14,9 @@ grep -q 'GRAALVM_VERSION="25.4.4.1.1"' "$JAVA_HOME/release" || {
 }
 feature=$(mktemp -d)
 trap 'rm -rf "$feature"' EXIT
-javac --add-modules org.graalvm.nativeimage -cp "$JAVA_HOME/lib/svm/builder/*" \
+"$JAVA_HOME/bin/javac" --add-modules org.graalvm.nativeimage -cp "$JAVA_HOME/lib/svm/builder/*" \
   -d "$feature" manure/server/native-image/PosixLinkFeature.java
-native-image -J-Xmx"${MANURE_NATIVE_IMAGE_HEAP:-6g}" --parallelism="${MANURE_NATIVE_IMAGE_THREADS:-4}" \
+"$JAVA_HOME/bin/native-image" -J-Xmx"${MANURE_NATIVE_IMAGE_HEAP:-6g}" --parallelism="${MANURE_NATIVE_IMAGE_THREADS:-4}" \
   --static --libc=musl -march=compatibility --enable-native-access=ALL-UNNAMED \
   -J--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.jdk=ALL-UNNAMED \
   -J--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.hosted.c=ALL-UNNAMED \

@@ -969,6 +969,10 @@
             touch "$out"
           '';
           backend-foundation = pkgs.callPackage ./nix/pkg/backend-foundation.nix { squishLib = inputs.squish.lib; };
+          manure-toolchain-routing = pkgs.runCommand "manure-toolchain-routing-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            python3 ${./nix/tests/manure-toolchain-routing.py} ${./scripts/manure-native-image.sh} ${./manure/server/native-image/PosixLinkFeature.java}
+            touch "$out"
+          '';
           manure-posix-acceptance = pkgs.callPackage ./nix/pkg/manure/posix-acceptance.nix { squishLib = inputs.squish.lib; };
           backend-source = import ./nix/tests/backend-source.nix { inherit pkgs; };
           chronicle-sbt-lock = import ./nix/tests/chronicle-sbt-lock.nix { inherit pkgs; };
