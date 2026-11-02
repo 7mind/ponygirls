@@ -1,0 +1,40 @@
+# Behavioral-Active / Blackbox-Atomic; specified source-layout/cache contract.
+{ pkgs }:
+let
+  sources = pkgs.callPackage ../pkg/chronicle/source.nix { };
+  selected = source: path: type: source.filter "${toString source.origSrc}/${path}" type;
+  server = sources.server;
+  tests = sources.backendTests;
+  protocol = sources.protocol;
+in
+assert selected server "build.sbt" "regular";
+assert selected server "project/plugins.sbt" "regular";
+assert selected server "deps.lock.json" "regular";
+assert selected server "chronicle/generated/scala/chronicle/api" "directory";
+assert selected server "chronicle/server/src/main/resources/META-INF/native-image/chronicle" "directory";
+assert selected server "shared/lossless-json/src/main/scala/example.scala" "regular";
+assert !(selected server "shared/lossless-json/src/test/scala/example.scala" "regular");
+assert !(selected server "manure/server/src/main/scala/example.scala" "regular");
+assert !(selected server "manure/web/example.ts" "regular");
+assert !(selected server "chronicle/web/package.json" "regular");
+assert !(selected server "chronicle/server/src/test/scala/example.scala" "regular");
+assert !(selected server "chronicle/target/chronicle-server.jar" "regular");
+assert !(selected server ".worktrees" "directory");
+assert selected tests "chronicle/scripts/validation-report.py" "regular";
+assert selected tests "scripts/backend-sbt.sh" "regular";
+assert selected tests "chronicle/server/src/test/fixtures/client.json" "regular";
+assert selected sources.foundation "manure/server/src/test/scala/example.scala" "regular";
+assert !(selected sources.foundation "chronicle/server/src/main/scala/example.scala" "regular");
+assert !(selected sources.foundation "manure/web/example.ts" "regular");
+assert selected sources.backendDevelopment "manure/server/src/test/scala/example.scala" "regular";
+# Protocol remains rooted at Chronicle: TypeScript and fixture-script relative
+# paths must not silently move with the JVM build.
+assert selected protocol "generated/typescript/chronicle/api/index.ts" "regular";
+assert selected protocol "web/package-lock.json" "regular";
+assert selected protocol "server/src/test/fixtures/client.json" "regular";
+assert !(selected protocol "build.sbt" "regular");
+assert builtins.pathExists "${server}/build.sbt";
+assert builtins.pathExists "${server}/chronicle/server/src/main/resources/META-INF/native-image/chronicle";
+assert builtins.pathExists "${tests}/chronicle/scripts/test-fast.sh";
+assert builtins.pathExists "${protocol}/scripts/codec-fixtures.mjs";
+pkgs.runCommand "backend-source-layout-test" { } "touch $out"
