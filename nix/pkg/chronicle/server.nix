@@ -33,7 +33,7 @@ let
     cd source
     ${environment.setup}
     ${environment.assemble}
-    install -Dm644 target/chronicle-server.jar "$out/chronicle-server.jar"
+    install -Dm644 chronicle/target/chronicle-server.jar "$out/chronicle-server.jar"
   '';
 in callPackage ./wrapper.nix {
   inherit nativeArtifact web validationEvidence validationInputs backendValidation protocolValidation offlineAssemblyCheck;

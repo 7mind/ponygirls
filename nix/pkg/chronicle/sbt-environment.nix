@@ -1,7 +1,7 @@
 { lib, pkgs, callPackage, squishLib }:
 let
   tools = callPackage ./toolchain.nix { };
-  dependencies = squishLib.mkCoursierCache { inherit pkgs; lockfilePath = ../../../chronicle/deps.lock.json; };
+  dependencies = squishLib.mkCoursierCache { inherit pkgs; lockfilePath = ../../../deps.lock.json; };
   repositories = pkgs.writeText "chronicle-sbt-offline-repositories" ''
     [repositories]
     maven-offline: file://${dependencies}/https/repo.maven.apache.org/maven2/
@@ -24,6 +24,6 @@ in {
   '';
   assemble = ''
     read -r -a sbtJavaOpts <<< "$SBT_JAVA_OPTS"
-    java "''${sbtJavaOpts[@]}" -jar ${tools.launcher} assembly
+    java "''${sbtJavaOpts[@]}" -jar ${tools.launcher} chronicleServer/assembly
   '';
 }

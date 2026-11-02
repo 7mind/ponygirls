@@ -22,7 +22,7 @@ in stdenv.mkDerivation {
       nativeImageThreads=${toString nativeImageMaximumThreads}
     fi
     native-image -J-Xmx${toString nativeImageHeapGiB}g --parallelism="$nativeImageThreads" --no-fallback -march=compatibility --enable-url-protocols=http,https ${lib.escapeShellArgs environment.tools.nativeImageFlags} \
-      -jar target/chronicle-server.jar chronicle-server
+      -jar chronicle/target/chronicle-server.jar chronicle-server
     runHook postBuild
   '';
   installPhase = ''

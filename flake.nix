@@ -283,6 +283,8 @@
           pkgs.runCommandLocal "subagents-policy-shape-test" { } "touch $out";
       in
       {
+        # One pinned JVM/toolchain environment for all common-build modules.
+        devShells.backend = self.devShells.${system}.chronicle;
         devShells.chronicle = pkgs.mkShell {
           packages = [ chronicleTools.graal chronicleTools.baboon chronicleTools.sbt chronicleTools.postgres pkgs.nodejs_24 pkgs.python3 pkgs.git pkgs.pkg-config pkgs.zlib pkgs.openssl pkgs.stdenv.cc ];
           JAVA_HOME = chronicleTools.graal.home;
@@ -955,6 +957,12 @@
           chronicle-hm-server = import ./nix/tests/chronicle-hm-server.nix { inherit pkgs; chronicleModule = self.homeManagerModules.chronicleServer; };
           agentic-services-hm-eval = import ./nix/tests/agentic-services-hm-eval.nix { inherit pkgs inputs; agenticServicesModule = self.homeManagerModules.agenticServicesServer; };
           chronicle-models = import ./nix/tests/chronicle-models.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
+          backend-foundation-policy = pkgs.runCommand "backend-foundation-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            python3 ${./nix/tests/backend-foundation-report.py} ${./scripts/backend-foundation-report.py}
+            touch "$out"
+          '';
+          backend-foundation = pkgs.callPackage ./nix/pkg/backend-foundation.nix { squishLib = inputs.squish.lib; };
+          backend-source = import ./nix/tests/backend-source.nix { inherit pkgs; };
           chronicle-sbt-lock = import ./nix/tests/chronicle-sbt-lock.nix { inherit pkgs; };
           # The full suite requires Linux /proc process identity and bubblewrap.
           ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
