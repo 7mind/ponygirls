@@ -284,7 +284,12 @@
       in
       {
         # One pinned JVM/toolchain environment for all common-build modules.
-        devShells.backend = self.devShells.${system}.chronicle;
+        devShells.backend = pkgs.mkShell ({
+          inputsFrom = [ self.devShells.${system}.chronicle ];
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          MANURE_POSIX_LIBRARY = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).shared}/lib/libmanure_posix.so";
+          MANURE_POSIX_STATIC = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).static}/lib";
+        });
         devShells.chronicle = pkgs.mkShell {
           packages = [ chronicleTools.graal chronicleTools.baboon chronicleTools.sbt chronicleTools.postgres pkgs.nodejs_24 pkgs.python3 pkgs.git pkgs.pkg-config pkgs.zlib pkgs.openssl pkgs.stdenv.cc ];
           JAVA_HOME = chronicleTools.graal.home;
@@ -322,6 +327,8 @@
           chronicle-web = pkgs.callPackage ./nix/pkg/chronicle/web.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           chronicle = self.lib.mkChroniclePackage { inherit pkgs; };
+          manure-posix-shared = (pkgs.callPackage ./nix/pkg/manure/posix.nix { }).shared;
+          manure-posix-static = (pkgs.callPackage ./nix/pkg/manure/posix.nix { }).static;
           chronicle-native-dev = self.packages.${system}.chronicle.nativeArtifact;
           chronicle-update-sbt-lock = pkgs.callPackage ./nix/pkg/chronicle/update-lock.nix { lockfileGenerator = inputs.squish.packages.${system}.generate-lockfile; };
           crawl4ai = pkgs.callPackage ./nix/pkg/crawl4ai/package.nix { src = inputs.crawl4ai; };
@@ -963,6 +970,7 @@
             touch "$out"
           '';
           backend-foundation = pkgs.callPackage ./nix/pkg/backend-foundation.nix { squishLib = inputs.squish.lib; };
+          manure-posix-acceptance = pkgs.callPackage ./nix/pkg/manure/posix-acceptance.nix { squishLib = inputs.squish.lib; };
           backend-source = import ./nix/tests/backend-source.nix { inherit pkgs; };
           chronicle-sbt-lock = import ./nix/tests/chronicle-sbt-lock.nix { inherit pkgs; };
           # The full suite requires Linux /proc process identity and bubblewrap.
