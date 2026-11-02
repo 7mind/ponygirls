@@ -1071,3 +1071,37 @@ This is the second time in one day that the experimenter's own write-up
 overstated its instruments (J9). The pattern itself supports J5's point about
 attenuators built by the generator: summaries drift toward the favourable
 reading unless an independent channel audits them.
+
+---
+
+## J13 — 2026-11-02 — Were the agents told the epistemic rules?
+
+### User input (verbatim)
+
+> Have you attempted to explictly instruct agents about the epistemic rules?
+> Ok, so, what's our next plan is?
+
+### Answer and new observation
+
+- **Pilot subjects:** only task-specific rules — test provenance and symmetric
+  non-authority (Pilot A gated), elicitation format (Pilot B), belief
+  precedence and "propose alternatives" (Pilot E gated). The user's general
+  epistemic discipline (global instruction file: Hammer Mode, epistemic
+  discipline, reproduce before fixing) was deliberately excluded for
+  isolation (J8). No condition tested it.
+- **Field instance [L6], checked now** from the persisted system message of
+  the 2026-10-23 session: the prompt contained the user's global rules
+  (sections including "Hammer Mode", "Epistemic discipline", "Reproduce before
+  fixing", "Evidence-based reasoning", "Fail fast"), and the model was
+  gpt-6.1-sol. The same model defended no test in 12 E1/E1b runs without
+  those rules.
+- **Implications (hypotheses).** General epistemic instructions did not
+  prevent the failure in the field (n = 1). Something present in the field
+  and absent from the fixture matters: a real repository and test suite, an
+  investigation that first ran the tests as a "baseline" ("passing confirms
+  the hold-until-input behaviour, because several of these tests assert it"),
+  a long session — or the rules themselves. They make tests the central
+  evidence ("reproduce before fixing", "test before done") and say nothing
+  about whose intent a test encodes; they may increase deference to tests
+  (H-T6, proposed). The rules distinguish observed, inferred and intended
+  state, but the agent classified test-asserted behaviour as intended.
