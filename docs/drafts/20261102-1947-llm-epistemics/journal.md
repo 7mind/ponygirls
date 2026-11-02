@@ -313,3 +313,94 @@ source.
 - Only a human act — writing or ratifying — brings synthesised detail
   under intent. Unratified tests stay useful as change detectors, outside the
   bridge.
+
+---
+
+## J5 — 2026-11-02 — Quine's web of belief and Beer's variety engineering
+
+### User input (verbatim)
+
+> Now, I want to invoke Quine himself. So, an engineer has a network of beliefs
+> regarding the code which is not yet created. Once the code is generated - the
+> existing network should be tested - and, perhaps, modified - and this is the
+> crux of the wellness and burnout - to limit the flow of information through
+> human head and make this process manageable. Also here I would like to invoke
+> Beer and his vision on information reduction/expansion between the levels of
+> a viable system. Do I still make sense?
+
+### Assessment
+
+Yes. The two invocations connect through one result: every good regulator of a
+system must be a model of that system [R38]. The engineer's web of belief is
+the regulator's model; the law of requisite variety [R37] says the regulator's
+variety must match the variety that matters; Beer's answer is that the match is
+achieved by designed attenuation and amplification between levels, not by
+effort [R35, R36]. Burnout, in these terms, is the human trying to reach
+requisite variety by absorbing unattenuated variety into the web (inference,
+not evidence).
+
+**Quine — holds, with two corrections.**
+
+- *What works.* Generated code, as observed through tests, reading and runtime,
+  is recalcitrant experience at the periphery of the web [R30, R31]. A conflict
+  underdetermines what to revise — the test, the code, the requirement or the
+  engineer's understanding [R33]. J2's failure mode is a revision choice: the
+  model protects the test and declines to revise the code. Ratification is an
+  explicit entrenchment ordering: ratified claims sit near the centre and are
+  revised last; unratified claims sit at the periphery and are revised first.
+  Minimal mutilation [R31] is close to the wellness criterion: keep each
+  revision local.
+- *Correction 1 — direction of fit.* Quine's web is descriptive: it fits itself
+  to the world. The engineer's web also contains intentions, which the world
+  must fit. Anscombe's shopping list [R34]: a mismatch between the list and the
+  purchases is a fault in the purchases; a mismatch between a detective's
+  record and the purchases is a fault in the record. Unlike nature, code is
+  malleable, so each conflict has three resolutions: revise the belief (accept
+  the generated decision, i.e. ratify it), revise the code (reject it), or
+  revise the intent (deliberately). A purely Quinean posture defaults to the
+  first — the web conforms to whatever was generated. Applied to tests: a
+  ratified test has the direction of fit of an intention (the code must
+  conform); an unratified test has that of a belief (the test conforms to the
+  code — a characterization). J2's defended test is a direction-of-fit error.
+- *Correction 2 — moderate holism suffices.* Quine later called his original
+  statement of holism "needlessly strong" [R32]. Duhem's local version [R33] —
+  a failed test indicts a group of hypotheses, not one — is all this needs.
+- *Risk — silent replacement.* The pre-generation web is often thin. The
+  generated code can replace the web instead of testing it: the engineer's
+  beliefs become whatever was generated, anchored on the first concrete
+  artifact [R41]. The failure is not only overload but unnoticed substitution.
+
+**Beer — holds; partly prior art; two corrections.**
+
+- *Mapping.* Agents ≈ System 1 operations; the engineer ≈ the metasystem
+  (Systems 3–5). Upward attenuation: exception reporting, aggregation,
+  ratification candidates. Downward amplification: policy (AGENTS.md), types,
+  ratified tests, invariants — each expands into many generated decisions.
+  Recursion: subsystems made self-regulating (types, tests, mechanical checks)
+  let the human model only interfaces; information hiding [R40] is variety
+  attenuation.
+- *Prior art.* Lässig [R39] already applies requisite variety, VSM
+  attenuation/amplification and the good-regulator theorem to agentic coding
+  ("human on the loop", harness engineering, Lean "go see"). The Beer step
+  alone is not new. What that article (as read) does not address is the
+  epistemic quality of the attenuators.
+- *Correction 1 — "limit the flow" is insufficient.* Attenuation already
+  happens: skimming, rubber-stamping, trusting a green suite; interviewed
+  developers use test results as guarantees of correctness [R42]. The defect is
+  accidental, unprincipled attenuation. Attenuators must be designed against a
+  criterion; here the criterion is intent — what reaches the human is the
+  variety relevant to the ratified core of the web.
+- *Correction 2 — the attenuators are built by the generator.* Summaries,
+  reports and QA-agent verdicts are model testimony [R4] with correlated errors
+  [R7]; an attenuator sharing the generator's failure modes filters out the
+  wrong things. Beer's own instruments fit: System 3* — sporadic direct audit
+  that bypasses the reporting channel — calibrates trust in the attenuators;
+  the algedonic channel — alarms that bypass filtering — carries, for example,
+  ratified-test failures or invariant violations straight to the human.
+
+**Convergence.** Ratification is both: in Quine's terms it assigns
+entrenchment; in Beer's terms it is the human's amplifier (one ratified claim
+governs many generated decisions) and the attenuation criterion (what does not
+touch ratified claims need not reach the human). The wellness mechanism, as a
+hypothesis: the human's work becomes maintaining a small, entrenched core of
+the web while agents absorb peripheral variety under independent audit.
