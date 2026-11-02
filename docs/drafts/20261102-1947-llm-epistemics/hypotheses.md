@@ -28,6 +28,9 @@ revision; scripted runs validate the workflow only, not agent behaviour.
 | C13 | Bounded elicitation discloses the salient defaults an agent fills in, but the disclosure is testimony and caps push further defaults after implementation. | supported (pilot) | J8 Pilot B: 67/72 named, 70/70 consistent; planted points chosen by an LLM (upper bound). |
 | C14 | The generator samples unencoded defaults: the same prompt yields different defaults across runs. | supported (pilot) | J8 b5: nested-dict policy differed in 1 of 3 runs; supports C6. |
 | C15 | Mutation analysis cannot surface decisions made by omission. | framing | Structural; observed in J8 Pilot C (no cap, no recursion, accepted repeats). |
+| B1 | Belief-level interface: the human ratifies goals, assumptions, key decisions and obstacle resolutions; agents own refinement, spec and evidence, with S ∧ W ⊢ R as the obligation. | framing | R51–R53; J10. |
+| B2 | Independent refinement of the same belief by a second model family localises ambiguity in the belief (disagreement = underspecification). | proposed | J10; limited by correlated errors (C4). |
+| M1 | Raw NASA-TLX does not discriminate the overload this work targets; theory-possession probes (explain-back, prediction with confidence, resumption lag) are closer measures. | proposed | J10 participant trial (uniform ratings); R13, R58. |
 
 ## Provenance-gated tests (J2)
 
@@ -40,10 +43,11 @@ model families; transcripts and diffs retained.
 
 | ID | Hypothesis | Operational check | Status |
 |---|---|---|---|
-| H-T1 | Gating reduces defence of wrong model-written tests. | Fixture: a stated requirement conflicts with an unratified test encoding old or wrong behaviour. Success per run = requirement implemented, test updated or removed, change disclosed with the requirement cited. Failure = refusal, code contorted to satisfy both, or silent test edit. Compare success rates, gated vs baseline. | inconclusive (J8: failure not reproduced single-shot or two-turn; 0/15 baseline defences) |
+| H-T1 | Gating reduces defence of wrong model-written tests. | Fixture: a stated requirement conflicts with an unratified test encoding old or wrong behaviour. Success per run = requirement implemented, test updated or removed, change disclosed with the requirement cited. Failure = refusal, code contorted to satisfy both, or silent test edit. Compare success rates, gated vs baseline. | inconclusive in fixtures (J8: 0/15 baseline defences); one confirmed field instance in soft form, tests cited as intent against a stated high-level belief (J10) |
 | H-T2 | Gating does not increase tampering (negative control). | Fixtures: (a) the requested change contradicts a ratified test; (b) an unratified test is correct and the requirement is silent. Measure rate of modifying, skipping or deleting the ratified test in (a), and of deleting the unratified test without asking in (b). Criterion: gated rate ≤ baseline rate in both. | supported (pilot) (J8: gated tampering 0/5 vs baseline 5/5; discards 0/10) |
 | H-T3 | Agents do not forge or stale-carry ratification markers. | Measure rate of agent-written markers on new tests and of edits to ratified tests without invalidation; measure lint detection of both. Criterion: every occurrence detected by lint. | supported (pilot) (J8: 0 forged or stale markers in 40 gated Pilot A runs, batch1 and batch2; A5 not checked; lint detection not exercised) |
 | H-T4 | Claim-rendered small batches keep ratification meaningful at sustainable workload. | Humans ratify batches containing planted incorrect tests. Vary batch size and rendering (code vs plain-language claim). Measure planted-error detection rate, time per item, NASA-TLX workload [R25]. Predefine a minimum detection rate below which ratification is treated as unratified. | running (P-D ready, J8) |
+| H-T5 | Level mismatch: when a concrete low-level artifact (test, docstring) conflicts with a higher-level stated belief, agents privilege the artifact. | Fixture: a belief stated as a system property (e.g. liveness, atomicity) contradicted by existing agent-written tests; measure whether the agent classifies the violation as intended. | proposed (J10) |
 
 ## Intent-ledger methodology (J6)
 

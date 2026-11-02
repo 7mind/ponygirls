@@ -814,3 +814,144 @@ analysing a skill candidate. Its findings, checked by the experimenter:
 
 None of these corrections reverses a J8 conclusion; items 1 and 5 narrow how
 the results may be quoted.
+
+---
+
+## J10 — 2026-11-02 — Belief-level interface; field instance of test-as-authority; measurement critique
+
+### User input (verbatim)
+
+> " or allow me to search Chronicle for one?" - you may try, because I can't
+> find the session right now but there were several such events on this host.
+> The problem is that I don't recall the context; you can add any other
+> available model - apart from anthropic ones; 2 -why not;; now - I've played
+> with your pilot and here is the problem - the pilot is mechanical and talks
+> about minor implementation details. What I mean when I talk about all this
+> is that the engineer-produced specs/beliefs are usually of much higher level
+> than technicalities: an agent talks about a function signature, the engineer
+> says "an update should be atomic".;; Beerian questionnaire here is dubious:
+> "Batch 1 done. Workload ratings for this batch (NASA-TLX, raw): [six
+> ratings: mental 50, physical 0, temporal 50, performance 50, effort 50,
+> frustration 50]" -- it's hard to measure de-concentration, decoherence,
+> mental overload, etc. ;; So, what I think could be the direction of thinking
+> is more... grandiose. The engineer writes a prompt. The agent helps to turn
+> it into a spec - and produce that beliefs dag which would later be used to
+> validate the code. The dag should be compact and high-level. The agent
+> should discuss it with the human to build a sound system - nd keep the
+> actual spec production out of sight - the human interfaces with the agents
+> through belief formalization - specs are too huge to process them at the
+> agentic speed. Do I make any sense here?
+
+(The quoted questionnaire output is abbreviated in brackets; the ratings are
+exact.)
+
+### Evidence gathered
+
+- **Session search [L6].** This session has no Chronicle MCP access, and no
+  token was minted from service credentials; the search covered the raw pi
+  histories on this host (1,417 transcripts including subagents; no Claude or
+  Codex histories present), by keyword, best effort. One confirmed instance:
+  on 2026-10-23 the user asked that background-task notices of a Pi extension
+  always wake the harness ("it's unacceptable if a task finishes but nothing
+  happens until user types something"). The agent found five no-wake paths and
+  classified three as "deliberate: the design hands the notice to your next
+  input, and the existing tests check that it does". The user rejected this as
+  reducing harness autonomy; the agent then wrote failing tests and fixed all
+  cases. One unconfirmed candidate (2026-11-02 review): a behaviour judged
+  "intended, and the test docstring states it".
+- **P-D trial.** The participant tried batch 1 only (8 items, all accepted,
+  median 1.5 s per code item, 11 s per claim; NASA-TLX 50 on every scale but
+  physical 0). Recorded as an instrument trial, not as rubber-stamping
+  evidence; the participant judged the instrument inadequate.
+
+### Assessment
+
+**Yes, and the field instance supports it more than the pilots did.** The
+real failure was not a test against a function-level requirement (what
+Pilot A and A5 staged) but agent-written tests against a high-level belief
+(a liveness property: notices are never held until the user types). The
+tests won because they were concrete and the belief was not formalised. The
+pilots chose the function level because mechanical ground truth was cheap
+there — a proxy substitution by the experimenter. New hypothesis H-T5: agents
+privilege concrete, low-level artifacts over higher-level stated beliefs when
+the two conflict.
+
+**The direction has deep prior art in structure; its novelty is economic.**
+
+- Zave and Jackson [R51]: requirements R are properties of the world,
+  domain assumptions W are what is taken as given, the specification S is
+  what the machine must do, and the obligation is S ∧ W ⊢ R. The engineer's
+  beliefs are R and W; the spec is S. "Updates are atomic" is in R;
+  "rename is atomic within one filesystem" is in W, and W is where
+  unstated beliefs hide.
+- Goal-oriented requirements engineering refines goals through AND/OR graphs
+  and asks what obstructs each goal [R52]; assurance cases arrange claims,
+  arguments, assumptions and evidence as a graph [R53], with defeaters [R47].
+  The belief DAG is such a graph.
+- These notations rarely left safety-critical domains because building and
+  maintaining the refinement and evidence was expensive. Agents make exactly
+  that layer cheap; this is the plausible novelty (hypothesis). Early work
+  instantiates GSN assurance cases with LLMs [R57]; AWS engineers used
+  compact TLA+ models of high-level properties to find subtle design defects
+  [R55].
+- The crux moves to the refinement links (refinement mappings in the formal
+  sense [R54]). LLMs wrote semantically correct
+  TLA+ from natural language in at most 8.6 % of cases across 30 models
+  [R56]; in the field instance, agent-written tests were unfaithful to the
+  belief. Hiding the spec is sound only if the belief→spec links are checked
+  by something other than the generator's say-so.
+
+**Proposed shape.**
+
+- *Nodes, human layer (compact, ratified):* goals (R), assumptions (W),
+  key decisions, obstacles with their resolution (handled, assumed away,
+  accepted risk). *Agent layer (out of sight):* obligations (checkable
+  refinements), spec, code, evidence.
+- *Status per node:* ratified or proposed; informal, scenario-backed or
+  formalised; evidence none, tested, fault-injected, model-checked; evidence
+  independence class (C4, C11).
+- *Edges:* refines (AND/OR), assumes, obstructs, resolves, contradicts,
+  evidences. Spec items are unratified by default and never outrank a belief
+  (the field instance is the counterexample to allowing it).
+- *Compactness:* hierarchical, one bounded belief set per component
+  (information hiding [R40]); a human-facing view of a handful of nodes
+  ([R18]).
+
+**The agent's role in the dialogue.** Refinement questions ("atomic for which
+observers, under which failures?"), obstacle proposals (crash between steps,
+concurrent writer, partial network), tension detection between beliefs
+("atomic" + "lock-free" + "multi-file" + "network filesystem"), and two or
+three concrete scenarios per belief for the human to ratify — example-based
+validation at the belief level, the analogue of [R43]. Concern catalogues
+(quality characteristics [R59], quality-attribute scenarios [R60]) and the
+user's own skills (controllers, rerun-safe artifacts, resilient connections)
+already work as belief catalogues at this level.
+
+**Keeping the spec out of sight — conditions.**
+
+1. Traceability both ways: every spec element links up to a belief or a
+   recorded decision; orphans are unencoded decisions (J4) and surface only
+   when consequential (the attenuation criterion of J5).
+2. Independent refinement: a second model family refines the same belief;
+   disagreement localises ambiguity in the belief itself (hypothesis B2;
+   limited by correlated errors, C4).
+3. Belief-level falsification: fault injection, model checking or
+   property-based tests phrased in the belief's own terms ("kill the process
+   between any two writes; a reader never sees a mixture") rather than
+   function-level tests.
+4. Sporadic audit of one belief→spec→code path per session (System 3*).
+
+**Measurement.** Agreed: raw NASA-TLX did not discriminate here and measures
+momentary task load, not loss of coherence. Measures closer to the question
+are theory-possession probes [R13]: after a session, from memory, state the
+system's key beliefs and answer prediction questions with confidence
+(accuracy and calibration); resumption lag after an interruption [R58];
+one-keystroke "lost the thread" marks during work; churn of ratified beliefs;
+escaped defects that violate ratified beliefs. Still n = 1.
+
+**Consequences for the pilot programme.** The second model family and the
+"propose an alternative that keeps ratified beliefs intact" policy (both
+authorised in the user input) belong in the next, belief-level pilot rather
+than in reruns of the function-level one. Candidate fixtures: the field
+instance itself (liveness of notices; ground truth by fault injection and
+timing), and an atomic multi-file update (ground truth by crash injection).
