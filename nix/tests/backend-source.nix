@@ -21,6 +21,8 @@ assert !(selected server "chronicle/server/src/test/scala/example.scala" "regula
 assert !(selected server "chronicle/target/chronicle-server.jar" "regular");
 assert !(selected server ".worktrees" "directory");
 assert selected tests "chronicle/scripts/validation-report.py" "regular";
+assert selected tests "chronicle/scripts/fast-suites.txt" "regular";
+assert !(selected tests "scripts/fast-suites.txt" "regular");
 assert selected tests "scripts/backend-sbt.sh" "regular";
 assert selected tests "chronicle/server/src/test/fixtures/client.json" "regular";
 assert selected sources.foundation "manure/server/src/test/scala/example.scala" "regular";
@@ -36,5 +38,7 @@ assert !(selected protocol "build.sbt" "regular");
 assert builtins.pathExists "${server}/build.sbt";
 assert builtins.pathExists "${server}/chronicle/server/src/main/resources/META-INF/native-image/chronicle";
 assert builtins.pathExists "${tests}/chronicle/scripts/test-fast.sh";
+assert builtins.pathExists "${tests}/chronicle/scripts/fast-suites.txt";
+assert !(builtins.pathExists "${tests}/scripts/fast-suites.txt");
 assert builtins.pathExists "${protocol}/scripts/codec-fixtures.mjs";
 pkgs.runCommand "backend-source-layout-test" { } "touch $out"
