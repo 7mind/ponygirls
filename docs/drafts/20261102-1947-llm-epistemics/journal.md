@@ -404,3 +404,145 @@ governs many generated decisions) and the attenuation criterion (what does not
 touch ratified claims need not reach the human). The wellness mechanism, as a
 hypothesis: the human's work becomes maintaining a small, entrenched core of
 the web while agents absorb peripheral variety under independent audit.
+
+---
+
+## J6 — 2026-11-02 — Operational methodology proposal: the intent ledger
+
+### User input (verbatim)
+
+> Now, I think it's time to attack the primary problem: the engineer writes a
+> specification (prompt), the prompt turns into the code, engineer tries to
+> understand/evaluate and their mind blows. So, what could we propose - as an
+> operational methodology? Anything worth turning into skills? Which components
+> we might need - skills, harness extensions - what could save the engineer?
+> How do we build, test and revise the network (or graph) of the beliefs? Do we
+> need to visualize the graph?
+
+### Assessment and proposal
+
+Status: proposal for discussion; nothing built.
+
+**Core move.** Stop asking the engineer to understand the expansion. The
+engineer maintains a small compressed artifact — the *intent ledger*, the
+ratified core of the web (J5) — and machines measure the expansion against it.
+Human attention goes only to conflicts with the core, consequential defaults not
+yet covered by it, and a small random audit. Everything else is absorbed below
+the human.
+
+**Constraints from prior art.**
+
+- Spec-driven tools moved the overload into markdown: verbose, repetitive
+  specs; a small bug became 4 user stories with 16 acceptance criteria; the
+  reviewer would "rather review code"; the agent took descriptions of existing
+  classes as a new specification [R45]. The ledger must stay compressed and
+  capped, the model may propose but not inflate it, and direction of fit must be
+  explicit (the last failure is C9's direction-of-fit error).
+- Test-driven intent clarification: 15 programmers were significantly more
+  likely to evaluate generated code correctly and reported significantly less
+  cognitive load [R43]. Small, function-level evidence that ratifying examples
+  beats reading code.
+- Specification validation is the bottleneck; the user is the only oracle for
+  specification correctness [R44].
+- Diff-scoped mutation testing with filtering, per-review caps and selection by
+  historical usefulness works at Google scale [R46] — an existing, designed
+  attenuator.
+
+**The belief graph (minimal data model).**
+
+- *Claim*: one observable sentence; direction (intent | belief); authority
+  (ratified | unratified | unknown); scope (interface or code region).
+- *Decision*: a default the generator filled in (unencoded detail, J4), with a
+  consequence class; unratified until accepted.
+- *Evidence*: test, type or contract, proof, execution observation, review;
+  with an independence class (human-written | other model family |
+  same generator | mechanical) and a content digest.
+- *Edges*: supports, depends-on, contradicts, implements.
+- *Status is derived, not asserted*: supported, unsupported or contradicted,
+  computed from evidence as in a justification-based truth maintenance system
+  [R48]; retracting a node propagates "unsupported" to its dependents.
+- Stored as plain text in the repository, reviewable in diffs; agents write
+  only to a staging area; only a human command ratifies. This journal and its
+  hypotheses register are a manual instance of the same structure.
+
+**Per-change process.**
+
+1. *Elicit before generating.* The agent restates the prompt as at most N
+   atomic claims, lists the defaults it intends to fill (ranked by
+   consequence) and asks only material questions. The engineer edits and
+   ratifies, and pre-registers one to three predictions ("only module X
+   changes", "no schema migration"). This gives the encoder the decoder's view
+   (J4), prevents silent replacement of the web (J5) and creates the feedback
+   loop intuition needs (J1, [R16]).
+2. *Generate with bindings.* Each change cites the claims it serves; new
+   defaults become decision nodes; ratified regions are write-guarded.
+3. *Verify mechanically.* Run the evidence and derive status. Diff-scoped
+   mutation analysis against ratified evidence only: surviving mutants mark
+   behaviour not constrained by intent; mutants killed only by unratified tests
+   are ratification candidates; mutants surviving everything mark unconstrained
+   behaviour.
+4. *Report the web delta, attenuated*, in fixed priority: (a) alarms —
+   contradicted ratified claims and violated predictions (a surprise means the
+   web or the code is wrong; both matter); (b) a capped queue of consequential
+   unratified decisions and mutation-derived candidates, rendered as "when X,
+   then Y"; (c) one random audit item (System 3*) the attenuator classed as
+   fine; (d) counts only for everything else.
+5. *Revise.* Each item exits one of three ways — ratify (revise the belief),
+   reject (revise the code), revise the intent — with a recorded reason;
+   propagation marks dependents for re-verification.
+6. *Calibrate.* Log escapes (defects later traced to items filtered out) and
+   audit findings; tune caps and thresholds. Persistent audit findings mean the
+   attenuator is untrustworthy and human sampling must rise.
+
+**Testing the web.**
+
+- Support is not testing. Claims are tested by attempted refutation: list the
+  defeaters that would make a claim false and eliminate them [R47] — property
+  tests, mutation, adversarial inputs — rather than adding confirming tests.
+- Evidence counts toward a ratified claim only if independent of the
+  generator: human-written, mechanical or another model family.
+- The engineer's web is itself tested by the pre-registered predictions.
+  Prediction accuracy over time is a cheap calibration measure of the
+  engineer's model of the system — a measure of understanding that does not
+  require reading code.
+
+**Skills versus harness.** Procedure goes into skills; anything that must hold
+under goal pressure goes into the harness, because instructions alone fail
+(J2's misfiring anti-tampering norm; agents ignoring specifications [R45]).
+
+- Skills: (1) an *intent-ledger protocol* for agents — elicitation, default
+  disclosure, bindings, delta report, no self-ratification; (2) a human-invoked
+  *ratification review* — the J2 sorting skill generalised to claims and
+  decisions, mutation-ranked, capped batches; (3) an amendment adding an
+  Authority axis to `constructive-test-taxonomy` [L1]. Overlap check: no
+  similar Haystack skill drafts found by text search (best effort, 2026-11-02).
+- Harness extensions: (1) ledger store and a human-only `/ratify` command that
+  writes digests; (2) an entrenchment guard — Pi `tool_call` handlers can block
+  calls [L3] — with a turn-end or pre-commit digest check as backstop, because
+  shell edits bypass tool-level guards; (3) a diff-scoped mutation runner
+  against ratified evidence; (4) the delta and queue view with caps and alarm
+  notifications; (5) an audit sampler and escape log; (6) provenance links to
+  archived sessions [L4].
+
+**Visualisation.** Not the whole graph. The graph is a machine structure;
+humans need views:
+
+- the ranked queue — the primary interface;
+- the per-change delta;
+- the local neighbourhood and impact set of one claim under revision (depth
+  one or two);
+- an intent-coverage map over the code tree: ratified, unratified-only,
+  unconstrained — where the engineer is working without intent coverage.
+
+Node-link diagrams of large, dense graphs lose readability [R49], and a
+whole-graph view gives an illusion of overview — another expansion. A
+visualisation is itself an attenuator and must be designed against intent.
+
+**Risks.** Ledger inflation (the spec-driven failure); claims are themselves
+model-decoded and their ratification can be rubber-stamped; mutation analysis
+is costly and tooling varies by language; net benefit is unmeasured, and the
+best direct evidence [R43] is small and function-level.
+
+**Smallest slice, if operationalised.** Elicitation with default disclosure and
+predictions, test ratification from J2, and a mutation-ranked queue — no graph
+store yet.
