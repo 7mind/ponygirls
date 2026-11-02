@@ -19,7 +19,9 @@ in runCommand "manure-posix-jvm-static-musl-acceptance" {
   bash scripts/manure-probe-classpath.sh "$PWD/classpath"
   classpath=$(cat classpath)
   java --enable-native-access=ALL-UNNAMED -cp "$classpath" \
-    manure.storage.FilesystemCapabilityProbe --shared "$MANURE_POSIX_LIBRARY" > "$out/jvm.log" 2>&1
+    manure.storage.FilesystemCapabilityProbe --shared "$MANURE_POSIX_LIBRARY" > "$out/jvm.log" 2>&1 || {
+    cat "$out/jvm.log"; exit 1;
+  }
   cat "$out/jvm.log"
   bash scripts/manure-native-image.sh "$classpath" "$out/manure-posix-probe" > "$out/build.log" 2>&1 || {
     cat "$out/build.log"; exit 1;
@@ -29,7 +31,9 @@ in runCommand "manure-posix-jvm-static-musl-acceptance" {
   readelf -dW "$out/manure-posix-probe" > "$out/elf-dynamic.txt"
   ! grep -q INTERP "$out/elf-program-headers.txt"
   ! grep -q NEEDED "$out/elf-dynamic.txt"
-  "$out/manure-posix-probe" --linked > "$out/native.log" 2>&1
+  "$out/manure-posix-probe" --linked > "$out/native.log" 2>&1 || {
+    cat "$out/native.log"; exit 1;
+  }
   cat "$out/native.log"
   # Same discovered, nonempty behavior inventory on both runtimes, no skips.
   grep '^PASS: ' "$out/jvm.log" > jvm-cases
