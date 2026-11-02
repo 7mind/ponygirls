@@ -26,7 +26,7 @@ actually read.
 | R13 | Naur, P. (1985). Programming as Theory Building. *Microprocessing and Microprogramming* 15(5), 253–261. | — | From memory | J1 |
 | R14 | Polanyi, M. (1966). *The Tacit Dimension.* "We can know more than we can tell." | — | From memory | J1, J4 |
 | R15 | Knight, J. C., Leveson, N. G. (1986). An experimental evaluation of the assumption of independence in multiversion programming. *IEEE TSE* SE-12(1), 96–109. | — | From memory | J1 |
-| R16 | Kahneman, D., Klein, G. (2009). Conditions for intuitive expertise: a failure to disagree. *American Psychologist* 64(6), 515–526. | — | From memory | J1 |
+| R16 | Kahneman, D., Klein, G. (2009). Conditions for intuitive expertise: a failure to disagree. *American Psychologist* 64(6), 515–526. | — | From memory | J1, J6 |
 | R17 | Chase, W. G., Simon, H. A. (1973). Perception in chess. *Cognitive Psychology* 4(1), 55–81. | — | From memory | J1 |
 | R18 | Cowan, N. (2001). The magical number 4 in short-term memory. *Behavioral and Brain Sciences* 24(1), 87–114. | — | From memory | J1 |
 | R19 | Johnson, M. K., Hashtroudi, S., Lindsay, D. S. (1993). Source monitoring. *Psychological Bulletin* 114(1), 3–28. | — | From memory | J1 |
@@ -53,10 +53,19 @@ actually read.
 | R40 | Parnas, D. L. (1972). On the criteria to be used in decomposing systems into modules. *CACM* 15(12), 1053–1058. | — | From memory | J5 |
 | R41 | Tversky, A., Kahneman, D. (1974). Judgment under Uncertainty: Heuristics and Biases. *Science* 185(4157), 1124–1131. (Anchoring.) | — | From memory | J5 |
 | R42 | Dhanorkar, Passi, Vorvoreanu (2026). *Human oversight of agentic systems in practice.* arXiv 2606.05391. 17 developer interviews; oversight forms: a priori control, co-planning, real-time monitoring, post hoc review; heuristic: test results used as guarantees of correctness. | https://arxiv.org/abs/2606.05391 | Fetched (abstract), 2026-11-02 | J5 |
+| R43 | Fakhoury, Naik, Sakkas, Chakraborty, Lahiri (2024). *LLM-Based Test-Driven Interactive Code Generation: User Study and Empirical Evaluation* (TiCoder). IEEE TSE 50(9), 2254–2268. 15 programmers: more often correctly evaluated generated code, significantly lower task-induced cognitive load; +45.97 % absolute pass@1 within 5 interactions (idealised proxy user). | https://arxiv.org/abs/2404.10100 | Fetched (abstract), 2026-11-02 | J6 |
+| R44 | Lahiri, S. K. (2026). *Intent Formalization: A Grand Challenge for Reliable Coding in the Age of AI Agents.* arXiv 2603.17150. Specification validation is the central bottleneck; the user is the only oracle for specification correctness. | https://arxiv.org/abs/2603.17150 | Fetched (abstract), 2026-11-02 | J6 |
+| R45 | Böckeler, B. (2025-10-15). *Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl.* martinfowler.com. Verbose spec review ("I'd rather review code"), small bug → 4 user stories / 16 acceptance criteria, agent treated descriptions of existing classes as new specification. | https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html | Fetched, 2026-11-02 | J6 |
+| R46 | Petrović, Ivanković, Fraser, Just (2021). *Practical Mutation Testing at Scale: A view from Google.* IEEE TSE. Diff-scoped mutants during code review, filtered, capped per line and per review, selected by historical operator performance; >24,000 developers. | https://arxiv.org/abs/2102.11378 | Fetched (abstract), 2026-11-02 | J6 |
+| R47 | Goodenough, J. B., Weinstock, C., Klein, A. Z. (2015). *Eliminative Argumentation: A Basis for Arguing Confidence in System Properties.* CMU/SEI technical report. | https://www.sei.cmu.edu/library/eliminative-argumentation-a-basis-for-arguing-confidence-in-system-properties/ | Search-observed, 2026-11-02 | J6 |
+| R48 | Doyle, J. (1979). A truth maintenance system. *Artificial Intelligence* 12(3), 231–272. | — | From memory | J6 |
+| R49 | Ghoniem, M., Fekete, J.-D., Castagliola, P. (2004). A Comparison of the Readability of Graphs Using Node-Link and Matrix-Based Representations. IEEE InfoVis 2004. | https://www.researchgate.net/publication/221005943 | Search-observed (title/venue); finding cited from memory | J6 |
 
 ## Local artifacts
 
 | ID | Artifact | Observation | Used in |
 |---|---|---|---|
-| L1 | Installed skill `constructive-test-taxonomy` (`nix/pkg/llm-skills/skills/constructive-test-taxonomy/`) | Read 2026-11-02: records test *Origin* (Specified/Regression) as provenance metadata; says Origin matters only for auditing and gap analysis. | J2 |
+| L1 | Installed skill `constructive-test-taxonomy` (`nix/pkg/llm-skills/skills/constructive-test-taxonomy/`) | Read 2026-11-02: records test *Origin* (Specified/Regression) as provenance metadata; says Origin matters only for auditing and gap analysis. | J2, J6 |
 | L2 | Ponygirls `AGENTS.md`, section "Chronicle validation" | Read 2026-11-02 (session context): "do not shorten deadlines, skip cases, filter counters, or relax browser interactions to obtain a pass" — applies to all tests, regardless of provenance. | J2 |
+| L3 | Pi extension documentation (`docs/extensions.md` of the installed pi-coding-agent 1.4.0) | Read 2026-11-02: `tool_call` handlers can mutate input or block execution; a handler failure blocks the tool (fail-safe). | J6 |
+| L4 | Ponygirls `README.md` | Read 2026-11-02: Chronicle is described as a searchable archive of harness sessions; capabilities beyond that not inspected. | J6 |
