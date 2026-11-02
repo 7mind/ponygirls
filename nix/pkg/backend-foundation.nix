@@ -1,12 +1,14 @@
 { runCommand, callPackage, python3, squishLib }:
 let
   source = (callPackage ./chronicle/source.nix { }).foundation;
+  bridge = callPackage ./manure/posix.nix { };
   environment = callPackage ./chronicle/sbt-environment.nix { inherit squishLib; };
 in runCommand "backend-foundation-validation" {
   nativeBuildInputs = [ environment.tools.graal python3 ];
+  MANURE_POSIX_LIBRARY = "${bridge.shared}/lib/libmanure_posix.so";
   LANG = "C.UTF-8";
   LC_ALL = "C.UTF-8";
-  passthru = { foundationSource = source; };
+  passthru = { foundationSource = source; posixLibrary = bridge.shared; };
 } ''
   cp -r ${source} source
   chmod -R u+w source
