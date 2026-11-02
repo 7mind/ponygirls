@@ -20,6 +20,8 @@ in runCommand "backend-foundation-validation" {
     'manureStorage / Test / validationInventory' 'manureStorage / test'
   mkdir -p "$out"
   python3 scripts/backend-foundation-report.py --source ${source} --output "$out/foundation.json"
+  printf '%s\n' "$MANURE_POSIX_LIBRARY" > "$out/posix-library"
+  sha256sum "$MANURE_POSIX_LIBRARY" > "$out/posix-library.sha256"
   for module in shared/lossless-json manure/server; do
     mkdir -p "$out/$module"
     cp -r "$module/target/test-reports" "$module/target/validation-inventory.txt" "$out/$module/"
