@@ -17,6 +17,11 @@ public final class PosixLinkFeature implements Feature {
     public void beforeAnalysis(BeforeAnalysisAccess access) {
         PlatformNativeLibrarySupport.singleton().addBuiltinNativePrefix("manure_storage_PosixNative_");
         ImageSingletons.lookup(NativeLibraries.class).addStaticJniLibrary("manure_posix");
+        Class<?> bridge = access.findClassByName("manure.storage.PosixNative");
+        if (bridge == null) throw new IllegalStateException("missing PosixNative");
+        for (java.lang.reflect.Method method : bridge.getDeclaredMethods()) {
+            if (java.lang.reflect.Modifier.isNative(method.getModifiers())) RuntimeJNIAccess.register(method);
+        }
         try {
             Class<?> failure = access.findClassByName("manure.storage.NativeFailure");
             if (failure == null) throw new IllegalStateException("missing NativeFailure");

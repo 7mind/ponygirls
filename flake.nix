@@ -286,9 +286,9 @@
         # One pinned JVM/toolchain environment for all common-build modules.
         devShells.backend = self.devShells.${system}.chronicle.overrideAttrs (_:
           pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          MANURE_POSIX_LIBRARY = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).shared}/lib/libmanure_posix.so";
-          MANURE_POSIX_STATIC = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).static}/lib";
-        });
+            MANURE_POSIX_LIBRARY = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).shared}/lib/libmanure_posix.so";
+            MANURE_POSIX_STATIC = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).static}/lib";
+          });
         devShells.chronicle = pkgs.mkShell {
           packages = [ chronicleTools.graal chronicleTools.baboon chronicleTools.sbt chronicleTools.postgres pkgs.nodejs_24 pkgs.python3 pkgs.git pkgs.pkg-config pkgs.zlib pkgs.openssl pkgs.stdenv.cc ];
           JAVA_HOME = chronicleTools.graal.home;
