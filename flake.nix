@@ -949,6 +949,7 @@
           chronicle-backend = self.packages.${system}.chronicle.backendValidation;
           chronicle-protocol = self.packages.${system}.chronicle.protocolValidation;
           chronicle-validation = self.packages.${system}.chronicle.validationEvidence;
+          chronicle-evidence-layout = import ./nix/tests/chronicle-evidence-layout.nix { inherit pkgs; };
           chronicle-validation-policy = pkgs.runCommand "chronicle-validation-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
             python3 ${./nix/tests/chronicle-validation-policy.py} ${./chronicle/scripts/validation-report.py} ${./nix/pkg/chronicle/validation-evidence.py}
             touch "$out"
