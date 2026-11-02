@@ -1,0 +1,3 @@
+mknod: /tmp/manure-jni-selftest-10114056440661256289/device: Operation not permitted
+SKIP optional owned device fixture unavailable: mknod exit status 1
+PASS NativeSelfTest assertions=1257

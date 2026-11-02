@@ -12,10 +12,12 @@ JAVA_HOME=/path/to/pinned/jdk CC=/path/to/pinned/gcc \
 The runner compiles with strict warnings, checks the checked-in `javac -h`
 header, and runs the JVM with `-Xcheck:jni`. It creates and removes only owned
 temporary payloads. `mkfifo`, `mknod`, Python 3, and a genuine `/proc` are
-required tools/prerequisites; creating an owned device node is explicitly
-skipped if the environment denies `mknod`. That privileged-node check is
+required tools/prerequisites. Fixture-command stderr is retained. If `mknod`
+returns nonzero, the optional owned-device fixture is labeled unavailable
+with its observed exit status; no root cause is inferred. That node check is
 supplemental, not the separate Scala device-contract acceptance fixture.
-No existing device is opened by this runner.
+Mandatory fixture-command failures fail the run. No existing device is opened
+by this runner. Assertion counters belong to each selftest-run instance.
 ASan preloading is scoped to JVM processes. LeakSanitizer is disabled because
 of JVM process-lifetime allocations; the test separately checks fd counts
 on repeated error paths. Do not mix incompatible host/Nix sanitizer runtimes.
@@ -38,8 +40,11 @@ actual Graal static-musl executable. The JVM runner uses `--shared`; static
 runtime acceptance is separate.
 
 Retained invalid-prerequisite setup-failure transcripts are in
-`verification/setup-failures.md`; final-source strict/sanitizer/analyzer logs,
-commands and input digests are in `verification/20261102-size-truncate/`.
+`verification/setup-failures.md`. Current harness strict/sanitizer logs,
+commands and input digests are in `verification/20261102-harness-instance/`.
+The unchanged `verification/20261102-size-truncate/` receipts are historical:
+their harness digest identifies the earlier harness, not the current source.
+Production C/Java input digests remain identical; see `verification/README.md`.
 
 ## Boundary assumptions
 
