@@ -238,3 +238,78 @@ Current phase: assessment of the user's theses only. J2's "Methodology step"
 and the operational checks in the hypotheses register went beyond the request;
 H-T1..H-T4 are parked as provisional sketches, not plans. No implementation,
 experiment or skill work until operationalization is explicitly requested.
+
+---
+
+## J4 — 2026-11-02 — Decompression revisited; automatic tests as a bridge (revises J1 correction 2, refines J2 point 3)
+
+### User input (verbatim)
+
+> "What I would drop as originally stated" --  "Cannot know" -- agreed, dirty
+> language -- but I'm a human, cutie.  "Decompression" -- that could be a
+> metaphor - but in my opinion it's very close to the literal process - this
+> generation process is, effectively, a lossy decompressor of intent into code
+> -- much lossier than manual typing -- but much faster. Do I make sense?
+> "Only (b) and (c) matter" -- I agree on your point. What I mean is that when
+> we start talking about buidling a bridge between intent and the produced code
+> - purely automatically generated tests are much less valuable. Do I make sense
+
+### Assessment
+
+**Language.** Loose wording in conversation is fine; it is flagged only where
+it would enter the journal as a claim. "Cannot know" → per-property
+justification (agreed).
+
+**Decompression — concession.** J1 correction 2 was too strong. It assumed
+decompression means recovering encoded information. That holds for lossless
+and classical lossy decoders, not for *generative* lossy decoders, whose
+defining property is synthesising unencoded detail from a learned prior. Under
+that category the description is close to literal:
+
+- Language models are compressors in the formal sense (prediction ↔
+  compression via arithmetic coding) [R28].
+- Rate–distortion–perception: at fixed rate, requiring outputs that are
+  distributed like real samples raises the minimum achievable distortion
+  [R26]; under MSE, perfect perceptual quality costs exactly double the
+  minimal distortion [R27]. Mapping: *rate* = intent information in prompt and
+  context; *perception* = code indistinguishable from competent real code;
+  *distortion* = deviation from intent. Consequence: at low rate, realism and
+  fidelity trade off, so fluency is not evidence of fidelity — a formal account
+  of J1's decoupled cues. The mapping is structural analogy; the theorems hold
+  for formal sources and distortion measures and are not proven for code
+  generation.
+- "Much lossier than typing, much faster": consistent. Typing is high-rate
+  coding where decoder and encoder share one model (the engineer's), so
+  fill-in detail comes from the engineer's own prior. The magnitude is
+  unmeasured.
+
+Where it departs from a codec — the useful parts:
+
+1. *Mismatched encoder.* A codec's encoder shares the decoder's model and
+   spends bits where the decoder would err. The engineer cannot see the model's
+   prior, so bits are misallocated: spent on what the prior already gets right,
+   omitted where it diverges. Prompting skill is learning an encoder for one
+   decoder; model updates invalidate it.
+2. *Decoder side information.* Repository context acts as side information at
+   the decoder [R29]; conventions present in context reduce the rate needed.
+   Candidate explanation (hypothesis) for agents doing better in codebases
+   with strong conventions.
+3. *Non-fixed source.* Intent is partly tacit and partly formed by seeing the
+   output [R14]; the distortion measure is defined after decoding. Accepting
+   synthesised detail as intended is ratification — the same act J2 proposed
+   for tests.
+
+**Automatic tests as a bridge — agreed, with a precise reason.** A
+model-generated test is another decoding of the same message by the same
+decoder. It measures consistency between two decodings, not fidelity to the
+source.
+
+- Encoded intent (explicit requirements): a weak but real check that those
+  bits survived into the code; weak because one misreading can corrupt both
+  [R7].
+- Synthesised detail: the test freezes the prior's choice [R9]; the message
+  holds nothing to check it against, so it carries almost no information about
+  intent.
+- Only a human act — writing or ratifying — brings synthesised detail
+  under intent. Unratified tests stay useful as change detectors, outside the
+  bridge.
