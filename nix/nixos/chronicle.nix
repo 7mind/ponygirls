@@ -27,6 +27,7 @@ let
     jdbcUrl = cfg.database.jdbcUrl;
     databaseUser = cfg.database.user;
     databasePasswordFile = "${credentialDir}/database-password";
+    databaseLimits = cfg.database.limits;
     users = lib.mapAttrsToList (id: user: {
       inherit id;
       inherit (user) login enabled;
@@ -103,6 +104,7 @@ in
       };
     };
     database = {
+      limits = import ../lib/jdbc-limits-options.nix { inherit lib; };
       manageLocal = lib.mkOption { type = lib.types.bool; default = false; description = "Retired: must remain false. Configure the explicitly migrated shared servicePostgres provider separately."; };
       readinessUnit = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
       ssdTuning = lib.mkEnableOption "SSD-oriented planner and I/O concurrency defaults for the managed PostgreSQL cluster (cluster-wide, not a storage benchmark)" // { default = false; };

@@ -11,6 +11,7 @@ let
     jdbcUrl = "jdbc:postgresql://127.0.0.1:${toString cfg.database.port}/${cfg.database.name}";
     databaseUser = cfg.database.user;
     databasePasswordFile = cfg.database.passwordFile;
+    databaseLimits = cfg.database.limits;
   };
   serverConfig = json.generate "chronicle-server.json" settings;
   proxyHeaders = ''
@@ -95,6 +96,7 @@ in {
       description = "Passwords hashed to credentials/NAME.pbkdf2 during setup; settings.users selects these files explicitly.";
     };
     database = {
+      limits = import ../lib/jdbc-limits-options.nix { inherit lib; };
       package = lib.mkOption { type = lib.types.package; default = pkgs.postgresql_18.withPackages (p: [ p.pgvector ]); };
       port = lib.mkOption { type = lib.types.port; default = 15433; };
       name = lib.mkOption { type = lib.types.strMatching "[a-z_][a-z0-9_]*"; default = "chronicle"; };
@@ -110,7 +112,7 @@ in {
       { assertion = builtins.elem cfg.settings.listenHost [ "127.0.0.1" "::1" ]; message = "Chronicle user hosting requires a loopback backend; expose it through the reverse proxy."; }
       { assertion = runtimePath state && runtimePath cfg.database.passwordFile; message = "Chronicle state and database credentials require absolute runtime paths outside the store."; }
       { assertion = lib.all (name: builtins.match "[a-zA-Z0-9_-]+" name != null && runtimePath cfg.passwords.${name}.passwordFile && lib.hasPrefix "/" cfg.passwords.${name}.revisionFile) (builtins.attrNames cfg.passwords); message = "Chronicle password names must be safe path components, password files must be runtime paths and revision files must be absolute."; }
-      { assertion = !(cfg.settings ? jdbcUrl || cfg.settings ? databaseUser || cfg.settings ? databasePasswordFile); message = "Chronicle database settings are supplied by the database options, not settings."; }
+      { assertion = !(cfg.settings ? jdbcUrl || cfg.settings ? databaseUser || cfg.settings ? databasePasswordFile || cfg.settings ? databaseLimits); message = "Chronicle database settings are supplied by the database options, not settings."; }
     ];
     lib.ponygirls.chronicleServer = {
       inherit serverConfig proxyLocations;

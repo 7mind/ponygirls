@@ -17,6 +17,8 @@ in stdenv.mkDerivation {
   dontConfigure = true;
   buildPhase = ''
     runHook preBuild
+    # Exact filtered input bytes BEFORE compilation creates target/hosted files.
+    find . -type f -print0 | sort -z | xargs -0 sha256sum > ../compiled-inputs.sha256
     ${environment.setup}
     read -r -a sbtJavaOpts <<< "$SBT_JAVA_OPTS"
     java "''${sbtJavaOpts[@]}" -jar ${environment.tools.launcher} ${project}/assembly
@@ -46,6 +48,9 @@ in stdenv.mkDerivation {
   '';
   installPhase = ''
     install -Dm755 ${service}-server "$out/libexec/${service}-server"
+    install -Dm644 ../compiled-inputs.sha256 "$out/share/${service}/compiled-inputs.sha256"
+    printf '%s\n' '${sources."${service}Server"}' > "$out/share/${service}/runtime-source"
+    printf '%s\n' '${environment.tools.graal}' > "$out/share/${service}/toolchain"
   '';
   passthru = { runtimeSource = sources."${service}Server"; inherit project jar; };
   meta = { description = "${service} static-musl Scala server (native-runtime acceptance is a separate required check)"; platforms = [ "x86_64-linux" ]; license = lib.licenses.mit; };
