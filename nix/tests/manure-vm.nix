@@ -32,6 +32,17 @@ let
 
   common = {
     system.stateVersion = "26.11";
+    ponygirls.servicePostgres = {
+      enable = true;
+      databases.manure = { passwordFile = "/etc/manure-test/database-password"; schemas = [ "public" "manure" ]; };
+    };
+    smind.services.manure.database = {
+      jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/manure";
+      user = "manure";
+      passwordFile = "/etc/manure-test/database-password";
+      readinessUnit = "ponygirls-database-manure.service";
+    };
+    environment.etc."manure-test/database-password".text = "owned-synthetic-vm-database-password\n";
     environment.systemPackages = [
       pkgs.curl
       pkgs.jq
