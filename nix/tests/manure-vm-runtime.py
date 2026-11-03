@@ -24,9 +24,10 @@ Boundary design (reader-reviewed; do NOT overclaim):
   sharing (9p/virtiofs/vhost-user-fs), TAP/bridge/VDE, vfio and /dev-backed
   drives are refused. A REQUIRED explicit CPU policy admits either exact
   `-machine accel=kvm` (kvm-only) or the pinned `accel=kvm:tcg` list
-  (kvm-or-tcg); exactly one `-cpu max` and only the corresponding anonymous
-  memfd1024M/mem0 auxiliary machine are admitted. Anything outside the known-good
-  generated patterns fails closed as unsupported launch syntax. A guest NEVER boots
+  (kvm-or-tcg); exactly one `-cpu max`, the exact anonymous memfd1024M/mem0
+  pair, and the source-observed q35/smm+secure-global pair only when coupled
+  to that memory pair are admitted. Anything outside the known-good generated
+  patterns fails closed as unsupported launch syntax. A guest NEVER boots
   until this boundary verifies (refusal exit 125, real QEMU never execs).
 - Post-run, the attached-drive mapping captured by the wrapper is
   cross-checked against the discovered lab images (every attached file
