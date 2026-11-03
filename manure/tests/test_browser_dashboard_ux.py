@@ -18,12 +18,11 @@ class DashboardUXTests(unittest.TestCase):
         cls.node = bf.node_bin()
         cls.firefox = os.environ.get("MANURE_FIREFOX_BIN", "")
         cls.browser = cls.firefox or bf.chromium_bin()
-        cls.clock = [time.time()]
-        cls.fix = bf.start_server(suffix_mode="separate", now_fn=lambda: cls.clock[0],
+        cls.fix = bf.start_server(suffix_mode="separate",
                                   config_overrides={"rate_limit_per_min": 10000, "login_rate_per_min_per_ip": 1000})
+        cls.expired = bf.upload_fixture(cls.fix, name="ux-expired", kind="file", visibility="internal", files={"old.txt": b"expired"}, expires_in_s=60)["artifact_id"]
         cls.records = []
         for index in range(65):
-            cls.clock[0] += 1
             cls.records.append(bf.upload_fixture(cls.fix, name=f"ux-record-{index:02}", kind="file",
                 visibility=("internal", "external", "public")[index % 3], files={"note.txt": b"x"})["artifact_id"])
         cls.bundle = bf.upload_fixture(cls.fix, name="ux-bundle", kind="dir", visibility="internal",
@@ -32,11 +31,8 @@ class DashboardUXTests(unittest.TestCase):
         cls.protected = protected["artifact_id"]
         cls.password = protected["external_password"]
         cls.public = bf.upload_fixture(cls.fix, name="ux-public", kind="dir", visibility="public", files={"index.html": b"<h1>Public preview</h1>"})["artifact_id"]
-        live_time = cls.clock[0]
-        cls.clock[0] = time.time() - 120
-        cls.expired = bf.upload_fixture(cls.fix, name="ux-expired", kind="file", visibility="internal", files={"old.txt": b"expired"}, expires_in_s=60)["artifact_id"]
-        cls.clock[0] = live_time
         cls.hostile = bf.upload_fixture(cls.fix, name='<img src=x onerror=alert("xss")> ux-hostile', kind="file", visibility="internal", files={"note.txt": b"inert"})["artifact_id"]
+        bf.wait_for_expiry(cls.fix,cls.expired)
 
     @classmethod
     def tearDownClass(cls):

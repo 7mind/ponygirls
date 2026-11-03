@@ -92,3 +92,12 @@ test('redirect without ExtraInfo does not consume next hop extras', () => {
   assert.deepEqual(ctx.responses.map(r => [r.url, r.status]),
     [['http://cached', 302], ['http://dashboard/api/grants', 403]]);
 });
+test('current command label is captured without token, password or grant fields', () => {
+  const event=request('current','http://dashboard/api/current');
+  event.request.postData=JSON.stringify({requestId:'id',command:{Login:{token:'SECRET-CANARY'}}});
+  const ctx=run([['requestWillBeSent',event],['responseReceivedExtraInfo',respExtra('current')]]);
+  assert.equal(ctx.requests[0].command,'Login');
+  assert.equal(ctx.responses[0].command,'Login');
+  assert.ok(!JSON.stringify(ctx).includes('SECRET'));
+  assert.ok(!JSON.stringify(ctx).includes('postData'));
+});

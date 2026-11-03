@@ -138,7 +138,17 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       val stripped = rawPath.drop(1).stripSuffix("/")
       val parts = stripped.split("/",-1).toVector.map { value =>
         Require(!"%(?![0-9a-fA-F]{2})".r.findFirstIn(value).nonEmpty, "invalid-path")
-        val decoded = try URLDecoder.decode(value.replace("+","%2B"),"UTF-8") catch case _: IllegalArgumentException => throw DomainError("invalid-path")
+        val decoded = try
+          val buffer = new java.io.ByteArrayOutputStream()
+          var i = 0
+          while i < value.length do
+            if value.charAt(i) == '%' then
+              buffer.write(Integer.parseInt(value.substring(i+1,i+3),16)); i += 3
+            else
+              val cp = value.codePointAt(i)
+              buffer.write(Exact.utf8(new String(Character.toChars(cp)))); i += Character.charCount(cp)
+          Exact.string(buffer.toByteArray)
+        catch case _: IllegalArgumentException | _: java.nio.charset.CharacterCodingException => throw DomainError("invalid-path")
         Require(decoded.nonEmpty && decoded != "." && decoded != ".." && !decoded.contains('/'), "invalid-path")
         decoded
       }
@@ -170,7 +180,11 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         IO(mutation(req,ctx,c)) *> artifacts.init(required(c),InitUpload(name,CurrentWire.kind(kind),CurrentWire.visibility(visibility),CurrentWire.manifest(files),expiry.map(_.toLong)))
           .map(a => wire.Result.UploadInitialized(a.artifact.id,config.limits.chunkBytes,url(ctx,a.artifact.id),a.externalPassword))
       case wire.Command.GetArtifact(id) => artifacts.info(required(c),id).map(a => wire.Result.ArtifactInfo(summary(ctx,a)))
-      case wire.Command.GetManifest(id) => artifacts.info(required(c),id).map(a => wire.Result.ArtifactManifest(CurrentWire.manifest(a)))
+      case wire.Command.GetManifest(id) =>
+        val visible = c.identity match
+          case Some(identity) => artifacts.info(identity,id)
+          case None => artifacts.contentInfo(id,None,None,None)
+        visible.map(a => wire.Result.ArtifactManifest(CurrentWire.manifest(a)))
       case wire.Command.GetUploadStatus(id) => artifacts.status(required(c),id).map { p =>
         wire.Result.UploadProgress(wire.UploadStatus(id,CurrentWire.state(p.state),config.limits.chunkBytes,p.files.map(f =>
           wire.FileProgress(f.path,f.size,f.receivedBytes,f.ranges.map((s,e) => wire.ByteRange(s,e)).toList)).toList))
@@ -199,6 +213,18 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         val id = CurrentWire.requestId(value)
         IO(CurrentWire.command(value)).flatMap(command(req,ctx,c,_)).handleError(e => failure(id,e))
       }
+    else if req.method == Method.POST && path == "/api/current/login" then
+      IO {
+        Require(originHeader(req).contains(ctx.origin.value), "forbidden")
+        Require(throttle.allow("login:" + peer(req),config.loginRatePerMinutePerIp), "rate-limited")
+      } *> form(req).flatMap { fields => IO {
+        val token = fields.getOrElse("token","")
+        auth.authenticate(token).getOrElse(throw DomainError("unauthorized"))
+        Response[IO](Status.SeeOther).putHeaders(raw("Location","/"),raw("Set-Cookie",sessionCookie(ctx,token,false)))
+      }}
+    else if req.method == Method.POST && path == "/api/current/logout" then
+      IO(mutation(req,ctx,c)) *> form(req) *> artifacts.logout(required(c)).as(
+        Response[IO](Status.SeeOther).putHeaders(raw("Location","/"),raw("Set-Cookie",sessionCookie(ctx,"",true))))
     else if req.method == Method.PUT && path.matches("/api/current/artifacts/[0-9a-f]{32}/chunks") then
       val id = path.split("/")(4)
       IO(mutation(req,ctx,c)) *> IO {
@@ -221,13 +247,14 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         case Some(identity) => artifacts.info(identity,id).map(_ => ())
         case None => IO.unit
       eligibility *> serveFile(req,ctx,id,file,true,c.identity)
-    else if req.method == Method.GET && (path == "/" || path == "/app.js" || path == "/styles.css" || path == "/current-api.js") then
+    else if req.method == Method.GET && (path == "/" || Set("/app.js","/styles.css","/current-protocol.js","/current-schema.js")(path) || path.startsWith("/current/")) then
       c.identity.foreach(auth.human)
       asset(config.dashboardDir,if path == "/" then "index.html" else path.drop(1),ctx,true)
     else IO.raiseError(DomainError("not-found"))
   private def asset(directory: Option[Path],name: String,ctx: Context,dashboard: Boolean): IO[Response[IO]] = IO.blocking {
     val root = directory.getOrElse(throw DomainError(if dashboard then "dashboard-disabled" else "not-found"))
-    Require(Set("index.html","app.js","styles.css","unlock.js","current-api.js")(name), "not-found")
+    val generated = name.matches("current/(?:manure/api/)?[A-Za-z][A-Za-z0-9_]*\\.js")
+    Require(Set("index.html","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js")(name) || dashboard && generated, "not-found")
     val file = root.resolve(name)
     Require(Files.isRegularFile(file) && Files.size(file) <= 2097152, "not-found")
     var bytes = Files.readAllBytes(file)
@@ -333,11 +360,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     else if req.method == Method.GET && path.startsWith("/__manure/files/") && path.endsWith("/content") then
       val (file,_) = decoded("/" + path.stripPrefix("/__manure/files/").stripSuffix("/content"))
       serveFile(req,ctx,id,file,true,None)
-    else if req.method == Method.GET && path == "/__manure/manifest" then
-      artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None)
-        .map(a => json(CurrentWire.encode(wire.Manifest.codecJson,CurrentWire.manifest(a))))
-    else if req.method == Method.GET && Set("/styles.css","/unlock.js","/__manure/password")(path) then
-      asset(config.unlockShellDir,if path == "/__manure/password" then "index.html" else path.drop(1),ctx,false)
+    else if req.method == Method.GET && path == "/__manure/password" then
+      artifacts.externalInfo(id).flatMap(_ => asset(config.unlockShellDir,"index.html",ctx,false))
     else if req.method == Method.GET && !path.startsWith("/__manure/") then
       val (file,trailing) = decoded(if path.isEmpty then "/" else path)
       artifacts.contentInfo(id,presented(req,ctx,id),None,None).flatMap { a =>
@@ -348,7 +372,9 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         if isDirectory && !trailing then IO.pure(Response[IO](Status.SeeOther).putHeaders(raw("Location",ctx.mount + "/" + encoded(file) + "/")))
         else serveFile(req,ctx,id,target,false,None)
       }.handleErrorWith {
-        case d: DomainError if d.code == "password-required" => asset(config.unlockShellDir,"index.html",ctx,false)
+        case d: DomainError if d.code == "password-required" =>
+          val shell = if Set("/styles.css","/unlock.js")(path) then path.drop(1) else "index.html"
+          asset(config.unlockShellDir,shell,ctx,false)
         case error => IO.raiseError(error)
       }
     else IO.raiseError(DomainError("not-found"))

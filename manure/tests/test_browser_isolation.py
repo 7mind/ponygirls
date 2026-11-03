@@ -53,17 +53,12 @@ class IsolationFlows:
     def _grant_cookie_jar(self, aid):
         """Fetch a one-time grant and redeem it; returns a jar holding the
         grant cookie for the artifact's content host."""
-        grant_res = self.http.request(
-            "POST", f"{self.api}/api/v1/artifacts/{aid}/grants",
-            body={}, headers=self.bearer)
+        grant_res = self.http.current((self.api), bf.cp.Command_CreateGrant(aid), headers=self.bearer)
         self.assertEqual(grant_res.status, 200, grant_res.body[:300])
         content_url = bf.content_url_for(self.fix, aid)
         jar = bf.TestHttp()
         origin = self.api
-        redeem = jar.request(
-            "POST", content_url.rstrip("/") + "/__manure/grant",
-            body={"grant": grant_res.json()["grant"]},
-            content_type="application/json", headers={"Origin": origin})
+        redeem = jar.current((content_url.rstrip("/")), bf.cp.ContentCommand_RedeemGrant(({"grant": grant_res.json()["grant"]})["grant"]), headers={"Origin": origin})
         self.assertEqual(redeem.status, 200, redeem.body[:300])
         return jar, content_url
 
@@ -141,7 +136,7 @@ class IsolationFlows:
     def test_b4_management_paths_absent_from_content_origin(self):
         aid, url = self._internal_dir("iso-mgmt", B_HTML)
         jar, _ = self._grant_cookie_jar(aid)
-        for path in ("/api/v1/health", "/api/v1/artifacts",
+        for path in ("/api/current/health", "/api/current/artifacts",
                      "/__manure/nope", "/api/"):
             res = jar.request("GET", url.rstrip("/") + path)
             self.assertEqual(res.status, 404, (path, res.status, res.body[:200]))
@@ -149,7 +144,7 @@ class IsolationFlows:
                              (path, res.body[:200]))
         # Same over a real browser navigation (status observed by the step).
         out = bf.run_steps([
-            {"op": "goto", "url": url.rstrip("/") + "/api/v1/health"},
+            {"op": "goto", "url": url.rstrip("/") + "/api/current/health"},
         ])
         self.assertEqual(out[0]["status"], 404, out)
 
@@ -227,7 +222,7 @@ class IsolationFlows:
             self.fix, name="attach-probe", kind="file",
             visibility="internal", files={"evil.html": EVIL_HTML})
         aid = created["artifact_id"]
-        api_content = (f"{self.api}/api/v1/artifacts/{aid}/files/"
+        api_content = (f"{self.api}/api/current/artifacts/{aid}/files/"
                        + urllib.parse.quote("evil.html", safe="") + "/content")
         res = self.http.request("GET", api_content, headers=self.bearer)
         self.assertEqual(res.status, 200, res.body[:300])
@@ -279,12 +274,9 @@ class IsolationFlows:
     def test_b6_reserved_prefixes_never_serve_user_content(self):
         for bad_path in ("__manure/x.txt", "api/y.txt",
                          "__manure", "api"):
-            res = self.http.request(
-                "POST", self.api + "/api/v1/artifacts:init",
-                body={"name": "reserved", "kind": "file", "visibility": "internal",
+            res = self.http.current((self.api), bf.init_command({"name": "reserved", "kind": "file", "visibility": "internal",
                       "files": [{"path": bad_path, "kind": "file",
-                                 "size": 1, "sha256": hashlib.sha256(b"x").hexdigest()}]},
-                headers=self.bearer)
+                                 "size": 1, "sha256": hashlib.sha256(b"x").hexdigest()}]}), headers=self.bearer)
             self.assertEqual(res.status, 400, (bad_path, res.status, res.body[:200]))
             self.assertEqual(res.json()["error"]["code"], "invalid-path",
                              (bad_path, res.body[:200]))

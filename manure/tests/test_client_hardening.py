@@ -9,6 +9,8 @@ import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
+from current_fixture import current_fixture
+from manure import current_protocol as cp
 
 from manure.auth import generate_token as _gen_token  # canonical vectors (governor A1)
 VALID_TOKEN = _gen_token()
@@ -16,9 +18,10 @@ ART_ID = "f" * 32
 
 
 def _jb(o):
-    return json.dumps(o).encode()
+    return o
 
 
+@current_fixture
 class Dummy:
     def __init__(self, fn):
         self.fn = fn
@@ -36,7 +39,7 @@ class TestB1RedirectBody(unittest.TestCase):
 
         def fn(method, url, headers, body):
             parsed = urllib.parse.urlparse(url)
-            if parsed.path == "/__manure/unlock":
+            if parsed.path == "/__manure/current":
                 return (307, {"Location": "https://evil.example/unlock2"}, b"")
             seen_bodies.append(body)
             return (200, {}, b"")
@@ -46,8 +49,8 @@ class TestB1RedirectBody(unittest.TestCase):
                          cache_dir=tempfile.mkdtemp(), transport=tr)
         # Direct _request with body cross-origin 307 must refuse, not forward.
         with self.assertRaisesRegex(Exception, "cross-origin redirect with body"):
-            c._request("POST", "http://127.0.0.1:8000/__manure/unlock",
-                       {"Content-Type": "application/json"}, b'{"password":"P"}',
+            c._request("POST", "http://127.0.0.1:8000/__manure/current",
+                       {"Content-Type": "application/json"}, cp.dumps(cp.ContentEnvelope(cp.UUID(int=1),cp.API_VERSION,cp.ContentCommand_Unlock("P"))),
                        send_auth=False, send_grant=False, origin="http://127.0.0.1:8000")
         # evil destination never received the password body
         for b in seen_bodies:
@@ -68,7 +71,7 @@ class TestB1RedirectBody(unittest.TestCase):
         c = ManureClient("http://127.0.0.1:8000", token=VALID_TOKEN,
                          cache_dir=tempfile.mkdtemp(), transport=tr)
         with self.assertRaises(Exception):
-            c._request("PUT", "http://127.0.0.1:8000/api/v1/artifacts/x/chunks?path=f&offset=0",
+            c._request("PUT", "http://127.0.0.1:8000/api/current/artifacts/x/chunks?path=f&offset=0",
                        {"Content-Type": "application/octet-stream"}, canary, send_auth=True)
         for r in got:
             if "evil.example" in r["url"]:
@@ -113,7 +116,7 @@ class TestB2Bounds(unittest.TestCase):
             Path(src).write_bytes(b"hi")
             for bad in (0, 1, 262143, 4194305, 1 << 30, "x", -5):
                 routes = {
-                    ("POST", "/api/v1/artifacts:init"): (200, {"Content-Type": "application/json"},
+                    ('InitUpload', ''): (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "chunk_bytes": bad, "content_url": "http://x"})),
                 }
                 tr = Dummy(lambda m, u, h, b, _r=routes: _route(_r, m, u))
@@ -128,7 +131,7 @@ class TestB2Bounds(unittest.TestCase):
         sha = hashlib.sha256(data).hexdigest()
 
         def fn(method, url, headers, body):
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": "f", "kind": "file", "size": 10, "sha256": sha}]}))
@@ -166,7 +169,7 @@ class TestB2Bounds(unittest.TestCase):
                               cache_dir=os.path.join(td, "c2"), transport=tr2)
             from manure.client import ManureError
             with self.assertRaises(ManureError) as cm:
-                c2._ranged_download("http://127.0.0.1:8000/api/v1/artifacts/x/files/f/content",
+                c2._ranged_download("http://127.0.0.1:8000/api/current/artifacts/x/files/f/content",
                                     dest, len(big), big_sha, grant_host=None, is_content=False,
                                     artifact_id=ART_ID, rel="f")
             self.assertEqual(cm.exception.code, "bad-envelope")
@@ -207,7 +210,7 @@ class TestB2Bounds(unittest.TestCase):
 def _route(routes, method, url):
     import urllib.parse
     parsed = urllib.parse.urlparse(url)
-    if method.upper() == "PUT" and parsed.path.endswith("/chunks"):
+    if method == "PUT" and parsed.path.endswith("/chunks"):
         qs = urllib.parse.parse_qs(parsed.query)
         try:
             off = int(qs.get("offset", ["0"])[0])
@@ -216,9 +219,9 @@ def _route(routes, method, url):
         path = qs.get("path", ["f"])[0]
         return (200, {"Content-Type": "application/json"},
                 _jb({"path": path, "offset": off, "length": 1, "received_bytes": off + 1}))
-    key = (method.upper(), parsed.path + (("?" + parsed.query) if parsed.query else ""))
+    key = (method, parsed.path + (("?" + parsed.query) if parsed.query else ""))
     if key not in routes:
-        key = (method.upper(), parsed.path)
+        key = (method, parsed.path)
     if key not in routes:
         return (404, {"Content-Type": "application/json"}, _jb({"error": {"code": "not-found", "message": "x"}}))
     s, h, b = routes[key]
@@ -232,7 +235,7 @@ class TestB3Staging(unittest.TestCase):
         sha = hashlib.sha256(data).hexdigest()
 
         def fn(method, url, headers, body):
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": "a", "kind": "file", "size": 5, "sha256": sha}]}))
@@ -283,7 +286,7 @@ class TestB3Staging(unittest.TestCase):
 
             def fn(method, url, headers, body, _files=files):
                 import urllib.parse
-                if url.endswith("/files"):
+                if method == "GetManifest":
                     return (200, {"Content-Type": "application/json"},
                             _jb({"artifact_id": ART_ID, "state": "ready", "files": _files}))
                 for f in _files:
@@ -396,14 +399,14 @@ class TestB5ResumeAccess(unittest.TestCase):
                     except ValueError:
                         off = 0
                     return (200, {"Content-Type": "application/json"},
-                            _jb({"path": "f.txt", "offset": off, "length": 1,
-                                 "received_bytes": off + 1}))
-                if method == "POST" and parsed.path.endswith("/publish"):
+                            _jb({"path": "f.txt", "offset": off, "length": len(body),
+                                 "received_bytes": off + len(body)}))
+                if method == "FinishUpload":
                     _published["flag"] = True
                     return (200, {"Content-Type": "application/json"},
                             _jb({"artifact_id": ART_ID, "state": "ready",
                                  "content_url": "http://x"}))
-                if method == "GET" and parsed.path.endswith(f"/artifacts/{ART_ID}"):
+                if method == "GetArtifact":
                     st = "ready" if (_published["flag"] or state == "ready") else state
                     return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "name": "n", "kind": "file",
@@ -414,13 +417,13 @@ class TestB5ResumeAccess(unittest.TestCase):
                 return _route(self.routes, method, url)
 
         routes = {
-            ("GET", f"/api/v1/artifacts/{ART_ID}/upload-status"): (200, {"Content-Type": "application/json"},
+            ('GetUploadStatus', ART_ID): (200, {"Content-Type": "application/json"},
                 _jb({"artifact_id": ART_ID, "state": state, "chunk_bytes": 262144,
                      "files": [{"path": "f.txt", "size": 11, "received_bytes": 0, "received_ranges": []}]})),
-            ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+            ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
                 _jb({"artifact_id": ART_ID, "state": state,
                      "files": [{"path": "f.txt", "kind": "file", "size": 11, "sha256": _sha_hw}]})),
-            ("POST", f"/api/v1/artifacts/{ART_ID}/publish"): (200, {"Content-Type": "application/json"},
+            ('FinishUpload', ART_ID): (200, {"Content-Type": "application/json"},
                 _jb({"artifact_id": ART_ID, "state": "ready", "content_url": "http://x"})),
         }
         return src, _Stateful(routes)
@@ -498,7 +501,7 @@ class TestB7Credentials(unittest.TestCase):
         tr = Dummy(fn)
         c = ManureClient("http://[::1]:8000", token=VALID_TOKEN, transport=tr)
         # Content origin helper must produce bracketed host (no crash).
-        out = c.fetch_to_dest("http://[::1]:8000/", tempfile.mkdtemp())
+        out = c.fetch_to_dest("http://[::1]:8000/view/"+ART_ID, tempfile.mkdtemp())
         self.assertEqual(out["artifact_id"], ART_ID)
 
 
@@ -510,10 +513,10 @@ class TestB10Patch(unittest.TestCase):
         def fn(method, url, headers, body):
             import urllib.parse
             parsed = urllib.parse.urlparse(url)
-            if method == "PATCH":
-                bodies.append(json.loads(body.decode()))
+            if method == "PatchArtifact":
+                bodies.append(cp.encode(body.patch))
                 return (200, {"Content-Type": "application/json"},
-                        _jb({"artifact_id": ART_ID, "visibility": "internal", "content_url": "http://x"}))
+                        _jb({"artifact_id":ART_ID,"name":"fixture","kind":"dir","visibility":"internal","state":"ready","created_by_user":"u","created_at":"2026-10-08T00:00:00Z","expires_at":None,"total_bytes":0,"file_count":0,"content_url":"http://x"}))
             return (404, {}, b"")
 
         tr = Dummy(fn)
@@ -523,17 +526,17 @@ class TestB10Patch(unittest.TestCase):
             c.patch_artifact(ART_ID, expires_in_s=3600)
             c.patch_artifact(ART_ID, expires_in_s=None)
             c.patch_artifact(ART_ID, visibility="public")
-            self.assertEqual(bodies[0], {"expires_in_s": 3600})
-            self.assertEqual(bodies[1], {"expires_in_s": None})
-            self.assertEqual(bodies[2], {"visibility": "public"})
+            self.assertEqual(bodies[0], {"name":None,"visibility":None,"expiry":{"Set":{"seconds":3600}}})
+            self.assertEqual(bodies[1], {"name":None,"visibility":None,"expiry":{"Clear":{}}})
+            self.assertEqual(bodies[2], {"name":None,"visibility":"Public","expiry":{"Keep":{}}})
             # Omitted TTL sends no key.
             bodies.clear()
             c.patch_artifact(ART_ID, visibility="internal")
-            self.assertNotIn("expires_in_s", bodies[0])
+            self.assertEqual(bodies[0]["expiry"], {"Keep":{}})
             # Name shorten/rename body + validation before network.
             bodies.clear()
             c.patch_artifact(ART_ID, name="renamed-site")
-            self.assertEqual(bodies[0], {"name": "renamed-site"})
+            self.assertEqual(bodies[0], {"name":"renamed-site","visibility":None,"expiry":{"Keep":{}}})
             n_before = len(tr.requests)
             with self.assertRaises(Exception):
                 c.patch_artifact(ART_ID, name="")
@@ -580,7 +583,7 @@ class TestB4SwapDeterministic(unittest.TestCase):
         sha = _hl.sha256(data).hexdigest()
 
         def fn(method, url, headers, body):
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": "v", "kind": "file", "size": len(data), "sha256": sha}]}))
@@ -653,18 +656,18 @@ class TestB5RecoveryManifest(unittest.TestCase):
             def fn(method, url, headers, body):
                 import urllib.parse
                 parsed = urllib.parse.urlparse(url)
-                if parsed.path.endswith("/upload-status"):
+                if method == "GetUploadStatus":
                     calls["status"] += 1
                     # First: publishing, then uploading (recovery).
                     state = "publishing" if calls["status"] == 1 else "uploading"
                     return (200, {"Content-Type": "application/json"},
                             _jb({"artifact_id": ART_ID, "state": state, "chunk_bytes": 262144,
                                  "files": [{"path": "f.txt", "size": 11, "received_bytes": 0, "received_ranges": []}]}))
-                if parsed.path.endswith("/files") and not parsed.path.endswith("/content"):
+                if method == "GetManifest":
                     return (200, {"Content-Type": "application/json"},
                             _jb({"artifact_id": ART_ID, "state": "uploading",
                                  "files": [{"path": "f.txt", "kind": "file", "size": 11, "sha256": hw}]}))
-                if parsed.path.endswith(f"/artifacts/{ART_ID}") and method == "GET":
+                if method == "GetArtifact":
                     # Authoritative info: uploading until publish, ready after.
                     st = "ready" if calls["published"] else "uploading"
                     return (200, {"Content-Type": "application/json"},
@@ -674,7 +677,7 @@ class TestB5RecoveryManifest(unittest.TestCase):
                 if method == "PUT":
                     return (200, {"Content-Type": "application/json"},
                             _jb({"path": "f.txt", "offset": 0, "length": 11, "received_bytes": 11}))
-                if parsed.path.endswith("/publish"):
+                if method == "FinishUpload":
                     calls["published"] = True
                     return (200, {"Content-Type": "application/json"},
                             _jb({"artifact_id": ART_ID, "state": "ready", "content_url": "http://x"}))
@@ -707,16 +710,16 @@ class TestB5RecoveryManifest(unittest.TestCase):
             def fn(method, url, headers, body):
                 import urllib.parse
                 parsed = urllib.parse.urlparse(url)
-                if parsed.path.endswith("/upload-status"):
+                if method == "GetUploadStatus":
                     return (200, {"Content-Type": "application/json"},
                             _jb({"artifact_id": ART_ID, "state": "uploading", "chunk_bytes": 262144,
                                  "files": [{"path": "f.txt", "size": 11, "received_bytes": 0, "received_ranges": []}]}))
-                if parsed.path.endswith("/files") and not parsed.path.endswith("/content"):
+                if method == "GetManifest":
                     # Server manifest differs (different sha).
                     return (200, {"Content-Type": "application/json"},
                             _jb({"artifact_id": ART_ID, "state": "uploading",
                                  "files": [{"path": "f.txt", "kind": "file", "size": 11, "sha256": "c" * 64}]}))
-                if parsed.path.endswith(f"/artifacts/{ART_ID}"):
+                if method == "GetArtifact":
                     return (200, {"Content-Type": "application/json"},
                             _jb({"artifact_id": ART_ID, "name": "n", "kind": "file", "visibility": "internal",
                                  "state": "uploading", "created_by_user": "u", "created_at": "2026-10-08T00:00:00Z",
@@ -734,7 +737,7 @@ class TestB3NamespaceOwnership(unittest.TestCase):
     def _fetch_fn(self, files, payloads):
         def fn(method, url, headers, body):
             import urllib.parse
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready", "files": files}))
             for f in files:
@@ -776,7 +779,7 @@ class TestB3NamespaceOwnership(unittest.TestCase):
         from manure.client import ManureClient
 
         def fn(method, url, headers, body):
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready", "files": []}))
             return (404, {}, b"")
@@ -1058,13 +1061,13 @@ class TestB4SwapHooks(unittest.TestCase):
             hw = entries[0]["sha256"] if entries[0]["kind"] == "file" else None
             # Server manifest mirrors the built (good) manifest.
             routes = {
-                ("GET", f"/api/v1/artifacts/{ART_ID}/upload-status"): (200, {"Content-Type": "application/json"},
+                ('GetUploadStatus', ART_ID): (200, {"Content-Type": "application/json"},
                     _jb({"artifact_id": ART_ID, "state": "uploading", "chunk_bytes": 262144,
                          "files": [{"path": "f.txt", "size": 13, "received_bytes": 0, "received_ranges": []}]})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+                ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
                     _jb({"artifact_id": ART_ID, "state": "uploading",
                          "files": [{"path": "f.txt", "kind": "file", "size": 13, "sha256": hw}]})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}"): (200, {"Content-Type": "application/json"},
+                ('GetArtifact', ART_ID): (200, {"Content-Type": "application/json"},
                     _jb({"artifact_id": ART_ID, "name": "n", "kind": "dir", "visibility": "internal",
                          "state": "uploading", "created_by_user": "u", "created_at": "2026-10-08T00:00:00Z",
                          "expires_at": None, "total_bytes": 13, "file_count": 1, "content_url": "http://x"})),
@@ -1113,7 +1116,7 @@ class TestB4SwapHooks(unittest.TestCase):
         sha = _hl.sha256(data).hexdigest()
 
         def fn(method, url, headers, body):
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": "v", "kind": "file", "size": len(data),
@@ -1163,7 +1166,7 @@ class TestB11LongPaths(unittest.TestCase):
 
         def fn(method, url, headers, body):
             import urllib.parse
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": rel, "kind": "file",
@@ -1188,7 +1191,7 @@ class TestB11LongPaths(unittest.TestCase):
 
         def fn(method, url, headers, body):
             import urllib.parse
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": rel, "kind": "file",
@@ -1239,7 +1242,7 @@ class TestB11LongPaths(unittest.TestCase):
 
         def fn(method, url, headers, body):
             import urllib.parse
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [fa, fb]}))
@@ -1265,7 +1268,7 @@ class TestB4BoundaryHooks(unittest.TestCase):
         sha = _hl.sha256(data).hexdigest()
 
         def fn(method, url, headers, body):
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": "sub/f", "kind": "file",
@@ -1316,7 +1319,7 @@ class TestB4BoundaryHooks(unittest.TestCase):
         sha = _hl.sha256(data).hexdigest()
 
         def fn(method, url, headers, body):
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": "v", "kind": "file",
@@ -1374,7 +1377,7 @@ class TestB4BoundaryHooks(unittest.TestCase):
         sha = _hl.sha256(data).hexdigest()
 
         def fn(method, url, headers, body):
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": "a", "kind": "file",
@@ -1425,7 +1428,7 @@ class TestB3SidecarRace(unittest.TestCase):
         sha = _hl.sha256(data).hexdigest()
 
         def fn(method, url, headers, body):
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": "r", "kind": "file",
@@ -1513,17 +1516,17 @@ class TestB4AncestorSwaps(unittest.TestCase):
                 "manifest_sha256": msha, "access": "internal"}))
             hw = entries[0]["sha256"]
             routes = {
-                ("GET", f"/api/v1/artifacts/{ART_ID}/upload-status"): (200, {"Content-Type": "application/json"},
+                ('GetUploadStatus', ART_ID): (200, {"Content-Type": "application/json"},
                     _jb({"artifact_id": ART_ID, "state": "uploading", "chunk_bytes": 262144,
                          "files": [{"path": "f.txt", "size": 13, "received_bytes": 0, "received_ranges": []}]})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+                ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
                     _jb({"artifact_id": ART_ID, "state": "uploading",
                          "files": [{"path": "f.txt", "kind": "file", "size": 13, "sha256": hw}]})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}"): (200, {"Content-Type": "application/json"},
+                ('GetArtifact', ART_ID): (200, {"Content-Type": "application/json"},
                     _jb({"artifact_id": ART_ID, "name": "n", "kind": "file", "visibility": "internal",
                          "state": "uploading", "created_by_user": "u", "created_at": "2026-10-08T00:00:00Z",
                          "expires_at": None, "total_bytes": 13, "file_count": 1, "content_url": "http://x"})),
-                ("POST", f"/api/v1/artifacts/{ART_ID}/publish"): (200, {"Content-Type": "application/json"},
+                ('FinishUpload', ART_ID): (200, {"Content-Type": "application/json"},
                     _jb({"artifact_id": ART_ID, "state": "ready", "content_url": "http://x"})),
             }
             sent: list[bytes] = []
@@ -1735,7 +1738,7 @@ class TestB4ParentOpenHook(unittest.TestCase):
         sha = _hl.sha256(data).hexdigest()
 
         def fn(method, url, headers, body):
-            if url.endswith("/files"):
+            if method == "GetManifest":
                 return (200, {"Content-Type": "application/json"},
                         _jb({"artifact_id": ART_ID, "state": "ready",
                              "files": [{"path": "sub/f", "kind": "file",

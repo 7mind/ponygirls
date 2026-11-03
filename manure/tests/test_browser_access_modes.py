@@ -21,9 +21,7 @@ class DashboardAccessModeTests(unittest.TestCase):
         for name in names:
             artifacts[name] = bf.upload_fixture(fix, name="access-" + name, kind="dir",
                 visibility="internal", files={"index.html": b"<h1>access payload</h1>"}, expires_in_s=3600)
-        incomplete = fix.http.request("POST", fix.api_base + "/api/v1/artifacts:init",
-            body={"name": "access-incomplete", "kind": "dir", "visibility": "internal", "files": []},
-            headers={"Authorization": "Bearer " + fix.identity.token})
+        incomplete = fix.http.current((fix.api_base), bf.init_command({"name": "access-incomplete", "kind": "dir", "visibility": "internal", "files": []}), headers={"Authorization": "Bearer " + fix.identity.token})
         self.assertEqual(incomplete.status, 200)
         payload = {"base": fix.api_base, "token": fix.identity.token, "core": core,
             "browser": chromium, "resolver": bf.HOST_RESOLVER_RULES, "artifacts": artifacts,

@@ -25,6 +25,7 @@ trait Payloads:
   def forceLive(a: Artifact, fault: String => Unit): Unit
   def cleanupStage(a: Artifact): Unit
   def cleanup(a: Artifact): Unit
+  def cleanupOrphans(known: Set[String]): Unit
   def open(a: Artifact, path: String): ConfinedFile
 
 final class FilesystemPayloads(root: ConfinedDirectory, limits: Limits) extends Payloads:
@@ -147,6 +148,10 @@ final class FilesystemPayloads(root: ConfinedDirectory, limits: Limits) extends 
     absent { root.deleteFile(name("staging/" + a.id + ".tmp")); root.forceDirectory(name("staging")) }
   def cleanup(a: Artifact): Unit =
     remove(prefix(a,true)); cleanupStage(a)
+  def cleanupOrphans(known: Set[String]): Unit =
+    root.cleanupChildren(name("live"),known,limits.cleanupEntries,68)
+    root.cleanupChildren(name("staging"),known ++ known.map(_ + ".json") ++ known.map(_ + ".tmp"),limits.cleanupEntries,68)
+    root.forceRootDirectory()
   def open(a: Artifact,path: String): ConfinedFile =
     Manifest.path(path)
     Require(a.manifest.exists(e => !e.directory && e.path == path), "not-found")

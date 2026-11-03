@@ -1,7 +1,7 @@
 """Token-free external/public content-host fetch + credential isolation (F10b).
 
 Flow: unlock POST (JSON) with Origin -> grant cookie (exact-host jar) ->
-GET /__manure/manifest -> ranged GET /__manure/files/.../content ->
+ContentCommand.GetManifest -> ranged GET /__manure/files/.../content ->
 verify, empty dirs, temp/atomic, no bearer to content hosts.
 """
 from __future__ import annotations
@@ -13,6 +13,7 @@ import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
+from current_fixture import current_fixture
 
 from manure.auth import generate_token as _gen_token  # canonical vectors (governor A1)
 VALID_TOKEN = _gen_token()
@@ -23,9 +24,10 @@ CONTENT_ORIGIN = f"http://{CONTENT_HOST}:8901"
 
 
 def _jb(o):
-    return json.dumps(o).encode()
+    return o
 
 
+@current_fixture
 class ContentDummy:
     """Content-host + API dummy verifying credential isolation."""
 
@@ -45,10 +47,10 @@ class ContentDummy:
         # bearer must NEVER arrive at content host
         if host == CONTENT_HOST:
             assert "authorization" not in hdrl, "bearer leaked to content host"
-        if method == "POST" and path == "/__manure/unlock":
+        if method == "Unlock":
             assert hdrl.get("origin") == CONTENT_ORIGIN, f"content POST needs Origin {CONTENT_ORIGIN}"
             assert parsed.hostname == CONTENT_HOST
-            payload = json.loads(body.decode() or "{}")
+            payload = {"password":body.password}
             if payload.get("password") != PASSWORD:
                 return (401, {"Content-Type": "application/json"},
                         _jb({"error": {"code": "password-invalid", "message": "bad"}}))
@@ -56,7 +58,7 @@ class ContentDummy:
             return (200, {"Content-Type": "application/json",
                           "Set-Cookie": "mgrant-dev=GRANT123; Path=/; HttpOnly"},
                     _jb({"ok": True}))
-        if method == "GET" and path == "/__manure/manifest":
+        if method == "GetManifest":
             if self.require_password and not self.unlocked:
                 # check cookie
                 if hdrl.get("cookie", "") != "mgrant-dev=GRANT123":
@@ -89,6 +91,7 @@ class ContentDummy:
         return (404, {"Content-Type": "application/json"}, _jb({"error": {"code": "not-found", "message": "x"}}))
 
 
+@current_fixture
 class PathContentDummy:
     """Two password-protected artifacts sharing one origin, with distinct grants."""
 
@@ -107,14 +110,15 @@ class PathContentDummy:
         assert aid in self.artifacts
         control = parsed.path[len("/view/" + aid):]
         cookie = "mgrant-dev-" + aid + "=" + aid
-        if method == "POST" and control == "/__manure/unlock":
+        if method == "Unlock":
             assert hdrl.get("origin") == self.origin, "Origin must be bare, not the content path base"
-            assert json.loads(body)["password"] == PASSWORD
+            assert body.password == PASSWORD
             return 200, {"Set-Cookie": cookie + "; Path=/view/" + aid + "/; HttpOnly"}, _jb({"ok": True})
         assert hdrl.get("cookie") == cookie, "missing or cross-artifact grant"
-        assert "origin" not in hdrl
+        if method == "GetManifest":assert hdrl.get("origin")==self.origin
+        else:assert "origin" not in hdrl
         data = self.artifacts[aid]
-        if control == "/__manure/manifest":
+        if method == "GetManifest":
             return 200, {}, _jb({"artifact_id": aid, "state": "ready", "files": [
                 {"path": "f.txt", "kind": "file", "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}]})
         assert control == "/__manure/files/f.txt/content"
@@ -138,7 +142,7 @@ class TestExternalTokenFreeFetch(unittest.TestCase):
             # empty dir recreated
             self.assertTrue(Path(os.path.join(td, "out", "emptydir")).is_dir())
             # unlock used Origin, manifest/files used grant cookie, no bearer anywhere on content host
-            unlocks = [r for r in dummy.requests if r["url"].endswith("/__manure/unlock")]
+            unlocks = [r for r in dummy.requests if r.get("operation")=="Unlock"]
             self.assertEqual(len(unlocks), 1)
             # wrong password fails
             dummy2 = ContentDummy(files, require_password=True)
@@ -156,7 +160,7 @@ class TestExternalTokenFreeFetch(unittest.TestCase):
                              cache_dir=os.path.join(td, "c"), transport=dummy)
             out = c.fetch_to_dest(f"{CONTENT_ORIGIN}/", os.path.join(td, "out"))
             self.assertEqual(Path(os.path.join(td, "out", "f.txt")).read_bytes(), b"public")
-            self.assertFalse(any(r["url"].endswith("/__manure/unlock") for r in dummy.requests))
+            self.assertFalse(any(r.get("operation")=="Unlock" for r in dummy.requests))
 
     def test_subdomain_url_nested_view_path_keeps_subdomain_routing(self):
         from manure.client import ManureClient

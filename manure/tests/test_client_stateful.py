@@ -1,5 +1,6 @@
-"""Stateful stdlib HTTP adapter: real upload bytes, publish/hash, ranges,
-killed-process resume, CLI commands (B8). No dummy acks."""
+"""Stateful current-protocol HTTP test peer: actual bytes, publish/hash, ranges,
+transport-failure resume and CLI commands (B8). ACK only after fixture byte mutation;
+not a production server or PostgreSQL/filesystem durability oracle."""
 from __future__ import annotations
 
 import base64
@@ -8,6 +9,9 @@ import http.server
 import io
 import json
 import os
+import re
+from uuid import UUID
+from manure import current_protocol as cp
 import socketserver
 import threading
 import tempfile
@@ -26,234 +30,111 @@ def _b64(n: int = 32) -> str:
 
 
 class StatefulHandler(http.server.BaseHTTPRequestHandler):
+    """Controlled current-protocol HTTP peer; in-memory bytes, not a backend port."""
     store: dict = {}
     log: list = []
 
-    def log_message(self, *a):
-        pass
+    def log_message(self,*_):pass
 
-    def _send_json(self, code, obj):
-        body = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+    def _send_json(self,status,value):
+        body=cp.dumps(value)
+        self.send_response(status);self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
 
-    def _auth(self) -> bool:
-        return self.headers.get("Authorization") == f"Bearer {VALID_TOKEN}"
+    def _fault(self,status,code,request_id=UUID(int=0)):
+        return self._send_json(status,cp.ServerEnvelope(request_id,cp.Result_Error(cp.Failure(code,code.value,None))))
 
-    def _read(self) -> bytes:
-        ln = int(self.headers.get("Content-Length") or 0)
-        return self.rfile.read(ln) if ln else b""
-
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        q = urllib.parse.parse_qs(parsed.query)
-        StatefulHandler.log.append(("GET", self.path, self.headers.get("Range")))
-        if parsed.path == "/api/v1/whoami":
-            if not self._auth():
-                return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
-            return self._send_json(200, {"user_id": "u", "type": "agent", "token_id": "t"})
-        if parsed.path == "/api/v1/artifacts":
-            if not self._auth():
-                return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
-            arts = [{"artifact_id": aid, "name": a["name"], "kind": a["kind"],
-                     "visibility": a["visibility"], "state": a["state"],
-                     "created_by_user": "u", "created_at": "2026-10-08T00:00:00Z",
-                     "expires_at": None, "total_bytes": a["total"],
-                     "file_count": len([e for e in a["manifest"] if e["kind"] == "file"]),
-                     "content_url": f"http://127.0.0.1:{self.server.server_address[1]}/c/{aid}"}
-                    for aid, a in self.store.items()]
-            return self._send_json(200, {"artifacts": arts, "next_cursor": None})
-        parts = parsed.path.split("/")
-        # /api/v1/artifacts/<id>/...
-        if len(parts) >= 5 and parts[1] == "api" and parts[2] == "v1" and parts[3] == "artifacts":
-            aid = parts[4]
-            rest = parts[5:]
-            a = self.store.get(aid)
-            if a is None:
-                return self._send_json(404, {"error": {"code": "not-found", "message": "x"}})
-            if rest == []:
-                if not self._auth():
-                    return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
-                return self._send_json(200, {"artifact_id": aid, "name": a["name"], "kind": a["kind"],
-                    "visibility": a["visibility"], "state": a["state"], "created_by_user": "u",
-                    "created_at": "2026-10-08T00:00:00Z", "expires_at": None,
-                    "total_bytes": a["total"], "file_count": len([e for e in a["manifest"] if e["kind"] == "file"]),
-                    "content_url": f"http://127.0.0.1:{self.server.server_address[1]}/c/{aid}"})
-            if rest == ["files"] and not self.path.endswith("/content"):
-                if a["visibility"] != "public" and not self._auth():
-                    return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
-                files = []
-                for e in a["manifest"]:
-                    if e["kind"] == "dir":
-                        files.append({"path": e["path"], "kind": "dir"})
-                    else:
-                        files.append({"path": e["path"], "kind": "file", "size": e["size"], "sha256": e["sha256"]})
-                return self._send_json(200, {"artifact_id": aid, "state": a["state"], "files": files})
-            if rest == ["upload-status"]:
-                if not self._auth():
-                    return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
-                files = []
-                for e in a["manifest"]:
-                    if e["kind"] != "file":
-                        continue
-                    got = a["chunks"].get(e["path"], b"")
-                    files.append({"path": e["path"], "size": e["size"],
-                                  "received_bytes": len(got),
-                                  "received_ranges": [[0, len(got)]] if got else []})
-                return self._send_json(200, {"artifact_id": aid, "state": a["state"],
-                                             "chunk_bytes": CHUNK, "files": files})
-            if len(rest) >= 2 and rest[0] == "files" and rest[-1] == "content":
-                if a["visibility"] != "public" and not self._auth():
-                    return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
-                enc = "/".join(rest[1:-1])
-                rel = urllib.parse.unquote(enc)
-                # find entry
-                ent = next((e for e in a["manifest"] if e["path"] == rel and e["kind"] == "file"), None)
-                if ent is None or a["state"] != "ready":
-                    return self._send_json(404 if ent is None else 409,
-                                           {"error": {"code": "not-found" if ent is None else "incomplete-upload", "message": "x"}})
-                data = a["chunks"].get(rel, b"")
-                rng = self.headers.get("Range")
-                if rng:
-                    try:
-                        spec = rng.split("=")[1].split("-")
-                        s = int(spec[0]); e = int(spec[1]) + 1 if spec[1] else len(data)
-                    except ValueError:
-                        return self._send_json(416, {"error": {"code": "invalid-range", "message": "x"}})
-                    if s >= len(data) or e <= s:
-                        self.send_response(416)
-                        self.send_header("Content-Range", f"bytes */{len(data)}")
-                        self.end_headers()
-                        return
-                    part = data[s:min(e, len(data))]
-                    self.send_response(206)
-                    self.send_header("Content-Type", "application/octet-stream")
-                    self.send_header("Content-Range", f"bytes {s}-{s+len(part)-1}/{len(data)}")
-                    self.send_header("Accept-Ranges", "bytes")
-                    self.send_header("Content-Length", str(len(part)))
-                    self.end_headers()
-                    self.wfile.write(part)
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Accept-Ranges", "bytes")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-                return
-        return self._send_json(404, {"error": {"code": "not-found", "message": "x"}})
+    def _auth(self):return self.headers.get("Authorization")==f"Bearer {VALID_TOKEN}"
+    def _read(self):return self.rfile.read(int(self.headers.get("Content-Length") or 0))
+    def _url(self,aid):return f"http://127.0.0.1:{self.server.server_address[1]}/view/{aid}"
+    def _artifact(self,aid,a):
+        return cp.Artifact(aid,a["name"],a["kind"],a["visibility"],a["state"],"u","2026-10-08T00:00:00Z",None,
+            a["total"],sum(isinstance(e,cp.ManifestEntry_File) for e in a["manifest"]),self._url(aid))
 
     def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        body = self._read()
-        StatefulHandler.log.append(("POST", self.path, len(body)))
-        if parsed.path == "/api/v1/artifacts:init":
-            if not self._auth():
-                return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
+        if self.path!="/api/current":return self._fault(404,cp.ErrorCode.NotFound)
+        request=cp.decode(cp.ClientEnvelope,cp.loads(self._read()));command=request.command;rid=request.requestId
+        StatefulHandler.log.append((command._variant,getattr(command,"artifactId",""),None))
+        if request.apiVersion!=cp.API_VERSION:return self._fault(400,cp.ErrorCode.UnsupportedVersion,rid)
+        aid=getattr(command,"artifactId",None);a=self.store.get(aid)
+        public_manifest=isinstance(command,cp.Command_GetManifest) and a is not None and a["visibility"] is cp.Visibility.Public
+        if not self._auth() and not public_manifest:return self._fault(401,cp.ErrorCode.Unauthorized,rid)
+        if isinstance(command,cp.Command_Whoami):result=cp.Result_Identity(cp.Principal("u","t",cp.PrincipalType.Agent))
+        elif isinstance(command,cp.Command_ListArtifacts):result=cp.Result_Catalogue(cp.CataloguePage([self._artifact(id,value) for id,value in self.store.items()],None))
+        elif isinstance(command,cp.Command_InitUpload):
+            if any(isinstance(e,cp.ManifestEntry_File) and e.size<0 for e in command.files):return self._fault(400,cp.ErrorCode.InvalidManifest,rid)
+            aid=os.urandom(16).hex();pw=_b64() if command.visibility is cp.Visibility.External else None
+            self.store[aid]={"name":command.name,"kind":command.kind,"visibility":command.visibility,"manifest":command.files,
+                "total":sum(e.size for e in command.files if isinstance(e,cp.ManifestEntry_File)),"chunks":{},"state":cp.ArtifactState.Uploading,"password":pw}
+            result=cp.Result_UploadInitialized(aid,CHUNK,self._url(aid),pw)
+        elif a is None:return self._fault(404,cp.ErrorCode.NotFound,rid)
+        elif isinstance(command,cp.Command_GetArtifact):result=cp.Result_ArtifactInfo(self._artifact(aid,a))
+        elif isinstance(command,cp.Command_GetManifest):result=cp.Result_ArtifactManifest(cp.Manifest(aid,a["state"],a["manifest"]))
+        elif isinstance(command,cp.Command_GetUploadStatus):
+            progress=[]
+            for entry in a["manifest"]:
+                if isinstance(entry,cp.ManifestEntry_File):
+                    size=len(a["chunks"].get(entry.path,b""))
+                    progress.append(cp.FileProgress(entry.path,entry.size,size,[cp.ByteRange(0,size)] if size else []))
+            result=cp.Result_UploadProgress(cp.UploadStatus(aid,a["state"],CHUNK,progress))
+        elif isinstance(command,cp.Command_FinishUpload):
+            for entry in a["manifest"]:
+                if isinstance(entry,cp.ManifestEntry_File):
+                    got=a["chunks"].get(entry.path,b"")
+                    if len(got)!=entry.size or hashlib.sha256(got).hexdigest()!=entry.sha256:return self._fault(409,cp.ErrorCode.HashMismatch,rid)
+            a["state"]=cp.ArtifactState.Ready;result=cp.Result_UploadFinished(aid,a["state"],self._url(aid))
+        elif isinstance(command,cp.Command_RotateExternalPassword):
+            if a["visibility"] is not cp.Visibility.External:return self._fault(400,cp.ErrorCode.InvalidVisibility,rid)
+            a["password"]=_b64();result=cp.Result_PasswordRotated(a["password"])
+        elif isinstance(command,cp.Command_DeleteArtifact):self.store.pop(aid,None);result=cp.Result_Ok()
+        else:return self._fault(404,cp.ErrorCode.NotFound,rid)
+        return self._send_json(200,cp.ServerEnvelope(rid,result))
+
+    def do_GET(self):
+        parsed=urllib.parse.urlsplit(self.path)
+        StatefulHandler.log.append(("GET",self.path,self.headers.get("Range")))
+        match=re.fullmatch(r"/api/current/artifacts/([0-9a-f]{32})/files/(.+)/content",parsed.path)
+        if match is None:return self._fault(404,cp.ErrorCode.NotFound)
+        aid,encoded=match.groups();a=self.store.get(aid)
+        if a is None:return self._fault(404,cp.ErrorCode.NotFound)
+        if a["visibility"] is not cp.Visibility.Public and not self._auth():return self._fault(401,cp.ErrorCode.Unauthorized)
+        rel=urllib.parse.unquote(encoded)
+        entry=next((e for e in a["manifest"] if isinstance(e,cp.ManifestEntry_File) and e.path==rel),None)
+        if entry is None:return self._fault(404,cp.ErrorCode.NotFound)
+        if a["state"] is not cp.ArtifactState.Ready:return self._fault(409,cp.ErrorCode.IncompleteUpload)
+        data=a["chunks"].get(rel,b"");range_header=self.headers.get("Range")
+        if range_header:
             try:
-                obj = json.loads(body.decode() or "{}")
-            except Exception:
-                return self._send_json(400, {"error": {"code": "bad-envelope", "message": "x"}})
-            manifest = obj.get("files", [])
-            # basic validation (sizes ints, sha hex) to exercise publish/hash paths
-            total = 0
-            for e in manifest:
-                if e.get("kind") == "file":
-                    if not isinstance(e.get("size"), int) or e["size"] < 0:
-                        return self._send_json(400, {"error": {"code": "invalid-manifest", "message": "x"}})
-                    total += e["size"]
-            aid = os.urandom(16).hex()
-            vis = obj.get("visibility", "internal")
-            resp: dict = {"artifact_id": aid, "chunk_bytes": CHUNK,
-                          "content_url": f"http://127.0.0.1:{self.server.server_address[1]}/c/{aid}"}
-            pw = None
-            if vis == "external":
-                pw = _b64()
-                resp["external_password"] = pw
-            self.store[aid] = {"name": obj.get("name", "n"), "kind": obj.get("kind", "file"),
-                               "visibility": vis, "manifest": manifest, "total": total,
-                               "chunks": {}, "state": "uploading", "password": pw}
-            return self._send_json(200, resp)
-        parts = parsed.path.split("/")
-        if len(parts) >= 6 and parts[3] == "artifacts":
-            aid = parts[4]
-            a = self.store.get(aid)
-            if a is None:
-                return self._send_json(404, {"error": {"code": "not-found", "message": "x"}})
-            if parts[5] == "publish":
-                if not self._auth():
-                    return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
-                # verify hashes (real publish validation)
-                for e in a["manifest"]:
-                    if e["kind"] != "file":
-                        continue
-                    got = a["chunks"].get(e["path"], b"")
-                    if len(got) != e["size"] or hashlib.sha256(got).hexdigest() != e["sha256"]:
-                        return self._send_json(409, {"error": {"code": "hash-mismatch", "message": "x"}})
-                a["state"] = "ready"
-                return self._send_json(200, {"artifact_id": aid, "state": "ready",
-                    "content_url": f"http://127.0.0.1:{self.server.server_address[1]}/c/{aid}"})
-            if parts[5] == "external-password:rotate":
-                if not self._auth():
-                    return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
-                if a["visibility"] != "external":
-                    return self._send_json(400, {"error": {"code": "invalid-visibility", "message": "x"}})
-                pw = _b64()
-                a["password"] = pw
-                return self._send_json(200, {"external_password": pw})
-        return self._send_json(404, {"error": {"code": "not-found", "message": "x"}})
+                spec=range_header.split("=")[1].split("-");start=int(spec[0]);end=int(spec[1])+1 if spec[1] else len(data)
+            except (ValueError,IndexError):return self._fault(416,cp.ErrorCode.InvalidRange)
+            if start>=len(data) or end<=start:
+                self.send_response(416);self.send_header("Content-Range",f"bytes */{len(data)}");self.end_headers();return
+            part=data[start:min(end,len(data))];self.send_response(206)
+            self.send_header("Content-Range",f"bytes {start}-{start+len(part)-1}/{len(data)}")
+        else:part=data;self.send_response(200)
+        self.send_header("Content-Type","application/octet-stream");self.send_header("Accept-Ranges","bytes")
+        self.send_header("Content-Length",str(len(part)));self.end_headers();self.wfile.write(part)
 
     def do_PUT(self):
-        parsed = urllib.parse.urlparse(self.path)
-        q = urllib.parse.parse_qs(parsed.query)
-        body = self._read()
-        StatefulHandler.log.append(("PUT", self.path, len(body)))
-        parts = parsed.path.split("/")
-        if len(parts) >= 6 and parts[3] == "artifacts" and parts[5] == "chunks":
-            aid = parts[4]
-            a = self.store.get(aid)
-            if a is None:
-                return self._send_json(404, {"error": {"code": "not-found", "message": "x"}})
-            if not self._auth():
-                return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
-            if a["state"] != "uploading":
-                return self._send_json(409, {"error": {"code": "state-conflict", "message": "x"}})
-            rel = (q.get("path") or [""])[0]
-            try:
-                off = int((q.get("offset") or ["0"])[0])
-            except ValueError:
-                return self._send_json(400, {"error": {"code": "invalid-range", "message": "x"}})
-            sha = self.headers.get("X-Chunk-Sha256", "")
-            if hashlib.sha256(body).hexdigest() != sha:
-                return self._send_json(400, {"error": {"code": "invalid-range", "message": "hash"}})
-            if len(body) > CHUNK:
-                return self._send_json(413, {"error": {"code": "too-large", "message": "x"}})
-            cur = a["chunks"].get(rel, b"")
-            if off < len(cur) and cur[off:off+len(body)] == body:
-                pass  # idempotent re-PUT
-            elif off != len(cur):
-                return self._send_json(409, {"error": {"code": "chunk-conflict", "message": "x"}})
-            else:
-                a["chunks"][rel] = cur + body
-            # Ack evidence (written only after receipt mutation).
-            StatefulHandler.log.append(("ACK", self.path, len(a["chunks"].get(rel, b""))))
-            got = a["chunks"][rel]
-            ent = next((e for e in a["manifest"] if e["path"] == rel), {"size": len(got)})
-            return self._send_json(200, {"path": rel, "offset": off, "length": len(body),
-                                         "received_bytes": len(got)})
-        return self._send_json(404, {"error": {"code": "not-found", "message": "x"}})
-
-    def do_DELETE(self):
-        parts = urllib.parse.urlparse(self.path).path.split("/")
-        if len(parts) >= 5 and parts[3] == "artifacts":
-            if not self._auth():
-                return self._send_json(401, {"error": {"code": "unauthorized", "message": "x"}})
-            self.store.pop(parts[4], None)
-            return self._send_json(200, {"ok": True})
-        return self._send_json(404, {"error": {"code": "not-found", "message": "x"}})
+        parsed=urllib.parse.urlsplit(self.path);query=urllib.parse.parse_qs(parsed.query);body=self._read()
+        StatefulHandler.log.append(("PUT",self.path,len(body)))
+        match=re.fullmatch(r"/api/current/artifacts/([0-9a-f]{32})/chunks",parsed.path)
+        if match is None:return self._fault(404,cp.ErrorCode.NotFound)
+        aid=match[1];a=self.store.get(aid)
+        if a is None:return self._fault(404,cp.ErrorCode.NotFound)
+        if not self._auth():return self._fault(401,cp.ErrorCode.Unauthorized)
+        if a["state"] is not cp.ArtifactState.Uploading:return self._fault(409,cp.ErrorCode.StateConflict)
+        rel=(query.get("path") or [""])[0]
+        try:offset=int((query.get("offset") or ["0"])[0])
+        except ValueError:return self._fault(400,cp.ErrorCode.InvalidRange)
+        if hashlib.sha256(body).hexdigest()!=self.headers.get("X-Chunk-Sha256",""):return self._fault(400,cp.ErrorCode.InvalidRange)
+        if len(body)>CHUNK:return self._fault(413,cp.ErrorCode.TooLarge)
+        current=a["chunks"].get(rel,b"")
+        if offset<len(current) and current[offset:offset+len(body)]==body:pass
+        elif offset!=len(current):return self._fault(409,cp.ErrorCode.ChunkConflict)
+        else:a["chunks"][rel]=current+body
+        StatefulHandler.log.append(("ACK",self.path,len(a["chunks"][rel])))
+        return self._send_json(200,cp.ChunkReceipt(rel,offset,len(body),len(a["chunks"][rel])))
 
 
 class StatefulServer:

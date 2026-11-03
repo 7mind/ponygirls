@@ -55,6 +55,13 @@ export function captureNetwork(cdp, ctx) {
       entry.origin = lowKey(req.headers, "origin") || null;
       entry.cookieNames = cookieNamesOf(req.headers);
       entry.headers = redact(req.headers);
+      // Record only an allowlisted variant label, never postData or fields.
+      // Passwords/tokens/grants can be in the envelope; none belongs in logs.
+      try {
+        const parsed = JSON.parse(req.postData || "null");
+        const name = parsed?.command && Object.keys(parsed.command).length === 1 ? Object.keys(parsed.command)[0] : null;
+        if (["Version","GetCapabilities","Login","Logout","Whoami","ListArtifacts","InitUpload","GetArtifact","PatchArtifact","DeleteArtifact","RotateExternalPassword","GetManifest","GetUploadStatus","FinishUpload","CreateGrant","Search","Unlock","RedeemGrant"].includes(name)) entry.command = name;
+      } catch (_) { /* Non-JSON forms carry no command label. */ }
       delete entry.blockedCookieNames;
       // CDP flags identify redirect/cache hops without ExtraInfo. Queues
       // preserve protocol order even when extras precede the main events.
@@ -90,6 +97,7 @@ export function captureNetwork(cdp, ctx) {
       Object.assign(hop.responseEntry, {
         url: main?.url || req.url || "",
         status: main?.status || extra?.statusCode || 0,
+        ...(entry.command ? {command: entry.command} : {}),
         setCookieNames: setCookieNames(main?.headers),
       });
       if (!hop.responseEntry.setCookieNames.length && extra) {
