@@ -1,0 +1,32 @@
+{
+  "scope": "controlled actual test-adapter process readiness and actual test-driver evidence/phase controller; not systemd or native app acceptance",
+  "cases": [
+    "test_active_same_invocation_fresh_success_is_accepted",
+    "test_actual_automatic_restart_evidence_survives_NRestarts_reset",
+    "test_aggregate_success_from_another_invocation_is_not_reconnection",
+    "test_bootstrap_failure_preserves_all_declared_not_executed_cases",
+    "test_fault_assertion_is_not_misclassified_as_invalid_fixture",
+    "test_inactive_child_old_success_is_not_reconnection",
+    "test_manual_selected_chains_keep_unselected_database_inactive",
+    "test_post_observation_failure_has_attributed_terminal_record",
+    "test_precondition_failure_has_attributed_terminal_record",
+    "test_precondition_failure_never_enters_fault",
+    "test_ready_event_has_installed_signal_handler_at_exact_controlled_boundary",
+    "test_replaced_child_old_success_is_not_reconnection",
+    "test_restart_cursor_rejects_before_boundary_other_unit_and_old_boot",
+    "test_restore_failure_attributes_remaining_not_executed_cases",
+    "test_restore_failure_has_attributed_terminal_record"
+  ],
+  "tests": 15,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "sourceSHA256": {
+    "service-unit-graph-adapter.py": "142998a81ce022c85b8b289dab8142864c4659e7fcc0c866ed3196530a5ad00d",
+    "service-unit-graph-controller.py": "2ad451a6c6e8aa9f551a1d0a819df0db374d3937b9d18d820d1704a8bca1418b",
+    "service-unit-graph-harness-test.py": "6c8b663f5c6a3507380b5e9e174f8d0023b5f566db92b2c9202dd8a392c749ec",
+    "service-unit-graph-restart-evidence.py": "809922f098a7fcbb03b4b0f5df73309a2c4ba0b63a926eb6d4faaf5179ae5d88",
+    "service-unit-graph-snapshot.py": "7634550068d7d34837a11496da752de2aaea1acdce36d8c39c4ca4064bcc3681",
+    "service-unit-graph-vm.py": "ac66c6699bdb8c43324caae65950c67e8bc9c7a4311adcbbcbcbc7f12af3ae1c"
+  }
+}

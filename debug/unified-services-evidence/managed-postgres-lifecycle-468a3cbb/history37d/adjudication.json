@@ -1,0 +1,17 @@
+{
+  "classificationAfterActualInspection": {
+    "crash": "invalid cumulative NRestarts metric: actual automatic restart message and live role reconnection were positive; original case status remains fail",
+    "disabled": "not-executed because restore failed; not retroactively passed",
+    "manual": "selected-chain assertion incorrectly demanded third DB readiness; original status remains fail",
+    "package": "actual exit4 from register-nix-paths read-only .links and restore failure; original status remains invalid-fixture"
+  },
+  "followup468": "fresh exact-unit current-boot post-cursor restart evidence; exact selected chains; guest-only tmpfs store overlay; all nine actual fault cases/restore phases pass",
+  "originalStatusCounts": {
+    "fail": 2,
+    "invalid-fixture": 1,
+    "not-executed": 1,
+    "pass": 5
+  },
+  "productionRequiresOrPartOfPolicyChanged": false,
+  "statusesUnchanged": true
+}

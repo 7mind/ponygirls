@@ -1,0 +1,3 @@
+SAFE OWNED LIFECYCLE EVIDENCE
+
+Read SUMMARY.json and ARTIFACTS.json first. NixOS468 receipt and terminal are byte-exact after allowlist validation; history37d/bootstrap lifecycle files are explicit privacy derivatives with original statuses unchanged. All raw build/test logs are omitted with exact original hashes/counts. Safe diagnostic JSON contains permission/class/decoded ACL metadata only, not raw xattrs or values. Source files are not copied; SHA256 provenance is supplied. HM typed/controlled receipts are not runtime acceptance. Cleanup assertions are bounded to the original terminal observation/visible namespace, not a claim about every host process now. No host systemd operation, VM launch, or live database operation was performed while preparing this bundle.

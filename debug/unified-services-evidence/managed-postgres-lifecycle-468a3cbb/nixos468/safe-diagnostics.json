@@ -1,0 +1,3451 @@
+{
+  "credentialContractBatches": [
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    },
+    {
+      "cases": [
+        "actual-root-owned-UID-ACL-loaded-credential-positive",
+        "controlled-metadata-reject/foreign-owner",
+        "controlled-metadata-reject/foreign-group",
+        "controlled-metadata-reject/writable",
+        "controlled-metadata-reject/default-acl",
+        "controlled-metadata-reject/acl-version",
+        "controlled-metadata-reject/acl-truncated",
+        "controlled-metadata-reject/acl-extra-uid",
+        "controlled-metadata-reject/acl-group-read",
+        "reject-reference/missing",
+        "reject-reference/forged-root",
+        "reject-reference/escaped-file",
+        "reject-reference/wrong-name"
+      ],
+      "errors": 0,
+      "failures": 0,
+      "scope": "actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched",
+      "skips": 0,
+      "tests": 13
+    }
+  ],
+  "privacy": "Decoded ACL tag/permission/UID metadata only; no raw xattrs, secret bytes/values, SQL, argv, configuration, HOME/runtime PG files or environment snapshots.",
+  "records": [
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 79.714445643,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 79.710416081,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 79.88043322,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 82.685991189,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 82.692704612,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 82.740895653,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 82.745246764,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 82.830684718,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 82.832759563,
+      "stage": "provider-exception-class"
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 132.279830344,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 132.28286816,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 132.443557298,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 135.341349336,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 135.342602288,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 135.428890629,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 135.432799785,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 135.436512268,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 135.43736964,
+      "stage": "provider-exception-class"
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 168.26328997,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 168.52137724,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 168.815375779,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 171.569489221,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 171.570778491,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 171.946333764,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 171.948640482,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 172.097676462,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 172.100866253,
+      "stage": "provider-exception-class"
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 204.960765482,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 205.022368563,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 205.1122582,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 208.191495924,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 208.192872077,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 208.370564213,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 208.374187579,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 208.594611683,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 208.600767214,
+      "stage": "provider-exception-class"
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 247.021808711,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 247.021106666,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 248.239369881,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 248.240398783,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 248.288800745,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 248.289692757,
+      "stage": "provider-exception-class"
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 268.010523755,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 269.228748696,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 269.229898843,
+      "stage": "provider-exception-class"
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 345.619168699,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 345.794926512,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "acl": {
+        "entries": [
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 1
+          },
+          {
+            "id": 71,
+            "permissions": 4,
+            "tag": 2
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 4
+          },
+          {
+            "id": 4294967295,
+            "permissions": 4,
+            "tag": 16
+          },
+          {
+            "id": 4294967295,
+            "permissions": 0,
+            "tag": 32
+          }
+        ],
+        "validMetadataEncoding": true
+      },
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectory": {
+        "acl": {
+          "entries": [
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 1
+            },
+            {
+              "id": 71,
+              "permissions": 5,
+              "tag": 2
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 4
+            },
+            {
+              "id": 4294967295,
+              "permissions": 5,
+              "tag": 16
+            },
+            {
+              "id": 4294967295,
+              "permissions": 0,
+              "tag": 32
+            }
+          ],
+          "validMetadataEncoding": true
+        },
+        "defaultAcl": {
+          "errno": 61,
+          "exceptionClass": "OSError"
+        },
+        "directory": true,
+        "gid": 0,
+        "identityMatchesNoFollow": true,
+        "mode": "0o550",
+        "notSymlink": true,
+        "uid": 0,
+        "writableByService": false
+      },
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultAcl": {
+        "errno": 61,
+        "exceptionClass": "OSError"
+      },
+      "defaultUnixPeerSuccess": false,
+      "effectiveGid": 71,
+      "gid": 71,
+      "identityMatchesNoFollow": true,
+      "major18": true,
+      "managedRootPrivate": true,
+      "matchesKnownBoundUnitDirectory": true,
+      "mode": "0o440",
+      "monotonic": 345.860829022,
+      "ownerGid": 0,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "protectedAncestors": {
+        "credentialRoot": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "root": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        },
+        "run": {
+          "acl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "defaultAcl": {
+            "errno": 61,
+            "exceptionClass": "OSError"
+          },
+          "directory": true,
+          "gid": 0,
+          "identityMatchesNoFollow": true,
+          "mode": "0o755",
+          "notSymlink": true,
+          "uid": 0,
+          "writableByService": false
+        }
+      },
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "supplementaryGids": [
+        71
+      ],
+      "uid": 71
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 348.761674241,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 348.765232235,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 348.763814457,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 348.766853949,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "directory_fd",
+      "monotonic": 349.168475664,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "loaded_systemd_secret",
+      "monotonic": 349.170887423,
+      "stage": "provider-exception-class"
+    }
+  ],
+  "sourceLogBytes": 731799,
+  "sourceLogSHA256": "640a2f888a5c0c0b05039f55090f8ab7091daaed2997b3e34fa873287eb05635",
+  "stages": {
+    "credential-metadata": 18,
+    "provider-exception-class": 36
+  }
+}

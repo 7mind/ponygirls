@@ -1,0 +1,11 @@
+{
+  "cases": 2,
+  "tests": [
+    "initdb-hyphen-admin-preserved",
+    "quoted-hba-hyphen-admin-peer-authentication"
+  ],
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "scope": "Disposable PG18 with exact fixture peer map; production admin principal is not rewritten."
+}

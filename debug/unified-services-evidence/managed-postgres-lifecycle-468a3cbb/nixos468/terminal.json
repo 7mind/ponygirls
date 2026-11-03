@@ -1,0 +1,40 @@
+{
+  "revision": "468a3cbbd803d7c81962b3b04bb6f5802bfde88e",
+  "finishedAt": "2026-11-03T12:52:50.083202+00:00",
+  "nixClientExitStatus": 0,
+  "exitStatus": 0,
+  "requestedSignal": null,
+  "cleanupVerifiedVisibleNamespace": true,
+  "remainingOwnedWorkers": [],
+  "success": true,
+  "knownWorkerIdentities": [
+    {
+      "pid": 4103794,
+      "startTicks": 117081880,
+      "state": "R",
+      "ppid": 4103780,
+      "comm": "tar"
+    },
+    {
+      "pid": 4103795,
+      "startTicks": 117081880,
+      "state": "R",
+      "ppid": 4103780,
+      "comm": "mkfs.erofs"
+    },
+    {
+      "pid": 4103780,
+      "startTicks": 117081874,
+      "state": "S",
+      "ppid": 4103769,
+      "comm": "qemu-system-x86"
+    },
+    {
+      "pid": 4103769,
+      "startTicks": 117081831,
+      "state": "R",
+      "ppid": 4103731,
+      "comm": ".nixos-test-dri"
+    }
+  ]
+}

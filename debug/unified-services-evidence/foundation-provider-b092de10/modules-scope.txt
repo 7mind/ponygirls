@@ -1,0 +1,1 @@
+HM: exactly one daemon + 3 database units; independent application package change leaves provider/unrelated database unit unchanged. NixOS: existing sole postgresql.service adapter. No activation/runtime-systemd claim.

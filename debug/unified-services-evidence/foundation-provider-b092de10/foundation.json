@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "status": "passed",
+  "scope": "complete-jvm-foundation-modules",
+  "foundationSource": "/nix/store/w1dqi1pk3ydfvf9ljgwbm05mfa42hcdb-backend-foundation-source",
+  "modules": {
+    "losslessJson": {
+      "suites": 1,
+      "tests": 36,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suiteCounts": {
+        "ponygirls.losslessjson.LosslessJsonTest": 36
+      }
+    },
+    "manureStorage": {
+      "suites": 1,
+      "tests": 29,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suiteCounts": {
+        "manure.storage.ConfinedDirectorySuite": 29
+      }
+    }
+  },
+  "claimsChronicleValidation": false,
+  "claimsNativeAcceptance": false
+}
