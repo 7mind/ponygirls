@@ -89,6 +89,7 @@ let
     listen_address = cfg.listenAddress;
     port = cfg.port;
     data_dir = cfg.dataDir;
+    migration_receipt_dir = cfg.migrationReceiptDirectory;
     api_origin = cfg.apiOrigin;
     content_mode = cfg.contentMode;
     loopback_dev = cfg.loopbackDev;
@@ -321,6 +322,7 @@ in
       example = "artifacts.7mind.io";
       description = "Required in subdomain mode, optional in path mode. Content suffix; each artifact serves from <hex32>.<contentSuffix>. A separate registrable domain is strongly recommended when unrelated apps share the parent domain (§5.6).";
     };
+    migrationReceiptDirectory = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Offline converter control receipt root (OWNER/COMPLETE/import.sql), distinct from payload dataDir and operator credentials."; };
     dataDir = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/manure";

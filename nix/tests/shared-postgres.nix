@@ -38,5 +38,6 @@ in pkgs.runCommand "shared-postgresql-18-provider-rehearsal" {
   export PG_PROVIDER=${../postgres/provider.py}
   export PG_CONFIGURATION=${policy.configuration}
   mkdir -p "$out"
+  python3 ${./provider-files-test.py} ${../postgres/provider.py}
   python3 ${./shared-postgres-test.py} --output "$out"
 ''

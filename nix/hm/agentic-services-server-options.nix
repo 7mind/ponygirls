@@ -149,6 +149,8 @@ in
       agentTokenFile = runtimePath "Absolute runtime 43-character agent token file. Existing token mismatches fail closed without rotation.";
       database = import ../lib/service-database-options.nix { inherit lib; name = "manure"; };
       legacyOrigins = strings "Additional allowed backend API origins.";
+      dataDirectory = str "${cfg.stateDirectory}/manure" "Explicit payload root, independently migratable from the existing credentials/state directory. Offline destination payloads typically live at DEST/data.";
+      migrationReceiptDirectory = mkOption { type = types.nullOr types.str; default = null; description = "Explicit offline migration control/OWNER/COMPLETE/import.sql directory, independently of dataDirectory and existing credentials."; };
       allowInsecureHttp = mkOption {
         type = types.bool;
         default = cfg.host.scheme == "http";

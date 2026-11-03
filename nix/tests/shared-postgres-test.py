@@ -45,6 +45,7 @@ def main():
         manifest.write_text(json.dumps(config))
         # Rewrite only paths/admin identity for the OWNED disposable cluster.
         hba = Path(os.environ['PG_HBA']).read_text().replace('local all nixbld peer', f'local all {admin} peer')
+        hba = hba.replace('host all all 0.0.0.0/0 reject','host unicode_probe unicode_probe 127.0.0.1/32 scram-sha-256\nhost all all 0.0.0.0/0 reject')
         (root/'hba').write_text(hba)
         settings = Path(os.environ['PG_CONFIGURATION']).read_text()
         settings = settings.replace('/unused-evaluation-path/socket', str(root/'cluster'/'socket'))
@@ -176,6 +177,25 @@ def main():
             check('secret-replacement-fails-without-rotation',result.returncode != 0 and b'replacement-not-authorized' not in result.stderr)
             secret.write_bytes(hashes['haystack'])
             check('original-credential-remains-valid',query('haystack','haystack','SELECT 1') == '1')
+            # Prove SCRAM preparation against PG18/libpq, including Unicode3.2
+            # normalization and PostgreSQL's raw fallback for prohibited/unassigned
+            # and bidi-invalid passwords. Never log values or verifiers.
+            unicode_cases = ['p\u00e4ss','a\u00a0b','\u00adIX','\u2168pass','\u0007raw','\u0221raw','\u0627abc','\u0627\u0628']
+            for number, value in enumerate(unicode_cases):
+                entry = dict(config['databases']['haystack'],name='unicode_probe',user='unicode_probe',passwordFile=str(root/'secrets'/'unicode_probe'),createPassword=False,maxConnections=1)
+                config['databases']['unicode_probe']=entry
+                manifest.write_text(json.dumps(config))
+                unicode_file = Path(entry['passwordFile'])
+                unicode_file.write_text(value+'\n'); unicode_file.chmod(0o600)
+                provision('unicode_probe')
+                check('unicode-scram-pg18-'+str(number),query('unicode_probe','unicode_probe','SELECT 1') == '1')
+                before = sql_hash = query(admin,'postgres',"SELECT rolpassword FROM pg_authid WHERE rolname='unicode_probe'")
+                provision('unicode_probe')
+                check('existing-unicode-secret-preserved-'+str(number),query(admin,'postgres',"SELECT rolpassword FROM pg_authid WHERE rolname='unicode_probe'") == before and unicode_file.read_text() == value+'\n')
+                query(admin,'postgres','DROP DATABASE unicode_probe')
+                query(admin,'postgres','DROP ROLE unicode_probe')
+                del config['databases']['unicode_probe']
+            manifest.write_text(json.dumps(config))
         finally:
             stop()
         # Fresh-host logical restore: restore all managed roles/password verifiers

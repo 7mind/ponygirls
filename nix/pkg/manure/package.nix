@@ -6,7 +6,7 @@ let
     src = ../../../manure;
     filter = path: type:
       let relative = lib.removePrefix "${toString ../../../manure}/" (toString path);
-      in toString path == toString ../../../manure || builtins.elem relative [ "manure" "manure/__init__.py" "manure/client.py" "manure/cli.py" "manure/mcp.py" "skill" "skill/SKILL.md" ] || relative == "generated" || lib.hasPrefix "generated/python" relative;
+      in toString path == toString ../../../manure || builtins.elem relative [ "manure" "manure/__init__.py" "manure/client.py" "manure/current_protocol.py" "manure/cli.py" "manure/mcp.py" "skill" "skill/SKILL.md" ] || relative == "generated" || lib.hasPrefix "generated/python" relative;
   };
   web = lib.cleanSourceWith { src = ../../../manure/web; filter = path: type: lib.cleanSourceFilter path type && !(builtins.elem (baseNameOf path) [ "node_modules" "dist" "test-results" ]); };
 in runCommand "manure-0.2.0" {
