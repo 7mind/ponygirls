@@ -1,96 +1,221 @@
 # Behavioral-Active/Blackbox-GoodCommunication: actual HM USER systemd graph.
-# Deliberately no native HTTP/model acceptance. All services share alice's UID.
-import importlib.util,json,os,pathlib,shlex,shutil,time
-spec=importlib.util.spec_from_file_location('controller',CONTROLLER_SOURCE_PATH);controller=importlib.util.module_from_spec(spec);spec.loader.exec_module(controller)
-PROVIDER='ponygirls-postgres.service'
-APPS=['chronicle.service','ivm-haystack.service','ivm-manure.service']
-MIGRATIONS=['chronicle-migrate.service','ivm-haystack-migrate.service','ivm-manure-migrate.service']
-DATABASES=['ponygirls-database-'+name+'.service' for name in ['chronicle','haystack','manure']]
-UNITS=[PROVIDER]+DATABASES+MIGRATIONS+APPS
-results=[];out=pathlib.Path(os.environ['out']);out.mkdir(exist_ok=True);shutil.copyfile(SOURCE_MANIFEST,out/'source-inputs.sha256')
-PREFIX='runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus '
-def user(command):return home.succeed(PREFIX+command)
-def ctl(command):return user('systemctl --user '+command)
-def snapshot():return json.loads(user('/etc/unit-graph-user/snapshot '+' '.join(UNITS)))
-def wait(predicate,description,seconds=60):
-    deadline=time.monotonic()+seconds
-    while time.monotonic()<deadline:
-        state=snapshot()
-        if predicate(state):return state
-        time.sleep(.25)
-    raise AssertionError(description)
-def ready_chains(apps,databases):
-    required=[PROVIDER]+databases+[m for a,m in zip(APPS,MIGRATIONS) if a in apps]+apps
-    return wait(lambda s:all(s[u]['ActiveState']=='active' for u in required) and all(s[u]['InvocationID'] in s[u]['adapterStartedInvocations'] for u in required if u in APPS+MIGRATIONS),'actual HM units did not become ready')
-def ready(apps=APPS):return ready_chains(apps,DATABASES)
-def probes(apps=APPS):
-    before=snapshot();intended={u:before[u]['InvocationID'] for u in apps}
-    assert all(before[u]['ActiveState']=='active' and intended[u] for u in apps)
-    ctl('kill --kill-whom=main --signal=USR1 '+' '.join(apps))
-    return wait(lambda s:all(s[u]['ActiveState']=='active' and s[u]['InvocationID']==intended[u] and s[u]['probeSuccessByInvocation'].get(intended[u],0)>before[u]['probeSuccessByInvocation'].get(intended[u],0) for u in apps),'no fresh active intended HM invocation SQL success')
-def stable(before,after,units):
-    for unit in units:
-        for field in ['MainPID','ExecMainStartTimestampMonotonic','InvocationID','startCount']:
-            assert before[unit][field]==after[unit][field],(unit,field)
-def save():
-    receipt={'scope':'actual HM modules/systemd USER manager/real PG with explicit synthetic CLI adapters; NOT native app/HTTP/model acceptance','trustBoundary':'all HM services share alice UID1000; role ACLs do not isolate credentials from same-UID processes','sourceRevision':SOURCE_REVISION,'manualStopStartPolicy':'intentional stop leaves consumers down; provider start alone does not resurrect; selected app start restores own chain','cases':results,'mandatoryCases':len(results),'faultsExecuted':sum(bool(c.get('faultEntered')) for c in results),'notExecuted':[c['name'] for c in results if not c.get('faultEntered')],'invalidFixtureCases':[c['name'] for c in results if c['status']=='invalid-fixture']}
-    (out/'lifecycle-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
-def restore():
-    if home.succeed('readlink -f /run/current-system').strip()!=base:
-        home.succeed(base+'/bin/switch-to-configuration test');home.wait_for_unit('home-manager-alice.service',timeout=120)
-    ctl('start '+PROVIDER);ctl('start '+' '.join(APPS));return ready()
-def case(name,body):
-    def update(item):
-        for index,prior in enumerate(results):
-            if prior['name']==name:results[index]=item;break
-        save()
-    item=controller.run_case(name,body,ready,snapshot,restore,update)
-    print('HM_UNIT_GRAPH_MILESTONE '+name+' '+item['status'],flush=True);return item
+# Explicit synthetic app CLI adapters; no native HTTP/model acceptance.
+import json
+import pathlib
+import shlex
+import shutil
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Protocol
 
-def bootstrap():
-    global base
-    print('HM_UNIT_GRAPH_BOOTSTRAP launch-owned-user-manager-VM',flush=True)
-    start_all();home.wait_for_unit('user@1000.service',timeout=120);home.wait_for_unit('home-manager-alice.service',timeout=120)
-    base=home.succeed('readlink -f /run/current-system').strip()
-    home.succeed('! systemctl is-active --quiet postgresql.service')
-    print('HM_UNIT_GRAPH_BOOTSTRAP_STATE '+json.dumps(snapshot(),sort_keys=True),flush=True)
-    ready();probes()
+Case = dict[str, Any]
+State = dict[str, dict[str, Any]]
 
-def boot(item):ready();probes()
-def own_restart(item):
-    ctl('restart ivm-haystack.service');after=ready();probes()
-    stable(item['before'],after,[PROVIDER]+DATABASES+MIGRATIONS+['chronicle.service','ivm-manure.service'])
-    assert after['ivm-haystack.service']['MainPID']!=item['before']['ivm-haystack.service']['MainPID']
-def provider_restart(item):
-    ctl('restart '+PROVIDER);after=ready();probes()
-    assert after[PROVIDER]['MainPID']!=item['before'][PROVIDER]['MainPID']
-def crash(item):
-    reference=json.loads(user('/etc/unit-graph-user/restart-evidence capture --scope user'))
-    ctl('kill --kill-whom=main --signal=KILL '+PROVIDER)
-    after=wait(lambda s:s[PROVIDER]['ActiveState']=='active' and s[PROVIDER]['MainPID'] not in [0,item['before'][PROVIDER]['MainPID']],'HM provider did not auto-restart')
-    ready();probes();after=snapshot()
-    evidence=json.loads(user('/etc/unit-graph-user/restart-evidence after --scope user --unit '+PROVIDER+' --cursor '+shlex.quote(reference['cursor'])+' --boot '+shlex.quote(reference['bootId'])))
-    item['automaticRestartEvidence']={'reference':reference,**evidence};assert evidence['count']>0
-    assert after[PROVIDER]['InvocationID']!=item['before'][PROVIDER]['InvocationID']
-def stopped(item):
-    ctl('stop ivm-manure.service');ctl('restart '+PROVIDER)
-    after=ready(['chronicle.service','ivm-haystack.service']);probes(['chronicle.service','ivm-haystack.service'])
-    assert after['ivm-manure.service']['ActiveState']=='inactive'
-def manual(item):
-    ctl('stop '+PROVIDER);wait(lambda s:all(s[u]['ActiveState']=='inactive' for u in UNITS),'HM manual stop left a dependent active')
-    ctl('start '+PROVIDER);wait(lambda s:s[PROVIDER]['ActiveState']=='active','HM manual provider start failed')
-    assert all(snapshot()[u]['ActiveState']=='inactive' for u in APPS)
-    ctl('start chronicle.service ivm-haystack.service');ready_chains(APPS[:2],DATABASES[:2]);probes(APPS[:2])
-    assert snapshot()['ivm-manure.service']['ActiveState']=='inactive'
-def disabled(item):
-    home.succeed(base+'/specialisation/disabled-consumer/bin/switch-to-configuration test');home.wait_for_unit('home-manager-alice.service',timeout=120)
-    after=ready(['chronicle.service','ivm-haystack.service'])
-    stable(item['before'],after,[PROVIDER]+DATABASES+['chronicle.service','ivm-haystack.service','chronicle-migrate.service','ivm-haystack-migrate.service'])
-    assert after['ivm-manure.service']['ActiveState']=='inactive'
-    ctl('restart '+PROVIDER);after=ready(['chronicle.service','ivm-haystack.service']);probes(['chronicle.service','ivm-haystack.service'])
-    assert after['ivm-manure.service']['ActiveState']=='inactive' and after['ivm-manure-migrate.service']['ActiveState']=='inactive'
+class Guest(Protocol):
+    def succeed(self, command: str) -> str: ...
+    def wait_for_unit(self, unit: str, *, timeout: int) -> None: ...
 
-PLANS=[('HM-boot-three-consumers-one-user-provider',boot),('HM-own-app-restart-isolates-provider-others',own_restart),('HM-explicit-provider-restart-recovers-active-chain',provider_restart),('HM-provider-crash-autorestart-fresh-role-reconnect',crash),('HM-stopped-consumer-stays-stopped',stopped),('HM-intentional-manual-stop-start-selected-recovery',manual),('HM-actual-disabled-module-stays-disabled',disabled)]
-controller.run_matrix(PLANS,bootstrap,lambda plan:case(*plan),records=results,persist=save)
-save();print('UNIT_GRAPH_TERMINAL '+(out/'lifecycle-receipt.json').read_text().replace('\n',' '),flush=True)
-assert len(results)==7 and all(c['status']=='pass' for c in results),'actual HM user-manager lifecycle matrix failed; no policy fix inferred'
+class Controller(Protocol):
+    def run_case(self, name: str, body: Callable[..., Any], precondition: Callable[..., Any],
+                 observe: Callable[..., Any], restore: Callable[..., Any], persist: Callable[..., Any]) -> Case: ...
+    def run_matrix(self, plans: tuple[Any, ...], bootstrap: Callable[..., Any], execute: Callable[..., Any],
+                   *, records: list[Case], persist: Callable[..., Any]) -> None: ...
+
+@dataclass(frozen=True)
+class Source:
+    revision: str
+    manifest: pathlib.Path
+
+class HmLifecycle:
+    PROVIDER = 'ponygirls-postgres.service'
+    APPS = ('chronicle.service', 'ivm-haystack.service', 'ivm-manure.service')
+    MIGRATIONS = ('chronicle-migrate.service', 'ivm-haystack-migrate.service', 'ivm-manure-migrate.service')
+    DATABASES = tuple('ponygirls-database-' + name + '.service' for name in ('chronicle', 'haystack', 'manure'))
+    UNITS = (PROVIDER,) + DATABASES + MIGRATIONS + APPS
+    PREFIX = 'runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus '
+
+    def __init__(self, home: Guest, controller: Controller, source: Source,
+                 out: pathlib.Path, start_all: Callable[[], None]):
+        self.home = home
+        self.controller = controller
+        self.source = source
+        self.out = out
+        self.start_all = start_all
+        self.base: str | None = None
+        self.results: list[Case] = []
+        self.out.mkdir(exist_ok=True)
+        shutil.copyfile(self.source.manifest, self.out / 'source-inputs.sha256')
+
+    def user(self, command: str) -> str:
+        return self.home.succeed(self.PREFIX + command)
+
+    def ctl(self, command: str) -> str:
+        return self.user('systemctl --user ' + command)
+
+    def snapshot(self) -> State:
+        return json.loads(self.user('/etc/unit-graph-user/snapshot ' + ' '.join(self.UNITS)))
+
+    def wait(self, predicate: Callable[[State], bool], description: str, seconds: int) -> State:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            state = self.snapshot()
+            if predicate(state):
+                return state
+            time.sleep(.25)
+        raise AssertionError(description)
+
+    def ready_chains(self, apps: tuple[str, ...], databases: tuple[str, ...]) -> State:
+        required = (self.PROVIDER,) + databases + tuple(m for a, m in zip(self.APPS, self.MIGRATIONS) if a in apps) + apps
+        return self.wait(lambda s: all(s[u]['ActiveState'] == 'active' for u in required)
+                         and all(s[u]['InvocationID'] in s[u]['adapterStartedInvocations']
+                                 for u in required if u in self.APPS + self.MIGRATIONS),
+                         'actual HM units did not become ready', 60)
+
+    def ready_all(self) -> State:
+        return self.ready_chains(self.APPS, self.DATABASES)
+
+    def probes(self, apps: tuple[str, ...]) -> State:
+        before = self.snapshot()
+        intended = {u: before[u]['InvocationID'] for u in apps}
+        assert all(before[u]['ActiveState'] == 'active' and intended[u] for u in apps)
+        self.ctl('kill --kill-whom=main --signal=USR1 ' + ' '.join(apps))
+        return self.wait(lambda s: all(s[u]['ActiveState'] == 'active' and s[u]['InvocationID'] == intended[u]
+                         and s[u]['probeSuccessByInvocation'].get(intended[u], 0) > before[u]['probeSuccessByInvocation'].get(intended[u], 0)
+                         for u in apps), 'no fresh active intended HM invocation SQL success', 60)
+
+    def probes_all(self) -> State:
+        return self.probes(self.APPS)
+
+    @staticmethod
+    def stable(before: State, after: State, units: tuple[str, ...]) -> None:
+        for unit in units:
+            for field in ('MainPID', 'ExecMainStartTimestampMonotonic', 'InvocationID', 'startCount'):
+                assert before[unit][field] == after[unit][field], (unit, field)
+
+    def save(self) -> None:
+        receipt = {
+            'scope': 'actual HM modules/systemd USER manager/real PG with explicit synthetic CLI adapters; NOT native app/HTTP/model acceptance',
+            'trustBoundary': 'all HM services share alice UID1000; role ACLs do not isolate credentials from same-UID processes',
+            'sourceRevision': self.source.revision,
+            'manualStopStartPolicy': 'intentional stop leaves consumers down; provider start alone does not resurrect; selected app start restores own chain',
+            'cases': self.results, 'mandatoryCases': len(self.results),
+            'faultsExecuted': sum(bool(c.get('faultEntered')) for c in self.results),
+            'notExecuted': [c['name'] for c in self.results if not c.get('faultEntered')],
+            'invalidFixtureCases': [c['name'] for c in self.results if c['status'] == 'invalid-fixture'],
+        }
+        (self.out / 'lifecycle-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+
+    def restore(self) -> State:
+        assert self.base is not None, 'restore requires successful bootstrap'
+        if self.home.succeed('readlink -f /run/current-system').strip() != self.base:
+            self.home.succeed(self.base + '/bin/switch-to-configuration test')
+            self.home.wait_for_unit('home-manager-alice.service', timeout=120)
+        self.ctl('start ' + self.PROVIDER)
+        self.ctl('start ' + ' '.join(self.APPS))
+        return self.ready_all()
+
+    def case(self, name: str, body: Callable[[Case], None]) -> Case:
+        def update(item: Case) -> None:
+            for index, prior in enumerate(self.results):
+                if prior['name'] == name:
+                    self.results[index] = item
+                    break
+            self.save()
+        item = self.controller.run_case(name, body, self.ready_all, self.snapshot, self.restore, update)
+        print('HM_UNIT_GRAPH_MILESTONE ' + name + ' ' + item['status'], flush=True)
+        return item
+
+    def bootstrap(self) -> None:
+        print('HM_UNIT_GRAPH_BOOTSTRAP launch-owned-user-manager-VM', flush=True)
+        self.start_all()
+        self.home.wait_for_unit('user@1000.service', timeout=120)
+        self.home.wait_for_unit('home-manager-alice.service', timeout=120)
+        self.base = self.home.succeed('readlink -f /run/current-system').strip()
+        self.home.succeed('! systemctl is-active --quiet postgresql.service')
+        print('HM_UNIT_GRAPH_BOOTSTRAP_STATE ' + json.dumps(self.snapshot(), sort_keys=True), flush=True)
+        self.ready_all()
+        self.probes_all()
+
+    def boot(self, item: Case) -> None:
+        self.ready_all()
+        self.probes_all()
+
+    def own_restart(self, item: Case) -> None:
+        self.ctl('restart ivm-haystack.service')
+        after = self.ready_all()
+        self.probes_all()
+        self.stable(item['before'], after, (self.PROVIDER,) + self.DATABASES + self.MIGRATIONS + ('chronicle.service', 'ivm-manure.service'))
+        assert after['ivm-haystack.service']['MainPID'] != item['before']['ivm-haystack.service']['MainPID']
+
+    def provider_restart(self, item: Case) -> None:
+        self.ctl('restart ' + self.PROVIDER)
+        after = self.ready_all()
+        self.probes_all()
+        assert after[self.PROVIDER]['MainPID'] != item['before'][self.PROVIDER]['MainPID']
+
+    def crash(self, item: Case) -> None:
+        reference = json.loads(self.user('/etc/unit-graph-user/restart-evidence capture --scope user'))
+        self.ctl('kill --kill-whom=main --signal=KILL ' + self.PROVIDER)
+        self.wait(lambda s: s[self.PROVIDER]['ActiveState'] == 'active' and s[self.PROVIDER]['MainPID'] not in (0, item['before'][self.PROVIDER]['MainPID']),
+                  'HM provider did not auto-restart', 60)
+        self.ready_all()
+        self.probes_all()
+        after = self.snapshot()
+        evidence = json.loads(self.user('/etc/unit-graph-user/restart-evidence after --scope user --unit ' + self.PROVIDER
+                              + ' --cursor ' + shlex.quote(reference['cursor']) + ' --boot ' + shlex.quote(reference['bootId'])))
+        item['automaticRestartEvidence'] = {'reference': reference, **evidence}
+        assert evidence['count'] > 0
+        assert after[self.PROVIDER]['InvocationID'] != item['before'][self.PROVIDER]['InvocationID']
+
+    def stopped(self, item: Case) -> None:
+        self.ctl('stop ivm-manure.service')
+        self.ctl('restart ' + self.PROVIDER)
+        after = self.ready_chains(self.APPS[:2], self.DATABASES)
+        self.probes(self.APPS[:2])
+        assert after['ivm-manure.service']['ActiveState'] == 'inactive'
+
+    def manual(self, item: Case) -> None:
+        self.ctl('stop ' + self.PROVIDER)
+        self.wait(lambda s: all(s[u]['ActiveState'] == 'inactive' for u in self.UNITS), 'HM manual stop left a dependent active', 60)
+        self.ctl('start ' + self.PROVIDER)
+        self.wait(lambda s: s[self.PROVIDER]['ActiveState'] == 'active', 'HM manual provider start failed', 60)
+        assert all(self.snapshot()[u]['ActiveState'] == 'inactive' for u in self.APPS)
+        self.ctl('start chronicle.service ivm-haystack.service')
+        self.ready_chains(self.APPS[:2], self.DATABASES[:2])
+        self.probes(self.APPS[:2])
+        after = self.snapshot()
+        assert all(after[u]['ActiveState'] == 'inactive' for u in (self.APPS[2], self.MIGRATIONS[2], self.DATABASES[2]))
+
+    def disabled(self, item: Case) -> None:
+        assert self.base is not None, 'switch requires successful bootstrap'
+        self.home.succeed(self.base + '/specialisation/disabled-consumer/bin/switch-to-configuration test')
+        self.home.wait_for_unit('home-manager-alice.service', timeout=120)
+        after = self.ready_chains(self.APPS[:2], self.DATABASES)
+        self.stable(item['before'], after, (self.PROVIDER,) + self.DATABASES + ('chronicle.service', 'ivm-haystack.service', 'chronicle-migrate.service', 'ivm-haystack-migrate.service'))
+        assert after['ivm-manure.service']['ActiveState'] == 'inactive'
+        self.ctl('restart ' + self.PROVIDER)
+        after = self.ready_chains(self.APPS[:2], self.DATABASES)
+        self.probes(self.APPS[:2])
+        assert after['ivm-manure.service']['ActiveState'] == 'inactive' and after['ivm-manure-migrate.service']['ActiveState'] == 'inactive'
+
+    def plans(self) -> tuple[tuple[str, Callable[[Case], None]], ...]:
+        return (
+            ('HM-boot-three-consumers-one-user-provider', self.boot),
+            ('HM-own-app-restart-isolates-provider-others', self.own_restart),
+            ('HM-explicit-provider-restart-recovers-active-chain', self.provider_restart),
+            ('HM-provider-crash-autorestart-fresh-role-reconnect', self.crash),
+            ('HM-stopped-consumer-stays-stopped', self.stopped),
+            ('HM-intentional-manual-stop-start-selected-recovery', self.manual),
+            ('HM-actual-disabled-module-stays-disabled', self.disabled),
+        )
+
+    def run(self) -> None:
+        self.controller.run_matrix(self.plans(), self.bootstrap, lambda plan: self.case(*plan), records=self.results, persist=self.save)
+        self.save()
+        print('UNIT_GRAPH_TERMINAL ' + (self.out / 'lifecycle-receipt.json').read_text().replace('\n', ' '), flush=True)
+        assert len(self.results) == 7 and all(c['status'] == 'pass' for c in self.results), 'actual HM user-manager lifecycle matrix failed; no policy fix inferred'
+
+
+def run_hm_graph(home: Guest, controller: Controller, source: Source,
+                 out: pathlib.Path, start_all: Callable[[], None]) -> None:
+    HmLifecycle(home, controller, source, out, start_all).run()
