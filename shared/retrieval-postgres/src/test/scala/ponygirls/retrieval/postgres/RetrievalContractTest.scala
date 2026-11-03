@@ -10,7 +10,7 @@ private[postgres] object ControlledFixtures {
   val field=AttributeKey.parse("project")
   val provenance=ChunkProvenance("metadata",Some("/description"),None,None)
   def source(id: String,text: String,audience: Set[String]): SourceProjection = SourceProjection(id,"version-1",List(InputChunk("first",text,provenance)),Vector(ProjectionAttribute(field,AttributeValue("controlled"))),audience,true,false,None)
-  def query(mode: RetrievalMode): RetrievalQuery = RetrievalQuery("reader","alpha",mode,Vector.empty,false,0,100,EpochSeconds(BigDecimal(1000)))
+  def query(mode: RetrievalMode): RetrievalQuery = RetrievalQuery("reader","alpha",mode,Vector.empty,false,0,100,EpochSeconds(BigDecimal("4102444800")))
 }
 private[postgres] trait RetrievalContractStore {
   def put(source: SourceProjection): Unit
@@ -84,7 +84,7 @@ abstract class RetrievalContractTest extends munit.FunSuite {
   }
   test("Blackbox: current ACL/filter/archive/exact expiry are applied before counts and selection") {
     val store=fresh(); val base=source("visible","alpha",Set("reader"))
-    List(base,base.copy(id="hidden",audience=Set("other")),base.copy(id="archived",archived=true),base.copy(id="expired",expiresAt=Some(EpochSeconds(BigDecimal(1000)))),base.copy(id="tiny-future",expiresAt=Some(EpochSeconds(BigDecimal("1000.00000000001"))))).foreach(store.put)
+    List(base,base.copy(id="hidden",audience=Set("other")),base.copy(id="archived",archived=true),base.copy(id="expired",expiresAt=Some(EpochSeconds(BigDecimal("4102444800")))),base.copy(id="tiny-future",expiresAt=Some(EpochSeconds(BigDecimal("4102444800.00000000001"))))).foreach(store.put)
     store.publishAll()
     List(RetrievalMode.Lexical,RetrievalMode.Semantic,RetrievalMode.Hybrid).foreach { mode =>
       val page=store.search(query(mode)); assertEquals(page.hits.map(_.id).toSet,Set("visible","tiny-future")); assertEquals(page.total,2L)

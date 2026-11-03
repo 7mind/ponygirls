@@ -122,4 +122,10 @@ class PublicationFenceTest extends munit.FunSuite {
     assertEquals(after,before)
   }
 
+  test("Blackbox-GoodCommunication regression: expired sources are never claimed for a new model call") {
+    val f=fixture()
+    f.store.put(source("expired","alpha",Set("reader")).copy(expiresAt=Some(EpochSeconds(BigDecimal(1000)))))
+    assertEquals(f.tx(c => f.index.claim(c,30)),None)
+  }
+
 }
