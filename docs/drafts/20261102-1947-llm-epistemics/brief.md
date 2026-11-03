@@ -160,6 +160,7 @@ a subject workspace.
 
 **Open items for the user**
 - Stored Pilot DF sessions contain the user's skill files (read by Sol,
-  about 8.8 MB, local repo only): redact or keep?
+  about 8.8 MB, local repo only): the user decided to keep them (nothing to
+  redact, 2026-11-03).
 - Choose between next steps 1 and 2 (or both); settle OC-1, OC-5, OC-8 for
   the dialogue prototype.
