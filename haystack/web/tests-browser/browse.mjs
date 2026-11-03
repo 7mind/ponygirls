@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 
 export async function checkBrowse({ browser, base, login, humanToken, check, seed, agent, docOf, rid, artifacts, interceptSearch }) {
   const total = 45;
-  for (let index = 0; index < total; index++) {
+  // Reverse insertion order makes real modified-at desc match the original
+  // constant-clock/key-order fixture, without injecting private server state.
+  for (let index = total - 1; index >= 0; index--) {
     await seed.put({ key: `scroll:${String(index).padStart(2, "0")}`, documentJson: docOf({ title: `Record ${String(total - index - 1).padStart(2, "0")}`, tags: [index % 2 ? "odd" : "even"] }), expectedRevision: 0, requestId: rid() }, agent);
   }
   const open = async (page) => {
     await login(page, humanToken);
+    await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
     await page.goto(`${base}/#/browse?project=scroll`);
     await page.waitForFunction(() => document.querySelectorAll(".records-panel tbody .record-open").length === 20);
   };

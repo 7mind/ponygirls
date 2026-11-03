@@ -12,8 +12,14 @@ def normalize(text):
 
 
 baseline, current, haystack_auth, manure_config = (json.loads(Path(path).read_text()) for path in sys.argv[1:])
-for field in ("proxy", "crawl"):
-    assert normalize(current[field]) == normalize(baseline[field]), f"legacy {field} behavior changed"
+expected_proxy = normalize(baseline["proxy"])
+# Deliberate current-codec replacement and native request-line privacy fix only;
+# all other proxy identity/body/timeouts/Host bindings remain characterized.
+assert expected_proxy.count("root @STORE@;") == 1
+expected_proxy = expected_proxy.replace("root @STORE@;", "error_log /dev/null;\nroot @STORE@;", 1)
+expected_proxy = expected_proxy.replace('{"error":{"code":"unavailable","message":"service unavailable"}}', json.dumps({"code":"unavailable","currentRevision":None,"message":"service unavailable","spans":[]},separators=(',',':'),sort_keys=True))
+assert normalize(current["proxy"]) == expected_proxy, "unintended proxy behavior changed"
+assert normalize(current["crawl"]) == normalize(baseline["crawl"]), "legacy crawler behavior changed"
 assert current["units"] == sorted([n for n in baseline["units"] if n not in ("ivm-postgres", "ivm-haystack-database")] + ["ivm-haystack-migrate","ivm-manure-migrate"])
 assert current["timers"] == baseline["timers"]
 # Explicitly migrated connection/native asset fields; retain every other domain,

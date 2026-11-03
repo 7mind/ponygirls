@@ -2,20 +2,22 @@
 // Firefox (HAYSTACK_FIREFOX), real app + PG (HAYSTACK_TEST_PG), and built UI.
 // Skipped explicitly when the database or browser is unset — never a silent pass.
 //
-// Run after `npm run build` (UI) and server `tsc -p tsconfig.tests.json`:
+// Run after `npm run build` (UI), with HAYSTACK_SERVER_COMMAND selecting the built Scala/native executable:
 //   HAYSTACK_TEST_PG=... HAYSTACK_CHROMIUM=/nix/store/.../bin/chromium \
 //     npm run test:browser -w web
 import assert from "node:assert/strict";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import pg from "pg";
 import express from "express";
 import { chromium, firefox } from "playwright-core";
 import { checkBrowse } from "./browse.mjs";
+import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
+import { GetRequest } from "../../generated/typescript/haystack/api/GetRequest.ts";
+import { ownedDatabase, configFor, atomicConfig, startServer, stopServer, publicClient, freePort } from "./native.mjs";
 
 const CONN = process.env.HAYSTACK_TEST_PG;
 const CHROMIUM = process.env.HAYSTACK_CHROMIUM;
@@ -30,68 +32,80 @@ if (!CONN || (!CHROMIUM && !FIREFOX)) {
   process.exit(0);
 }
 
-const { LiveUpdates } = await import(path.join(serverRoot, "dist-test", "src", "http", "live.js"));
-const { createApp } = await import(path.join(serverRoot, "dist-test", "src", "http", "server.js"));
-const { migrate } = await import(path.join(serverRoot, "dist-test", "src", "storage", "migrate.js"));
-const { PgItemRepository } = await import(path.join(serverRoot, "dist-test", "src", "storage", "postgres.js"));
-const { ItemService } = await import(path.join(serverRoot, "dist-test", "src", "application", "service.js"));
-const { ManualClock } = await import(path.join(serverRoot, "dist-test", "src", "application", "clock.js"));
-
-const admin = new pg.Client(CONN);
-await admin.connect();
-await admin.query("DROP DATABASE IF EXISTS haystack_browser");
-await admin.query("CREATE DATABASE haystack_browser");
-await admin.end();
-const BCONN = CONN.replace(/haystack_test/, "haystack_browser");
-const pool = new pg.Pool({ connectionString: BCONN });
-await migrate(pool, "agent-activity");
-
-const dir = await mkdtemp(path.join(os.tmpdir(), "haystack-uitest-"));
+let database; let dir; let backend; let browser; let server;
+const sockets = new Set();
+let cleaning;
+const cleanup = () => cleaning ??= (async () => {
+  if (browser) await browser.close();
+  await stopServer(backend);
+  for (const socket of sockets) socket.destroy();
+  if (server?.listening) await new Promise(resolve => server.close(resolve));
+  if (database) await database.close();
+  if (dir) await rm(dir, { recursive: true, force: true });
+})();
+process.once("SIGTERM", () => { void cleanup().finally(() => process.exit(143)); });
+try {
+if (ARTIFACTS) await mkdir(ARTIFACTS, { recursive: true });
+database = await ownedDatabase(CONN, "haystack_browser");
+dir = await mkdtemp(path.join(os.tmpdir(), "haystack-uitest-"));
 const humanToken = randomBytes(32).toString("base64url");
 const agentToken = randomBytes(32).toString("base64url");
 const digestOf = (t) => createHash("sha256").update(t, "ascii").digest("hex");
 await writeFile(path.join(dir, "human.sha"), digestOf(humanToken) + "\n");
 await writeFile(path.join(dir, "agent.sha"), digestOf(agentToken) + "\n");
-const { loadAuth } = await import(path.join(serverRoot, "dist-test", "src", "auth", "config.js"));
-let auth = await loadAuth({
+const auth = {
   activityProjectId: "agent-activity",
   users: [
     { id: "op", type: "human", displayName: "Op", tokens: [{ id: "browser", hashFile: path.join(dir, "human.sha") }] },
     { id: "agent", type: "agent", displayName: "Agent", tokens: [{ id: "default", hashFile: path.join(dir, "agent.sha") }] },
   ],
-  cookieSecure: true,
-  allowedHosts: ["127.0.0.1", "localhost", "haystack.test"],
-  allowedOrigins: [],
-});
+  cookieSecure: true, allowedHosts: ["127.0.0.1", "localhost", "haystack.test"],
+  allowedOrigins: [], insecureHttpOrigins: [], rateLimit: { windowMs: 60000, max: 600 },
+};
 
-// Parent app: real API + static UI (mirrors the production single-origin layout).
-// createApp already prefixes its routes with /api — mount at root.
+// Test-only reverse proxy supplies controlled request interception. All real
+// HTTP/WebSocket handling is performed by the separate Scala/native process.
+const backendPort = await freePort();
 const parent = express();
 let searchInterceptor = null;
 parent.post("/api/v1/search", express.json(), (req, res, next) => {
   if (searchInterceptor === null) return next();
   Promise.resolve(searchInterceptor(req.body, res, next)).catch(next);
 });
-const sharedRepo = new PgItemRepository(BCONN);
-const updates = new LiveUpdates(() => auth);
-parent.use(createApp({ updates, getAuth: () => auth, repo: sharedRepo, clock: new ManualClock() }));
-parent.use(express.static(path.join(webRoot, "dist"), { maxAge: 0 }));
-const server = http.createServer(parent);
-updates.attach(server);
+parent.use((req, res) => {
+  const headers = { ...req.headers };
+  let body;
+  if (req.body !== undefined) { body = JSON.stringify(req.body); headers["content-length"] = Buffer.byteLength(body); }
+  const upstream = http.request({ hostname: "127.0.0.1", port: backendPort, path: req.originalUrl, method: req.method, headers }, (reply) => {
+    res.writeHead(reply.statusCode, reply.headers); reply.pipe(res);
+  });
+  upstream.on("error", () => { if (!res.headersSent) res.status(503).json({ code: "unavailable", message: "server unreachable", spans: [], currentRevision: null }); else res.destroy(); });
+  if (body !== undefined) upstream.end(body); else req.pipe(upstream);
+});
+server = http.createServer(parent);
+server.on("connection", socket => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)); });
+server.on("upgrade", (req, socket, head) => {
+  const upstream = http.request({ hostname: "127.0.0.1", port: backendPort, path: req.url, method: "GET", headers: req.headers });
+  upstream.on("upgrade", (reply, target, received) => {
+    socket.write(`HTTP/1.1 ${reply.statusCode} ${reply.statusMessage}\r\n` + Object.entries(reply.headers).flatMap(([k,v]) => Array.isArray(v) ? v.map(x => `${k}: ${x}\r\n`) : [`${k}: ${v}\r\n`]).join("") + "\r\n");
+    if (received.length) socket.write(received); if (head.length) target.write(head);
+    socket.on("error", () => target.destroy()); target.on("error", () => socket.destroy());
+    socket.pipe(target).pipe(socket);
+  });
+  upstream.on("response", (reply) => { socket.end(`HTTP/1.1 ${reply.statusCode} Rejected\r\nConnection: close\r\n\r\n`); });
+  upstream.on("error", () => socket.destroy()); upstream.end();
+});
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 const insecureBase = `http://haystack.test:${server.address().port}`;
-// The page origin (with its ephemeral port) joins the CSRF allowlist after
-// listen — mirroring production, where the public URL is configured.
-// Exercise production Secure default with explicit HTTP exceptions, not the
-// global development override. Both ordinary and non-secure-context UI paths
-// must retain working login, renewal, writes, and live updates.
-auth = await loadAuth({ ...auth.config, allowedOrigins: [base, insecureBase],
-  insecureHttpOrigins: [base, insecureBase] });
-
-// Seed through the service layer (agent authorship, big ints, links).
-const seedRepo = new PgItemRepository(BCONN);
-const seed = new ItemService(seedRepo, new ManualClock());
+auth.allowedOrigins = [base, insecureBase]; auth.insecureHttpOrigins = [base, insecureBase];
+const configFile = path.join(dir, "config.json");
+const config = await configFor({ dir, connectionString: database.connectionString, port: backendPort,
+  webRoot: path.join(webRoot, "dist"), auth });
+await atomicConfig(configFile, config);
+backend = await startServer(configFile, backendPort, path.join(dir, "server.log"));
+// Fixtures cross the authenticated current generated public HTTP boundary.
+const seed = publicClient(base, agentToken);
 const agent = { userId: "agent", type: "agent", tokenId: "default" };
 let n = 0;
 const rid = () => `0193e8d5-6f5c-7a1b-8c2d-${String(++n).padStart(12, "0")}`;
@@ -135,19 +149,22 @@ await seed.put({ key: "ui:root-array", documentJson: docOf({ title: "Root array"
 await seed.put({ key: "ui:root-markdown", documentJson: docOf({ title: "Root Markdown", fields: { type: "md", content: "# Root content\n\nA paragraph." } }), expectedRevision: 0, requestId: rid() }, agent);
 
 console.log(`# Browser: ${FIREFOX ? "Firefox" : "Chromium"}`);
-const browser = FIREFOX
+browser = FIREFOX
   ? await firefox.launch({ executablePath: FIREFOX, firefoxUserPrefs: { "network.dns.localDomains": "haystack.test" } })
   : await chromium.launch({ executablePath: CHROMIUM, args: ["--no-sandbox", "--no-proxy-server", "--host-resolver-rules=MAP haystack.test 127.0.0.1"] });
 if (ARTIFACTS) await mkdir(ARTIFACTS, { recursive: true });
 const results = [];
 const check = async (name, fn) => {
   if (process.env.HAYSTACK_BROWSER_CHECK && !name.startsWith(process.env.HAYSTACK_BROWSER_CHECK)) return;
+  console.log(`# check - ${name}`);
   try {
     await fn();
     results.push(`ok - ${name}`);
+    console.log(`ok - ${name}`);
   } catch (err) {
     results.push(`FAIL - ${name}: ${err.message.split("\n")[0]}`);
     console.error(err);
+    if (ARTIFACTS) await writeFile(path.join(ARTIFACTS, `failure-${results.length}.txt`), err.stack ?? String(err));
     process.exitCode = 1;
   }
 };
@@ -393,7 +410,7 @@ await check("system theme changes update native controls and square layouts with
     });
     const light = await theme();
     assert.equal(light.scheme, "light");
-    assert.ok(light.corners.every((radius) => radius === "0px"));
+    assert.ok(light.corners.every((radius) => radius === "0px"), JSON.stringify(await page.locator("button, input, .search-panel, .records-panel").evaluateAll(elements => elements.map(e => ({ tag: e.tagName, type: e.type, radius: getComputedStyle(e).borderTopLeftRadius })))));
     await page.emulateMedia({ colorScheme: "dark" });
     const dark = await theme();
     assert.equal(dark.scheme, "dark");
@@ -549,11 +566,12 @@ await check("typed field editors preview content, preserve data, and save attrib
     await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
     assert.equal((await write).status(), 200);
     await page.getByText(/Saved as revision 2/).waitFor();
-    const result = await ctx.request.post(`${base}/api/v1/get`, { data: { key: "ui:editor" } });
+    const result = await ctx.request.post(`${base}/api/v1/get`, { data: GetRequest.jsonCodec().encode(BaboonCodecContext.Default, new GetRequest("ui:editor", undefined)) });
     const text = await result.text();
     assert.match(text, /9007199254740993/);
     assert.match(text, /0\.12345678901234567890123456789/);
     const doc = JSON.parse(text);
+    doc.document = JSON.parse(doc.document.json);
     assert.equal(doc.metadata.modifiedBy, "op");
     assert.deepEqual(doc.document.fields.skill, { type: "md", content: markdown });
     assert.deepEqual(doc.document.fields.snippet, { type: "code", language: "typescript", content: 'const text: string = "🐎";' });
@@ -667,6 +685,50 @@ await check("fidelity + inert rendering", async () => {
   await ctx.close();
 });
 
+await check("a lost committed response replays the original ID without overwriting a newer draft", async () => {
+  await seed.put({ key: "ui:uncertain", documentJson: docOf({ title: "Uncertain fixture" }), expectedRevision: 0, requestId: rid() });
+  const ctx = await browser.newContext();
+  try {
+    const page = await ctx.newPage();
+    await login(page, humanToken);
+    await page.getByRole("button", { name: "ui:uncertain", exact: true }).click();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await page.getByLabel("Title", { exact: true }).fill("Committed original");
+    const sent = [];
+    await page.route("**/api/v1/put", async (route) => {
+      sent.push(route.request().postDataJSON());
+      if (sent.length === 1) {
+        const committed = await route.fetch();
+        assert.equal(committed.status(), 200, "failure must happen after actual commit");
+        await route.abort("failed");
+      } else await route.continue();
+    });
+    await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
+    await page.getByRole("status").filter({ hasText: "Save failed: server unreachable" }).waitFor();
+    await page.getByRole("button", { name: "Retry original write", exact: true }).waitFor();
+    await page.getByLabel("Title", { exact: true }).fill("Newer local draft");
+    await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
+    await page.getByRole("status").filter({ hasText: "uncertain write must be replayed" }).waitFor();
+    assert.equal(sent.length, 1, "edited draft must not get a new operation ID before reconciliation");
+    await page.getByRole("button", { name: "Retry original write", exact: true }).click();
+    await page.getByText(/Original write confirmed as revision 2/).waitFor();
+    assert.deepEqual(sent[1], sent[0], "replay must use identical current encoded payload, original request ID and CAS");
+    assert.equal(sent[0].expectedRevision, 1);
+    const actual = await seed.get("ui:uncertain");
+    assert.equal(actual.revision, 2); assert.equal(JSON.parse(actual.document.json).title, "Committed original");
+    assert.deepEqual((await seed.history("ui:uncertain")).revisions.map(r => r.revision), [2, 1]);
+    assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "Newer local draft");
+    await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
+    await page.getByRole("alert").waitFor();
+    assert.equal(sent[2].expectedRevision, 1, "unresolved local draft retains its captured original CAS");
+    assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "Newer local draft");
+    await page.getByRole("button", { name: "Save my draft on top of revision 2", exact: true }).click();
+    await page.getByText(/Saved as revision 3/).waitFor();
+    assert.notEqual(sent[3].requestId, sent[0].requestId, "only explicit terminal-conflict recovery is a new operation");
+    assert.equal(sent[3].expectedRevision, 2);
+  } finally { await ctx.close(); }
+});
+
 // Two-editor conflict preserves the draft.
 await check("conflict preserves draft", async () => {
   const ctx = await browser.newContext();
@@ -767,9 +829,7 @@ await check("live writes refresh browse and preserve concurrent drafts", async (
     await login(page, humanToken);
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
     const write = async (expected, title) => {
-      const response = await fetch(`${base}/api/v1/put`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${agentToken}` },
-        body: JSON.stringify({ key: "live:external", document_json: docOf({ title }), expected_revision: expected, request_id: rid() }) });
-      assert.equal(response.status, 200);
+      await seed.put({ key: "live:external", documentJson: docOf({ title }), expectedRevision: expected, requestId: rid() });
     };
     await write(0, "Written by an agent");
     await page.getByText("Written by an agent", { exact: true }).waitFor();
@@ -803,7 +863,7 @@ await check("silent heartbeat loss opens an overlapping replacement", async () =
       const id = ++count;
       const upstream = socket.connectToServer();
       upstream.onMessage((message) => {
-        if (drop && id === 1 && JSON.parse(String(message)).type === "pong") { dropped++; resolveDrop(); return; }
+        if (drop && id === 1 && JSON.parse(String(message)).kind === "pong") { dropped++; resolveDrop(); return; }
         socket.send(message);
       });
     });
@@ -834,9 +894,7 @@ await check("permanent close stops and manual retry resynchronizes missed writes
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
     await channel.close({ code: 1007, reason: "Injected invalid payload" });
     await page.getByRole("button", { name: "Connection: Connection stopped", exact: true }).waitFor();
-    const response = await fetch(`${base}/api/v1/put`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${agentToken}` },
-      body: JSON.stringify({ key: "live:missed", document_json: docOf({ title: "Created while disconnected" }), expected_revision: 0, request_id: rid() }) });
-    assert.equal(response.status, 200);
+    await seed.put({ key: "live:missed", documentJson: docOf({ title: "Created while disconnected" }), expectedRevision: 0, requestId: rid() });
     assert.equal(await page.getByText("Created while disconnected", { exact: true }).count(), 0);
     await page.getByRole("button", { name: "Connection: Connection stopped", exact: true }).click();
     await page.getByRole("button", { name: "Try again", exact: true }).click();
@@ -868,12 +926,6 @@ await checkBrowse({ browser, base, login, humanToken, check, seed, agent, docOf,
   interceptSearch: (handler) => { searchInterceptor = handler; },
 });
 
-for (const line of results) console.log(line);
-await browser.close();
-updates.close();
-await new Promise((resolve) => server.close(resolve));
-await seedRepo.close();
-await sharedRepo.close();
-await pool.end();
-// Explicit exit: keep-alive sockets otherwise hold the loop open forever.
+console.log(`# ${results.length} checks; ${results.filter(line => line.startsWith("FAIL")).length} failures; 0 skipped`);
+} finally { await cleanup(); }
 process.exit(process.exitCode ?? 0);

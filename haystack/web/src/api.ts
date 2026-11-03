@@ -56,7 +56,7 @@ interface Codec<T> {
 async function request(path: string, init: RequestInit): Promise<Response> {
   let res: Response;
   try { res = await fetch(path, init); } catch { throw new NetworkError(); }
-  if (res.status === 401) { writes.clear(); throw new AuthError(); }
+  if (res.status === 401) { writes.clear(); sessionIdentity = undefined; throw new AuthError(); }
   if (res.status === 502 || res.status === 503 || res.status === 504) throw new NetworkError();
   return res;
 }
@@ -228,6 +228,8 @@ export function uuidv7(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+let sessionIdentity: string | undefined;
+const identityKey = (identity: Identity): string => JSON.stringify([identity.userId, identity.tokenId]);
 const writes = new WriteCoordinator<PutResult>(
   async (op) => {
     const result = await call("/api/v1/put", PutResult.jsonCodec(), encode(PutRequest.jsonCodec(),
@@ -243,15 +245,19 @@ const writes = new WriteCoordinator<PutResult>(
 );
 export const api = {
   pendingWrite: writes.snapshot,
+  clearSessionWrites: () => { writes.clear(); sessionIdentity = undefined; },
   subscribePendingWrite: writes.subscribe,
   retryPendingWrite: () => writes.retry(),
   login: async (token: string) => {
     const result = await call("/api/v1/login", LoginResult.jsonCodec(), encode(LoginRequest.jsonCodec(), new LoginRequest(token)));
-    writes.clear(); return result;
+    writes.clear(); sessionIdentity = identityKey(result.identity); return result;
   },
-  logout: async () => { const result = await call("/api/v1/logout", Ack.jsonCodec()); writes.clear(); return result; },
+  logout: async () => { const result = await call("/api/v1/logout", Ack.jsonCodec()); writes.clear(); sessionIdentity = undefined; return result; },
   whoami: async (): Promise<Principal> => {
     const identity = await call("/api/v1/whoami", Identity.jsonCodec(), undefined, "GET");
+    const key = identityKey(identity);
+    if (sessionIdentity !== undefined && sessionIdentity !== key) writes.clear();
+    sessionIdentity = key;
     return { userId: identity.userId, type: identity.userType as Principal["type"], tokenId: identity.tokenId, activityProjectId: identity.activityProjectId };
   },
   get: async (key: string, revision?: number) => toItem(await call("/api/v1/get", WireItem.jsonCodec(),

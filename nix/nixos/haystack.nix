@@ -4,6 +4,7 @@
 { mkHaystackPackage }:
 { config, lib, pkgs, ... }:
 let
+  proxyFailure = (import ../lib/haystack-proxy.nix { }).unavailableJson;
   cfg = config.smind.services.haystack;
 
   # Credential names are fixed derivations of user/token ids (no secrets in
@@ -49,6 +50,10 @@ let
     proxyPass = "http://${cfg.listenAddress}:${toString cfg.port}";
     proxyWebsockets = true;
     extraConfig = ''
+      # Native error/access logs can expose request-line credentials or query
+      # values. The Scala service emits allowlisted structured request telemetry.
+      error_log /dev/null;
+      access_log off;
       proxy_cache off;
       proxy_buffering off;
       client_max_body_size 2m;
@@ -294,7 +299,7 @@ in
             default_type application/json;
             add_header Cache-Control "no-store" always;
             add_header Referrer-Policy "no-referrer" always;
-            return 503 '{"error":{"code":"unavailable","message":"service unavailable"}}';
+            return 503 '${proxyFailure}';
           '';
         };
       };

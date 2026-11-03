@@ -6,6 +6,7 @@
   ...
 }:
 let
+  proxyFailure = (import ../lib/haystack-proxy.nix { }).unavailableJson;
   cfg = config.smind.hm.services.agentic;
   host = cfg.host;
   endpoints = {
@@ -232,11 +233,14 @@ let
     location / { proxy_pass http://${cfg.crawl4ai.listenAddress}:${toString cfg.crawl4ai.port}; ${proxyHeaders} proxy_read_timeout 1800s; }
   '';
   haystackLocations = ''
+    # Raw nginx upstream errors include the query-bearing request line. App
+    # telemetry is sanitized; proxy access logging is already disabled globally.
+    error_log /dev/null;
     root ${cfg.haystack.package}/share/haystack/web;
     location / { try_files $uri $uri/ =404; add_header Cache-Control no-cache; add_header Referrer-Policy no-referrer always; add_header X-Content-Type-Options nosniff always; }
     location /api/ { proxy_pass http://${cfg.haystack.listenAddress}:${toString cfg.haystack.port}; ${proxyHeaders} client_max_body_size 2m; proxy_intercept_errors on; error_page 502 504 =503 @unavailable; }
     location /mcp { proxy_pass http://${cfg.haystack.listenAddress}:${toString cfg.haystack.port}; ${proxyHeaders} proxy_read_timeout 300s; proxy_intercept_errors on; error_page 502 504 =503 @unavailable; }
-    location @unavailable { default_type application/json; add_header Cache-Control no-store always; return 503 '{"error":{"code":"unavailable","message":"service unavailable"}}'; }
+    location @unavailable { default_type application/json; add_header Cache-Control no-store always; return 503 '${proxyFailure}'; }
   '';
   manureLocations = ''
     # Suppress native request-line errors, which can contain capability URLs.

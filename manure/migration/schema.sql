@@ -1,6 +1,11 @@
 -- Canonical Manure PG schema. TEXT = exact UTF8 bytea, REAL = BE binary64
 -- bytea. *_value columns are query projections, never authoritative.
-CREATE SCHEMA IF NOT EXISTS manure;
+-- PostgreSQL checks DATABASE CREATE even for CREATE SCHEMA IF NOT EXISTS.
+-- Existing least-privilege deployments receive a preprovisioned namespace;
+-- fresh owned disposable/admin fixtures may create only this fixed namespace.
+DO $manure_namespace$ BEGIN
+ IF to_regnamespace('manure') IS NULL THEN CREATE SCHEMA manure; END IF;
+END $manure_namespace$;
 CREATE TABLE IF NOT EXISTS manure.artifacts (
  id bytea PRIMARY KEY, name bytea NOT NULL, kind bytea NOT NULL,
  visibility bytea NOT NULL, created_by_user bytea NOT NULL,

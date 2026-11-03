@@ -17,6 +17,11 @@ in stdenv.mkDerivation {
   dontConfigure = true;
   buildPhase = ''
     runHook preBuild
+    ${lib.optionalString (service == "manure") ''
+      # Both inputs belong to the service owner; never package a silently stale
+      # migration copy. This guard precedes assembly and native compilation.
+      cmp manure/migration/schema.sql manure/backend/src/main/resources/manure-schema.sql
+    ''}
     # Exact filtered input bytes BEFORE compilation creates target/hosted files.
     find . -type f -print0 | sort -z | xargs -0 sha256sum > ../compiled-inputs.sha256
     ${lib.optionalString (service == "manure") "python3 manure/scripts/artifact-source.py > ../compiled-runtime-inputs.sha256"}

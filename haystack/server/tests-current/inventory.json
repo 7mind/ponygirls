@@ -26,6 +26,7 @@
   "exact opted-in authority alone selects plain cookie, other authorities remain Secure",
   "mixed-authority live sessions select only the current cookie and reject cross-authority Origin",
   "allowed but mismatched Origin/Host cannot read or log in; absent opt-in cannot downgrade",
+  "configured fixture provision failures are bounded sanitized cleaned and never fall back to app CREATEDB",
   "production Main handles SIGTERM with clean resource drain and exit0",
   "controlled provider uses approved corpus only, durable worker publication and explicit outage without write coupling"
 ]

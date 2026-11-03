@@ -35,8 +35,11 @@ final class MemoryMetadata(root: RootLease) extends Metadata:
         Require(s.artifacts.contains(g.artifactId) && !s.content.contains(g.hash), "grant-invalid")
         s = s.copy(content=s.content.updated(g.hash,g))
       def deleteContent(hash: String): Unit = s = s.copy(content=s.content-hash)
-      def trimContent(id: String,max: Int): Unit =
-        val keep = s.content.values.filter(_.artifactId == id).toVector.sortBy(g => (-g.createdAt,g.hash)).take(max).map(_.hash).toSet
+      def trimContent(id: String,max: Int,newestHash: String): Unit =
+        Require(max > 0, "bad-envelope")
+        val keep = s.content.values.filter(g => g.artifactId == id && g.hash != newestHash).toVector
+          .sortWith((a,b) => if a.createdAt == b.createdAt then Exact.compare(a.hash,b.hash) > 0 else a.createdAt > b.createdAt)
+          .take(max-1).map(_.hash).toSet + newestHash
         s = s.copy(content=s.content.filter((_,g) => g.artifactId != id || keep(g.hash)))
       def revokeArtifact(id: String): Unit = s = s.copy(oneTime=s.oneTime.filterNot(_._2.artifactId == id),content=s.content.filterNot(_._2.artifactId == id))
       def revokeCredential(user: String,token: String): Unit =

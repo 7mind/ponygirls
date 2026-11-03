@@ -678,3 +678,48 @@ No fresh actual-target service execution is claimed in this worker environment.
 The actual-target MCP environment regression and all realserver/CLI-process,
 Chromium, PostgreSQL, native, importer/recovery acceptance still need the owned
 runner. This component receipt is not the full-service completion gate.
+
+
+## Credential source-preflight security correction (`b27444a7`)
+
+Parent-authorized correction to client configuration precedence: known nonempty
+source references count as configured before opening them. Both direct value and
+file reference now mean `ambiguous-credentials` regardless of invalid direct
+shape, missing/empty/unreadable file or FIFO contents. No credentials rotate and
+no wire schema changes. `client.check_secret_pair_ambiguity` is presence-only;
+`resolve_secret_pair` and `ManureClient` call it before credential validation/I/O.
+CLI preflights URL/token and relevant fetch password sources globally; MCP
+preflights URL/token and HTTP configuration before any credential-file read.
+Canonical codecs, exact direct values, empty-as-unset rules, single-file decoding,
+no-network behavior and CLI exit2 remain intact.
+
+Regression file `test_credential_preflight.py` adds8 methods/35 controlled cases.
+Every child has an explicit minimal environment (no ambient client/model/PG
+values), synthetic canonical credentials, owned temp references only, network
+entrypoints forbidden, and a2-second real subprocess deadline for no-writer FIFO
+probes. An audit hook asserts **zero configured-reference opens and zero network
+attempts**, not merely a sanitized error after performing I/O. Exact scenarios:
+- [test_common_pairs_reject_fifo_before_read](../tests/test_credential_preflight.py#L83)
+- [test_common_pairs_missing_file_and_invalid_direct_are_still_ambiguous](../tests/test_credential_preflight.py#L89)
+- [test_constructor_checks_presence_before_direct_token_validation](../tests/test_credential_preflight.py#L97)
+- [test_cli_token_and_url_pairs_fail_before_fifo_or_missing_file](../tests/test_credential_preflight.py#L104)
+- [test_mcp_token_and_url_pairs_fail_before_fifo_or_missing_file](../tests/test_credential_preflight.py#L113)
+- [test_all_pairs_are_preflighted_before_reading_another_pairs_file](../tests/test_credential_preflight.py#L122)
+- [test_cli_password_sources_preflight_before_token_file_read_or_validation](../tests/test_credential_preflight.py#L129)
+- [test_mcp_invalid_http_configuration_precedes_token_file_read](../tests/test_credential_preflight.py#L141)
+
+Fail-first test commit `b5a3999c` against pre-fix application source `9b198e3e`:
+8 methods,33 failing controlled cases, exit1 in28.417s; real bounded FIFO blocks
+and wrong malformed/missing-file precedence reproduced. The passing constructor
+valid-direct cases are not misreported as failures. Fix commit
+`b27444a7654323b33d70621fe05fff5ba0b7ae24` includes the strengthened open/network
+audits. At2026-11-03T01:18:22Z, a fresh `env -i` run with only pinned executable
+PATH, scratch HOME, locale, source PYTHONPATH and explicitly selected SDK1.32.1
+passed **153 methods,0 failures/errors/skips**, including all previous145 plus
+these8. No live client/model/PG environment was inherited. Evidence directory
+`/tmp/manure-credential-preflight.6uqNS2` preserves full fail-first and committed
+fixed logs, source/tool identities, and baseline/fixed input SHA256 manifests.
+No prior reports were discarded/filtered into a pass. This is client/config
+security evidence, not actual-target/native/PostgreSQL/browser acceptance.
+The current Python source inventory is now31 files/379 discovered methods; all
+353 original methods remain. TargetServer was not changed by this correction.

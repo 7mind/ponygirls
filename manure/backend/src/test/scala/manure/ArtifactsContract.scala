@@ -118,6 +118,20 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
     _ <- IO { f.clock.now = newer._2 }
     _ <- fails("password-required",f.artifacts.contentInfo(a.artifact.id,Some(newer._1),None,None))
   yield () }}
+  test("grant capacity keeps newly issued grant even when its hash sorts below timestamp-tied predecessor") { run { f =>
+    val tokens = Vector(0.toByte,1.toByte).map(b => java.util.Base64.getUrlEncoder.withoutPadding().encodeToString(Array.fill[Byte](32)(b))).sortBy(SecretCodec.sha256)
+    for
+      a <- uploaded(f,Visibility.External)
+      _ <- f.metadata.transaction { tx =>
+        val now = f.clock.now
+        tx.putContent(ContentGrant(SecretCodec.sha256(tokens(1)),a.id,now+100,now,None,None,None,a.externalPasswordHash))
+        tx.putContent(ContentGrant(SecretCodec.sha256(tokens(0)),a.id,now+100,now,None,None,None,a.externalPasswordHash))
+        tx.trimContent(a.id,1,SecretCodec.sha256(tokens(0)))
+      }
+      _ <- f.artifacts.contentInfo(a.id,Some(tokens(0)),None,None)
+      _ <- fails("password-required",f.artifacts.contentInfo(a.id,Some(tokens(1)),None,None))
+    yield ()
+  }}
   test("single-use handoff and token-bound content grant revoke at logout and credential change") { run { f => for
     a <- uploaded(f)
     handoff <- f.artifacts.createGrant(f.identity,a.id)
