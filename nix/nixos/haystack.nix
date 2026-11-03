@@ -105,7 +105,7 @@ in
           tokens = lib.mkOption {
             type = lib.types.attrsOf (lib.types.submodule {
               options.tokenHashFile = lib.mkOption {
-                type = lib.types.path;
+                type = lib.types.str;
                 description = "Runtime file with the token's SHA-256 hex digest (secret-manager path, never store material).";
               };
             });
@@ -122,7 +122,7 @@ in
         options = {
           userId = lib.mkOption { type = lib.types.str; description = "Agent user ID for this Unix account."; };
           tokenId = lib.mkOption { type = lib.types.str; description = "Token ID for this Unix account."; };
-          tokenFile = lib.mkOption { type = lib.types.path; description = "Runtime file with the raw bearer token."; };
+          tokenFile = lib.mkOption { type = lib.types.str; description = "Runtime file with the raw bearer token."; };
         };
       });
       default = { };
@@ -177,6 +177,8 @@ in
     }
     (lib.mkIf cfg.enable {
       assertions = [
+        { assertion = lib.all (p: lib.hasPrefix "/" p && !(lib.hasPrefix "/nix/store/" p)) ([ cfg.database.passwordFile ] ++ lib.concatMap (u: map (t: t.tokenHashFile) (builtins.attrValues u.tokens)) (builtins.attrValues cfg.users) ++ lib.optional (cfg.retrieval.embedding != null) cfg.retrieval.embedding.credentialFile); message = "smind.services.haystack: credentials must be absolute runtime paths, never source/store files."; }
+
         {
           assertion = cfg.listenAddress == "127.0.0.1" || cfg.listenAddress == "::1" || cfg.allowPublicListen;
           message = "smind.services.haystack: non-loopback listenAddress requires allowPublicListen.";

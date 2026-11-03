@@ -321,6 +321,7 @@
           tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
           tui-tmux = pkgs.callPackage ./nix/pkg/tui-tmux/default.nix { };
           haystack = self.lib.mkHaystackPackage { inherit pkgs; };
+          manure-clients = self.lib.mkManureClientPackage { inherit pkgs; };
           manure = self.lib.mkManurePackage { inherit pkgs; };
           chronicle-collector = pkgs.callPackage ./nix/pkg/chronicle/collector.nix { };
           chronicle-web = pkgs.callPackage ./nix/pkg/chronicle/web.nix { };
@@ -1096,6 +1097,7 @@
         homeManagerModules.service-postgres = import ./nix/hm/service-postgres.nix;
         nixosModules.service-postgres = import ./nix/nixos/service-postgres.nix;
         lib.mkHaystackPackage = { pkgs }: pkgs.callPackage ./nix/pkg/haystack/package.nix { squishLib = inputs.squish.lib; };
+        lib.mkManureClientPackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/client.nix { };
         lib.mkManurePackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/package.nix { squishLib = inputs.squish.lib; };
         lib.mkChroniclePackage = { pkgs }: pkgs.callPackage ./nix/pkg/chronicle/server.nix { squishLib = inputs.squish.lib; };
         nixosModules.chronicle = import ./nix/nixos/chronicle.nix { mkChroniclePackage = self.lib.mkChroniclePackage; };

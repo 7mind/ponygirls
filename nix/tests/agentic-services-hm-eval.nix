@@ -84,7 +84,7 @@ let
     assert lib.hasInfix ":8446" proxy == flags.manure;
     assert lib.hasInfix "--haystack-agent-file" setup == flags.haystack;
     assert lib.hasInfix "--manure-agent-file" setup == flags.manure;
-    assert lib.hasInfix "postgres-socket" setup == flags.haystack;
+    assert lib.hasInfix "backups" setup == flags.haystack;
     assert lib.hasInfix "redis-password"
       c.systemd.user.services.ivm-crawl4ai-redis.Service.ExecStart.text;
     true;
@@ -155,7 +155,7 @@ assert disabled.systemd.user.services == { };
 assert disabled.systemd.user.timers == { };
 assert disabled.lib == { };
 assert disabled.home.packages == [ ];
-assert builtins.attrNames units == builtins.filter (n: !(builtins.elem n [ "ivm-postgres" "ivm-haystack-database" ])) baseline.units;
+assert builtins.attrNames units == lib.sort builtins.lessThan ((builtins.filter (n: !(builtins.elem n [ "ivm-postgres" "ivm-haystack-database" ])) baseline.units) ++ [ "ivm-haystack-migrate" "ivm-manure-migrate" ]);
 assert builtins.attrNames cfg.systemd.user.timers == baseline.timers;
 assert builtins.all testCombo combos;
 assert allAssertions retired;
@@ -177,8 +177,10 @@ assert
     "agenix.service"
     "ivm-crawl4ai-redis.service"
   ];
-assert builtins.elem "ponygirls-database-haystack.service" units.ivm-haystack.Unit.After;
-assert builtins.elem "ponygirls-database-manure.service" units.ivm-manure.Unit.After;
+assert units.ivm-haystack.Unit.Requires == [ "ivm-haystack-migrate.service" ];
+assert builtins.elem "ponygirls-database-haystack.service" units.ivm-haystack-migrate.Unit.Requires;
+assert units.ivm-manure.Unit.Requires == [ "ivm-manure-migrate.service" ];
+assert builtins.elem "ponygirls-database-manure.service" units.ivm-manure-migrate.Unit.Requires;
 assert !(units ? ivm-postgres);
 assert units.ivm-services-setup.Service.UMask == "0077";
 assert units.ivm-crawl4ai.Service.NoNewPrivileges;

@@ -72,7 +72,7 @@ let
     Install.WantedBy = [ "default.target" ];
   };
   databaseUnits = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
-  serverDependencies = databaseUnits ++ cfg.serverDependencies;
+  serverDependencies = [ (unit "-migrate") ] ++ cfg.serverDependencies;
   runtimePath = path: lib.hasPrefix "/" path && path != builtins.storeDir && !(lib.hasPrefix "${builtins.storeDir}/" path);
 in {
   imports = [ ./service-postgres.nix ];
@@ -122,6 +122,11 @@ in {
       "${cfg.unitPrefix}-setup" = {
         Unit = { Description = "Prepare Chronicle credentials"; After = cfg.setupDependencies; Wants = cfg.setupDependencies; };
         Service = { Type = "oneshot"; ExecStart = setup; RemainAfterExit = true; UMask = "0077"; };
+        Install.WantedBy = [ "default.target" ];
+      };
+      "${cfg.unitPrefix}-migrate" = {
+        Unit = { Description = "Chronicle database-scoped migrations"; After = [ (unit "-setup") ] ++ databaseUnits; Wants = [ (unit "-setup") ]; Requires = databaseUnits; };
+        Service = { Type = "oneshot"; ExecStart = "${cfg.package}/bin/chronicle-server migrate ${serverConfig}"; RemainAfterExit = true; UMask = "0077"; TimeoutStartSec = 180; };
         Install.WantedBy = [ "default.target" ];
       };
       "${cfg.unitPrefix}" = (service "Chronicle session archive" serverDependencies "${cfg.package}/bin/chronicle-server serve ${serverConfig}") // {

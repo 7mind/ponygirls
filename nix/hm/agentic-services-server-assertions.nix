@@ -17,6 +17,9 @@ let
   };
 in
 [
+  (assertThat (!cfg.manure.enable || (runtimePath cfg.manure.dataDirectory && (cfg.manure.migrationReceiptDirectory == null || runtimePath cfg.manure.migrationReceiptDirectory))) "Manure payload/control roots must be explicit absolute runtime paths, independent of existing credentials.")
+  (assertThat (!cfg.manure.enable || runtimePath cfg.manure.database.passwordFile) "Manure database credentials must be runtime file references.")
+  (assertThat (!cfg.haystack.enable || runtimePath cfg.haystack.database.passwordFile) "Haystack database credentials must be runtime file references.")
   (assertThat pkgs.stdenv.hostPlatform.isLinux "user servers require Linux.")
   (assertThat (runtimePath cfg.stateDirectory) "stateDirectory must be an absolute runtime path outside the Nix store, without whitespace or config metacharacters.")
   (assertThat (runtimePath cfg.crawl4ai.tokenFile) "crawl4ai.tokenFile must be an absolute runtime path outside the Nix store.")

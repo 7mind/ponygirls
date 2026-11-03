@@ -378,7 +378,7 @@ pkgs.runCommandLocal "manure-nixos-eval-test"
   test -x "$launcherBin"
   grep -q 'CREDENTIALS_DIRECTORY' "$launcherBin"
   grep -q 'RUNTIME_DIRECTORY' "$launcherBin"
-  grep -q 'manure-server --config' "$launcherBin"
+  grep -q 'manure-server'  "$launcherBin"
   # The template path is baked into the launcher; extract and inspect it.
   tmpl=$(grep -o '/nix/store/[^ "]*manure-config.template.json' "$launcherBin" | head -n 1)
   test -n "$tmpl"

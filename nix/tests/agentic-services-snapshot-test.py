@@ -14,7 +14,7 @@ def normalize(text):
 baseline, current, haystack_auth, manure_config = (json.loads(Path(path).read_text()) for path in sys.argv[1:])
 for field in ("proxy", "crawl"):
     assert normalize(current[field]) == normalize(baseline[field]), f"legacy {field} behavior changed"
-assert current["units"] == [n for n in baseline["units"] if n not in ("ivm-postgres", "ivm-haystack-database")]
+assert current["units"] == sorted([n for n in baseline["units"] if n not in ("ivm-postgres", "ivm-haystack-database")] + ["ivm-haystack-migrate","ivm-manure-migrate"])
 assert current["timers"] == baseline["timers"]
 # Explicitly migrated connection/native asset fields; retain every other domain,
 # network and credential identity binding byte-for-byte.

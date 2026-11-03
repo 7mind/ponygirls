@@ -121,8 +121,9 @@ let
     umask 077
     ${pkgs.coreutils}/bin/mkdir -p ${shellState}/{credentials,nginx,crawl4ai/{home,cache,outputs}}
     ${lib.optionalString cfg.static.enable "${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg cfg.static.root}"}
+    ${lib.optionalString stores.manure.enable "${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg cfg.manure.dataDirectory}"}
     ${lib.optionalString stores.haystack.enable ''
-      ${pkgs.coreutils}/bin/mkdir -p ${shellState}/{postgres-socket,backups}
+      ${pkgs.coreutils}/bin/mkdir -p ${shellState}/{backups}
     ''}
     # nginx recreates its request-body/proxy temp dirs on start; drop any left
     # non-user-owned (e.g. by a root `nginx -t`, which chowns absolute *_temp_path
@@ -360,9 +361,14 @@ in
         };
     }
     // lib.optionalAttrs stores.haystack.enable {
+      "${cfg.unitPrefix}-haystack-migrate" = {
+        Unit = { Description = "Haystack database-scoped migrations"; After = setupDeps ++ lib.optional (cfg.haystack.database.readinessUnit != null) cfg.haystack.database.readinessUnit; Requires = lib.optional (cfg.haystack.database.readinessUnit != null) cfg.haystack.database.readinessUnit; Wants = setupDeps; };
+        Service = { Type = "oneshot"; ExecStart = "${cfg.haystack.package}/bin/haystack-server migrate ${haystackConfig}"; RemainAfterExit = true; UMask = "0077"; TimeoutStartSec = 180; };
+        Install.WantedBy = [ "default.target" ];
+      };
       "${cfg.unitPrefix}-haystack" =
-        unit "Agentic services native Haystack" (setupDeps ++ lib.optional (cfg.haystack.database.readinessUnit != null) cfg.haystack.database.readinessUnit)
-          "${cfg.haystack.package}/bin/haystack-server serve ${haystackConfig}";
+        (unit "Agentic services native Haystack" (setupDeps ++ [ "${cfg.unitPrefix}-haystack-migrate.service" ])
+          "${cfg.haystack.package}/bin/haystack-server serve ${haystackConfig}") // { Unit = { Description = "Agentic services native Haystack"; After = setupDeps ++ [ "${cfg.unitPrefix}-haystack-migrate.service" ]; Wants = setupDeps; Requires = [ "${cfg.unitPrefix}-haystack-migrate.service" ]; }; };
       "${cfg.unitPrefix}-haystack-backup" = {
         Unit = {
           Description = "Back up private Haystack";
@@ -385,9 +391,14 @@ in
       };
     }
     // lib.optionalAttrs stores.manure.enable {
+      "${cfg.unitPrefix}-manure-migrate" = {
+        Unit = { Description = "Manure database bootstrap under physical-root claims"; After = setupDeps ++ lib.optional (cfg.manure.database.readinessUnit != null) cfg.manure.database.readinessUnit; Requires = lib.optional (cfg.manure.database.readinessUnit != null) cfg.manure.database.readinessUnit; Wants = setupDeps; };
+        Service = { Type = "oneshot"; ExecStart = "${cfg.manure.package}/bin/manure-server migrate ${manureConfig}"; RemainAfterExit = true; UMask = "0077"; TimeoutStartSec = 180; };
+        Install.WantedBy = [ "default.target" ];
+      };
       "${cfg.unitPrefix}-manure" =
-        unit "Agentic services native Manure (low-security path hosting)" (setupDeps ++ lib.optional (cfg.manure.database.readinessUnit != null) cfg.manure.database.readinessUnit)
-          "${cfg.manure.package}/bin/manure-server --config ${manureConfig}";
+        (unit "Agentic services native Manure (low-security path hosting)" (setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ])
+          "${cfg.manure.package}/bin/manure-server --config ${manureConfig}") // { Unit = { Description = "Agentic services native Manure"; After = setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ]; Requires = [ "${cfg.unitPrefix}-manure-migrate.service" ]; Wants = setupDeps; }; };
     };
     systemd.user.timers = lib.optionalAttrs stores.haystack.enable {
       "${cfg.unitPrefix}-haystack-backup" = {

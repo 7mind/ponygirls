@@ -10,7 +10,7 @@ let
     endpoint = lib.mkOption { type = lib.types.str; description = "Full OpenAI-compatible operation URL: /v1/chat/completions for annotation, /v1/embeddings for embedding."; };
     model = lib.mkOption { type = lib.types.str; description = "Served model name."; };
     revision = lib.mkOption { type = lib.types.str; description = "Operator-pinned deployment/model revision; changes require explicit maintenance reindex."; };
-    credentialFile = lib.mkOption { type = lib.types.path; description = "Runtime API credential file; an explicitly empty file means no Authorization header."; };
+    credentialFile = lib.mkOption { type = lib.types.str; description = "Runtime API credential file; an explicitly empty file means no Authorization header."; };
     timeoutSeconds = lib.mkOption { type = lib.types.ints.positive; default = 60; };
     maxResponseBytes = lib.mkOption { type = lib.types.ints.positive; default = 4194304; };
   };
@@ -18,7 +18,7 @@ let
     inherit (endpoint) endpoint model revision timeoutSeconds maxResponseBytes;
     credentialFile = "${credentialDir}/${name}-key";
   };
-  serverConfig = pkgs.writeText "chronicle-server.json" (builtins.toJSON {
+  serverSettings = {
     listenHost = cfg.listenAddress;
     listenPort = cfg.port;
     allowedOrigin = if cfg.publicUrl == null then "configuration-required" else cfg.publicUrl;
@@ -43,7 +43,9 @@ let
     embedding = endpointJson "embedding" cfg.embedding // {
       inherit (cfg.embedding) dimensions sendDimensions queryPrefix documentPrefix;
     };
-  });
+  };
+  serverConfig = pkgs.writeText "chronicle-server.json" (builtins.toJSON serverSettings);
+  migrationConfig = pkgs.writeText "chronicle-migrate.json" (builtins.replaceStrings [ credentialDir ] [ "/run/credentials/chronicle-migrate.service" ] (builtins.toJSON serverSettings));
   runtimeFiles = [ cfg.database.passwordFile cfg.annotation.credentialFile cfg.embedding.credentialFile ]
     ++ map (u: u.passwordHashFile) (builtins.attrValues cfg.users)
     ++ map (t: t.tokenFile) cfg.staticTokens;
@@ -66,7 +68,7 @@ in
       type = lib.types.attrsOf (lib.types.submodule {
         options = {
           login = lib.mkOption { type = lib.types.str; description = "Unique login; attribute name is the stable user ID."; };
-          passwordHashFile = lib.mkOption { type = lib.types.path; description = "Runtime PBKDF2 password hash file produced by chronicle-server password-hash."; };
+          passwordHashFile = lib.mkOption { type = lib.types.str; description = "Runtime PBKDF2 password hash file produced by chronicle-server password-hash."; };
           enabled = lib.mkOption { type = lib.types.bool; default = true; };
         };
       });
@@ -81,7 +83,7 @@ in
           userId = lib.mkOption { type = lib.types.str; description = "Existing configured owner ID."; };
           name = lib.mkOption { type = lib.types.str; };
           scopes = lib.mkOption { type = lib.types.listOf (lib.types.enum [ "Ingest" "Read" "Raw" ]); };
-          tokenFile = lib.mkOption { type = lib.types.path; description = "Private runtime file containing a random strong bearer token, never a Nix store file."; };
+          tokenFile = lib.mkOption { type = lib.types.str; description = "Private runtime file containing a random strong bearer token, never a Nix store file."; };
         };
       });
     };
@@ -110,7 +112,7 @@ in
       ssdTuning = lib.mkEnableOption "SSD-oriented planner and I/O concurrency defaults for the managed PostgreSQL cluster (cluster-wide, not a storage benchmark)" // { default = false; };
       name = lib.mkOption { type = lib.types.str; default = "chronicle"; };
       user = lib.mkOption { type = lib.types.str; default = "chronicle"; };
-      passwordFile = lib.mkOption { type = lib.types.path; description = "Runtime database password file; never embed a password in jdbcUrl."; };
+      passwordFile = lib.mkOption { type = lib.types.str; description = "Runtime database password file; never embed a password in jdbcUrl."; };
       jdbcUrl = lib.mkOption { type = lib.types.str; default = ""; description = "External JDBC URL when manageLocal=false; provision the vector extension there."; };
     };
     limits = {
@@ -137,17 +139,29 @@ in
         { assertion = builtins.length (map (t: lib.toLower t.id) cfg.staticTokens) == builtins.length (lib.unique (map (t: lib.toLower t.id) cfg.staticTokens)); message = "Chronicle: static token IDs must be distinct."; }
         { assertion = lib.all (t: builtins.hasAttr t.userId cfg.users && t.name != "" && builtins.stringLength t.name <= 128 && t.scopes != [ ] && builtins.length t.scopes == builtins.length (lib.unique t.scopes) && (!(builtins.elem "Raw" t.scopes) || builtins.elem "Read" t.scopes)) cfg.staticTokens; message = "Chronicle: static tokens require configured owners, bounded names and nonempty distinct valid scopes (Raw requires Read)."; }
         { assertion = builtins.length loginList == builtins.length (lib.unique loginList); message = "Chronicle: logins must be unique."; }
-        { assertion = lib.all (p: !(lib.hasPrefix builtins.storeDir (toString p))) runtimeFiles; message = "Chronicle: all credential files must be runtime paths outside the Nix store."; }
+        { assertion = lib.all (p: lib.hasPrefix "/" p && !(lib.hasPrefix builtins.storeDir p)) runtimeFiles; message = "Chronicle: all credential files must be runtime paths outside the Nix store."; }
         { assertion = !cfg.database.manageLocal; message = "Chronicle: implicit manageLocal has been retired. Migrate logically into the explicit shared servicePostgres provider and supply its connection fields/readinessUnit."; }
         { assertion = cfg.database.manageLocal || cfg.database.jdbcUrl != ""; message = "Chronicle: external database requires jdbcUrl and a preinstalled vector extension."; }
       ];
       users.groups.chronicle = { };
       users.users.chronicle = { isSystemUser = true; group = "chronicle"; };
+      systemd.services.chronicle-migrate = {
+        description = "Chronicle database-scoped migrations without HTTP/models";
+        wantedBy = [ "multi-user.target" ];
+        after = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+        requires = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+        serviceConfig = {
+          Type = "oneshot"; User = "chronicle"; Group = "chronicle"; RemainAfterExit = true;
+          ExecStart = "${cfg.package}/bin/chronicle-server migrate ${migrationConfig}";
+          LoadCredential = config.systemd.services.chronicle.serviceConfig.LoadCredential;
+          UMask = "0077"; TimeoutStartSec = 180;
+        };
+      };
       systemd.services.chronicle = {
         description = "Chronicle agent session archive and search";
         wantedBy = [ "multi-user.target" ];
-        after = [ "network-online.target" ] ++ lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
-        requires = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+        after = [ "network-online.target" "chronicle-migrate.service" ];
+        requires = [ "chronicle-migrate.service" ];
         serviceConfig = {
           User = "chronicle";
           Group = "chronicle";

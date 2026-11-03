@@ -184,7 +184,7 @@ let
         os.chmod(out, 0o600)
         json.dump(config, fh)
     PYEOF
-    exec ${cfg.package}/bin/manure-server --config "$out"
+    exec ${cfg.package}/bin/manure-server "''${1:---config}" "$out"
   '';
 
   # Allowlisted access-log format: addresses, timing, and the query-less
@@ -508,11 +508,24 @@ in
       "d ${cfg.dataDir} 0700 manure manure -"
     ];
 
+    systemd.services.manure-migrate = {
+      description = "Manure schema bootstrap under physical-root claims";
+      wantedBy = [ "multi-user.target" ];
+      after = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+      requires = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+      serviceConfig = {
+        Type = "oneshot"; User = "manure"; Group = "manure"; RemainAfterExit = true;
+        RuntimeDirectory = "manure-migrate"; RuntimeDirectoryMode = "0700";
+        ExecStart = "${launcher}/bin/manure-launcher migrate";
+        LoadCredential = config.systemd.services.manure.serviceConfig.LoadCredential;
+        UMask = "0077"; TimeoutStartSec = 180;
+      };
+    };
     systemd.services.manure = {
       description = "manure file & directory hosting service";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ] ++ lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
-      requires = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+      after = [ "network.target" "manure-migrate.service" ];
+      requires = [ "manure-migrate.service" ];
       serviceConfig = {
         ExecStart = "${launcher}/bin/manure-launcher";
         User = "manure";
