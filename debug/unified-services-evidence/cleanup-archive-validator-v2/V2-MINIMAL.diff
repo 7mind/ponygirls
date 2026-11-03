@@ -1,0 +1,47 @@
+--- v1/future-cleanup.py
++++ v2/future-cleanup.py
+@@ -96,7 +96,7 @@
+  p=PurePosixPath(name);need('\x00' not in name and not p.is_absolute() and '..' not in p.parts,'unsafe archive path');return '/'.join(x for x in p.parts if x!='.')
+ def archive_check(afd,case,live_marker):
+  # Archive data are only streamed opaquely; extract ONLY top owner-marker metadata.
+- entries={};links=[];archmarker=None;deadline=time.monotonic()+180
++ entries={};regular=set();links={};archmarker=None;deadline=time.monotonic()+180
+  with os.fdopen(os.dup(afd),'rb') as f:
+   f.seek(0)
+   with tarfile.open(fileobj=f,mode='r|gz') as tar:
+@@ -104,10 +104,11 @@
+     need(time.monotonic()<deadline and len(entries)<50000,'archive scan bound exceeded')
+     name=member_name(m.name);need(name not in entries,'duplicate archive entry')
+     if m.isdir():typ='dir'
+-    elif m.isfile() or m.islnk():typ='file'
++    elif m.isfile():typ='file';regular.add(name)
++    elif m.islnk():typ='file'
+     elif m.issym():typ='symlink'
+     else:raise RuntimeError('unsupported archive node; refuse')
+-    if m.islnk():links.append(member_name(m.linkname))
++    if m.islnk():links[name]=member_name(m.linkname)
+     need(m.uid==1001,'archive foreign owner; refuse');entries[name]=typ
+     if name=='owned-marker.json':
+      need(m.isfile() and m.size<=4096 and m.mode&0o7777==0o600,'unsafe archived owner marker')
+@@ -116,7 +117,20 @@
+  for name in entries:
+   parts=PurePosixPath(name).parts
+   for i in range(1,len(parts)):need(entries.get('/'.join(parts[:i]))=='dir','archive parent not a directory')
+- for target in links:need(entries.get(target)=='file','archive hardlink target not a preserved in-root regular file')
++ # Resolve each hardlink to an ACTUAL regular payload, not another link's
++ # flattened return type. Iterative path caching visits each edge at most once
++ # successfully, accepts forward/chained links, and bounds failed paths too.
++ resolved=set(regular)
++ for name in links:
++  need(time.monotonic()<deadline,'archive scan bound exceeded')
++  if name in resolved:continue
++  path=[];visiting=set();target=name
++  while target not in resolved:
++   need(time.monotonic()<deadline and len(path)<50000,'archive scan bound exceeded')
++   need(target in links,'archive hardlink target not a preserved in-root regular file')
++   need(target not in visiting,'archive hardlink cycle/self-reference without regular payload')
++   visiting.add(target);path.append(target);target=links[target]
++  resolved.update(path)
+  need(archmarker==live_marker,'archived/current ORIGINAL creation marker mismatch')
+  return entries
+ 
