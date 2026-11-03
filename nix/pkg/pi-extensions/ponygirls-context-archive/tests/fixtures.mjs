@@ -1,3 +1,13 @@
+import { DEFAULT_PREFERENCES, validatePreferences } from "../src/preferences.ts";
+
+export class MemoryPreferences {
+  path = "memory:context-archive";
+  defaults = { ...DEFAULT_PREFERENCES };
+  failure = null;
+  read() { if (this.failure !== null) throw new Error(this.failure); return structuredClone(this.defaults); }
+  write(defaults) { if (this.failure !== null) throw new Error(this.failure); this.defaults = validatePreferences(defaults); }
+}
+
 export const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 export function assistant(content, overrides = {}) {
   return { role: "assistant", content, api: "openai-completions", provider: "fixture", model: "fixture", usage, stopReason: content.some((p) => p.type === "toolCall") ? "toolUse" : "stop", timestamp: 1, ...overrides };

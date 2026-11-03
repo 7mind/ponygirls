@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import * as sdk from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { ARCHIVE_TYPE, RECALL_TOOL, recallArchive } from "../src/archive.ts";
+import { SESSION_SETTING_TYPE, sessionOverride } from "../src/session-settings.ts";
 import { productionHistory, usage } from "./fixtures.mjs";
 
 const extensionPath = resolve(import.meta.dirname, "../index.ts");
@@ -88,7 +89,8 @@ test("real Pi: default off -> archive -> bounded exact tool recovery -> immediat
   await f.session.reload();
   f.replies.push("Reload retained off"); await f.session.prompt("Check after reload");
   assert.match(JSON.stringify(f.contexts[5]), /Historical invocation/);
-  assert.equal(JSON.parse(readFileSync(join(f.dir, "context-archive.json"), "utf8")).enabled, false);
+  assert.equal(existsSync(join(f.dir, "context-archive.json")), false, "session controls never create a global defaults file");
+  assert.equal(sessionOverride(f.manager.getEntries(), f.manager.getSessionId()), false);
   assert.deepEqual(f.errors, []);
 });
 
@@ -112,6 +114,47 @@ test("real Pi: cached provider usage triggers archival and is invalidated after 
   assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 2);
   assert.ok(f.session.getContextUsage().tokens < 700000);
   assert.equal(f.contexts.length, 2, "archiving never starts an extra request");
+  assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: session override persists through reload/resume; new forks inherit global default", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, 80000);
+  await f.session.prompt("/context-archive default on");
+  await f.session.prompt("/context-archive off");
+  assert.equal(f.contexts.length, 0, "configuration never starts inference");
+  assert.equal(JSON.parse(readFileSync(join(f.dir, "context-archive.json"), "utf8")).enabled, true);
+  await f.session.reload();
+  assert.ok(!f.session.getActiveToolNames().includes(RECALL_TOOL));
+  const resumed = sdk.SessionManager.open(f.manager.getSessionFile());
+  assert.equal(sessionOverride(resumed.getEntries(), resumed.getSessionId()), false);
+  assert.ok(resumed.getEntries().some((e) => e.type === "custom" && e.customType === SESSION_SETTING_TYPE));
+  const forked = sdk.SessionManager.forkFrom(f.manager.getSessionFile(), join(f.dir, "child"), f.dir);
+  assert.notEqual(forked.getSessionId(), resumed.getSessionId());
+  assert.equal(sessionOverride(forked.getEntries(), forked.getSessionId()), null);
+  const branchFile = resumed.createBranchedSession(resumed.getLeafId());
+  const branched = sdk.SessionManager.open(branchFile);
+  assert.notEqual(branched.getSessionId(), f.manager.getSessionId());
+  assert.equal(sessionOverride(branched.getEntries(), branched.getSessionId()), null);
+  f.replies.push("Disabled for this session"); await f.session.prompt("Continue without archival");
+  assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 0);
+  await f.session.prompt("/context-archive inherit");
+  assert.ok(f.session.getActiveToolNames().includes(RECALL_TOOL));
+  f.replies.push("Inherited default enables archival"); await f.session.prompt("Continue using the default");
+  assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 2);
+  assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: configured trigger suppresses then permits archival at completed boundaries", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, 80000);
+  await f.session.prompt("/context-archive on");
+  await f.session.prompt("/context-archive thresholds 100 90");
+  f.replies.push("Below configured trigger"); await f.session.prompt("Continue");
+  assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 0);
+  await f.session.prompt("/context-archive thresholds 60 40");
+  f.replies.push("Above configured trigger"); await f.session.prompt("Continue again");
+  assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 2);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.dir, "context-archive.json"), "utf8")), { version: 2, enabled: false, highWatermark: 0.6, lowWatermark: 0.4 });
+  assert.equal(f.contexts.length, 2);
   assert.deepEqual(f.errors, []);
 });
 

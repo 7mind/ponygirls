@@ -5,18 +5,54 @@
 
 ## Controls
 
-- `/context-archive on` — persist enablement, show the **CTX archive** editor-border
-  badge, and enable automatic selection at completed-turn boundaries.
-- `/context-archive off` — persist disablement, remove the badge, stop new selection.
-- `/context-archive status` — show policy status, branch archive count, Pi's current
-  context token count/capacity, numeric archive trigger, last boundary result and preference path.
+- `/context-archive on` / `off` — persist an override for **this session only**.
+  ON shows the **CTX archive** badge and enables selection at completed-turn boundaries;
+  OFF removes the badge and stops new selection.
+- `/context-archive inherit` — clear this session's override and follow the global default.
+- `/context-archive default on` / `default off` — change the global enablement default.
+  Existing explicit session overrides still win.
+- `/context-archive thresholds HIGH LOW` — set the **global** trigger/release percentages,
+  e.g. `thresholds 80 55`. Decimal percentages are accepted; require
+  `0 <= LOW < HIGH <= 100`. The initial pair is **70 / 50**.
+- `/context-archive status` — show effective ON/OFF and its source, global default,
+  branch archive count, Pi context tokens/capacity, both watermarks, last boundary
+  result and global defaults path.
 
-The agent-global preference is `<getAgentDir()>/context-archive.json`, normally
-`~/.pi/agent/context-archive.json`: `{"version":1,"enabled":false}`. Missing means
-OFF. Commands atomically replace this independent writable file, not Pi's possibly
-Nix-managed `settings.json`. Other processes observe changes on their next request
-or boundary. Invalid/unreadable preferences stop selection visibly (`CTX !`), not
-silently as a successful OFF. An explicit on/off command can repair preferences.
+Session overrides are versioned custom entries in the append-only session JSONL,
+not model-facing messages. They survive reload/resume and apply across `/tree`
+branches: the latest setting for this session ID wins, even on another branch.
+New sessions and native forks/clones have different IDs and inherit the global
+value, ignoring copied parent overrides. In-memory sessions retain settings only
+for their lifetime. Pi does not create a session file before any user/assistant
+message exists, so a toggle in an entirely empty session is not durable across
+process exit until conversation begins.
+
+The global defaults file is `<getAgentDir()>/context-archive.json`, normally
+`~/.pi/agent/context-archive.json`:
+
+```json
+{"version":2,"enabled":false,"highWatermark":0.7,"lowWatermark":0.5}
+```
+
+Missing means OFF with 70/50 watermarks. Existing version-1 files containing only
+`enabled` are read as global defaults with 70/50; reads and session commands never
+rewrite them. Explicit global changes write version 2 atomically, independently
+of Pi's possibly Nix-managed `settings.json`. Global commands preserve the other
+values; concurrent whole-file updates are last-writer-wins, not merged transactions.
+Other sessions observe defaults on their next request/boundary. Only inheriting
+sessions follow global ON/OFF; thresholds apply to every session, including those
+with an enablement override. Changes cannot alter an already-sent request and
+never start inference themselves.
+
+Invalid/unreadable defaults or active session settings stop selection visibly
+(`CTX !`), not silently as a successful OFF. A later session on/off/inherit command
+can replace an invalid session setting. It does **not** repair a corrupt global
+file: inspect it and replace it with a valid complete version-2 object above,
+choosing the intended enablement and thresholds. Global field-update commands
+also refuse invalid existing defaults rather than silently resetting other values.
+After deploying this version, reload existing Pi processes before using these
+controls: older extensions still interpret on/off globally and write version 1,
+which would reset configurable watermarks to the legacy defaults.
 
 The extension loads through the ponygirls Pi package/Home Manager module. Merely
 loading it does not enable it. While OFF with no archives, its recovery tool is
@@ -35,9 +71,9 @@ sessions retain evidence only for their normal process lifetime.
 
 Selection uses Pi's canonical, branch-local, compaction-aware projection:
 
-- Trigger at **70%** of model capacity, release toward **50%**, at least
-  **4096 estimated tokens** per batch, at most **16 targets**. These are conservative
-  initial policy constants, not empirically calibrated thresholds. Pressure uses
+- Trigger/release use the configured global percentages of model capacity
+  (**70% / 50%** initially), at least **4096 estimated tokens** per batch, at most
+  **16 targets**. These initial defaults are not empirically calibrated. Pressure uses
   Pi's public `getContextUsage`: valid provider accounting (including cached tokens)
   plus estimated trailing messages, with the resolved model's capacity. Pi invalidates
   old accounting after context edits/compaction; unknown usage falls back to the
@@ -92,7 +128,8 @@ without the recovery tool. Keep the original session files with their manifests.
 
 Missing/changed/malformed archive evidence aborts the affected operation visibly
 before sending unverifiable stubs; it is not replaced by an invented summary or a
-fresh file read. On/off repairs **preferences only**, not corrupt session evidence.
+fresh file read. Session on/off/inherit changes **settings only**, not corrupt
+archive evidence.
 For session corruption, retain the file, investigate, or navigate to an intact
 branch; do not hand-delete manifests/edits as an automatic recovery policy.
 
@@ -106,9 +143,13 @@ preference/controller tests run against both a manual in-memory port and the rea
 filesystem. Real SDK tests exercise the loader, native boundaries/JSONL, provider
 context, recovery tool loop, disable/reload, abort and native compaction. A scripted
 provider validates integration, not semantic task preservation or remote provider
-serialization. The deterministic suite has 47 checks, including six real SDK
-tests. Regression cases cover provider/character-estimate disagreement, cache accounting,
-unknown and invalidated usage, pending boundary drafts, and numeric diagnostics. Real-PTY controls were also checked in fullscreen and regular modes.
+serialization. The deterministic suite has 67 checks, including eight real SDK
+tests. Cases cover provider/character-estimate disagreement, cache accounting,
+unknown and invalidated usage, pending boundary drafts, numeric diagnostics,
+layered defaults, threshold validation/effects, legacy migration, session isolation,
+reload/resume and fork identity. Earlier badge/on-off controls were checked in a
+real PTY in fullscreen and regular modes; the expanded commands are covered by
+controller and real-SDK tests, not a new live-provider or PTY acceptance claim.
 
 A small paired live-provider pilot exercised synthetic repairs and exact recovery;
 it does not establish production non-inferiority. Provider/account-specific
