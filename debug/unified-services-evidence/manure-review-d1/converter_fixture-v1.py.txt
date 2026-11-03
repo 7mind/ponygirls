@@ -1,0 +1,56 @@
+"""Owned synthetic converter fixture. Invokes actual archivedd1 converter unchanged."""
+import json, os, sys
+from pathlib import Path
+from urllib.parse import urlsplit
+from manure.storage import ArtifactStore
+from migration import offline as M
+
+mode, root_arg, params_arg, pg_home = sys.argv[1:]
+root=Path(root_arg); params=json.loads(Path(params_arg).read_text())
+u=urlsplit(params['jdbc'].removeprefix('jdbc:'))
+# Explicit disposable libpq service/passfile. No ambient auth or private references.
+password=Path(params['adminPasswordFile']).read_text().rstrip('\n')
+passfile=root/'owned.pgpass'; passfile.write_text(f'{u.hostname}:{u.port}:{u.path[1:]}:{params["adminUser"]}:{password}\n'); passfile.chmod(0o600)
+service=root/'owned.pg_service.conf'
+service.write_text(f'[review]\nhost={u.hostname}\nport={u.port}\ndbname={u.path[1:]}\nuser={params["adminUser"]}\npassfile={passfile}\nconnect_timeout=5\n'); service.chmod(0o600)
+os.environ['PGSERVICEFILE']=str(service)
+pg=M.Psql('review', str(Path(pg_home)/'bin'/'psql'))
+control=root/'converted'; bundle=root/'bundle'
+if mode=='prepare':
+    source=root/'sqlite-source'
+    data=b'good'
+    store=ArtifactStore(str(source),now=lambda:1700000000.125,chunk_bytes=params['chunkBytes'])
+    try:
+        item=store.init_artifact(params['owner'],'primary','controlled source','file','public',[{'path':'file.txt','kind':'file','size':len(data),'sha256':M.digest(data)}],None)
+        aid=item['id']
+        store.put_chunk(params['owner'],aid,'file.txt',0,data,M.digest(data))
+        store.publish(params['owner'],aid)
+    finally: store.close()
+    effective={'api_origin':'http://127.0.0.1:47329','content_mode':'path','content_suffix':'','chunk_bytes':params['chunkBytes'],'allowed_api_origins':[],'users':[]}
+    config=root/'effective-legacy.json'; config.write_bytes(M.canonical(effective))
+    identity,_=M.snapshot(source,bundle,config,quiesced=True)
+    M.prepare_destination(control,pg,disposable=True)
+    M.import_bundle(bundle,control,pg,identity)
+    M.verify_destination(bundle,control,pg,identity)
+    role=params['user']
+    assert role.startswith('manure_runtime_') and all(c in '0123456789abcdef' for c in role.removeprefix('manure_runtime_'))
+    pg.run('GRANT USAGE ON SCHEMA manure,manure_offline TO '+role+'; GRANT SELECT ON manure_offline.destination TO '+role+'; GRANT ALL ON ALL TABLES IN SCHEMA manure TO '+role+';')
+    fixture={'artifactId':aid,'source':identity,'destination':json.loads((control/'OWNER.json').read_text())['id']}
+    (root/'fixture.json').write_bytes(M.canonical(fixture))
+    # Include actual converter-generated proof shapes/bindings for later audit.
+    copied={name:json.loads((control/name).read_text()) for name in ['OWNER.json','COPY.json','PAYLOAD.json','COMPLETE']}
+    (root/'generated-proof-audit.json').write_bytes(M.canonical(copied))
+    print(json.dumps({'prepared':True,'artifactId':aid,'payloadProof':True,'completeBindsPayloadHash':copied['COMPLETE'].get('payloadManifestSha256')==M.digest((control/'PAYLOAD.json').read_bytes())}))
+else:
+    fixture=json.loads((root/'fixture.json').read_text())
+    if mode=='mark':
+        M.mark_writable(control,pg,fixture['source'])
+        print(json.dumps({'markedWritable':True,'writesStarted':pg.run('SELECT writes_started FROM manure_offline.destination')=='t'}))
+    elif mode=='mark-expect-refusal':
+        try:
+            M.mark_writable(control,pg,fixture['source'])
+            refused=False
+        except M.Refused:
+            refused=True
+        print(json.dumps({'refused':refused,'writesStarted':pg.run('SELECT writes_started FROM manure_offline.destination')=='t'}))
+    else: raise AssertionError('unknown controlled mode')

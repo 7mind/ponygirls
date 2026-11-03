@@ -1,0 +1,86 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/nix/store/v3b2cypq1ix4553s8mw745d8g9m2rgc9-sbt-launch-1.13.1.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by com.sun.jna.Native in an unnamed module (file:/home/pavel/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.13.0/jna-5.19.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[0m[[0m[0minfo[0m] [0m[0mwelcome to sbt 1.13.0 (GraalVM Community Java 25.0.4.1.1)[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project wt-ponygirls-retrieval-shared-build from plugins.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mloading project definition from /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/project[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project root from build.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mresolving key references (12050 settings) ...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining retrievalCore / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by retrievalCore / Compile / bspBuildTargetSourcesItem, retrievalCore / Compile / sourceDirectories, retrievalCore / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining retrievalPostgres / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by retrievalPostgres / Compile / bspBuildTargetSourcesItem, retrievalPostgres / Compile / sourceDirectories, retrievalPostgres / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining modelHttp / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by modelHttp / Compile / bspBuildTargetSourcesItem, modelHttp / Compile / sourceDirectories, modelHttp / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining baboonRuntime / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by baboonRuntime / Compile / bspBuildTargetSourcesItem, baboonRuntime / Compile / sourceDirectories, baboonRuntime / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining serviceRuntime / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by serviceRuntime / Compile / bspBuildTargetSourcesItem, serviceRuntime / Compile / sourceDirectories, serviceRuntime / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureContracts / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureContracts / Compile / bspBuildTargetSourcesItem, manureContracts / Compile / sourceDirectories, manureContracts / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureStorage / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureStorage / Compile / bspBuildTargetSourcesItem, manureStorage / Compile / sourceDirectories, manureStorage / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureServer / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureServer / Compile / bspBuildTargetSourcesItem, manureServer / Compile / sourceDirectories, manureServer / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureServer / Compile / unmanagedResourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureServer / Compile / resourceDirectories, manureServer / Compile / unmanagedResources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureServer / Test / sources[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureServer / Test / compile / compileOptions, manureServer / Test / doc, manureServer / Test / packageSrc / mappings[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 1 Scala source to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/manure/backend/target/scala-3.9.0/test-classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/home/pavel/.cache/coursier/v1/https/repo.maven.apache.org/maven2/org/scala-lang/scala-library/3.9.0/scala-library-3.9.0.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+REVIEW_FIFO completedWithin2s=true output=READ_STARTED
+READ_REJECTED
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by manure.storage.PosixNative in an unnamed module (file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/manure/server/target/scala-3.9.0/classes/)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+REVIEW_FD dbFailure=true rootCloseError=Some(OpenRootLeases)
+REVIEW_COMMIT_FD callbackReturned=true commitFailureState=Some(23503) rootCloseError=Some(OpenRootLeases)
+REVIEW_GRANT newlyInsertedAccepted=true olderAccepted=false sameTimestamp=true bound=1
+REVIEW_HANDOFF startupAccepted=false servedExpectedHash=None
+Test run [36mmanure.ReviewCriticalSuite[0m started
+[32mmanure.ReviewCriticalSuite[0m: finished [90m2.721s[0m
+Test run [36mmanure.ReviewCriticalSuite[0m finished: 0 failed, 0 ignored, 5 total [90m2.734s[0m
+REVIEW_D1_CONVERTER_POSITIVE sourceBytes=good before=(false,false) after=(true,true)
+REVIEW_D1_PREMARK replace=false converterRefused=Some(true) domainRefused=true flags=(false,false)
+REVIEW_D1_FIRST_ADOPTION replace=false startupAccepted=false servedExpectedHash=None flags=(false,true)
+REVIEW_D1_PREMARK replace=true converterRefused=Some(true) domainRefused=true flags=(false,false)
+REVIEW_D1_FIRST_ADOPTION replace=true startupAccepted=false servedExpectedHash=None flags=(false,true)
+Test run [36mmanure.ConverterAdoptionSuite[0m started
+[32mmanure.ConverterAdoptionSuite[0m: finished [90m4.475s[0m
+Test run [36mmanure.ConverterAdoptionSuite[0m finished: 0 failed, 0 ignored, 5 total [90m4.475s[0m
+[0m[[0m[0minfo[0m] [0m[0mPassed: Total 10, Failed 0, Errors 0, Passed 10[0m
+[0m[[0m[32msuccess[0m] [0m[0mTotal time: 14 s, completed Nov 3, 2026, 9:53:09 AM[0m
+[0J
