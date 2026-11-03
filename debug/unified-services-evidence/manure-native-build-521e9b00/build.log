@@ -1,0 +1,149 @@
+this derivation will be built:
+  /nix/store/fkd2cxxyhf2hll493bcdjfh0v2rq4mmd-manure-native-artifact-0.1.0.drv
+building '/nix/store/fkd2cxxyhf2hll493bcdjfh0v2rq4mmd-manure-native-artifact-0.1.0.drv'...
+manure-native-artifact> Running phase: unpackPhase
+manure-native-artifact> unpacking source archive /nix/store/f2mqngrn25igi17z0hx0dgg5mzdq4hb1-manure-native-source
+manure-native-artifact> source root is manure-native-source
+manure-native-artifact> Running phase: patchPhase
+manure-native-artifact> Running phase: updateAutotoolsGnuConfigScriptsPhase
+manure-native-artifact> Running phase: buildPhase
+manure-native-artifact> Picked up JAVA_TOOL_OPTIONS:  -Duser.home="/build/tmp.yibrq4uPqD"
+manure-native-artifact> WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+manure-native-artifact> WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/nix/store/v3b2cypq1ix4553s8mw745d8g9m2rgc9-sbt-launch-1.13.1.jar)
+manure-native-artifact> WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+manure-native-artifact> WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+manure-native-artifact> [info] [launcher] getting org.scala-sbt sbt 1.13.0  (this may take some time)...
+manure-native-artifact> [info] [launcher] getting Scala 2.12.21 (for sbt)...
+manure-native-artifact> WARNING: A restricted method in java.lang.System has been called
+manure-native-artifact> WARNING: java.lang.System::load has been called by com.sun.jna.Native in an unnamed module (file:/build/tmp.yibrq4uPqD/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.13.0/jna-5.19.0.jar)
+manure-native-artifact> WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+manure-native-artifact> WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+manure-native-artifact> 
+manure-native-artifact> [info] welcome to sbt 1.13.0 (GraalVM Community Java 25.0.4.1.1)
+manure-native-artifact> [info] loading settings for project manure-native-source-build from plugins.sbt...
+manure-native-artifact> [info] loading project definition from /build/manure-native-source/project
+manure-native-artifact> [info] loading settings for project root from build.sbt...
+manure-native-artifact> [info] resolving key references (12050 settings) ...
+manure-native-artifact> [info] set current project to backend-foundation (in build file:/build/manure-native-source/)
+manure-native-artifact> [info] compiling 11 Scala sources to /build/manure-native-source/shared/baboon-runtime/target/scala-2.13/classes ...
+manure-native-artifact> [info] compiling 7 Scala sources to /build/manure-native-source/shared/service-runtime/target/scala-3.9.0/classes ...
+manure-native-artifact> [info] compiling 1 Scala source and 2 Java sources to /build/manure-native-source/manure/server/target/scala-3.9.0/classes ...
+manure-native-artifact> [info] compiling 2 Scala sources to /build/manure-native-source/shared/retrieval-core/target/scala-3.9.0/classes ...
+manure-native-artifact> [info] done compiling
+manure-native-artifact> [info] done compiling
+manure-native-artifact> [info] done compiling
+manure-native-artifact> [info] compiling 1 Scala source to /build/manure-native-source/shared/model-http/target/scala-3.9.0/classes ...
+manure-native-artifact> [info] done compiling
+manure-native-artifact> [info] compiling 2 Scala sources to /build/manure-native-source/shared/retrieval-postgres/target/scala-3.9.0/classes ...
+manure-native-artifact> [info] done compiling
+manure-native-artifact> [info] compiling 39 Scala sources to /build/manure-native-source/manure/generated/.build/target/scala-2.13/classes ...
+manure-native-artifact> [warn] An existential type that came from a Scala-2 classfile for class IO
+manure-native-artifact> [warn] cannot be mapped accurately to a Scala-3 equivalent.
+manure-native-artifact> [warn] original type    : cats.effect.IOFiber[?$1] @uncheckedVariance forSome ?$1
+manure-native-artifact> [warn] reduces to       : cats.effect.IOFiber[?$1] @uncheckedVariance
+manure-native-artifact> [warn] type used instead: cats.effect.IOFiber[Any] @uncheckedVariance
+manure-native-artifact> [warn] This choice can cause follow-on type errors or hide type errors.
+manure-native-artifact> [warn] Proceed at own risk.
+manure-native-artifact> [warn]   |
+manure-native-artifact> [warn]   | longer explanation available when compiling with `-explain`
+manure-native-artifact> [warn] one warning found
+manure-native-artifact> [info] done compiling
+manure-native-artifact> [info] done compiling
+manure-native-artifact> [info] compiling 15 Scala sources to /build/manure-native-source/manure/backend/target/scala-3.9.0/classes ...
+manure-native-artifact> [warn] there was 1 deprecation warning; re-run with -deprecation for details
+manure-native-artifact> [warn] one warning found
+manure-native-artifact> [info] done compiling
+manure-native-artifact> [info] Verified 148 Baboon runtime classes from one owner: /build/manure-native-source/shared/baboon-runtime/target/scala-2.13/classes
+manure-native-artifact> [info] 4 file(s) merged using strategy 'First' (Run the task at debug level to see the details)
+manure-native-artifact> [info] 3083 file(s) merged using strategy 'Discard' (Run the task at debug level to see the details)
+manure-native-artifact> [info] Built: /build/manure-native-source/manure/backend/target/manure-server.jar
+manure-native-artifact> [info] Jar hash: 25177cb759df915ae31e5dec3725a65cee688857
+manure-native-artifact> [success] Total time: 23 s, completed Nov 3, 2026, 10:51:47 AM
+manure-native-artifact> Picked up JAVA_TOOL_OPTIONS:  -Duser.home="/build/tmp.yibrq4uPqD"
+manure-native-artifact> Warning: Using a deprecated option --no-fallback from command line. No effect, no replacement available
+manure-native-artifact> Warning: Using a deprecated option --enable-url-protocols= from command line. Use reachability metadata instead.
+manure-native-artifact> Warning: The option '-H:IncludeResources=.*\.sql|org/postgresql/.*|META-INF/services/.*' is experimental and must be enabled via '-H:+UnlockExperimentalVMOptions' in the future.
+manure-native-artifact> Warning: The option '-H:DynamicProxyConfigurationResources=META-INF/native-image/org.typelevel/cats-effect/sun-misc-signal-proxy-config.json' is experimental and must be enabled via '-H:+UnlockExperimentalVMOptions' in the future.
+manure-native-artifact> Warning: Please re-evaluate whether any experimental option is required, and either remove or unlock it. The build output lists all active experimental options, including where they come from and possible alternatives. If you think an experimental option should be considered as stable, please file an issue.
+manure-native-artifact> Warning: Environment variable 'LOCALE_ARCHIVE' is undefined and therefore not available during image build-time.
+manure-native-artifact> Warning: Option 'FallbackThreshold' is deprecated and might be removed in a future release: It no longer has any effect, and no replacement is available. Please refer to the GraalVM release notes.
+manure-native-artifact> Warning: Option 'EnableAllSecurityServices' is deprecated and might be removed in a future release. Please refer to the GraalVM release notes.
+manure-native-artifact> Warning: Option 'DynamicProxyConfigurationResources' is deprecated and might be removed in a future release: This can be caused by a proxy-config.json file in your META-INF directory. Consider including proxy configuration in the reflection section of reachability-metadata.json instead.. Please refer to the GraalVM release notes.
+manure-native-artifact> ========================================================================================================================
+manure-native-artifact> GraalVM Native Image: Generating 'manure-server' (static executable)...
+manure-native-artifact> ========================================================================================================================
+manure-native-artifact> For detailed information and explanations on the build output, visit:
+manure-native-artifact> https://github.com/oracle/graal/blob/master/docs/reference-manual/native-image/BuildOutput.md
+manure-native-artifact> ------------------------------------------------------------------------------------------------------------------------
+manure-native-artifact> [1/8] Initializing...                                                                                   (7.2s @ 0.87GiB)
+manure-native-artifact>  Builder configuration:
+manure-native-artifact>  - Java version: 25.0.4.1.1+1, vendor version: GraalVM CE 25.4.4.1.1+1.1
+manure-native-artifact>  - Graal compiler: optimization level: 2, target machine: compatibility
+manure-native-artifact>  - C compiler: x86_64-linux-musl-gcc (unknown, x86_64, 16.2.0)
+manure-native-artifact>  - Assertions: disabled, system assertions: disabled
+manure-native-artifact>  - 1 user-specific feature(s):
+manure-native-artifact>    - manure.build.PosixLinkFeature
+manure-native-artifact>  Image configuration:
+manure-native-artifact>  - Garbage collector: Serial GC (max heap size: 80% of RAM)
+manure-native-artifact>  - Assertions: disabled (class-specific config may apply), system assertions: disabled
+manure-native-artifact> ------------------------------------------------------------------------------------------------------------------------
+manure-native-artifact>  2 experimental option(s) unlocked:
+manure-native-artifact>  - '-H:DynamicProxyConfigurationResources' (origin(s): 'META-INF/native-image/org.typelevel/cats-effect/native-image.properties' in 'file:///build/manure-native-source/manure/backend/target/manure-server.jar')
+manure-native-artifact>  - '-H:IncludeResources': Use a resource-config.json in your META-INF/native-image/<groupID>/<artifactID> directory instead. (origin(s): command line)
+manure-native-artifact> ------------------------------------------------------------------------------------------------------------------------
+manure-native-artifact> Build resources:
+manure-native-artifact>  - 24.00GiB of memory (1.5% of system memory, set via '-Xmx24g')
+manure-native-artifact>  - 8 thread(s) (6.3% of 128 available processor(s), set via '--parallelism=8')
+manure-native-artifact> [2/8] Performing analysis...  [*****]                                                                  (15.6s @ 1.82GiB)
+manure-native-artifact>    18,409 types,  25,376 fields, and  89,933 methods found reachable
+manure-native-artifact>       523 types,      79 fields, and   1,544 methods registered for reflection
+manure-native-artifact>        64 types,      63 fields, and      74 methods registered for JNI access
+manure-native-artifact>       608 resource accesses registered with 2.58MiB total size
+manure-native-artifact>         5 native libraries: dl, m, pthread, rt, z
+manure-native-artifact> [3/8] Building universe...                                                                              (4.2s @ 1.98GiB)
+manure-native-artifact> [4/8] Parsing methods...      [**]                                                                      (2.3s @ 2.13GiB)
+manure-native-artifact> [5/8] Inlining methods...     [***]                                                                     (1.2s @ 2.26GiB)
+manure-native-artifact> [6/8] Compiling methods...    [****]                                                                   (14.7s @ 1.80GiB)
+manure-native-artifact> [7/8] Laying out methods...   [***]                                                                     (5.4s @ 2.22GiB)
+manure-native-artifact> [8/8] Creating image...       [**]                                                                      (4.2s @ 1.73GiB)
+manure-native-artifact>   25.66MiB (42.45%) for code area:    51,310 compilation units
+manure-native-artifact>   29.81MiB (49.31%) for image heap:  320,961 objects and 554 resources
+manure-native-artifact>    4.99MiB ( 8.25%) for other data
+manure-native-artifact>   60.46MiB in total image size, 56.25MiB in total file size
+manure-native-artifact> ------------------------------------------------------------------------------------------------------------------------
+manure-native-artifact> Top 10 origins of code area:                                Top 10 object types in image heap:
+manure-native-artifact>    4.86MiB org.http4s                                          6.88MiB byte[] for string data
+manure-native-artifact>    1.14MiB java.base/sun.security.ssl                          6.38MiB byte[] for code metadata
+manure-native-artifact>  898.34KiB java.base/java.util                                 4.65MiB java.base/java.lang.Class
+manure-native-artifact>  792.99KiB scala.collection.immutable                          2.59MiB byte[] for embedded resources
+manure-native-artifact>  725.51KiB manure.api                                          2.29MiB java.base/java.lang.String
+manure-native-artifact>  593.19KiB java.base/com.sun.crypto.provider                   1.97MiB o.g.n.runtime/c.o.s.core.hub.DynamicHubCompanion
+manure-native-artifact>  579.28KiB manure                                            980.85KiB byte[] for general heap data
+manure-native-artifact>  475.51KiB java.base/java.lang.invoke                        529.75KiB byte[] for reflection metadata
+manure-native-artifact>  423.97KiB java.base/java.lang                               341.93KiB java.base/java.lang.String[]
+manure-native-artifact>  420.08KiB org.http4s.ember.core.h2                          326.93KiB java.base/java.lang.Object[]
+manure-native-artifact>   14.87MiB for 420 more packages                               2.94MiB for 4705 more object types
+manure-native-artifact> ------------------------------------------------------------------------------------------------------------------------
+manure-native-artifact> Recommendations:
+manure-native-artifact>  FUTR: Use '--future-defaults=all' to prepare for future releases.
+manure-native-artifact>  HEAP: Set max heap for improved and more predictable memory usage.
+manure-native-artifact> ------------------------------------------------------------------------------------------------------------------------
+manure-native-artifact>                        5.2s (9.0% of total time) in 463 GCs | Peak RSS: 3.72GiB | CPU load: 10.77
+manure-native-artifact> ------------------------------------------------------------------------------------------------------------------------
+manure-native-artifact> Build artifacts:
+manure-native-artifact>  /build/manure-native-source/manure-server (executable, 56.25MiB)
+manure-native-artifact> ========================================================================================================================
+manure-native-artifact> Finished generating 'manure-server' in 57.1s.
+manure-native-artifact> 
+manure-native-artifact> The build process encountered 8 warnings.
+manure-native-artifact> 
+manure-native-artifact> buildPhase completed in 1 minutes 31 seconds
+manure-native-artifact> Running phase: installPhase
+manure-native-artifact> Running phase: fixupPhase
+manure-native-artifact> shrinking RPATHs of ELF executables and libraries in /nix/store/8sj7d0crw5ca59k2mgxa81xy4l1kw7hk-manure-native-artifact-0.1.0
+manure-native-artifact> shrinking /nix/store/8sj7d0crw5ca59k2mgxa81xy4l1kw7hk-manure-native-artifact-0.1.0/libexec/manure-server
+manure-native-artifact> patchelf: cannot find section '.dynamic'. The input file is most likely statically linked
+manure-native-artifact> checking for references to /build/ in /nix/store/8sj7d0crw5ca59k2mgxa81xy4l1kw7hk-manure-native-artifact-0.1.0...
+manure-native-artifact> patchelf: cannot find section '.dynamic'. The input file is most likely statically linked
+manure-native-artifact> patching script interpreter paths in /nix/store/8sj7d0crw5ca59k2mgxa81xy4l1kw7hk-manure-native-artifact-0.1.0
+manure-native-artifact> stripping (with command strip and flags -S -p) in /nix/store/8sj7d0crw5ca59k2mgxa81xy4l1kw7hk-manure-native-artifact-0.1.0/libexec
