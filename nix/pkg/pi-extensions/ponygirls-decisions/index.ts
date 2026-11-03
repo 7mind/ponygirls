@@ -16,7 +16,7 @@ const STATUS_KEY = "decisions";
 const PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
 const PANE_CHROME_ROWS = 4;
-const INBOX_SHORTCUT = { key: "ctrl+shift+d", label: "Ctrl+Shift+D" } as const;
+const INBOX_SHORTCUT = { key: "ctrl+alt+d", label: "Ctrl+Alt+D" } as const;
 export const SESSION_SETTING_TYPE = "ponygirls.decisions.setting";
 export const PREFERENCE_FILENAME = "decisions.json";
 

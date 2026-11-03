@@ -14,9 +14,9 @@ next configuration activation. To try it without activation:
 pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
 ```
 
-- `/decisions` or **Ctrl+Shift+D** opens the project's pending inbox.
+- `/decisions` or **Ctrl+Alt+D** opens the project's pending inbox.
 - `/decisions Q12` opens a particular question, including answered history.
-- The **? N · Ctrl+Shift+D** pending-count badge lives on the editor's bottom-left
+- The **? N · Ctrl+Alt+D** pending-count badge lives on the editor's bottom-left
   border alongside the existing badges and shows the inbox shortcut. In fullscreen
   mode it is clickable. When the border is too narrow it shrinks to a compact `?N` chip.
 - The inbox frame shows `pending N` / `all` tabs and the repository name (the

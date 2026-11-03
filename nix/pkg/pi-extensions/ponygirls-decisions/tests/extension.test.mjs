@@ -15,6 +15,7 @@ function fixture(t) {
   const path = join(dir, "decisions", "questions.sqlite");
   const handlers = new Map();
   const commands = new Map();
+  const shortcuts = new Map();
   const widgets = [];
   const messages = [];
   const notifications = [];
@@ -31,7 +32,7 @@ function fixture(t) {
     setActiveTools: (value) => { active = value; },
     appendEntry: (customType, data) => entries.push({ type: "custom", customType, data }),
     registerMessageRenderer() {},
-    registerShortcut() {},
+    registerShortcut: (key, value) => shortcuts.set(key, value),
     registerCommand: (name, value) => commands.set(name, value),
     enqueueMessage: (message, options) => { messages.push({ message, options }); },
   };
@@ -60,7 +61,7 @@ function fixture(t) {
     watch: (refresh) => { tick = refresh; watching = true; return () => { watching = false; }; } });
   t.after(() => { handlers.get("session_shutdown")({}, ctx); rmSync(dir, { recursive: true, force: true }); });
   const start = () => handlers.get("session_start")({}, ctx);
-  return { path, pi, ctx, entries, messages, widgets, notifications, preferences, start, tick: () => tick(), watching: () => watching,
+  return { path, pi, ctx, entries, messages, widgets, notifications, preferences, shortcuts, start, tick: () => tick(), watching: () => watching,
     setActive: (value) => { active = value; },
     active: () => active, tool: () => tool, completions: (prefix) => commands.get("decisions").getArgumentCompletions(prefix),
     setUnavailable: (value) => { unavailable = value; }, failProject: () => { projectFailure = true; },
@@ -79,7 +80,9 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal(key, "decisions");
   assert.equal(options.placement, "borderBottomLeft");
   const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
-  assert.equal(factory(null, theme).render(80)[0], " ? 1 · Ctrl+Shift+D ");
+  assert.equal(factory(null, theme).render(80)[0], " ? 1 · Ctrl+Alt+D ");
+  assert.equal(f.shortcuts.get("ctrl+alt+d").description, "Open decisions inbox");
+  assert.equal(f.shortcuts.has("ctrl+shift+d"), false, "Pi reserves Ctrl+Shift+D for its global debug handler");
   const tagged = { bg: (color, s) => `[${color}]${s}[/${color}]`, fg: (color, s) => `<${color}>${s}</${color}>` };
   assert.equal(factory(null, tagged).renderCompact(10), "[toolPendingBg] <warning>?</warning><text>1</text> [/toolPendingBg]");
   assert.equal((await f.call({ action: "list" }, "list")).details.total, 1);
