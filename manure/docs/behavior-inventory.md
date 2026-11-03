@@ -15,7 +15,7 @@ Node test names. No declaration means no silent omission: a new root/nested
 case ID, an import resolving outside the assigned source, or a missing concrete
 mapping causes the inventory self-check to fail.
 
-The frozen register currently declares **27 CURRENT Python modules /293 case
+The frozen register currently declares **28 CURRENT Python modules /308 case
 IDs**, **17 Node cases** across both browser-boundary/CDP suites, and the
 **74-vector generated TypeScript codec check**. These are declared inventory
 sizes, **not execution/pass counts**. All client, CLI, MCP, browser, offline and
@@ -58,8 +58,9 @@ authorized by test registration.
 | `test_mcp_environment` | 1 | target |
 | `test_mcp_hardening` | 11 | controlled local/pure |
 | `test_mcp_protocol` | 9 | sdk |
-| `test_offline_conversion` | 17 | offline-postgres |
-| `test_target_migration` | 1 | target |
+| `test_offline_conversion` | 30 | offline-postgres |
+| `test_target_migration` | 2 | target |
+| `test_target_search` | 1 | target |
 
 `test_offline_conversion` uses Python ArtifactStore to create synthetic historical
 states and, in one complementary test, restores PG rows into a disposable SQLite
@@ -184,14 +185,12 @@ Every live authenticated manager lists/inspects/manifests/status/deletes/rotates
 **Concrete target assertions:**
 - [`test("NUL/Unicode metadata, exact reservations and complete upload/publish/read/delete"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
 - [`test_client_realserver.TestRealServer.test_grant_revocation_real_server`](../../manure/tests/test_client_realserver.py).
+- [`test("shared incomplete reads and abort coexist with owner-only upload mutations"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test("any manager may rotate an incomplete external password without advancing activity"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
 
-**Adjudication:** Parent adjudicated 2026-11-03: original CONTRACT§6.5 and Python source agree; inverse port assertions are a BUG, not an intentional policy change.
+**Adjudication:** Corrected in parent69494c01: positive shared incomplete reads/list/status/abort and rotation coexist with owner-only upload mutations in both Memory and real-PG ArtifactsContract. This fixes the regression; it is not a policy change. All current transport/native gates remain mandatory.
 
-**OPEN—blocks full release acceptance:**
-- Adjudicated regression: the frozen source still has inverse owner-only incomplete read/abort assertions. Replace with positive shared incomplete info/status/manifest/list/delete/rotate and negative owner-only chunk/publish/PATCH matrix on memory and real PG plus actual target.
-
-**Planned corrected target (not counted as implemented coverage):**
-- `manure/backend/src/test/scala/manure/ArtifactsContract.scala` :: `test("shared incomplete reads and abort coexist with owner-only upload mutations"`.
+**Treatment:** corrected positive assertions are implemented in both Memory and real-PG contracts; their actual execution and all separate artifact/runtime gates remain mandatory. This is not a claim of completed CURRENT/native acceptance.
 
 ### origins
 
@@ -280,6 +279,7 @@ Original-precision expiry cuts authorization immediately (410 authenticated API,
 - [`test_client_realserver.TestRealServer.test_ttl_updates_real_server`](../../manure/tests/test_client_realserver.py).
 - [`test_client_realserver.TestRealServer.test_pagination_filters_real_server`](../../manure/tests/test_client_realserver.py).
 - [`test_browser_dashboard.ExpiredDeleteCase.test_a2_expired_artifact_can_be_deleted_from_list`](../../manure/tests/test_browser_dashboard.py).
+- [`test("any manager may rotate an incomplete external password without advancing activity"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
 
 **OPEN—blocks full release acceptance:**
 - Current replacement needs explicit successful PATCH/publish versus read/status activity allowlist checks and sweep-vs-publish/receipt lock-order assertion; expiry display tests alone do not cover idle-session durability.
@@ -390,16 +390,18 @@ Authenticated ready/unexpired metadata+manifest-path corpus only; lexical/semant
 - [`test_current_protocol.CurrentProtocolTests.test_search_goldens_distinguish_published_space_from_lexical_head`](../../manure/tests/test_current_protocol.py).
 - [`shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/AuthorizedCandidateTest.scala`](../../shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/AuthorizedCandidateTest.scala).
 - [`shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala`](../../shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala).
+- [`test_target_search.TargetSearchTests.test_metadata_only_heartbeat_publication_modes_outage_and_profile_space`](../../manure/tests/test_target_search.py).
 
 **OPEN—blocks full release acceptance:**
-- Manure actual-target semantic/hybrid/profile-space/not-ready/provider-outage/filter/expiry/delete delivery assertions are required; shared retrieval correctness and codec goldens alone do not prove the service adapter.
+- Actual target now proves controlled-provider heartbeat, semantic/hybrid identity, not-ready/outage, profile cutover/restart, metadata-only inputs and delete eligibility. Remaining service-adapter assertions: negative kind/visibility/creator filters before count/limit, expiry during delivery, and concrete evidence/provenance coordinates/identity. Shared authorization/fencing tests and codec goldens remain complementary, not live-provider quality evidence.
 
-The parent is implementing `test_target_search.py` with
-`TargetSearchTests.test_metadata_only_heartbeat_publication_modes_outage_and_profile_space`.
-It is recorded as planned, **not silently counted as an existing/current test**.
-When its source appears it must be explicitly promoted into the CURRENT module
-and exact case-ID list; until then the unregistered-module check fails and the
-retrieval invariant gap remains open. No optional-file append is restored.
+The actual-target test closes/restarts the configured application using the shared worker/root resource lifetime, exercises a four-second document call beyond the three-second lease and a same-URL/dimension revision cutover. Controlled provider evidence is correctness/lifecycle evidence, not a live-provider relevance/quality result. It does not establish graceful cancellation during every active chunk/stream/model operation; the separate lifecycle gap remains explicit.
+`test_target_search.py` is now CURRENT with its exact declared method, after
+integration of parent source `26ad56aa`. Planned `test_target_durability.py` has
+four owner-supplied method names in `plannedCurrentModules`; these are **not
+silently counted as existing tests**. Once its source is committed, explicitly
+promote/register it and review the corresponding receipt/publication/admission
+gaps. An unregistered appearance fails; no optional-file append is restored.
 
 ## Separately required artifact/runtime gates
 
@@ -426,8 +428,15 @@ execution cannot pass, subtest traces are durable, evidence cannot be overwritte
 and helper/provider environment separation is explicit. The local focused
 inventory/credential/current-codec diagnostic executed37 methods with0
 failures/errors/skips and correctly reported **releaseAcceptance:false**.
-A full invocation without provider/browser prerequisites exited1 with293 expected
-and0 executed tests—not a full-suite result. Open gaps remain as listed.
+At the first inventory checkpoint `599b2c6b`, a full invocation without
+provider/browser prerequisites exited1 with293 expected and0 executed tests—not
+a full-suite result. After the parent import/search integration the declared
+CURRENT count is308, not a completed308-test run. Open gaps remain as listed.
+
+Parent receipt `20261103T094915Z-jvm.hd5INM` was read after integration:1
+focused actual-target search method,0 failures/errors/skips and exit0. This is
+the controlled-provider JVM search slice, **not full release acceptance**.
+The latest inventory self-tests again passed14 methods after source integration.
 
 Historical receipts are scoped history, not current acceptance: client fixture
 source `3f5bba81` had145 Python methods/16 Node cases/73 vectors; the credential

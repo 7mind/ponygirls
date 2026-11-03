@@ -539,12 +539,25 @@
         "offline-postgres"
       ],
       "tests": [
+        "test_offline_conversion.PostgresContracts.test_active_payload_owner_blocks_writable_boundary",
         "test_offline_conversion.PostgresContracts.test_bad_destination_payload_never_writes_metadata",
+        "test_offline_conversion.PostgresContracts.test_bound_copy_restart_before_rename_and_after_payload_receipt",
+        "test_offline_conversion.PostgresContracts.test_dangling_final_proof_is_not_treated_as_missing_for_restart",
         "test_offline_conversion.PostgresContracts.test_interruption_before_and_after_atomic_metadata_completion",
         "test_offline_conversion.PostgresContracts.test_killed_sql_connection_rolls_back_import_transaction",
         "test_offline_conversion.PostgresContracts.test_lossless_pg_roundtrip_then_executable_source_state_rehearsal",
+        "test_offline_conversion.PostgresContracts.test_mark_after_new_writes_refuses_before_scanning_old_payload_inventory",
+        "test_offline_conversion.PostgresContracts.test_missing_or_corrupt_final_proofs_are_not_regenerated_in_place",
+        "test_offline_conversion.PostgresContracts.test_new_or_missing_entries_before_mark_are_not_adopted",
+        "test_offline_conversion.PostgresContracts.test_no_payload_completion_receipt_before_pg_readback_verifies",
+        "test_offline_conversion.PostgresContracts.test_old_converter_completion_without_payload_proofs_requires_new_destination",
         "test_offline_conversion.PostgresContracts.test_ownership_and_nonempty_destination_refused",
+        "test_offline_conversion.PostgresContracts.test_payload_receipt_binds_every_raw_path_hash_and_actual_data_inode",
+        "test_offline_conversion.PostgresContracts.test_postcommit_pre_receipt_corruption_never_gets_a_fresh_hash_receipt",
+        "test_offline_conversion.PostgresContracts.test_postcommit_pre_receipt_replaced_root_cannot_be_blessed_on_retry",
         "test_offline_conversion.PostgresContracts.test_process_death_after_commit_retries_without_duplicate_rows",
+        "test_offline_conversion.PostgresContracts.test_replaced_data_inode_with_identical_bytes_before_mark_is_not_adopted",
+        "test_offline_conversion.PostgresContracts.test_same_size_corrupt_payload_before_mark_is_never_adopted_or_reblessed",
         "test_offline_conversion.PostgresContracts.test_source_destination_corruption_and_projection_binding",
         "test_offline_conversion.PostgresContracts.test_sql_failure_rolls_back_all_rows_and_marker_then_retry_succeeds",
         "test_offline_conversion.PostgresContracts.test_writable_boundary_is_fix_forward_and_old_snapshot_untouched",
@@ -650,7 +663,19 @@
         "target"
       ],
       "tests": [
-        "test_target_migration.TargetMigrationTests.test_actual_target_import_resume_crash_windows_original_grants_restart_and_fixforward"
+        "test_target_migration.TargetMigrationTests.test_actual_target_import_resume_crash_windows_original_grants_restart_and_fixforward",
+        "test_target_migration.TargetMigrationTests.test_first_adoption_rejects_replaced_payload_root_without_blessing"
+      ]
+    },
+    {
+      "module": "test_target_search",
+      "path": "manure/tests/test_target_search.py",
+      "classification": "current",
+      "requires": [
+        "target"
+      ],
+      "tests": [
+        "test_target_search.TargetSearchTests.test_metadata_only_heartbeat_publication_modes_outage_and_profile_space"
       ]
     }
   ],
@@ -788,18 +813,18 @@
         {
           "path": "manure/tests/test_client_realserver.py",
           "testId": "test_client_realserver.TestRealServer.test_grant_revocation_real_server"
-        }
-      ],
-      "openGaps": [
-        "Adjudicated regression: the frozen source still has inverse owner-only incomplete read/abort assertions. Replace with positive shared incomplete info/status/manifest/list/delete/rotate and negative owner-only chunk/publish/PATCH matrix on memory and real PG plus actual target."
-      ],
-      "plannedTargetRefs": [
+        },
         {
           "path": "manure/backend/src/test/scala/manure/ArtifactsContract.scala",
           "marker": "test(\"shared incomplete reads and abort coexist with owner-only upload mutations\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/ArtifactsContract.scala",
+          "marker": "test(\"any manager may rotate an incomplete external password without advancing activity\""
         }
       ],
-      "adjudication": "Parent adjudicated 2026-11-03: original CONTRACT§6.5 and Python source agree; inverse port assertions are a BUG, not an intentional policy change."
+      "openGaps": [],
+      "adjudication": "Corrected in parent69494c01: positive shared incomplete reads/list/status/abort and rotation coexist with owner-only upload mutations in both Memory and real-PG ArtifactsContract. This fixes the regression; it is not a policy change. All current transport/native gates remain mandatory."
     },
     {
       "id": "origins",
@@ -1034,6 +1059,10 @@
         {
           "path": "manure/tests/test_browser_dashboard.py",
           "testId": "test_browser_dashboard.ExpiredDeleteCase.test_a2_expired_artifact_can_be_deleted_from_list"
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/ArtifactsContract.scala",
+          "marker": "test(\"any manager may rotate an incomplete external password without advancing activity\""
         }
       ],
       "openGaps": [
@@ -1312,16 +1341,14 @@
         },
         {
           "path": "shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala"
-        }
-      ],
-      "openGaps": [
-        "Manure actual-target semantic/hybrid/profile-space/not-ready/provider-outage/filter/expiry/delete delivery assertions are required; shared retrieval correctness and codec goldens alone do not prove the service adapter."
-      ],
-      "plannedTargetRefs": [
+        },
         {
           "path": "manure/tests/test_target_search.py",
           "testId": "test_target_search.TargetSearchTests.test_metadata_only_heartbeat_publication_modes_outage_and_profile_space"
         }
+      ],
+      "openGaps": [
+        "Actual target now proves controlled-provider heartbeat, semantic/hybrid identity, not-ready/outage, profile cutover/restart, metadata-only inputs and delete eligibility. Remaining service-adapter assertions: negative kind/visibility/creator filters before count/limit, expiry during delivery, and concrete evidence/provenance coordinates/identity. Shared authorization/fencing tests and codec goldens remain complementary, not live-provider quality evidence."
       ]
     }
   ],
@@ -1357,12 +1384,15 @@
   ],
   "plannedCurrentModules": [
     {
-      "module": "test_target_search",
-      "path": "manure/tests/test_target_search.py",
+      "module": "test_target_durability",
+      "path": "manure/tests/test_target_durability.py",
       "tests": [
-        "test_target_search.TargetSearchTests.test_metadata_only_heartbeat_publication_modes_outage_and_profile_space"
+        "test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume",
+        "test_target_durability.TargetDurabilityTests.test_server_sigkill_after_rename_before_ready_commit_recovers",
+        "test_target_durability.TargetDurabilityTests.test_shutdown_drains_active_chunk_and_stream_and_releases_claim",
+        "test_target_durability.TargetDurabilityTests.test_connection_admission_returns_503_while_body_worker_active"
       ],
-      "status": "owner implementation pending; NOT a discovered/current gate yet. Once file exists, registration must be promoted explicitly or inventory check fails."
+      "status": "owner implementation pending; NOT a discovered/current gate yet. Explicitly promote once committed; open receipt/publication/admission groups remain blocking."
     }
   ]
 }
