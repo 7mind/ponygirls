@@ -37,13 +37,19 @@ final case class JdbcConfig(jdbcUrl: String, user: String, passwordFile: Path, l
   override def toString: String = "JdbcConfig(<redacted>)"
 }
 
-/** Explicit runtime file only. Bounded strict UTF8, one optional terminal newline, no symlink.
-  * The operator owns file/directory permissions (including systemd credentials directories).
+/** Explicit runtime file only. Bounded strict UTF8, one optional terminal newline.
+  * Configured references and every containing/resolved directory are trusted operator-owned
+  * inputs, not payload paths. Resolve managed symlinks each read (e.g. agenix), then require
+  * a regular resolved leaf and open that leaf NOFOLLOW. Operators must not race replacement
+  * with a special file; this is not adversarial payload-path confinement.
   */
 object CredentialFile {
   def read(path: Path): String = {
     try {
-      val bytes = Using.resource(Files.newInputStream(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))(_.readNBytes(16385))
+      if (!path.isAbsolute) throw RuntimeFailure("credential-file")
+      val resolved = path.toRealPath()
+      if (!Files.isRegularFile(resolved, LinkOption.NOFOLLOW_LINKS)) throw RuntimeFailure("credential-file")
+      val bytes = Using.resource(Files.newInputStream(resolved, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))(_.readNBytes(16385))
       if (bytes.isEmpty || bytes.length > 16384) throw RuntimeFailure("credential-file")
       val decoded = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
         .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString
