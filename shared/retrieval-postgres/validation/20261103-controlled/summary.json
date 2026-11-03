@@ -1,0 +1,23 @@
+{
+  "retrieval-core": {
+    "tests": 5,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": 1
+  },
+  "model-http": {
+    "tests": 21,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": 2
+  },
+  "retrieval-postgres": {
+    "tests": 27,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": 5
+  }
+}

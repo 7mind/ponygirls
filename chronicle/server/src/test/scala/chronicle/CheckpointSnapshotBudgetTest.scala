@@ -44,7 +44,7 @@ class CheckpointSnapshotBudgetTest extends munit.FunSuite {
     DriverManager.registerDriver(driver)
     try {
       val measured=config.copy(jdbcUrl=prefix+config.jdbcUrl)
-      val db=new Database(measured,IndexProfileCatalog.current(measured)); val archive=new PostgresArchive(db,measured)
+      val db=Fixtures.database(measured,IndexProfileCatalog.current(measured)); val archive=new PostgresArchive(db,measured)
       archive.ingest("a",Fixtures.snapshot())
       val claim=archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get
       def accepted(index: Int): Unit = {

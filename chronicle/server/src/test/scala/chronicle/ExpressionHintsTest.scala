@@ -285,13 +285,13 @@ final class ExpressionHintsPostgresTest extends ExpressionHintsContract {
     Check(sys.env.contains("CHRONICLE_TEST_JDBC"),"test","PostgreSQL is required for expression hint contracts")
     val base=Fixtures.config()
     val config=base.copy(users=seed.users.zipWithIndex.map { case (id,n) => UserConfig(id,"hint-login-"+n,base.users.head.passwordHashFile,true) })
-    val admin=new Database(config,IndexProfileCatalog.legacyOnly(config))
+    val admin=Fixtures.database(config,IndexProfileCatalog.legacyOnly(config))
     val schema="hint_test_"+UUID.randomUUID().toString.replace("-","")
     admin.transaction { c => Sql.exec(c,"CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public"); Sql.exec(c,"CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public"); Sql.exec(c,s"CREATE SCHEMA $schema") }
     try {
       val separator=if(config.jdbcUrl.contains("?")) "&" else "?"
       val scoped=config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema+",public")
-      val db=new Database(scoped,IndexProfileCatalog.legacyOnly(scoped)); db.initialize()
+      val db=Fixtures.database(scoped,IndexProfileCatalog.legacyOnly(scoped)); db.initialize()
       def revision(c: java.sql.Connection,id: UUID,value: Revision): Unit = {
         Sql.exec(c,"INSERT INTO ch_revisions VALUES(?,?,?::jsonb)",id,value.number,"{\"mustNotDecodeRawSnapshot\":true}")
         Sql.exec(c,"INSERT INTO ch_revision_info(session_id,revision,metadata,source,completion,redacted,last_timestamp,last_timestamp_order,message_count,lexical_version) VALUES(?,?,?::jsonb,?::jsonb,'Quiescent',false,?,?::numeric,0,1)",id,value.number,Wire.encode(Metadata.codecJson,value.metadata).noSpaces,Wire.encode(SourceIdentity.codecJson,value.source).noSpaces,value.time,ArchiveProjection.timestampOrder(Instant.parse(value.time)))

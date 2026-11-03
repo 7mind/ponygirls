@@ -68,3 +68,18 @@ final class PostgresTransactionContract extends TransactionContract {
     })
   }
 }
+
+// Same abstract commit/rollback laws against the synchronous facade and real PG.
+final class BlockingPostgresTransactionContract extends TransactionContract {
+  import PostgresFixture.*
+  def counter: Resource[IO, Counter] = config.flatMap(cfg => Resource.make(IO.blocking(new BlockingJdbcDatabase(cfg)))(db => IO.blocking(db.close()))).evalMap { db =>
+    IO.blocking(db.transaction(c => { execute(c, "DROP TABLE IF EXISTS runtime_counter"); execute(c, "CREATE TABLE runtime_counter(value integer NOT NULL)"); execute(c, "INSERT INTO runtime_counter VALUES(0)") })).as(new Counter {
+      def value: IO[Int] = IO.blocking(db.transaction(c => integer(c, "SELECT value FROM runtime_counter")))
+      def change(amount: Int, reject: Boolean): IO[Int] = IO.blocking(db.transaction { c =>
+        Using.resource(c.prepareStatement("UPDATE runtime_counter SET value=value+?")) { p => p.setInt(1, amount); p.executeUpdate() }
+        if (reject) throw new IllegalStateException("rejected")
+        integer(c, "SELECT value FROM runtime_counter")
+      })
+    })
+  }
+}

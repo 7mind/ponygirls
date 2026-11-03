@@ -1,0 +1,43 @@
+{ config, lib, pkgs, ... }:
+let
+  cfg = config.ponygirls.servicePostgres;
+  policy = import ../postgres/policy.nix { inherit lib pkgs cfg; };
+in {
+  imports = [ ../postgres/options.nix ];
+  config = lib.mkMerge [
+    { ponygirls.servicePostgres = {
+      stateDirectory = lib.mkDefault "/var/lib/ponygirls-postgres-18";
+      adminRole = lib.mkDefault "postgres";
+    }; }
+    (lib.mkIf cfg.enable {
+      ponygirls.servicePostgres.manifestFile = policy.manifest;
+      assertions = [{ assertion = cfg.adminRole == "postgres"; message = "NixOS shared PostgreSQL administration runs as postgres."; }];
+      # Deliberately reuse NixOS's ONE provider, never a hidden second daemon.
+      services.postgresql = {
+        enable = true;
+        package = cfg.package;
+        dataDir = "${cfg.stateDirectory}/data";
+        settings = policy.settings;
+        authentication = lib.mkForce policy.hbaText;
+      };
+      systemd.tmpfiles.rules = [ "d ${cfg.stateDirectory} 0700 postgres postgres -" "d ${cfg.stateDirectory}/socket 0700 postgres postgres -" "d ${cfg.stateDirectory}/backups 0700 postgres postgres -" ];
+      # Run before NixOS's automatic initdb; unmarked existing data fails closed.
+      systemd.services = { postgresql.preStart = lib.mkBefore "${policy.init}"; } // lib.mapAttrs' (key: d: lib.nameValuePair "ponygirls-database-${key}" {
+        description = "Provision isolated ${key} database/extensions (not app startup)";
+        after = [ "postgresql.service" ];
+        requires = [ "postgresql.service" ];
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          User = "postgres";
+          ExecStart = policy.provision key;
+          RemainAfterExit = true;
+          UMask = "0077";
+          LoadCredential = lib.optional (!d.createPassword) "database-password:${d.passwordFile}";
+          Environment = lib.optional (!d.createPassword) "PONYGIRLS_PASSWORD_FILE=%d/database-password";
+          TimeoutStartSec = 180;
+        };
+      }) cfg.databases;
+    })
+  ];
+}

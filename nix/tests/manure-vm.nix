@@ -36,8 +36,8 @@ let
       pkgs.curl
       pkgs.jq
       pkgs.python3
-      # REAL CLI under test (EXACT same package derivation the service runs).
-      (pkgs.callPackage ../pkg/manure/package.nix { })
+      # REAL CLI under test (same client derivation composed into the server package).
+      (pkgs.callPackage ../pkg/manure/client.nix { })
       # Test-only LLM stand-in (see HM block): drops yolo-injected
       # --append-system-prompt pairs, execs the rest (the REAL CLI).
       hmStubPi

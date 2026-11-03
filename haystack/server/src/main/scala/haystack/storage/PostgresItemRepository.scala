@@ -37,7 +37,7 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
   private val columns = "project_id,item_id,revision,document_text,created_at,created_by,modified_at,modified_by"
   private def stored(r: ResultSet): StoredItem = {
     val text = r.getString("document_text")
-    StoredItem(ItemKey(r.getString("project_id"), r.getString("item_id")), r.getLong("revision"), DocumentCodec.parse(text), text,
+    StoredItem(ItemKey(r.getString("project_id"), r.getString("item_id")), r.getLong("revision"), DocumentCodec.decodeStored(text), text,
       ItemMetadata(r.getTimestamp("created_at").toInstant, r.getString("created_by"), r.getTimestamp("modified_at").toInstant, r.getString("modified_by")))
   }
   private def readCurrent(c: Connection, key: ItemKey): Option[StoredItem] = rows(c, s"SELECT $columns FROM items WHERE project_id=? AND item_id=?", Seq(key.project, key.item))(stored).headOption
@@ -98,14 +98,14 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
     projection.foreach(_.put(c,item))
   }
   private def encodeOutcome(result: Either[Fault,CommitSuccess]): String = result.fold(
-    e => Json.obj("kind"->Json.fromString(e.code),"currentRevision"->e.currentRevision.fold(Json.Null)(Json.fromLong)),
+    e => Json.obj("kind"->Json.fromString(e.code),"message"->Json.fromString(e.message),"currentRevision"->e.currentRevision.fold(Json.Null)(Json.fromLong)),
     s => Json.obj("kind"->Json.fromString("committed"),"revision"->Json.fromLong(s.revision),"createdAt"->Json.fromString(s.metadata.createdAt.toString),"createdBy"->Json.fromString(s.metadata.createdBy),"modifiedAt"->Json.fromString(s.metadata.modifiedAt.toString),"modifiedBy"->Json.fromString(s.metadata.modifiedBy))
   ).noSpaces
   private def decodeOutcome(text: String): Either[Fault,CommitSuccess] = {
     val cursor = parse(text).fold(_ => throw Fault("unavailable","invalid stored replay"),identity).hcursor
     def str(name:String)=cursor.get[String](name).fold(_=>throw Fault("unavailable","invalid stored replay"),identity)
     val kind=str("kind")
-    if(kind!="committed") Left(Fault(kind,"recorded terminal outcome",cursor.get[Option[Long]]("currentRevision").getOrElse(None)))
+    if(kind!="committed") Left(Fault(kind,cursor.get[String]("message").getOrElse("recorded terminal outcome"),cursor.get[Option[Long]]("currentRevision").getOrElse(None)))
     else Right(CommitSuccess(cursor.get[Long]("revision").fold(_=>throw Fault("unavailable","invalid stored replay"),identity),ItemMetadata(Instant.parse(str("createdAt")),str("createdBy"),Instant.parse(str("modifiedAt")),str("modifiedBy")),true))
   }
 }

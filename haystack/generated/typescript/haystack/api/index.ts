@@ -11,6 +11,7 @@ export * from './HistoryRequest.js';
 export * from './HistoryResult.js';
 export * from './Identity.js';
 export * from './Item.js';
+export * from './LiveFrame.js';
 export * from './LoginRequest.js';
 export * from './LoginResult.js';
 export * from './Metadata.js';

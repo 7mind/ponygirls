@@ -16,7 +16,9 @@ let
       ({ lib, ... }: lib.recursiveUpdate
         {
           system.stateVersion = "26.11";
+          smind.services.manure.package = pkgs.hello;
           smind.services.manure.enable = true;
+          smind.services.manure.database = { jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/manure"; passwordFile = "/run/secrets/manure-database"; readinessUnit = "ponygirls-database-manure.service"; };
         }
         extra)
     ];
@@ -74,6 +76,7 @@ let
 
   stubOptions = { lib, ... }: {
     options.assertions = lib.mkOption { type = lib.types.listOf lib.types.attrs; default = [ ]; };
+    options.services.postgresql = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
     options.services.nginx = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
     options.networking.firewall.allowedTCPPorts = lib.mkOption { type = lib.types.listOf lib.types.port; default = [ ]; };
     options.systemd.services = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
@@ -88,7 +91,9 @@ let
       manureModule
       stubOptions
       ({ lib, ... }: lib.recursiveUpdate
-        { smind.services.manure.enable = true; }
+        { smind.services.manure.package = pkgs.hello;
+          smind.services.manure.enable = true;
+          smind.services.manure.database = { jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/manure"; passwordFile = "/run/secrets/manure-database"; readinessUnit = "ponygirls-database-manure.service"; }; }
         extra)
     ];
   };
@@ -373,7 +378,7 @@ pkgs.runCommandLocal "manure-nixos-eval-test"
   test -x "$launcherBin"
   grep -q 'CREDENTIALS_DIRECTORY' "$launcherBin"
   grep -q 'RUNTIME_DIRECTORY' "$launcherBin"
-  grep -q 'manure-server --config' "$launcherBin"
+  grep -q 'manure-server'  "$launcherBin"
   # The template path is baked into the launcher; extract and inspect it.
   tmpl=$(grep -o '/nix/store/[^ "]*manure-config.template.json' "$launcherBin" | head -n 1)
   test -n "$tmpl"

@@ -47,3 +47,36 @@ credential file and bounded admission are mandatory. Chunk bytes plus document
 prefix must fit maxInputBytes; batchSize must fit maxBatch. No provider is invoked
 by writes or metadata browsing. Approved projections and durable shared index jobs
 are written on the authoritative JDBC transaction; worker calls are outside it.
+
+## Executable acceptance runner
+
+From repository root in the pinned Chronicle shell, run:
+
+```
+HAYSTACK_SERVER_COMMAND=/absolute/path/haystack-server \
+HAYSTACK_SERVER_ARTIFACT_FILE=/absolute/path/haystack-server \
+HAYSTACK_ARTIFACT_KIND=native \
+  bash haystack/scripts/test-current.sh
+```
+
+For JVM use command `java -jar /absolute/path/haystack-server.jar`, artifact file
+that exact JAR, and kind `jvm`. This is explicit selection, never a native fallback.
+Required tools: pinned Node24+, locked `haystack/package-lock.json` npm tree
+(`cd haystack && npm ci --offline --ignore-scripts`), PostgreSQL18 **with pgvector**
+(`initdb`, `pg_ctl`, `psql` on PATH), Python3, coreutils (including `timeout`). The
+Node tree contains official MCP SDK1.32.1, ws8.22.0 and the locked rolldown
+transformer used only to load generated TypeScript in tests. No external provider
+or production database is read; the script creates its own cluster/database and
+sets the guarded fixture environment itself. Never set that guard against an
+existing database.
+
+The runner has a 240-second whole-node deadline and 10-second forced cleanup;
+each Node test is bounded60seconds; readiness15seconds and WS assertion1second
+are separately bounded. It always stops its owned PG via EXIT trap. Child process
+fixtures stop their server on suite exit. Full test inventory is committed at
+`server/tests-current/inventory.json`; fresh JUnit names must match it exactly,
+with zero skips/errors/failures and nonempty cases. The full TAP and JUnit XML,
+runner log, source/artifact SHA256 binding and machine receipt are in a fresh
+`$HAYSTACK_REPORT_DIR`, or the printed disposable report directory. Existing
+nonempty reports are never overwritten. This is the HTTP/MCP/WS process leg,
+not a substitute for Scala dual-PG, browser, model-provider or downstream gates.

@@ -89,3 +89,23 @@ unchanged. `BoundedSecretFile.read(path,maxBytes)` is the common strict UTF8 raw
 reader, allowing empty optional auth; DB `CredentialFile` still requires nonempty.
 It resolves trusted operator references, verifies regular type before opening and
 bounds **actual bytes read** (`readNBytes(maxBytes+1)`), never size-then-readString.
+
+## Chronicle adoption
+
+Chronicle's existing synchronous `Database.transaction` now delegates to the
+owned blocking facade, and its distage graph owns `DatabaseResource` cleanup.
+The domain migration SQL, advisory-lock/order, profile/security reconciliation,
+ArchiveProjection backfill and post-backfill migration remain Chronicle-owned and
+unchanged. They are **not** blindly registered in the generic runtime ledger.
+`chronicle-server migrate CONFIG.json` initializes only this database/profile
+configuration, without constructing HTTP, model clients or workers.
+
+Chronicle config keeps `jdbcUrl`, `databaseUser`, `databasePasswordFile` and requires
+all eight fields under **`databaseLimits`**: `maxConnections`, `maxQueued`,
+`queueTimeoutMs`, `connectTimeoutMs`, `statementTimeoutMs`, `lockTimeoutMs`,
+`idleTransactionTimeoutMs`, `socketTimeoutMs`. No omitted-field fallback. Effective
+PostgreSQL statement/lock/idle timeouts are the minimum of required policy and any
+stricter existing role/database setting, applied by one fully consumed bound
+`pg_settings` setup query before the caller transaction. This fixed setup is
+explicitly accounted in SQL-observation tests; domain query work/isolation and
+admission/cursor/deadline contracts are not silently filtered or relaxed.
