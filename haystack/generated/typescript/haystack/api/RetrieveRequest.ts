@@ -7,13 +7,15 @@ export class RetrieveRequest implements BaboonGeneratedLatest {
     private readonly _mode: RetrievalMode;
     private readonly _project: string | undefined;
     private readonly _includeArchived: boolean;
+    private readonly _offset: number;
     private readonly _limit: number;
 
-    constructor(query: string, mode: RetrievalMode, project: string | undefined, includeArchived: boolean, limit: number) {
+    constructor(query: string, mode: RetrievalMode, project: string | undefined, includeArchived: boolean, offset: number, limit: number) {
         this._query = query
         this._mode = mode
         this._project = project
         this._includeArchived = includeArchived
+        this._offset = offset
         this._limit = limit
     }
 
@@ -29,6 +31,9 @@ export class RetrieveRequest implements BaboonGeneratedLatest {
     public get includeArchived(): boolean {
         return this._includeArchived;
     }
+    public get offset(): number {
+        return this._offset;
+    }
     public get limit(): number {
         return this._limit;
     }
@@ -39,26 +44,29 @@ export class RetrieveRequest implements BaboonGeneratedLatest {
             mode: this._mode,
             project: this._project !== undefined ? this._project : undefined,
             includeArchived: this._includeArchived,
+            offset: this._offset,
             limit: this._limit
         };
     }
 
-    public with(overrides: {query?: string; mode?: RetrievalMode; project?: string | undefined; includeArchived?: boolean; limit?: number}): RetrieveRequest {
+    public with(overrides: {query?: string; mode?: RetrievalMode; project?: string | undefined; includeArchived?: boolean; offset?: number; limit?: number}): RetrieveRequest {
         return new RetrieveRequest(
             'query' in overrides ? overrides.query! : this._query,
             'mode' in overrides ? overrides.mode! : this._mode,
             'project' in overrides ? overrides.project! : this._project,
             'includeArchived' in overrides ? overrides.includeArchived! : this._includeArchived,
+            'offset' in overrides ? overrides.offset! : this._offset,
             'limit' in overrides ? overrides.limit! : this._limit
         );
     }
 
-    public static fromPlain(obj: {query: string; mode: RetrievalMode; project: string | undefined; includeArchived: boolean; limit: number}): RetrieveRequest {
+    public static fromPlain(obj: {query: string; mode: RetrievalMode; project: string | undefined; includeArchived: boolean; offset: number; limit: number}): RetrieveRequest {
         return new RetrieveRequest(
             obj.query,
             obj.mode,
             obj.project,
             obj.includeArchived,
+            obj.offset,
             obj.limit
         );
     }
@@ -103,6 +111,7 @@ export class RetrieveRequest_JsonCodec {
             "mode": RetrievalMode_JsonCodec.instance.encode(BaboonCodecContext.Default, value.mode),
             "project": value.project === undefined ? null : value.project,
             "includeArchived": value.includeArchived,
+            "offset": value.offset,
             "limit": value.limit,
         }
     }
@@ -117,6 +126,7 @@ export class RetrieveRequest_JsonCodec {
             RetrievalMode_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["mode"]),
             obj["project"] === undefined || obj["project"] === null ? undefined : obj["project"] === undefined || obj["project"] === null ? undefined : obj["project"] as string,
             obj["includeArchived"] as boolean,
+            obj["offset"] as number,
             obj["limit"] as number,
         )
     }
