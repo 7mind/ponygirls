@@ -231,3 +231,17 @@ not the current client-only suite status. No Python legacy server/API fallback
 was introduced to make these pass. The nested real-target environment test
 retains its real target prerequisite and must run under the parent's owned
 PostgreSQL/executable fixture.
+
+
+### Credential source configuration precedes secret-file I/O
+
+Both a nonempty direct value and a nonempty file reference are always
+`ambiguous-credentials`, even when the direct value is malformed or the file
+would be missing, empty, unreadable or blocking. Presence is checked before
+credential validation or opening a file. URL pairs retain their existing
+whitespace/empty-as-unset rule; token/password direct values remain exact.
+CLI/MCP preflight all relevant pairs before resolving any other pair's file;
+CLI password flag/env combinations obey the same source-first rule. CLI returns
+exit2 without file/network effects. Existing one-source canonical file codecs
+and no-secret-diagnostics rules are unchanged. Focused fail-first evidence and
+the fresh153-method zero-skip regression receipt are in behavior-inventory.md.
