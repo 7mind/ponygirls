@@ -22,7 +22,7 @@ in runCommand "manure-clients-0.2.0" {
     makeWrapper ${python3}/bin/python3 "$out/bin/$client" \
       --prefix PYTHONPATH : "$out/lib/python" --add-flags "-m manure.$module"
   done
-  ${lib.optionalString (builtins.pathExists "${source}/skill/SKILL.md") ''cp ${source}/skill/SKILL.md "$out/share/manure/SKILL.md"''}
+  ${lib.optionalString (builtins.pathExists ../../../manure/skill/SKILL.md) ''cp ${source}/skill/SKILL.md "$out/share/manure/SKILL.md"''}
   PYTHONPATH="$out/lib/python" python3 -c 'import manure.client, manure.current_protocol, manure.cli, manure.mcp'
   test ! -e "$out/lib/python/manure/server.py"
 ''
