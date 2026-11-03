@@ -15,7 +15,7 @@ class TagSearchTest extends munit.FunSuite {
   private def fixture(test: ReadSourceFixture => Unit): Unit=ReadSourceFixture.withFixture(_ => IO.raiseError(new AssertionError("tag catalog must not call a provider")))(test)
   private def index(f: ReadSourceFixture): PostgresSearch = {
     val config=f.config.copy(jdbcUrl=f.probe.url(f.config.jdbcUrl))
-    val db=new Database(config,f.catalog)
+    val db=Fixtures.database(config,f.catalog)
     new PostgresSearch(db,new PostgresArchive(db,config),config)
   }
   private def publish(f: ReadSourceFixture,owner: String,request: IngestRequest,tags: List[List[String]]): IngestReceipt = {
@@ -223,7 +223,7 @@ class TagSearchTest extends munit.FunSuite {
       Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_generation_tags TO $role")
     }
     try {
-      val config=f.config.copy(databaseUser=role,jdbcUrl=f.probe.url(f.config.jdbcUrl)); val db=new Database(config,f.catalog)
+      val config=f.config.copy(databaseUser=role,jdbcUrl=f.probe.url(f.config.jdbcUrl)); val db=Fixtures.database(config,f.catalog)
       assertEquals(intercept[java.sql.SQLException](db.transaction(c => Sql.exec(c,"CREATE TEMP TABLE forbidden(i integer)"))).getSQLState,"42501")
       val search=new PostgresSearch(db,new PostgresArchive(db,config),config)
       assertEquals(search.tags("a",query("",None,100),admission(f,65536L,_ => ())),List(Facet("select-only",1)))

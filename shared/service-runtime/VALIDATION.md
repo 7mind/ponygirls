@@ -209,3 +209,86 @@ nonempty synthetic password; the backend full-run bootstrap uses SCRAM. This is
 focused adoption evidence, not the full mandatory Chronicle release result. Parent
 owns the durable full unfiltered run after all final inputs are integrated; no third
 600-second foreground full attempt was made.
+
+## Adopted-runtime integration file-only proof (01:21Z, exact committed inputs)
+
+Clean archived input **88a4e2d3ee4fe4168e9f6aeb14dcaac0c81af63f** includes
+Chronicle fa71+cc47 and shared physical engine0b2; actual committed Haystack9030a93f,
+Manure1113862e and retrieval f9ccc80d (including48a accounting and739 common-reader
+adoption). Fresh empty HOME/boot and only the same locked file:// artifact repository
+were used; no dependency/pin changes or lock regeneration required.
+
+Receipt `shared/service-runtime/target/validation-runs/20261103-adopted-offline-three.g9Q5ac/`
+retains archived source, source commit, full compile/assembly log, runtime PG log,
+exit0 and `jar-verification.json`. **All module Test/compile**, three real server
+assemblies and three-domain contract coassembly passed. Fresh full shared runtime
+owned SCRAM PG gate passed **9 suites /34 cases /0 failures/errors/skips** with
+unfiltered inventory/XML verification. No application test/full-release claim.
+
+All three jars again have exactly148 duplicate-free, byte-identical Baboon runtime
+classes from one compiled owner. Their shared physical JdbcTransactionEngine class
+maps are also byte-identical. Chronicle uses that engine via the managed blocking
+facade, while the other two services use the IO facade. Service-owned SQL resources
+are packaged (Haystack0001..0005, Manure manure-schema.sql, Chronicle original set).
+JAR SHA256s:
+
+- Chronicle `1ce5dc866d7b62551b07310b41f834b540048c2d7e894f982b6c533d5ce6aca1`
+- Haystack `1bbcf64000b38e3bbe3d50ca2a63e73b76e6ffe96847ace2a4d191772b4d3514`
+- Manure `149a37cbd90f63235d510fb53236eb521b57dd063d22ce7a5efcce6a5b8b9db5`
+
+Only those exact committed inputs are covered: newer/uncommitted Haystack/Manure
+SQL/DTO work and pending generic retrieval empty-source/final-lease fixes are **not**
+covered by this receipt. Parent owns the final immutable-source durable full
+Chronicle run after integration; no third foreground full run was started.
+
+## Resume: reproduce and correct remaining explicit fixture seams (09:24–09:27Z)
+
+On resumed committed integration094eff597d34c3bb2fb91fd5d410ec0540d0b9c1,
+BEFORE patches, the seven affected suites reproduced **exactly40 failures /79 cases /
+7 suites**, zero errors/skips, against owned SCRAM PostgreSQL. Fresh
+`20261103-resume-fail-first.*` receipt retains source commit/hash manifest, log,
+exit1 and every XML. This corroborates the parent's complete112-suite failed gate;
+it is not a substitute for that full run.
+
+Nineteen config failures were caused by fixture-only URL decoration leaking into
+Database's domain Config and failing later StaticTokens reconciliation validation.
+Seventeen direct-constructor failures were missed TagSearch/BrowserWS probe seams.
+The test helper now keeps its query/proxy URL exclusively inside the explicit
+trusted connection factory, passing ordinary validated canonical configuration to
+Database initialization. Those two suites use that same existing fixture seam.
+Production config URL validation, physical engine and domain SQL are unchanged.
+
+Focused affected five-suite rerun: **57 cases /5 suites /0 failures/errors/skips**
+(ArchiveHeadCandidate8, ExpressionHintsPostgres10, IndexProfiles5, BrowserWS19,
+TagSearch15). Fresh `20261103-resume-fixture-fix.*` receipt retains pre-commit HEAD+
+source patch, fresh XML, exit0 and complete log. Deadline/session policy failures
+remain separately reproduced and are not counted fixed by this fixture-only patch.
+
+## Resume: preserve Chronicle's established deadline/session contracts (09:30Z)
+
+The same pre-patch seven-suite run above also reproduced four genuine policy
+regressions: lock5s preempted the six-second archive wait and the thirty-second
+statement error, and preempted renewal/raw extension serialized past five-second
+expiry; idle30s could race the thirty-second lock holder. The new baseline had
+silently narrowed prior observable behavior; it was not a defect in those tests.
+
+With parent approval, only the explicit Chronicle baseline/example/native/browser
+fixtures are aligned to statement30s /lock35s /idle60s /socket35s. The runtime's
+minimum-effective-role/config semantics and production URL validation are unchanged.
+No domain SQL or elapsed/status assertion is edited. The provider role and consumer
+baseline are coordinated to the same values by their owners (a role5s would still,
+correctly, remain stricter). Other services retain independent policy.
+
+Focused rerun: **5 suites /43 cases /0 failures/errors/skips**: ArchiveSearch13,
+PersistentBrowserSession9, ChronicleJdbcRuntime6, MessageContextBoundary10,
+SessionMessageSearchBoundary5. The original real six-second wait, observable
+29–35s deadline, stricter inherited100ms bounds and HTTP401/expiry invalidation
+assertions all pass unchanged. New baseline regression checks example/fixture
+agreement and verifies explicit lower operator policy remains valid.
+Fresh `20261103-resume-policy-fix.*` receipt retains HEAD+source patch, log, exit0
+and every XML. Shared runtime full unfiltered owned SCRAM gate also rerun:
+**9 suites /34 cases /0 failures/errors/skips** with fresh discovery/XML match;
+log `/tmp/unified-runtime-resume-runtime-gate.log` and its printed validation run.
+Pinned Node24 syntax checks passed for all three changed TS fixture configs.
+These focused receipts are not the full Chronicle/native/application release gate;
+parent owns the next immutable-source durable unfiltered run.

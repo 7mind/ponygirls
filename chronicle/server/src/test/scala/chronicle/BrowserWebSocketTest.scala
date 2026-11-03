@@ -225,7 +225,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
         _ <- Resource.make(IO(java.sql.DriverManager.registerDriver(driver)))(_ => IO(java.sql.DriverManager.deregisterDriver(driver))).use { _ =>
           fixture(immediateEmbedder,model,tools,identity).use { f =>
             val observed=f.config.copy(jdbcUrl=prefix+f.config.jdbcUrl)
-            val auth=new Auth(new Database(observed,f.db.profiles),observed)
+            val auth=new Auth(Fixtures.database(observed,f.db.profiles),observed)
             for {
               secret <- IO.blocking(auth.login(LoginRequest("a","synthetic"))._2)
               _ <- server(f.copy(auth=auth)).use(url => socket(url,f.config,secret).use { client => for {

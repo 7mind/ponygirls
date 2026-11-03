@@ -162,7 +162,7 @@ test('native annotation budgets survive claims/restart and owner retry retains c
   const config = {
     listenHost: '127.0.0.1', listenPort: Number(new URL(base).port), allowedOrigin: base, secureCookies: false, allowInsecureHttp: false,
     jdbcUrl: `jdbc:postgresql://127.0.0.1:${dbPort}/chronicle_test`, databaseUser: 'chronicle_test', databasePasswordFile: join(directory, 'db-password'),
-    databaseLimits: { maxConnections: 8, maxQueued: 32, queueTimeoutMs: 5000, connectTimeoutMs: 5000, statementTimeoutMs: 30000, lockTimeoutMs: 5000, idleTransactionTimeoutMs: 30000, socketTimeoutMs: 35000 },
+    databaseLimits: { maxConnections: 8, maxQueued: 32, queueTimeoutMs: 5000, connectTimeoutMs: 5000, statementTimeoutMs: 30000, lockTimeoutMs: 35000, idleTransactionTimeoutMs: 60000, socketTimeoutMs: 35000 },
     users: [{ id: 'owner', login: 'owner', passwordHashFile: join(directory, 'password'), enabled: true }],
     staticTokens: [{ id: randomUUID(), userId: 'owner', name: 'synthetic-ingest', scopes: ['Ingest'], tokenFile: join(directory, 'token') }],
     maxBodyBytes: 8_388_608, maxFiles: 4, maxFileBytes: 4_194_304, maxMessages: 1000, sessionTtlSeconds: 3600,
