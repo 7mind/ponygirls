@@ -1397,3 +1397,82 @@ table with verdicts, instrument lessons, prioritised next steps (human-side
 dialogue prototype; field replay before commit `c1bb530a`; build the
 independent channels into the workflow; low-risk policy changes), and a
 handover section for the next agent.
+
+---
+
+## J21 — 2026-11-03 — The belief network as a validation frame
+
+### User input
+
+Decision Q17 (answer read from revision 2):
+
+> Clarify the human capabilities and success criteria first; continue conceptual research
+
+Subsequent clarification (verbatim):
+
+> I think we should focus on this: a human writes a prompt, the agent plans work - and, togehter with the human, builds the belief network -- for human's later use. Then agent autonomously work on the problem, once it delivers - the belief network is used for the validation  of the code against the initial intent
+
+### Assessment — conceptual proposals, not new findings
+
+This narrows the earlier capability discussion. The proposed primary outcome is
+an informed human acceptance judgment using a jointly prepared network and
+inspectable evidence, not unaided recall or reconstruction of the implementation.
+The workflow is prompt → joint planning/framing → autonomous construction →
+post-delivery validation. The user's clarification sets that direction; it does
+not ratify the criteria or execution policies proposed below.
+
+The conceptual note [belief-network-validation.md](belief-network-validation.md)
+separates two obligations:
+
+1. **Intent → network, faithfulness:** joint clarification must expose materially
+   different interpretations, assumptions and omissions. Human agreement gives
+   goals authority but does not prove complete elicitation, or make descriptive
+   assumptions true.
+2. **Network → code, conformance:** evidence must address the agreed properties
+   for the delivered version and checked scope. A passing suite for a silently
+   narrowed network cannot establish conformance to the initial intent.
+
+Validation must also ask in both directions: which beliefs are supported or
+contradicted by the code, and which consequential behaviors or choices in the
+code have no agreed basis? This is a proposed omission challenge, not a claim
+that exhaustive semantic coverage is mechanically attainable. Changes discovered
+during autonomous work remain proposals until agreed; explicit revisions must
+remain distinguishable from the baseline. Dialogue may clarify or change intent,
+so the original prompt is preserved as an anchor, not treated as an exhaustive
+formal specification.
+
+Proposed success criteria: intent fidelity, discrimination between matching and
+violating deliveries, recognition of unchecked boundaries, authority/version
+binding, bounded total human effort, and later usability without relying
+exclusively on the original agent's narrative. Prediction and explain-back may
+be diagnostics; they do not replace the acceptance outcome. Always accepting,
+always rejecting, or always deferring are not demonstrations of useful validation.
+No numerical thresholds, new instrument or efficacy claim are supplied.
+
+Primary-source excerpts support distinctions, not effects: Hutchins treats
+people and artifacts as a cognitive unit [R62]; meaningful-human-control work
+distinguishes responding to human reasons from merely placing a person in a
+loop [R61]; Bainbridge describes skill/knowledge maintenance and recovery
+problems under automation [R20]. Applying these to this workflow remains an
+inference. The fetched portions and limitations are recorded in references;
+full-text reading is not claimed.
+
+Corrections to the brief's next-step framing: permanent scenario-node layout
+(OC-1) and storage syntax (OC-8) are not prerequisites for conceptual work or a
+manual tryout. Provisional dialogue limits (OC-5) would matter to a future
+tryout, but its construct and scoring come first. No new pilot, deployment,
+harness change, or experiment with a human subject was started.
+
+A read-only subagent challenged the criteria using counterexamples and reviewed
+the draft. It caught superseded pilot/build instructions retained in the brief
+and a thought experiment conflating insufficient evidence with a demonstrated
+violation; these were corrected before committing. Its analysis is advisory,
+not new empirical evidence. Skill-overlap analysis found no justified new
+procedure to promote from untried conceptual criteria; the existing
+`agent-behaviour-pilot` draft remains separate.
+
+Documentation validation: `git diff --check` and an inline Python check of all
+five touched documents' local links/anchors and reference ids, journal J1–J21
+ordering, and the unchanged byte prefix of the pre-existing journal. Source
+base: `26bfe420c7dc50793ba0a8101b13d45a43aaa76d`. No application code changed;
+application suites and the experimental runners were not executed.

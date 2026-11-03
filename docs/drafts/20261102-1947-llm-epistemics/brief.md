@@ -1,8 +1,10 @@
 # Brief — epistemics of LLM-accelerated development (2026-11-02 … 11-03)
 
-Status: summary of journal entries J1–J19 for the user and the next agent.
+Status: summary of journal entries J1–J21 for the user and the next agent;
+J21 clarifies the current direction without adding experimental results.
 Source of truth for every claim: [journal](journal.md), [hypotheses](hypotheses.md),
-[references](references.md), the [design draft](belief-dag-design.md) and the
+[references](references.md), the [design draft](belief-dag-design.md), the
+[validation-frame proposal](belief-network-validation.md) and the
 pilot repository `~/work/epistemics-pilots` (local git, `main` at `3768c9e`).
 
 ## 1. Problem
@@ -76,14 +78,22 @@ atomic); unlabelled secondary codings in two write-ups (found by independent
 reviews, J9, J12). The skill draft `agent-behaviour-pilot` (Haystack r2)
 captures the procedure.
 
-## 5. What to do next (priority order)
+## 5. Current focus and parked options
 
-1. **Human side — the only test of the core claim.** Dialogue prototype on
-   one real component of the user's: agent runs the design's dialogue stages,
-   the user ratifies beliefs and 2–3 scenarios each; measure explain-back and
-   prediction accuracy with confidence, resumption lag, lost-thread marks
-   (design §8). Settle design open choices OC-1, OC-5, OC-8 first. Start the
-   prediction log (`human/pf.py`) in real work in parallel.
+Item 1 is the current direction. Items 2–5 are earlier proposals, not new work
+authorized by Q17; no replay, implementation or policy change is underway.
+
+1. **Conceptual clarification first (Q17, J21; current direction).** The user
+   specifies prompt → joint planning/belief-network construction → autonomous
+   work → post-delivery validation against initial intent. The network is for
+   the human's later use, not primarily a recall test. The
+   [validation-frame proposal](belief-network-validation.md) separates
+   intent→network faithfulness from network→code conformance and proposes
+   acceptance criteria, still unratified. A future human-side tryout must
+   establish its construct and scoring before execution; predictions and
+   explain-back are possible diagnostics, not the primary outcome. Storage
+   syntax (OC-8) and scenario layout (OC-1) need not precede a manual tryout;
+   provisional dialogue limits (OC-5) would matter. No new pilot is underway.
 2. **Field replay** (agent side): ponygirls just before commit `c1bb530a`
    ("ponygirls-bg-tasks: completion notices never wait for user input"), the
    original prompt verbatim (session
@@ -92,14 +102,14 @@ captures the procedure.
    where possible), real tests; Sol and DeepSeek. Ground truth: the fix
    commit's tests. Explains why Sol failed only in the field (session length,
    real repo, baseline-test-first investigation).
-3. **Build the independent channels into the workflow:** cross-family audit
-   and a "fresh reader who experiments" step for consequential changes;
-   environment perturbation for stated assumptions; scenario selection by
-   cross-family disagreement. These are the validated pieces.
-4. **Policy changes worth adopting now** (low risk): test provenance with
-   escalation on conflict (Pilot A); reports that name changed tests with old
-   and new assertions; never let tests, docstrings or measured behaviour
-   stand as evidence of intent.
+3. **Workflow integration (parked proposal):** cross-family audit and a
+   "fresh reader who experiments" step; environment perturbation for stated
+   assumptions; scenario selection by cross-family disagreement. These have
+   agent-side feasibility evidence, not validation of the human acceptance
+   workflow.
+4. **Policy proposals (parked):** test provenance with escalation on conflict
+   (Pilot A); reports naming changed tests with old and new assertions;
+   tests, docstrings and measured behaviour do not establish intent.
 5. Lower priority: retest B3 with a batch where the control fails reliably;
    larger n only for effects that matter to decisions.
 
@@ -107,8 +117,9 @@ captures the procedure.
 
 ## Handover to the next agent
 
-**Read first, in order:** this brief; `journal.md` J16–J19 (latest state);
-`hypotheses.md` (status column); `belief-dag-design.md` §5, §6, §11; the
+**Read first, in order:** this brief; `journal.md` J21 (current direction),
+then J16–J19 (latest experiments); `belief-network-validation.md` (conceptual
+proposal); `hypotheses.md` (status column); `belief-dag-design.md` §5, §6, §11; the
 pilot repo `README.md` and `protocols/pilot-e.md`, `pilot-5-7.md`.
 
 **Where things are**
@@ -123,9 +134,11 @@ pilot repo `README.md` and `protocols/pilot-e.md`, `pilot-5-7.md`.
   `pilot_5.py`, `pilot_12.py`, plus subagent-built `pilot_3/4/6/df` runners.
   Every runner has a committed `validate_scoring_*.py`; run it before trusting
   a rescore.
-- Human-side tools: `human/ratify_session.py` (P-D; its NASA-TLX part is
-  rejected — replace with design §8 measures), `human/pf.py` (prediction log;
-  data in `~/.local/state/epistemics-pilots/`, never committed).
+- Human-side tools: `human/ratify_session.py` is the historical P-D instrument,
+  not a primary assessment of the current acceptance outcome. No replacement
+  instrument is specified. `human/pf.py` is a prediction log; predictions and
+  explain-back remain possible diagnostics. Data in
+  `~/.local/state/epistemics-pilots/`, never committed.
 - Skill draft: Haystack `corporate-activity:skill-draft-agent-behaviour-pilot`
   (r2, human-attention required). Pending amendment: experimenter oracles must
   vary inputs (equal sizes, repeated faults) and be audited by an independent
@@ -162,5 +175,7 @@ a subject workspace.
 - Stored Pilot DF sessions contain the user's skill files (read by Sol,
   about 8.8 MB, local repo only): the user decided to keep them (nothing to
   redact, 2026-11-03).
-- Choose between next steps 1 and 2 (or both); settle OC-1, OC-5, OC-8 for
-  the dialogue prototype.
+- Q17 chose conceptual clarification, not a new pilot or field replay. Review
+  the validation-frame proposal: which material distinctions must the joint
+  network preserve for later human acceptance, and which can remain in the
+  hidden refinement? Criteria and execution policy remain proposals.

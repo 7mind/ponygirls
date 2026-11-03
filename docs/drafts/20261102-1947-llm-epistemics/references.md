@@ -23,14 +23,14 @@ actually read.
 | R10 | Anthropic. *Prompting best practices*, section "Avoid focusing on passing tests and hardcoding": "Tests are there to verify correctness, not to define the solution … if any of the tests are incorrect, please inform me rather than working around them." | https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices | Fetched (markdown), 2026-11-02 | J2, J14 |
 | R11 | Panickssery, Bowman, Feng (2024). *LLM Evaluators Recognize and Favor Their Own Generations.* NeurIPS 2024. | https://arxiv.org/abs/2404.13076 | Search-observed (abstract), 2026-11-02 | J2 |
 | R12 | Feng, Afroz, Sarma (2025). *From Gains to Strains: Modeling Developer Burnout with GenAI Adoption.* 442 developers, JD–R model, PLS-SEM; GenAI adoption raises burnout via job demands; resources and positive perceptions mitigate. | https://arxiv.org/abs/2510.07435 | Fetched (abstract), 2026-11-02 | J2 |
-| R13 | Naur, P. (1985). Programming as Theory Building. *Microprocessing and Microprogramming* 15(5), 253–261. | — | From memory | J1, J10, J16 |
+| R13 | Naur, P. (1985). Programming as Theory Building. *Microprocessing and Microprogramming* 15(5), 253–261. | https://www.naur.com/comp/c1-4.html | Fetched (author-hosted abstract only), 2026-11-03; claims beyond the abstract remain from memory. Wisconsin PDF reprint returned no extractable text. | J1, J10, J16 |
 | R14 | Polanyi, M. (1966). *The Tacit Dimension.* "We can know more than we can tell." | — | From memory | J1, J4, J16 |
 | R15 | Knight, J. C., Leveson, N. G. (1986). An experimental evaluation of the assumption of independence in multiversion programming. *IEEE TSE* SE-12(1), 96–109. | — | From memory | J1 |
 | R16 | Kahneman, D., Klein, G. (2009). Conditions for intuitive expertise: a failure to disagree. *American Psychologist* 64(6), 515–526. | — | From memory | J1, J6 |
 | R17 | Chase, W. G., Simon, H. A. (1973). Perception in chess. *Cognitive Psychology* 4(1), 55–81. | — | From memory | J1 |
 | R18 | Cowan, N. (2001). The magical number 4 in short-term memory. *Behavioral and Brain Sciences* 24(1), 87–114. | — | From memory | J1, J10 |
 | R19 | Johnson, M. K., Hashtroudi, S., Lindsay, D. S. (1993). Source monitoring. *Psychological Bulletin* 114(1), 3–28. | — | From memory | J1 |
-| R20 | Bainbridge, L. (1983). Ironies of automation. *Automatica* 19(6), 775–779. | — | From memory | J1 |
+| R20 | Bainbridge, L. (1983). Ironies of automation. *Automatica* 19(6), 775–779. | https://ckrybus.com/static/papers/Bainbridge_1983_Automatica.pdf | Fetched (p. 775 and opening of p. 776; skills, knowledge, practice/feedback), 2026-11-03; extraction truncated, full-text reading not claimed. | J1, J21 |
 | R21 | Sharma, M. et al. (2023). Towards Understanding Sycophancy in Language Models. arXiv 2310.13548. | — | From memory | J1 |
 | R22 | Feathers, M. (2004). *Working Effectively with Legacy Code.* Prentice Hall. (Characterization tests.) | — | From memory | J2 |
 | R23 | Barr, E. T., Harman, M., McMinn, P., Shahbaz, M., Yoo, S. (2015). The Oracle Problem in Software Testing: A Survey. *IEEE TSE* 41(5), 507–525. | — | From memory | J2 |
@@ -71,6 +71,8 @@ actually read.
 | R58 | Altmann, E. M., Trafton, J. G. (2002). Memory for goals: an activation-based model. *Cognitive Science* 26(1), 39–83. (Resumption lag after interruption.) | — | From memory | J10 |
 | R59 | ISO/IEC 25010:2023. Systems and software engineering — Systems and software Quality Requirements and Evaluation (SQuaRE) — Product quality model. | — | From memory | J10 |
 | R60 | Bass, L., Clements, P., Kazman, R. (2021). *Software Architecture in Practice*, 4th ed. Addison-Wesley. (Quality-attribute scenarios.) | — | From memory | J10 |
+| R61 | Santoni de Sio, F., van den Hoven, J. (2018). *Meaningful Human Control over Autonomous Systems: A Philosophical Account.* Frontiers in Robotics and AI 5:15. DOI 10.3389/frobt.2018.00015. Proposed tracking and tracing conditions are necessary conditions, not an efficacy result for development workflows. | https://www.frontiersin.org/journals/robotics-and-ai/articles/10.3389/frobt.2018.00015/full | Fetched (abstract and introduction via Exa), 2026-11-03; full page truncated. The philosophical tracing condition is not our graph's traceability. | J21 |
+| R62 | Hutchins, E. (1995). *How a Cockpit Remembers Its Speeds.* Cognitive Science 19, 265–288. A distributed people-and-artifacts system as unit of analysis, not evidence about LLM oversight. | https://pages.ucsd.edu/~ehutchins/documents/CockpitSpeeds.pdf | Fetched (abstract and opening methodological discussion, pp. 265–267), 2026-11-03; remaining extraction truncated. | J21 |
 
 ## Local artifacts
 
