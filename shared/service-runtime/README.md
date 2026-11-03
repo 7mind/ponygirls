@@ -51,3 +51,12 @@ applied prefixes must match exactly, including names. Unknown/modified/deleted
 migrations fail closed. SQL and ledger inserts commit together; failure rolls back
 both. Migration SQL is trusted service/library-owned input, never user SQL.
 No application tables or domain auth policy belong here.
+
+## distage / pinned Cats IO
+
+`CatsIOInjector.apply(): izumi.distage.model.Injector[IO]` is the shared distage
+entrypoint (`CatsIOInjector().produceGet[Graph](module).use(...)`). It preserves
+Chronicle's pinned Scala2.13 Cats / Scala3 Izumi erased-ABI workaround unchanged.
+Use ordinary typed/`@Id` graph bindings and Lifecycle-managed resources; the helper
+does not scan plugins or install service bindings. ChronicleInjector delegates
+here, so apps must not copy their own QuasiIO/QuasiAsync adapter implementation.
