@@ -2,6 +2,7 @@
  * Credentials and one-time passwords stay transient. No HTML injection or browser storage.
  */
 import * as current from "./current-protocol.js";
+import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./current/manure/api/index.js";
 
 "use strict";
 
@@ -75,6 +76,21 @@ import * as current from "./current-protocol.js";
       if (!subdomain && !pathMode) { return null; }
       return url.href;
     } catch (_error) { return null; }
+  }
+
+  function checkHostingMode() {
+    var notice = $("path-mode-warning");
+    // The static dashboard is also used in subdomain mode. Read the existing
+    // public typed capability, never infer origin isolation from artifact URLs
+    // or require a login before disclosing the low-security hosting warning.
+    current.request(fetch, [new Command_GetCapabilities(), Result_CapabilityInfo,
+      function (result) { return result.capabilities.contentMode; }]).then(function (mode) {
+      notice.hidden = mode !== ContentMode.Path;
+    }).catch(function () {
+      notice.hidden = false;
+      notice.title = "Content-origin isolation could not be determined. Verify hosting configuration before opening untrusted content.";
+      notice.setAttribute("aria-label", notice.title);
+    });
   }
 
   function readRoute() {
@@ -689,5 +705,6 @@ import * as current from "./current-protocol.js";
   $("files-retry-button").addEventListener("click", loadFiles);
   $("detail-back-button").addEventListener("click", function () { invalidateNavigation(); window.location.hash = routeHash(null); });
   window.addEventListener("hashchange", handleRoute);
+  checkHostingMode();
   checkSession();
 })(document, window, window.fetch.bind(window));
