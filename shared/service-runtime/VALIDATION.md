@@ -240,3 +240,26 @@ Only those exact committed inputs are covered: newer/uncommitted Haystack/Manure
 SQL/DTO work and pending generic retrieval empty-source/final-lease fixes are **not**
 covered by this receipt. Parent owns the final immutable-source durable full
 Chronicle run after integration; no third foreground full run was started.
+
+## Resume: reproduce and correct remaining explicit fixture seams (09:24–09:27Z)
+
+On resumed committed integration094eff597d34c3bb2fb91fd5d410ec0540d0b9c1,
+BEFORE patches, the seven affected suites reproduced **exactly40 failures /79 cases /
+7 suites**, zero errors/skips, against owned SCRAM PostgreSQL. Fresh
+`20261103-resume-fail-first.*` receipt retains source commit/hash manifest, log,
+exit1 and every XML. This corroborates the parent's complete112-suite failed gate;
+it is not a substitute for that full run.
+
+Nineteen config failures were caused by fixture-only URL decoration leaking into
+Database's domain Config and failing later StaticTokens reconciliation validation.
+Seventeen direct-constructor failures were missed TagSearch/BrowserWS probe seams.
+The test helper now keeps its query/proxy URL exclusively inside the explicit
+trusted connection factory, passing ordinary validated canonical configuration to
+Database initialization. Those two suites use that same existing fixture seam.
+Production config URL validation, physical engine and domain SQL are unchanged.
+
+Focused affected five-suite rerun: **57 cases /5 suites /0 failures/errors/skips**
+(ArchiveHeadCandidate8, ExpressionHintsPostgres10, IndexProfiles5, BrowserWS19,
+TagSearch15). Fresh `20261103-resume-fixture-fix.*` receipt retains pre-commit HEAD+
+source patch, fresh XML, exit0 and complete log. Deadline/session policy failures
+remain separately reproduced and are not counted fixed by this fixture-only patch.

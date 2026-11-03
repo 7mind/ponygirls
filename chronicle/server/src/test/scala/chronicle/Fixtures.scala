@@ -38,7 +38,9 @@ object Fixtures {
       val physical = BlockingJdbcDatabase.withConnectionFactory(config.copy(jdbcUrl=canonicalUrl).jdbcConfig,new JdbcConnectionFactory {
         def open(url: String,properties: Properties): java.sql.Connection = DriverManager.getConnection(config.jdbcUrl,properties)
       })
-      Database.withRuntime(config,profiles,physical)
+      // The decorated URL belongs only to the explicit transport probe. Domain
+      // initialization still validates an ordinary production-shaped configuration.
+      Database.withRuntime(config.copy(jdbcUrl=canonicalUrl),profiles,physical)
     }
   }
   def config(): Config = {
