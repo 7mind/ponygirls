@@ -1,0 +1,40 @@
+{
+  "revision": "be4cb86972c820ea2ae0e2c6f886057f0604c2ec",
+  "runtimeJob": "bgt-43dfb39d43b27b8f",
+  "parentVerified": true,
+  "cases": [
+    "boot-three-consumers-one-provider-independent-ready-and-migrations",
+    "own-app-restart-leaves-provider-other-apps-and-migrations-stable",
+    "explicit-provider-restart-recovers-previously-active-complete-chain",
+    "provider-crash-autorestart-bounded-unit-and-real-role-reconnection",
+    "intentionally-stopped-consumer-is-not-resurrected-by-provider-restart",
+    "manual-stop-start-policy-explicit-selected-app-recovery",
+    "own-migration-restart-leaves-provider-and-unrelated-consumers-stable",
+    "actual-package-switch-restarts-only-own-app-and-migration",
+    "actual-disabled-module-preserves-provider-db-and-others-stays-disabled-after-restart"
+  ],
+  "mandatoryCases": 9,
+  "faultsExecuted": 9,
+  "allFourPhasesPassed": true,
+  "errors": [],
+  "notExecuted": [],
+  "invalidFixtureCases": [],
+  "receiptSha256": "6a422fdf8766a20753826f4c83456fc5d30f524062c20e250bf00f510cc7075a",
+  "inventoryComparisonSource": "managed-postgres-lifecycle-468a3cbb/nixos468/lifecycle-receipt.json",
+  "inventoryComparisonSha256": "60fdca55a189cf718abbf38afda3a521a84e66b74a73b662a9793dc016658081",
+  "immutableTestScriptSha256": "ac66c6699bdb8c43324caae65950c67e8bc9c7a4311adcbbcbcbc7f12af3ae1c",
+  "metadataAdmission": {
+    "firstAttempt": "Refused new dynamic invocation-ID map keys before destination creation; not a guest failure",
+    "secondAttempt": "Only probeSuccessByInvocation under the ten known service objects admits typed 32hex->nonnegative-int keys; before/after/restored keys subset corresponding adapterStartedInvocations. Every other field key checked against approved prior receipt.",
+    "rawReceiptRewritten": false
+  },
+  "scope": "actual NixOS module/systemd/real PG lifecycle with explicitly synthetic app CLI adapters; NOT native application/protocol acceptance",
+  "scopeDoesNotProveNativeFinalizers": true,
+  "cleanupScope": "Visible expected-output/known-startTicks identities only; NOT Nix-daemon=subreaper/whole-host absence",
+  "rawBuildLog": {
+    "omitted": true,
+    "sha256": "41ad8a5931898acedf2b08cd817798e844aaae8cf7d9163a0e335772a91162a2",
+    "bytes": 714294,
+    "lines": 2047
+  }
+}

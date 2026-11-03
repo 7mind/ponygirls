@@ -2,7 +2,7 @@
 
 Production-code pin: `be4cb86972c820ea2ae0e2c6f886057f0604c2ec`.
 
-**Not deployed or integrated into the original main checkout.** The final NixOS9 revalidation is running; Git-history integration requires Q11. This document records verified evidence, not activation permission.
+**Not deployed or integrated into the original main checkout.** The final NixOS9 revalidation passed; Git-history integration requires Q11. This document records verified evidence, not activation permission.
 
 ## Implemented boundary
 
@@ -38,7 +38,7 @@ Later stop-policy changes did not change application/native inputs. Source-bound
 - Shared runtime:9 suites/34 cases. Shared retrieval:8 suites/55 cases, including PostgreSQL/HTTP boundaries. Lossless JSON36 and current filesystem29 cases have separate inventories.
 - Foundation/provider batch: eight source-bound realizations, with exact inventories and credential/provider/harness scopes in `foundation-provider-b092de10/`. Trusted Nix realization reuse is not described as every derivation having executed afresh.
 - Actual current Home Manager lifecycle: all7 mandatory cells/four phases/faults passed at source658; `hm-postgres-lifecycle-65879bdd/`. The later Chronicle NixOS-only change leaves HM behavioral inputs unchanged; its receipt remains source658.
-- Final NixOS lifecycle: all9 original cells are required at final sourcebe4. `bgt-43dfb39d43b27b8f` is running; no pass is inferred from its driver build.
+- Final actual NixOS lifecycle: all9 original cells/four phases/faults passed at final sourcebe4, zero errors/omissions/invalid fixtures. Parent verified the full receipt against the original inventory and immutable test-script names; `nixos-postgres-lifecycle-be4cb869/`, receipt SHA256 `6a422fdf8766a20753826f4c83456fc5d30f524062c20e250bf00f510cc7075a`. Runtime job `bgt-43dfb39d43b27b8f` ended0 with separate visible-namespace cleanup proof; this is actual guest execution, not driver-build inference.
 - Complete applicable x86_64 no-build checks passed for all three repositories using immutable local overrides: Ponygirlsbe4, nix-config01b11, Paddock91bd. See `final-no-build-be4cb869/`. aarch64-linux/Darwin were omitted; no runtime/build claim for those architectures.
 
 ## Shutdown contracts
@@ -60,4 +60,4 @@ Normal exit143, signal termination15, manager clean-exit classification and actu
 
 ## Remaining work
 
-Validate the final NixOS9 receipt, finish private evidence/authorized cleanup, and resolve Q11 before any history reconciliation. No push, pin update, production migration, credential rotation or activation is authorized by this acceptance summary. Detailed provenance and original outcomes remain in `20261103-0017-unified-services-execution.md` and the named bundles.
+Finish private evidence/authorized cleanup and resolve Q11 before any history reconciliation. No push, pin update, production migration, credential rotation or activation is authorized by this acceptance summary. Detailed provenance and original outcomes remain in `20261103-0017-unified-services-execution.md` and the named bundles.
