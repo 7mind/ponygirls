@@ -17,6 +17,7 @@ import * as A from '../generated/typescript/chronicle/api/index.js';
 import { BaboonCodecContext } from '../generated/typescript/BaboonSharedRuntime.js';
 
 const context = BaboonCodecContext.Default;
+const fixtureDatabasePassword = 'chronicle-test-password';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const deadlineMs = 90_000;
 const shutdownGraceMs = 40_000;
@@ -31,7 +32,7 @@ function command(): string[] {
   return value as string[];
 }
 function run(executable: string, args: string[], input: string | undefined): string {
-  const result = spawnSync(executable, args, { input, encoding: 'utf8', timeout: deadlineMs });
+  const result = spawnSync(executable, args, { input, encoding: 'utf8', timeout: deadlineMs, env: { ...process.env, PGPASSWORD: fixtureDatabasePassword } });
   assert.equal(result.status, 0, `${executable} failed: ${result.stderr}`);
   return result.stdout;
 }
@@ -163,7 +164,8 @@ test('collector → durable archive → annotation/pgvector → generated WS and
     else { console.error(`Synthetic failure artifacts retained: ${directory}`); console.error(serverLog); }
     assert.ok(graceful, 'server shutdown required SIGKILL');
   });
-  run(join(pg, 'initdb'), ['-D', db, '-A', 'trust', '-U', 'chronicle_test', '--no-locale', '--encoding=UTF8'], undefined);
+  await writeFile(join(directory, 'db-password'), fixtureDatabasePassword, { mode: 0o600 });
+  run(join(pg, 'initdb'), ['-D', db, '-A', 'scram-sha-256', '--pwfile', join(directory, 'db-password'), '-U', 'chronicle_test', '--no-locale', '--encoding=UTF8'], undefined);
   run(join(pg, 'pg_ctl'), ['-D', db, '-l', join(directory, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${dbPort} -k ${directory}`, '-w', 'start'], undefined); databaseStarted = true;
   run(join(pg, 'createdb'), ['-h', '127.0.0.1', '-p', String(dbPort), '-U', 'chronicle_test', 'chronicle_test'], undefined);
   run(join(pg, 'psql'), ['-h', '127.0.0.1', '-p', String(dbPort), '-U', 'chronicle_test', '-d', 'chronicle_test', '-c', 'CREATE EXTENSION vector'], undefined);
@@ -171,12 +173,13 @@ test('collector → durable archive → annotation/pgvector → generated WS and
   const passwordHash = run(cmd[0], [...cmd.slice(1), 'password-hash'], password + '\n').trim();
   assert.match(passwordHash, /^pbkdf2-sha256\$/);
   await writeFile(join(directory, 'password'), passwordHash, { mode: 0o600 });
-  await writeFile(join(directory, 'db-password'), '', { mode: 0o600 });
+  await writeFile(join(directory, 'db-password'), fixtureDatabasePassword, { mode: 0o600 });
   await writeFile(join(directory, 'model-key'), '', { mode: 0o600 });
   const endpointConfig = { model: 'synthetic-model', revision: 'synthetic-v1', credentialFile: join(directory, 'model-key'), timeoutSeconds: 5, maxResponseBytes: 1_048_576 };
   const config = {
     listenHost: '127.0.0.1', listenPort: httpPort, allowedOrigin: base, secureCookies: false,
     jdbcUrl: `jdbc:postgresql://127.0.0.1:${dbPort}/chronicle_test`, databaseUser: 'chronicle_test', databasePasswordFile: join(directory, 'db-password'),
+    databaseLimits: { maxConnections: 8, maxQueued: 32, queueTimeoutMs: 5000, connectTimeoutMs: 5000, statementTimeoutMs: 30000, lockTimeoutMs: 5000, idleTransactionTimeoutMs: 30000, socketTimeoutMs: 35000 },
     users: ['alice', 'bob', 'carol'].map(id => ({ id, login: id, passwordHashFile: join(directory, 'password'), enabled: true })),
     maxBodyBytes: 8_388_608, maxFiles: 16, maxFileBytes: 4_194_304, maxMessages: 10_000, sessionTtlSeconds: 3600,
     annotation: { ...endpointConfig, endpoint: model.endpoint + '/chat/completions' },
