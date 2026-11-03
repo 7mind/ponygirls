@@ -16,7 +16,7 @@ object Migration {
   }
 
   private[runtime] def applyAll(c: Connection, namespace: String, migrations: List[Migration]): Unit = {
-    // Common lock guards first ledger creation, then per-namespace migration serialization.
+    // Per-database lock guards first ledger creation and serializes all migration namespaces.
     // Different DBs have independent PostgreSQL advisory-lock spaces and independent ledgers.
     Using.resource(c.prepareStatement("SELECT pg_advisory_xact_lock(71393722)"))(_.execute())
     Using.resource(c.createStatement())(_.execute("""CREATE TABLE IF NOT EXISTS ponygirls_runtime_migrations (
