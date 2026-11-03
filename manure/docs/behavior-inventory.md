@@ -566,3 +566,60 @@ resumability/grants/expiry and rollback-boundary rehearsals; metadata retrieval
 ACL/profile/provider/outage tests; official MCP SDK + Chromium complete suites.
 No production switch, credential rotation, source-data deletion or legacy test
 retirement is authorized by generation or a subset passing.
+
+## Current-target migration status (2026-11-03)
+
+Original 353 discovered Python methods remain; no server/storage tests were
+removed. The tree now has 30 `test_*.py` files / 371 discovered methods, adding
+8 current-codec + 6 current-client + 4 target-harness safety methods. Node browser
+boundary has 7 cases; network capture has 9 (including new command-only logging).
+The original inventory above remains baseline provenance, not a claim that old
+REST callbacks are supported by the new client.
+
+* `browser_fixtures.py` now owns an actual target subprocess and a unique opted-in
+  disposable PostgreSQL database, seeds only through typed current commands/raw
+  chunks, and has no Python server/storage imports. Browser Python probes and
+  access-modes/dashboard-UX helpers use current DTOs; private clocks are replaced
+  by real minimum-60-second TTL expiry probes. Original browser scenario methods,
+  negative controls, race interactions, bytes/hash checks and deadlines remain.
+* `test_client_realserver.py` (14 methods) now starts the target executable;
+  it no longer mutates a private SQLite connection for expiry. Public API
+  60-second expiry preserves expired-but-unswept pagination assertions.
+* `test_cli_process.py` (3 methods) now uses the target executable and genuine
+  child CLI SIGKILL/resume. Audit/delay is client-transport-only, **after** actual
+  receipt ACK; no fake backend ACK can satisfy the assertions. Interrupted fetch
+  still proves exact resumed Range and byte identity.
+* Browser cross-origin JSON commands now require preflight. The two hostile
+  browser tests explicitly assert blocked current-API preflight, never call this
+  a dispatched-cookie 403 proof. Retained URLencoded Login/Logout form adapters
+  still prove actual cookie dispatch + wrong-Origin 403 (including planted
+  None/Secure over TLS). Targeted authenticated CreateGrant/Delete 403 and exact
+  victim byte/session preservation remain direct current-API HTTP complements.
+  This is the intentional current transport change, not a SameSite/preflight
+  shortcut claimed as proof of an authenticated mutation guard.
+* Additional insecure-HTTP regression: the dashboard uses CSPRNG getRandomValues
+  to build canonical v4 UUIDs; randomUUID is secure-context-only. The dedicated
+  check removes randomUUID and still exercises request-ID generation.
+
+Fresh static/component checks: Python current protocol/client/harness safety,
+markup and asset hygiene: **31 methods, 0 failures/errors/skips**; Node current
+boundary/network capture: **16 cases, 0 failures/skips**. All Python test sources
+compile; all browser `.mjs` sources parse. These do not execute PostgreSQL,
+Chromium, the replacement executable, native code or official MCP SDK.
+
+**Not yet executed:** all actual-target/browser/CLI-process scenarios above.
+The deliberate realserver smoke prerequisite probe fails (not skips) because
+`MANURE_TEST_SERVER_COMMAND_JSON` is absent in this worktree environment. The
+owned provider/JNI environment has not been started here. No full service or
+migration acceptance is claimed.
+
+**Still requires adaptation:** historical `test_client_transport.py`,
+`test_client_external.py`, `test_client_stateful.py`, fake-REST portions of
+`test_client_hardening.py`, CLI/MCP fake-transport helpers and the original
+server/storage suites must be rehosted against the current typed fixture or
+replacement adapter as appropriate. The exploratory historical hardening run
+recorded 8 failures and 18 error reports/49 methods, all retained for migration;
+those old callbacks are not a compatibility target and are not excluded from
+release acceptance. Realserver/browser adapters need actual runner execution
+and any resulting defects fixed before acceptance. Nothing here retires the
+Python source tests or authorizes a production switch.

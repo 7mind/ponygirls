@@ -21,9 +21,25 @@ object Main extends IOApp:
     case List("migrate",path) => IO.blocking(Config.load(Path.of(path))).flatMap(config => buildResources(config,false).use(_ => IO.unit)).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("--config",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
     case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | --config CONFIG.json").as(ExitCode.Error)
+  private final case class StartupFailure(stage: String,code: String) extends RuntimeException(code)
+  private def safeCode(error: Throwable): String = error match
+    case s: StartupFailure => s.code
+    case d: DomainError if d.code.matches("[a-z][a-z-]{0,63}") => d.code
+    case r: ponygirls.runtime.RuntimeFailure if r.code.matches("[a-z][a-z-]{0,63}") => r.code
+    case j: ponygirls.runtime.JdbcFailure => "jdbc-" + j.sqlState.getOrElse("unknown")
+    case n: manure.storage.NativeFailure => "posix-" + n.errno()
+    case _: java.nio.file.FileSystemException => "filesystem"
+    case _: java.io.IOException => "io"
+    case e if e.getClass.getName.startsWith("izumi.") => "wiring"
+    case _: IllegalArgumentException => "configuration"
+    case _ => "internal"
+  private def stage[A](name: String,work: IO[A]): IO[A] = work.handleErrorWith(error => IO.raiseError(StartupFailure(name,safeCode(error))))
   private def safeFailure(error: Throwable): IO[ExitCode] =
-    // No stack trace/cause/SQL/filesystem/config/credential output.
-    IO(System.err.println("manure startup-or-runtime failure")).as(ExitCode.Error)
+    val label = error match
+      case s: StartupFailure => s.stage
+      case _ => "serve"
+    // Enumerated stage/category ONLY. No stack/cause/SQL/path/provider detail.
+    IO(System.err.println("manure failure stage=" + label + " code=" + safeCode(error))).as(ExitCode.Error)
   private def schema: String =
     val input = getClass.getResourceAsStream("/manure-schema.sql")
     Require(input != null, "unavailable")
@@ -68,7 +84,7 @@ object Main extends IOApp:
       make[Semaphore[IO]].fromValue(gate)
     })))(_ => IO.unit)
     // distage Lifecycle remains scoped inside the outer resource ownership graph.
-    services <- Resource.make(graph.acquire)(graph.release).evalMap(inner => graph.extract(inner).fold(identity,IO.pure))
+    services <- Resource.make(stage("wiring",graph.acquire))(graph.release).evalMap(inner => stage("wiring",graph.extract(inner).fold(identity,IO.pure)))
     _ <- Resource.eval(services.database.transaction { c =>
       // Offline import control state is NEVER cleared/adopted automatically.
       val imported = Jdbc.rows(c,"SELECT to_regclass('manure_offline.destination') IS NOT NULL")(_.getBoolean(1)).head
@@ -102,7 +118,7 @@ object Main extends IOApp:
           Require(!unexpected, "migration-required")
 
     })
-    _ <- Resource.eval(IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema),Migration(2,"physical-root-binding","CREATE TABLE IF NOT EXISTS manure.root_owner(singleton boolean PRIMARY KEY CHECK(singleton),identity bytea NOT NULL)"))))
+    _ <- Resource.eval(stage("schema",IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema),Migration(2,"physical-root-binding","CREATE TABLE IF NOT EXISTS manure.root_owner(singleton boolean PRIMARY KEY CHECK(singleton),identity bytea NOT NULL)")))))
     _ <- Resource.eval(services.database.transaction { c =>
       val identity = java.nio.ByteBuffer.allocate(16)
       directory.physicalIdentity.foreach(identity.putLong)
@@ -111,8 +127,8 @@ object Main extends IOApp:
       Require(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).headOption.exists(java.util.Arrays.equals(_,bytes)), "migration-required")
       services.projection.initialize(c)
     })
-    _ <- Resource.eval(if recover then services.artifacts.initialize() else IO.unit)
-    _ <- Resource.eval(if recover then backfill(services) else IO.unit)
+    _ <- Resource.eval(stage("reconcile",if recover then services.artifacts.initialize() else IO.unit))
+    _ <- Resource.eval(stage("projection",if recover then backfill(services) else IO.unit))
   yield services
   private def backfill(services: RuntimeServices): IO[Unit] =
     def loop(after: Option[String]): IO[Unit] = services.database.transaction { c =>

@@ -16,6 +16,7 @@ import tempfile
 import urllib.parse
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from current_fixture import current_fixture
 from unittest import mock
 
 from manure.auth import generate_token as _gen_token  # canonical vectors (governor A1)
@@ -25,9 +26,10 @@ ART_ID = "b" * 32
 
 
 def _json(b):
-    return json.dumps(b).encode()
+    return b
 
 
+@current_fixture
 class DummyTransport:
     def __init__(self, routes):
         self.routes = routes
@@ -36,13 +38,13 @@ class DummyTransport:
     def request(self, method, url, headers, body):
         self.requests.append({"method": method, "url": url, "headers": dict(headers), "body": body})
         parsed = urllib.parse.urlparse(url)
-        key = (method.upper(), parsed.path + (("?" + parsed.query) if parsed.query else ""))
+        key = (method, parsed.path + (("?" + parsed.query) if parsed.query else ""))
         if key not in self.routes:
-            alt = (method.upper(), parsed.path)
+            alt = (method, parsed.path)
             if alt in self.routes:
                 key = alt
             else:
-                if method.upper() == "PUT" and parsed.path.endswith("/chunks"):
+                if method == "PUT" and parsed.path.endswith("/chunks"):
                     qs = urllib.parse.parse_qs(parsed.query)
                     off = int(qs.get("offset", ["0"])[0])
                     return (200, {"Content-Type": "application/json"},
@@ -160,17 +162,17 @@ class TestEnvPrecedence(unittest.TestCase):
 class TestUploadCacheResume(unittest.TestCase):
     def _upload_routes(self, artifact_id, chunk_bytes, content_url, external_pw=None, fname="f.txt", size=11):
         routes: dict = {
-            ("POST", "/api/v1/artifacts:init"): (200, {"Content-Type": "application/json"},
+            ('InitUpload', ''): (200, {"Content-Type": "application/json"},
                 _json({"artifact_id": artifact_id, "chunk_bytes": chunk_bytes, "content_url": content_url}
                       | ({"external_password": external_pw} if external_pw else {}))),
-            ("GET", f"/api/v1/artifacts/{artifact_id}/upload-status"): (200, {"Content-Type": "application/json"},
+            ('GetUploadStatus', artifact_id): (200, {"Content-Type": "application/json"},
                 _json({"artifact_id": artifact_id, "state": "uploading", "chunk_bytes": chunk_bytes,
                        "files": [{"path": fname, "size": size, "received_bytes": 0, "received_ranges": []}]})),
-            ("GET", f"/api/v1/artifacts/{artifact_id}"): (200, {"Content-Type": "application/json"},
+            ('GetArtifact', artifact_id): (200, {"Content-Type": "application/json"},
                 _json({"artifact_id": artifact_id, "name": "n", "kind": "file", "visibility": "external" if external_pw else "internal",
                        "state": "ready", "created_by_user": "u", "created_at": "2026-10-08T00:00:00Z",
                        "expires_at": None, "total_bytes": size, "file_count": 1, "content_url": content_url})),
-            ("POST", f"/api/v1/artifacts/{artifact_id}/publish"): (200, {"Content-Type": "application/json"},
+            ('FinishUpload', artifact_id): (200, {"Content-Type": "application/json"},
                 _json({"artifact_id": artifact_id, "state": "ready", "content_url": content_url})),
         }
         return routes
@@ -252,17 +254,17 @@ class TestUploadCacheResume(unittest.TestCase):
                 "local_path": str(Path(src).resolve()), "manifest_sha256": msha, "access": "external"}))
             # resume: init NOT called; status shows progress; publish ok; no password generated
             routes: dict = {
-                ("GET", f"/api/v1/artifacts/{ART_ID}/upload-status"): (200, {"Content-Type": "application/json"},
+                ('GetUploadStatus', ART_ID): (200, {"Content-Type": "application/json"},
                     _json({"artifact_id": ART_ID, "state": "uploading", "chunk_bytes": 262144,
                            "files": [{"path": "f.txt", "size": 11, "received_bytes": 0, "received_ranges": []}]})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+                ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
                     _json({"artifact_id": ART_ID, "state": "uploading",
                            "files": [{"path": "f.txt", "kind": "file", "size": 11, "sha256": "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"}]})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}"): (200, {"Content-Type": "application/json"},
+                ('GetArtifact', ART_ID): (200, {"Content-Type": "application/json"},
                     _json({"artifact_id": ART_ID, "name": "n", "kind": "file", "visibility": "external",
                            "state": "ready", "created_by_user": "u", "created_at": "2026-10-08T00:00:00Z",
                            "expires_at": None, "total_bytes": 11, "file_count": 1, "content_url": "http://x"})),
-                ("POST", f"/api/v1/artifacts/{ART_ID}/publish"): (200, {"Content-Type": "application/json"},
+                ('FinishUpload', ART_ID): (200, {"Content-Type": "application/json"},
                     _json({"artifact_id": ART_ID, "state": "ready", "content_url": "http://x"})),
             }
             tr = DummyTransport(routes)
@@ -311,17 +313,17 @@ class TestUploadCacheResume(unittest.TestCase):
                 "artifact_id": ART_ID, "api_base": "http://127.0.0.1:8000",
                 "local_path": str(Path(src).resolve()), "manifest_sha256": msha, "access": "internal"}))
             routes: dict = {
-                ("GET", f"/api/v1/artifacts/{ART_ID}/upload-status"): (200, {"Content-Type": "application/json"},
+                ('GetUploadStatus', ART_ID): (200, {"Content-Type": "application/json"},
                     _json({"artifact_id": ART_ID, "state": "uploading", "chunk_bytes": 262144,
                            "files": [{"path": "f.txt", "size": 11, "received_bytes": 0, "received_ranges": []}]})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+                ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
                     _json({"artifact_id": ART_ID, "state": "uploading",
                            "files": [{"path": "f.txt", "kind": "file", "size": 11, "sha256": "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"}]})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}"): (200, {"Content-Type": "application/json"},
+                ('GetArtifact', ART_ID): (200, {"Content-Type": "application/json"},
                     _json({"artifact_id": ART_ID, "name": "n", "kind": "file", "visibility": "internal",
                            "state": "ready", "created_by_user": "u", "created_at": "2026-10-08T00:00:00Z",
                            "expires_at": None, "total_bytes": 11, "file_count": 1, "content_url": "http://x"})),
-                ("POST", f"/api/v1/artifacts/{ART_ID}/publish"): (200, {"Content-Type": "application/json"},
+                ('FinishUpload', ART_ID): (200, {"Content-Type": "application/json"},
                     _json({"artifact_id": ART_ID, "state": "ready", "content_url": "http://x"})),
             }
             tr = DummyTransport(routes)
@@ -331,7 +333,7 @@ class TestUploadCacheResume(unittest.TestCase):
             }, tr)
             self.assertEqual(code, 0, msg=err)
             # auto-resume must NOT call init
-            self.assertFalse(any(r["url"].endswith(":init") for r in tr.requests))
+            self.assertFalse(any(r.get("operation")=="InitUpload" for r in tr.requests))
 
     def test_fresh_ignores_cache(self):
         with tempfile.TemporaryDirectory() as td:

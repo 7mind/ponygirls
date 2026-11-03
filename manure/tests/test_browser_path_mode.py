@@ -99,7 +99,7 @@ class PathTlsBrowserCase(unittest.TestCase):
             {'op': 'click', 'selector': 'button[data-action=open][data-artifact-id="' + internal['artifact_id'] + '"]'},
             {'op': 'waitForEval', 'fn': '() => document.title === "PATH-OK"'},
             # This observed shared-session access is the reason path mode is LOW-SECURITY.
-            {'op': 'eval', 'fn': 'async () => (await (await fetch("/api/v1/whoami")).json()).user_id'},
+            {'op': 'eval', 'fn': 'async () => (await (await fetch("/api/current", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId:crypto.randomUUID(),apiVersion:"1.0.0",command:{Whoami:{}}})})).json()).result.Identity.principal.userId'},
             {'op': 'goto', 'url': external['content_url']},
             {'op': 'waitForEval', 'fn': '() => { const icon = document.getElementById("path-mode-warning"); const rect = icon.getBoundingClientRect(); return icon.getAttribute("role") === "img" && icon.title.includes("share") && icon.textContent === "ⓘ" && rect.width > 0 && rect.width <= 24 && rect.height > 0 && rect.height <= 24; }'},
             {'op': 'fill', 'selector': 'input[name=password]', 'value': external['external_password']},
@@ -121,6 +121,6 @@ class PathTlsBrowserCase(unittest.TestCase):
         self.assertFalse(any(c['name'] == '__Host-mgrant' for c in cookies))
         grant = next(c for c in cookies if c['name'] == '__Secure-mgrant-' + internal['artifact_id'])
         forged = '__Secure-mgrant-' + external['artifact_id'] + '=' + grant['value']
-        rejected = fix.http.request('GET', external['content_url'] + '/__manure/manifest', headers={'Cookie': forged})
+        rejected = fix.http.current((external['content_url']), bf.cp.ContentCommand_GetManifest(), headers={'Cookie': forged})
         self.assertEqual(rejected.status, 401)
         bf.assert_no_secrets_in_request_urls(self, out, [fix.identity.token, external['external_password']])

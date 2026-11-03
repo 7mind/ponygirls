@@ -180,7 +180,11 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         IO(mutation(req,ctx,c)) *> artifacts.init(required(c),InitUpload(name,CurrentWire.kind(kind),CurrentWire.visibility(visibility),CurrentWire.manifest(files),expiry.map(_.toLong)))
           .map(a => wire.Result.UploadInitialized(a.artifact.id,config.limits.chunkBytes,url(ctx,a.artifact.id),a.externalPassword))
       case wire.Command.GetArtifact(id) => artifacts.info(required(c),id).map(a => wire.Result.ArtifactInfo(summary(ctx,a)))
-      case wire.Command.GetManifest(id) => artifacts.info(required(c),id).map(a => wire.Result.ArtifactManifest(CurrentWire.manifest(a)))
+      case wire.Command.GetManifest(id) =>
+        val visible = c.identity match
+          case Some(identity) => artifacts.info(identity,id)
+          case None => artifacts.contentInfo(id,None,None,None)
+        visible.map(a => wire.Result.ArtifactManifest(CurrentWire.manifest(a)))
       case wire.Command.GetUploadStatus(id) => artifacts.status(required(c),id).map { p =>
         wire.Result.UploadProgress(wire.UploadStatus(id,CurrentWire.state(p.state),config.limits.chunkBytes,p.files.map(f =>
           wire.FileProgress(f.path,f.size,f.receivedBytes,f.ranges.map((s,e) => wire.ByteRange(s,e)).toList)).toList))
@@ -356,9 +360,6 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     else if req.method == Method.GET && path.startsWith("/__manure/files/") && path.endsWith("/content") then
       val (file,_) = decoded("/" + path.stripPrefix("/__manure/files/").stripSuffix("/content"))
       serveFile(req,ctx,id,file,true,None)
-    else if req.method == Method.GET && path == "/__manure/manifest" then
-      artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None)
-        .map(a => json(CurrentWire.encode(wire.Manifest.codecJson,CurrentWire.manifest(a))))
     else if req.method == Method.GET && path == "/__manure/password" then
       artifacts.externalInfo(id).flatMap(_ => asset(config.unlockShellDir,"index.html",ctx,false))
     else if req.method == Method.GET && !path.startsWith("/__manure/") then

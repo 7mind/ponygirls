@@ -6,6 +6,14 @@ import { BaboonCodecContext } from './current/BaboonSharedRuntime.js';
 import { schema } from './current-schema.js';
 const ctx = BaboonCodecContext.Default;
 const version = p.ClientEnvelope.BaboonDomainVersion;
+// randomUUID is secure-context-only; explicitly opted-in HTTP hosting still
+// has getRandomValues. Never replace correlation UUID generation with Math.random.
+export function requestId() {
+  const bytes=crypto.getRandomValues(new Uint8Array(16));
+  bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+  const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+  return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+}
 const bad = () => { throw new Error('bad-response'); };
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -99,7 +107,7 @@ function local(value) {
 
 export async function request(fetch, descriptor) {
   const [command, expected, project] = descriptor;
-  const id = crypto.randomUUID();
+  const id = requestId();
   const envelope = new p.ClientEnvelope(id,version,command);
   const wire = p.ClientEnvelope_JsonCodec.instance.encode(ctx,envelope);
   validate('ClientEnvelope',wire);
