@@ -8,7 +8,8 @@
 - `/context-archive on` — persist enablement, show the **CTX archive** editor-border
   badge, and enable automatic selection at completed-turn boundaries.
 - `/context-archive off` — persist disablement, remove the badge, stop new selection.
-- `/context-archive status` — show policy status, branch archive count, preference path.
+- `/context-archive status` — show policy status, branch archive count, Pi's current
+  context token count/capacity, numeric archive trigger, last boundary result and preference path.
 
 The agent-global preference is `<getAgentDir()>/context-archive.json`, normally
 `~/.pi/agent/context-archive.json`: `{"version":1,"enabled":false}`. Missing means
@@ -34,10 +35,16 @@ sessions retain evidence only for their normal process lifetime.
 
 Selection uses Pi's canonical, branch-local, compaction-aware projection:
 
-- Trigger at **70% estimated** context usage, release toward **50%**, at least
+- Trigger at **70%** of model capacity, release toward **50%**, at least
   **4096 estimated tokens** per batch, at most **16 targets**. These are conservative
-  initial policy constants, not empirically calibrated thresholds. Estimates use
-  Pi's public `estimateTokens`, not actual provider accounting.
+  initial policy constants, not empirically calibrated thresholds. Pressure uses
+  Pi's public `getContextUsage`: valid provider accounting (including cached tokens)
+  plus estimated trailing messages, with the resolved model's capacity. Pi invalidates
+  old accounting after context edits/compaction; unknown usage falls back to the
+  canonical projection's character estimate. Pending boundary edits/compaction also
+  invalidate accounting; pending custom messages add their estimated contribution.
+  Release savings and recent-token protection still use Pi's public `estimateTokens`;
+  they are estimates, not guarantees of provider-token reduction.
 - Preserve at least **6 recent assistant turns AND 16000 estimated recent tokens**.
 - Replace only old successful text tool results or large (4096+ characters)
   builtin `bash.command` / `write.content` strings. Preserve complete assistant
@@ -99,8 +106,9 @@ preference/controller tests run against both a manual in-memory port and the rea
 filesystem. Real SDK tests exercise the loader, native boundaries/JSONL, provider
 context, recovery tool loop, disable/reload, abort and native compaction. A scripted
 provider validates integration, not semantic task preservation or remote provider
-serialization. The deterministic suite has 39 checks, including five real SDK
-tests. Real-PTY controls were also checked in fullscreen and regular modes.
+serialization. The deterministic suite has 47 checks, including six real SDK
+tests. Regression cases cover provider/character-estimate disagreement, cache accounting,
+unknown and invalidated usage, pending boundary drafts, and numeric diagnostics. Real-PTY controls were also checked in fullscreen and regular modes.
 
 A small paired live-provider pilot exercised synthetic repairs and exact recovery;
 it does not establish production non-inferiority. Provider/account-specific
