@@ -21,5 +21,7 @@
   "invalid JSON/heartbeat/binary/oversized frames close permanently, no content leak",
   "logout/login session replacement and loaded-token revocation close sockets4401",
   "exact opted-in authority alone selects plain cookie, other authorities remain Secure",
-  "allowed but mismatched Origin/Host cannot read or log in; absent opt-in cannot downgrade"
+  "allowed but mismatched Origin/Host cannot read or log in; absent opt-in cannot downgrade",
+  "production Main handles SIGTERM with clean resource drain and exit0",
+  "controlled provider uses approved corpus only, durable worker publication and explicit outage without write coupling"
 ]

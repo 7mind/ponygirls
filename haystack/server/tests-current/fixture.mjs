@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import http from 'node:http';
+import pg from 'pg';
 import os from 'node:os';
 import path from 'node:path';
 import {mkdtemp,readFile,writeFile,rename} from 'node:fs/promises';
@@ -20,7 +21,7 @@ export const document=(over={})=>JSON.stringify({title:'t',description:'d',field
 export const encode=(Type,value)=>Type.jsonCodec().encode(context,value);
 export const decode=(Type,value)=>Type.jsonCodec().decode(context,value);
 export async function freePort(){const server=net.createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const port=server.address().port;await new Promise(resolve=>server.close(resolve));return port;}
-export async function fixture(overrides={}){
+export async function fixture(overrides={},configure=async()=>{}){
   assert.equal(process.env.HAYSTACK_OWNED_TEST_DB,'1','run scripts/test-current.sh with its owned PostgreSQL; no arbitrary data reads');
   assert.ok(process.env.HAYSTACK_SERVER_COMMAND,'explicit JVM/native command required');
   const dir=await mkdtemp(path.join(os.tmpdir(),'haystack-current-'));
@@ -29,12 +30,18 @@ export async function fixture(overrides={}){
   const port=await freePort();const base=`http://127.0.0.1:${port}`;
   const config=JSON.parse(await readFile(path.join(root,'haystack/docs/scala-config.example.json'),'utf8'));
   Object.assign(config,{listenPort:port,webRoot:null,authReloadMs:100});
-  Object.assign(config.database,{jdbcUrl:process.env.HAYSTACK_TEST_JDBC,user:process.env.HAYSTACK_TEST_DB_USER,passwordFile:process.env.HAYSTACK_TEST_DB_PASSWORD_FILE});
+  const databaseName='haystack_current_'+randomBytes(8).toString('hex');
+  const databaseUrl=new URL(process.env.HAYSTACK_TEST_JDBC.replace(/^jdbc:/,''));
+  const admin=new pg.Client({host:databaseUrl.hostname,port:Number(databaseUrl.port),database:databaseUrl.pathname.slice(1),user:process.env.HAYSTACK_TEST_DB_USER,password:(await readFile(process.env.HAYSTACK_TEST_DB_PASSWORD_FILE,'utf8')).trimEnd()});
+  await admin.connect();try{await admin.query('CREATE DATABASE "'+databaseName+'"');}finally{await admin.end();}
+  const jdbc=process.env.HAYSTACK_TEST_JDBC.replace(/\/[^/]+$/,'/'+databaseName);
+  Object.assign(config.database,{jdbcUrl:jdbc,user:process.env.HAYSTACK_TEST_DB_USER,passwordFile:process.env.HAYSTACK_TEST_DB_PASSWORD_FILE});
   Object.assign(config.auth,{cookieSecure:false,allowedHosts:['127.0.0.1','localhost','haystack.test'],allowedOrigins:[base,'http://allowed.test'],insecureHttpOrigins:[],rateLimit:{windowMs:60000,max:10000},users:[
     {id:'alice',type:'human',displayName:'Alice',tokens:[{id:'browser',hashFile:path.join(dir,'alice.sha')}]},
     {id:'bot',type:'agent',displayName:'Bot',tokens:[{id:'default',hashFile:path.join(dir,'bot.sha')}]},
   ],...overrides});
   Object.assign(config.retrieval,{approvedFieldPrefixes:['']});
+  await configure(config,{dir,port,base});
   const configPath=path.join(dir,'config.json');
   const save=async()=>{await writeFile(configPath+'.tmp',JSON.stringify(config),{mode:0o600});await rename(configPath+'.tmp',configPath);};
   await save();let processHandle;let output='';let errors='';
@@ -45,7 +52,7 @@ export async function fixture(overrides={}){
     while(Date.now()<deadline){if(processHandle.exitCode!==null)throw new Error('server exited before readiness: '+output);try{const r=await fetch(base+'/api/v1/health');if(r.ok){ready=true;break;}}catch{}await sleep(50);}
     assert.ok(ready,'server readiness deadline');
   };
-  const stop=async()=>{if(!processHandle||processHandle.exitCode!==null)return;const exited=once(processHandle,'exit');processHandle.kill('SIGTERM');const timeout=setTimeout(()=>processHandle.kill('SIGKILL'),3000);await exited;clearTimeout(timeout);};
+  const stop=async()=>{if(!processHandle)return [0,null];if(processHandle.exitCode!==null||processHandle.signalCode!==null)return [processHandle.exitCode,processHandle.signalCode];const exited=once(processHandle,'exit');processHandle.kill('SIGTERM');const timeout=setTimeout(()=>processHandle.kill('SIGKILL'),3000);const result=await exited;clearTimeout(timeout);return result;};
   await start();
   const call=async(route,value,options={})=>{
     const headers={'Content-Type':'application/json','X-Haystack-Version':'1.0.0',...(options.token?{Authorization:'Bearer '+options.token}:{}),...options.headers};
