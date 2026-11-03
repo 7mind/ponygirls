@@ -1,8 +1,8 @@
 # Unified services: acceptance status
 
-Production-code pin: `be4cb86972c820ea2ae0e2c6f886057f0604c2ec`.
+Service implementation pin: `be4cb86972c820ea2ae0e2c6f886057f0604c2ec`. Local integration merge: `178340994540da14fbcbc8f2a46e1cc15d69267a`.
 
-**Not deployed or integrated into the original main checkout.** The final NixOS9 revalidation passed; Git-history integration requires Q11. This document records verified evidence, not activation permission.
+**Integrated locally, not deployed.** Q11 revision2 explicitly approved preserving both histories. The normal two-parent merge was verified and fast-forwarded into the original main checkout; final three-repository no-build checks passed. This document records verified evidence, not activation permission.
 
 ## Implemented boundary
 
@@ -58,8 +58,10 @@ Normal exit143, signal termination15, manager clean-exit classification and actu
 - Historical failed/application/setup/cleanup outcomes remain unchanged. Raw confidential logs/configuration/argv/PG contents stay private; approved copies or explicitly hashed omissions are distinguished.
 - Private VM archives omit filesystem socket nodes. Exact metadata preservation/review of those specific ephemeral nodes is required before cleanup; compare0 alone is not an exact entry-set proof. No blanket omission or deletion exemption is granted.
 
-## Remaining work
+## Integration and retained artifacts
+
+Q11 is resolved. The old and rewritten baselines have identical tree `5f68a46d`; all16 current-main paths were disjoint from2085 task paths. Parent independently verified the complete mode/type/blob overlay, normal merge parents/tree, new-path collision absence and clean original main after fast-forward. Both histories remain reachable. Fresh x86_64 no-build checks at integration178 passed for all three repositories, without lock writes: `q11-history-integration-1783409/` and `final-no-build-integration-1783409/`. Previous application/native/provider evidence retains its original provenance; only unrelated Pi/docs paths were inherited, so no fresh application execution is claimed.
 
 All required application and infrastructure gates have passed. The four completed Manure VM temporary roots were removed only after fresh preservation/identity checks; their private backups remain. The Chronicle probe root `/tmp/cns.x8nktpy8` is explicitly retained, not forced through the VM-specific validator. Task worktrees and late evidence remain intact pending authorized integration/retirement.
 
-**Q11 is the remaining integration decision:** preserve both histories, discuss integration without old ancestry, or leave integration to the user. Until answered, no history reconciliation or original-main integration is performed. Per Q1, publication and portable pin updates remain user-controlled. No push, pin update, production migration, credential rotation or activation is authorized by this acceptance summary. Detailed provenance and original outcomes remain in `20261103-0017-unified-services-execution.md` and the named bundles.
+The task worktree `/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-unified-services` is retained: it holds late raw evidence and a `.codegraph` directory whose deletion authority was not established. No unsafe recursive removal was attempted. Other task worktrees remain preserved; downstream commits01b11eef/91bd308d remain validated and retained per Q1. Publication and portable pin updates remain user-controlled. No push, pin update, production migration, credential rotation or activation is authorized by this acceptance summary. Detailed provenance and original outcomes remain in `20261103-0017-unified-services-execution.md` and the named bundles.
