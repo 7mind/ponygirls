@@ -164,7 +164,10 @@ class TargetDurabilityTests(unittest.TestCase):
                 sock.sendall(head+data[:65536]);time.sleep(.1)
                 closer=threading.Thread(target=close_active,daemon=True);closer.start();time.sleep(.1)
                 sock.sendall(data[65536:]);status,fields,body=response_head(sock)
-                while len(body)<int(fields['content-length']):body+=sock.recv(65536)
+                while len(body)<int(fields['content-length']):
+                    part=sock.recv(65536)
+                    if not part:raise AssertionError('target closed before acknowledged chunk receipt body')
+                    body+=part
                 sock.close();self.assertEqual(status,200)
                 receipt=cp.decode(cp.ChunkReceipt,cp.loads(body));self.assertEqual(receipt.receivedBytes,len(data))
                 closer.join(timeout=30);self.assertFalse(closer.is_alive());self.assertEqual(errors,[]);server=None
@@ -204,6 +207,7 @@ class TargetDurabilityTests(unittest.TestCase):
                     result=cp.decode(cp.ServerEnvelope,cp.loads(wire));self.assertIsInstance(result.result,cp.Result_Error)
                     self.assertEqual(result.result.failure.code,cp.ErrorCode.Unavailable)
                 finally:probe.close()
+                stalled.close();stalled=None
                 self.assertEqual(client(server,token,root).list_artifacts()['artifacts'],[])
             finally:
                 if stalled is not None:stalled.close()
