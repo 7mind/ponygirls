@@ -250,6 +250,7 @@ class SearchHit:
     generationId: str
     policyId: str
     embeddingProfile: str | None
+    embeddingSpace: str | None
     evidence: list[SearchEvidence]
     score: float
 

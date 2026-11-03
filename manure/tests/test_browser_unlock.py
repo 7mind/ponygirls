@@ -148,7 +148,7 @@ class UnlockFlows:
         jar = bf.TestHttp()
         bad = jar.current((content_url.rstrip("/")), bf.cp.ContentCommand_Unlock(({"password": wrong})["password"]), headers={"Origin": origin})
         self.assertEqual(bad.status, 401, bad.body[:300])
-        self.assertEqual(bad.json()["error"]["code"], "password-invalid")
+        self.assertEqual(bad.current_error_code(), "password-invalid")
         self.assertNotIn(password, bad.body.decode(), "real password in fault")
         # Urlencoded failure is the same class over HTTP.
         form = {"password": wrong}

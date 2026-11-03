@@ -44,9 +44,26 @@ for cls in p._ADTS[p.Command].values():
 for expiry in [p.ExpiryChange_Keep(),p.ExpiryChange_Clear(),p.ExpiryChange_Set(60)]:
     commands.append(p.ClientEnvelope(REQUEST_ID,p.API_VERSION,p.Command_PatchArtifact('a'*32,p.ArtifactPatch('é',p.Visibility.External,expiry))))
 commands.append(p.ClientEnvelope(REQUEST_ID,p.API_VERSION,sample(p.Command_Search,options=True)))
-results=[p.ServerEnvelope(REQUEST_ID,sample(cls,options=True)) for cls in p._ADTS[p.Result].values()]
+def search_fixture(published):
+    # Distinct identities detect accidental profile/space substitution. These
+    # are synthetic immutable identities, not provider endpoints or dimensions.
+    artifact=p.Artifact('a'*32,'Published metadata' if published else 'Lexical HEAD metadata',
+        p.ArtifactKind.Directory,p.Visibility.Internal,p.ArtifactState.Ready,'fixture-owner',
+        '2026-11-03T00:00:00Z',None,42,1,'https://'+'a'*32+'.example.invalid')
+    hit=p.SearchHit(artifact,'d'*64 if published else 'e'*64,
+        '11111111-1111-4111-8111-111111111111' if published else '22222222-2222-4222-8222-222222222222',
+        'manure-metadata-paths-v1','b'*64 if published else None,'c'*64 if published else None,
+        [p.SearchEvidence(p.EvidenceField.Name,None,artifact.name,0.625),
+         p.SearchEvidence(p.EvidenceField.ManifestPath,'é/𐐀.txt','é/𐐀.txt',0.5)],0.625)
+    page=p.SearchPage([hit],1,p.SearchCountScope.CandidateWindow if published else p.SearchCountScope.ExactMatches,
+        1000 if published else None,None)
+    return p.ServerEnvelope(REQUEST_ID,p.Result_SearchResults(page))
+
+results=[search_fixture(True) if cls is p.Result_SearchResults else p.ServerEnvelope(REQUEST_ID,sample(cls,options=True))
+         for cls in p._ADTS[p.Result].values()]
 results += [p.ServerEnvelope(REQUEST_ID,p.Result_Error(p.Failure(code,'safe-code-only',None))) for code in p.ErrorCode]
 results.append(p.ServerEnvelope(REQUEST_ID,p.Result_ArtifactInfo(sample(p.Artifact,options=False))))
+results.append(search_fixture(False))
 content=[p.ContentEnvelope(REQUEST_ID,p.API_VERSION,sample(cls)) for cls in p._ADTS[p.ContentCommand].values()]
 chunk=[p.ChunkReceipt('é/𐐀.txt',9007199254740993,262144,9223372036854775807)]
 output=ROOT/'models/fixtures';output.mkdir(exist_ok=True)

@@ -165,21 +165,77 @@ a completion receipt and no arbitrary DB cleanup runs.
 
 Import binds the canonical target path/device/inode, random owner ID and libpq
 service name to that DB marker. It copies staging/live into private incoming,
-fsyncs every file/directory, verifies exact contents/mtimes, atomically renames
-to `data/`, then starts one PG transaction for **all four tables and the source
-completion marker**. The tool never overwrites nonempty metadata. It writes a
-protected executable `import.sql` receipt with source/destination/write-boundary
-guards. Execute through the tool, not by bypassing filesystem verification.
+fsyncs every file/directory, and verifies exact contents/mtimes. Before renaming
+incoming to `data/` or writing PG rows, it durably writes `COPY.json`:
+
+```json
+{"format":"manure-copy-1","source":"SNAPSHOT_SHA256","destination":"CONTROL_ID","device":123,"inode":456}
+```
+
+`device`/`inode` identify the **copied payload directory**, not the outer
+receipt/control directory (`OWNER.json` continues to bind that outer root).
+The rename retains this inode. COPY is an interrupted-import identity fence,
+**not** startup authorization. A retry must match this exact data identity even
+when PG committed but the final payload receipt does not yet exist. It cannot
+adopt a replacement `data/` with identical bytes/mtimes or regenerate proof
+for whichever tree happens to be there now. An interruption after COPY but
+before rename can resume only the same completely copied incoming inode.
+A partial incoming copy with no COPY binding can be rebuilt before adoption.
+
+Only then does import start one PG transaction for **all four tables and the
+source completion marker**. The tool never overwrites nonempty metadata. It
+writes a protected executable `import.sql` receipt with source/destination/write-
+boundary guards. Execute through the tool, not by bypassing filesystem checks.
+
+After PG COMMIT, **complete exact PG readback and snapshot/filesystem verification
+must succeed** before import durably creates the versioned `PAYLOAD.json`:
+
+```json
+{"format":"manure-payload-1","source":"SNAPSHOT_SHA256","destination":"CONTROL_ID","device":123,"inode":456,"entries":[{"path":"","kind":"dir"},{"path":"6c697665","kind":"dir"},{"path":"6c6976652f66696c65","kind":"file","size":7,"sha256":"EXACT_FILE_SHA256"}]}
+```
+
+The example is abbreviated, not a valid fixture inventory. Actual `entries`
+contains **every directory including the root** (`path: ""`), every sidecar,
+recovery remnant, empty directory, and every regular file. Paths are lowercase
+hex of raw relative filesystem-name bytes, with `/` separators, not percent-
+encoded/normalized Unicode. Entries use the existing root-first, raw-byte-
+sorted-sibling recursive traversal. A file entry has exact integer `size` and
+lowercase SHA256; a directory entry has only `path` and `kind`. Target receipt
+entries deliberately **omit mtimes**. The independent source snapshot retains
+nanosecond mtimes, and `verify-destination` still compares to that exact source
+snapshot; target adoption and `mark-writable` compare only names/topology/bytes.
+
+`PAYLOAD.json` is canonical ASCII JSON (sorted object keys, no insignificant
+whitespace), private and atomically fsynced. COMPLETE is written **last**, only
+after this record and the actual copied directory's identity/content agree:
+
+```json
+{"source":"SNAPSHOT_SHA256","destination":"CONTROL_ID","payloadManifestSha256":"SHA256_OF_EXACT_PAYLOAD_JSON_BYTES"}
+```
+
+The digest binds exact `PAYLOAD.json` bytes, not its parsed/re-serialized value.
+Neither existing final receipt is overwritten/rehashed on retry. Malformed,
+missing, inconsistent or substituted final proof refuses instead of blessing
+current invalid bytes. As elsewhere, these hashes are integrity bindings, not
+signatures against a malicious owner who can rewrite all protected state.
 
 Before COMMIT: SQL faults/connection death roll back every row and marker;
-durable files may remain and are verified/reused on retry. After COMMIT but
-before local COMPLETE: retry observes the PG source marker, verifies every
-actual row (including hashes, grant bindings, original float bits and query
-projections) and all files, then writes local COMPLETE. No fake/dummy completion,
-no ON CONFLICT silently swallowing unequal rows, no destructive re-import.
-Unexpected destination corruption refuses; repair/dispose only under the
-separate owned-destination policy. Physical-root claims exclude competing
-migration processes and an already-active destination filesystem owner.
+durable files remain under their original COPY identity for verified retry.
+After COMMIT but before PAYLOAD/COMPLETE: retry checks COPY identity, every actual
+PG row (hashes, grant bindings, float bits/projections) and all original files
+before completing the receipts. After PAYLOAD but before COMPLETE: retry checks
+and reuses the existing immutable record. Same-size wrong bytes, extra/missing
+entries, a new data inode, invalid receipt/hash, or PG readback mismatch refuse
+without setting `writes_started`, repairing files, refreshing receipts, or
+altering metadata. No fake completion, no unequal-row `ON CONFLICT` swallowing,
+no destructive re-import. Physical-root claims exclude competing converters
+and an active destination filesystem owner during verification and marking.
+
+**No in-place receipt upgrade:** output made by the earlier converter without
+COPY/PAYLOAD or with the old source-only COMPLETE is not sufficient proof of
+what was copied. Do not manufacture receipts over that directory. Keep the
+untouched snapshot and explicitly reenact conversion into a **new owned
+isolated disposable destination** under the preparation policy above.
 
 ## Reconciliation, cutover and rollback
 
@@ -203,6 +259,25 @@ python3 manure/migration/offline.py rollback-policy \
   --destination /owned/disposable-target --pg-service rehearsal
 ```
 
+`mark-writable` claims both the outer destination and `data/`, checks the PG
+pre-write control fence, validates COPY's data identity, verifies COMPLETE's
+exact payload-record digest and bindings, and hashes the actual entire payload
+against PAYLOAD **before** toggling `writes_started`. Hashing is outside the
+short PG control transactions. A failure leaves the flag false and all original
+receipts, current payload bytes, PG rows, source snapshot and credentials intact;
+it is not a repair or automatic activation operation.
+
+The backend independently requires valid COMPLETE/PAYLOAD bindings and actual
+data identity on **all imported-state startups** (including migration-only
+startup). Before FIRST `root_owner` adoption it must additionally verify the
+entire confined/raw-path inventory and exact file hashes against PAYLOAD,
+outside a long PG transaction. This closes replacement/corruption between
+marking and first serving. Once the same data inode has an established PG root
+owner, legitimate recovery/new writes change its inventory; subsequent startup
+checks still require the immutable receipt/digest/source/destination and data
+identity, but do not compare new bytes to the old snapshot inventory. COPY is
+not a backend authorization requirement; COMPLETE/PAYLOAD are.
+
 Before this boundary, rollback is restarting the **untouched old state** under
 its original config/credentials, not pointing SQLite at the PG destination.
 After it, choose **fix-forward**. Restarting old SQLite could lose acknowledged
@@ -210,8 +285,9 @@ new files/receipts/grants/metadata. No reverse converter or zero-RPO rollback
 is claimed. The tool's flag is an operational fence, not an SQL privilege
 system: the operator must mark it **before** target writes; it cannot detect
 writes made by unrelated tools that deliberately bypass this protocol. Once
-marked, re-import and exact snapshot-comparison retries refuse, leaving new
-writes untouched. A package rollback is not a data rollback. Production
+marked, re-import, repeat marking, and exact snapshot-comparison retries refuse
+at the PG fence **before target inventory hashing**, leaving new writes and the
+old immutable receipt untouched. A package rollback is not a data rollback. Production
 activation, final RPO/window approval and old-state deletion remain gated.
 
 ## Rehearsal coverage and limits
@@ -245,3 +321,27 @@ HTTP/native service. After integration, the same imported PG/filesystem state
 must also be exercised by that actual backend plus updated client/MCP,
 JVM/native and browser suites. No browser/native/live activation acceptance
 is claimed by this migration-only suite.
+
+
+### Payload-adoption regression evidence (2026-11-03)
+
+The focused suite now additionally covers version/field/complete-digest binding,
+all raw paths/directories, target mtime independence, same-size corruption with
+restored mtime, identical-byte replaced data inodes, extra/missing topology,
+malformed/missing/old receipts, COPY-before-rename and PAYLOAD-before-COMPLETE
+interruption, PG-commit/pre-receipt replacement and corruption, failed PG readback
+before receipt creation, active-root exclusion and no rehash after new writes.
+Pre-write adoption negatives verify `writes_started` remains false and prove
+actual PG, receipt, corrupted filesystem and source/archive preservation, not
+fake success. Post-write refusals retain the true flag and new bytes unchanged.
+The actual target lifecycle counterpart is `manure/tests/test_target_migration.py`;
+converter-only results do not establish its JVM/native acceptance. Backend
+first-adoption enforcement and its real target regression are separate work.
+
+Fresh converter-only validation after this receipt change: 30 cases (22 real
+owned-PG cases + 8 snapshot/representation cases), 0 failures/errors/skips,
+24.601s, using Python 3.14.8 and PostgreSQL 18.6 binaries at
+`/nix/store/vq4kynp3jwqh97z58bqbz0hyamhqayyp-postgresql-18.6/bin` with the
+command above. Ruff, `py_compile`, whitespace checks and exact canonical
+schema/backend-resource `cmp` also passed. The newer canonical namespace
+DO-guard was retained unchanged; only converter/tests/this document changed.

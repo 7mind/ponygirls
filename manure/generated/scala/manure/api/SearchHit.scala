@@ -9,6 +9,7 @@ package manure.api {
     generationId: String,
     policyId: String,
     embeddingProfile: Option[String],
+    embeddingSpace: Option[String],
     evidence: List[SearchEvidence],
     score: Double
   ) extends BaboonGeneratedLatest {
@@ -45,6 +46,7 @@ package manure.api {
         "generationId" -> Json.fromString(value.generationId),
         "policyId" -> Json.fromString(value.policyId),
         "embeddingProfile" -> value.embeddingProfile.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "embeddingSpace" -> value.embeddingSpace.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "evidence" -> Json.fromValues(value.evidence.map(e => SearchEvidence_JsonCodec.instance.encode(ctx, e))),
         "score" -> Json.fromDouble(value.score).get
       )
@@ -62,9 +64,10 @@ package manure.api {
             generationId <- getField(jsonObject, "generationId").flatMap(v => decodeString(v.hcursor))
             policyId <- getField(jsonObject, "policyId").flatMap(v => decodeString(v.hcursor))
             embeddingProfile <- getField(jsonObject, "embeddingProfile").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            embeddingSpace <- getField(jsonObject, "embeddingSpace").flatMap(v => decodeOption(decodeString)(v.hcursor))
             evidence <- getField(jsonObject, "evidence").flatMap(v => decodeList(SearchEvidence_JsonCodec.circeDecoder)(v.hcursor))
             score <- getField(jsonObject, "score").flatMap(v => decodeDouble(v.hcursor))
-          } yield SearchHit(artifact,sourceVersion,generationId,policyId,embeddingProfile,evidence,score)
+          } yield SearchHit(artifact,sourceVersion,generationId,policyId,embeddingProfile,embeddingSpace,evidence,score)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to SearchHit: object expected"))
       }
     }

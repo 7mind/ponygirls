@@ -58,12 +58,16 @@ class TlsSmokeCase(unittest.TestCase):
     def test_tls_edge_required_without_proxy(self):
         # Direct plain-HTTP to the backend (no trusted X-Forwarded-Proto)
         # is rejected even with a valid Host: the edge owns TLS.
-        port = urllib.parse.urlsplit(self.api).port
+        endpoint = urllib.parse.urlsplit(self.api)
+        port = endpoint.port
+        # Keep the effective non-default port: an omitted port means HTTPS443
+        # and would test BadHost instead of the intended TLS trust boundary.
+        authority = endpoint.netloc
         direct = bf.TestHttp().request(
             "GET", f"http://127.0.0.2:{port}/api/current/health",
-            headers={"Host": bf.TLS_API_HOST})
+            headers={"Host": authority})
         self.assertEqual(direct.status, 403, direct.body[:300])
-        self.assertEqual(direct.json()["error"]["code"], "tls-required")
+        self.assertEqual(direct.current_error_code(), "tls-required")
         # Through the edge the same Host routes to the dashboard.
         import ssl as _ssl
         import socket as _socket
@@ -73,7 +77,7 @@ class TlsSmokeCase(unittest.TestCase):
         ctx.verify_mode = _ssl.CERT_NONE
         tls = ctx.wrap_socket(raw, server_hostname=bf.TLS_API_HOST)
         try:
-            tls.sendall(f"GET / HTTP/1.1\r\nHost: {bf.TLS_API_HOST}\r\n"
+            tls.sendall(f"GET / HTTP/1.1\r\nHost: {authority}\r\n"
                         f"Connection: close\r\n\r\n".encode())
             chunks = []
             while True:

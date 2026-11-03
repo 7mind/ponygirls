@@ -18,9 +18,10 @@ import io.circe.Json
 object Main extends IOApp:
   def run(args: List[String]): IO[ExitCode] = args match
     case List("serve",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
+    case List("check-config",path) => IO.blocking(Config.load(Path.of(path))).flatMap(_ => IO.println("MANURE_CONFIG_OK")).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("migrate",path) => IO.blocking(Config.load(Path.of(path))).flatMap(config => buildResources(config,false).use(_ => IO.unit)).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("--config",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
-    case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | --config CONFIG.json").as(ExitCode.Error)
+    case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json | --config CONFIG.json").as(ExitCode.Error)
   private final case class StartupFailure(stage: String,code: String) extends RuntimeException(code)
   private def safeCode(error: Throwable): String = error match
     case s: StartupFailure => s.code
@@ -85,46 +86,50 @@ object Main extends IOApp:
     })))(_ => IO.unit)
     // distage Lifecycle remains scoped inside the outer resource ownership graph.
     services <- Resource.make(stage("wiring",graph.acquire))(graph.release).evalMap(inner => stage("wiring",graph.extract(inner).fold(identity,IO.pure)))
-    _ <- Resource.eval(services.database.transaction { c =>
-      // Offline import control state is NEVER cleared/adopted automatically.
+    observation <- Resource.eval(services.database.transaction { c =>
+      // Read-only observation: no root-owner adoption or artifact mutation may
+      // precede complete imported payload verification.
       val imported = Jdbc.rows(c,"SELECT to_regclass('manure_offline.destination') IS NOT NULL")(_.getBoolean(1)).head
-      if recover && imported then
-        val receipt = control.getOrElse(throw DomainError("migration-required"))
+      val record = if imported then
         val records = Jdbc.rows(c,"SELECT id,root,source,writes_started FROM manure_offline.destination") { r =>
-          (r.getString(1),r.getString(2),Option(r.getString(3)),r.getBoolean(4))
+          ImportedDestination(r.getString(1),r.getString(2),Option(r.getString(3)).getOrElse(""),r.getBoolean(4))
         }
-        Require(records.size == 1 && records.head._2 == config.migrationReceiptDir.get.toString && records.head._3.nonEmpty && records.head._4, "migration-required")
-        def read(name: String): Json = Using.resource(receipt.openExistingFile(RelativeName.parse(name),ExistingFileAccess.ReadOnly)) { marker =>
-          Require(marker.size() <= 16384, "migration-required")
-          CurrentWire.parse(Exact.string(marker.read(0,16384)))
-        }
-        val marker = read("COMPLETE")
-        val owner = read("OWNER.json")
-        val physical = receipt.physicalIdentity.map(java.lang.Long.toUnsignedString)
-        Require(marker.hcursor.get[String]("source").toOption == records.head._3 &&
-          marker.hcursor.get[String]("destination").toOption.contains(records.head._1) &&
-          owner.hcursor.get[String]("id").toOption.contains(records.head._1) &&
-          owner.hcursor.get[String]("root").toOption.contains(records.head._2) &&
-          owner.hcursor.get[BigInt]("device").toOption.map(_.toString).contains(physical(0)) &&
-          owner.hcursor.get[BigInt]("inode").toOption.map(_.toString).contains(physical(1)), "migration-required")
-      if recover && !imported then
-        val hasTable = Jdbc.rows(c,"SELECT to_regclass('manure.artifacts') IS NOT NULL")(_.getBoolean(1)).head
-        val empty = !hasTable || Jdbc.rows(c,"SELECT NOT EXISTS(SELECT 1 FROM manure.artifacts)")(_.getBoolean(1)).head
-        if empty then
-          val unexpected = Vector("staging","live").exists { name =>
-            try directory.tree(RelativeName.parse(name),config.limits.cleanupEntries,68).nonEmpty
-            catch case _: NoSuchFileException => false
-          }
-          Require(!unexpected, "migration-required")
-
+        Require(records.size == 1,"migration-required");Some(records.head)
+      else None
+      val bound = if Jdbc.rows(c,"SELECT to_regclass('manure.root_owner') IS NOT NULL")(_.getBoolean(1)).head then
+        val bindings=Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1))
+        Require(bindings.size <= 1,"migration-required");bindings.headOption
+      else None
+      val hasArtifacts=Jdbc.rows(c,"SELECT to_regclass('manure.artifacts') IS NOT NULL")(_.getBoolean(1)).head
+      val empty = !hasArtifacts || Jdbc.rows(c,"SELECT NOT EXISTS(SELECT 1 FROM manure.artifacts)")(_.getBoolean(1)).head
+      (record,bound,empty)
+    })
+    _ <- Resource.eval(IO.blocking {
+      observation._2.foreach(expected => Require(java.util.Arrays.equals(expected,ImportReceipt.rootBytes(directory)),"migration-required"))
+      observation._1 match
+        case Some(record) if recover || record.source.nonEmpty =>
+          ImportReceipt.validate(config,directory,control.getOrElse(throw DomainError("migration-required")),record,observation._2.isEmpty,recover)
+        case _ => ()
+      if recover then
+        observation._1 match
+          case None if observation._3 =>
+            val unexpected=Vector("staging","live").exists { name =>
+              try directory.tree(RelativeName.parse(name),config.limits.cleanupEntries,68).nonEmpty
+              catch case _: NoSuchFileException => false
+            }
+            Require(!unexpected,"migration-required")
+          case _ => ()
     })
     _ <- Resource.eval(stage("schema",IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema),Migration(2,"physical-root-binding","CREATE TABLE IF NOT EXISTS manure.root_owner(singleton boolean PRIMARY KEY CHECK(singleton),identity bytea NOT NULL)")))))
     _ <- Resource.eval(services.database.transaction { c =>
-      val identity = java.nio.ByteBuffer.allocate(16)
-      directory.physicalIdentity.foreach(identity.putLong)
-      val bytes = identity.array()
-      Jdbc.exec(c,"INSERT INTO manure.root_owner(singleton,identity) VALUES(true,?) ON CONFLICT DO NOTHING",bytes)
-      Require(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).headOption.exists(java.util.Arrays.equals(_,bytes)), "migration-required")
+      if recover then
+        // File/hash validation above ran without an open DB transaction. Both
+        // physical claims remain held; check root identities again before the
+        // FIRST insert. migrate is schema-only and NEVER adopts a payload root.
+        val bytes=ImportReceipt.rootBytes(directory)
+        control.foreach(_.physicalIdentity)
+        Jdbc.exec(c,"INSERT INTO manure.root_owner(singleton,identity) VALUES(true,?) ON CONFLICT DO NOTHING",bytes)
+        Require(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).headOption.exists(java.util.Arrays.equals(_,bytes)), "migration-required")
       services.projection.initialize(c)
     })
     _ <- Resource.eval(stage("reconcile",if recover then services.artifacts.initialize() else IO.unit))

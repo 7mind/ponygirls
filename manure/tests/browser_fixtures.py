@@ -159,7 +159,17 @@ class HttpResult:
         self.body = body  # bytes
 
     def json(self):
+        # Typed command helpers may expose an in-process fixture projection,
+        # but body MUST remain the actual received bytes for leak assertions.
+        if hasattr(self, "current_local"):
+            return self.current_local
         return json.loads(self.body.decode("utf-8"))
+
+    def current_error_code(self):
+        envelope = cp.decode(cp.ServerEnvelope, cp.loads(self.body))
+        if not isinstance(envelope.result, cp.Result_Error):
+            raise AssertionError("expected generated current failure envelope")
+        return re.sub(r"(?<!^)(?=[A-Z])", "-", envelope.result.failure.code.value).lower()
 
     def header(self, name, default=None):
         return self.headers.get(name, default)
@@ -252,8 +262,7 @@ class TestHttp:
         elif isinstance(result,cp.Result_Ok):local={"ok":True}
         else:local=cp.local(result)
         response.current_result=result
-        response.wire_body=response.body
-        response.body=json.dumps(local).encode("utf-8")
+        response.current_local=local
         return response
 
     def _store_cookies(self, url: str, headers) -> None:
