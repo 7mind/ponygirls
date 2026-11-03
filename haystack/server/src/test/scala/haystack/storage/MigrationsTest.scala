@@ -30,7 +30,7 @@ class MigrationsTest extends ContractSuite {
   test("eight concurrent startup migrations on an empty database converge once") { run(emptyDatabase.use { db => for {
     _ <- Vector.fill(8)(Migrations.initialize(db, Activity)).parSequence_
     versions <- db.transaction(c => Sql.rows(c, "SELECT version FROM schema_migrations ORDER BY version")(_.getString(1)))
-    _ = assertEquals(versions, Vector("0001-initial", "0002-search", "0003-tags", "0004-scala-current", "0005-exact-numeric-query"))
+    _ = assertEquals(versions, Vector("0001-initial", "0002-search", "0003-tags", "0004-scala-current", "0005-exact-numeric-query", "0006-tag-completion"))
     metadata <- db.transaction(c => Sql.rows(c, "SELECT activity_project_id FROM store_metadata")(_.getString(1)))
     _ = assertEquals(metadata, Vector(Activity))
     cutovers <- db.transaction(c => Sql.rows(c, "SELECT contract FROM haystack_contract_cutovers")(_.getString(1)))
