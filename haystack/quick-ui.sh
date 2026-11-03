@@ -32,7 +32,11 @@ export PGDATA="$WORK/pg" PGSOCK="$WORK/sock"
 mkdir -p "$PGSOCK"
 initdb -D "$PGDATA" -U postgres --auth=trust >/dev/null
 pg_ctl -D "$PGDATA" -l "$WORK/pg.log" -o "-k $PGSOCK -p $PGPORT -c listen_addresses='127.0.0.1'" start >/dev/null
-psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE DATABASE haystack;' >/dev/null
+psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE ROLE haystack_preview LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;' >/dev/null
+psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE DATABASE haystack OWNER haystack_preview;' >/dev/null
+# Extension installation is an explicit owned-cluster administrator operation;
+# the selected application runtime remains NOSUPERUSER/NOCREATEDB.
+psql -h "$PGSOCK" -p "$PGPORT" -U postgres -d haystack -c 'CREATE EXTENSION IF NOT EXISTS vector;' >/dev/null
 TOKEN_FILE="$HAYSTACK_DIR/../debug/haystack-ui/$PORT/token.txt"
 mkdir -p -- "$(dirname -- "$TOKEN_FILE")"
 TOKEN="$(node --input-type=module - "$TOKEN_FILE" <<'JS'
@@ -60,7 +64,7 @@ const config = {
   auth: { activityProjectId: 'demo', users: [{id:'op',type:'human',displayName:'Op',tokens:[{id:'browser',hashFile:`${dir}/token.sha`}]}],
     cookieSecure: true, allowedHosts: hosts, allowedOrigins: origins, insecureHttpOrigins: origins,
     rateLimit: {windowMs:60000,max:600} },
-  database: {jdbcUrl:`jdbc:postgresql://127.0.0.1:${pgport}/haystack`,user:'postgres',passwordFile:`${dir}/database-password`,
+  database: {jdbcUrl:`jdbc:postgresql://127.0.0.1:${pgport}/haystack`,user:'haystack_preview',passwordFile:`${dir}/database-password`,
     limits:{maxConnections:4,maxQueued:32,queueTimeoutMs:5000,connectTimeoutMs:5000,statementTimeoutMs:30000,lockTimeoutMs:5000,idleTransactionTimeoutMs:30000,socketTimeoutMs:40000}},
   retrieval: {policy:'operator-approved-metadata-v1',includeMetadata:true,approvedFieldPrefixes:[],maxChunkBytes:8192,embedding:null,maxConcurrent:2,maxQueued:8,batchSize:4},
 };
