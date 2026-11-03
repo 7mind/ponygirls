@@ -74,7 +74,7 @@ export async function fixture(overrides={},configure=async()=>{}){
     processHandle=spawn('/bin/sh',['-c','exec '+process.env.HAYSTACK_SERVER_COMMAND+' serve "$1"','haystack-test',configPath],{cwd:root,stdio:['ignore','pipe','pipe']});
     processHandle.stdout.on('data',bytes=>{output+=bytes;});processHandle.stderr.on('data',bytes=>{errors+=bytes;});
     const deadline=Date.now()+15000;let ready=false;
-    while(Date.now()<deadline){if(processHandle.exitCode!==null)throw new Error('server exited before readiness: '+output);try{const r=await fetch(base+'/api/v1/health');if(r.ok){ready=true;break;}}catch{}await sleep(50);}
+    while(Date.now()<deadline){if(processHandle.exitCode!==null)throw new Error('server exited before readiness: '+output);try{const r=await fetch(base+'/api/v1/health',{headers:{Connection:'close'}});await r.text();if(r.ok){ready=true;break;}}catch{}await sleep(50);}
     assert.ok(ready,'server readiness deadline');
   };
   const stop=async()=>{if(!processHandle)return [0,null];if(processHandle.exitCode!==null||processHandle.signalCode!==null)return [processHandle.exitCode,processHandle.signalCode];const exited=once(processHandle,'exit');processHandle.kill('SIGTERM');const timeout=setTimeout(()=>processHandle.kill('SIGKILL'),3000);const result=await exited;clearTimeout(timeout);return result;};

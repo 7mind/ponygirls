@@ -29,11 +29,27 @@ it('failed real live handshakes and normal socket close release all per-token ca
  try{
   const login=await f.call('/api/v1/login',encode(api.LoginRequest,new api.LoginRequest(f.tokens.alice)),{headers:{Origin:f.base}});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];
   for(let i=0;i<16;i++){const failed=await f.call('/api/v1/live',undefined,{method:'GET',headers:{Origin:f.base,Cookie:cookie}});assert.equal(failed.status,426);assert.equal(failed.headers.get('cache-control'),'no-store');}
+  for(const extra of [{'Sec-WebSocket-Key':'invalid','Sec-WebSocket-Version':'13'},{'Sec-WebSocket-Key':'dGhlIHNhbXBsZSBub25jZQ==','Sec-WebSocket-Version':'12'}])for(let i=0;i<8;i++){
+   const failed=await f.call('/api/v1/live',undefined,{method:'GET',headers:{Host:'127.0.0.1:'+f.port,Origin:f.base,Cookie:cookie,Connection:'Upgrade',Upgrade:'websocket',...extra}});assert.equal(failed.status,400);assert.equal(failed.headers.get('cache-control'),'no-store');
+  }
   for(let i=0;i<12;i++){
    socket=new WebSocket(f.base.replace('http:','ws:')+'/api/v1/live',{headers:{Origin:f.base,Cookie:cookie}});socket.on('error',()=>{});await once(socket,'open');
    const message=once(socket,'message');socket.send(JSON.stringify(encode(api.LiveFrame,new api.LiveFrame('ping',undefined,undefined,'lifetime-'+i,123,undefined))));
    const value=decode(api.LiveFrame,JSON.parse(String((await message)[0])));assert.equal(value.kind,'pong');assert.equal(value.nonce,'lifetime-'+i);
    const closed=once(socket,'close');socket.close();await closed;
   }
+ }finally{socket?.terminate();await f.stop();}
+});
+
+it('healthy automatic protocol pongs keep a socket live across two real30second heartbeat intervals',{timeout:85000},async()=>{
+ const f=await fixture();let socket;
+ try{
+  const login=await f.call('/api/v1/login',encode(api.LoginRequest,new api.LoginRequest(f.tokens.alice)),{headers:{Origin:f.base}});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];
+  const pings=[];let secondPing;const second=new Promise(resolve=>{secondPing=resolve;});
+  socket=new WebSocket(f.base.replace('http:','ws:')+'/api/v1/live',{headers:{Origin:f.base,Cookie:cookie}});socket.on('error',()=>{});socket.on('ping',bytes=>{pings.push(bytes.toString('hex'));if(pings.length===2)secondPing();});await once(socket,'open');
+  const started=Date.now();
+  await Promise.race([second,once(socket,'close').then(([code])=>{throw new Error('healthy ponging peer was closed: '+code);}),sleep(62000).then(()=>{throw new Error('two protocol heartbeat deadline exceeded');})]);
+  assert.ok(Date.now()-started>=59000,'real production30second interval must not be shortened for tests');assert.equal(socket.readyState,WebSocket.OPEN);assert.notEqual(pings[0],pings[1]);assert.ok(pings.every(nonce=>nonce.length===16));
+  const response=once(socket,'message');socket.send(JSON.stringify(encode(api.LiveFrame,new api.LiveFrame('ping',undefined,undefined,'after-two-intervals',123,undefined))));const value=decode(api.LiveFrame,JSON.parse(String((await response)[0])));assert.equal(value.kind,'pong');assert.equal(value.nonce,'after-two-intervals');
  }finally{socket?.terminate();await f.stop();}
 });

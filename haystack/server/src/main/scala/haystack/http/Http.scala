@@ -185,15 +185,37 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       case Some(file)=>StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file),Some(r)).getOrElseF(IO.pure(json(Status.NotFound,Json.Null))).map(_.putHeaders(Header.Raw(CIString("Referrer-Policy"),"no-referrer"),Header.Raw(CIString("Cache-Control"),if(file.getFileName.toString.matches("[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\\.(js|css|woff2?|svg|png|jpg|webp)")) "public, max-age=31536000, immutable" else "no-store")))
     }
   }
+  private def upgradeRejection(r:Request[IO]):Option[Response[IO]]={
+    def reject(status:Status)=Some(failure(Fault("bad-envelope","invalid websocket handshake")).withStatus(status).putHeaders(Header.Raw(CIString("Sec-WebSocket-Version"),"13")))
+    val connection=all(r,"Connection").flatMap(_.split(",")).exists(_.trim.equalsIgnoreCase("upgrade"))
+    val protocol=all(r,"Upgrade").exists(_.trim.equalsIgnoreCase("websocket"))
+    if(!connection || !protocol || r.httpVersion!=HttpVersion.`HTTP/1.1`)reject(Status.UpgradeRequired)
+    else {
+      val keys=all(r,"Sec-WebSocket-Key")
+      val keyValid=keys.size==1 && keys.head.matches("[A-Za-z0-9+/]{22}==") && scala.util.Try {
+        val decoded=java.util.Base64.getDecoder.decode(keys.head)
+        decoded.length==16 && java.util.Base64.getEncoder.encodeToString(decoded)==keys.head
+      }.getOrElse(false)
+      if(all(r,"Sec-WebSocket-Version")!=Vector("13") || !keyValid)reject(Status.BadRequest)else None
+    }
+  }
   private def socket(r:Request[IO],ws:WebSocketBuilder2[IO]):IO[Response[IO]]=IO.defer {
     version(r);val auth=getAuth();val h=headers(r)
     Sessions.validateTransport(auth.config,h)
     if(h.origin.size!=1 || !auth.config.allowedOrigins.contains(h.origin.head)) throw Fault("forbidden","live origin required")
     // Upgrade is performed even for missing/revoked sessions so the browser
     // receives an authoritative 4401 rather than mistaking an outage for logout.
+    upgradeRejection(r) match {
+      case Some(response)=>IO.pure(response)
+      case None=>
     val resolved=scala.util.Try(Sessions.resolve(auth,h)).toOption.filter(_.cookie)
+    // This service owns nonce validation. The default builder filters Pong
+    // frames, which would otherwise close healthy peers after two heartbeats.
+    val upgrade=ws.withFilterPingPongs(false).withHeaders(Headers(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
+      .withOnNonWebSocketRequest(IO.pure(failure(Fault("bad-envelope","websocket upgrade required")).withStatus(Status.UpgradeRequired)))
+      .withOnHandshakeFailure(IO.pure(failure(Fault("bad-envelope","invalid websocket handshake")).putHeaders(Header.Raw(CIString("Sec-WebSocket-Version"),"13"))))
     resolved match {
-      case None=>ws.build(Stream.emit(WebSocketFrame.Close(4401,"Sign in required").fold(throw _,identity)),_.drain).map(_.putHeaders(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
+      case None=>upgrade.build(Stream.emit(WebSocketFrame.Close(4401,"Sign in required").fold(throw _,identity)),_.drain).map(_.putHeaders(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
       case Some(a)=>
         Deferred[IO,Option[WebSocketFrame=>IO[Unit]]].flatMap { receiver=>
           val outgoing=Stream.eval(IO(revalidate(r,a))).flatMap { current=>
@@ -211,9 +233,10 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
           }
           // Resource lifetime is the upgraded stream, not construction of the
           // HTTP response. Failed/non-upgrade handshakes never reserve a slot.
-          ws.withOnClose(receiver.complete(None).void).build(outgoing,_.evalMap(frame=>receiver.get.flatMap(_.fold(IO.unit)(_(frame)))))
+          upgrade.withOnClose(receiver.complete(None).void).build(outgoing,_.evalMap(frame=>receiver.get.flatMap(_.fold(IO.unit)(_(frame)))))
             .map(_.putHeaders(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
         }
+    }
     }
   }
   private def liveStreams(session:LiveSession):IO[(Stream[IO,WebSocketFrame],WebSocketFrame=>IO[Unit])]=for {

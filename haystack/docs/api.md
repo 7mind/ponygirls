@@ -84,10 +84,12 @@ incompatibility is unavailable until deliberate rebuild/publication.
 
 Generated `LiveFrame.kind` is `ping | pong | changed` with optional fields. Ping
 requires bounded nonce and finite clientTs; pong echoes them with serverTs.
-Changed carries canonical key/revision. Only fresh committed writes publish;
+Changed carries canonical key/revision. Session slots are scoped to the actual upgraded stream; invalid/non-upgrade handshakes never reserve capacity and carry no-store. Initial credential validation admits only bounded body reading: all authenticated body routes revalidate the exact captured identity/transport after the read and before dispatch.
+
+Only fresh committed writes publish;
 replay/terminal failure does not. Application frame cap1024bytes, transport safety
 ceiling1MiB, bounded64KiB/64frame outgoing queue, per-token8 sockets, real30second
-protocol heartbeat with nonce validation. Revocation is checked on incoming and
+protocol heartbeat with nonce validation (Pong frames are deliberately delivered to the service, not filtered by the builder). Revocation is checked on incoming and
 outgoing activity and heartbeat. Session rejection4401 alone asks for sign-in;
 network outages preserve cookies, reconnect/refetch and unsaved editor CAS.
 
