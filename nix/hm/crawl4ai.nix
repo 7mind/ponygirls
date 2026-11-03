@@ -6,6 +6,12 @@
 let
   cfg = config.smind.hm.dev.llm.crawl4ai;
   mcp = pkgs.callPackage ../pkg/crawl4ai/mcp.nix { };
+  # One logical stdio server; Claude Code and Pi spawn it from the shared
+  # programs.mcp registry.
+  stdioServer = {
+    command = lib.getExe mcp;
+    args = [ cfg.url ] ++ lib.optional (cfg.tokenFile != null) cfg.tokenFile;
+  };
 in
 {
   options.smind.hm.dev.llm.crawl4ai = {
@@ -40,12 +46,15 @@ in
       }
     ];
 
-    programs.mcp.servers.crawl4ai = {
-      command = lib.getExe mcp;
-      args = [ cfg.url ] ++ lib.optional (cfg.tokenFile != null) cfg.tokenFile;
-    };
+    programs.mcp.servers.crawl4ai = stdioServer;
     # Codex filters inherited stdio-server environment variables. Forward the
     # runtime token (e.g. inside yolo) without embedding its value in settings.
-    programs.codex.settings.mcp_servers.crawl4ai.env_vars = [ "CRAWL4AI_API_TOKEN" ];
+    # home-manager merges settings.mcp_servers.<name> over the registry-derived
+    # entry wholesale (per server, not per field), so the override must repeat
+    # the full stdio transport: an entry carrying only env_vars would replace
+    # command/args and leave codex without a transport ("invalid transport").
+    programs.codex.settings.mcp_servers.crawl4ai = stdioServer // {
+      env_vars = [ "CRAWL4AI_API_TOKEN" ];
+    };
   };
 }

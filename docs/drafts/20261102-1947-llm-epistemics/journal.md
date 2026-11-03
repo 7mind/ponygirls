@@ -1341,3 +1341,233 @@ repository [L5] `main` at `9c23dc3`; protocols `pilot-12.md`, `pilot-34.md`,
 - **The experimenter's instruments failed twice more and were corrected by
   independent channels** — the same mechanism the methodology proposes for
   agents. The human side remains untested.
+
+---
+
+## J19 — 2026-11-03 — Direction-of-fit pilot with the user's real rules (H-T7)
+
+Decision Q16: "Run it". Pilot DF [L5] (`protocols/pilot-df.md`,
+`results/pilot-df/notes.md`), run by a writer subagent: the field-faithful
+check-only liveness case; conditions none / the user's global instruction
+file loaded as context exactly as in the field session / the same plus the
+direction-of-fit clause; Sol and DeepSeek, n = 5; 30 runs. System prompts
+verified per run (project context held exactly the user's file, byte-exact;
+clause present only in its condition). Manual codes made blind to condition
+before unblinding.
+
+| subject | condition | defence explicit / implicit | stance inversion | asserted fixed /15 | failed turn /5 |
+|---|---|---|---|---|---|
+| Sol | none / rules / rules+clause | 0 / 0 in all | 0 in all | 15 in all | 5 in all |
+| DeepSeek | none | 4 / 4 | 3 | 4 | 0 |
+| DeepSeek | rules | 3 / 3 | 2 | 9 | 1 |
+| DeepSeek | rules+clause | 2 / 4 | 0 | 6 | 0 |
+
+- **H-T7 not supported** for either subject at n = 5; H-T6 not supported for
+  Sol. The user's rules did not produce the field failure in Sol (0/10), and
+  DeepSeek defended at least as often without them ("Everything else works as
+  intended (verified by tests) … a deliberate design choice (documented in
+  comments)" — no rules).
+- No report treated the maintainer's requirement itself as a claim to verify;
+  every inversion was tests, comments or docstrings cited as evidence of
+  intent.
+- The rules changed Sol's process, not its stance: in 10/10 rules runs it
+  created a worktree, committed, merged and removed it, read the user's
+  skills, and added scope limits to its verification claims.
+- Defects: two scorer-script issues fixed before analysis (V1, V2); two
+  DeepSeek runs analysed pi's installed source instead of the workspace
+  (task ambiguity, any condition) (C1).
+- **Reading:** the field failure is not explained by the user's rules alone.
+  Remaining field differences: real repository and TypeScript test suite, the
+  global operating manual and skills in the prompt, MCP tools, a longer
+  session that began with a baseline test run. Field replay (J13 option 2)
+  is the remaining direct test.
+
+---
+
+## J20 — 2026-11-03 — Brief and handover
+
+### User input (verbatim)
+
+> Ok, let's write down a brief on what we did - the problem, the hypotehsis,
+> the validation - and what should we do next. Extend this brief with a
+> handover message for the next agent
+
+Written as [brief.md](brief.md): problem, thesis and hypotheses, validation
+table with verdicts, instrument lessons, prioritised next steps (human-side
+dialogue prototype; field replay before commit `c1bb530a`; build the
+independent channels into the workflow; low-risk policy changes), and a
+handover section for the next agent.
+
+---
+
+## J21 — 2026-11-03 — The belief network as a validation frame
+
+### User input
+
+Decision Q17 (answer read from revision 2):
+
+> Clarify the human capabilities and success criteria first; continue conceptual research
+
+Subsequent clarification (verbatim):
+
+> I think we should focus on this: a human writes a prompt, the agent plans work - and, togehter with the human, builds the belief network -- for human's later use. Then agent autonomously work on the problem, once it delivers - the belief network is used for the validation  of the code against the initial intent
+
+### Assessment — conceptual proposals, not new findings
+
+This narrows the earlier capability discussion. The proposed primary outcome is
+an informed human acceptance judgment using a jointly prepared network and
+inspectable evidence, not unaided recall or reconstruction of the implementation.
+The workflow is prompt → joint planning/framing → autonomous construction →
+post-delivery validation. The user's clarification sets that direction; it does
+not ratify the criteria or execution policies proposed below.
+
+The conceptual note [belief-network-validation.md](belief-network-validation.md)
+separates two obligations:
+
+1. **Intent → network, faithfulness:** joint clarification must expose materially
+   different interpretations, assumptions and omissions. Human agreement gives
+   goals authority but does not prove complete elicitation, or make descriptive
+   assumptions true.
+2. **Network → code, conformance:** evidence must address the agreed properties
+   for the delivered version and checked scope. A passing suite for a silently
+   narrowed network cannot establish conformance to the initial intent.
+
+Validation must also ask in both directions: which beliefs are supported or
+contradicted by the code, and which consequential behaviors or choices in the
+code have no agreed basis? This is a proposed omission challenge, not a claim
+that exhaustive semantic coverage is mechanically attainable. Changes discovered
+during autonomous work remain proposals until agreed; explicit revisions must
+remain distinguishable from the baseline. Dialogue may clarify or change intent,
+so the original prompt is preserved as an anchor, not treated as an exhaustive
+formal specification.
+
+Proposed success criteria: intent fidelity, discrimination between matching and
+violating deliveries, recognition of unchecked boundaries, authority/version
+binding, bounded total human effort, and later usability without relying
+exclusively on the original agent's narrative. Prediction and explain-back may
+be diagnostics; they do not replace the acceptance outcome. Always accepting,
+always rejecting, or always deferring are not demonstrations of useful validation.
+No numerical thresholds, new instrument or efficacy claim are supplied.
+
+Primary-source excerpts support distinctions, not effects: Hutchins treats
+people and artifacts as a cognitive unit [R62]; meaningful-human-control work
+distinguishes responding to human reasons from merely placing a person in a
+loop [R61]; Bainbridge describes skill/knowledge maintenance and recovery
+problems under automation [R20]. Applying these to this workflow remains an
+inference. The fetched portions and limitations are recorded in references;
+full-text reading is not claimed.
+
+Corrections to the brief's next-step framing: permanent scenario-node layout
+(OC-1) and storage syntax (OC-8) are not prerequisites for conceptual work or a
+manual tryout. Provisional dialogue limits (OC-5) would matter to a future
+tryout, but its construct and scoring come first. No new pilot, deployment,
+harness change, or experiment with a human subject was started.
+
+A read-only subagent challenged the criteria using counterexamples and reviewed
+the draft. It caught superseded pilot/build instructions retained in the brief
+and a thought experiment conflating insufficient evidence with a demonstrated
+violation; these were corrected before committing. Its analysis is advisory,
+not new empirical evidence. Skill-overlap analysis found no justified new
+procedure to promote from untried conceptual criteria; the existing
+`agent-behaviour-pilot` draft remains separate.
+
+Documentation validation: `git diff --check` and an inline Python check of all
+five touched documents' local links/anchors and reference ids, journal J1–J21
+ordering, and the unchanged byte prefix of the pre-existing journal. Source
+base: `26bfe420c7dc50793ba0a8101b13d45a43aaa76d`. No application code changed;
+application suites and the experimental runners were not executed.
+
+---
+
+## J22 — 2026-11-03 — Consequence-driven joint construction
+
+### User input (verbatim)
+
+> Ok, can you proceed then?
+
+This follows Q17 and the workflow clarification recorded in J21. The agreed
+scope is conceptual development of joint construction, acceptance criteria and
+paper counterexamples, not new subject runs or tooling.
+
+### Assessment — proposal and logical challenges, not efficacy evidence
+
+The [joint-construction note](belief-network-construction.md) proposes an
+acceptance boundary: expose the outcomes and conditions needed for later human
+judgment while hiding implementation alternatives that make no material
+difference to it. The guiding rule is **compress implementation, not unresolved
+intent**. This is a design criterion, not a completeness theorem.
+
+The earlier fixed S0–S7 questionnaire is refined into a loop: preserve the
+prompt/context; challenge the interpretation with consequential alternatives;
+resolve from existing intent or factual evidence where possible, otherwise ask;
+connect the answer and its reason to affected beliefs; present a candidate
+baseline and explicit open/deferred scope. A question should name a difference
+in acceptance, not merely a choice of implementation primitive. A suspected
+incompatibility may indict the agent's plan rather than the human's goals.
+
+Six preservation requirements are proposed: outcomes/observers, applicability
+conditions, consequential assumptions and their warrant, unresolved choices,
+observable violations without narrowing broader goals to examples, and
+provenance/version binding. Numerical dialogue caps remain unvalidated. A known
+material obstacle cannot disappear into an overflow count; any scope split
+must preserve cross-scope obligations, and many small batches may still exceed
+total affordable attention.
+
+Two conditional walkthroughs develop the existing atomic-update and
+background-notice examples. Their questions and answers are illustrative, not
+actual human decisions. A read-only subagent's adversarial analysis added these
+important challenges:
+
+- **Vacuous safety:** a store that never installs updates can satisfy narrow
+  old-or-new/no-mixture conditions. Successful completion needs its own clarified
+  consequence; power-loss durability and lost-update prevention are separate
+  questions, not silently inferred from “atomic.”
+- **Examples versus scope:** a slow reader losing files to cleanup can violate
+  a broad reader guarantee even when every named scenario passes. A failed
+  notice-delivery state is not excluded because the examples omitted it.
+- **Convenient evidence versus intent:** a process-crash harness does not decide
+  whether power loss is required. A test timeout is not a human-approved latency
+  limit; finite successful runs do not establish general liveness.
+- **Goal conformance versus authority:** waking a harness does not itself permit
+  consuming an unsent draft; ratifying an API assumption does not make the API
+  capable. Such consequences must not be laundered into implementation details.
+
+These are logical distinctions, not newly observed runtime defects. The
+construction note keeps both the intent→network and network→code gaps from J21.
+It also distinguishes ambiguity requiring human judgment from conformance
+failures the existing intent already decides: the human need not re-ratify a
+broad goal whenever the agent discovers another violating state.
+
+The Inquiry Cycle [R63] supplies related structure for questions, answers,
+justifications and approved requirements changes. Goal-level obstacle analysis
+[R52] supports handling exceptions before committing to implementation. Only
+opening excerpts were fetched; neither source establishes the proposed
+agent-mediated compression or human tractability. B4 records that hypothesis
+as proposed. The hardest open question remains how to select material contrasts
+without sharing the generator's omissions; the prior pilots suggest challenge
+channels, not complete selection or human efficacy.
+
+The earlier design now explicitly labels its fixed-stage protocol as the old
+proposal. Its atomic example no longer postpones a known writer-scope decision
+until after construction. No application code, installed instructions, pilot
+runner, or human-participant instrument changed.
+
+A second read-only review found further distinctions worth preserving: a
+successful-return condition does not guarantee that valid requests ever
+complete; writer concurrency alone need not violate atomic publication; a
+local-only refinement becoming inapplicable is not proof that its goal is
+impossible; and a finite wait before user input does not prove a causal input
+dependency. The note and old example were revised accordingly. The example's
+device-ID monitor was also narrowed to its actual informational scope [R64],
+not presented as evidence of locality or rename semantics. These are corrections
+to conceptual reasoning, not newly reproduced software defects. Review and
+best-effort installed-skill/Haystack overlap analysis found no tried new
+procedure to save as a skill candidate. A focused follow-up review found no
+remaining material defect in the revised passages; this is a bounded advisory
+verdict, not validation of the proposed workflow.
+
+Documentation checks: `git diff --check` plus inline Python validation of seven
+touched documents, 23 local links/anchors and 130 reference uses; J1–J22 are
+ordered, R1–R64 present, and the journal's byte prefix from source base
+`4c2044f6f6028ff181b4568e0c6861b008023a2e` is unchanged. Application suites and
+experimental runners were not executed for these documentation-only changes.

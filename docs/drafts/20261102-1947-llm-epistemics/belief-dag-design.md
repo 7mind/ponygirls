@@ -133,6 +133,12 @@ Queue items render as "when X, then Y" claims with ids and one-letter exits
 
 ## 5. Dialogue protocol: from a prompt to a ratified belief set
 
+J22's [construction proposal](belief-network-construction.md) refines this
+fixed-stage draft into a consequence-driven loop. The numerical caps below are
+unvalidated proposals, not ratified limits; known material obstacles cannot be
+hidden as counts. Scenarios do not exhaust broader goals, and testability does
+not determine intent. The stages remain the earlier design for comparison.
+
 Stages S0–S7 precede generation; generation starts when every goal in scope is
 ratified or explicitly deferred.
 
@@ -142,7 +148,7 @@ ratified or explicitly deferred.
 | S1 restate | restates the prompt as candidate goals in the human's words; maps each to existing nodes (reuse, revise, new); names what is out of scope | ≤5 new nodes |
 | S2 refine | asks questions whose answers change a scenario outcome or a W, e.g. "atomic for which observers, under which failures?" (J10) | ≤3 questions |
 | S3 obstacles | proposes obstacles per goal from catalogues — quality characteristics [R59], quality-attribute scenarios [R60], the user's skills — each with a proposed resolution kind | ≤3 shown per goal; rest counted |
-| S4 tensions | checks small sets of beliefs for joint unsatisfiability ("atomic" + "lock-free" + "multi-file" + "network filesystem", J10); reports the minimal conflicting set and options | ≤2 |
+| S4 tensions | investigates apparent conflicts among beliefs and assumptions; distinguishes an established incompatibility under stated premises from a suspected tension in the current refinement; proposes alternatives preserving the goals before asking for a trade-off (J22) | ≤2 |
 | S5 assumptions | turns everything the intended refinement relies on but S does not enforce into W, with guarantor and monitor | within the S1 cap |
 | S6 scenarios | 2–3 per goal: nominal, failure or boundary, optionally "must not" | 3 per goal |
 | S7 ratify | presents the batch; the human answers per node | ≤7 per batch |
@@ -245,7 +251,7 @@ nodes:
     origin: agent:family-a
     statement: rename(2) on one local filesystem replaces the target atomically.
     guarantor: POSIX filesystem semantics
-    monitor: startup check that store and pointer share one device id
+    monitor: same-device placement check only; rename semantics need separate warrant
   - id: O-power
     kind: obstacle
     origin: agent:family-a
@@ -326,7 +332,10 @@ on).
 
 ### 9b. "A multi-file update is atomic"
 
-Neighbourhood of `G-atomic` after S1–S7 (11 human-layer nodes, under the cap):
+Illustrative neighbourhood of `G-atomic` during joint framing (11 human-layer
+nodes, under the proposed cap). Ratification labels are hypothetical, not actual
+user decisions; the open writer boundary still needs a disposition before
+concurrent-writer work is authorized.
 
 | Id | Kind | Statement (abridged) | Status / resolution |
 |---|---|---|---|
@@ -335,15 +344,19 @@ Neighbourhood of `G-atomic` after S1–S7 (11 human-layer nodes, under the cap):
 | G-isolate | goal (AND) | a concurrent reader never observes a mixture | ratified |
 | D-pointer | decision (closes OR) | write the new set into a fresh version directory, then switch a pointer by rename; rejected: in-place writes with a journal; one bundle file | ratified |
 | W-rename | W | rename(2) within one local filesystem replaces the target atomically | ratified |
-| W-onefs | W | store and pointer live on one local filesystem, not a network filesystem | ratified; monitor: device-id check |
+| W-onefs | W | store and pointer live on one local filesystem, not a network filesystem | ratified; device-id check addresses placement only, not locality/semantics [R64] |
 | W-readers | W | readers resolve the pointer once per read of the set | ratified; guarantor: shared reader library |
 | O-gap | obstacle → G-crash | crash between the writes of a and b | handled by D-pointer (the old set is untouched) |
 | O-power | obstacle → G-crash | power loss, unlike a process crash, can lose the rename or file contents without fsync | accepted risk (answer a to Q1, §5) |
-| O-writers | obstacle → G-atomic | two concurrent writers | open: handle (exclusive lock, new goal) or assume away (W: single writer) |
-| O-nfs | obstacle → W-rename | a network filesystem may not rename atomically | assumed away by W-onefs |
+| O-writers | candidate obstacle → G-atomic | writer interference through shared staging/recovery state could expose mixed versions | open: investigate the refinement; clarify writer guarantees, then handle or explicitly defer affected scope; concurrency alone is not an atomicity violation |
+| O-nfs | obstacle → W-onefs | deployment uses a network filesystem rather than the assumed local one | excluded only if that scope was explicitly agreed; the actual target still needs warrant |
 
-S4 tension: had a belief placed the store on a network share, S4 would report
-the minimal set {G-atomic, W-rename, that belief}; W-onefs is one resolution.
+S4 applicability: requiring a network share does not establish that G-atomic is
+impossible, or contradict the conditional local-filesystem claim W-rename. It
+conflicts with W-onefs if that locality assumption is also required, and leaves
+the chosen local-only refinement without an applicable premise. Investigate the
+target's semantics and alternative refinements before proposing a scope change.
+A device-ID check does not establish locality or rename semantics [R64].
 
 Agent layer (hidden), obligations: `ob-fresh` (write only into a fresh
 version directory, never the one the pointer names); `ob-switch` (one rename
@@ -366,8 +379,13 @@ V2: if the second family's refinement of G-isolate lets readers open files by
 path, the disagreement reaches the human as a question about the belief ("may
 readers bypass the pointer?"), which W-readers answers.
 
-First queue after generation: O-writers (handle or assume away), the `ob-gc`
-candidate decision, one audit path; everything else is counts.
+Before generation: investigate O-writers and clarify the required writer
+guarantees; handle any actual interference or explicitly defer affected scope.
+A known material boundary must not first surface after implementation (J22).
+After generation: the newly discovered `ob-gc` consequence and an audit path
+reach the human. If cleanup violates the agreed reader goal, fix it rather than
+asking the human to ratify that goal again. Counts may summarize only items
+whose omission does not hide a known material obstacle.
 
 ## 10. Risks and open questions
 
