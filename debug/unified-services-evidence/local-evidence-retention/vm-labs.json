@@ -1,0 +1,27 @@
+{
+  "scope": "Private opaque byte-preservation only; no image/file interpretation, conversion, mount, SQL, publication, upload or deletion",
+  "job": "bgt-b62b2cd289c04a84",
+  "exitStatus": 0,
+  "finishedAt": "2026-11-03T14:22:58Z",
+  "archiveRoot": "/home/pavel/work/flakes/ponygirls/debug/unified-services-vm-labs-local-only-20261103",
+  "rootMode": "0700",
+  "archiveDigestsIndependentlyRehashedByParent": false,
+  "archives": [
+    {
+      "label": "original-fe4352",
+      "archiveSha256RecordedByCompletedJob": "3e7f2ecb565afde02716af7918d2b0512adaa23e9c295a02ef1c1469ab8a8684",
+      "archiveBytes": 1265881974,
+      "gnuTarComparedToOriginalSuccessfully": true,
+      "originalRoot": "/tmp/mv.3tnn98u5",
+      "originalRootDeleted": false
+    },
+    {
+      "label": "diagnostic-abd8",
+      "archiveSha256RecordedByCompletedJob": "633045a99a061ac29ba21f6632e9110a76363de7734666be097231f879d61a58",
+      "archiveBytes": 2530823216,
+      "gnuTarComparedToOriginalSuccessfully": true,
+      "originalRoot": "/tmp/mv.yb1xinoj",
+      "originalRootDeleted": false
+    }
+  ]
+}
