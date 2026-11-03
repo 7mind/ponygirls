@@ -15,7 +15,7 @@ Node test names. No declaration means no silent omission: a new root/nested
 case ID, an import resolving outside the assigned source, or a missing concrete
 mapping causes the inventory self-check to fail.
 
-The frozen register currently declares **32 CURRENT Python modules /330 case
+The frozen register currently declares **33 CURRENT Python modules /334 case
 IDs**, **17 Node cases** across both browser-boundary/CDP suites, and the
 **74-vector generated TypeScript codec check**. These are declared inventory
 sizes, **not execution/pass counts**. All client, CLI, MCP, browser, offline and
@@ -36,6 +36,7 @@ credential rotation.
 
 | Module | Declared cases | Required execution inputs |
 |---|---:|---|
+| `test_artifact_source_manifest` | 4 | owned copied-source CLI; no compiler/service |
 | `test_browser_access_modes` | 2 | target, browser |
 | `test_browser_dashboard` | 29 | target, browser |
 | `test_browser_dashboard_ux` | 1 | target, browser |
@@ -548,3 +549,23 @@ active publish/sweep/SQL-deadline cases use owned service-role triggers and
 physical dev/inode kernel claim probes. All remain unexecuted by registration:
 no native/current acceptance is claimed. Production JDBC defaults/identity are
 not changed by the explicit owned test-fixture deadline override.
+
+### Compiled-source manifest location identity
+
+`test_artifact_source_manifest` is CURRENT with4 exact methods. Independent
+fixture SHA+relative-path expectations include build/dependency/lock/schema,
+Scala/main resources/generated/native/shared runtime inputs. Identical copied
+checkouts beneath ordinary, `target` and `.git` ancestors now yield byte-identical
+manifests from any cwd; only repository-relative build/git components are
+excluded. Mutating ignored outputs, docs/tests and the generator itself leaves
+compiled identity unchanged. No production/credential/network inputs are used.
+
+Baseline `7a101763`:4 methods/2 failures/0 errors/skips (both ancestor bugs).
+After the relative-parts fix,19 manifest/inventory/historical-oracle methods
+passed0 failures/errors/skips. The real ordinary-checkout manifest was captured
+before/after and compared byte-for-byte equal. There is no count padding or
+fixed103/107 acceptance count. Correct earlier Nix-store/native ELF source
+manifests are NOT invalidated: ordinary-path selection is unchanged and the
+generator is not a compiled input. Only archives affected by the ancestor bug
+need their previously incomplete manifest regenerated. These component checks
+are not full runtime/native acceptance; existing three blockers remain open.

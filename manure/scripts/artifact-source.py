@@ -12,6 +12,6 @@ paths=[root/'build.sbt',root/'deps.lock.json',root/'lockfile-config.json',root/'
 for directory in ['project','manure/backend/src/main','manure/server/src/main','manure/server/native-image',
                   'manure/generated/scala','shared/baboon-runtime/src/main','shared/lossless-json/src/main','shared/service-runtime/src/main',
                   'shared/model-http/src/main','shared/retrieval-core/src/main','shared/retrieval-postgres/src/main']:
-    paths.extend(p for p in (root/directory).rglob('*') if p.is_file() and 'target' not in p.parts and '.git' not in p.parts)
+    paths.extend(p for p in (root/directory).rglob('*') if p.is_file() and 'target' not in p.relative_to(root).parts and '.git' not in p.relative_to(root).parts)
 for path in sorted(set(paths)):
     if path.is_file():print(hashlib.sha256(path.read_bytes()).hexdigest()+'  '+path.relative_to(root).as_posix())
