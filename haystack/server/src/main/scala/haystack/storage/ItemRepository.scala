@@ -11,6 +11,17 @@ trait ItemRepository {
   def history(key: ItemKey): IO[Vector[RevisionMeta]]
   def allCurrent(): IO[Vector[StoredItem]]
   def search(input:haystack.query.SearchInput):IO[haystack.query.SearchResult]=allCurrent().map(haystack.query.Search.search(_,input))
+  def complete(fragment:String):IO[Vector[String]]=allCurrent().map(haystack.query.Search.complete(_,fragment))
+  def observedValues(field:String):IO[Vector[String]]=allCurrent().map { items=>
+    val values=field match{
+      case "type"=>items.map(_.document.docType)
+      case "status"=>items.map(_.document.status)
+      case "importance"=>items.map(_.document.importance)
+      case "tags"=>items.flatMap(_.document.tags)
+      case _=>throw Fault("not-found","unknown value set")
+    }
+    values.distinct.sortWith(haystack.query.Search.compareSearchText(_,_)<0).take(100)
+  }
   /** Includes terminal validation/CAS outcomes. An IO failure is uncertain,
     * never permission to retry under a new identity. */
   def commit(operation: AcceptedOperation, principal: Principal, now: Instant): IO[CommitSuccess]

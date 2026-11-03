@@ -37,6 +37,10 @@ assert lib.all (name: hmUnits.${name}.Unit.Requires == [ "ponygirls-postgres.ser
 assert !(hmUnits.ponygirls-postgres.Unit ? PartOf);
 assert hmUnits.ponygirls-postgres == disabledApp.systemd.user.services.ponygirls-postgres;
 assert hmUnits.ponygirls-database-chronicle == disabledApp.systemd.user.services.ponygirls-database-chronicle;
+assert base.ponygirls.servicePostgres.databases.chronicle.lockTimeoutMs == 35000;
+assert base.ponygirls.servicePostgres.databases.chronicle.idleTransactionTimeoutMs == 60000;
+assert base.ponygirls.servicePostgres.databases.haystack.lockTimeoutMs == 5000;
+assert base.ponygirls.servicePostgres.databases.manure.idleTransactionTimeoutMs == 30000;
 assert base.ponygirls.servicePostgres.connections.haystack.jdbcUrl == "jdbc:postgresql://127.0.0.1:15434/haystack";
 assert tunedPolicy.settings.shared_buffers == "16GB";
 assert tunedPolicy.settings.effective_cache_size == "128GB";
@@ -45,6 +49,9 @@ assert tunedPolicy.settings.track_io_timing;
 assert tunedPolicy.settings.random_page_cost == 1.1;
 assert tunedPolicy.settings.effective_io_concurrency == 200;
 assert tunedPolicy.settings.maintenance_io_concurrency == 100;
+assert system.services.postgresql.settings.hba_file != toString (import ../postgres/policy.nix { inherit lib pkgs; cfg = system.ponygirls.servicePostgres; }).hba;
+assert lib.hasInfix ''local all "postgres" peer'' system.services.postgresql.authentication;
+assert system.services.postgresql.settings.listen_addresses == "127.0.0.1";
 assert system.services.postgresql.enable;
 assert system.services.postgresql.dataDir == "/var/lib/ponygirls-postgres-18/data";
 assert !(system.systemd.services ? ponygirls-postgres);
@@ -53,6 +60,7 @@ assert system.services.postgresql.settings.fsync;
 assert system.services.postgresql.settings.full_page_writes;
 assert system.services.postgresql.settings.synchronous_commit == "on";
 pkgs.runCommand "shared-postgres-module-adapters" { } ''
+  test -f ${system.services.postgresql.finalPackage}/share/postgresql/extension/vector.control
   mkdir "$out"
   printf '%s\n' 'HM: exactly one daemon + 3 database units; independent application package change leaves provider/unrelated database unit unchanged. NixOS: existing sole postgresql.service adapter. No activation/runtime-systemd claim.' > "$out/scope"
 ''

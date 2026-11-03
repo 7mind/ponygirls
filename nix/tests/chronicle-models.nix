@@ -18,7 +18,7 @@ let
       package = pkgs.writeShellScriptBin "chronicle-server" "exit 0";
       publicUrl = "https://chronicle.example.net";
       users.alice = { login = "alice"; passwordHashFile = "/run/secrets/alice-hash"; };
-      database.passwordFile = "/run/secrets/database-key";
+      database = { passwordFile = "/run/secrets/database-key"; jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/chronicle"; readinessUnit = "ponygirls-database-chronicle.service"; };
       embedding = { dimensions = 2048; queryPrefix = "query: "; documentPrefix = "passage: "; };
       models = lib.genAttrs [ "annotation" "embedding" ] (role: {
         enable = true;
@@ -38,7 +38,7 @@ let
   failures = cfg: lib.filter (a: !a.assertion && lib.hasPrefix "Chronicle:" a.message) cfg.assertions;
   badRevision = invalid { smind.services.chronicle.models.annotation.revision = "main"; };
   badPaths = invalid { smind.services.chronicle.models.annotation.files."../secret" = lib.concatStrings (lib.replicate 64 "a"); };
-  badCredential = invalid { smind.services.chronicle.models.embedding.apiKeyFile = pkgs.writeText "not-a-secret" ""; };
+  badCredential = invalid { smind.services.chronicle.models.embedding.apiKeyFile = "${pkgs.writeText "not-a-secret" ""}"; };
   badPorts = invalid { smind.services.chronicle.models.embedding.port = 47331; };
   badDevice = invalid { smind.services.chronicle.models.embedding.cudaVisibleDevices = [ ]; };
   external = invalid {

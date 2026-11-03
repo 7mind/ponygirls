@@ -96,7 +96,7 @@ in {
       description = "Passwords hashed to credentials/NAME.pbkdf2 during setup; settings.users selects these files explicitly.";
     };
     database = {
-      limits = import ../lib/jdbc-limits-options.nix { inherit lib; };
+      limits = import ../lib/jdbc-limits-options.nix { inherit lib; lockTimeoutMs = 35000; idleTransactionTimeoutMs = 60000; socketTimeoutMs = 35000; };
       package = lib.mkOption { type = lib.types.package; default = pkgs.postgresql_18.withPackages (p: [ p.pgvector ]); };
       port = lib.mkOption { type = lib.types.port; default = 15433; };
       name = lib.mkOption { type = lib.types.strMatching "[a-z_][a-z0-9_]*"; default = "chronicle"; };

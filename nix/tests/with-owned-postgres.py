@@ -19,6 +19,7 @@ def main():
     pg=os.environ['PG_BIN']
     with tempfile.TemporaryDirectory(prefix='ponygirls-owned-pg-') as name:
         root=Path(name)
+        (root/'.owned-test-only').write_text('ponygirls-owned-test-v1\n')
         with socket.socket() as sock:
             sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]
         admin=pwd.getpwuid(os.getuid()).pw_name
@@ -27,7 +28,7 @@ def main():
             d['passwordFile']=str(root/'secrets'/key)
             # Behavioral native tests have finite <=30s statements. Module policy
             # rehearsal separately executes the short real deadline cases.
-            d.update(createPassword=True,statementTimeoutMs=30000,lockTimeoutMs=5000,idleTransactionTimeoutMs=30000)
+            d.update(createPassword=True,statementTimeoutMs=30000,lockTimeoutMs=35000 if key=="chronicle" else 5000,idleTransactionTimeoutMs=60000 if key=="chronicle" else 30000)
         manifest=root/'provider.json';manifest.write_text(json.dumps(template))
         hba=Path(os.environ['PG_HBA']).read_text().replace('local all "nixbld" peer',f'local all "{admin}" peer')
         (root/'hba').write_text(hba)
@@ -39,13 +40,13 @@ def main():
         data=str(root/'cluster'/'data')
         run(pg+'/pg_ctl','-D',data,'-l',str(root/'postgres.log'),'-o',f'-c config_file={root}/postgresql.conf','-w','-t','30','start')
         try:
-            env=dict(os.environ)
+            env=dict(os.environ,PONYGIRLS_OWNED_FIXTURE_ROOT=str(root))
             for key,d in template['databases'].items():
                 run(sys.executable,os.environ['PG_PROVIDER'],'provision',str(manifest),key)
                 env['PONYGIRLS_TEST_DATABASE_'+key.upper()]=json.dumps({
                     'jdbcUrl':f'jdbc:postgresql://127.0.0.1:{port}/{d["name"]}',
                     'user':d['user'],'passwordFile':d['passwordFile'],
-                    'limits':{'maxConnections':8,'maxQueued':32,'queueTimeoutMs':5000,'connectTimeoutMs':5000,'statementTimeoutMs':30000,'lockTimeoutMs':5000,'idleTransactionTimeoutMs':30000,'socketTimeoutMs':40000}})
+                    'limits':{'maxConnections':8,'maxQueued':32,'queueTimeoutMs':5000,'connectTimeoutMs':5000,'statementTimeoutMs':d['statementTimeoutMs'],'lockTimeoutMs':d['lockTimeoutMs'],'idleTransactionTimeoutMs':d['idleTransactionTimeoutMs'],'socketTimeoutMs':35000 if key=='chronicle' else 40000}})
             child=subprocess.Popen(sys.argv[1:],env=env,start_new_session=True)
             try:
                 return child.wait(timeout=3600)

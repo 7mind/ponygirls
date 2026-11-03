@@ -106,7 +106,7 @@ in
       };
     };
     database = {
-      limits = import ../lib/jdbc-limits-options.nix { inherit lib; };
+      limits = import ../lib/jdbc-limits-options.nix { inherit lib; lockTimeoutMs = 35000; idleTransactionTimeoutMs = 60000; socketTimeoutMs = 35000; };
       manageLocal = lib.mkOption { type = lib.types.bool; default = false; description = "Retired: must remain false. Configure the explicitly migrated shared servicePostgres provider separately."; };
       readinessUnit = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
       ssdTuning = lib.mkEnableOption "SSD-oriented planner and I/O concurrency defaults for the managed PostgreSQL cluster (cluster-wide, not a storage benchmark)" // { default = false; };
