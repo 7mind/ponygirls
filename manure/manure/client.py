@@ -208,30 +208,31 @@ def _exact_credential(direct: str | None) -> str | None:
     return direct
 
 
-def resolve_secret_pair(direct: str | None, file_path: str | None, *, kind: str = "token") -> str | None:
-    """Resolve one MANURE_* direct/file pair.
+def check_secret_pair_ambiguity(direct: str | None, file_path: str | None, *, kind: str = "token") -> None:
+    """Pure source-presence preflight: no validation, file I/O or network.
 
-    Token/password direct values are exact (canonical, no stripping per
-    governor A1); token/password files use the exact-byte file rule (43 chars
-    plus at most one final LF); url values/files use the §9 strip rule.
-    Both present -> AmbiguousCredentials (no network by construction).
+    A configured nonempty reference is a source even if missing, unreadable,
+    empty, or a FIFO. Ambiguity therefore wins over malformed direct values
+    and file contents. Secret direct values are exact; URL emptiness retains
+    its existing strip rule. Reference whitespace is used only for presence.
     """
-    if kind in ("token", "password"):
-        d = _exact_credential(direct)
-    else:
-        d = strip_secret_value(direct)
-    f_raw: str | None = None
-    if file_path is not None and str(file_path).strip() != "":
-        fp = str(file_path)
-        if kind in ("token", "password"):
-            f_raw = read_token_file(fp)
-        else:
-            f_raw = read_url_file(fp)
-        if f_raw is not None and f_raw == "":
-            f_raw = None
-    if d is not None and f_raw is not None:
+    direct_present = (direct is not None and direct != "") if kind in ("token", "password") else strip_secret_value(direct) is not None
+    reference_present = file_path is not None and str(file_path).strip() != ""
+    if direct_present and reference_present:
         raise AmbiguousCredentials(f"both {kind} direct and file credentials set")
-    return d if d is not None else f_raw
+
+
+def resolve_secret_pair(direct: str | None, file_path: str | None, *, kind: str = "token") -> str | None:
+    """Resolve one pair, rejecting source ambiguity before validation or I/O.
+
+    Token/password codecs and URL whitespace rules are unchanged. Callers with
+    multiple pairs preflight every pair before resolving any credential file.
+    """
+    check_secret_pair_ambiguity(direct, file_path, kind=kind)
+    value = _exact_credential(direct) if kind in ("token", "password") else strip_secret_value(direct)
+    if file_path is not None and str(file_path).strip() != "":
+        return read_token_file(str(file_path)) if kind in ("token", "password") else read_url_file(str(file_path))
+    return value
 
 
 def is_loopback_host(host: str) -> bool:
@@ -1200,6 +1201,7 @@ class ManureClient:
                  cache_dir: str | os.PathLike | None = None,
                  transport: HttpTransport | None = None,
                  allow_insecure_http: bool = False):
+        check_secret_pair_ambiguity(token, token_file, kind="token")
         if type(allow_insecure_http) is not bool:
             raise ManureError("bad-envelope", "allow_insecure_http: boolean required")
         self.allow_insecure_http = allow_insecure_http
@@ -1218,21 +1220,7 @@ class ManureClient:
             raise InvalidUrl(f"bad api base: {base}")
         self.api_base: str = base
         self.api_origin: str = origin_of(base)
-        # ambiguity without network; direct values exact (governor A1).
-        if token is None or token == "":
-            tok_direct = None
-        elif not isinstance(token, str):
-            raise ManureError("bad-envelope", "malformed credential")
-        else:
-            _validate_token_format(token)
-            tok_direct = token
-        tfile = str(token_file) if token_file is not None and str(token_file).strip() != "" else None
-        if tok_direct is not None and tfile is not None:
-            raise AmbiguousCredentials("token and token_file both set")
-        if tfile is not None:
-            resolved = read_token_file(tfile)
-        else:
-            resolved = tok_direct
+        resolved = resolve_secret_pair(token, token_file, kind="token")
         self._token: str | None = resolved
         if cache_dir is None:
             self.cache_dir = Path.home() / ".cache" / "manure"

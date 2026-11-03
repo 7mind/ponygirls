@@ -81,60 +81,29 @@ def _tool_schema(name: str) -> dict[str, Any] | None:
 
 
 def _client_from_env(client_module: Any | None = None):
-    from manure.client import ManureClient, resolve_secret_pair, strip_secret_value
-    mod = client_module
-    MC = getattr(mod, "ManureClient", None) if mod is not None else None
+    from manure.client import (ManureClient, MissingCredentials, _exact_credential,
+        check_secret_pair_ambiguity, insecure_http_from_env, resolve_secret_pair,
+        strip_secret_value, validate_url_before_network)
+    MC = getattr(client_module, "ManureClient", None) if client_module is not None else None
     if MC is None:
-        from manure.client import ManureClient as MC  # type: ignore
+        MC = ManureClient
     url_direct = os.environ.get("MANURE_URL")
-    url_file = os.environ.get("MANURE_URL_FILE")
-    url_file_s = strip_secret_value(url_file) if url_file is not None else None
-    if url_file is not None and url_file_s is None:
-        url_file = None
-    else:
-        url_file = url_file_s
+    url_file = strip_secret_value(os.environ.get("MANURE_URL_FILE"))
     tok_direct = os.environ.get("MANURE_TOKEN")
-    tok_file = os.environ.get("MANURE_TOKEN_FILE")
-    tok_file_s = strip_secret_value(tok_file) if tok_file is not None else None
-    if tok_file is not None and tok_file_s is None:
-        tok_file = None
-    else:
-        tok_file = tok_file_s
-    try:
-        api_base = resolve_secret_pair(url_direct, url_file, kind="url")
-    except Exception as e:
-        from manure.client import ManureError
-        code = getattr(e, "code", "missing-credentials")
-        raise ManureError(code, "bad url credentials")
-    token: str | None = None
-    from manure.client import read_token_file, _exact_credential
-    try:
-        d = _exact_credential(tok_direct)
-    except Exception as e:
-        from manure.client import ManureError
-        code = getattr(e, "code", "missing-credentials")
-        raise ManureError(code, "bad token credentials")
-    fval: str | None = None
-    if tok_file is not None:
-        try:
-            fval = read_token_file(tok_file)
-        except Exception as e:
-            from manure.client import ManureError
-            code = getattr(e, "code", "missing-credentials")
-            raise ManureError(code, "bad token credentials")
-    from manure.client import AmbiguousCredentials
-    if d is not None and fval is not None:
-        raise AmbiguousCredentials("both MANURE_TOKEN and MANURE_TOKEN_FILE set")
-    token = d if d is not None else fval
-    cache_env = os.environ.get("MANURE_CACHE_DIR")
-    from manure.client import strip_secret_value as ssv
-    cache_s = ssv(cache_env) if cache_env is not None else None
-    cache_dir = Path(cache_s) if cache_s is not None else Path.home() / ".cache" / "manure"
-    if api_base is None:
-        from manure.client import MissingCredentials
-        raise MissingCredentials("MANURE_URL is required")
-    from manure.client import insecure_http_from_env
+    tok_file = strip_secret_value(os.environ.get("MANURE_TOKEN_FILE"))
+    # Presence is checked across BOTH pairs before validating a direct value
+    # or opening any configured file. A FIFO/missing file cannot mask ambiguity.
+    check_secret_pair_ambiguity(url_direct, url_file, kind="url")
+    check_secret_pair_ambiguity(tok_direct, tok_file, kind="token")
     allow_http = insecure_http_from_env(os.environ.get("MANURE_ALLOW_INSECURE_HTTP"))
+    _exact_credential(tok_direct)
+    api_base = resolve_secret_pair(url_direct, url_file, kind="url")
+    if api_base is None:
+        raise MissingCredentials("MANURE_URL is required")
+    validate_url_before_network(api_base, allow_http)
+    token = resolve_secret_pair(tok_direct, tok_file, kind="token")
+    cache = strip_secret_value(os.environ.get("MANURE_CACHE_DIR"))
+    cache_dir = Path(cache) if cache is not None else Path.home() / ".cache" / "manure"
     return MC(api_base, token=token, cache_dir=cache_dir, allow_insecure_http=allow_http)
 
 

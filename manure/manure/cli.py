@@ -49,37 +49,31 @@ def _resolve_token() -> str | None:
     return resolve_secret_pair(direct, fpath, kind="token")
 
 
-def _resolve_password_cli(flag_pw: str | None, flag_file: str | None) -> str | None:
-    from manure.client import _exact_credential
+def _password_sources_cli(flag_pw: str | None, flag_file: str | None) -> list[tuple[str, str | None, bool]]:
+    """Collect sources without validating values or reading any file."""
     cands: list[tuple[str, str | None, bool]] = []
-    # Direct password values are exact (canonical, no stripping); file paths
-    # use strip-emptiness only for presence detection (governor A1).
-    if flag_pw is not None and flag_pw != "":
-        _exact_credential(flag_pw)
-        cands.append(("flag", flag_pw, False))
-    if flag_file is not None and strip_secret_value(flag_file) is not None:
-        cands.append(("flag-file", strip_secret_value(flag_file), True))
-    env_direct = os.environ.get("MANURE_EXTERNAL_PASSWORD")
-    env_file = os.environ.get("MANURE_EXTERNAL_PASSWORD_FILE")
-    env_file_s = strip_secret_value(env_file) if env_file is not None else None
-    if env_file is not None and env_file_s is None:
-        env_file = None
-    else:
-        env_file = env_file_s
-    if env_direct is not None and env_direct != "":
-        _exact_credential(env_direct)
-        cands.append(("env", env_direct, False))
-    if env_file is not None:
-        cands.append(("env-file", env_file, True))
+    for label, value, is_file in (
+        ("flag", flag_pw, False), ("flag-file", flag_file, True),
+        ("env", os.environ.get("MANURE_EXTERNAL_PASSWORD"), False),
+        ("env-file", os.environ.get("MANURE_EXTERNAL_PASSWORD_FILE"), True),
+    ):
+        if is_file:
+            reference = strip_secret_value(value)
+            if reference is not None:
+                cands.append((label, reference, True))
+        elif value is not None and value != "":
+            cands.append((label, value, False))
     if len(cands) > 1:
         raise AmbiguousCredentials("multiple password sources set")
+    return cands
+
+
+def _resolve_password_cli(flag_pw: str | None, flag_file: str | None) -> str | None:
+    cands = _password_sources_cli(flag_pw, flag_file)
     if not cands:
         return None
-    label, val, is_file = cands[0]
-    if is_file:
-        # password files share the token exact-byte codec (43-char base64url)
-        return read_token_file(val or "")
-    return val
+    _label, value, is_file = cands[0]
+    return read_token_file(value or "") if is_file else _client_mod._exact_credential(value)
 
 
 def _resolve_cache_dir(flag: str | None) -> Path:
@@ -171,8 +165,20 @@ def main(argv: list[str] | None = None) -> int:
     cache_dir = _resolve_cache_dir(getattr(args, "cache_dir", None))
     # Resolve credentials before network; ambiguity -> exit 2 no-network
     try:
+        # Preflight ALL relevant source pairs before any credential-file read.
+        # Do not let URL-file resolution hide a known token/password ambiguity.
+        _client_mod.check_secret_pair_ambiguity(os.environ.get("MANURE_URL"), os.environ.get("MANURE_URL_FILE"), kind="url")
+        _client_mod.check_secret_pair_ambiguity(os.environ.get("MANURE_TOKEN"), os.environ.get("MANURE_TOKEN_FILE"), kind="token")
+        password_sources = _password_sources_cli(getattr(args, "password", None), getattr(args, "password_file", None)) if args.cmd == "fetch" else []
         allow_insecure_http = _client_mod.insecure_http_from_env(os.environ.get("MANURE_ALLOW_INSECURE_HTTP")) or args.allow_insecure_http
+        _client_mod._exact_credential(os.environ.get("MANURE_TOKEN"))
+        if password_sources and not password_sources[0][2]:
+            _client_mod._exact_credential(password_sources[0][1])
         api_base = _resolve_api_base()
+        if api_base is not None:
+            _client_mod.validate_url_before_network(api_base, allow_insecure_http)
+        elif args.cmd != "fetch":
+            raise _client_mod.MissingCredentials("MANURE_URL is required")
         token = _resolve_token()
     except AmbiguousCredentials as e:
         _eprint(f"ambiguous-credentials: {e.message}")

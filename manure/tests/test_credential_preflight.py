@@ -20,7 +20,17 @@ CHILD=r'''
 import contextlib,io,json,os,socket,sys
 from manure import client,cli,mcp
 spec=json.load(sys.stdin)
-def no_network(*a,**k):raise AssertionError('unexpected network')
+counters={'files':0,'network':0}
+references={value for key,value in os.environ.items() if key.endswith('_FILE')}
+if 'reference' in spec:references.add(spec['reference'])
+argv=spec.get('argv',[])
+if '--password-file' in argv:references.add(argv[argv.index('--password-file')+1])
+def audit(event,args):
+    if event=='open' and args and args[0] in references:counters['files']+=1
+sys.addaudithook(audit)
+def no_network(*a,**k):
+    counters['network']+=1
+    raise AssertionError('unexpected network')
 socket.socket=no_network
 socket.create_connection=no_network
 client.StdlibTransport.request=no_network
@@ -39,9 +49,9 @@ try:
         with contextlib.redirect_stdout(output),contextlib.redirect_stderr(error):
             exit_code=cli.main(spec.get('argv',['whoami']))
         code='ambiguous-credentials' if 'ambiguous-credentials:' in error.getvalue() else 'other-cli-error'
-        print(json.dumps({'code':code,'exit':exit_code}));raise SystemExit(0)
+        print(json.dumps({'code':code,'exit':exit_code,**counters}));raise SystemExit(0)
 except client.ManureError as error:code=error.code
-print(json.dumps({'code':code}))
+print(json.dumps({'code':code,**counters}))
 '''
 
 
@@ -60,6 +70,8 @@ class CredentialPreflightTests(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertNotIn('SYNTHETIC-CANARY',result.stdout+result.stderr)
         observed=json.loads(result.stdout)
+        self.assertEqual(observed['files'],0,'configured credential reference was opened')
+        self.assertEqual(observed['network'],0,'network was attempted during credential preflight')
         self.assertEqual(observed['code'],expected,observed)
         if spec['action']=='cli':self.assertEqual(observed['exit'],2)
 
