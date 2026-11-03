@@ -128,4 +128,18 @@ class PublicationFenceTest extends munit.FunSuite {
     assertEquals(f.tx(c => f.index.claim(c,30)),None)
   }
 
+  test("Blackbox-GoodCommunication regression: empty complete generation is idempotent under repeated same-version projection") {
+    val f=fixture(); val empty=source("empty","",Set("reader")).copy(chunks=Nil)
+    f.store.put(empty); f.store.publishAll(); f.store.put(empty)
+    assertEquals(f.tx(c => f.index.claim(c,30)),None)
+    assertEquals(f.store.search(query(RetrievalMode.Semantic)).total,0L)
+  }
+  test("Effectual-GoodCommunication regression: crashed last-attempt lease becomes terminal Failed, not stranded Running") {
+    val f=fixture(); f.store.put(source("one","alpha",Set("reader")))
+    val claim=f.tx(c => f.index.claim(c,30)).get
+    f.tx(c => Jdbc.exec(c,"UPDATE pony_retrieval_jobs SET attempts=5,lease_until=clock_timestamp()-interval '1 second' WHERE id=?",claim.jobId))
+    assertEquals(f.tx(c => f.index.claim(c,30)),None)
+    assertEquals(f.tx(c => Jdbc.one(c,"SELECT state FROM pony_retrieval_jobs WHERE id=?",claim.jobId)(_.getString(1))),Some("Failed"))
+  }
+
 }
