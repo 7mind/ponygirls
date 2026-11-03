@@ -106,7 +106,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private def secure(response: Response[IO],content: Boolean): Response[IO] =
     val base = response.putHeaders(raw("Origin-Agent-Cluster","?1"),raw("Cross-Origin-Opener-Policy","same-origin"),
       raw("Cross-Origin-Resource-Policy","same-origin"),raw("X-Content-Type-Options","nosniff"),
-      raw("Referrer-Policy","no-referrer"),raw("Cache-Control","no-store"))
+      raw("Cache-Control","no-store"))
+      .putHeaders(raw("Referrer-Policy",response.headers.headers.find(_.name == CIString("Referrer-Policy")).map(_.value).getOrElse("no-referrer")))
     if content then base.putHeaders(raw("Content-Security-Policy","frame-ancestors 'none'; base-uri 'none'; form-action 'self'")) else base
   private def json(value: io.circe.Json,status: Int = 200): Response[IO] =
     Response[IO](Status.fromInt(status).getOrElse(Status.InternalServerError)).withEntity(value.noSpaces)
@@ -261,9 +262,14 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     if name == "index.html" && ctx.mount.nonEmpty then
       val html = Exact.string(bytes).replace("href=\"/","href=\"" + ctx.mount + "/")
         .replace("src=\"/","src=\"" + ctx.mount + "/").replace("action=\"/","action=\"" + ctx.mount + "/")
-      bytes = Exact.utf8(html)
+      bytes = Exact.utf8(html.replace("id=\"path-mode-warning\" hidden","id=\"path-mode-warning\""))
     val response = Response[IO](Status.Ok).withEntity(bytes).putHeaders(raw("Content-Type",mime(name)))
-    if dashboard then response.putHeaders(raw("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")) else response
+    val navigational = if name == "index.html" then response.putHeaders(raw("Referrer-Policy","strict-origin")) else response
+    if dashboard then
+      val port = if ctx.origin.port == (if ctx.origin.scheme == "https" then 443 else 80) then "" else ":" + ctx.origin.port
+      val forms = if config.contentMode == "path" then "'self'" else "'self' " + ctx.origin.scheme + "://*." + config.contentSuffix + port
+      navigational.putHeaders(raw("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action " + forms))
+    else navigational
   }
   private def mime(path: String): String = path.toLowerCase(java.util.Locale.ROOT).split('.').lastOption.getOrElse("") match
     case "html" | "htm" => "text/html; charset=utf-8"
@@ -320,6 +326,14 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
           out.updated(key,URLDecoder.decode(if parts.length == 2 then parts(1) else "","UTF-8"))
         }
       }
+  private def unlockPage(ctx: Context,status: Status = Status.Ok): IO[Response[IO]] = config.unlockShellDir match
+    case Some(_) => asset(config.unlockShellDir,"index.html",ctx,false).map(_.withStatus(status))
+    case None =>
+      val warning = if config.contentMode == "path" then "<span id=\"path-mode-warning\" role=\"img\" title=\"Low-security path hosting: artifacts share the dashboard/API origin. Trusted content only.\">ⓘ</span>" else ""
+      val html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>manure — password required</title></head><body>" + warning +
+        "<h1>password required</h1><form method=\"post\" action=\"" + ctx.mount + "/__manure/unlock\">" +
+        "<label>External password<input type=\"password\" name=\"password\" autocomplete=\"off\" required></label><button type=\"submit\">unlock</button></form></body></html>"
+      IO.pure(Response[IO](status).withEntity(html).putHeaders(raw("Content-Type","text/html; charset=utf-8"),raw("Referrer-Policy","strict-origin")))
   private def contentCommand(req: Request[IO],ctx: Context,id: String,command: wire.ContentCommand,requestId: UUID): IO[Response[IO]] = command match
     case wire.ContentCommand.Unlock(password) =>
       IO {
@@ -341,7 +355,9 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         .map(a => envelope(requestId,wire.Result.ArtifactManifest(CurrentWire.manifest(a))))
   private def content(req: Request[IO],ctx: Context,id: String): IO[Response[IO]] =
     val path = req.uri.path.renderString.stripPrefix(ctx.mount)
-    if path.startsWith("/api/") then IO.raiseError(DomainError("not-found"))
+    if req.method == Method.GET && ctx.mount.nonEmpty && path.isEmpty then
+      IO.pure(Response[IO](Status.SeeOther).putHeaders(raw("Location",ctx.mount + "/")))
+    else if path.startsWith("/api/") then IO.raiseError(DomainError("not-found"))
     else if req.method == Method.POST && path == "/__manure/current" then
       readJson(req).flatMap { value =>
         val rid = CurrentWire.requestId(value)
@@ -355,13 +371,17 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
           case _ => wire.ContentCommand.Logout()
         contentCommand(req,ctx,id,command,new UUID(0L,0L)).map { response =>
           response.withStatus(Status.SeeOther).withBodyStream(Stream.empty).putHeaders(raw("Location",ctx.mount + "/"))
+        }.handleErrorWith {
+          case e: DomainError if path == "/__manure/unlock" && Set("password-invalid","rate-limited")(e.code) =>
+            unlockPage(ctx,if e.code == "password-invalid" then Status.Unauthorized else Status.TooManyRequests)
+          case error => IO.raiseError(error)
         }
       }
     else if req.method == Method.GET && path.startsWith("/__manure/files/") && path.endsWith("/content") then
       val (file,_) = decoded("/" + path.stripPrefix("/__manure/files/").stripSuffix("/content"))
       serveFile(req,ctx,id,file,true,None)
     else if req.method == Method.GET && path == "/__manure/password" then
-      artifacts.externalInfo(id).flatMap(_ => asset(config.unlockShellDir,"index.html",ctx,false))
+      artifacts.externalInfo(id).flatMap(_ => unlockPage(ctx))
     else if req.method == Method.GET && !path.startsWith("/__manure/") then
       val (file,trailing) = decoded(if path.isEmpty then "/" else path)
       artifacts.contentInfo(id,presented(req,ctx,id),None,None).flatMap { a =>
@@ -373,8 +393,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         else serveFile(req,ctx,id,target,false,None)
       }.handleErrorWith {
         case d: DomainError if d.code == "password-required" =>
-          val shell = if Set("/styles.css","/unlock.js")(path) then path.drop(1) else "index.html"
-          asset(config.unlockShellDir,shell,ctx,false)
+          if Set("/styles.css","/unlock.js")(path) then asset(config.unlockShellDir,path.drop(1),ctx,false)
+          else unlockPage(ctx)
         case error => IO.raiseError(error)
       }
     else IO.raiseError(DomainError("not-found"))

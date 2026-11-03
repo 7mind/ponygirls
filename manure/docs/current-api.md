@@ -214,3 +214,34 @@ Shutdown waits for the real child before dropping its owned DB. Tests seed via
 public typed API only; browser TLS retains the controlled Host-preserving edge.
 Real TTL waits replace private clocks. See behavior-inventory.md for precise
 executed component scope and remaining full-target acceptance requirements.
+
+
+### Retained client fixture verification update
+
+At committed source `3f5bba8162dad31fc8042ec3bb69e37837c506aa`, all114 retained
+client-only hardening/transport/external/stateful/CLIresume/MCP protocol/hardening
+methods now use current typed fixtures and pass without skips. Combined with
+current codec/client/fixture-safety/markup/asset hygiene, the fresh Python run is
+145 methods,0 failures/errors/skips; Node boundary/CDP run16 cases,0 failures/skips.
+The official SDK1.32.1 controlled-current-HTTP stdio leg executes. Full logs and
+source SHA binding are in `/tmp/manure-contract-evidence.Dc9gQ7`; the behavior
+register records the earlier redirect-fixture failure/fix and current remaining
+actual-target acceptance gates. The earlier old-fixture failures are historical,
+not the current client-only suite status. No Python legacy server/API fallback
+was introduced to make these pass. The nested real-target environment test
+retains its real target prerequisite and must run under the parent's owned
+PostgreSQL/executable fixture.
+
+
+### Credential source configuration precedes secret-file I/O
+
+Both a nonempty direct value and a nonempty file reference are always
+`ambiguous-credentials`, even when the direct value is malformed or the file
+would be missing, empty, unreadable or blocking. Presence is checked before
+credential validation or opening a file. URL pairs retain their existing
+whitespace/empty-as-unset rule; token/password direct values remain exact.
+CLI/MCP preflight all relevant pairs before resolving any other pair's file;
+CLI password flag/env combinations obey the same source-first rule. CLI returns
+exit2 without file/network effects. Existing one-source canonical file codecs
+and no-secret-diagnostics rules are unchanged. Focused fail-first evidence and
+the fresh153-method zero-skip regression receipt are in behavior-inventory.md.

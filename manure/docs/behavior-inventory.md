@@ -42,8 +42,8 @@ SQL/private-Python assertions become PG/JDBC checks, never silently removed.
 Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [DashboardAccessModeTests.test_subdomain_access_transitions](../tests/test_browser_access_modes.py#L40)
-- [DashboardAccessModeTests.test_path_access_transitions_controls_and_races](../tests/test_browser_access_modes.py#L43)
+- [DashboardAccessModeTests.test_subdomain_access_transitions](../tests/test_browser_access_modes.py#L38)
+- [DashboardAccessModeTests.test_path_access_transitions_controls_and_races](../tests/test_browser_access_modes.py#L41)
 
 ### `test_browser_dashboard.py` — 18 methods
 
@@ -58,23 +58,23 @@ K-only legacy wire/cursor expectations are replaced explicitly.
 - [TestAssetHygiene.test_grant_handoff_is_form_post_not_url](../tests/test_browser_dashboard.py#L94)
 - [DashboardFlows.test_b1_login_sets_session_cookie_and_clears_token](../tests/test_browser_dashboard.py#L138)
 - [DashboardFlows.test_b1_login_requires_exact_origin_http](../tests/test_browser_dashboard.py#L162)
-- [DashboardFlows.test_b1_dashboard_shell_csp_allows_content_suffix](../tests/test_browser_dashboard.py#L181)
-- [DashboardFlows.test_b1_api_dynamic_responses_carry_security_headers](../tests/test_browser_dashboard.py#L217)
-- [DashboardFlows.test_b7_wrong_origin_mutation_with_planted_cookie_changes_nothing](../tests/test_browser_dashboard.py#L230)
-- [DashboardFlows.test_d1_list_detail_delete_with_hostile_name](../tests/test_browser_dashboard.py#L263)
-- [DashboardFlows.test_d1_rotate_reveals_once_and_clears_on_dismiss](../tests/test_browser_dashboard.py#L316)
-- [DashboardFlows.test_a1_logout_clears_revealed_password_dom](../tests/test_browser_dashboard.py#L358)
-- [DashboardFlows.test_a2_detail_failure_is_visible_in_list](../tests/test_browser_dashboard.py#L397)
-- [DashboardFlows.test_b7_hostile_sibling_js_cannot_mutate_dashboard](../tests/test_browser_dashboard.py#L438)
-- [DashboardFlows.test_d1_open_public_and_external_from_dashboard](../tests/test_browser_dashboard.py#L683)
-- [ExpiredDeleteCase.test_a2_expired_artifact_can_be_deleted_from_list](../tests/test_browser_dashboard.py#L749)
+- [DashboardFlows.test_b1_dashboard_shell_csp_allows_content_suffix](../tests/test_browser_dashboard.py#L176)
+- [DashboardFlows.test_b1_api_dynamic_responses_carry_security_headers](../tests/test_browser_dashboard.py#L212)
+- [DashboardFlows.test_b7_wrong_origin_mutation_with_planted_cookie_changes_nothing](../tests/test_browser_dashboard.py#L223)
+- [DashboardFlows.test_d1_list_detail_delete_with_hostile_name](../tests/test_browser_dashboard.py#L247)
+- [DashboardFlows.test_d1_rotate_reveals_once_and_clears_on_dismiss](../tests/test_browser_dashboard.py#L298)
+- [DashboardFlows.test_a1_logout_clears_revealed_password_dom](../tests/test_browser_dashboard.py#L340)
+- [DashboardFlows.test_a2_detail_failure_is_visible_in_list](../tests/test_browser_dashboard.py#L379)
+- [DashboardFlows.test_b7_hostile_sibling_js_cannot_mutate_dashboard](../tests/test_browser_dashboard.py#L421)
+- [DashboardFlows.test_d1_open_public_and_external_from_dashboard](../tests/test_browser_dashboard.py#L646)
+- [ExpiredDeleteCase.test_a2_expired_artifact_can_be_deleted_from_list](../tests/test_browser_dashboard.py#L710)
 
 ### `test_browser_dashboard_ux.py` — 1 methods
 
 Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [DashboardUXTests.test_catalogue_detail_and_session_flows](../tests/test_browser_dashboard_ux.py#L45)
+- [DashboardUXTests.test_catalogue_detail_and_session_flows](../tests/test_browser_dashboard_ux.py#L41)
 
 ### `test_browser_handoff.py` — 2 methods
 
@@ -89,19 +89,19 @@ K-only legacy wire/cursor expectations are replaced explicitly.
 Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [HttpOptInBrowserCase.test_login_internal_handoff_external_unlock_public_and_logout](../tests/test_browser_http_opt_in.py#L12)
+- [HttpOptInBrowserCase.test_login_internal_handoff_external_unlock_public_and_logout](../tests/test_browser_http_opt_in.py#L10)
 
 ### `test_browser_isolation.py` — 6 methods
 
 Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [IsolationFlows.test_b4_artifacts_cannot_read_each_other](../tests/test_browser_isolation.py#L72)
-- [IsolationFlows.test_b4_content_responses_carry_isolation_headers](../tests/test_browser_isolation.py#L117)
-- [IsolationFlows.test_b4_management_paths_absent_from_content_origin](../tests/test_browser_isolation.py#L141)
-- [IsolationFlows.test_b4_framing_blocked_by_header](../tests/test_browser_isolation.py#L156)
-- [IsolationFlows.test_b5_api_bytes_are_attachment_and_never_execute](../tests/test_browser_isolation.py#L225)
-- [IsolationFlows.test_b6_reserved_prefixes_never_serve_user_content](../tests/test_browser_isolation.py#L279)
+- [IsolationFlows.test_b4_artifacts_cannot_read_each_other](../tests/test_browser_isolation.py#L67)
+- [IsolationFlows.test_b4_content_responses_carry_isolation_headers](../tests/test_browser_isolation.py#L112)
+- [IsolationFlows.test_b4_management_paths_absent_from_content_origin](../tests/test_browser_isolation.py#L136)
+- [IsolationFlows.test_b4_framing_blocked_by_header](../tests/test_browser_isolation.py#L151)
+- [IsolationFlows.test_b5_api_bytes_are_attachment_and_never_execute](../tests/test_browser_isolation.py#L220)
+- [IsolationFlows.test_b6_reserved_prefixes_never_serve_user_content](../tests/test_browser_isolation.py#L274)
 
 ### `test_browser_path_mode.py` — 4 methods
 
@@ -131,14 +131,14 @@ K-only legacy wire/cursor expectations are replaced explicitly.
 
 - [UnlockFlows.test_b3_unlock_shell_round_trip_in_browser](../tests/test_browser_unlock.py#L59)
 - [UnlockFlows.test_b3_wrong_password_fails_generic_without_cookie](../tests/test_browser_unlock.py#L97)
-- [UnlockFlows.test_b3_rotation_kills_old_password_and_grants](../tests/test_browser_unlock.py#L164)
-- [UnlockFlows.test_b3_logout_clears_grant_cookie](../tests/test_browser_unlock.py#L206)
-- [UnlockFlows.test_b3_unlock_assets_served_locked_else_404](../tests/test_browser_unlock.py#L232)
-- [UnlockFlows.test_b3_password_pages_use_origin_only_referrer_policy](../tests/test_browser_unlock.py#L259)
-- [UnlockFlows.test_b3_browser_revocation_and_password_rotation](../tests/test_browser_unlock.py#L272)
-- [UnlockFlows.test_b3_no_password_appears_in_listings_or_manifest](../tests/test_browser_unlock.py#L342)
-- [UnlockRateLimitCase.test_b3_browser_rate_limit_statuses](../tests/test_browser_unlock.py#L382)
-- [UnlockRateLimitCase.test_b3_unlock_rate_limited_with_retry_after](../tests/test_browser_unlock.py#L414)
+- [UnlockFlows.test_b3_rotation_kills_old_password_and_grants](../tests/test_browser_unlock.py#L162)
+- [UnlockFlows.test_b3_logout_clears_grant_cookie](../tests/test_browser_unlock.py#L198)
+- [UnlockFlows.test_b3_unlock_assets_served_locked_else_404](../tests/test_browser_unlock.py#L224)
+- [UnlockFlows.test_b3_password_pages_use_origin_only_referrer_policy](../tests/test_browser_unlock.py#L251)
+- [UnlockFlows.test_b3_browser_revocation_and_password_rotation](../tests/test_browser_unlock.py#L264)
+- [UnlockFlows.test_b3_no_password_appears_in_listings_or_manifest](../tests/test_browser_unlock.py#L332)
+- [UnlockRateLimitCase.test_b3_browser_rate_limit_statuses](../tests/test_browser_unlock.py#L369)
+- [UnlockRateLimitCase.test_b3_unlock_rate_limited_with_retry_after](../tests/test_browser_unlock.py#L401)
 
 ### `test_catalogue.py` — 12 methods
 
@@ -163,95 +163,95 @@ K-only legacy wire/cursor expectations are replaced explicitly.
 Invariant rows: **E J M**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [TestSubprocessKillResume.test_kill_auto_resume](../tests/test_cli_process.py#L73)
-- [TestSubprocessKillResume.test_kill_manual_resume](../tests/test_cli_process.py#L131)
-- [TestOwnedFetchResumeRange.test_interrupted_fetch_resumes_exact_range](../tests/test_cli_process.py#L173)
+- [TestSubprocessKillResume.test_kill_auto_resume](../tests/test_cli_process.py#L103)
+- [TestSubprocessKillResume.test_kill_manual_resume](../tests/test_cli_process.py#L104)
+- [TestOwnedFetchResumeRange.test_interrupted_fetch_resumes_exact_range](../tests/test_cli_process.py#L108)
 
 ### `test_cli_resume.py` — 14 methods
 
 Invariant rows: **A E M N**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [TestEnvPrecedence.test_ambiguous_token_exits_2_no_network](../tests/test_cli_resume.py#L89)
-- [TestEnvPrecedence.test_ambiguous_url_exits_2](../tests/test_cli_resume.py#L103)
-- [TestEnvPrecedence.test_ambiguous_password_exits_2](../tests/test_cli_resume.py#L116)
-- [TestEnvPrecedence.test_missing_credentials_before_network](../tests/test_cli_resume.py#L131)
-- [TestEnvPrecedence.test_token_file_exact_bytes_via_cli](../tests/test_cli_resume.py#L138)
-- [TestEnvPrecedence.test_empty_env_treated_as_unset](../tests/test_cli_resume.py#L150)
-- [TestUploadCacheResume.test_upload_requires_access](../tests/test_cli_resume.py#L178)
-- [TestUploadCacheResume.test_upload_invalid_ttl_before_network](../tests/test_cli_resume.py#L190)
-- [TestUploadCacheResume.test_upload_json_stable_and_cache_no_secrets](../tests/test_cli_resume.py#L202)
-- [TestUploadCacheResume.test_external_generating_call_returns_password_once](../tests/test_cli_resume.py#L226)
-- [TestUploadCacheResume.test_resumed_external_prints_null_note](../tests/test_cli_resume.py#L241)
-- [TestUploadCacheResume.test_source_changed_exit_2](../tests/test_cli_resume.py#L278)
-- [TestUploadCacheResume.test_auto_resume_single_match](../tests/test_cli_resume.py#L301)
-- [TestUploadCacheResume.test_fresh_ignores_cache](../tests/test_cli_resume.py#L336)
+- [TestEnvPrecedence.test_ambiguous_token_exits_2_no_network](../tests/test_cli_resume.py#L91)
+- [TestEnvPrecedence.test_ambiguous_url_exits_2](../tests/test_cli_resume.py#L105)
+- [TestEnvPrecedence.test_ambiguous_password_exits_2](../tests/test_cli_resume.py#L118)
+- [TestEnvPrecedence.test_missing_credentials_before_network](../tests/test_cli_resume.py#L133)
+- [TestEnvPrecedence.test_token_file_exact_bytes_via_cli](../tests/test_cli_resume.py#L140)
+- [TestEnvPrecedence.test_empty_env_treated_as_unset](../tests/test_cli_resume.py#L152)
+- [TestUploadCacheResume.test_upload_requires_access](../tests/test_cli_resume.py#L180)
+- [TestUploadCacheResume.test_upload_invalid_ttl_before_network](../tests/test_cli_resume.py#L192)
+- [TestUploadCacheResume.test_upload_json_stable_and_cache_no_secrets](../tests/test_cli_resume.py#L204)
+- [TestUploadCacheResume.test_external_generating_call_returns_password_once](../tests/test_cli_resume.py#L228)
+- [TestUploadCacheResume.test_resumed_external_prints_null_note](../tests/test_cli_resume.py#L243)
+- [TestUploadCacheResume.test_source_changed_exit_2](../tests/test_cli_resume.py#L280)
+- [TestUploadCacheResume.test_auto_resume_single_match](../tests/test_cli_resume.py#L303)
+- [TestUploadCacheResume.test_fresh_ignores_cache](../tests/test_cli_resume.py#L338)
 
 ### `test_client_external.py` — 5 methods
 
 Invariant rows: **H J L M**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [TestExternalTokenFreeFetch.test_password_to_manifest_to_ranged_files](../tests/test_client_external.py#L127)
-- [TestExternalTokenFreeFetch.test_public_anon_fetch_no_password](../tests/test_client_external.py#L150)
-- [TestExternalTokenFreeFetch.test_subdomain_url_nested_view_path_keeps_subdomain_routing](../tests/test_client_external.py#L161)
-- [TestExternalTokenFreeFetch.test_path_mode_bare_origin_no_bearer_and_independent_grant_jar](../tests/test_client_external.py#L171)
-- [TestExternalTokenFreeFetch.test_fetch_resumes_partial_temp](../tests/test_client_external.py#L185)
+- [TestExternalTokenFreeFetch.test_password_to_manifest_to_ranged_files](../tests/test_client_external.py#L131)
+- [TestExternalTokenFreeFetch.test_public_anon_fetch_no_password](../tests/test_client_external.py#L154)
+- [TestExternalTokenFreeFetch.test_subdomain_url_nested_view_path_keeps_subdomain_routing](../tests/test_client_external.py#L165)
+- [TestExternalTokenFreeFetch.test_path_mode_bare_origin_no_bearer_and_independent_grant_jar](../tests/test_client_external.py#L175)
+- [TestExternalTokenFreeFetch.test_fetch_resumes_partial_temp](../tests/test_client_external.py#L189)
 
 ### `test_client_hardening.py` — 49 methods
 
 Invariant rows: **A C E F I J L M**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [TestB1RedirectBody.test_307_unlock_body_refused](../tests/test_client_hardening.py#L33)
-- [TestB1RedirectBody.test_308_chunk_body_refused_canary](../tests/test_client_hardening.py#L56)
-- [TestB1RedirectBody.test_get_redirect_drops_creds_still_follows](../tests/test_client_hardening.py#L79)
-- [TestB2Bounds.test_negative_and_nonint_sizes_rejected](../tests/test_client_hardening.py#L100)
-- [TestB2Bounds.test_chunk_bytes_bounds](../tests/test_client_hardening.py#L109)
-- [TestB2Bounds.test_oversized_range_ignored_before_write](../tests/test_client_hardening.py#L125)
-- [TestB2Bounds.test_content_range_mismatch_rejected](../tests/test_client_hardening.py#L182)
-- [TestB3Staging.test_existing_part_preserved](../tests/test_client_hardening.py#L229)
-- [TestB3Staging.test_manifest_temp_collision_both_orders](../tests/test_client_hardening.py#L259)
-- [TestB4Symlink.test_dest_symlink_ancestor_rejected_before_mkdir](../tests/test_client_hardening.py#L308)
-- [TestB4Symlink.test_empty_manifest_through_symlink_rejected](../tests/test_client_hardening.py#L329)
-- [TestB4Symlink.test_source_parent_swap_rejected](../tests/test_client_hardening.py#L347)
-- [TestB5ResumeAccess.test_cached_access_mismatch_rejected](../tests/test_client_hardening.py#L428)
-- [TestB5ResumeAccess.test_reports_actual_visibility](../tests/test_client_hardening.py#L439)
-- [TestB5ResumeAccess.test_ready_resume_no_puts_and_retires](../tests/test_client_hardening.py#L448)
-- [TestB7Credentials.test_malformed_direct_token_before_network](../tests/test_client_hardening.py#L461)
-- [TestB7Credentials.test_missing_file_normalized](../tests/test_client_hardening.py#L472)
-- [TestB7Credentials.test_invalid_port_before_network](../tests/test_client_hardening.py#L480)
-- [TestB7Credentials.test_ipv6_origin_bracketed](../tests/test_client_hardening.py#L487)
-- [TestB10Patch.test_shorten_extend_clear_bodies](../tests/test_client_hardening.py#L506)
-- [TestB4SwapDeterministic.test_source_file_swapped_to_symlink_rejected](../tests/test_client_hardening.py#L556)
-- [TestB4SwapDeterministic.test_fetch_final_swapped_to_symlink_refused](../tests/test_client_hardening.py#L576)
-- [TestB7SecretCanary.test_transport_error_hides_authorization](../tests/test_client_hardening.py#L604)
-- [TestB8TopologyHashes.test_topology_uses_valid_hashes](../tests/test_client_hardening.py#L623)
-- [TestB5RecoveryManifest.test_publishing_recovery_continues_not_success](../tests/test_client_hardening.py#L635)
-- [TestB5RecoveryManifest.test_server_manifest_mismatch_rejected](../tests/test_client_hardening.py#L692)
-- [TestB3NamespaceOwnership.test_preexisting_namespace_contents_preserved](../tests/test_client_hardening.py#L751)
-- [TestB3NamespaceOwnership.test_empty_manifest_creates_nothing_extra](../tests/test_client_hardening.py#L775)
-- [TestB3NamespaceOwnership.test_fallback_payload_collision_both_orders](../tests/test_client_hardening.py#L796)
-- [TestB3NamespaceOwnership.test_successful_replace_preserves_foreign_backup](../tests/test_client_hardening.py#L824)
-- [TestB3NamespaceOwnership.test_replace_unreadable_regular_destination](../tests/test_client_hardening.py#L864)
-- [TestB3NamespaceOwnership.test_backup_cleanup_never_unlinks_foreign_inode](../tests/test_client_hardening.py#L904)
-- [TestB3NamespaceOwnership.test_backup_verify_never_unlinks_foreign](../tests/test_client_hardening.py#L965)
-- [TestB4SwapHooks.test_ancestor_swap_between_init_and_read_sends_nothing](../tests/test_client_hardening.py#L1041)
-- [TestB4SwapHooks.test_staging_swap_between_verify_and_install](../tests/test_client_hardening.py#L1109)
-- [TestB11LongPaths.test_nested_path_over_255_roundtrip](../tests/test_client_hardening.py#L1152)
-- [TestB11LongPaths.test_interrupted_long_path_resume](../tests/test_client_hardening.py#L1181)
-- [TestB11LongPaths.test_slash_flatten_collision_impossible](../tests/test_client_hardening.py#L1229)
-- [TestB4BoundaryHooks.test_dest_ancestor_swap_before_parent_open](../tests/test_client_hardening.py#L1260)
-- [TestB4BoundaryHooks.test_staging_swap_at_rename_boundary](../tests/test_client_hardening.py#L1311)
-- [TestB4BoundaryHooks.test_cleanup_preserves_owned_namespace_unrelated](../tests/test_client_hardening.py#L1369)
-- [TestB3SidecarRace.test_foreign_sidecar_planted_during_claim](../tests/test_client_hardening.py#L1419)
-- [TestB4AncestorSwaps.test_single_file_hash_ancestor_swap](../tests/test_client_hardening.py#L1476)
-- [TestB4AncestorSwaps.test_single_file_parent_swap_redirects_nothing](../tests/test_client_hardening.py#L1494)
-- [TestB4AncestorSwaps.test_cleanup_ancestor_swap](../tests/test_client_hardening.py#L1556)
-- [TestB4AncestorSwaps.test_cleanup_swap_after_acquire_before_rmdir](../tests/test_client_hardening.py#L1603)
-- [TestB4AncestorSwaps.test_existing_hash_swap_at_open](../tests/test_client_hardening.py#L1663)
-- [TestB4ParentOpenHook.test_swap_at_install_parent_open_boundary](../tests/test_client_hardening.py#L1730)
-- [TestE1FailFirstRecords.test_e1_baseline_fail_fixed_pass_records](../tests/test_client_hardening.py#L1935)
+- [TestB1RedirectBody.test_307_unlock_body_refused](../tests/test_client_hardening.py#L36)
+- [TestB1RedirectBody.test_308_chunk_body_refused_canary](../tests/test_client_hardening.py#L59)
+- [TestB1RedirectBody.test_get_redirect_drops_creds_still_follows](../tests/test_client_hardening.py#L82)
+- [TestB2Bounds.test_negative_and_nonint_sizes_rejected](../tests/test_client_hardening.py#L103)
+- [TestB2Bounds.test_chunk_bytes_bounds](../tests/test_client_hardening.py#L112)
+- [TestB2Bounds.test_oversized_range_ignored_before_write](../tests/test_client_hardening.py#L128)
+- [TestB2Bounds.test_content_range_mismatch_rejected](../tests/test_client_hardening.py#L185)
+- [TestB3Staging.test_existing_part_preserved](../tests/test_client_hardening.py#L232)
+- [TestB3Staging.test_manifest_temp_collision_both_orders](../tests/test_client_hardening.py#L262)
+- [TestB4Symlink.test_dest_symlink_ancestor_rejected_before_mkdir](../tests/test_client_hardening.py#L311)
+- [TestB4Symlink.test_empty_manifest_through_symlink_rejected](../tests/test_client_hardening.py#L332)
+- [TestB4Symlink.test_source_parent_swap_rejected](../tests/test_client_hardening.py#L350)
+- [TestB5ResumeAccess.test_cached_access_mismatch_rejected](../tests/test_client_hardening.py#L431)
+- [TestB5ResumeAccess.test_reports_actual_visibility](../tests/test_client_hardening.py#L442)
+- [TestB5ResumeAccess.test_ready_resume_no_puts_and_retires](../tests/test_client_hardening.py#L451)
+- [TestB7Credentials.test_malformed_direct_token_before_network](../tests/test_client_hardening.py#L464)
+- [TestB7Credentials.test_missing_file_normalized](../tests/test_client_hardening.py#L475)
+- [TestB7Credentials.test_invalid_port_before_network](../tests/test_client_hardening.py#L483)
+- [TestB7Credentials.test_ipv6_origin_bracketed](../tests/test_client_hardening.py#L490)
+- [TestB10Patch.test_shorten_extend_clear_bodies](../tests/test_client_hardening.py#L509)
+- [TestB4SwapDeterministic.test_source_file_swapped_to_symlink_rejected](../tests/test_client_hardening.py#L559)
+- [TestB4SwapDeterministic.test_fetch_final_swapped_to_symlink_refused](../tests/test_client_hardening.py#L579)
+- [TestB7SecretCanary.test_transport_error_hides_authorization](../tests/test_client_hardening.py#L607)
+- [TestB8TopologyHashes.test_topology_uses_valid_hashes](../tests/test_client_hardening.py#L626)
+- [TestB5RecoveryManifest.test_publishing_recovery_continues_not_success](../tests/test_client_hardening.py#L638)
+- [TestB5RecoveryManifest.test_server_manifest_mismatch_rejected](../tests/test_client_hardening.py#L695)
+- [TestB3NamespaceOwnership.test_preexisting_namespace_contents_preserved](../tests/test_client_hardening.py#L754)
+- [TestB3NamespaceOwnership.test_empty_manifest_creates_nothing_extra](../tests/test_client_hardening.py#L778)
+- [TestB3NamespaceOwnership.test_fallback_payload_collision_both_orders](../tests/test_client_hardening.py#L799)
+- [TestB3NamespaceOwnership.test_successful_replace_preserves_foreign_backup](../tests/test_client_hardening.py#L827)
+- [TestB3NamespaceOwnership.test_replace_unreadable_regular_destination](../tests/test_client_hardening.py#L867)
+- [TestB3NamespaceOwnership.test_backup_cleanup_never_unlinks_foreign_inode](../tests/test_client_hardening.py#L907)
+- [TestB3NamespaceOwnership.test_backup_verify_never_unlinks_foreign](../tests/test_client_hardening.py#L968)
+- [TestB4SwapHooks.test_ancestor_swap_between_init_and_read_sends_nothing](../tests/test_client_hardening.py#L1044)
+- [TestB4SwapHooks.test_staging_swap_between_verify_and_install](../tests/test_client_hardening.py#L1112)
+- [TestB11LongPaths.test_nested_path_over_255_roundtrip](../tests/test_client_hardening.py#L1155)
+- [TestB11LongPaths.test_interrupted_long_path_resume](../tests/test_client_hardening.py#L1184)
+- [TestB11LongPaths.test_slash_flatten_collision_impossible](../tests/test_client_hardening.py#L1232)
+- [TestB4BoundaryHooks.test_dest_ancestor_swap_before_parent_open](../tests/test_client_hardening.py#L1263)
+- [TestB4BoundaryHooks.test_staging_swap_at_rename_boundary](../tests/test_client_hardening.py#L1314)
+- [TestB4BoundaryHooks.test_cleanup_preserves_owned_namespace_unrelated](../tests/test_client_hardening.py#L1372)
+- [TestB3SidecarRace.test_foreign_sidecar_planted_during_claim](../tests/test_client_hardening.py#L1422)
+- [TestB4AncestorSwaps.test_single_file_hash_ancestor_swap](../tests/test_client_hardening.py#L1479)
+- [TestB4AncestorSwaps.test_single_file_parent_swap_redirects_nothing](../tests/test_client_hardening.py#L1497)
+- [TestB4AncestorSwaps.test_cleanup_ancestor_swap](../tests/test_client_hardening.py#L1559)
+- [TestB4AncestorSwaps.test_cleanup_swap_after_acquire_before_rmdir](../tests/test_client_hardening.py#L1606)
+- [TestB4AncestorSwaps.test_existing_hash_swap_at_open](../tests/test_client_hardening.py#L1666)
+- [TestB4ParentOpenHook.test_swap_at_install_parent_open_boundary](../tests/test_client_hardening.py#L1733)
+- [TestE1FailFirstRecords.test_e1_baseline_fail_fixed_pass_records](../tests/test_client_hardening.py#L1938)
 
 ### `test_client_realserver.py` — 14 methods
 
@@ -278,38 +278,38 @@ K-only legacy wire/cursor expectations are replaced explicitly.
 Invariant rows: **E L M**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [TestStatefulRoundtrip.test_upload_fetch_bytes_ranges](../tests/test_client_stateful.py#L278)
-- [TestStatefulRoundtrip.test_killed_process_auto_and_manual_resume](../tests/test_client_stateful.py#L305)
-- [TestStatefulRoundtrip.test_cli_commands_against_stateful](../tests/test_client_stateful.py#L367)
+- [TestStatefulRoundtrip.test_upload_fetch_bytes_ranges](../tests/test_client_stateful.py#L159)
+- [TestStatefulRoundtrip.test_killed_process_auto_and_manual_resume](../tests/test_client_stateful.py#L186)
+- [TestStatefulRoundtrip.test_cli_commands_against_stateful](../tests/test_client_stateful.py#L248)
 
 ### `test_client_transport.py` — 23 methods
 
 Invariant rows: **A C J L M**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [TestAmbiguityNoNetwork.test_constructor_token_and_file_ambiguous_no_network](../tests/test_client_transport.py#L79)
-- [TestAmbiguityNoNetwork.test_empty_values_are_unset_not_ambiguous](../tests/test_client_transport.py#L95)
-- [TestTokenFileCodec.test_exact_bytes_ok](../tests/test_client_transport.py#L102)
-- [TestTokenFileCodec.test_rejects](../tests/test_client_transport.py#L112)
-- [TestLoopbackHttps.test_http_non_loopback_rejected_before_network](../tests/test_client_transport.py#L133)
-- [TestLoopbackHttps.test_https_non_loopback_allowed](../tests/test_client_transport.py#L143)
-- [TestLoopbackHttps.test_http_loopback_allowed](../tests/test_client_transport.py#L153)
-- [TestLoopbackHttps.test_is_loopback_host](../tests/test_client_transport.py#L163)
-- [TestCredentialIsolation.test_bearer_only_to_api_origin](../tests/test_client_transport.py#L174)
-- [TestCredentialIsolation.test_grant_jar_exact_host](../tests/test_client_transport.py#L198)
-- [TestCredentialIsolation.test_cross_origin_redirect_drops_credentials](../tests/test_client_transport.py#L222)
-- [TestManifestValidation.test_validate_paths](../tests/test_client_transport.py#L252)
-- [TestManifestValidation.test_depth_limit](../tests/test_client_transport.py#L268)
-- [TestManifestValidation.test_topology_conflicts](../tests/test_client_transport.py#L277)
-- [TestTTL.test_parse](../tests/test_client_transport.py#L296)
-- [TestUploadFetchRoundTripDummy.test_upload_file_then_fetch_via_api](../tests/test_client_transport.py#L314)
-- [TestUploadFetchRoundTripDummy.test_upload_rejects_symlink](../tests/test_client_transport.py#L388)
-- [TestUploadFetchRoundTripDummy.test_upload_dir_includes_empty_dirs](../tests/test_client_transport.py#L401)
-- [TestUploadFetchRoundTripDummy.test_resume_skips_received_ranges](../tests/test_client_transport.py#L417)
-- [TestUploadFetchRoundTripDummy.test_fetch_verifies_hash_and_atomic](../tests/test_client_transport.py#L477)
-- [TestUploadFetchRoundTripDummy.test_fetch_refuses_symlink_overwrite](../tests/test_client_transport.py#L503)
-- [TestUploadFetchRoundTripDummy.test_fetch_rejects_hostile_manifest](../tests/test_client_transport.py#L530)
-- [TestLoopbackFixture.test_fixture_verifies_bearer_and_range](../tests/test_client_transport.py#L602)
+- [TestAmbiguityNoNetwork.test_constructor_token_and_file_ambiguous_no_network](../tests/test_client_transport.py#L83)
+- [TestAmbiguityNoNetwork.test_empty_values_are_unset_not_ambiguous](../tests/test_client_transport.py#L99)
+- [TestTokenFileCodec.test_exact_bytes_ok](../tests/test_client_transport.py#L106)
+- [TestTokenFileCodec.test_rejects](../tests/test_client_transport.py#L116)
+- [TestLoopbackHttps.test_http_non_loopback_rejected_before_network](../tests/test_client_transport.py#L137)
+- [TestLoopbackHttps.test_https_non_loopback_allowed](../tests/test_client_transport.py#L147)
+- [TestLoopbackHttps.test_http_loopback_allowed](../tests/test_client_transport.py#L157)
+- [TestLoopbackHttps.test_is_loopback_host](../tests/test_client_transport.py#L167)
+- [TestCredentialIsolation.test_bearer_only_to_api_origin](../tests/test_client_transport.py#L178)
+- [TestCredentialIsolation.test_grant_jar_exact_host](../tests/test_client_transport.py#L202)
+- [TestCredentialIsolation.test_cross_origin_redirect_drops_credentials](../tests/test_client_transport.py#L226)
+- [TestManifestValidation.test_validate_paths](../tests/test_client_transport.py#L256)
+- [TestManifestValidation.test_depth_limit](../tests/test_client_transport.py#L272)
+- [TestManifestValidation.test_topology_conflicts](../tests/test_client_transport.py#L281)
+- [TestTTL.test_parse](../tests/test_client_transport.py#L300)
+- [TestUploadFetchRoundTripDummy.test_upload_file_then_fetch_via_api](../tests/test_client_transport.py#L318)
+- [TestUploadFetchRoundTripDummy.test_upload_rejects_symlink](../tests/test_client_transport.py#L392)
+- [TestUploadFetchRoundTripDummy.test_upload_dir_includes_empty_dirs](../tests/test_client_transport.py#L405)
+- [TestUploadFetchRoundTripDummy.test_resume_skips_received_ranges](../tests/test_client_transport.py#L421)
+- [TestUploadFetchRoundTripDummy.test_fetch_verifies_hash_and_atomic](../tests/test_client_transport.py#L482)
+- [TestUploadFetchRoundTripDummy.test_fetch_refuses_symlink_overwrite](../tests/test_client_transport.py#L508)
+- [TestUploadFetchRoundTripDummy.test_fetch_rejects_hostile_manifest](../tests/test_client_transport.py#L535)
+- [TestLoopbackFixture.test_fixture_verifies_bearer_and_range](../tests/test_client_transport.py#L616)
 
 ### `test_dashboard_markup.py` — 7 methods
 
@@ -353,15 +353,15 @@ K-only legacy wire/cursor expectations are replaced explicitly.
 Invariant rows: **N**. Target: preserve scenario under current protocol;
 K-only legacy wire/cursor expectations are replaced explicitly.
 
-- [TestMcpProtocol.test_initialize_supported_echo](../tests/test_mcp_protocol.py#L98)
-- [TestMcpProtocol.test_initialize_unsupported_offers_downgrade](../tests/test_mcp_protocol.py#L109)
-- [TestMcpProtocol.test_full_lifecycle_ping_list_call](../tests/test_mcp_protocol.py#L116)
-- [TestMcpProtocol.test_jsonrpc_error_shapes](../tests/test_mcp_protocol.py#L148)
-- [TestMcpProtocol.test_parse_error_and_invalid_request](../tests/test_mcp_protocol.py#L165)
-- [TestMcpProtocol.test_stdout_purity](../tests/test_mcp_protocol.py#L184)
-- [TestMcpProtocol.test_tools_call_whoami_inprocess](../tests/test_mcp_protocol.py#L212)
-- [TestMcpProtocol.test_tools_call_domain_fault_iserror](../tests/test_mcp_protocol.py#L230)
-- [TestMcpProtocol.test_sdk_interop_if_available](../tests/test_mcp_protocol.py#L248)
+- [TestMcpProtocol.test_initialize_supported_echo](../tests/test_mcp_protocol.py#L101)
+- [TestMcpProtocol.test_initialize_unsupported_offers_downgrade](../tests/test_mcp_protocol.py#L112)
+- [TestMcpProtocol.test_full_lifecycle_ping_list_call](../tests/test_mcp_protocol.py#L119)
+- [TestMcpProtocol.test_jsonrpc_error_shapes](../tests/test_mcp_protocol.py#L151)
+- [TestMcpProtocol.test_parse_error_and_invalid_request](../tests/test_mcp_protocol.py#L168)
+- [TestMcpProtocol.test_stdout_purity](../tests/test_mcp_protocol.py#L187)
+- [TestMcpProtocol.test_tools_call_whoami_inprocess](../tests/test_mcp_protocol.py#L215)
+- [TestMcpProtocol.test_tools_call_domain_fault_iserror](../tests/test_mcp_protocol.py#L233)
+- [TestMcpProtocol.test_sdk_interop_if_available](../tests/test_mcp_protocol.py#L252)
 
 ### `test_server_http_opt_in.py` — 5 methods
 
@@ -613,7 +613,7 @@ The deliberate realserver smoke prerequisite probe fails (not skips) because
 owned provider/JNI environment has not been started here. No full service or
 migration acceptance is claimed.
 
-**Still requires adaptation:** historical `test_client_transport.py`,
+**Historical pending list at `a324a0ad` (client-only items resolved below):** historical `test_client_transport.py`,
 `test_client_external.py`, `test_client_stateful.py`, fake-REST portions of
 `test_client_hardening.py`, CLI/MCP fake-transport helpers and the original
 server/storage suites must be rehosted against the current typed fixture or
@@ -623,3 +623,103 @@ those old callbacks are not a compatibility target and are not excluded from
 release acceptance. Realserver/browser adapters need actual runner execution
 and any resulting defects fixed before acceptance. Nothing here retires the
 Python source tests or authorizes a production switch.
+
+
+## Retained client fixture conversion complete (`3f5bba81`)
+
+The historical fake-REST callback migration above is now resolved for
+`test_client_hardening`, `test_client_transport`, `test_client_external`,
+`test_client_stateful`, `test_cli_resume`, `test_mcp_protocol` and
+`test_mcp_hardening`: **114 methods**, no removed methods or weakened domain,
+credential, containment, byte/hash, race, resume or stdout-purity assertions.
+
+`current_fixture.py` decodes actual current envelopes to generated Command or
+ContentCommand objects. Scenarios dispatch logical variant/artifact-ID keys and
+return in-process domain fixture values or typed Results, serialized by the
+current codec. It does not translate to legacy HTTP endpoints or consult the
+Python application server. Raw range/chunk requests stay raw. Controlled HTTP
+peers in stateful/transport/official-SDK tests implement current DTOs only.
+Exact PATCH assertions now use generated optional fields plus Keep/Clear/Set;
+receipt fixtures now echo the actual acknowledged offset/length. The IPv6
+bracket-origin regression uses a valid path-mode artifact URL. All original
+negative/race/foreign-inode/mutant-failure records remain. The full fixture
+conversion does not establish real PostgreSQL, process-crash durability or
+native behavior.
+
+`test_mcp_environment` still intentionally nests the actual-target management
+case. It now preserves only the explicit launcher/owned-PG/JNI fixture variables,
+while injecting invalid ambient client credentials/settings as before. This
+one method requires the target runner; it is not replaced by fake success.
+Original server/storage suites and actual target/browser/native acceptance
+remain the backend owner's work; none was retired here.
+
+Fresh committed-source verification at **2026-11-03T01:07:46Z**, source
+`3f5bba8162dad31fc8042ec3bb69e37837c506aa`:
+
+* Python 3.14.8: all seven complete client-only suites above plus current
+  codec/client/harness-safety, markup and asset hygiene: **145 methods,
+  0 failures/errors/skips**. Official MCP SDK **1.32.1** + Node24.21.0 controlled
+  current-HTTP stdio lifecycle executed, not skipped.
+* Node current browser-boundary and CDP capture: **16 cases, 0 failures/skips**.
+* Generated TypeScript/Python codec fixtures: **73 vectors** (20 commands,
+  48 results,4 content,1 chunk) pass. Browser/client ranges now also use a
+  2.6MB payload and assert an actual bounded Range request.
+* Receipt directory: `/tmp/manure-contract-evidence.Dc9gQ7` holds full logs,
+  exact source/tool identities and SHA256 list for all source/generated/web/test
+  inputs. No old/stale XML/report files were combined or filtered.
+* A prior final combined run at source `8efdc198` exposed one redirect-fixture
+  defect: the typed fixture tried to turn transport307 into an application
+  result. Full failing evidence remains at
+  `/tmp/manure-contract-evidence.byopNp`. `3f5bba81` passes transport3xx through
+  unchanged; the real cross-origin body-refusal assertion now passes against a
+  genuine current envelope, not an incidental fixture exception.
+
+No fresh actual-target service execution is claimed in this worker environment.
+The actual-target MCP environment regression and all realserver/CLI-process,
+Chromium, PostgreSQL, native, importer/recovery acceptance still need the owned
+runner. This component receipt is not the full-service completion gate.
+
+
+## Credential source-preflight security correction (`b27444a7`)
+
+Parent-authorized correction to client configuration precedence: known nonempty
+source references count as configured before opening them. Both direct value and
+file reference now mean `ambiguous-credentials` regardless of invalid direct
+shape, missing/empty/unreadable file or FIFO contents. No credentials rotate and
+no wire schema changes. `client.check_secret_pair_ambiguity` is presence-only;
+`resolve_secret_pair` and `ManureClient` call it before credential validation/I/O.
+CLI preflights URL/token and relevant fetch password sources globally; MCP
+preflights URL/token and HTTP configuration before any credential-file read.
+Canonical codecs, exact direct values, empty-as-unset rules, single-file decoding,
+no-network behavior and CLI exit2 remain intact.
+
+Regression file `test_credential_preflight.py` adds8 methods/35 controlled cases.
+Every child has an explicit minimal environment (no ambient client/model/PG
+values), synthetic canonical credentials, owned temp references only, network
+entrypoints forbidden, and a2-second real subprocess deadline for no-writer FIFO
+probes. An audit hook asserts **zero configured-reference opens and zero network
+attempts**, not merely a sanitized error after performing I/O. Exact scenarios:
+- [test_common_pairs_reject_fifo_before_read](../tests/test_credential_preflight.py#L83)
+- [test_common_pairs_missing_file_and_invalid_direct_are_still_ambiguous](../tests/test_credential_preflight.py#L89)
+- [test_constructor_checks_presence_before_direct_token_validation](../tests/test_credential_preflight.py#L97)
+- [test_cli_token_and_url_pairs_fail_before_fifo_or_missing_file](../tests/test_credential_preflight.py#L104)
+- [test_mcp_token_and_url_pairs_fail_before_fifo_or_missing_file](../tests/test_credential_preflight.py#L113)
+- [test_all_pairs_are_preflighted_before_reading_another_pairs_file](../tests/test_credential_preflight.py#L122)
+- [test_cli_password_sources_preflight_before_token_file_read_or_validation](../tests/test_credential_preflight.py#L129)
+- [test_mcp_invalid_http_configuration_precedes_token_file_read](../tests/test_credential_preflight.py#L141)
+
+Fail-first test commit `b5a3999c` against pre-fix application source `9b198e3e`:
+8 methods,33 failing controlled cases, exit1 in28.417s; real bounded FIFO blocks
+and wrong malformed/missing-file precedence reproduced. The passing constructor
+valid-direct cases are not misreported as failures. Fix commit
+`b27444a7654323b33d70621fe05fff5ba0b7ae24` includes the strengthened open/network
+audits. At2026-11-03T01:18:22Z, a fresh `env -i` run with only pinned executable
+PATH, scratch HOME, locale, source PYTHONPATH and explicitly selected SDK1.32.1
+passed **153 methods,0 failures/errors/skips**, including all previous145 plus
+these8. No live client/model/PG environment was inherited. Evidence directory
+`/tmp/manure-credential-preflight.6uqNS2` preserves full fail-first and committed
+fixed logs, source/tool identities, and baseline/fixed input SHA256 manifests.
+No prior reports were discarded/filtered into a pass. This is client/config
+security evidence, not actual-target/native/PostgreSQL/browser acceptance.
+The current Python source inventory is now31 files/379 discovered methods; all
+353 original methods remain. TargetServer was not changed by this correction.

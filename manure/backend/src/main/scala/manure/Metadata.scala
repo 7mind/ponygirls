@@ -29,7 +29,7 @@ trait MetadataTxn:
   def content(hash: String): Option[ContentGrant]
   def putContent(grant: ContentGrant): Unit
   def deleteContent(hash: String): Unit
-  def trimContent(id: String, max: Int): Unit
+  def trimContent(id: String, max: Int, newestHash: String): Unit
   def revokeArtifact(id: String): Unit
   def revokeCredential(user: String, token: String): Unit
   def sweepGrants(now: Double): Unit
@@ -129,7 +129,11 @@ private[manure] final class PostgresTxn(c: Connection,projection: SearchProjecti
   }.headOption
   def putContent(g: ContentGrant): Unit = exec(c,"INSERT INTO manure.content_grants(grant_hash,artifact_id,expires_at,created_at,user_id,token_id,token_digest,pwd_hash,expires_at_value,created_at_value) VALUES(?,?,?,?,?,?,?,?,?,?)",Exact.utf8(g.hash),Exact.utf8(g.artifactId),Exact.timestamp(g.expiresAt),Exact.timestamp(g.createdAt),bytes(g.userId),bytes(g.tokenId),bytes(g.tokenDigest),bytes(g.passwordHash),g.expiresAt,g.createdAt)
   def deleteContent(hash: String): Unit = exec(c,"DELETE FROM manure.content_grants WHERE grant_hash=?",Exact.utf8(hash))
-  def trimContent(id: String,max: Int): Unit = exec(c,"DELETE FROM manure.content_grants WHERE grant_hash IN (SELECT grant_hash FROM manure.content_grants WHERE artifact_id=? ORDER BY created_at_value DESC,grant_hash DESC OFFSET ?)",Exact.utf8(id),max)
+  def trimContent(id: String,max: Int,newestHash: String): Unit =
+    Require(max > 0, "bad-envelope")
+    // Keep the actual newly-issued grant even when the source clock ties and its
+    // random hash sorts lower. Retain max-1 deterministic prior grants.
+    exec(c,"DELETE FROM manure.content_grants WHERE grant_hash IN (SELECT grant_hash FROM manure.content_grants WHERE artifact_id=? AND grant_hash<>? ORDER BY created_at_value DESC,grant_hash DESC OFFSET ?)",Exact.utf8(id),Exact.utf8(newestHash),max-1)
   def revokeArtifact(id: String): Unit =
     exec(c,"DELETE FROM manure.one_time_grants WHERE artifact_id=?",Exact.utf8(id))
     exec(c,"DELETE FROM manure.content_grants WHERE artifact_id=?",Exact.utf8(id))
