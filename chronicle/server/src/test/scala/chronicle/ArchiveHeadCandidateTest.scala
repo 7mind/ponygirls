@@ -18,7 +18,7 @@ class ArchiveHeadCandidateTest extends munit.FunSuite {
     val separator=if(original.jdbcUrl.contains("?")) "&" else "?"
     val options=java.net.URLEncoder.encode("-c statement_timeout=10000",java.nio.charset.StandardCharsets.UTF_8)
     val config=original.copy(jdbcUrl=original.jdbcUrl+separator+"options="+options)
-    val db=new Database(config,IndexProfileCatalog.current(config)); db.initialize()
+    val db=Fixtures.database(config,IndexProfileCatalog.current(config)); db.initialize()
     db.transaction { c =>
       val present=Sql.one(c,"SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='ch_archive_fragments'::regclass AND attname='head_candidate' AND NOT attisdropped)")(_.getBoolean(1)).get
       assert(present,"head-candidate schema contract: ch_archive_fragments.head_candidate is missing after initialize; migration must install the completeness mask before flag/query assertions")
@@ -220,7 +220,7 @@ class ArchiveHeadCandidateTest extends munit.FunSuite {
     val barrierKey=1729013371L
     val application="head-candidate-backfill-"+suffix
     val backfillConfig=config.copy(jdbcUrl=config.jdbcUrl+"&ApplicationName="+application)
-    val backfillDb=new Database(backfillConfig,db.profiles)
+    val backfillDb=Fixtures.database(backfillConfig,db.profiles)
     db.transaction { c =>
       Sql.exec(c,"UPDATE ch_revision_info SET lexical_version=0 WHERE session_id=? AND revision=1",out.sessionId)
       Sql.exec(c,s"CREATE FUNCTION $function() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN PERFORM pg_advisory_xact_lock($barrierKey::bigint); RETURN OLD; END;'")

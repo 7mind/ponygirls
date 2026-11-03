@@ -17,6 +17,11 @@ object Main extends IOApp {
       Check(chars!=null && chars.nonEmpty && chars.length<=1024,"invalid","password required on stdin")
       try println(Password.hash(chars)) finally java.util.Arrays.fill(chars,'\u0000')
     }.as(ExitCode.Success)
+    case List("migrate",path) =>
+      IO.blocking(Config.load(path)).flatMap { config =>
+        cats.effect.Resource.make(IO.blocking(new Database(config,IndexProfileCatalog.current(config))))(db => IO.blocking(db.close()))
+          .use(db => IO.blocking(db.initialize()))
+      }.as(ExitCode.Success)
     case List("serve",path) =>
       IO.blocking(Config.load(path)).flatMap { config =>
         ModelHttp.client(config).use { client =>
@@ -31,7 +36,7 @@ object Main extends IOApp {
           }
         }
       }.as(ExitCode.Success)
-    case _ => IO.println("usage: chronicle-server serve CONFIG.json | password-hash (stdin)").as(ExitCode.Error)
+    case _ => IO.println("usage: chronicle-server serve CONFIG.json | migrate CONFIG.json | password-hash (stdin)").as(ExitCode.Error)
   }
   private def serve(config: Config,s: RuntimeServices): IO[Nothing] = for {
     gate <- Semaphore[IO](2)

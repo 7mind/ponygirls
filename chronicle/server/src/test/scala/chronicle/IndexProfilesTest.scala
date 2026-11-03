@@ -44,7 +44,7 @@ final class IndexProfilesTest extends munit.FunSuite {
       try {
         val separator=if(c.jdbcUrl.contains("?")) "&" else "?"
         val isolated=c.copy(jdbcUrl=c.jdbcUrl+separator+"currentSchema="+schema+",public")
-        val db=new Database(isolated,catalog)
+        val db=Fixtures.database(isolated,catalog)
         db.transaction { x =>
           Sql.exec(x,"CREATE TABLE ch_users(id text PRIMARY KEY,login text UNIQUE NOT NULL,enabled boolean NOT NULL,credential text NOT NULL)")
           Sql.exec(x,"CREATE TABLE ch_profile(singleton boolean PRIMARY KEY CHECK(singleton),active text NOT NULL,target text NOT NULL,maintenance boolean NOT NULL)")

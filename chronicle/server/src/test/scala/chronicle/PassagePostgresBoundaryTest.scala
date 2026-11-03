@@ -60,7 +60,7 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
     val view=archive.session("a",receipt.sessionId).view; val expected=archive.passages("a",receipt.sessionId,0,100,Some(view))
     val role="passage_reader_"+UUID.randomUUID().toString.replace("-","")
     db.transaction { c =>
-      Sql.exec(c,s"CREATE ROLE $role LOGIN")
+      Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
       Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_problem_passages,ch_problem_spans TO $role")
       Sql.exec(c,s"GRANT SELECT(session_id,revision) ON ch_revisions TO $role")
