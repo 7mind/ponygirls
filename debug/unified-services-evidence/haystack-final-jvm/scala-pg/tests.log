@@ -1,0 +1,187 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/nix/store/v3b2cypq1ix4553s8mw745d8g9m2rgc9-sbt-launch-1.13.1.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by com.sun.jna.Native in an unnamed module (file:/home/pavel/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.13.0/jna-5.19.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[0m[[0m[0minfo[0m] [0m[0mwelcome to sbt 1.13.0 (GraalVM Community Java 25.0.4.1.1)[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project wt-ponygirls-haystack-port-build from plugins.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mloading project definition from /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-port/project[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project root from build.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mresolving key references (12050 settings) ...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-port/)[0m
+[0m[[0m[32msuccess[0m] [0m[0mTotal time: 1 s, completed Nov 3, 2026, 11:02:07 AM[0m
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/home/pavel/.cache/coursier/v1/https/repo.maven.apache.org/maven2/org/scala-lang/scala-library/3.9.0/scala-library-3.9.0.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+Test run [36mhaystack.auth.AuthConfigTest[0m started
+[32mhaystack.auth.AuthConfigTest[0m: finished [90m0.161s[0m
+Test run [36mhaystack.auth.AuthConfigTest[0m finished: 0 failed, 0 ignored, 32 total [90m0.179s[0m
+{"userId":"alice","tokenId":"browser","requestId":"c853fb63-d41a-47cd-8c2d-4f5270e34a40","route":"complete","status":400,"result":"fault","durationMs":175}
+{"userId":"alice","tokenId":"browser","requestId":"7e5fa65d-c5f7-4ef2-988c-619d15873b84","route":"complete","status":400,"result":"fault","durationMs":4}
+{"userId":"alice","tokenId":"browser","requestId":"e94daf79-0e1b-4d9a-90f6-ee472bf0a018","route":"complete","status":200,"result":"ok","durationMs":20}
+{"userId":"alice","tokenId":"browser","requestId":"eff736bd-7a9c-45e0-bfd2-59bfd13444b0","route":"complete","status":200,"result":"ok","durationMs":11}
+{"userId":"alice","tokenId":"browser","requestId":"e19cbc36-8305-4c98-bdd8-d84fe7e88da5","route":"complete","status":200,"result":"ok","durationMs":10}
+Test run [36mhaystack.auth.QueryRequestHttpTest[0m started
+[32mhaystack.auth.QueryRequestHttpTest[0m: finished [90m1.72s[0m
+Test run [36mhaystack.auth.QueryRequestHttpTest[0m finished: 0 failed, 0 ignored, 5 total [90m1.72s[0m
+Test run [36mhaystack.auth.OriginTest[0m started
+[32mhaystack.auth.OriginTest[0m: finished [90m0.008s[0m
+Test run [36mhaystack.auth.OriginTest[0m finished: 0 failed, 0 ignored, 35 total [90m0.01s[0m
+Test run [36mhaystack.domain.OperationEnvelopeTest[0m started
+[32mhaystack.domain.OperationEnvelopeTest[0m: finished [90m0.033s[0m
+Test run [36mhaystack.domain.OperationEnvelopeTest[0m finished: 0 failed, 0 ignored, 15 total [90m0.033s[0m
+Test run [36mhaystack.domain.DocumentCodecTest[0m started
+[32mhaystack.domain.DocumentCodecTest[0m: finished [90m0.269s[0m
+Test run [36mhaystack.domain.DocumentCodecTest[0m finished: 0 failed, 0 ignored, 54 total [90m0.27s[0m
+Test run [36mhaystack.application.PostgresServiceContractTest[0m started
+[32mhaystack.application.PostgresServiceContractTest[0m: finished [90m1.231s[0m
+Test run [36mhaystack.application.PostgresServiceContractTest[0m finished: 0 failed, 0 ignored, 19 total [90m1.232s[0m
+Test run [36mhaystack.application.MemoryServiceContractTest[0m started
+[32mhaystack.application.MemoryServiceContractTest[0m: finished [90m0.037s[0m
+Test run [36mhaystack.application.MemoryServiceContractTest[0m finished: 0 failed, 0 ignored, 19 total [90m0.037s[0m
+Test run [36mhaystack.storage.PostgresSemanticsTest[0m started
+[32mhaystack.storage.PostgresSemanticsTest[0m: finished [90m1.268s[0m
+Test run [36mhaystack.storage.PostgresSemanticsTest[0m finished: 0 failed, 0 ignored, 14 total [90m1.268s[0m
+Test run [36mhaystack.storage.PostgresRepositoryContractTest[0m started
+[32mhaystack.storage.PostgresRepositoryContractTest[0m: finished [90m1.147s[0m
+Test run [36mhaystack.storage.PostgresRepositoryContractTest[0m finished: 0 failed, 0 ignored, 22 total [90m1.147s[0m
+Test run [36mhaystack.domain.GithubIdentityTest[0m started
+[32mhaystack.domain.GithubIdentityTest[0m: finished [90m0.025s[0m
+Test run [36mhaystack.domain.GithubIdentityTest[0m finished: 0 failed, 0 ignored, 20 total [90m0.025s[0m
+Test run [36mhaystack.storage.ProjectionTransactionTest[0m started
+[32mhaystack.storage.ProjectionTransactionTest[0m: finished [90m0.711s[0m
+Test run [36mhaystack.storage.ProjectionTransactionTest[0m finished: 0 failed, 0 ignored, 3 total [90m0.711s[0m
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+haystack: startup or runtime failure
+usage: haystack-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json
+Test run [36mhaystack.auth.StartupConfigTest[0m started
+[32mhaystack.auth.StartupConfigTest[0m: finished [90m0.094s[0m
+Test run [36mhaystack.auth.StartupConfigTest[0m finished: 0 failed, 0 ignored, 31 total [90m0.095s[0m
+Test run [36mhaystack.query.SearchTest[0m started
+[32mhaystack.query.SearchTest[0m: finished [90m0.129s[0m
+Test run [36mhaystack.query.SearchTest[0m finished: 0 failed, 0 ignored, 40 total [90m0.129s[0m
+Test run [36mhaystack.auth.TokensTest[0m started
+[32mhaystack.auth.TokensTest[0m: finished [90m0.036s[0m
+Test run [36mhaystack.auth.TokensTest[0m finished: 0 failed, 0 ignored, 14 total [90m0.036s[0m
+Test run [36mhaystack.query.QueryTest[0m started
+[32mhaystack.query.QueryTest[0m: finished [90m0.026s[0m
+Test run [36mhaystack.query.QueryTest[0m finished: 0 failed, 0 ignored, 17 total [90m0.026s[0m
+Test run [36mhaystack.storage.PostgresQueryResourceTest[0m started
+[32mhaystack.storage.PostgresQueryResourceTest[0m: finished [90m1.29s[0m
+Test run [36mhaystack.storage.PostgresQueryResourceTest[0m finished: 0 failed, 0 ignored, 3 total [90m1.29s[0m
+{"requestId":"2c7460d4-50f0-415c-8af4-60ebaa3222ca","route":"put","status":401,"result":"fault","durationMs":12}
+{"requestId":"56644383-55fb-476f-9f53-2716aad2a7b8","route":"put","status":401,"result":"fault","durationMs":2}
+{"requestId":"3ab3279c-c056-46bf-be4c-a8cf2983be9c","route":"get","status":401,"result":"fault","durationMs":3}
+{"requestId":"4fb353f0-ed74-4a68-892f-7d99f117e96c","route":"history","status":401,"result":"fault","durationMs":3}
+{"requestId":"f8bc2eb4-e302-4220-a6cf-eb4af2bb81e9","route":"search","status":401,"result":"fault","durationMs":3}
+{"requestId":"64e2a192-d6ff-4431-bc94-6a85a56e275a","route":"complete","status":401,"result":"fault","durationMs":2}
+{"requestId":"2980d8c8-f5ad-4bb6-9734-0fa8e2e69bc6","route":"mcp","status":401,"result":"fault","durationMs":4}
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+SLF4J: Failed to load class "org.slf4j.impl.StaticMDCBinder".
+SLF4J: Defaulting to no-operation MDCAdapter implementation.
+SLF4J: See http://www.slf4j.org/codes.html#no_static_mdc_binder for further details.
+{"userId":"alice","tokenId":"browser","requestId":"1c24b227-8198-4529-9e21-04ea7ec0a0d9","route":"live","status":426,"result":"fault","durationMs":2}
+{"userId":"alice","tokenId":"browser","requestId":"3a7f2e17-7cf8-455a-9301-76b7b29221cc","route":"live","status":426,"result":"fault","durationMs":0}
+{"userId":"alice","tokenId":"browser","requestId":"b6c247a6-3696-4372-b497-3504feb66678","route":"live","status":426,"result":"fault","durationMs":0}
+{"userId":"alice","tokenId":"browser","requestId":"1bf84071-a156-4a4a-9d75-e33d99bd87c2","route":"live","status":426,"result":"fault","durationMs":0}
+{"userId":"alice","tokenId":"browser","requestId":"b376fec8-0ac9-4cae-88a3-fb842677a10c","route":"live","status":426,"result":"fault","durationMs":0}
+{"userId":"alice","tokenId":"browser","requestId":"2bf33536-dcec-44cc-b7c9-8bd7588428de","route":"live","status":426,"result":"fault","durationMs":0}
+{"userId":"alice","tokenId":"browser","requestId":"f2b842c8-fa18-4982-9941-e33740b772f5","route":"live","status":426,"result":"fault","durationMs":0}
+{"userId":"alice","tokenId":"browser","requestId":"41887c39-6068-47c9-b359-a0ef3a19c4d5","route":"live","status":426,"result":"fault","durationMs":0}
+Test run [36mhaystack.auth.HttpAuthorityLifetimeTest[0m started
+[32mhaystack.auth.HttpAuthorityLifetimeTest[0m: finished [90m1.229s[0m
+Test run [36mhaystack.auth.HttpAuthorityLifetimeTest[0m finished: 0 failed, 0 ignored, 8 total [90m1.229s[0m
+Test run [36mhaystack.storage.MigrationsTest[0m started
+[32mhaystack.storage.MigrationsTest[0m: finished [90m0.943s[0m
+Test run [36mhaystack.storage.MigrationsTest[0m finished: 0 failed, 0 ignored, 7 total [90m0.943s[0m
+Test run [36mhaystack.storage.MemoryReviewedQueryTest[0m started
+[32mhaystack.storage.MemoryReviewedQueryTest[0m: finished [90m0.059s[0m
+Test run [36mhaystack.storage.MemoryReviewedQueryTest[0m finished: 0 failed, 0 ignored, 33 total [90m0.059s[0m
+Test run [36mhaystack.storage.PostgresSearchRepositoryTest[0m started
+[32mhaystack.storage.PostgresSearchRepositoryTest[0m: finished [90m5.492s[0m
+Test run [36mhaystack.storage.PostgresSearchRepositoryTest[0m finished: 0 failed, 0 ignored, 71 total [90m5.492s[0m
+Test run [36mhaystack.domain.HistoricalAdmissionTest[0m started
+[32mhaystack.domain.HistoricalAdmissionTest[0m: finished [90m0.215s[0m
+Test run [36mhaystack.domain.HistoricalAdmissionTest[0m finished: 0 failed, 0 ignored, 24 total [90m0.215s[0m
+Test run [36mhaystack.storage.MemorySearchRepositoryTest[0m started
+[32mhaystack.storage.MemorySearchRepositoryTest[0m: finished [90m0.065s[0m
+Test run [36mhaystack.storage.MemorySearchRepositoryTest[0m finished: 0 failed, 0 ignored, 71 total [90m0.065s[0m
+Test run [36mhaystack.storage.PostgresReviewedQueryTest[0m started
+[32mhaystack.storage.PostgresReviewedQueryTest[0m: finished [90m1.844s[0m
+Test run [36mhaystack.storage.PostgresReviewedQueryTest[0m finished: 0 failed, 0 ignored, 33 total [90m1.844s[0m
+Test run [36mhaystack.storage.TagCompletionProjectionTest[0m started
+[32mhaystack.storage.TagCompletionProjectionTest[0m: finished [90m0.732s[0m
+Test run [36mhaystack.storage.TagCompletionProjectionTest[0m finished: 0 failed, 0 ignored, 5 total [90m0.733s[0m
+Test run [36mhaystack.storage.HistoricalIdentityTest[0m started
+[32mhaystack.storage.HistoricalIdentityTest[0m: finished [90m1.084s[0m
+Test run [36mhaystack.storage.HistoricalIdentityTest[0m finished: 0 failed, 0 ignored, 31 total [90m1.084s[0m
+Test run [36mhaystack.storage.MemoryRepositoryContractTest[0m started
+[32mhaystack.storage.MemoryRepositoryContractTest[0m: finished [90m0.011s[0m
+Test run [36mhaystack.storage.MemoryRepositoryContractTest[0m finished: 0 failed, 0 ignored, 22 total [90m0.011s[0m
+Test run [36mhaystack.auth.SessionsTest[0m started
+[32mhaystack.auth.SessionsTest[0m: finished [90m0.024s[0m
+Test run [36mhaystack.auth.SessionsTest[0m finished: 0 failed, 0 ignored, 10 total [90m0.024s[0m
+Test run [36mhaystack.domain.QualifiedIdTest[0m started
+[32mhaystack.domain.QualifiedIdTest[0m: finished [90m0.003s[0m
+Test run [36mhaystack.domain.QualifiedIdTest[0m finished: 0 failed, 0 ignored, 25 total [90m0.005s[0m
+Test run [36mhaystack.query.TimestampSubsetTest[0m started
+[32mhaystack.query.TimestampSubsetTest[0m: finished [90m0.004s[0m
+Test run [36mhaystack.query.TimestampSubsetTest[0m finished: 0 failed, 0 ignored, 9 total [90m0.004s[0m
+Test run [36mhaystack.storage.HistoricalStoredReadTest[0m started
+[32mhaystack.storage.HistoricalStoredReadTest[0m: finished [90m2.043s[0m
+Test run [36mhaystack.storage.HistoricalStoredReadTest[0m finished: 0 failed, 0 ignored, 9 total [90m2.044s[0m
+[0m[[0m[0minfo[0m] [0m[0mPassed: Total 701, Failed 0, Errors 0, Passed 701[0m
+[0m[[0m[32msuccess[0m] [0m[0mTotal time: 23 s, completed Nov 3, 2026, 11:02:30 AM[0m
+[0J
