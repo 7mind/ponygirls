@@ -15,6 +15,7 @@ final class MemoryMetadata(root: RootLease) extends Metadata:
     val tx = new MetadataTxn:
       def artifact(id: String): Option[Artifact] = s.artifacts.get(id)
       def artifacts(after: Option[String],limit: Int): Vector[Artifact] = s.artifacts.values.toVector.filter(a => after.forall(Exact.compare(a.id,_) > 0)).sortWith((a,b) => Exact.compare(a.id,b.id) < 0).take(limit)
+      def catalogue(selection: CataloguePolicy.Selection): Vector[Artifact] = CataloguePolicy.select(s.artifacts.values,selection)
       def put(a: Artifact): Unit = s = s.copy(artifacts=s.artifacts.updated(a.id,a))
       def delete(id: String): Unit =
         revokeArtifact(id); clearReceipts(id); s = s.copy(artifacts=s.artifacts-id)

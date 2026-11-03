@@ -3,6 +3,8 @@
 Behavioral-Active / Blackbox-GoodCommunication (local nginx only).
 """
 import json
+import hashlib
+import re
 import os
 from pathlib import Path
 import secrets
@@ -16,6 +18,7 @@ import urllib.request
 
 expected=json.loads(Path(sys.argv[2]).read_text())
 passed=[]
+assets={}
 with tempfile.TemporaryDirectory(prefix='haystack-proxy-test-') as temporary:
     root=Path(temporary);state=root/'state';(state/'nginx'/'body').mkdir(parents=True);(state/'nginx'/'proxy').mkdir()
     def port():
@@ -35,6 +38,24 @@ with tempfile.TemporaryDirectory(prefix='haystack-proxy-test-') as temporary:
                 with socket.create_connection(('127.0.0.1',ports[8445]),timeout=.2):break
             except OSError:time.sleep(.05)
         else:raise AssertionError('owned nginx readiness deadline')
+        asset_root=Path(sys.argv[4])
+        assert f'root {asset_root};' in config
+        def fetch(path):
+            request=urllib.request.Request(f'http://127.0.0.1:{ports[8445]}'+path,headers={'Host':f'services.example.test:{ports[8445]}'})
+            with urllib.request.urlopen(request,timeout=5) as response:
+                assert response.status==200
+                return response.read()
+        html=fetch('/')
+        assert html==(asset_root/'index.html').read_bytes()
+        assets['index.html']=hashlib.sha256(html).hexdigest()
+        passed.append('actual-installed-package-index-via-rendered-proxy')
+        references=re.findall(r'(?:src|href)="(/assets/[^"?]+)"',html.decode())
+        assert len(references)>=2 and any(p.endswith('.js') for p in references) and any(p.endswith('.css') for p in references)
+        for reference in references:
+            content=fetch(reference)
+            assert content==(asset_root/reference.lstrip('/')).read_bytes()
+            assets[reference]=hashlib.sha256(content).hexdigest()
+            passed.append('actual-installed-asset-'+reference.rsplit('/',1)[-1])
         canary=secrets.token_hex(24)
         for route in ['/api/v1/get','/mcp']:
             request=urllib.request.Request(f'http://127.0.0.1:{ports[8445]}{route}?private='+canary,data=b'{}',headers={'Host':f'services.example.test:{ports[8445]}','Content-Type':'application/json','Authorization':'Bearer '+canary},method='POST')
@@ -52,4 +73,4 @@ with tempfile.TemporaryDirectory(prefix='haystack-proxy-test-') as temporary:
         try:process.wait(timeout=5)
         except subprocess.TimeoutExpired:process.kill();process.wait()
         log.close()
-Path(sys.argv[3]).write_text(json.dumps({'tests':passed,'cases':len(passed),'failures':0,'errors':0,'skips':0},indent=2)+'\n')
+Path(sys.argv[3]).write_text(json.dumps({'tests':passed,'cases':len(passed),'failures':0,'errors':0,'skips':0,'installedAssetRoot':sys.argv[4],'assets':assets},indent=2)+'\n')

@@ -66,6 +66,56 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
     updated <- f.artifacts.info(f.other,a.artifact.id)
     _ <- IO { assert(SecretCodec.verify(password,updated.externalPasswordHash.get)); assertEquals(updated.lastActivityAt,a.artifact.lastActivityAt) }
   yield () }}
+  test("only successful PATCH and chunk including duplicate ACK refresh idle activity; reads and rejected mutations do not") { run { f => for
+    initialized <- f.artifacts.init(f.identity,request(Visibility.External))
+    id = initialized.artifact.id
+    original = initialized.artifact.lastActivityAt
+    _ <- IO { f.clock.now += 10 }
+    _ <- f.artifacts.info(f.other,id)
+    _ <- f.artifacts.status(f.other,id)
+    _ <- new Catalogue(f.artifacts,f.config.limits,f.clock).list(f.other,manure.api.CatalogueQuery("",true,None,None,manure.api.CatalogueSort.Name,manure.api.SortDirection.Asc,20,None))
+    _ <- f.artifacts.rotate(f.other,id)
+    untouched <- f.metadata.transaction(_.artifact(id).get.lastActivityAt)
+    _ <- IO(assertEquals(untouched,original))
+    _ <- fails("session-not-owned",f.artifacts.patch(f.other,id,ArtifactPatch(Some("forbidden"),None,TtlPatch.Unchanged)))
+    _ <- f.artifacts.patch(f.identity,id,ArtifactPatch(Some("successful patch"),None,TtlPatch.Unchanged))
+    patched <- f.metadata.transaction(_.artifact(id).get.lastActivityAt)
+    _ <- IO { assertEquals(patched,f.clock.now);f.clock.now += 10 }
+    _ <- fails("invalid-range",f.artifacts.putChunk(f.identity,id,"資料/file.txt",0,bytes,"0"*64))
+    rejected <- f.metadata.transaction(_.artifact(id).get.lastActivityAt)
+    _ <- IO(assertEquals(rejected,patched))
+    _ <- f.artifacts.putChunk(f.identity,id,"資料/file.txt",0,bytes,SecretCodec.sha256(bytes))
+    committed <- f.metadata.transaction(_.artifact(id).get.lastActivityAt)
+    _ <- IO { assertEquals(committed,f.clock.now);f.clock.now += f.config.limits.incompleteSessionTtl-1 }
+    _ <- f.artifacts.putChunk(f.identity,id,"資料/file.txt",0,bytes,SecretCodec.sha256(bytes))
+    duplicate <- f.metadata.transaction(_.artifact(id).get.lastActivityAt)
+    _ <- IO { assertEquals(duplicate,f.clock.now);f.clock.now += f.config.limits.incompleteSessionTtl-1 }
+    retained <- f.artifacts.sweep()
+    _ <- IO { assertEquals(retained,0);f.clock.now += 2 }
+    _ <- f.artifacts.status(f.other,id)
+    removed <- f.artifacts.sweep()
+    _ <- IO(assertEquals(removed,1))
+  yield () }}
+  test("failed publish mark and startup recovery are not successful-publish activity; ready commit and idempotency are exact") { run { f => for
+    initialized <- f.artifacts.init(f.identity,request())
+    id = initialized.artifact.id
+    _ <- f.artifacts.putChunk(f.identity,id,"資料/file.txt",0,bytes,SecretCodec.sha256(bytes))
+    before <- f.metadata.transaction(_.artifact(id).get.lastActivityAt)
+    _ <- IO { f.clock.now += 10;f.faults.armed=Set("after_publishing_commit") }
+    _ <- fails("unavailable",f.artifacts.finish(f.identity,id))
+    marked <- f.metadata.transaction(_.artifact(id).get)
+    _ <- IO { assertEquals(marked.state,UploadState.Publishing);assertEquals(marked.lastActivityAt,before);f.clock.now += 10 }
+    _ <- f.artifacts.reconcile()
+    recovered <- f.metadata.transaction(_.artifact(id).get)
+    _ <- IO { assertEquals(recovered.state,UploadState.Ready);assertEquals(recovered.lastActivityAt,before) }
+    second <- f.artifacts.init(f.identity,request())
+    _ <- f.artifacts.putChunk(f.identity,second.artifact.id,"資料/file.txt",0,bytes,SecretCodec.sha256(bytes))
+    _ <- IO { f.clock.now += 10 }
+    ready <- f.artifacts.finish(f.identity,second.artifact.id)
+    _ <- IO { assertEquals(ready.lastActivityAt,f.clock.now);f.clock.now += 10 }
+    retry <- f.artifacts.finish(f.other,second.artifact.id)
+    _ <- IO(assertEquals(retry.lastActivityAt,ready.lastActivityAt))
+  yield () }}
   test("chunk ACK follows file+parent fsync and durable receipt commit; retry heals corrupt bytes") { run { f => for
     a <- f.artifacts.init(f.identity,request())
     _ <- IO { f.faults.armed = Set("before_receipt_commit") }

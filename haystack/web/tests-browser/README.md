@@ -27,7 +27,7 @@ to 575 seconds plus a ten-second termination grace; individual assertion,
 heartbeat, concurrency and restart deadlines are unchanged. Use the parent's
 background execution lane rather than extending foreground tool timeouts.
 
-`inventory.json` is checked exactly against all 60 JUnit leaf cases (61 Node
+`inventory.json` is checked exactly against all 61 JUnit leaf cases (62 Node
 cases including the helper-mode group), 34 main browser checks, the HTTPS
 restart, preview restart, and markup case. The original 36 atomic cases remain.
 A fresh report records source and inventory hashes, dependency identities,
@@ -99,3 +99,10 @@ Filtered Nix sources need no `.git`, fake Git stub or Nix executable when the
 JSON is supplied. Set `HAYSTACK_SOURCE_REVISION` to the real 40-hex source commit
 identity when `.git` is absent; full source-file hashes remain the binding, not
 the label alone. The native/JAR artifact remains independently SHA256-bound.
+
+On a non-isolated host the producer must select unused declared ports. Before
+launch, the harness bind-checks both backend and proxy ports and refuses occupied
+listeners without sending requests. Backend health checks begin only after its
+own selected child emits the exact `haystack: ready` marker; an unrelated healthy
+service cannot satisfy fixture readiness. Private Nix-network fixed ports remain
+valid without changing the evaluated JSON.

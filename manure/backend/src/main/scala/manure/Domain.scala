@@ -28,10 +28,10 @@ object Exact:
     java.lang.Double.longBitsToDouble(ByteBuffer.wrap(value).getLong())
   def displayTime(value: Double): String = DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochSecond(math.floor(value).toLong))
   def compare(a: String, b: String): Int = java.util.Arrays.compareUnsigned(utf8(a), utf8(b))
-  /** Current catalogue policy: Unicode simple lowercase, ROOT locale; NOT Python
-    * casefold or a database collation. Stored strings are never normalized.
+  /** Normative full Unicode 16.0.0 casefold (CONTRACT7.1), independent of JDK
+    * locale/Unicode defaults. Ordering and stored source bytes stay unchanged.
     */
-  def matching(value: String): String = value.toLowerCase(Locale.ROOT)
+  def matching(value: String): String = UnicodeCaseFold.fold(value)
 
 enum ArtifactKind:
   case File, Directory

@@ -34,17 +34,30 @@ export async function atomicConfig(file, value) {
   await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
   await rename(temporary, file);
 }
+export async function assertPortAvailable(port, host = "127.0.0.1") {
+  const probe = http.createServer();
+  try {
+    await new Promise((resolve, reject) => { probe.once("error", reject); probe.listen(port, host, resolve); });
+    await new Promise((resolve) => probe.close(resolve));
+  } catch { throw new Error(`Fixture port ${port} is occupied; refusing to contact an existing listener`); }
+}
 export async function startServer(configFile, port, logFile) {
   const command = process.env.HAYSTACK_SERVER_COMMAND;
   if (!command) throw new Error("HAYSTACK_SERVER_COMMAND must select the Scala/native executable; no Node fallback");
+  await assertPortAvailable(port);
   // Operator-provided shell command permits java -jar as well as one executable.
   // Configuration path is always a separate, quoted positional argument.
   const child = spawn("bash", ["-c", `exec ${command} "$@"`, "haystack-server", "serve", configFile], {
     stdio: ["ignore", "pipe", "pipe"], env: process.env,
   });
   let output = "";
+  let ownReady = false;
   let log = Promise.resolve();
-  const record = (chunk) => { output = (output + chunk.toString()).slice(-16384); log = log.then(() => appendFile(logFile, chunk)); };
+  const record = (chunk) => {
+    output = (output + chunk.toString()).slice(-16384);
+    if (output.split(/\r?\n/u).includes("haystack: ready")) ownReady = true;
+    log = log.then(() => appendFile(logFile, chunk));
+  };
   child.stdout.on("data", record); child.stderr.on("data", record);
   child.on("error", (error) => { output += error.message; });
   try {
@@ -52,7 +65,7 @@ export async function startServer(configFile, port, logFile) {
     while (Date.now() < deadline) {
       if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Server exited: ${child.exitCode ?? child.signalCode}\n${output}`);
       try {
-        if ((await fetch(`http://127.0.0.1:${port}/api/v1/health`, { signal: AbortSignal.timeout(1000) })).ok) return child;
+        if (ownReady && (await fetch(`http://127.0.0.1:${port}/api/v1/health`, { signal: AbortSignal.timeout(1000) })).ok) return child;
       } catch {}
       await delay(50);
     }

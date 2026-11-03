@@ -2,6 +2,12 @@
 
 Main class `manure.Main`; executable CLI `manure-server serve CONFIG.json` or
 `manure-server --config CONFIG.json`. No Python production storage/server fallback.
+The portable Python package registers only `manure` and `manure-mcp`, never a
+server command. `python -m manure.server` fails closed (exit 2) before argument
+parsing, config/credential reads, storage or networking and points to the built
+Scala binary; it does not proxy to it. Retained `ArtifactStore`, validators and
+`create_server` definitions are unsupported historical test/oracle helpers, not
+public activation entrypoints.
 Payload root MUST already exist, with no symlink components; explicit JNI mode
 `linked` for native static deployment, `shared` plus absolute `posix_library` for
 JVM verification. Physical-root claim acquired BEFORE DB migrations or mutations.
@@ -79,7 +85,7 @@ client or model worker; semantic/hybrid requests return typed unavailable):
 ```
 
 Every field required when configured; synthetic local example, not authorization
-to transmit existing/private data. `leaseSeconds >= ceil(deadlineMs/1000)+5`.
+to transmit existing/private data. `leaseSeconds` is explicitly bounded to 3..3600; the shared worker renews fenced leases during provider IO, so a finite provider deadline may exceed one lease.
 Only authenticated management search over ready/unexpired names+manifest paths is
 indexed; never credentials/grants/password hashes or payload/file bytes. Writes
 atomically enqueue source jobs using caller Connection; model calls happen only

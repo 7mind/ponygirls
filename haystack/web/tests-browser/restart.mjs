@@ -13,7 +13,7 @@ import { chromium } from "playwright-core";
 import { Failure } from "../../generated/typescript/haystack/api/Failure.ts";
 import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
 import { readProxyConfig, validateProxyConfig } from "./proxy-config.mjs";
-import { freePort, ownedDatabase, configFor, atomicConfig, startServer } from "./native.mjs";
+import { freePort, ownedDatabase, configFor, atomicConfig, startServer, assertPortAvailable } from "./native.mjs";
 
 const conn = process.env.HAYSTACK_TEST_PG;
 const chromiumPath = process.env.HAYSTACK_CHROMIUM;
@@ -34,6 +34,8 @@ const backendPort = host?.backendPort ?? await freePort();
 const base = host?.publicUrl ?? `https://127.0.0.1:${await freePort()}`;
 const publicUrl = new URL(base);
 const proxyPort = Number(publicUrl.port || "443");
+await assertPortAvailable(backendPort);
+await assertPortAvailable(proxyPort, publicUrl.hostname.replace(/^\[|\]$/gu, ""));
 const serverConfig = path.join(dir, "config.json");
 const auth = {
   activityProjectId: "agent-activity", cookieSecure: true,
@@ -103,6 +105,8 @@ await atomicConfig(serverConfig, await configFor({ database: database.runtime,
 let backend;
 let proxy;
 let browser;
+let context;
+const diagnostic = { phase: "startup", responses: [], pageErrors: [], failedRequests: [], allowedHosts: auth.allowedHosts, allowedOrigins: auth.allowedOrigins };
 async function startBackend() {
   backend = await startServer(serverConfig, backendPort, path.join(dir, "server.log"));
 }
@@ -120,7 +124,26 @@ try {
   proxy = spawn(nginxPath, ["-e", path.join(dir, "nginx-error.log"), "-p", `${dir}/`, "-c", configFile], { stdio: ["ignore", "ignore", "inherit"] });
   browser = await chromium.launch({ executablePath: chromiumPath, args: ["--no-sandbox"] });
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
+  context = ctx;
   const page = await ctx.newPage();
+  page.on("response", async (response) => {
+    if (diagnostic.responses.length < 200) {
+      const entry = { path: new URL(response.url()).pathname, status: response.status(), contentType: response.headers()["content-type"] };
+      diagnostic.responses.push(entry);
+      if (entry.path === "/api/v1/login" && entry.status >= 400) try { entry.code = Failure.jsonCodec().decode(BaboonCodecContext.Default, await response.json()).code; } catch { entry.code = "not-current-json-failure"; }
+    }
+  });
+  page.on("pageerror", (error) => { if (diagnostic.pageErrors.length < 20) diagnostic.pageErrors.push(error.message); });
+  page.on("requestfailed", (request) => {
+    if (diagnostic.failedRequests.length < 20) diagnostic.failedRequests.push({ path: new URL(request.url()).pathname, error: request.failure()?.errorText });
+  });
+  page.on("request", async (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/login") {
+      const headers = await request.allHeaders();
+      diagnostic.loginTransport = { origin: headers.origin ?? null, fetchSite: headers["sec-fetch-site"] ?? null };
+    }
+  });
+  diagnostic.phase = "login";
   assert.equal((await page.goto(base)).status(), 200, "UI shell must be served by nginx");
   await page.getByLabel("Token").fill(token);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -128,6 +151,7 @@ try {
   await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
   const session = (await ctx.cookies()).find((cookie) => cookie.name === "__Host-haystack");
   assert.ok(session && session.secure && session.httpOnly);
+  diagnostic.phase = "backend-stop";
   await stop(backend);
   assert.equal(backend.exitCode, 0, "backend shutdown must be clean");
   const shell = await ctx.request.get(base);
@@ -145,6 +169,7 @@ try {
   await page.getByRole("alert").filter({ hasText: "Server unreachable" }).waitFor();
   assert.equal(await page.getByLabel("Token").count(), 0);
   assert.ok((await ctx.cookies()).find((cookie) => cookie.name === session.name).value === session.value, "outage must preserve the session token");
+  diagnostic.phase = "backend-restart";
   await startBackend();
   await page.reload();
   await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
@@ -155,6 +180,12 @@ try {
   await page.reload();
   await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
   console.log("ok - HTTPS session survives backend stop, refresh, restart, refresh; logout still expires it");
+} catch (error) {
+  // Never capture requests, response bodies, credentials or cookie values.
+  const evidence = { ...diagnostic, cookies: context ? (await context.cookies()).map(({ name, secure, httpOnly, sameSite }) => ({ name, secure, httpOnly, sameSite })) : [] };
+  console.error("HTTPS restart diagnostic:", JSON.stringify(evidence));
+  if (process.env.HAYSTACK_UI_ARTIFACTS) await writeFile(path.join(process.env.HAYSTACK_UI_ARTIFACTS, "https-restart-diagnostic.json"), JSON.stringify(evidence, null, 2) + "\n");
+  throw error;
 } finally {
   if (browser !== undefined) await browser.close();
   await stop(backend);

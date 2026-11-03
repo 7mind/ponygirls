@@ -41,7 +41,7 @@ final case class Network(cidr: String):
 final case class EmbeddingSettings(endpoint: ponygirls.retrieval.EmbeddingEndpoint,maxConcurrent: Int,maxQueued: Int,batchSize: Int,leaseSeconds: Int,pollInterval: FiniteDuration):
   def validate(): Unit =
     endpoint.validate()
-    Require(maxConcurrent > 0 && maxQueued >= 0 && batchSize > 0 && batchSize <= endpoint.maxBatch && leaseSeconds >= endpoint.deadline.toSeconds+5 && leaseSeconds <= 3600 && pollInterval > Duration.Zero, "bad-envelope")
+    Require(maxConcurrent > 0 && maxQueued >= 0 && batchSize > 0 && batchSize <= endpoint.maxBatch && leaseSeconds >= 3 && leaseSeconds <= 3600 && pollInterval > Duration.Zero, "bad-envelope")
 
 final case class Config(
   listenAddress: String, port: Int, dataDir: Path, apiOrigin: ApiOrigin, contentMode: String,

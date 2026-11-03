@@ -37,6 +37,12 @@ MAX_CHUNK_BYTES = 4194304
 # chunk or 4 MiB JSON body; 8 MiB + slack aborts hostile oversized replies
 # before any write.
 MAX_TRANSPORT_BYTES = 8 * 1024 * 1024 + 1024
+# Reference-file representation ceilings, not a new URL grammar/normalization.
+# Token: canonical 43 ASCII bytes and one optional LF. URL: the existing 64 KiB
+# HTTP request-line ceiling (CONTRACT §7.7 / stdlib HTTP server), deliberately
+# looser than the current service's 16 KiB total request-header admission.
+MAX_TOKEN_FILE_BYTES = 44
+MAX_URL_FILE_BYTES = 65536
 
 RESERVED_TOP = ("__manure", "api")
 
@@ -146,17 +152,54 @@ def _validate_token_format(value: str) -> None:
         raise ManureError("bad-envelope", "malformed credential")
 
 
+def _read_regular_reference(path: str | os.PathLike, limit: int, *, kind: str) -> bytes:
+    """Read a trusted configured reference, never a pipe/device or unbounded file.
+
+    Resolve managed (e.g. agenix) symlinks deliberately, then no-follow the
+    resolved leaf. Nonblocking open + descriptor type/identity checks close the
+    stat/open FIFO race. Unbuffered reads consume at most limit+1 actual bytes,
+    including if a regular file grows after fstat. No source values/paths leak.
+    """
+    def oversized() -> ManureError:
+        return InvalidUrl("oversized url file") if kind == "url" else ManureError("unauthorized", "oversized credential file")
+
+    try:
+        resolved = Path(path).resolve(strict=True)
+        before = os.stat(resolved, follow_symlinks=False)
+        if not stat.S_ISREG(before.st_mode):
+            raise OSError("nonregular reference")
+        fd = os.open(resolved, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+        try:
+            opened = os.fstat(fd)
+            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                raise OSError("reference changed")
+            if opened.st_size > limit:
+                raise oversized()
+            remaining = limit + 1
+            parts = []
+            while remaining:
+                block = os.read(fd, remaining)
+                if not block:
+                    break
+                parts.append(block)
+                remaining -= len(block)
+            raw = b"".join(parts)
+            if len(raw) > limit:
+                raise oversized()
+            return raw
+        finally:
+            os.close(fd)
+    except OSError:
+        raise MissingCredentials("unreadable " + kind + " file") from None
+
+
 def read_token_file(path: str | os.PathLike) -> str:
     """Haystack exact-byte rule: 43 chars + at most one final LF.
 
     Rejects: empty, NUL, CR, non-ASCII printable, multiline, noncanonical.
     IO failures are normalized to missing-credentials (sanitized).
     """
-    try:
-        with open(path, "rb") as f:
-            raw = f.read()
-    except OSError:
-        raise MissingCredentials("unreadable credential file")
+    raw = _read_regular_reference(path, MAX_TOKEN_FILE_BYTES, kind="credential")
     if len(raw) == 0:
         raise ManureError("unauthorized", "empty credential file")
     if b"\x00" in raw:
@@ -182,11 +225,7 @@ def read_token_file(path: str | os.PathLike) -> str:
 
 
 def read_url_file(path: str | os.PathLike) -> str | None:
-    try:
-        with open(path, "rb") as f:
-            raw = f.read()
-    except OSError:
-        raise MissingCredentials("unreadable url file")
+    raw = _read_regular_reference(path, MAX_URL_FILE_BYTES, kind="url")
     try:
         text = raw.decode("utf-8")
     except Exception:

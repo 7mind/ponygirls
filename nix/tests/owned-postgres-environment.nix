@@ -6,6 +6,8 @@ in {
   PG_BIN = "${pkgs.postgresql_18.withPackages (p: [ p.pgvector ])}/bin";
   PG_HBA = rehearsal.policy.hba;
   PG_POLICY = rehearsal.policy.manifest;
-  PG_PROVIDER = ../postgres/provider.py;
+  # Interpolate the leaf path NOW. A raw path passed through toString loses
+  # its copying context and leaves an undeclared whole-flake pathname.
+  PG_PROVIDER = "${../postgres/provider.py}";
   PG_CONFIGURATION = rehearsal.policy.configuration;
 }

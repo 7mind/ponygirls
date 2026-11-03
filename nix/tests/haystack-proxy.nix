@@ -1,11 +1,11 @@
-{ pkgs, inputs }:
+{ pkgs, inputs, haystackPackage }:
 let
   lib=pkgs.lib;
   cfg=(lib.evalModules {
     specialArgs={inherit pkgs;};
     modules=[ ./user-services-stub.nix ./agentic-services-legacy-config.nix
       (import ../hm/agentic-services-server.nix {inherit inputs;})
-      { smind.hm.services.agentic.host.scheme=lib.mkForce "http"; }
+      { smind.hm.services.agentic.host.scheme=lib.mkForce "http"; smind.hm.services.agentic.haystack.package=lib.mkForce haystackPackage; }
     ];
   }).config;
   failure=pkgs.writeText "haystack-proxy-failure.json" (import ../lib/haystack-proxy.nix {}).unavailableJson;
@@ -16,7 +16,7 @@ in pkgs.runCommand "haystack-rendered-proxy-current-codec" {
   NGINX="${pkgs.nginx}/bin/nginx";
 } ''
   mkdir "$out"
-  python3 ${./haystack-proxy-test.py} ${cfg.lib.ponygirls.agenticServices.proxyConfig} ${failure} "$out/proxy.json"
+  python3 ${./haystack-proxy-test.py} ${cfg.lib.ponygirls.agenticServices.proxyConfig} ${failure} "$out/proxy.json" ${haystackPackage}/share/haystack/web
   cp -r ${sources.haystackTests} source
   chmod -R u+w source
   cd source/haystack

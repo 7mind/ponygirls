@@ -99,7 +99,7 @@ Every content route above receives the path-mode prefix when selected.
 Strict single-pass segment decoding, reserved namespaces, symlink containment,
 MIME, headers, grant separation and low-security path-mode warning remain.
 
-## Catalogue policy `utf8-root-lower-v1`
+## Catalogue requirements and open matching regression
 
 One catalogue, default `CreatedAt Desc`, limit 50 clamped 1..maxListLimit.
 All filters/sorts and `limit+1` keyset pagination operate on the full authorized
@@ -113,17 +113,25 @@ numeric epoch, not API display text. `ExpiresAt` null sorts last both ways.
 API timestamps are UTC RFC3339 with `Z`, whole-second display for this contract;
 never round-trip displayed timestamps into authoritative migration state.
 
-Literal substring query compares ROOT-locale Unicode lowercase strings;
-no regex/wildcard, trimming, truncation, normalization or full casefold.
-This deliberately replaces Python casefold. Pin target JVM Unicode behavior
-with these vectors: `Straße`→`straße` (does not match `STRASSE`), `İ`→`i\u0307`,
-`ΟΣ`→`ος` (contextual final sigma), `Σ`→`σ`, `K`→`k`, composed `É`→`é` but
-`E\u0301`→`e\u0301` (still distinct), `A\u0000B`→`a\u0000b`, supplementary
-Deseret `𐐀`→`𐐨`. Query lowercasing must use the same complete-string algorithm
-as stored projection; do not substitute PostgreSQL lower/ILIKE or Python lower
-without those vectors. Unsigned UTF-8 order vectors: NUL < A < a < é < 𐐀.
+Literal substring query MUST preserve Python Unicode **casefold** from
+`CONTRACT.md`§7.1; no wildcard/regex, Unicode normalization, whitespace trimming,
+truncation or additional query-length cap beyond transport admission. `Straße`
+and `STRASSE` match; final sigma folds with sigma. Composed/decomposed Unicode
+strings remain distinct absent casefold equivalence. Original strings/epochs
+remain lossless; unsigned UTF-8 ordering is independent of the matching fold.
 
-Cursor binds effective lowercase query, includeExpired, visibility, state,
+**OPEN IMPLEMENTATION/VALIDATION GAP:** `3e4bd126` now embeds pinned Unicode16
+full-fold mappings and independent dual expected vectors, replacing the
+incorrect ROOT-lowercase implementation/characterization. The authorized effective-folded cursor fingerprint and removal of the
+unapproved1024-character cap are now implemented in the integrated source,
+with independent dual assertions. Compiled corrected assertions and actual
+source-bound native all-scalar validation remain mandatory before closure. The previous claim in this document that changing
+Python casefold was deliberate/approved was wrong and is withdrawn. Actual
+query projection, effective-query cursor equivalence and valid long-query
+assertions need the parent/reviewer fail-first+fix; SQL keyset tests alone do
+not close this gap. Existing policy labels are not authority to change behavior.
+
+Cursor binds effective casefold-equivalent query, includeExpired, visibility, state,
 sort, direction and clamped limit plus typed saved sort value and exact ID.
 Reject malformed/type-wrong/mismatched/old cursors with BadEnvelope. No legacy
 branch. Cursor is a position, not authorization or a snapshot; boundary deletion

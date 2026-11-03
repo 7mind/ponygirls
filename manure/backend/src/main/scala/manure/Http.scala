@@ -120,6 +120,9 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       case _ => "unavailable"
     val response = envelope(id,CurrentWire.error(code),CurrentWire.status(code))
     if Set("unavailable","rate-limited","session-limit")(code) then response.putHeaders(raw("Retry-After","5")) else response
+  /** Rejection has no credential/body effects and cannot retain a keep-alive slot. */
+  def overloaded: Response[IO] = secure(failure(new UUID(0L,0L),DomainError("unavailable")),false)
+    .putHeaders(raw("Connection","close"))
   private def body(req: Request[IO],cap: Int): IO[Array[Byte]] = IO {
     Require(header(req,"Transfer-Encoding").isEmpty, "bad-envelope")
     header(req,"Content-Length").foreach { value =>

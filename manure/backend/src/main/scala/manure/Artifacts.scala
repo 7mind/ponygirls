@@ -63,6 +63,9 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
   def snapshot(identity: Identity, after: Option[String], limit: Int): IO[Vector[Artifact]] = metadata.transaction { tx =>
     Require(auth.live(identity), "unauthorized"); tx.artifacts(after,limit)
   }
+  def catalogue(identity: Identity, selection: CataloguePolicy.Selection): IO[Vector[Artifact]] = metadata.transaction { tx =>
+    Require(auth.live(identity), "unauthorized"); tx.catalogue(selection)
+  }
   def patch(identity: Identity,id: String, patch: ArtifactPatch): IO[Initialized] = serialized {
     metadata.transaction { tx =>
       Require(auth.live(identity), "unauthorized")
@@ -138,10 +141,12 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
       val end = tx.receipts(a.id,e.path).map(r => r.offset+r.length).maxOption.getOrElse(0L)
       payloads.truncateTo(a,e.path,math.min(e.size,end))
     }
-  private def ready(a: Artifact): IO[Artifact] = metadata.transaction { tx =>
+  private def ready(a: Artifact,successfulPublish: Boolean = false): IO[Artifact] = metadata.transaction { tx =>
     val current = get(tx,a.id)
     Require(current.state != UploadState.Ready || payloads.complete(current,true), "unavailable")
-    val out = current.copy(state=UploadState.Ready)
+    // Only a successful user publish advances activity. A durable P2 mark or
+    // startup/crash recovery is not a successful request (§6 activity allowlist).
+    val out = current.copy(state=UploadState.Ready,lastActivityAt=if successfulPublish then clock.now else current.lastActivityAt)
     tx.put(out); tx.clearReceipts(a.id); faults("ready_commit"); out
   }.flatTap(a => blocking(payloads.cleanupStage(a)))
   private def recover(a: Artifact): IO[Artifact] =
@@ -171,14 +176,14 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
               val code = if payloads.structureComplete(current,false) then "hash-mismatch" else "incomplete-upload"
               repair(tx,current); Left(DomainError(code))
             else
-              val publishing = current.copy(state=UploadState.Publishing,lastActivityAt=clock.now)
+              val publishing = current.copy(state=UploadState.Publishing)
               tx.put(publishing); faults("publishing_commit"); Right(publishing)
           }.flatMap {
             case Left(error) => IO.raiseError(error)
             case Right(publishing) =>
               blocking(faults("after_publishing_commit")) *>
                 blocking(payloads.publish(publishing,faults.apply)) *>
-                blocking(faults("before_ready_commit")) *> ready(publishing)
+                blocking(faults("before_ready_commit")) *> ready(publishing,true)
           }
     }
   }
