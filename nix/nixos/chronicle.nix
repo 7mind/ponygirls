@@ -173,6 +173,8 @@ in
             "embedding-key:${cfg.embedding.credentialFile}"
           ] ++ lib.mapAttrsToList (id: u: "${passwordName id}:${u.passwordHashFile}") cfg.users
             ++ map (t: "${staticTokenName t.id}:${t.tokenFile}") cfg.staticTokens;
+          # IOApp TERM runs shutdown hooks, then the native runtime exits 128 + SIGTERM.
+          SuccessExitStatus = [ 143 ];
           Restart = "on-failure";
           RestartSec = 5;
           TimeoutStopSec = 60;

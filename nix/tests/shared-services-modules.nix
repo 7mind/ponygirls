@@ -74,8 +74,8 @@ assert system.systemd.services.manure-migrate.requires==["ponygirls-database-man
 assert system.systemd.services.chronicle-migrate.requires==["ponygirls-database-chronicle.service"];
 assert system.systemd.services.manure.requires==["manure-migrate.service"];
 assert system.systemd.services.chronicle.requires==["chronicle-migrate.service"];
-# Manure IOApp TERM may return 143 after its shutdown hooks; never extend this
-# serve-only classification to migrations, SIGKILL/fatal exits or other apps.
+# Manure IOApp TERM may return 143 after its shutdown hooks; these serve-only
+# declarations must not relax migrations or SIGKILL/fatal exits.
 assert serviceUnits.ivm-manure.Service.SuccessExitStatus==[143];
 assert system.systemd.services.manure.serviceConfig.SuccessExitStatus==[143];
 assert !(serviceUnits.ivm-manure-migrate.Service?SuccessExitStatus);
@@ -83,7 +83,12 @@ assert !(system.systemd.services.manure-migrate.serviceConfig?SuccessExitStatus)
 assert lib.all (status: !(builtins.elem status serviceUnits.ivm-manure.Service.SuccessExitStatus)) [1 137 "SIGKILL"];
 assert lib.all (status: !(builtins.elem status system.systemd.services.manure.serviceConfig.SuccessExitStatus)) [1 137 "SIGKILL"];
 assert !(serviceUnits.ivm-haystack.Service?SuccessExitStatus);
-assert !(system.systemd.services.haystack.serviceConfig?SuccessExitStatus) && !(system.systemd.services.chronicle.serviceConfig?SuccessExitStatus);
+assert !(system.systemd.services.haystack.serviceConfig?SuccessExitStatus);
+# Separately reproduced on the actual Chronicle native PID + pinned classifier.
+assert system.systemd.services.chronicle.serviceConfig.SuccessExitStatus==[143];
+assert !(system.systemd.services.chronicle-migrate.serviceConfig?SuccessExitStatus);
+assert lib.all (status: !(builtins.elem status system.systemd.services.chronicle.serviceConfig.SuccessExitStatus)) [1 137 "SIGKILL"];
+assert !(serviceUnits.chronicle-migrate.Service?SuccessExitStatus);
 assert serviceUnits.chronicle.Service.SuccessExitStatus==[143]; # Preexisting Chronicle HM policy remains unchanged.
 pkgs.runCommand "shared-three-service-provider-module-composition" {} ''
   mkdir "$out"
