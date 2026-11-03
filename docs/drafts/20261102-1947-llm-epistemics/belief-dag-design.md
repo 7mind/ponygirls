@@ -5,6 +5,10 @@ decision Q11 (belief-DAG format and dialogue, with a pilot specified
 separately). Sources: [journal](journal.md) J4–J10, [hypotheses](hypotheses.md),
 [references](references.md). Uncited statements are design proposals; effect
 claims are hypotheses. Open choices are marked **OC-n** and listed in §11.
+For the later operating proposal after partial framing, see
+[methodology v0.1](belief-network-methodology.md). Numerical caps, automatic
+support rules and planned guards below are not validated or implemented; the
+later proposal distinguishes cooperative controls from exclusive human authority.
 
 ## 1. Purpose and scope
 

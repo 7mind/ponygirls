@@ -2,8 +2,11 @@
 
 Status: conceptual proposal extending [the validation frame](belief-network-validation.md)
 and the earlier [dialogue draft](belief-dag-design.md#5-dialogue-protocol-from-a-prompt-to-a-ratified-belief-set).
-No procedure here has been tried with a human. The examples are conditional
-paper walkthroughs, not transcripts, user decisions, implementations or runs.
+Written before the partial human framing case in J23–J24. End-to-end use remains
+unvalidated; the examples below are still conditional paper walkthroughs, not
+transcripts, user decisions, implementations or runs. The later
+[methodology v0.1](belief-network-methodology.md) distinguishes observations from
+that case, proposed operating steps and possible skill/code components.
 
 ## 1. What the joint dialogue must preserve
 

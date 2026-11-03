@@ -4,7 +4,9 @@ Status: conceptual proposal following Q17 and the user's clarification in
 [journal J21](journal.md#j21--2026-11-03--the-belief-network-as-a-validation-frame).
 No new pilot, instrument, tooling or acceptance threshold is specified or
 validated here. The workflow direction is the user's; the criteria below are
-agent-written proposals, not ratified requirements.
+agent-written proposals, not ratified requirements. The later
+[methodology v0.1](belief-network-methodology.md) draws on partial framing
+observations (J24), not completed implementation or human acceptance evidence.
 
 ## 1. The object we are trying to preserve
 

@@ -1764,3 +1764,122 @@ validation, J1–J24 ordering and unchanged journal prefix from source base
 again against the files. These checks establish document/provenance invariants,
 not intent fidelity, game behavior or efficacy. No application tests,
 playthroughs, rendering benchmarks, deployment or push occurred.
+
+## J25 — 2026-11-03 — Provisional methodology and skill/code component roadmap
+
+### User request and scope
+
+> Can we attempt to draft some methodology based on this pilot? What components (skills, code) we might need?
+
+This requests a methodology/design draft, not game construction, a new harness,
+installed skills or another experimental run. The still-unanswered attention
+question is not answered by the topic change. Ordinary chat remains the chosen
+channel; no decisions-tool call was made. The RTS outcome clauses and its
+private-case boundary are unchanged.
+
+### What the partial case can support
+
+The new [methodology v0.1](belief-network-methodology.md) separates observed
+framing/compaction from proposed construction and delivery review. It retains
+J24's eight scoped acts inside one unfinished case, not independent samples.
+It makes a further limit explicit: the five goal IDs were initially proposed by
+the agent and retained. The case therefore does not establish independently
+human-chosen topology, complete contrast selection or exhaustive intent capture.
+Human choices may clarify or form/revise intent; their earlier mental status
+cannot be inferred from the fact of agreement.
+
+The record exposes practical design concerns: repeated propagation into multiple
+current documents, a living network growing into a transcript, scope-sensitive
+“yes” answers, and the missing prospective attention precondition. These warrant
+candidate bookkeeping/procedure improvements, not an efficacy claim. There is
+still no game, human acceptance judgment, active-attention measure, completed
+end-to-end trial or reduced-overload result.
+
+### Proposed operating method and component boundary
+
+The draft supplies a consequence-led loop: anchor the request and operating
+agreement; challenge a small acceptance model; resolve a consequential distinction;
+preserve raw acts separately from interpretations; challenge/close a scoped
+compilation and delegation envelope; construct with explicit reopening rules;
+then assess intent-to-network faithfulness, network-to-product conformance and
+product-to-agreed-basis omissions/additions. Examples never replace broad goals;
+positive accomplishment remains required alongside prohibitions.
+
+The first semantic component is one provisional co-framing playbook. Execution/
+reopening and acceptance remain phase modules until actual use warrants separate
+skills. The code roadmap has four logical responsibilities, not four services:
+pure state/projection, retained proposal/act records, a thin input/host adapter,
+and evidence binding/checks. Existing files may suffice initially; a new store,
+CAS interface or dual implementations are conditional on actual guarantees and
+needs. No language, schema, storage backend or host SDK implementation is selected.
+
+Code can check declared references, immutable versions, content bindings and
+recorded state transitions. It cannot prove materiality, adequate question
+selection, faithful paraphrase, semantic entailment or broad support from linked
+passing checks. Authenticated input origin also does not establish which
+antecedent or scope a person meant. Unsolicited requests/corrections remain valid
+human inputs; approval binding must not turn chat into a mandatory questionnaire.
+
+Same-account writable files, human-invoked commands, hooks and hash chains are
+cooperative controls, not exclusive human-identity enforcement [L10]. A genuine
+stronger boundary needs independently controlled user-input provenance and an
+authority store the agent cannot forge/rewrite. No such boundary was built here.
+The methodology explicitly leaves hostile-agent infrastructure outside the first
+prototype rather than implying protection already exists.
+
+### Existing code and skill reuse inspected
+
+The parent and kernel reader read the complete historical P-D script and its
+README [L9], without execution or stimulus/answer-key/participant-data reads.
+Named files had no uncommitted differences from pilot source
+`3768c9e934936b66a06c623d3b6e88c0ef1c7525`. Script SHA-256:
+`f28eaf059b0732f3a4e86a11311237adbc915b95d49212731ab0f500c82acd65`.
+It provides synthetic presentation/choice/timing/TLX/JSONL patterns, not retained
+proposal versions, authenticated scoped acts, CAS, projection or evidence binding.
+Its log must not be relabelled an authority ledger; its timer is not total human
+attention. No historical workload instrument was revived.
+
+The procedure reader's best-effort overlap assessment reports reading all eleven
+installed source metadata files, with taxonomy/dual-tests/tass as nearby but
+different concerns. The parent read the full installed taxonomy and dual-tests
+skills. A fresh Haystack search around 2026-11-03T21:26:42Z found only
+`corporate-activity:skill-draft-agent-behaviour-pilot` r2 for the framing/belief
+query; the parent read its full body and confirmed the current revision. It
+explicitly excludes human-participant pilots and is not this operating method.
+This is not an exhaustive novelty audit. The recommendation is a design-only
+playbook for now: no complete new SKILL.md was manufactured, installed, promoted
+or saved to Haystack from the unfinished case.
+
+### Review and checks
+
+Two read-only Sol workers supplied procedure/evidence and minimal-kernel/reuse
+analyses. Their reviews of the initial draft identified specific contract gaps:
+execution/deferment policy must not shrink delivery scope; visible material
+uncertainty is not accepted risk; new instructions need no proposal reference;
+interpretations cannot expand human acts; evidence must bind claim/baseline as
+well as code revisions; append order does not settle intent; and mechanical reply
+checks differ from semantic evaluation. The draft was revised accordingly,
+including conditional storage guarantees and declared failure-model limits.
+
+Review tasks: procedure analysis `f69e697a-1fea-4f53-8721-174fcd2a1ebd`, draft
+review `09121a94-3db0-4e69-b723-7e1591d07f9a`; kernel analysis
+`b4a6235b-ebec-4aa9-a0a1-5a4faf01811c`, draft review
+`b2ffb8a4-c952-4ae1-9c9f-3597948b81b2`. These are design/review assistance, not
+new model-subject trials or statistically independent human-intent oracles.
+Final follow-ups were `c04834c3-81bc-421b-9925-65ce1c82151c` (procedure/write-up:
+no remaining material correction) and `846f8805-55c9-4f16-867b-485ea811e018`
+(kernel: narrow “acts bind proposals” to claimed scoped approvals). The parent
+applied that final wording and checked that unsolicited instructions still need
+no proposal reference. Final method SHA-256:
+`4055661e6bff28d47bbb0edb797f754ee382284e5c662c46e8f29d87016bad8c`.
+
+Validation is document-level: eight research documents, 31 local-link targets,
+74 unique reference ids, whitespace, J1–J25 order,
+unchanged historical journal prefix from source base
+`56ee2e666a94ea22fd6e3a97875bfc514dea27dc`, inspected-script identity and unchanged
+RTS public artifact bindings from J24. The future prototype checks in the method
+are a proposed test plan, not executed tests. No application suites, new scorer,
+implementation, skill/config installation, benchmark, deployment or push occurred.
+Codegraph refused the targeted query because daemon ownership was in a foreign
+or unknown PID namespace; known sources were read directly, without attempting
+a daemon repair or new workspace index.

@@ -1,8 +1,9 @@
 # Brief — epistemics of LLM-accelerated development (2026-11-02 … 11-03)
 
-Status: summary of journal entries J1–J24 for the user and the next agent;
-J21–J22 clarify the framework; J23–J24 record real-task intake and conversational
-framing. No game acceptance, bounded-attention or efficacy result exists.
+Status: summary of journal entries J1–J25 for the user and the next agent;
+J21–J22 clarify the framework; J23–J24 record intake/framing; J25 proposes an
+operating methodology and skill/code components. No game acceptance,
+bounded-attention or efficacy result exists.
 Source of truth for every claim: [journal](journal.md), [hypotheses](hypotheses.md),
 [references](references.md), the [design draft](belief-dag-design.md), the
 [validation-frame proposal](belief-network-validation.md), the
@@ -89,8 +90,13 @@ captures the procedure.
 Item 1 is the current direction. Items 2–5 are earlier proposals, not newly
 authorized by Q17/Q18; no field replay or policy-tool implementation is underway.
 
-1. **Real-task conversational framing (Q18, J23–J24; current phase).** The
-   separate `/home/pavel/work/warcraft-inspired-rts` workspace now has a compact
+1. **Methodology synthesis (J25; current request).** The user asked for a method
+   based on the unfinished case and possible skill/code components. Read
+   [methodology v0.1](belief-network-methodology.md): a provisional co-framing
+   playbook, later execution/acceptance modules, and a small provenance/projection/
+   storage/input/evidence kernel roadmap. No code or full skill was built,
+   installed or promoted. This is a design proposal, not a completed pilot result.
+   **Underlying real-task case (Q18, J23–J24):** the separate `/home/pavel/work/warcraft-inspired-rts` workspace now has a compact
    five-goal compilation of chat confirmations C1–C8, plus their framing record
    and the larger 63-entry reference inventory. Scope: one-map AI annihilation;
    two conventional ground factions; gold/wood, supply, recruitment and research;
@@ -130,8 +136,9 @@ authorized by Q17/Q18; no field replay or policy-tool implementation is underway
 
 ## Handover to the next agent
 
-**Read first, in order:** this brief; `journal.md` J24 (current task/status),
-the RTS README, compact network and framing record; J23 (earlier intake);
+**Read first, in order:** this brief; `journal.md` J25 and
+`belief-network-methodology.md` (current design request); J24 and the RTS README,
+compact network and framing record (partial case); J23 (earlier intake);
 then J21–J22 (framework) and J16–J19 (latest experiments); `belief-network-validation.md` and
 `belief-network-construction.md` (conceptual proposals); `hypotheses.md` (status column); `belief-dag-design.md` §5, §6, §11; the
 pilot repo `README.md` and `protocols/pilot-e.md`, `pilot-5-7.md`.
@@ -188,6 +195,9 @@ a subject workspace.
   validation scripts after merging.
 
 **Open items for the user**
+- Current request is methodology/component design, not implementation of a
+  kernel, harness adapter or installed skill. Construction and human acceptance
+  through the network remain unexercised; the existing game target is unchanged.
 - Stored Pilot DF sessions contain the user's skill files (read by Sol,
   about 8.8 MB, local repo only): the user decided to keep them (nothing to
   redact, 2026-11-03).
