@@ -11,15 +11,16 @@ import ponygirls.runtime.{CatsIOInjector,JdbcDatabase,Migration}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry}
 import org.http4s.ember.server.EmberServerBuilder
 import scala.concurrent.duration.*
-import java.nio.file.Path
+import java.nio.file.{Path,NoSuchFileException}
 import scala.util.Using
 import io.circe.Json
 
 object Main extends IOApp:
   def run(args: List[String]): IO[ExitCode] = args match
     case List("serve",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
+    case List("migrate",path) => IO.blocking(Config.load(Path.of(path))).flatMap(config => buildResources(config,false).use(_ => IO.unit)).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("--config",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
-    case _ => IO.println("usage: manure-server serve CONFIG.json | --config CONFIG.json").as(ExitCode.Error)
+    case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | --config CONFIG.json").as(ExitCode.Error)
   private def safeFailure(error: Throwable): IO[ExitCode] =
     // No stack trace/cause/SQL/filesystem/config/credential output.
     IO(System.err.println("manure startup-or-runtime failure")).as(ExitCode.Error)
@@ -34,15 +35,28 @@ object Main extends IOApp:
     * precede JDBC/migrations/recovery/HTTP/workers. Release reverses that order,
     * awaiting uncancelable JDBC and streamed file cleanup before releasing claim.
     */
-  def resources(config: Config): Resource[IO,RuntimeServices] = for
+  def resources(config: Config): Resource[IO,RuntimeServices] = buildResources(config,true)
+  private def buildResources(config: Config,recover: Boolean): Resource[IO,RuntimeServices] = for
     bridge <- Resource.eval(IO.blocking(config.nativeMode match
       case "shared" => PosixNative.shared(config.posixLibrary.get)
       case "linked" => PosixNative.linked()
       case _ => throw DomainError("bad-envelope")))
     directory <- Resource.make(IO.blocking(ConfinedDirectory.open(config.dataDir,bridge)))(root => IO.blocking(root.close()))
     lease <- Resource.make(IO.blocking(directory.lease()))(lease => IO.blocking(lease.close()))
+    control <- config.migrationReceiptDir.traverse { path =>
+      Resource.make(IO.blocking(ConfinedDirectory.open(path,bridge)))(r => IO.blocking(r.close())).flatMap { r =>
+        Resource.make(IO.blocking(r.lease()))(l => IO.blocking(l.close())).as(r)
+      }
+    }
+    _ <- Resource.eval(IO.blocking {
+      if recover then
+        val legacy = try
+          Using.resource(directory.openExistingFile(RelativeName.parse("manure.db"),ExistingFileAccess.ReadOnly))(_ => true)
+        catch case _: NoSuchFileException => false
+        Require(!legacy, "migration-required")
+    })
     database <- JdbcDatabase.resource(config.database)
-    models <- embedding(config)
+    models <- if recover then embedding(config) else Resource.pure[IO,Option[EmbeddingClient]](None)
     gate <- Resource.eval(Semaphore[IO](1L))
     graph <- Resource.make(IO.pure(CatsIOInjector().produceGet[RuntimeServices](new ModuleDef {
       include(ManurePlugin)
@@ -58,21 +72,47 @@ object Main extends IOApp:
     _ <- Resource.eval(services.database.transaction { c =>
       // Offline import control state is NEVER cleared/adopted automatically.
       val imported = Jdbc.rows(c,"SELECT to_regclass('manure_offline.destination') IS NOT NULL")(_.getBoolean(1)).head
-      if imported then
-        val records = Jdbc.rows(c,"SELECT root,source,writes_started FROM manure_offline.destination") { r =>
-          (r.getString(1),Option(r.getString(2)),r.getBoolean(3))
+      if recover && imported then
+        val receipt = control.getOrElse(throw DomainError("migration-required"))
+        val records = Jdbc.rows(c,"SELECT id,root,source,writes_started FROM manure_offline.destination") { r =>
+          (r.getString(1),r.getString(2),Option(r.getString(3)),r.getBoolean(4))
         }
-        Require(records.size == 1 && records.head._1 == config.dataDir.toString && records.head._2.nonEmpty && records.head._3, "unavailable")
-        Using.resource(directory.openExistingFile(RelativeName.parse("COMPLETE"),ExistingFileAccess.ReadOnly)) { marker =>
-          Require(marker.size() <= 16384, "unavailable")
-          val json = CurrentWire.parse(Exact.string(marker.read(0,16384)))
-          Require(json.hcursor.get[String]("source").toOption == records.head._2, "unavailable")
+        Require(records.size == 1 && records.head._2 == config.migrationReceiptDir.get.toString && records.head._3.nonEmpty && records.head._4, "migration-required")
+        def read(name: String): Json = Using.resource(receipt.openExistingFile(RelativeName.parse(name),ExistingFileAccess.ReadOnly)) { marker =>
+          Require(marker.size() <= 16384, "migration-required")
+          CurrentWire.parse(Exact.string(marker.read(0,16384)))
         }
+        val marker = read("COMPLETE")
+        val owner = read("OWNER.json")
+        val physical = receipt.physicalIdentity.map(java.lang.Long.toUnsignedString)
+        Require(marker.hcursor.get[String]("source").toOption == records.head._3 &&
+          marker.hcursor.get[String]("destination").toOption.contains(records.head._1) &&
+          owner.hcursor.get[String]("id").toOption.contains(records.head._1) &&
+          owner.hcursor.get[String]("root").toOption.contains(records.head._2) &&
+          owner.hcursor.get[BigInt]("device").toOption.map(_.toString).contains(physical(0)) &&
+          owner.hcursor.get[BigInt]("inode").toOption.map(_.toString).contains(physical(1)), "migration-required")
+      if recover && !imported then
+        val hasTable = Jdbc.rows(c,"SELECT to_regclass('manure.artifacts') IS NOT NULL")(_.getBoolean(1)).head
+        val empty = !hasTable || Jdbc.rows(c,"SELECT NOT EXISTS(SELECT 1 FROM manure.artifacts)")(_.getBoolean(1)).head
+        if empty then
+          val unexpected = Vector("staging","live").exists { name =>
+            try directory.tree(RelativeName.parse(name),config.limits.cleanupEntries,68).nonEmpty
+            catch case _: NoSuchFileException => false
+          }
+          Require(!unexpected, "migration-required")
+
     })
-    _ <- Resource.eval(IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema))))
-    _ <- Resource.eval(services.database.transaction(services.projection.initialize))
-    _ <- Resource.eval(services.artifacts.initialize())
-    _ <- Resource.eval(backfill(services))
+    _ <- Resource.eval(IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema),Migration(2,"physical-root-binding","CREATE TABLE IF NOT EXISTS manure.root_owner(singleton boolean PRIMARY KEY CHECK(singleton),identity bytea NOT NULL)"))))
+    _ <- Resource.eval(services.database.transaction { c =>
+      val identity = java.nio.ByteBuffer.allocate(16)
+      directory.physicalIdentity.foreach(identity.putLong)
+      val bytes = identity.array()
+      Jdbc.exec(c,"INSERT INTO manure.root_owner(singleton,identity) VALUES(true,?) ON CONFLICT DO NOTHING",bytes)
+      Require(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).headOption.exists(java.util.Arrays.equals(_,bytes)), "migration-required")
+      services.projection.initialize(c)
+    })
+    _ <- Resource.eval(if recover then services.artifacts.initialize() else IO.unit)
+    _ <- Resource.eval(if recover then backfill(services) else IO.unit)
   yield services
   private def backfill(services: RuntimeServices): IO[Unit] =
     def loop(after: Option[String]): IO[Unit] = services.database.transaction { c =>

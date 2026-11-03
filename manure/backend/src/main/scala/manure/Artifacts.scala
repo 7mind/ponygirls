@@ -203,7 +203,18 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
         }
       }} *> (if rows.size == limits.sweepBatch then batch(Some(rows.last.id)) else IO.unit)
     }
-    batch(None)
+    batch(None) *> cleanupOrphans()
+  private def cleanupOrphans(): IO[Unit] = serialized(metadata.transaction { tx =>
+    var after: Option[String] = None
+    var known = Set.empty[String]
+    var more = true
+    while more do
+      val rows = tx.artifacts(after,limits.sweepBatch)
+      known ++= rows.map(_.id)
+      more = rows.size == limits.sweepBatch
+      after = rows.lastOption.map(_.id)
+    payloads.cleanupOrphans(known)
+  })
   def sweep(): IO[Int] =
     def batch(after: Option[String],removed: Int): IO[Int] = metadata.transaction(_.artifacts(after,limits.sweepBatch)).flatMap { rows =>
       rows.traverse { a => serialized {
@@ -220,7 +231,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
         if rows.size == limits.sweepBatch then batch(Some(rows.last.id),total) else IO.pure(total)
       }
     }
-    batch(None,0).flatTap(_ => metadata.transaction(_.sweepGrants(clock.now)))
+    batch(None,0).flatTap(_ => metadata.transaction(_.sweepGrants(clock.now)) *> cleanupOrphans())
   private def issue(tx: MetadataTxn,a: Artifact,identity: Option[Identity],passwordHash: Option[String]): (String,Double) =
     val value = SecretCodec.token()
     val expiry = math.min(clock.now+limits.grantTtl,a.expiresAtSeconds.getOrElse(Double.PositiveInfinity))
@@ -276,6 +287,11 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
       case Visibility.External => management || bound || password.exists(p => a.externalPasswordHash.exists(SecretCodec.verify(p,_)))
     Require(allowed, if a.visibility == Visibility.External then "password-required" else "grant-required")
     a
+  def externalInfo(id: String): IO[Artifact] = serialized(metadata.transaction { tx =>
+    val a = get(tx,id)
+    Require(a.state == UploadState.Ready && a.visibility == Visibility.External && !a.expired(clock.now), "not-found")
+    a
+  })
   def contentInfo(id: String,grant: Option[String],password: Option[String],identity: Option[Identity]): IO[Artifact] =
     serialized(metadata.transaction(tx => authorized(tx,id,grant,password,identity)))
   def openContent(id: String,path: String,grant: Option[String],password: Option[String],identity: Option[Identity]): Resource[IO,(Artifact,ConfinedFile)] =
