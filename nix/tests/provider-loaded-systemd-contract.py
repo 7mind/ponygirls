@@ -6,7 +6,7 @@ or caller context, not the kernel credential or its permissions.
 import copy,importlib.util,json,os,pathlib,struct,sys
 spec=importlib.util.spec_from_file_location('provider',sys.argv[1]);p=importlib.util.module_from_spec(spec);spec.loader.exec_module(p)
 cfg=json.loads(pathlib.Path(sys.argv[2]).read_text());key=sys.argv[3]
-value=p.loaded_systemd_secret(cfg,key);assert value and len(value.encode())<=4096;del value
+value=p.loaded_systemd_secret(cfg,key,p.CredentialFilesystem(),os.environ);assert value and len(value.encode())<=4096;del value
 passed=['actual-root-owned-UID-ACL-loaded-credential-positive']
 class ChangedMetadata(p.CredentialFilesystem):
     def __init__(self,kind):self.kind=kind;self.reads=0
@@ -33,12 +33,12 @@ class ChangedMetadata(p.CredentialFilesystem):
         return value
 for kind in ['foreign-owner','foreign-group','writable','default-acl','acl-version','acl-truncated','acl-extra-uid','acl-group-read']:
     fs=ChangedMetadata(kind)
-    try:p.loaded_systemd_secret(cfg,key,fs);raise AssertionError('unsafe metadata accepted')
+    try:p.loaded_systemd_secret(cfg,key,fs,os.environ);raise AssertionError('unsafe metadata accepted')
     except (p.ProviderError,OSError):pass
     assert fs.reads==0
     passed.append('controlled-metadata-reject/'+kind)
 for kind,environment in [('missing',{}),('forged-root',{**os.environ,'CREDENTIALS_DIRECTORY':'/tmp/forged'}),('escaped-file',{**os.environ,'PONYGIRLS_PASSWORD_FILE':os.environ['CREDENTIALS_DIRECTORY']+'/../database-password'}),('wrong-name',{**os.environ,'PONYGIRLS_PASSWORD_FILE':os.environ['CREDENTIALS_DIRECTORY']+'/other'})]:
-    try:p.loaded_systemd_secret(cfg,key,environment=environment);raise AssertionError('unsafe reference accepted')
+    try:p.loaded_systemd_secret(cfg,key,p.CredentialFilesystem(),environment);raise AssertionError('unsafe reference accepted')
     except p.ProviderError:pass
     passed.append('reject-reference/'+kind)
 print('UNIT_GRAPH_CREDENTIAL_CONTRACT '+json.dumps({'cases':passed,'tests':len(passed),'failures':0,'errors':0,'skips':0,'scope':'actual production loaded-credential reader/UID/FD positive plus metadata-only negative controls; real credential untouched'}),flush=True)

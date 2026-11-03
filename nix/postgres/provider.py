@@ -90,15 +90,13 @@ def absent_acl(fs, fd, name):
     return False
 
 
-def loaded_systemd_secret(cfg, key, fs=None, environment=None):
+def loaded_systemd_secret(cfg, key, fs, environment):
     """ONLY explicit NixOS provisioning context; ordinary files stay strict.
 
     The known systemd runtime root, expected unit/name, root-protected directory
     descriptors and exact UID ACLs establish trust, not caller environment alone.
     """
-    fs = CredentialFilesystem() if fs is None else fs
-    environment = os.environ if environment is None else environment
-    if cfg['adminRole'] != 'postgres' or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', key):
+    if cfg['adminRole'] != 'postgres' or not re.fullmatch(r'[A-Za-z0-9_-]+', key):
         raise ProviderError('unsupported systemd credential context')
     identity = fs.service_identity('postgres')
     uid = fs.euid()
@@ -110,7 +108,7 @@ def loaded_systemd_secret(cfg, key, fs=None, environment=None):
             environment.get('PONYGIRLS_PASSWORD_FILE') != directory + '/database-password'):
         raise ProviderError('unexpected systemd credential reference')
     descriptors = []
-    def directory_fd(name, parent=None, unit_directory=False):
+    def directory_fd(name, parent, unit_directory):
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
         before = fs.stat(name, dir_fd=parent, follow_symlinks=False)
         if not stat.S_ISDIR(before.st_mode):
@@ -128,9 +126,9 @@ def loaded_systemd_secret(cfg, key, fs=None, environment=None):
             raise ProviderError('unexpected protected ancestor ACL')
         return fd
     try:
-        root = directory_fd('/')
-        run = directory_fd('run', root)
-        credential_root = directory_fd('credentials', run)
+        root = directory_fd('/', None, False)
+        run = directory_fd('run', root, False)
+        credential_root = directory_fd('credentials', run, False)
         bound = directory_fd(unit, credential_root, True)
         before = fs.stat('database-password', dir_fd=bound, follow_symlinks=False)
         if not stat.S_ISREG(before.st_mode):
@@ -228,12 +226,12 @@ def initialize(cfg):
         raise ProviderError('cross-major state reuse forbidden; use logical migration')
 
 
-def provision(cfg, key, loaded_credential=False):
+def provision(cfg, key, loaded_credential):
     d = cfg['databases'][key]
     name, role = d['name'], d['user']
     if loaded_credential and d['createPassword']:
         raise ProviderError('loaded credentials cannot create password files')
-    password = loaded_systemd_secret(cfg, key) if loaded_credential else private_secret(os.environ.get('PONYGIRLS_PASSWORD_FILE', d['passwordFile']), d['createPassword'])
+    password = loaded_systemd_secret(cfg, key, CredentialFilesystem(), os.environ) if loaded_credential else private_secret(os.environ.get('PONYGIRLS_PASSWORD_FILE', d['passwordFile']), d['createPassword'])
     deadline = time.monotonic() + 60
     while True:
         try:

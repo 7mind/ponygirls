@@ -81,6 +81,12 @@ for target in [directory,file]:
         reject(target.rsplit('/',1)[-1]+'/'+name,lambda fs,target=target,raw=raw:fs.nodes[target].update(acl=raw))
 reject('fifo',lambda fs:setattr(fs.nodes[file]['info'],'st_mode',stat.S_IFIFO|0o440))
 reject('directory-as-file',lambda fs:setattr(fs.nodes[file]['info'],'st_mode',stat.S_IFDIR|0o440))
+# Nix admits long attribute keys when concrete DB/role identifiers are short.
+long_key='a'*65;long_directory='/run/credentials/ponygirls-database-'+long_key+'.service'
+fs=MemoryDescriptors(b'long-key-private')
+fs.nodes={path.replace(directory,long_directory):node for path,node in fs.nodes.items()}
+assert load(fs,{'CREDENTIALS_DIRECTORY':long_directory,'PONYGIRLS_PASSWORD_FILE':long_directory+'/database-password'},long_key)=='long-key-private'
+passed.append('loaded-existing-65-character-unit-key-admission')
 assert len(passed)==len(set(passed))
 report={'cases':passed,'tests':len(passed),'failures':0,'errors':0,'skips':0,'scope':'same bounded read contract: ordinary real FS + hand-written loaded-credential descriptor adapter; exact real systemd leg separately mandatory'}
 if len(sys.argv)>2:pathlib.Path(sys.argv[2]).write_text(json.dumps(report,indent=2)+'\n')

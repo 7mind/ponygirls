@@ -32,6 +32,12 @@ let
   invalidAperture = (systemEvaluation.extendModules { modules=[{
     systemd.services.postgresql.serviceConfig.ReadWritePaths=lib.mkForce "/srv/not-a-list";
   }]; }).config;
+  longKey = lib.concatStrings (lib.genList (_: "a") 65);
+  longKeySystem = (systemEvaluation.extendModules { modules=[{
+    ponygirls.servicePostgres.databases=lib.mkForce {
+      "${longKey}"={name="short_db";user="short_role";passwordFile="/run/secrets/long-key-database";};
+    };
+  }]; }).config;
   hmUnits = base.systemd.user.services;
   dbNames = map (name: "ponygirls-database-${name}") (builtins.attrNames databases);
 in
@@ -60,6 +66,8 @@ assert system.services.postgresql.settings.hba_file != toString (import ../postg
 assert lib.hasInfix ''local all "postgres" peer'' system.services.postgresql.authentication;
 assert system.services.postgresql.settings.listen_addresses == "127.0.0.1";
 assert system.services.postgresql.enable;
+assert lib.all (a: a.assertion) longKeySystem.assertions;
+assert builtins.hasAttr "ponygirls-database-${longKey}" longKeySystem.systemd.services;
 assert system.services.postgresql.dataDir == "/var/lib/ponygirls-postgres-18/data";
 assert system.systemd.services.postgresql-setup.environment.PGHOST == "/var/lib/ponygirls-postgres-18/socket";
 assert system.systemd.services.postgresql.serviceConfig.ReadWritePaths == ["/var/lib/ponygirls-postgres-18"];
