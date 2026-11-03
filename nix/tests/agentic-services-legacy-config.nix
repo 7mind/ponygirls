@@ -21,6 +21,7 @@
       package = pkgs.hello;
     };
     haystack = {
+      database = { jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/haystack"; passwordFile = "/run/secrets/haystack-database"; readinessUnit = "ponygirls-database-haystack.service"; };
       package = pkgs.hello;
       agentTokenFile = "/run/secrets/ivm-haystack-agent-token";
       activityProjectId = "team-activity";
@@ -29,6 +30,7 @@
       insecureHttpOrigins = [ "http://legacy.services.example.test:8085" ];
     };
     manure = {
+      database = { jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/manure"; passwordFile = "/run/secrets/manure-database"; readinessUnit = "ponygirls-database-manure.service"; };
       package = pkgs.hello;
       agentTokenFile = "/run/secrets/ivm-manure-agent-token";
       legacyOrigins = [ "http://legacy.services.example.test:8086" ];

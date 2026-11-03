@@ -23,7 +23,12 @@ let
     superuser_reserved_connections = cfg.adminReserve;
     shared_buffers = cfg.sharedBuffers;
     work_mem = "4MB";
-    maintenance_work_mem = "64MB";
+    effective_cache_size = cfg.effectiveCacheSize;
+    maintenance_work_mem = cfg.maintenanceWorkMem;
+    track_io_timing = cfg.trackIoTiming;
+    random_page_cost = cfg.randomPageCost;
+    effective_io_concurrency = cfg.effectiveIoConcurrency;
+    maintenance_io_concurrency = cfg.maintenanceIoConcurrency;
     max_parallel_maintenance_workers = 1;
     max_parallel_workers_per_gather = 0;
     autovacuum_max_workers = 3;
@@ -32,10 +37,8 @@ let
     synchronous_commit = "on";
     wal_level = "replica";
     # No SSD/planner claims without deployment measurements.
-    log_statement = "none";
-    log_min_error_statement = "panic";
   };
-  configuration = pkgs.writeText "ponygirls-postgresql.conf" (lib.concatStringsSep "\n" (lib.mapAttrsToList (k: v: "${k} = ${if builtins.isBool v then (if v then "on" else "off") else if builtins.isInt v then toString v else "'${v}'"}") settings) + "\n");
+  configuration = pkgs.writeText "ponygirls-postgresql.conf" (lib.concatStringsSep "\n" (lib.mapAttrsToList (k: v: "${k} = ${if builtins.isBool v then (if v then "on" else "off") else if (builtins.isInt v || builtins.isFloat v) then toString v else "'${v}'"}") settings) + "\n");
   manifest = pkgs.writeText "ponygirls-postgres.json" (builtins.toJSON {
     inherit (cfg) stateDirectory adminRole port databases adminReserve;
     postgresBin = "${cfg.package}/bin";

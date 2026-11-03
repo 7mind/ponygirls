@@ -42,7 +42,7 @@ let
     command = ''cache="${effectiveCacheDir}"; if [ ! -d "$cache" ] || [ ! -w "$cache" ]; then echo "manure: cache dir unavailable: $cache (persistent bind missing; resume records would be lost)" >&2; exit 1; fi'';
   };
 
-  pkg = pkgs.callPackage ../pkg/manure/package.nix { };
+  pkg = pkgs.callPackage ../pkg/manure/client.nix { };
   defaultFile = if cfg.tokenFile == null then "" else toString cfg.tokenFile;
   manureClient = pkgs.runCommand "manure-client" { } ''
     mkdir -p $out/bin

@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import secrets
 import stat
+import stringprep
+import unicodedata
 import subprocess
 import sys
 import time
@@ -35,7 +37,10 @@ def private_secret(path, create=False):
             os.close(directory)
     # Explicit operator credential paths may be agenix-managed symlinks.
     # Validate the opened target, not the symlink inode.
-    fd = os.open(path, os.O_RDONLY)
+    resolved = path.resolve(strict=True)
+    if not stat.S_ISREG(resolved.stat().st_mode):
+        raise ProviderError('credential must be a regular file')
+    fd = os.open(resolved, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     with os.fdopen(fd, 'rb') as inp:
         mode = os.fstat(inp.fileno())
         if not stat.S_ISREG(mode.st_mode) or mode.st_mode & 0o077:
@@ -47,14 +52,33 @@ def private_secret(path, create=False):
     return value.decode('utf-8', errors='strict')
 
 
+def saslprep(password):
+    """PostgreSQL/libpq RFC4013 Unicode3.2 preparation, raw UTF8 on failure.
+
+    PostgreSQL deliberately falls back to the original bytes if SASLprep fails
+    (prohibited/unassigned characters, bidi violations), rather than making an
+    existing non-ASCII password unusable. Never substitute current Unicode data.
+    """
+    mapped = ''.join(' ' if stringprep.in_table_c12(c) else c
+                     for c in password if not stringprep.in_table_b1(c))
+    prepared = unicodedata.ucd_3_2_0.normalize('NFKC', mapped)
+    prohibited = [stringprep.in_table_a1, stringprep.in_table_c12,
+        stringprep.in_table_c21, stringprep.in_table_c22, stringprep.in_table_c3,
+        stringprep.in_table_c4, stringprep.in_table_c5, stringprep.in_table_c6,
+        stringprep.in_table_c7, stringprep.in_table_c8, stringprep.in_table_c9]
+    if any(test(c) for c in prepared for test in prohibited):
+        return password.encode('utf-8')
+    if any(stringprep.in_table_d1(c) for c in prepared):
+        if (any(stringprep.in_table_d2(c) for c in prepared)
+                or not stringprep.in_table_d1(prepared[0])
+                or not stringprep.in_table_d1(prepared[-1])):
+            return password.encode('utf-8')
+    return prepared.encode('utf-8')
+
+
 def verifier(password):
-    # Generated passwords are ASCII; externally provisioned passwords must use
-    # PostgreSQL-compatible SASLprep. Reject non-ASCII rather than derive an
-    # incompatible verifier silently (runtime may still use non-ASCII externally).
-    if not password.isascii():
-        raise ProviderError('provider-created SCRAM passwords must be ASCII')
     salt = secrets.token_bytes(16)
-    salted = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 4096)
+    salted = hashlib.pbkdf2_hmac('sha256', saslprep(password), salt, 4096)
     client = hmac.digest(salted, b'Client Key', 'sha256')
     stored = hashlib.sha256(client).digest()
     server = hmac.digest(salted, b'Server Key', 'sha256')
@@ -123,6 +147,18 @@ SELECT 1 / CASE WHEN EXISTS (SELECT FROM pg_roles WHERE rolname='{role}' AND
 \\getenv verifier PONYGIRLS_SCRAM
 SELECT format('CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', '{role}', :'verifier')
  WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{role}')\\gexec
+-- Server ERROR text itself can contain values, even with statement logging
+-- disabled (invalid casts, constraints, parameter conversion). Suppress native
+-- SQL diagnostics for application sessions; retain sanitized app telemetry and
+-- unchanged admin/cluster diagnostics. These are privileged role defaults.
+ALTER ROLE "{role}" SET log_min_messages = 'panic';
+ALTER ROLE "{role}" SET log_min_error_statement = 'panic';
+ALTER ROLE "{role}" SET log_statement = 'none';
+ALTER ROLE "{role}" SET log_duration = 'off';
+ALTER ROLE "{role}" SET log_min_duration_statement = '-1';
+ALTER ROLE "{role}" SET log_min_duration_sample = '-1';
+ALTER ROLE "{role}" SET log_parameter_max_length = '0';
+ALTER ROLE "{role}" SET log_parameter_max_length_on_error = '0';
 ALTER ROLE "{role}" CONNECTION LIMIT {d['maxConnections']};
 SELECT 'CREATE DATABASE "{name}"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='{name}')\\gexec
 REVOKE ALL ON DATABASE "{name}" FROM PUBLIC;
@@ -165,6 +201,6 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (ProviderError, OSError, ValueError, subprocess.TimeoutExpired, KeyError):
+    except (ProviderError, OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, KeyError):
         print('shared PostgreSQL provider failed; no credentials or SQL logged', file=sys.stderr)
         sys.exit(1)

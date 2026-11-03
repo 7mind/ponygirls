@@ -14,6 +14,12 @@ in {
     maxConnections = mkOption { type = types.ints.between 16 1000; default = 64; };
     adminReserve = mkOption { type = types.ints.between 3 64; default = 8; };
     sharedBuffers = mkOption { type = types.strMatching "[0-9]+(MB|GB)"; default = "128MB"; description = "Conservative baseline, not host sizing. Budget model memory, workers, temp IO and disk independently."; };
+    effectiveCacheSize = mkOption { type = types.strMatching "[0-9]+(MB|GB)"; default = "4GB"; description = "Planner estimate, not allocated memory or a deployment sizing claim."; };
+    maintenanceWorkMem = mkOption { type = types.strMatching "[0-9]+(MB|GB)"; default = "64MB"; };
+    trackIoTiming = mkOption { type = types.bool; default = false; };
+    randomPageCost = mkOption { type = types.numbers.between 0.1 100; default = 4.0; description = "Host-specific planner/storage policy; set measured deployment overrides explicitly."; };
+    effectiveIoConcurrency = mkOption { type = types.ints.between 0 1000; default = 1; };
+    maintenanceIoConcurrency = mkOption { type = types.ints.between 0 1000; default = 10; };
     databases = mkOption {
       default = { };
       type = types.attrsOf (types.submodule ({ name, ... }: { options = {

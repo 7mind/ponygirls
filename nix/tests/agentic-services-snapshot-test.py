@@ -12,10 +12,21 @@ def normalize(text):
 
 
 baseline, current, haystack_auth, manure_config = (json.loads(Path(path).read_text()) for path in sys.argv[1:])
-for field in ("proxy", "crawl", "postgres"):
+for field in ("proxy", "crawl"):
     assert normalize(current[field]) == normalize(baseline[field]), f"legacy {field} behavior changed"
-for field in ("units", "timers", "haystackAuth", "manureConfig"):
-    assert current[field] == baseline[field], f"legacy {field} binding changed"
+assert current["units"] == sorted([n for n in baseline["units"] if n not in ("ivm-postgres", "ivm-haystack-database")] + ["ivm-haystack-migrate","ivm-manure-migrate"])
+assert current["timers"] == baseline["timers"]
+# Explicitly migrated connection/native asset fields; retain every other domain,
+# network and credential identity binding byte-for-byte.
+for user in current["haystackAuth"]["users"]:
+    assert user["displayName"] == user["id"]
+auth_without_display = {**current["haystackAuth"], "users": [{k:v for k,v in u.items() if k != "displayName"} for u in current["haystackAuth"]["users"]]}
+assert auth_without_display == baseline["haystackAuth"]
+assert {k:v for k,v in current["manureConfig"].items() if k not in ("database","migration_receipt_dir","embedding","native_mode","posix_library","dashboard_dir","unlock_shell_dir")} == baseline["manureConfig"]
+assert current["haystackConfig"]["database"]["jdbcUrl"] == "jdbc:postgresql://127.0.0.1:15434/haystack"
+assert current["manureConfig"]["database"]["jdbcUrl"] == "jdbc:postgresql://127.0.0.1:15434/manure"
+assert current["manureConfig"]["native_mode"] == "linked"
+assert current["haystackConfig"]["webRoot"].endswith("/share/haystack/web")
 assert haystack_auth == current["haystackAuth"], "rendered Haystack auth differs"
 assert manure_config == current["manureConfig"], "rendered Manure config differs"
 setup = current["setup"]
