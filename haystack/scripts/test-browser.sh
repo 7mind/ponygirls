@@ -39,7 +39,7 @@ PY
   printf 'artifact-kind=%s\n' "$HAYSTACK_ARTIFACT_KIND"
   printf '%s' "$HAYSTACK_SERVER_COMMAND" | sha256sum
   if [[ -n "${HAYSTACK_TEST_PROVISION_COMMAND:-}" ]]; then sha256sum "$HAYSTACK_TEST_PROVISION_COMMAND"; fi
-  find haystack/web/src haystack/web/tests haystack/web/tests-browser haystack/generated haystack/models haystack/migrations -type f -print0 | sort -z | xargs -0 sha256sum
+  find haystack/web/src haystack/web/tests haystack/web/tests-browser haystack/generated/scala haystack/generated/typescript haystack/models haystack/migrations -type f -print0 | sort -z | xargs -0 sha256sum
   sha256sum haystack/quick-ui.sh haystack/package-lock.json haystack/web/package.json haystack/scripts/register-generated.mjs haystack/scripts/test-browser.sh nix/nixos/haystack.nix
 } > "$report/source.txt"
 {
