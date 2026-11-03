@@ -69,7 +69,7 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
         else
           val a = projection.pinned(c,hit.id,hit.version).copy(contentUrl=config.contentUrl(hit.id,origin))
           val field = if hit.chunk.provenance.field == "name" then wire.EvidenceField.Name else wire.EvidenceField.ManifestPath
-          Some(wire.SearchHit(a,hit.version,hit.generation,projection.policy,hit.profile,
+          Some(wire.SearchHit(a,hit.version,hit.generation,projection.policy,hit.profile,hit.embeddingSpace,
             List(wire.SearchEvidence(field,hit.chunk.provenance.pointer,hit.chunk.text,hit.score)),hit.score))
       }
       wire.SearchPage(hits,page.total,if page.countScope == CountScope.ExactMatches then wire.SearchCountScope.ExactMatches else wire.SearchCountScope.CandidateWindow,page.rankingLimit,None)

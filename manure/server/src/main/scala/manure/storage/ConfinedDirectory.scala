@@ -44,6 +44,7 @@ final class RootLease private[storage] (
   }
 
 final case class TreeEntry(name: RelativeName, directory: Boolean)
+final case class RawInventoryEntry(pathHex: String, directory: Boolean, size: Long, sha256: String)
 
 enum ExistingFileAccess:
   case ReadOnly, ReadWrite
@@ -111,6 +112,50 @@ final class ConfinedDirectory private (
         }
       visit(start, "", 1)
     }
+    found.toVector
+  }
+
+  /** Raw-name, descriptor-only first-adoption verification. Includes root and
+    * every directory/file in unsigned-byte lexical DFS order; invalid UTF-8
+    * names remain reversible hex. Symlinks/special entries refuse. The declared
+    * aggregate byte/entry/depth budgets are inclusive and never truncate.
+    */
+  def inventory(maxEntries: Int, maxDepth: Int, maxBytes: Long): Vector[RawInventoryEntry] = synchronized {
+    require(maxEntries > 0 && maxDepth > 0 && maxBytes >= 0, "invalid inventory bounds")
+    checked()
+    val found = scala.collection.mutable.ArrayBuffer(RawInventoryEntry("",true,0L,""))
+    var remainingBytes = maxBytes
+    def hex(value: Array[Byte]): String = value.map(b => f"${b & 0xff}%02x").mkString
+    def visit(fd: Int, prefix: Array[Byte], depth: Int): Unit =
+      val entries = call(bridge.entries(fd,maxEntries-found.size+1))
+      if entries.length > maxEntries-found.size then throw new IOException("inventory bound exceeded")
+      val sorted = entries.toVector.sortWith((a,b) => java.util.Arrays.compareUnsigned(a,b) < 0)
+      sorted.foreach { leaf =>
+        if depth >= maxDepth || found.size >= maxEntries then throw new IOException("inventory bound exceeded")
+        val path = if prefix.isEmpty then leaf else prefix ++ Array('/'.toByte) ++ leaf
+        call(bridge.kind(fd,leaf)) match
+          case PosixNative.DIRECTORY =>
+            found += RawInventoryEntry(hex(path),true,0L,"")
+            withFd(call(bridge.openDirectory(fd,leaf)))(child => visit(child,path,depth+1))
+          case PosixNative.REGULAR =>
+            val entry = withFd(call(bridge.openFile(fd,leaf,false))) { file =>
+              val size = call(bridge.size(file))
+              if size < 0 || size > remainingBytes then throw new IOException("inventory byte bound exceeded")
+              remainingBytes -= size
+              val hash = MessageDigest.getInstance("SHA-256")
+              var offset = 0L
+              while offset < size do
+                val bytes = call(bridge.read(file,offset,math.min(1048576L,size-offset).toInt))
+                if bytes.isEmpty then throw new IOException("inventory file changed")
+                hash.update(bytes); offset += bytes.length
+              if call(bridge.size(file)) != size then throw new IOException("inventory file changed")
+              RawInventoryEntry(hex(path),false,size,hex(hash.digest()))
+            }
+            found += entry
+          case _ => throw new IOException("invalid inventory topology")
+      }
+    visit(root,Array.emptyByteArray,1)
+    checked()
     found.toVector
   }
 

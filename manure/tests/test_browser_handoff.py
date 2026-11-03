@@ -121,7 +121,7 @@ class HandoffFlows:
         again = bf.TestHttp()
         reuse = again.current((content_url.rstrip("/")), bf.cp.ContentCommand_RedeemGrant(({"grant": grant})["grant"]), headers={"Origin": self.api})
         self.assertIn(reuse.status, (401, 403), reuse.body[:300])
-        self.assertIn(reuse.json()["error"]["code"],
+        self.assertIn(reuse.current_error_code(),
                       ("grant-invalid", "grant-expired"),
                       reuse.body[:300])
         # Wrong-origin grant POSTs are rejected even with a fresh grant.

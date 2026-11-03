@@ -1,6 +1,7 @@
 package manure
 
-import java.nio.file.{Files, Path}
+import java.nio.file.Path
+import ponygirls.runtime.BoundedSecretFile
 import java.security.{MessageDigest, SecureRandom}
 import java.util.Base64
 
@@ -23,14 +24,14 @@ object SecretCodec:
   def equal(a: String, b: String): Boolean = MessageDigest.isEqual(Exact.utf8(a), Exact.utf8(b))
   def verify(candidate: String, digest: String): Boolean = equal(sha256(candidate), digest)
   def readHash(path: Path): String =
-    val bytes = Files.readAllBytes(path)
-    Require(bytes.length == 64 || bytes.length == 65 && bytes(64) == 10, "bad-envelope")
-    val text = Exact.string(bytes.take(64))
+    // Trusted operator credential references may be managed symlinks, never
+    // payload paths. Reject special leaves before opening and bound the actual
+    // read. Keep the old codec EXACT: one optional LF, never trim/CRLF/casefold.
+    val text = BoundedSecretFile.read(path.toAbsolutePath,65).stripSuffix("\n")
     Require(text.matches("[0-9a-f]{64}"), "bad-envelope"); text
   def readToken(path: Path): String =
-    val bytes = Files.readAllBytes(path)
-    Require(bytes.length == 43 || bytes.length == 44 && bytes(43) == 10, "bad-envelope")
-    val text = Exact.string(bytes.take(43)); Require(canonical(text), "bad-envelope"); text
+    val text = BoundedSecretFile.read(path.toAbsolutePath,44).stripSuffix("\n")
+    Require(canonical(text), "bad-envelope"); text
 
 final case class TokenRef(id: String, hashFile: Path)
 final case class UserConfig(id: String, userType: String, tokens: Vector[TokenRef], displayName: String)

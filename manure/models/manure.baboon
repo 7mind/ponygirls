@@ -40,7 +40,7 @@ data CataloguePage { artifacts: lst[Artifact] nextCursor: opt[str] }
 data SearchFilter { visibility: opt[Visibility] kind: opt[ArtifactKind] createdByUser: opt[str] }
 data SearchQuery { query: str mode: SearchMode filter: SearchFilter limit: i32 cursor: opt[str] }
 data SearchEvidence { field: EvidenceField path: opt[str] text: str score: f64 }
-data SearchHit { artifact: Artifact sourceVersion: str generationId: str policyId: str embeddingProfile: opt[str] evidence: lst[SearchEvidence] score: f64 }
+data SearchHit { artifact: Artifact sourceVersion: str generationId: str policyId: str embeddingProfile: opt[str] embeddingSpace: opt[str] evidence: lst[SearchEvidence] score: f64 }
 data SearchPage { hits: lst[SearchHit] total: i64 countScope: SearchCountScope rankingLimit: opt[i32] nextCursor: opt[str] }
 
 enum ErrorCode {

@@ -97,3 +97,43 @@ nonempty payload tree with empty/unimported PG metadata fails `migration-require
 there is no empty-catalogue adoption. `migrate CONFIG.json` runs schema/retrieval
 bootstrap only under physical-root claims: no HTTP, recovery, sweeper, model call
 or async indexing. It does not import SQLite or authorize subsequent activation.
+
+`check-config CONFIG.json` parses the same current `Config` and prints
+`MANURE_CONFIG_OK` on success. It reads only the explicit config file (bounded
+1 MiB, strict UTF-8), never referenced credentials/native libraries/payload roots,
+and does not construct JDBC/model clients. Duplicate primary/alias hosts and
+invalid typed settings fail without exposing values.
+
+First imported adoption additionally requires the converter's immutable
+`PAYLOAD.json` and exact `COMPLETE.payloadManifestSha256`. Both control and copied
+payload dev/inode identities must match. Before the first `root_owner` insert,
+the backend compares **every raw directory/file path, exact length and hash**
+through the descriptor API, outside an open JDBC transaction. `migrate` validates
+a completed import too but never inserts a root-owner binding; an early schema
+migration cannot bypass the first-serve check. Original snapshot bytes are not
+re-compared after acknowledged new writes; the persisted physical binding remains.
+`migration_manifest_max_bytes` defaults 67108864 (maximum 536870912), and
+`migration_manifest_max_entries` defaults 1000000. Oversized inventories refuse
+explicitly without adoption; plan higher finite migration capacity before importing
+large source sets. Payload hashing's aggregate byte bound is the exact receipt sum.
+
+## Actual target acceptance runner
+
+`manure/scripts/test-target.sh jvm full` builds the current JVM artifact;
+`manure/scripts/test-target.sh native /absolute/ELF /absolute/build-source.sha256 full`
+requires byte-identical compiled-input manifests from
+`python3 manure/scripts/artifact-source.py` on the actual artifact source snapshot.
+Full runs require pinned Node/Chromium, `MANURE_PLAYWRIGHT_CORE_PATH`,
+`MANURE_CHROMIUM_BIN`, `MANURE_MCP_SDK_PATH`, `POSTGRES_HOME`, and a paired executable
+`MANURE_TEST_PROVISION_COMMAND`. The helper accepts `[generatedDatabaseName]` and
+returns exactly `{jdbcUrl,user,passwordFile}`; `[--drop,generatedDatabaseName]`
+returns `{}` only for its owned registry. It runs inside the independently owned
+provider wrapper with `PONYGIRLS_OWNED_FIXTURE_ROOT`,
+`PONYGIRLS_TEST_PROVISION_SERVICE=manure`, and explicit `PG_PROVIDER` code path.
+The HTTP runtime has neither superuser/CREATEDB/CREATEROLE nor database-wide CREATE;
+only CONNECT and USAGE/CREATE on the administrator-preprovisioned public/manure
+namespaces. Each fixture verifies these effective privileges. Offline import
+uses the **separate owned fixture administrator**, then transfers imported table
+ownership to the runtime role and grants only SELECT on migration control state.
+Helper failures never fall back to administrator-as-runtime or reset an arbitrary DB.
+`core`/`focused` scopes are iterative diagnostics, not release acceptance.

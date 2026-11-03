@@ -24,6 +24,8 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 FORMAT = "manure-offline-1"
+PAYLOAD_FORMAT = "manure-payload-1"
+COPY_FORMAT = "manure-copy-1"
 # Exact storage.py schema, not an API DTO.
 TABLES = {
     "artifacts": (
@@ -808,9 +810,76 @@ def payload_inventory(manifest):
     ]
 
 
-def _verify_destination(bundle, root, pg, expected):
+def payload_entries(entries):
+    """Target adoption inventory: raw names and exact bytes, no mutable mtimes."""
+    return [
+        {k: value for k, value in entry.items() if k != "mtime_ns"} for entry in entries
+    ]
+
+
+def data_binding(path, owner, source, format_name):
+    try:
+        st = Path(path).lstat()
+    except OSError as exc:
+        raise Refused("payload root unavailable") from exc
+    require(stat.S_ISDIR(st.st_mode), "payload root must be a real directory")
+    return {
+        "format": format_name,
+        "source": source,
+        "destination": owner["id"],
+        "device": st.st_dev,
+        "inode": st.st_ino,
+    }
+
+
+def proof_exists(path):
+    # A dangling symlink is still an existing invalid proof, never an absent
+    # record that the restart path may replace with newly generated authority.
+    path = Path(path)
+    return path.exists() or path.is_symlink()
+
+
+def payload_bytes(path):
+    try:
+        return regular_bytes(path)
+    except OSError as exc:
+        raise Refused("missing or unsafe payload proof") from exc
+
+
+def verify_copy_binding(root, owner, source, data=None):
+    """Never adopt a substituted data inode, even before final receipts exist."""
+    path = Path(root) / "data" if data is None else Path(data)
+    expected = data_binding(path, owner, source, COPY_FORMAT)
+    require(
+        payload_bytes(Path(root) / "COPY.json") == canonical(expected),
+        "copied payload identity/source/destination mismatch",
+    )
+    return expected
+
+
+def verify_payload_receipt(root, owner, source, *, complete=True):
+    root = Path(root)
+    content = payload_bytes(root / "PAYLOAD.json")
+    expected = data_binding(root / "data", owner, source, PAYLOAD_FORMAT)
+    expected["entries"] = payload_entries(inventory(root / "data"))
+    require(content == canonical(expected), "payload receipt or current bytes mismatch")
+    marker = {
+        "source": source,
+        "destination": owner["id"],
+        "payloadManifestSha256": digest(content),
+    }
+    if complete or proof_exists(root / "COMPLETE"):
+        require(
+            payload_bytes(root / "COMPLETE") == canonical(marker),
+            "completion payload receipt binding mismatch",
+        )
+    return expected, marker
+
+
+def _verify_destination(bundle, root, pg, expected, *, receipts=True):
     identity, manifest = verify_bundle(bundle, expected)
     owner = destination_owner(root, pg)
+    # Fail at the operational write boundary before any target hash inventory.
     pg.run(
         "BEGIN;\n"
         + guard(owner, identity)
@@ -820,6 +889,7 @@ def _verify_destination(bundle, root, pg, expected):
         )
         + "COMMIT;"
     )
+    verify_copy_binding(root, owner, identity)
     expected_rows = {
         t: sorted(
             ([None if c is None else c[1] for c in r["values"]] for r in rows),
@@ -832,6 +902,10 @@ def _verify_destination(bundle, root, pg, expected):
         inventory(Path(root) / "data") == payload_inventory(manifest),
         "destination payload differs",
     )
+    if receipts or proof_exists(Path(root) / "PAYLOAD.json"):
+        verify_payload_receipt(root, owner, identity, complete=receipts)
+    else:
+        require(not proof_exists(Path(root) / "COMPLETE"), "payload receipt missing")
     return identity, manifest["audit"]
 
 
@@ -848,19 +922,47 @@ def _import_bundle(bundle, root, pg, expected, *, failpoint=None, claim_new=None
     status = pg.run("SELECT coalesce(source,'') FROM manure_offline.destination;")
     if not status:
         if not (root / "data").exists():
-            if (root / "incoming").exists():
-                inventory(root / "incoming")
-                shutil.rmtree(root / "incoming")
-            (root / "incoming").mkdir(mode=0o700)
-            for name in ("staging", "live"):
-                copy_tree(Path(bundle) / "raw" / name, root / "incoming" / name)
-            raw_stat = (Path(bundle) / "raw").stat()
-            os.utime(root / "incoming", ns=(raw_stat.st_atime_ns, raw_stat.st_mtime_ns))
-            syncdir(root / "incoming")
-            os.rename(root / "incoming", root / "data")
+            incoming = root / "incoming"
+            if proof_exists(root / "COPY.json"):
+                # Crash after binding the copied inode but before its rename.
+                # A missing/replaced/incomplete incoming tree is not re-blessed.
+                verify_copy_binding(root, owner, identity, incoming)
+                require(
+                    inventory(incoming) == payload_inventory(manifest),
+                    "bound incoming payload mismatch",
+                )
+            else:
+                require(
+                    not proof_exists(root / "PAYLOAD.json")
+                    and not proof_exists(root / "COMPLETE"),
+                    "orphan final receipts",
+                )
+                if incoming.exists():
+                    inventory(incoming)
+                    shutil.rmtree(incoming)
+                incoming.mkdir(mode=0o700)
+                for name in ("staging", "live"):
+                    copy_tree(Path(bundle) / "raw" / name, incoming / name)
+                raw_stat = (Path(bundle) / "raw").stat()
+                os.utime(incoming, ns=(raw_stat.st_atime_ns, raw_stat.st_mtime_ns))
+                syncdir(incoming)
+                require(
+                    inventory(incoming) == payload_inventory(manifest),
+                    "incoming payload mismatch",
+                )
+                # Durable identity BEFORE rename and BEFORE PG writes. A retry
+                # after COMMIT/pre-PAYLOAD cannot bless a replacement data root.
+                atomic(
+                    root / "COPY.json",
+                    canonical(data_binding(incoming, owner, identity, COPY_FORMAT)),
+                )
+                if failpoint:
+                    failpoint("copy_bound")
+            os.rename(incoming, root / "data")
             syncdir(root)
             if claim_new:
                 claim_new()
+        verify_copy_binding(root, owner, identity)
         require(
             inventory(root / "data") == payload_inventory(manifest),
             "payload mismatch before import",
@@ -868,15 +970,27 @@ def _import_bundle(bundle, root, pg, expected, *, failpoint=None, claim_new=None
         if failpoint:
             failpoint("files_durable")
         sql = import_sql(manifest, owner, identity)
-        # Private executable receipt with explicit source/destination guard.
         atomic(root / "import.sql", sql.encode())
         pg.run(sql)
         if failpoint:
             failpoint("metadata_committed")
-    result = _verify_destination(bundle, root, pg, expected)
-    atomic(
-        root / "COMPLETE", canonical({"source": identity, "destination": owner["id"]})
-    )
+    result = _verify_destination(bundle, root, pg, expected, receipts=False)
+    receipt = data_binding(root / "data", owner, identity, PAYLOAD_FORMAT)
+    receipt["entries"] = payload_entries(payload_inventory(manifest))
+    content = canonical(receipt)
+    if proof_exists(root / "PAYLOAD.json"):
+        require(
+            regular_bytes(root / "PAYLOAD.json") == content,
+            "existing payload receipt differs; never regenerate",
+        )
+    else:
+        require(not proof_exists(root / "COMPLETE"), "payload receipt missing")
+        atomic(root / "PAYLOAD.json", content)
+    if failpoint:
+        failpoint("payload_receipt_durable")
+    _, marker = verify_payload_receipt(root, owner, identity, complete=False)
+    if not proof_exists(root / "COMPLETE"):
+        atomic(root / "COMPLETE", canonical(marker))
     return result
 
 
@@ -889,7 +1003,7 @@ def import_bundle(bundle, root, pg, expected, *, failpoint=None):
     # Exclude both a concurrent converter and an active destination backend.
     with claim(root), contextlib.ExitStack() as stack:
         data = Path(root) / "data"
-        if data.exists():
+        if data.exists() or data.is_symlink():
             stack.enter_context(claim(data))
         return _import_bundle(
             bundle,
@@ -902,20 +1016,24 @@ def import_bundle(bundle, root, pg, expected, *, failpoint=None):
 
 
 def mark_writable(root, pg, expected):
-    owner = destination_owner(root, pg)
-    require(
-        json.loads(regular_bytes(Path(root) / "COMPLETE"))["source"] == expected,
-        "verified completion required before writable boundary",
-    )
-    pg.run(
-        "BEGIN;\n"
-        + guard(owner, expected)
-        + assertion(
-            "(SELECT source=" + literal(expected) + " FROM manure_offline.destination)",
-            "source not imported",
+    # No active process or concurrent conversion can change the verified tree
+    # between hashing and the short control-row transaction.
+    with claim(root), claim(Path(root) / "data"):
+        owner = destination_owner(root, pg)
+        pg.run("BEGIN;\n" + guard(owner, expected) + "COMMIT;")
+        verify_copy_binding(root, owner, expected)
+        verify_payload_receipt(root, owner, expected)
+        pg.run(
+            "BEGIN;\n"
+            + guard(owner, expected)
+            + assertion(
+                "(SELECT source="
+                + literal(expected)
+                + " FROM manure_offline.destination)",
+                "source not imported",
+            )
+            + "UPDATE manure_offline.destination SET writes_started=true; COMMIT;"
         )
-        + "UPDATE manure_offline.destination SET writes_started=true; COMMIT;"
-    )
 
 
 def rollback_policy(root, pg):

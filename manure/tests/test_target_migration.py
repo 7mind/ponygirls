@@ -12,6 +12,8 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
+import subprocess
 import sqlite3
 import tempfile
 import time
@@ -28,6 +30,75 @@ import test_offline_conversion as source_fixture
 
 
 class TargetMigrationTests(unittest.TestCase):
+    def test_first_adoption_rejects_replaced_payload_root_without_blessing(self):
+        with tempfile.TemporaryDirectory(prefix='manure-target-replaced-import-') as tmp:
+            root=Path(tmp)
+            with patch.object(source_fixture,'NOW',time.time()):
+                source,config_path,fixture=source_fixture.build_fixture(root)
+            token=A.generate_token();hashfile=root/'operator.digest'
+            hashfile.write_text(A.sha256_hex(token)+'\n');hashfile.chmod(0o600)
+            sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
+            config={'api_origin':f'http://127.0.0.1:{port}','listen_address':'127.0.0.1','port':port,
+                'loopback_dev':True,'content_mode':'path','content_suffix':'','chunk_bytes':source_fixture.CHUNK,
+                'dashboard_dir':None,'unlock_shell_dir':None,'sweep_interval_s':3600,
+                'users':[{'id':source_fixture.OWNER,'type':'human','tokens':[{'id':'token\0λ','hashFile':str(hashfile)}]}]}
+            config_path.write_text(json.dumps(config));original=M.inventory(source)
+            bundle=root/'bundle';identity,_=M.snapshot(source,bundle,config_path,quiesced=True)
+            database=OwnedDatabase(tmp)
+            try:
+                parts=urlsplit(database.jdbc[5:]);service='fixture_'+uuid4().hex
+                servicefile=root/'pg_service.conf'
+                servicefile.write_text(database.migration_service(service))
+                servicefile.chmod(0o600)
+                with patch.dict(os.environ,{'PGSERVICEFILE':str(servicefile)}):
+                    pg=M.Psql(service);destination=root/'destination'
+                    M.prepare_destination(destination,pg,disposable=True)
+                    M.import_bundle(bundle,destination,pg,identity)
+                    database.grant_import_runtime(pg)
+                    M.verify_destination(bundle,destination,pg,identity)
+                    M.mark_writable(destination,pg,identity)
+                    # Replace AFTER a fully verified conversion/write-boundary but
+                    # BEFORE the first target adoption. Keep the old copy intact.
+                    preserved=destination/'original-data';os.rename(destination/'data',preserved)
+                    shutil.copytree(preserved,destination/'data')
+                    aid=fixture['ids']['external']
+                    file=destination/'data'/'live'/aid/source_fixture.PATH
+                    wrong=b'X'*len(source_fixture.PAYLOAD);file.write_bytes(wrong)
+                    config.update(data_dir=str(destination/'data'),migration_receipt_dir=str(destination))
+                    server=None;refused=False
+                    try:
+                        server=TargetServer(config,tmp,owned_database=database,close_database=False)
+                        # This branch is a fail-first witness only: old backend
+                        # serves same-sized wrong bytes under the original hash.
+                        connection=http.client.HTTPConnection('127.0.0.1',server.bound_port,timeout=10)
+                        from urllib.parse import quote
+                        try:
+                            connection.request('GET',f'/api/current/artifacts/{aid}/files/'+quote(source_fixture.PATH,safe='/')+'/content',headers={'Authorization':'Bearer '+token})
+                            response=connection.getresponse();observed=response.read()
+                            self.assertEqual(response.status,200);self.assertEqual(observed,wrong)
+                        finally:connection.close()
+                    except RuntimeError as error:
+                        refused=True
+                        self.assertIn('migration-required',str(error))
+                    finally:
+                        if server is not None:server.close()
+                    self.assertTrue(refused,'target silently adopted a replaced, corrupted converted payload root')
+                    table=pg.run("SELECT to_regclass('manure.root_owner') IS NOT NULL")
+                    self.assertTrue(table=='f' or pg.run('SELECT count(*) FROM manure.root_owner')=='0')
+                    self.assertEqual(pg.run('SELECT writes_started FROM manure_offline.destination'),'t')
+                    # Restore original inode, then corrupt a file IN PLACE. Device/
+                    # inode-only checks are not full snapshot adoption verification.
+                    shutil.rmtree(destination/'data');os.rename(preserved,destination/'data')
+                    file=destination/'data'/'live'/aid/source_fixture.PATH
+                    file.write_bytes(wrong)
+                    with self.assertRaisesRegex(RuntimeError,'migration-required'):
+                        TargetServer(config,tmp,owned_database=database,close_database=False)
+                    self.assertTrue(pg.run("SELECT to_regclass('manure.root_owner') IS NULL")=='t' or pg.run('SELECT count(*) FROM manure.root_owner')=='0')
+                    file.write_bytes(source_fixture.PAYLOAD)
+                    self.assertEqual(M.inventory(source),original)
+                    self.assertEqual(M.verify_bundle(bundle,identity)[0],identity)
+            finally:database.close()
+
     def test_actual_target_import_resume_crash_windows_original_grants_restart_and_fixforward(self):
         with tempfile.TemporaryDirectory(prefix='manure-target-import-') as tmp:
             root=Path(tmp)
@@ -56,18 +127,26 @@ class TargetMigrationTests(unittest.TestCase):
             try:
                 parts=urlsplit(database.jdbc[5:]);service='fixture_'+uuid4().hex
                 servicefile=root/'pg_service.conf'
-                servicefile.write_text(f'[{service}]\nhost={parts.hostname}\nport={parts.port}\ndbname={database.name}\nuser={database.user}\npassfile={database.passfile}\n')
+                servicefile.write_text(database.migration_service(service))
                 servicefile.chmod(0o600)
                 with patch.dict(os.environ,{'PGSERVICEFILE':str(servicefile)}):
                     pg=M.Psql(service)
                     destination=root/'destination';M.prepare_destination(destination,pg,disposable=True)
                     M.import_bundle(bundle,destination,pg,identity)
+                    database.grant_import_runtime(pg)
                     self.assertEqual(M.verify_destination(bundle,destination,pg,identity)[0],identity)
                     config['data_dir']=str(destination/'data');config['migration_receipt_dir']=str(destination)
                     # Before explicit boundary, serve refuses rather than mutating a
                     # supposedly immutable comparison destination during recovery.
                     with self.assertRaisesRegex(RuntimeError,'before readiness'):
                         TargetServer(config,tmp,owned_database=database,close_database=False)
+                    self.assertEqual(M.verify_destination(bundle,destination,pg,identity)[0],identity)
+                    migration_config=dict(config,database=database.config(),native_mode='shared' if os.environ.get('MANURE_POSIX_LIBRARY') else 'linked',posix_library=os.environ.get('MANURE_POSIX_LIBRARY'))
+                    migration_path=root/'migration-only.json';migration_path.write_text(json.dumps(migration_config))
+                    command=json.loads(os.environ['MANURE_TEST_SERVER_COMMAND_JSON'])
+                    checked=subprocess.run(command+['migrate',str(migration_path)],stdin=subprocess.DEVNULL,capture_output=True,timeout=90)
+                    self.assertEqual(checked.returncode,0,checked.stderr.decode()[-4096:])
+                    self.assertEqual(pg.run('SELECT count(*) FROM manure.root_owner'),'0')
                     self.assertEqual(M.verify_destination(bundle,destination,pg,identity)[0],identity)
                     M.mark_writable(destination,pg,identity)
                     self.assertIn('fix-forward',M.rollback_policy(destination,pg))
