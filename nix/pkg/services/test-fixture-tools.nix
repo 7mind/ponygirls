@@ -14,7 +14,8 @@ in runCommand "ponygirls-owned-service-test-tools" {
       --set PG_PROVIDER ${../../postgres/provider.py} \
       --set PONYGIRLS_TEST_PROVISION_SERVICE "$service"
   done
-  makeWrapper ${pkgs.coreutils}/bin/env "$out/bin/with-browser-environment" \
+  makeWrapper ${pkgs.bash}/bin/bash "$out/bin/with-browser-environment" \
+    --add-flags ${../../tests/with-browser-environment.sh} \
     --set HAYSTACK_CHROMIUM ${pkgs.chromium}/bin/chromium \
     --set HAYSTACK_NGINX ${pkgs.nginx}/bin/nginx \
     --set FONTCONFIG_FILE ${pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; }} \

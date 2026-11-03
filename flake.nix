@@ -974,6 +974,7 @@
           '';
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
           haystack-proxy = import ./nix/tests/haystack-proxy.nix { inherit pkgs inputs; haystackPackage = self.packages.${system}.haystack; };
+          service-fixture-browser-home = import ./nix/tests/fixture-browser-home.nix { inherit pkgs; fixtureTools=self.packages.${system}.service-test-fixture-tools; };
           service-fixture-tool-closure = import ./nix/tests/fixture-tool-closure.nix { inherit pkgs; fixtureTools=self.packages.${system}.service-test-fixture-tools; };
           haystack-browser = import ./nix/tests/haystack-browser.nix {
             inherit pkgs;
