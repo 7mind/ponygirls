@@ -79,7 +79,7 @@ client or model worker; semantic/hybrid requests return typed unavailable):
 ```
 
 Every field required when configured; synthetic local example, not authorization
-to transmit existing/private data. `leaseSeconds >= ceil(deadlineMs/1000)+5`.
+to transmit existing/private data. `leaseSeconds` is explicitly bounded to 3..3600; the shared worker renews fenced leases during provider IO, so a finite provider deadline may exceed one lease.
 Only authenticated management search over ready/unexpired names+manifest paths is
 indexed; never credentials/grants/password hashes or payload/file bytes. Writes
 atomically enqueue source jobs using caller Connection; model calls happen only
