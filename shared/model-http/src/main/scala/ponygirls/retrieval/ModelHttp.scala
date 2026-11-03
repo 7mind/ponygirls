@@ -9,8 +9,8 @@ import org.http4s.client.Client
 import org.http4s.ember.client.EmberClientBuilder
 import org.typelevel.ci.CIString
 import java.nio.charset.StandardCharsets.UTF_8
-import java.nio.file.{Files,Path,LinkOption,StandardOpenOption}
-import scala.util.Using
+import java.nio.file.Path
+import ponygirls.runtime.BoundedSecretFile
 import scala.concurrent.duration.*
 
 /** Full operation URL and explicit credential reference. Empty file contents mean no auth;
@@ -39,16 +39,9 @@ object JsonHttp {
   }
   def credential(path: String): IO[String] = IO.blocking {
     try {
-      // Explicit, trusted operator references may be managed symlinks (agenix).
-      // Resolve on every call, require regular leaf, and bound ACTUAL bytes read.
-      // This is not the adversarial payload-path filesystem capability boundary.
-      val file=Path.of(path)
-      RetrievalChecks(file.isAbsolute,"config","model credential file unavailable")
-      val resolved=file.toRealPath()
-      RetrievalChecks(Files.isRegularFile(resolved,LinkOption.NOFOLLOW_LINKS),"config","model credential file unavailable")
-      val bytes=Using.resource(Files.newInputStream(resolved,StandardOpenOption.READ,LinkOption.NOFOLLOW_LINKS))(_.readNBytes(16385))
-      RetrievalChecks(bytes.length<=16384,"config","model credential exceeds bound")
-      val value=UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString.stripTrailing()
+      // Shared raw bounded reader; model policy deliberately permits empty auth
+      // and retains Chronicle's trailing-whitespace stripping at this boundary.
+      val value=BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
       RetrievalChecks(!value.exists(c => c<' ' || c==127.toChar),"config","invalid model credential")
       value
     } catch { case error: RetrievalError => throw error; case _: Exception => throw RetrievalError("config","model credential file unavailable") }

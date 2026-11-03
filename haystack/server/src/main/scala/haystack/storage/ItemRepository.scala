@@ -10,6 +10,7 @@ trait ItemRepository {
   def revision(key: ItemKey, revision: Long): IO[Option[StoredItem]]
   def history(key: ItemKey): IO[Vector[RevisionMeta]]
   def allCurrent(): IO[Vector[StoredItem]]
+  def search(input:haystack.query.SearchInput):IO[haystack.query.SearchResult]=allCurrent().map(haystack.query.Search.search(_,input))
   /** Includes terminal validation/CAS outcomes. An IO failure is uncertain,
     * never permission to retry under a new identity. */
   def commit(operation: AcceptedOperation, principal: Principal, now: Instant): IO[CommitSuccess]
@@ -23,7 +24,8 @@ private[storage] object Mutation {
       else if (current.exists(_.revision != operation.expectedRevision)) Left(Fault("conflict", "revision conflict", current.map(_.revision)))
       else if (current.exists(_.revision >= Int.MaxValue)) Left(Fault("conflict", "revision limit reached", current.map(_.revision)))
       else {
-        val metadata = current.fold(ItemMetadata(now, principal.userId, now, principal.userId))(s => s.metadata.copy(modifiedAt = now, modifiedBy = principal.userId))
+        val timestamp=now.truncatedTo(java.time.temporal.ChronoUnit.MICROS)
+        val metadata = current.fold(ItemMetadata(timestamp, principal.userId, timestamp, principal.userId))(s => s.metadata.copy(modifiedAt = timestamp, modifiedBy = principal.userId))
         Right(StoredItem(operation.key, current.fold(1L)(_.revision + 1), document, operation.documentCanonical, metadata))
       }
     }

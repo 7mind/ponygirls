@@ -36,7 +36,7 @@ immutable value. All four bounds are inclusive:
 |---|---:|---:|
 | Complete source UTF-8 bytes (whitespace included) | 1048576 | 1..16777216 |
 | Nested containers, including empty containers | 64 | 0..128 |
-| Number token characters (sign/punctuation/exponent included) | 4096 | 1..65536 |
+| Number token characters (sign/punctuation/exponent included) | 4096 | 1..1048576 |
 | Absolute explicit exponent | 999999 | 0..999999 |
 
 A scalar root has depth 0; `[]` has depth 1; `[{}]` has depth 2. Rejection

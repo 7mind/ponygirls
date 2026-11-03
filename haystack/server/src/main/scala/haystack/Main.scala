@@ -32,7 +32,8 @@ object Main extends IOApp {
     case _=>IO.println("usage: haystack-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json").as(ExitCode.Error)
   }).handleErrorWith(_=>IO.println("haystack: startup or runtime failure").as(ExitCode.Error))
 
-  private def serve(config:Config,file:Path,database:JdbcDatabase):IO[Unit]={
+  private def serve(config:Config,file:Path,database:JdbcDatabase):IO[Unit]=GracefulShutdown.resource.use(stop=>serveOwned(config,file,database).race(stop).void)
+  private def serveOwned(config:Config,file:Path,database:JdbcDatabase):IO[Unit]={
     val client:Resource[IO,Option[EmbeddingClient]]=config.retrieval.embedding match{
       case None=>Resource.pure(None)
       case Some(endpoint)=>EmbeddingClient.resource(endpoint,config.retrieval.maxConcurrent,config.retrieval.maxQueued,EmbeddingTelemetry.noop).map(Some(_))
@@ -44,15 +45,14 @@ object Main extends IOApp {
       hub<-LiveHub.create
       projection=new HaystackRetrieval(database,config.retrieval.policy,new PostgresRetrieval("haystack",config.retrieval.embedding.map(e=>RetrievalProfile(e.space,config.retrieval.policy.id))),embedding,config.retrieval.batchSize)
       repository=new PostgresItemRepository(database,Some(projection))
-      items<-repository.allCurrent()
-      _<-projection.initialize(items)
+      _<-repository.initializeProjection()
       // Every reload is fail-closed; invalid/unreadable replacement config
       // revokes access until repaired, rather than retaining stale authority.
       reload=(IO.sleep(config.authReloadMs.millis) *> IO.blocking { val next=Config.load(file);if(next.auth.activityProjectId!=config.auth.activityProjectId)throw haystack.domain.Fault("config","activity namespace mismatch");Auth.load(next.auth) }.attempt.flatMap(value=>IO(reference.set(value)))).foreverM
       graph=new ModuleDef{
         make[ItemRepository].fromValue(repository)
         make[LiveHub].fromValue(hub)
-        make[ItemService].from((repo:ItemRepository,live:LiveHub)=>new ItemService(repo,live.changed))
+        make[ItemService].from((repo:ItemRepository,live:LiveHub)=>new ItemService(repo,(key,revision)=>live.changed(key,revision,getAuth())))
         make[HaystackRetrieval].fromValue(projection)
         make[Http].from((service:ItemService,live:LiveHub)=>new Http(getAuth,service,live,config.webRoot,projection))
         make[Services]
@@ -60,7 +60,7 @@ object Main extends IOApp {
       _<-CatsIOInjector().produceGet[Services](graph).use { services=>
         EmberServerBuilder.default[IO].withHost(Host.fromString(config.listenHost).getOrElse(throw haystack.domain.Fault("config","invalid listen host")))
           .withPort(Port.fromInt(config.listenPort).getOrElse(throw haystack.domain.Fault("config","invalid port")))
-          .withMaxConnections(128).withMaxHeaderSize(16384).withHttpWebSocketApp(ws=>services.http.routes(ws).orNotFound).build.use { _=>
+          .withShutdownTimeout(2.seconds).withMaxConnections(128).withMaxHeaderSize(16384).withMaxWebSocketMessageSize(1024*1024).withHttpWebSocketApp(ws=>services.http.routes(ws).orNotFound).build.use { _=>
             IO.println("haystack: ready") *> (reload,services.retrieval.run).parTupled.void
           }
       }

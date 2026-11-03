@@ -1,0 +1,106 @@
+{
+  "format": "old-production-ts-admission-fixtures-v1",
+  "provenance": "Actual retained TS parseRaw + validateDocument; accepted fixtures acknowledged through actual old ItemService over its handwritten memory adapter. PG JSONB/current/history preservation is exercised separately by Scala tests.",
+  "sourceDigests": {
+    "server/src/domain/document.ts": "0beb05d5108055801d9526fb3b02a4139aa7d5820d7cec2f938f5ea2870f39f5",
+    "server/src/domain/json.ts": "c455a3b9882eb556796189a661f126f27587956cd67dc3b1d296d002f14d9c16",
+    "server/src/domain/qid.ts": "cd40e6e2fe3e284cfafebd20ca14f07d1962b096a8a5be947bb243551b9a1e50",
+    "server/src/application/service.ts": "03b4d6278b7fed2aa41ea8fe271a64acbb86cf1845316cfc166ecf881b1455ca",
+    "server/src/storage/memory.ts": "5d8d21b8bec4141f69f99e05042efed834721213eebc5554f575e85ab00c5d38",
+    "server/src/mcp/adapter.ts": "b44272f196f601917c1d21e44f06a10a1b7129759d306d6e6aaf9ed071068beb",
+    "package-lock.json": "d529dc8999edc28b4ed61f893b1fcac97a18806b6c01cdd799da9c6756af66a8"
+  },
+  "oldMcpMaxUtf16": 1049600,
+  "fixtures": [
+    {
+      "name": "coefficient-100000",
+      "file": "coefficient-100000.json.gz",
+      "accepted": true,
+      "newWrite": true,
+      "sha256": "6289955cc877f33a8368da6d68c7b63725bcec02e9b127eb8a8550465bbb9bff",
+      "utf16Chars": 100202,
+      "utf8Bytes": 100202
+    },
+    {
+      "name": "object-key-262145",
+      "file": "object-key-262145.json.gz",
+      "accepted": true,
+      "newWrite": true,
+      "sha256": "0dd5b26a456d76338e8788e5958567b783a9557e65a9edc3fa4cb62765b61021",
+      "utf16Chars": 262338,
+      "utf8Bytes": 262338
+    },
+    {
+      "name": "fields-64-arrays-scalar",
+      "file": "fields-64-arrays-scalar.json.gz",
+      "accepted": true,
+      "newWrite": true,
+      "sha256": "bdd08f82d226f68052d1af0c75196fdbe3e0359c7c7cf9d3bdb2e6167db3f18b",
+      "utf16Chars": 310,
+      "utf8Bytes": 310
+    },
+    {
+      "name": "fields-65-empty-arrays",
+      "file": "fields-65-empty-arrays.json.gz",
+      "accepted": true,
+      "newWrite": true,
+      "sha256": "a1ca4e4c5e4b44c5ed060393af9aee0adb3a0d08516afd4f9ec81b8d17b42adf",
+      "utf16Chars": 311,
+      "utf8Bytes": 311
+    },
+    {
+      "name": "fields-65-arrays-scalar",
+      "file": "fields-65-arrays-scalar.json.gz",
+      "accepted": false,
+      "newWrite": false,
+      "sha256": "4d59edcf95c158a1fe24b0523fd6d8b13a6e502f104ea58d457489f1e0a50e5c",
+      "utf16Chars": 312,
+      "utf8Bytes": 312
+    },
+    {
+      "name": "fields-66-empty-arrays",
+      "file": "fields-66-empty-arrays.json.gz",
+      "accepted": false,
+      "newWrite": false,
+      "sha256": "819c788314a775c4184c113c9ac67b7d51bf4685200da3772a02427945ccc838",
+      "utf16Chars": 313,
+      "utf8Bytes": 313
+    },
+    {
+      "name": "unicode-bmp-over-new-byte-envelope",
+      "file": "unicode-bmp-over-new-byte-envelope.json.gz",
+      "accepted": true,
+      "newWrite": false,
+      "sha256": "cccedeeee18b80d3e3d26d794d851b39b073922b507c0d527526181b752c7840",
+      "utf16Chars": 600191,
+      "utf8Bytes": 1800191
+    },
+    {
+      "name": "unicode-astral-over-new-byte-envelope",
+      "file": "unicode-astral-over-new-byte-envelope.json.gz",
+      "accepted": true,
+      "newWrite": false,
+      "sha256": "f8d1927f63df8e7cbad3af95ede92fd4adce44186463d81e4390e485084436ff",
+      "utf16Chars": 720191,
+      "utf8Bytes": 1440191
+    },
+    {
+      "name": "tag-non-whitespace-control",
+      "file": "tag-non-whitespace-control.json.gz",
+      "accepted": true,
+      "newWrite": true,
+      "sha256": "d96a1dec749b7e826168add9855b37ea42e2b123947cd1d0282499889b61049a",
+      "utf16Chars": 210,
+      "utf8Bytes": 210
+    },
+    {
+      "name": "field-string-262145",
+      "file": "field-string-262145.json.gz",
+      "accepted": false,
+      "newWrite": false,
+      "sha256": "0b458e6e4bb8ee812b7f8b4b96f94dec903106b9d8fae58cb99dc27e4a3a6390",
+      "utf16Chars": 262328,
+      "utf8Bytes": 262328
+    }
+  ]
+}

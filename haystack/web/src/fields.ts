@@ -1,5 +1,5 @@
 import { isLosslessNumber, stringify, type LosslessNumber } from "lossless-json";
-import { parseRaw as parse } from "../../server/src/domain/json.ts";
+import { parseRaw as parse } from "./lossless-json.ts";
 
 type JsonValue = string | boolean | null | LosslessNumber | JsonValue[] | JsonObject;
 interface JsonObject { [key: string]: JsonValue }

@@ -150,11 +150,21 @@ class LosslessJsonTest extends munit.FunSuite {
     intercept[IllegalArgumentException](StandardLimits.copy(maxExponentAbs = -1))
   }
 
+  test("explicit document-sized number policy preserves large stored coefficients") {
+    val limits = StandardLimits.copy(maxNumberChars = 1024 * 1024)
+    val coefficient = "9" * 100000
+    val value = read(coefficient, limits).asInstanceOf[Number]
+    assertEquals(encode(value), coefficient)
+    assertEquals(value.compare(read("9" * 99999 + "8", limits).asInstanceOf[Number]), 1)
+    assertEquals(read("1" + "0" * 100000, limits).asInstanceOf[Number].compare(number("1e100000")), 0)
+    reject(coefficient, "number-limit", StandardLimits)
+  }
+
   test("configured lower and upper ceilings are operational") {
     read("0", StandardLimits.copy(maxBytes = 1, maxNumberChars = 1, maxDepth = 0, maxExponentAbs = 0))
     reject("-0", "number-limit", StandardLimits.copy(maxNumberChars = 1))
-    val largest = StandardLimits.copy(maxBytes = 16 * 1024 * 1024, maxNumberChars = 65536)
-    val coefficient = "9" * 65536
+    val largest = StandardLimits.copy(maxBytes = 16 * 1024 * 1024, maxNumberChars = 1024 * 1024)
+    val coefficient = "9" * largest.maxNumberChars
     assertEquals(encode(read(coefficient, largest)), coefficient)
     reject(coefficient + "9", "number-limit", largest)
     val fullInput = " " * (largest.maxBytes - 1) + "0"
@@ -162,7 +172,7 @@ class LosslessJsonTest extends munit.FunSuite {
     reject(fullInput + " ", "byte-limit", largest)
     intercept[IllegalArgumentException](StandardLimits.copy(maxBytes = 16777217))
     intercept[IllegalArgumentException](StandardLimits.copy(maxDepth = -1))
-    intercept[IllegalArgumentException](StandardLimits.copy(maxNumberChars = 65537))
+    intercept[IllegalArgumentException](StandardLimits.copy(maxNumberChars = 1024 * 1024 + 1))
     intercept[IllegalArgumentException](StandardLimits.copy(maxExponentAbs = 1000000))
   }
 

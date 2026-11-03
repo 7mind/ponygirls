@@ -28,7 +28,12 @@ object Tokens {
     MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.US_ASCII)).map(b => f"${b & 255}%02x").mkString
   }
   private def read(path: String, length: Int, pattern: String): String = {
-    val raw = try Files.readAllBytes(Path.of(path)) catch { case _: Exception => throw Fault("config", "unreadable credential file") }
+    // At most exact bytes + optional LF + one overflow byte. A malformed
+    // runtime file cannot force allocation proportional to its source size.
+    val raw = try {
+      val input = Files.newInputStream(Path.of(path))
+      try input.readNBytes(length + 2) finally input.close()
+    } catch { case _: Exception => throw Fault("config", "unreadable credential file") }
     val body = if (raw.lastOption.contains(10.toByte)) raw.dropRight(1) else raw
     if (body.length != length || body.exists(b => b < 0 || b == 0 || b == 10 || b == 13)) throw Fault("config", "malformed credential file")
     val text = new String(body, StandardCharsets.US_ASCII)
@@ -64,12 +69,13 @@ object Auth {
       if (uri.getScheme != "http" || !config.allowedOrigins.contains(raw) || !config.allowedHosts.exists(_.equalsIgnoreCase(uri.getHost)) || conflicts)
         throw Fault("config", "insecure origins require a dedicated allowed HTTP authority")
     }
+    def idWhitespace(c: Char): Boolean = Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '\uFEFF'
     val entries = config.users.flatMap { user =>
-      if (!user.id.matches("[^\\s:]{1,128}") || !Set("human", "agent").contains(user.userType)) throw Fault("config", "invalid user")
+      if (!user.id.matches("[^\\s:]{1,128}") || user.id.exists(idWhitespace) || !Set("human", "agent").contains(user.userType)) throw Fault("config", "invalid user")
       if (user.tokens.isEmpty) throw Fault("config", "user has no tokens")
       unique(user.tokens.map(_.id), "duplicate token id")
       user.tokens.map { token =>
-        if (!token.id.matches("[^\\s:]{1,64}")) throw Fault("config", "invalid token id")
+        if (!token.id.matches("[^\\s:]{1,64}") || token.id.exists(idWhitespace)) throw Fault("config", "invalid token id")
         Tokens.readDigest(token.hashFile) -> Principal(user.id, user.userType, token.id)
       }
     }
@@ -84,14 +90,14 @@ object Origin {
   def canonical(value: String): URI = {
     val uri = try new URI(value) catch { case _: Exception => throw Fault("config", "invalid origin") }
     val scheme = uri.getScheme
-    if (!Set("http", "https").contains(scheme) || uri.getHost == null || uri.getRawUserInfo != null || uri.getRawQuery != null || uri.getRawFragment != null || Option(uri.getRawPath).exists(_.nonEmpty) || uri.getHost != uri.getHost.toLowerCase(Locale.ROOT) || uri.getPort == (if (scheme == "https") 443 else 80))
+    if (!Set("http", "https").contains(scheme) || uri.getPort > 65535 || uri.getHost == null || uri.getRawUserInfo != null || uri.getRawQuery != null || uri.getRawFragment != null || Option(uri.getRawPath).exists(_.nonEmpty) || uri.getHost != uri.getHost.toLowerCase(Locale.ROOT) || uri.getPort == (if (scheme == "https") 443 else 80))
       throw Fault("config", "invalid canonical origin")
     uri
   }
   def requestAuthority(host: String): URI = {
     if (host.isEmpty || host.exists(c => c.isWhitespace || "/@?#\\".contains(c))) throw Fault("forbidden", "disallowed host")
     val uri = try new URI("http://" + host) catch { case _: Exception => throw Fault("forbidden", "disallowed host") }
-    if (uri.getHost == null || uri.getRawUserInfo != null) throw Fault("forbidden", "disallowed host")
+    if (uri.getHost == null || uri.getPort > 65535 || uri.getRawUserInfo != null) throw Fault("forbidden", "disallowed host")
     uri
   }
 }

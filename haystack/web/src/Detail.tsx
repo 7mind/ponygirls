@@ -179,6 +179,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
     if (item === null) return;
     setConflict(null);
     setStatus("Saving…");
+    editRevision.current = item.revision;
     await saveWithRevision(item.revision);
   }
 

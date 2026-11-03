@@ -31,7 +31,6 @@ package haystack.api {
     register("haystack.api/:#HistoryResult", Lazy(HistoryResult_JsonCodec))
     register("haystack.api/:#AnalyzeResult", Lazy(AnalyzeResult_JsonCodec))
     register("haystack.api/:#SearchResult", Lazy(SearchResult_JsonCodec))
-    register("haystack.api/:#ValuesResult", Lazy(ValuesResult_JsonCodec))
     register("haystack.api/:#QueryRequest", Lazy(QueryRequest_JsonCodec))
     register("haystack.api/:#RetrievalMode", Lazy(RetrievalMode_JsonCodec))
     register("haystack.api/:#RetrievedSource", Lazy(RetrievedSource_JsonCodec))
@@ -46,5 +45,7 @@ package haystack.api {
     register("haystack.api/:#GetRequest", Lazy(GetRequest_JsonCodec))
     register("haystack.api/:#LoginRequest", Lazy(LoginRequest_JsonCodec))
     register("haystack.api/:#RetrieveRequest", Lazy(RetrieveRequest_JsonCodec))
+    register("haystack.api/:#LiveFrame", Lazy(LiveFrame_JsonCodec))
+    register("haystack.api/:#ValuesResult", Lazy(ValuesResult_JsonCodec))
   }
 }
