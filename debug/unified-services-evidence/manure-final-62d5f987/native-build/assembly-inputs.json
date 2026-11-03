@@ -1,0 +1,11 @@
+{
+  "assemblySha256": "fd251f85a3ff0d3ce95b594cc619ef21b475044867758c1385b53772a968f852",
+  "unicodeCaseFoldSourceSha256": "6805e5af7114a909f6da8d410fd747251fdf754a205a6141d71689b601ff8bc8",
+  "assemblyEntrySha256": {
+    "003_catalogue.sql": "66cc960108bf1c973ea228501f376fb7141af84aa5d52fbe4df579736c8bb484",
+    "manure-schema.sql": "60bcf836d17a97f6eda60cbbec73a6edad96c0ce98f558fe98ae82b4981de6cd",
+    "manure/UnicodeCaseFold.class": "0b906286123278122e3897fea5cb750fb4be6869f0b6147459ffc62ffe35d3fd",
+    "manure/UnicodeCaseFold$.class": "56dacd420f349e75d401a84271e034c6ebb79f2da4f2fea61e44f533c3a20bc9"
+  },
+  "verification": "actual assembly SQL bytes equal filtered source; generated Scala class entries exist before native-image"
+}

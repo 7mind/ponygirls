@@ -1,0 +1,6 @@
+d978838126b012520739460223032fc9005a963f6befa70f227f5cbae92c9f07  manure/backend/src/test/scala/manure/WideAudienceAuditSuite.scala
+c99c7ff5c11cf54e62b4cca46a0798835f249a3dced4083700049951873ef0ff  manure/manure/domain.py
+9829ae36d892ca75be652880de1166540df1bd9c20c6915c3a73d61758dd3ca0  manure/backend/src/main/scala/manure/Main.scala
+880c685373e77e067d5602b00ee0a7751332cf8e52d498f1836f26d461bb8c34  manure/backend/src/main/scala/manure/Config.scala
+f4fdbd2a7f3adcee48a70f51ba82d9e700975d76077f41e14b323b4633a2ee8c  manure/backend/src/main/scala/manure/Search.scala
+fd943419634625fce6f46e4b5675ae5468eb4e47adb4cde9b6c9d049c458c4a2  shared/retrieval-postgres/src/main/scala/ponygirls/retrieval/postgres/PostgresRetrieval.scala

@@ -1,0 +1,7 @@
+4862f2c6cb0feb65d08c1a4168c99a75a1defd4407581990f5df6222f73b0710  haystack/server/tests-current/authority-lifetime.test.mjs
+7c17b6ed2ba2ec619ae60a7891531161a2ffc4fc70f75c0ded976fca04380a9d  haystack/server/tests-current/fixture.mjs
+178701f9328ab305d52188238fd83fbc221ea890ebcfb8db4d1509ee1afcbf67  haystack/server/tests-current/http.test.mjs
+a9390a6537252262d3767cd6cada08cf020e6b573cc87f372e652de75fcb3586  haystack/server/tests-current/mcp-live.test.mjs
+26ed975789f1d18eb11cbbb6ec6e441fc10cea1644901b1f505b7e0f2c9141bb  haystack/server/tests-current/ownership.test.mjs
+07b7fefc516a61c803cd38f6417094aa1da724793605ebe6e8b12d22acd39e33  haystack/server/tests-current/provision.test.mjs
+c75b9c48f8d1fdb6058711a50122cc70baf69df69d181f896ad9d29bcf3a3bd1  haystack/server/tests-current/runtime-model.test.mjs

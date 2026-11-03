@@ -1,0 +1,6 @@
+commands: 20 vectors
+results: 49 vectors
+content: 4 vectors
+chunks: 1 vectors
+TypeScript generated codec goldens: 74 vectors passed; sole current API
+Search source/generation/policy/profile/space/provenance goldens passed
