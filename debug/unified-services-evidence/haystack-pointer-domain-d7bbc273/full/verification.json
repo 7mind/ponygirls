@@ -1,0 +1,15 @@
+{
+  "sourceCommit": "d7bbc273bdad19c3b37fdf607e133d6f98bdfd00",
+  "report": "/tmp/nix-shell.aWkSKm/haystack-scala-report.XLUOwP",
+  "suiteCount": 31,
+  "counts": {
+    "tests": 705,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "commandExit": 0,
+  "sourceUnchanged": true,
+  "ownedPostgresStopConfirmed": true,
+  "sourceInputManifestSha256": "3d30f82e09d2bb9b7c703595b742905ccdfdfccfe450f6f277e365fdb7f3a622"
+}
