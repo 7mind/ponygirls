@@ -1,5 +1,5 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
-import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
 import {RetrievalMode, RetrievalMode_JsonCodec} from './RetrievalMode.js'
 import {RetrievedSource, RetrievedSource_JsonCodec} from './RetrievedSource.js'
 
@@ -7,11 +7,15 @@ export class RetrieveResult implements BaboonGeneratedLatest {
     private readonly _sources: Array<RetrievedSource>;
     private readonly _mode: RetrievalMode;
     private readonly _countScope: string;
+    private readonly _total: bigint;
+    private readonly _rankingLimit: number | undefined;
 
-    constructor(sources: Array<RetrievedSource>, mode: RetrievalMode, countScope: string) {
+    constructor(sources: Array<RetrievedSource>, mode: RetrievalMode, countScope: string, total: bigint, rankingLimit: number | undefined) {
         this._sources = sources
         this._mode = mode
         this._countScope = countScope
+        this._total = total
+        this._rankingLimit = rankingLimit
     }
 
     public get sources(): Array<RetrievedSource> {
@@ -23,28 +27,40 @@ export class RetrieveResult implements BaboonGeneratedLatest {
     public get countScope(): string {
         return this._countScope;
     }
+    public get total(): bigint {
+        return this._total;
+    }
+    public get rankingLimit(): number | undefined {
+        return this._rankingLimit;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
             sources: this._sources,
             mode: this._mode,
-            countScope: this._countScope
+            countScope: this._countScope,
+            total: this._total,
+            rankingLimit: this._rankingLimit !== undefined ? this._rankingLimit : undefined
         };
     }
 
-    public with(overrides: {sources?: Array<RetrievedSource>; mode?: RetrievalMode; countScope?: string}): RetrieveResult {
+    public with(overrides: {sources?: Array<RetrievedSource>; mode?: RetrievalMode; countScope?: string; total?: bigint; rankingLimit?: number | undefined}): RetrieveResult {
         return new RetrieveResult(
             'sources' in overrides ? overrides.sources! : this._sources,
             'mode' in overrides ? overrides.mode! : this._mode,
-            'countScope' in overrides ? overrides.countScope! : this._countScope
+            'countScope' in overrides ? overrides.countScope! : this._countScope,
+            'total' in overrides ? overrides.total! : this._total,
+            'rankingLimit' in overrides ? overrides.rankingLimit! : this._rankingLimit
         );
     }
 
-    public static fromPlain(obj: {sources: Array<RetrievedSource>; mode: RetrievalMode; countScope: string}): RetrieveResult {
+    public static fromPlain(obj: {sources: Array<RetrievedSource>; mode: RetrievalMode; countScope: string; total: bigint; rankingLimit: number | undefined}): RetrieveResult {
         return new RetrieveResult(
             obj.sources,
             obj.mode,
-            obj.countScope
+            obj.countScope,
+            obj.total,
+            obj.rankingLimit
         );
     }
 
@@ -87,6 +103,8 @@ export class RetrieveResult_JsonCodec {
             "sources": Array.from(value.sources).map(item => RetrievedSource_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "mode": RetrievalMode_JsonCodec.instance.encode(BaboonCodecContext.Default, value.mode),
             "countScope": value.countScope,
+            "total": value.total.toString(),
+            "rankingLimit": value.rankingLimit === undefined ? null : value.rankingLimit,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): RetrieveResult {
@@ -99,6 +117,8 @@ export class RetrieveResult_JsonCodec {
             (obj["sources"] as unknown[]).map(item => RetrievedSource_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             RetrievalMode_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["mode"]),
             obj["countScope"] as string,
+            BaboonInt64.read(obj["total"], "i64/u64"),
+            obj["rankingLimit"] === undefined || obj["rankingLimit"] === null ? undefined : obj["rankingLimit"] === undefined || obj["rankingLimit"] === null ? undefined : obj["rankingLimit"] as number,
         )
     }
 

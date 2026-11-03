@@ -19,7 +19,7 @@ import java.nio.file.{Files,Path}
 
 /** Transport owns credentials and bounded decoding only. All mutation and
   * search semantics live in the application/repository shared with MCP. */
-final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option[Path]) {
+final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option[Path],retrieval:haystack.retrieval.HaystackRetrieval) {
   private val limiter=new RateLimiter
   private def all(r:Request[IO],name:String):Vector[String]=r.headers.headers.filter(_.name==CIString(name)).map(_.value).toVector
   private def headers(r:Request[IO]):RequestHeaders=RequestHeaders(all(r,"Host").headOption.getOrElse(""),all(r,"Authorization"),all(r,"Cookie"),all(r,"Origin"),all(r,"Sec-Fetch-Site").headOption)
@@ -43,7 +43,8 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     version(r)
     val auth=getAuth(); val resolved=Sessions.resolve(auth,headers(r),mutate)
     limiter.check(resolved.principal,auth.config.rateLimit)
-    f(resolved).map { response =>
+    f(resolved).attempt.map { outcome =>
+      val response=outcome.fold(failure,identity)
       if(resolved.cookie) response.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(resolved.token),resolved.secureCookie))) else response
     }
   }
@@ -60,6 +61,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
   private def failure(error:Throwable):Response[IO]={
     val (code,spans,current)=error match {
       case f:Fault=>(f.code,List.empty[api.Span],f.currentRevision.map(_.toInt))
+      case _:ponygirls.retrieval.RetrievalError=>("unavailable",List.empty[api.Span],None)
       case q:haystack.query.InvalidQuery=>("invalid-query",q.diagnostics.map(d=>api.Span(d.message,d.span.start,d.span.end)).toList,None)
       case _:haystack.query.InvalidCursor=>("invalid-cursor",List.empty[api.Span],None)
       case _=>("unavailable",List.empty[api.Span],None)
@@ -68,7 +70,8 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     json(status(code),Wire.encode(api.Failure.codecJson,api.Failure(code,code.replace('-',' '),spans,current)))
   }
   private def handled(operation: =>IO[Response[IO]]):IO[Response[IO]]=IO.defer(operation).handleError(e=>failure(e))
-  def routes(ws:WebSocketBuilder2[IO]):HttpRoutes[IO]=HttpRoutes.of[IO] {
+  def routes(ws:WebSocketBuilder2[IO]):HttpRoutes[IO]={
+    val core=HttpRoutes.of[IO] {
     case GET -> Root / "api" / "versions" =>IO.pure(ok(api.VersionInfo.codecJson,Wire.versions))
     case GET -> Root / "api" / "v1" / "health" =>IO.pure(ok(api.Ack.codecJson,api.Ack(true)))
     case r @ POST -> Root / "api" / "v1" / "login" =>handled {
@@ -95,6 +98,22 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       val input=Wire.decode(api.SearchRequest.codecJson,raw)
       service.search(SearchInput(input.query,input.project,input.limit,input.cursor,SearchSort(input.sort.field,input.sort.direction))).map(result=>ok(api.SearchResult.codecJson,api.SearchResult(result.items.map(Wire.summary).toList,result.cursor)))
     }}}
+    case r @ POST -> Root / "api" / "v1" / "retrieve" =>handled {authed(r) { a=>body(r).flatMap { raw=>
+      val input=Wire.decode(api.RetrieveRequest.codecJson,raw)
+      val mode=input.mode match {
+        case api.RetrievalMode.Lexical=>ponygirls.retrieval.RetrievalMode.Lexical
+        case api.RetrievalMode.Semantic=>ponygirls.retrieval.RetrievalMode.Semantic
+        case api.RetrievalMode.Hybrid=>ponygirls.retrieval.RetrievalMode.Hybrid
+      }
+      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).map { page=>
+        if(!getAuth().authenticate(a.token).contains(a.principal)) throw Fault("unauthorized","session revoked")
+        val sources=page.hits.map { hit=>
+          val revision=hit.version.takeWhile(_!='/').toInt
+          api.RetrievedSource(hit.id,revision,hit.chunk.provenance.pointer.getOrElse(""),hit.chunk.text,hit.score,hit.generation)
+        }
+        ok(api.RetrieveResult.codecJson,api.RetrieveResult(sources,input.mode,page.countScope.toString,page.total,page.rankingLimit))
+      }
+    }}}
     case r @ POST -> Root / "api" / "v1" / "history" =>handled {authed(r) { _=>body(r).flatMap { raw=>
       val input=Wire.decode(api.HistoryRequest.codecJson,raw)
       service.history(input.key).map(revisions=>ok(api.HistoryResult.codecJson,api.HistoryResult(revisions.map(v=>api.RevisionInfo(v.revision.toInt,v.modifiedAt.toString,v.modifiedBy,v.tokenId)).toList)))
@@ -120,6 +139,17 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     }
     case r if r.uri.path.renderString=="/mcp"=>IO.pure(json(Status.MethodNotAllowed,Json.Null).putHeaders(Header.Raw(CIString("Allow"),"POST")))
     case r if r.method==Method.GET && !r.uri.path.renderString.startsWith("/api/")=>handled(static(r))
+    case r if r.uri.path.renderString.startsWith("/api/")=>IO.pure(failure(Fault("not-found","unknown API operation")))
+  }
+    cats.data.Kleisli { request=>
+      val start=System.nanoTime()
+      core(request).semiflatMap { response=>
+        val path=request.uri.path.renderString
+        val label=if(path=="/mcp") "mcp" else if(path.startsWith("/api/")) path.split("/").lastOption.filter(Set("login","logout","whoami","get","put","search","history","analyze","complete","values","live","retrieve","health","versions")).getOrElse("unknown") else "static"
+        val event=Json.obj("requestId"->Json.fromString(java.util.UUID.randomUUID().toString),"route"->Json.fromString(label),"status"->Json.fromInt(response.status.code),"result"->Json.fromString(if(response.status.isSuccess) "ok" else "fault"),"durationMs"->Json.fromLong((System.nanoTime()-start)/1000000))
+        IO.println(event.noSpaces).as(response)
+      }
+    }
   }
   private def static(r:Request[IO]):IO[Response[IO]]=webRoot match {
     case None=>IO.pure(json(Status.NotFound,Json.Null))

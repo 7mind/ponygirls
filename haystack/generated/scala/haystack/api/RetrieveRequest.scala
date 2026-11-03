@@ -8,6 +8,7 @@ package haystack.api {
     mode: RetrievalMode,
     project: Option[String],
     includeArchived: Boolean,
+    offset: Int,
     limit: Int
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = RetrieveRequest.baboonDomainVersion
@@ -42,6 +43,7 @@ package haystack.api {
         "mode" -> RetrievalMode_JsonCodec.instance.encode(ctx, value.mode),
         "project" -> value.project.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "includeArchived" -> Json.fromBoolean(value.includeArchived),
+        "offset" -> Json.fromInt(value.offset),
         "limit" -> Json.fromInt(value.limit)
       )
     }
@@ -57,8 +59,9 @@ package haystack.api {
             mode <- getField(jsonObject, "mode").flatMap(v => RetrievalMode_JsonCodec.circeDecoder(v.hcursor))
             project <- getField(jsonObject, "project").flatMap(v => decodeOption(decodeString)(v.hcursor))
             includeArchived <- getField(jsonObject, "includeArchived").flatMap(v => decodeBoolean(v.hcursor))
+            offset <- getField(jsonObject, "offset").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))
             limit <- getField(jsonObject, "limit").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))
-          } yield RetrieveRequest(query,mode,project,includeArchived,limit)
+          } yield RetrieveRequest(query,mode,project,includeArchived,offset,limit)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to RetrieveRequest: object expected"))
       }
     }
