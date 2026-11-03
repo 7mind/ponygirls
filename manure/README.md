@@ -65,7 +65,13 @@ against same-origin scripts. CLI/MCP fetch accepts the returned content URL
 in either mode (public token-free; external with password); authenticated
 fetch by ID still uses the API.
 
-## Quick local run (no secrets store, no Nix)
+## Historical local fixture construction (not a server runtime)
+
+The public Python server entrypoint is retired and refuses before startup
+effects. Use the [Scala/native backend instructions](backend/README.md) for the
+current server and its owned PostgreSQL provider. The small example below is
+only a historical fixture/token-generation example, not a complete current
+server configuration or an activation instruction.
 
 Generate the token and its hash file entirely inside Python
 (43-char base64url, haystack codec): an exclusively created 0700
@@ -91,14 +97,9 @@ cfg = {"port": 47329, "data_dir": str(work / "data"), "api_origin": "http://127.
 EOF
 ```
 
-Those are the required keys (unknown keys fail startup; full set:
-`CONTRACT.md` §3.1). Run from the `manure/` project dir holding
-`pyproject.toml` — the repo root lacks it on `sys.path`:
-
-```bash
-cd manure   # <repo>/manure, not the repo root
-python -m manure.server --config /tmp/manure-local/m.json  # or MANURE_CONFIG=...
-```
+The generated config is historical source-format fixture data. It must not
+activate a Python backend: `python -m manure.server` now exits2 without reading
+it. Current server configuration and launch use the backend instructions above.
 
 Loopback HTTP needs no setup on `127.0.0.1` (one socket,
 Host-routed). `*.localhost` content names depend on your resolver —
@@ -149,8 +150,10 @@ remain CLI-only; Python hashing/RNG are unchanged.
 
 ## CLI
 
-Entry points: `manure` (CLI), `manure-server`, `manure-mcp`
-(`python -m manure.cli|server|mcp` are equivalent).
+Portable Python entrypoints: `manure` (CLI) and `manure-mcp`
+(`python -m manure.cli` / `python -m manure.mcp`). `manure-server` is the built
+Scala/native service, not a Python console script; `python -m manure.server`
+is deliberately fail-closed.
 
 Secrets are fail-closed ambiguous — flags do **not** override env.
 **URL/token pairs** (`MANURE_URL`/`_FILE`, `MANURE_TOKEN`/`_FILE`):

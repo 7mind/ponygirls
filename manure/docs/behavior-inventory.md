@@ -15,7 +15,7 @@ Node test names. No declaration means no silent omission: a new root/nested
 case ID, an import resolving outside the assigned source, or a missing concrete
 mapping causes the inventory self-check to fail.
 
-The frozen register currently declares **30 CURRENT Python modules /320 case
+The frozen register currently declares **31 CURRENT Python modules /325 case
 IDs**, **17 Node cases** across both browser-boundary/CDP suites, and the
 **74-vector generated TypeScript codec check**. These are declared inventory
 sizes, **not execution/pass counts**. All client, CLI, MCP, browser, offline and
@@ -25,9 +25,12 @@ actual-target modules are included; there is no six-core-only release gate.
 retired from the CURRENT selector, not their domain/security/durability
 requirements.** Their grouped requirements map to concrete current Python,
 Scala/PG and filesystem tests below, with real gaps left open. Their source is
-retained. The Python server entrypoints are **NOT retired/removed**, and no
-production activation, old-state deletion, migration or credential rotation is
-authorized by test registration.
+retained. The public Python server entrypoint is now **retired/fail-closed** in parent
+`5f3905ec`: the console registration is removed and module `main` returns2 with
+a constant message before parsing/config/credentials/network/storage effects.
+Historical helper imports remain unsupported source-format/migration seams.
+This does not authorize production activation, old-state deletion, migration or
+credential rotation.
 
 ## CURRENT Python modules (unfiltered in `full`)
 
@@ -60,6 +63,7 @@ authorized by test registration.
 | `test_mcp_hardening` | 11 | controlled local/pure |
 | `test_mcp_protocol` | 9 | sdk |
 | `test_offline_conversion` | 30 | offline-postgres |
+| `test_retired_server_entrypoint` | 5 | controlled local/pure |
 | `test_target_durability` | 4 | target |
 | `test_target_migration` | 2 | target |
 | `test_target_search` | 1 | target |
@@ -158,10 +162,10 @@ and any still-needed characterization, not as a production compatibility oracle.
 
 ## Invariant → source → concrete current assertion → migration/gap treatment
 
-The JSON contains exact file markers and qualified test IDs. References below
-are abbreviated for readability; every JSON reference is validated. A mapped
-assertion is a required case to execute, **not a claim it has passed**. These
-are domain groups, not one-to-one AST test-count parity.
+The JSON contains exact file markers and qualified test IDs, all validated.
+Mapped assertions must execute in their owning gate; presence is not a claim
+that an unfiltered artifact/runtime suite passed. No historical AST method count
+or legacy wire parity is used as coverage proof.
 
 ### credentials
 
@@ -175,15 +179,18 @@ Canonical exact token/password/hash bytes; source ambiguity/configuration preced
 - [`test("managed symlink reference allowed; oversized/CRLF/malformed hashes refuse bounded"`](../../manure/backend/src/test/scala/manure/SecretBoundarySuite.scala).
 - [`test_credential_preflight.CredentialPreflightTests.test_all_pairs_are_preflighted_before_reading_another_pairs_file`](../../manure/tests/test_credential_preflight.py).
 - [`test_credential_preflight.CredentialPreflightTests.test_common_pairs_reject_fifo_before_read`](../../manure/tests/test_credential_preflight.py).
+- [`test_client_secret_files.ClientSecretFileTests.test_ambiguity_still_precedes_any_file_open`](../../manure/tests/test_client_secret_files.py).
+- [`test_client_secret_files.ClientSecretFileTests.test_growth_after_fstat_still_has_bounded_actual_reads`](../../manure/tests/test_client_secret_files.py).
+- [`test_client_secret_files.ClientSecretFileTests.test_nonregular_missing_and_dangling_references_are_sanitized`](../../manure/tests/test_client_secret_files.py).
+- [`test_client_secret_files.ClientSecretFileTests.test_resolved_regular_leaf_raced_to_fifo_never_blocks_or_reads`](../../manure/tests/test_client_secret_files.py).
+- [`test_client_secret_files.ClientSecretFileTests.test_sole_fifo_reference_rejects_helpers_constructor_cli_and_mcp`](../../manure/tests/test_client_secret_files.py).
+- [`test_client_secret_files.ClientSecretFileTests.test_symlink_to_fifo_rejects_but_managed_regular_symlinks_work`](../../manure/tests/test_client_secret_files.py).
+- [`test_client_secret_files.ClientSecretFileTests.test_token_exact_ascii_codec_and_single_optional_lf`](../../manure/tests/test_client_secret_files.py).
+- [`test_client_secret_files.ClientSecretFileTests.test_url_reference_transport_bound_utf8_and_strip_semantics`](../../manure/tests/test_client_secret_files.py).
 
-**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
-**Portable client file boundary:** [bounded regular references](client-secret-files.md)
-now add8 CURRENT regression methods for sole-configured FIFO refusal, managed
-symlink acceptance, descriptor-race/growth bounds, unchanged exact token codec
-and ambiguity-first CLI/MCP configuration. Baseline18 failures were reproduced
-with kill/reap deadlines; the68-method corrected diagnostic passed with0 skips.
-These file-boundary tests are not substitutes for actual target/artifact gates.
+See [portable client bounded regular references](client-secret-files.md): the8 CURRENT regressions reproduce sole-FIFO blocking and bounded reads using only owned synthetic inputs; the corrected broad diagnostic passed161 methods with0 skips.
 
 ### shared-authority
 
@@ -196,14 +203,11 @@ Every live authenticated manager lists/inspects/manifests/status/deletes/rotates
 - [`test_client_realserver.TestRealServer.test_grant_revocation_real_server`](../../manure/tests/test_client_realserver.py).
 - [`test("shared incomplete reads and abort coexist with owner-only upload mutations"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
 - [`test("any manager may rotate an incomplete external password without advancing activity"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume`](../../manure/tests/test_target_durability.py).
 
 **Adjudication:** Corrected in parent69494c01: positive shared incomplete reads/list/status/abort and rotation coexist with owner-only upload mutations in both Memory and real-PG ArtifactsContract. This fixes the regression; it is not a policy change. All current transport/native gates remain mandatory.
 
-**Treatment:** corrected positive assertions are implemented in both Memory and real-PG contracts; their actual execution and all separate artifact/runtime gates remain mandatory. This is not a claim of completed CURRENT/native acceptance.
-
-**New concrete actual-target assertion:** `test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume`.
-
-**Treatment:** real-target replacement assertions are now implemented/registered; their passing unfiltered JVM/native execution remains mandatory. No test execution is claimed by registration.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### origins
 
@@ -218,7 +222,7 @@ Exact Host/port and Origin, trusted-peer XFP only; cookie/bearer ambiguity; same
 - [`test_browser_dashboard.DashboardSiblingCase.test_b7_hostile_sibling_js_cannot_mutate_dashboard`](../../manure/tests/test_browser_dashboard.py).
 - [`test_browser_http_opt_in.HttpOptInBrowserCase.test_login_internal_handoff_external_unlock_public_and_logout`](../../manure/tests/test_browser_http_opt_in.py).
 
-**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### manifest-serving
 
@@ -234,7 +238,7 @@ Immutable ordered file/directory manifest, topology/path/resource bounds, empty 
 - [`test_browser_isolation.IsolationSiblingCase.test_b5_api_bytes_are_attachment_and_never_execute`](../../manure/tests/test_browser_isolation.py).
 - [`test_browser_isolation.IsolationSeparateCase.test_b6_reserved_prefixes_never_serve_user_content`](../../manure/tests/test_browser_isolation.py).
 
-**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### receipts
 
@@ -247,11 +251,9 @@ Chunk bytes+file/parent fsync precede receipt commit and ACK; aligned/tail/idemp
 - [`test("chunk alignment, tail, overflow and single byte ranges remain bounded"`](../../manure/backend/src/test/scala/manure/DomainSuite.scala).
 - [`test_client_realserver.TestRealServer.test_chunk_resume_real_server`](../../manure/tests/test_client_realserver.py).
 - [`test_cli_process.TestSubprocessKillResume.test_kill_manual_resume`](../../manure/tests/test_cli_process.py).
+- [`test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume`](../../manure/tests/test_target_durability.py).
 
-
-**New concrete actual-target assertion:** `test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume`.
-
-**Treatment:** real-target replacement assertions are now implemented/registered; their passing unfiltered JVM/native execution remains mandatory. No test execution is claimed by registration.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### publication-import
 
@@ -265,11 +267,9 @@ Verify→publishing commit→tree/rename/parent/root fsync→ready commit→clea
 - [`test_target_migration.TargetMigrationTests.test_actual_target_import_resume_crash_windows_original_grants_restart_and_fixforward`](../../manure/tests/test_target_migration.py).
 - [`test_offline_conversion.PostgresContracts.test_process_death_after_commit_retries_without_duplicate_rows`](../../manure/tests/test_offline_conversion.py).
 - [`test_offline_conversion.PostgresContracts.test_killed_sql_connection_rolls_back_import_transaction`](../../manure/tests/test_offline_conversion.py).
+- [`test_target_durability.TargetDurabilityTests.test_server_sigkill_after_rename_before_ready_commit_recovers`](../../manure/tests/test_target_durability.py).
 
-
-**New concrete actual-target assertion:** `test_target_durability.TargetDurabilityTests.test_server_sigkill_after_rename_before_ready_commit_recovers`.
-
-**Treatment:** real-target replacement assertions are now implemented/registered; their passing unfiltered JVM/native execution remains mandatory. No test execution is claimed by registration.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### quota-session
 
@@ -280,9 +280,12 @@ Atomic aggregate reservation and per-user/global session bounds with consistent 
 **Concrete target assertions:**
 - [`test("NUL/Unicode metadata, exact reservations and complete upload/publish/read/delete"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
 - [`test("failed PG commit during content resource acquisition closes the pinned file"`](../../manure/backend/src/test/scala/manure/AcquisitionFailureSuite.scala).
+- [`test("concurrent PostgreSQL admissions reserve exactly the quota-fitting subset"`](../../manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala).
+- [`test("concurrent PostgreSQL per-user session cap is exact across independent managers"`](../../manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala).
+- [`test("concurrent PostgreSQL global session cap applies in the same admission transaction"`](../../manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala).
+- [`test("runtime role is least privilege and actual MetadataTxn waits on the PG advisory lock"`](../../manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala).
 
-**OPEN—blocks full release acceptance:**
-- No current real-PG simultaneous quota-fitting subset/session-cap contention and cleanup assertions identified in the frozen source. Single reservation/read/delete and resource acquisition tests do not establish aggregate concurrency.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### expiry-activity
 
@@ -314,7 +317,7 @@ One-time artifact/principal-bound handoff, password/token-digest-bound grants an
 - [`test_browser_isolation.TestCurrentErrorEnvelope.test_current_command_fixture_projection_never_replaces_received_fault_bytes`](../../manure/tests/test_browser_isolation.py).
 - [`test_browser_unlock.UnlockSeparateCase.test_b3_no_password_appears_in_listings_or_manifest`](../../manure/tests/test_browser_unlock.py).
 
-**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### filesystem-lifetime
 
@@ -330,7 +333,7 @@ Descriptor-relative no-follow operations, regular-file checks, bounded non-follo
 - [`test("wrong payload root cannot silently attach existing PG metadata"`](../../manure/backend/src/test/scala/manure/RuntimeSuite.scala).
 - [`test("symlink payload parent/leaf cannot redirect writes, hashes, serving or deletion"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
 
-**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### range-client
 
@@ -346,7 +349,7 @@ Finite streamed range reads with exact206/416 semantics; credentials/grants rema
 - [`test_cli_process.TestOwnedFetchResumeRange.test_interrupted_fetch_resumes_exact_range`](../../manure/tests/test_cli_process.py).
 - [`test_current_client.CurrentClientTests.test_full_upload_fetch_empty_dirs_hashes_ranges_and_secret_free_cache`](../../manure/tests/test_current_client.py).
 
-**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### admission-shutdown
 
@@ -358,14 +361,11 @@ Malformed/oversized/stalled requests cannot mutate or revoke before body validat
 - [`test("bounded body, duplicate JSON and framing fail before initialization effects"`](../../manure/backend/src/test/scala/manure/HttpSuite.scala).
 - [`test_browser_unlock.UnlockRateLimitCase.test_b3_browser_rate_limit_statuses`](../../manure/tests/test_browser_unlock.py).
 - [`test("root close refuses live pinned handles and retains claim after unlink and root rename"`](../../manure/server/src/test/scala/manure/storage/FilesystemBehavior.scala).
-
-
-**New concrete actual-target assertion:** `test_target_durability.TargetDurabilityTests.test_shutdown_drains_active_chunk_and_stream_and_releases_claim`.
-
-**New concrete actual-target assertion:** `test_target_durability.TargetDurabilityTests.test_connection_admission_returns_503_while_body_worker_active`.
+- [`test_target_durability.TargetDurabilityTests.test_shutdown_drains_active_chunk_and_stream_and_releases_claim`](../../manure/tests/test_target_durability.py).
+- [`test_target_durability.TargetDurabilityTests.test_connection_admission_returns_503_while_body_worker_active`](../../manure/tests/test_target_durability.py).
+- [`MaxActiveRequests`](../../manure/backend/src/main/scala/manure/Main.scala).
 
 **OPEN—blocks full release acceptance:**
-- Explicit actual-target stalled-body admission503+Retry-After assertion now exists, but current Ember connection cap blocks accepting the rejection request. Parent must capture bounded fail-first and fix application admission; fixture also must close the stalled request before its follow-up catalogue assertion. This unresolved actual behavior blocks acceptance.
 - Actual-target graceful chunk/stream shutdown and claim restart are now concrete. Active publish/sweeper shutdown and stuck-worker claim retention still require replacement assertions beyond standalone POSIX lease-close tests.
 
 ### catalogue-current
@@ -379,11 +379,20 @@ Sole current UTF8 unsigned-byte ordering with exact stored NUL/Unicode values, R
 - [`test_client_realserver.TestRealServer.test_pagination_filters_real_server`](../../manure/tests/test_client_realserver.py).
 - [`test_browser_dashboard_ux.DashboardUXTests.test_catalogue_detail_and_session_flows`](../../manure/tests/test_browser_dashboard_ux.py).
 - [`test_current_client.CurrentClientTests.test_typed_catalogue_patch_management_and_search`](../../manure/tests/test_current_client.py).
+- [`test(s"all metadata shared; $sort/$direction byte order, ties, NULL-last keyset traversal"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("ROOT lowercase is not casefold; NUL/supplementary text and SQL wildcard characters are literal"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("expiry authorization and state/visibility filtering happen before keyset LIMIT"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("cursor binds every effective option and enforces typed count/time/text/null positions"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("deleting a cursor boundary does not require a boundary-row lookup"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("put/rename atomically refreshes bytea name matching without changing source bytes"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("integer keysets preserve adjacent counts beyond IEEE754 precision"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("timestamp keysets retain adjacent source binary64 values and NULL expiry tails"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("forward catalogue projection bootstrap/backfill preserves original bytea and timestamp bits"`](../../manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala).
+- [`test("trusted catalogue SQL has one keyset LIMIT and literal bytea parameters, never user SQL"`](../../manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala).
 
 **Adjudication:** Python SQLite binary/casefold, old ASC default and old cursor decoder assertions intentionally retire. Replace with current utf8-root-lower-v1 semantics; stored names/epochs remain lossless.
 
-**OPEN—blocks full release acceptance:**
-- Need real current-PG all-sort/direction/tie/null-expiry traversal and typed cursor mismatch/boundary-mutation checks, including ROOT-lowercase/NUL/Unicode vectors. UI sorting and one-key pagination do not establish this complete current policy.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### cli-mcp
 
@@ -398,7 +407,7 @@ Owned CLI/MCP remain restart-safe, credential-hermetic and stdout-clean; MCP2025
 - [`test_client_realserver.TestRealServer.test_official_sdk_lifecycle_against_real_service`](../../manure/tests/test_client_realserver.py).
 - [`test_cli_process.TestSubprocessKillResume.test_kill_auto_resume`](../../manure/tests/test_cli_process.py).
 
-**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
 
 ### retrieval-current
 
@@ -416,16 +425,31 @@ Authenticated ready/unexpired metadata+manifest-path corpus only; lexical/semant
 **OPEN—blocks full release acceptance:**
 - Actual target now proves controlled-provider heartbeat, semantic/hybrid identity, not-ready/outage, profile cutover/restart, metadata-only inputs and delete eligibility. Remaining service-adapter assertions: negative kind/visibility/creator filters before count/limit, expiry during delivery, and concrete evidence/provenance coordinates/identity. Shared authorization/fencing tests and codec goldens remain complementary, not live-provider quality evidence.
 
-The actual-target test closes/restarts the configured application using the shared worker/root resource lifetime, exercises a four-second document call beyond the three-second lease and a same-URL/dimension revision cutover. Controlled provider evidence is correctness/lifecycle evidence, not a live-provider relevance/quality result. It does not establish graceful cancellation during every active chunk/stream/model operation; the separate lifecycle gap remains explicit.
-`test_target_search.py` and `test_target_durability.py` are CURRENT after parent
-sources `26ad56aa` and `712e9191`. The latter's four exact methods are registered,
-not optionally appended. Receipt/reverse-concurrent/server-SIGKILL and exact
-post-rename/pre-ready-commit recovery assertions now have concrete real-target
-replacements; registration is **not a passing execution claim**. The fixture
-uses only its owned service-role SQL trigger, no production fault hook or old
-Python backend. Admission remains a known failing invariant until bounded
-fail-first, fixture cleanup correction and application admission fix. Full
-active-publish/sweeper/stuck-worker shutdown coverage remains open separately.
+The actual-target test exercises shared-worker heartbeat across a4s document call/3s lease, actual server close/restart and same-URL/dimension revision cutover. This is controlled-provider correctness/lifetime evidence, not live-provider relevance/quality. Mid-operation graceful publish/sweeper/stuck-worker shutdown remains separately open.
+
+### retired-server-activation
+
+Portable Python cannot activate the legacy SQLite HTTP server; refuse before parser/config/credentials/storage/network/write/subprocess. Current CLI and actual MCP stdio remain usable; historical helper imports are effect-free and unsupported as runtimes.
+
+**Source:** `manure/manure/server.py` (`def main(`); `manure/pyproject.toml`.
+
+**Concrete target assertions:**
+- [`test_retired_server_entrypoint.RetiredServerEntrypointTests.test_portable_cli_registration_and_help_remain_usable`](../../manure/tests/test_retired_server_entrypoint.py).
+- [`test_retired_server_entrypoint.RetiredServerEntrypointTests.test_portable_mcp_registration_and_real_stdio_remain_usable`](../../manure/tests/test_retired_server_entrypoint.py).
+- [`test_retired_server_entrypoint.RetiredServerEntrypointTests.test_public_module_refuses_before_parser_config_credentials_database_or_network`](../../manure/tests/test_retired_server_entrypoint.py).
+- [`test_retired_server_entrypoint.RetiredServerEntrypointTests.test_python_server_console_script_is_not_registered`](../../manure/tests/test_retired_server_entrypoint.py).
+- [`test_retired_server_entrypoint.RetiredServerEntrypointTests.test_unsupported_historical_helpers_remain_importable_without_effects`](../../manure/tests/test_retired_server_entrypoint.py).
+
+**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
+
+`test_target_search.py`, `test_target_durability.py` and
+`test_retired_server_entrypoint.py` are explicitly CURRENT, never optional-file
+appendages. The retirement boundary's five methods exercise real scrubbed child
+entrypoints/stdio and effect guards, while retaining portable CLI/MCP usability.
+The real PG admission and dual catalogue matrices now replace the earlier open
+quota/session/all-sort/cursor groups. The application rejection middleware and
+fixture cleanup correction now have concrete source and the registered actual
+503 assertion; full release execution remains mandatory.
 
 ## Separately required artifact/runtime gates
 
@@ -475,6 +499,13 @@ claim. Those inputs differ from this register and must not be reused as full
 current release evidence.
 
 No current full JVM/native/browser/PG run is claimed by this inventory change.
-The parent supervises frozen full runs after integration and fills real invariant
-gaps. Source Python entrypoints and acknowledged state remain preserved until
-all required replacement gates and separately authorized activation work finish.
+The parent supervises frozen full runs after integration and fills remaining
+invariant gaps. Python historical helpers and acknowledged state remain
+preserved; public legacy activation is blocked by the new retirement guard.
+Separately authorized production activation is not implied.
+
+After parent `5f3905ec` integration and explicit retirement registration, a
+35-method focused retirement/client-secret/preflight/inventory diagnostic
+passed0 failures/errors/skips. The declared inventory is now31 modules/325
+methods, not a completed325-method run. Three invariant clauses remain open;
+full acceptance still cannot be inferred from this component diagnostic.

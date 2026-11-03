@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "contract": "manure.api/1.0.0",
-  "legacySourceEntrypointsRetired": false,
+  "legacySourceEntrypointsRetired": true,
   "scope": "All CURRENT Python modules/case IDs + Node/codec checks; architecture-retired implementation tests retain mapped requirements, not historical AST coverage claims.",
   "pythonModules": [
     {
@@ -589,6 +589,19 @@
       "migrationOnlySourceImports": "ArtifactStore creates synthetic pre-port states and performs complementary historical source-format recovery on a disposable decoded copy. This is NOT target-backend evidence; actual test_target_migration is separately mandatory."
     },
     {
+      "module": "test_retired_server_entrypoint",
+      "path": "manure/tests/test_retired_server_entrypoint.py",
+      "classification": "current",
+      "requires": [],
+      "tests": [
+        "test_retired_server_entrypoint.RetiredServerEntrypointTests.test_portable_cli_registration_and_help_remain_usable",
+        "test_retired_server_entrypoint.RetiredServerEntrypointTests.test_portable_mcp_registration_and_real_stdio_remain_usable",
+        "test_retired_server_entrypoint.RetiredServerEntrypointTests.test_public_module_refuses_before_parser_config_credentials_database_or_network",
+        "test_retired_server_entrypoint.RetiredServerEntrypointTests.test_python_server_console_script_is_not_registered",
+        "test_retired_server_entrypoint.RetiredServerEntrypointTests.test_unsupported_historical_helpers_remain_importable_without_effects"
+      ]
+    },
+    {
       "module": "test_server_http_opt_in",
       "path": "manure/tests/test_server_http_opt_in.py",
       "classification": "architecture-retired",
@@ -1089,11 +1102,25 @@
         {
           "path": "manure/backend/src/test/scala/manure/AcquisitionFailureSuite.scala",
           "marker": "test(\"failed PG commit during content resource acquisition closes the pinned file\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala",
+          "marker": "test(\"concurrent PostgreSQL admissions reserve exactly the quota-fitting subset\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala",
+          "marker": "test(\"concurrent PostgreSQL per-user session cap is exact across independent managers\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala",
+          "marker": "test(\"concurrent PostgreSQL global session cap applies in the same admission transaction\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala",
+          "marker": "test(\"runtime role is least privilege and actual MetadataTxn waits on the PG advisory lock\""
         }
       ],
-      "openGaps": [
-        "No current real-PG simultaneous quota-fitting subset/session-cap contention and cleanup assertions identified in the frozen source. Single reservation/read/delete and resource acquisition tests do not establish aggregate concurrency."
-      ]
+      "openGaps": []
     },
     {
       "id": "expiry-activity",
@@ -1306,10 +1333,13 @@
         {
           "path": "manure/tests/test_target_durability.py",
           "testId": "test_target_durability.TargetDurabilityTests.test_connection_admission_returns_503_while_body_worker_active"
+        },
+        {
+          "path": "manure/backend/src/main/scala/manure/Main.scala",
+          "marker": "MaxActiveRequests"
         }
       ],
       "openGaps": [
-        "Explicit actual-target stalled-body admission503+Retry-After assertion now exists, but current Ember connection cap blocks accepting the rejection request. Parent must capture bounded fail-first and fix application admission; fixture also must close the stalled request before its follow-up catalogue assertion. This unresolved actual behavior blocks acceptance.",
         "Actual-target graceful chunk/stream shutdown and claim restart are now concrete. Active publish/sweeper shutdown and stuck-worker claim retention still require replacement assertions beyond standalone POSIX lease-close tests."
       ]
     },
@@ -1344,11 +1374,49 @@
         {
           "path": "manure/tests/test_current_client.py",
           "testId": "test_current_client.CurrentClientTests.test_typed_catalogue_patch_management_and_search"
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(s\"all metadata shared; $sort/$direction byte order, ties, NULL-last keyset traversal\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"ROOT lowercase is not casefold; NUL/supplementary text and SQL wildcard characters are literal\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"expiry authorization and state/visibility filtering happen before keyset LIMIT\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"cursor binds every effective option and enforces typed count/time/text/null positions\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"deleting a cursor boundary does not require a boundary-row lookup\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"put/rename atomically refreshes bytea name matching without changing source bytes\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"integer keysets preserve adjacent counts beyond IEEE754 precision\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"timestamp keysets retain adjacent source binary64 values and NULL expiry tails\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala",
+          "marker": "test(\"forward catalogue projection bootstrap/backfill preserves original bytea and timestamp bits\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala",
+          "marker": "test(\"trusted catalogue SQL has one keyset LIMIT and literal bytea parameters, never user SQL\""
         }
       ],
-      "openGaps": [
-        "Need real current-PG all-sort/direction/tie/null-expiry traversal and typed cursor mismatch/boundary-mutation checks, including ROOT-lowercase/NUL/Unicode vectors. UI sorting and one-key pagination do not establish this complete current policy."
-      ],
+      "openGaps": [],
       "adjudication": "Python SQLite binary/casefold, old ASC default and old cursor decoder assertions intentionally retire. Replace with current utf8-root-lower-v1 semantics; stored names/epochs remain lossless."
     },
     {
@@ -1427,6 +1495,42 @@
       "openGaps": [
         "Actual target now proves controlled-provider heartbeat, semantic/hybrid identity, not-ready/outage, profile cutover/restart, metadata-only inputs and delete eligibility. Remaining service-adapter assertions: negative kind/visibility/creator filters before count/limit, expiry during delivery, and concrete evidence/provenance coordinates/identity. Shared authorization/fencing tests and codec goldens remain complementary, not live-provider quality evidence."
       ]
+    },
+    {
+      "id": "retired-server-activation",
+      "invariant": "Portable Python cannot activate the legacy SQLite HTTP server; refuse before parser/config/credentials/storage/network/write/subprocess. Current CLI and actual MCP stdio remain usable; historical helper imports are effect-free and unsupported as runtimes.",
+      "sourceRefs": [
+        {
+          "path": "manure/manure/server.py",
+          "marker": "def main("
+        },
+        {
+          "path": "manure/pyproject.toml"
+        }
+      ],
+      "targetRefs": [
+        {
+          "path": "manure/tests/test_retired_server_entrypoint.py",
+          "testId": "test_retired_server_entrypoint.RetiredServerEntrypointTests.test_portable_cli_registration_and_help_remain_usable"
+        },
+        {
+          "path": "manure/tests/test_retired_server_entrypoint.py",
+          "testId": "test_retired_server_entrypoint.RetiredServerEntrypointTests.test_portable_mcp_registration_and_real_stdio_remain_usable"
+        },
+        {
+          "path": "manure/tests/test_retired_server_entrypoint.py",
+          "testId": "test_retired_server_entrypoint.RetiredServerEntrypointTests.test_public_module_refuses_before_parser_config_credentials_database_or_network"
+        },
+        {
+          "path": "manure/tests/test_retired_server_entrypoint.py",
+          "testId": "test_retired_server_entrypoint.RetiredServerEntrypointTests.test_python_server_console_script_is_not_registered"
+        },
+        {
+          "path": "manure/tests/test_retired_server_entrypoint.py",
+          "testId": "test_retired_server_entrypoint.RetiredServerEntrypointTests.test_unsupported_historical_helpers_remain_importable_without_effects"
+        }
+      ],
+      "openGaps": []
     }
   ],
   "externalReleaseGates": [
@@ -1459,5 +1563,6 @@
       "requirement": "Shared runtime/retrieval changes require full owned Chronicle/Haystack regressions per their instructions; Manure subset is not consumer evidence."
     }
   ],
-  "plannedCurrentModules": []
+  "plannedCurrentModules": [],
+  "legacySourceEntrypointsRetirementScope": "Public Python module main refuses before startup effects and Python manure-server console registration is absent; historical helpers remain unsupported importable migration/source-format seams. No production activation/state deletion is implied."
 }
