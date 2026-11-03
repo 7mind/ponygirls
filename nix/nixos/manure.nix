@@ -90,6 +90,7 @@ let
     port = cfg.port;
     data_dir = cfg.dataDir;
     migration_receipt_dir = cfg.migrationReceiptDirectory;
+    embedding = if cfg.embedding == null then null else cfg.embedding // { credentialFile = "/run/credentials/manure.service/embedding-key"; };
     api_origin = cfg.apiOrigin;
     content_mode = cfg.contentMode;
     loopback_dev = cfg.loopbackDev;
@@ -176,6 +177,9 @@ let
                 sys.exit(1)
             # Absolute runtime path only; digest bytes never enter the config.
             tok["hashFile"] = os.path.join(cred_dir, name)
+    config["database"]["passwordFile"] = os.path.join(cred_dir,"database-password")
+    if config["embedding"] is not None:
+        config["embedding"]["credentialFile"] = os.path.join(cred_dir,"embedding-key")
     with open(out, "w", encoding="utf-8") as fh:
         os.chmod(out, 0o600)
         json.dump(config, fh)
@@ -322,6 +326,13 @@ in
       example = "artifacts.7mind.io";
       description = "Required in subdomain mode, optional in path mode. Content suffix; each artifact serves from <hex32>.<contentSuffix>. A separate registrable domain is strongly recommended when unrelated apps share the parent domain (§5.6).";
     };
+      embedding = import ../lib/embedding-options.nix { inherit lib; extraOptions = {
+        maxConcurrent = lib.mkOption { type = lib.types.ints.positive; };
+        maxQueued = lib.mkOption { type = lib.types.ints.unsigned; };
+        batchSize = lib.mkOption { type = lib.types.ints.positive; };
+        leaseSeconds = lib.mkOption { type = lib.types.ints.between 3 3600; };
+        pollIntervalMs = lib.mkOption { type = lib.types.ints.positive; };
+      }; };
     migrationReceiptDirectory = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Offline converter control receipt root (OWNER/COMPLETE/import.sql), distinct from payload dataDir and operator credentials."; };
     dataDir = lib.mkOption {
       type = lib.types.str;
@@ -524,7 +535,7 @@ in
           (userId: user: lib.mapAttrsToList
             (tokenId: token: "${credName userId tokenId}:${token.tokenHashFile}")
             user.tokens)
-          cfg.users) ++ [ "database-password:${cfg.database.passwordFile}" ];
+          cfg.users) ++ [ "database-password:${cfg.database.passwordFile}" ] ++ lib.optional (cfg.embedding != null) "embedding-key:${cfg.embedding.credentialFile}";
         TimeoutStopSec = 60;
         UMask = "0077";
       };

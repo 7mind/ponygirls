@@ -1,5 +1,5 @@
 # Optional explicit profile, no ambient credentials/models or automatic failover.
-{ lib }:
+{ lib, extraOptions ? { } }:
 let inherit (lib) mkOption types;
 in mkOption {
   default = null;
@@ -18,5 +18,5 @@ in mkOption {
     maxBatch = mkOption { type = types.ints.positive; };
     maxInputBytes = mkOption { type = types.ints.positive; };
     maxRequestBytes = mkOption { type = types.ints.positive; };
-  }; });
+  } // extraOptions; });
 }

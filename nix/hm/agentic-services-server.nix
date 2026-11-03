@@ -85,6 +85,7 @@ let
     port = cfg.manure.port;
     data_dir = cfg.manure.dataDirectory;
     migration_receipt_dir = cfg.manure.migrationReceiptDirectory;
+    embedding = cfg.manure.embedding;
     api_origin = endpoints.urls.manure;
     allow_insecure_http = cfg.manure.allowInsecureHttp;
     allowed_api_origins = cfg.manure.legacyOrigins;

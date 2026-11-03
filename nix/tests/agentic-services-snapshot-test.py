@@ -22,7 +22,7 @@ for user in current["haystackAuth"]["users"]:
     assert user["displayName"] == user["id"]
 auth_without_display = {**current["haystackAuth"], "users": [{k:v for k,v in u.items() if k != "displayName"} for u in current["haystackAuth"]["users"]]}
 assert auth_without_display == baseline["haystackAuth"]
-assert {k:v for k,v in current["manureConfig"].items() if k not in ("database","migration_receipt_dir","native_mode","posix_library","dashboard_dir","unlock_shell_dir")} == baseline["manureConfig"]
+assert {k:v for k,v in current["manureConfig"].items() if k not in ("database","migration_receipt_dir","embedding","native_mode","posix_library","dashboard_dir","unlock_shell_dir")} == baseline["manureConfig"]
 assert current["haystackConfig"]["database"]["jdbcUrl"] == "jdbc:postgresql://127.0.0.1:15434/haystack"
 assert current["manureConfig"]["database"]["jdbcUrl"] == "jdbc:postgresql://127.0.0.1:15434/manure"
 assert current["manureConfig"]["native_mode"] == "linked"

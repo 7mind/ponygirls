@@ -186,7 +186,7 @@ assert cfg.systemd.user.timers.ivm-haystack-backup.Timer.OnCalendar == "daily";
 assert cfg.systemd.user.timers.ivm-haystack-backup.Timer.Persistent;
 assert builtins.removeAttrs artifacts.haystackAuth.value [ "users" ] == builtins.removeAttrs baseline.haystackAuth [ "users" ];
 assert map (u: builtins.removeAttrs u [ "displayName" ]) artifacts.haystackAuth.value.users == baseline.haystackAuth.users;
-assert builtins.removeAttrs artifacts.manureConfig.value [ "database" "migration_receipt_dir" "native_mode" "posix_library" "dashboard_dir" "unlock_shell_dir" ] == baseline.manureConfig;
+assert builtins.removeAttrs artifacts.manureConfig.value [ "database" "migration_receipt_dir" "embedding" "native_mode" "posix_library" "dashboard_dir" "unlock_shell_dir" ] == baseline.manureConfig;
 assert artifacts.manureConfig.value.database.passwordFile == "/run/secrets/manure-database";
 assert artifacts.haystackConfig.value.database.passwordFile == "/run/secrets/haystack-database";
 assert artifacts.haystackConfig.value.retrieval.embedding == null;
