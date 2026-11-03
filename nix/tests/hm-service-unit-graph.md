@@ -27,6 +27,15 @@ writable store is a guest tmpfs overlay over an isolated read-only EROFS image,
 not a host mount. This is needed for real guest configuration activation and
 registration. The required feature is honest `nixos-test`, with real TCG fallback.
 
+The driver owns baseline/results per `HmLifecycle` instance. Guest, controller,
+source identity, output and VM-start callback are required explicit dependencies;
+only the Nix test-script entry boundary consumes injected driver globals. Chain
+selection and probe selection have no argument defaults. The fast harness type
+checks this driver and executes five controlled contracts (including rejection
+of any unselected database/migration/app activation), without monkeypatching or
+claiming real VM execution. The three database files have distinct known
+synthetic per-name values, exercising independent credential wiring.
+
 Preparation/evaluation is not runtime acceptance. Only the parent may launch the
 frozen VM through the supervised background runner. Terminal receipts retain all
 seven cells, failed bootstrap/restore attribution and not-executed inventory.
