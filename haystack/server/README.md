@@ -71,8 +71,10 @@ sets the guarded fixture environment itself. Never set that guard against an
 existing database.
 
 The runner has a 240-second whole-node deadline and 10-second forced cleanup;
-each Node test is bounded60seconds; readiness15seconds and WS assertion1second
-are separately bounded. It always stops its owned PG via EXIT trap. Child process
+ordinary Node tests are bounded60seconds; the healthy-peer regression has an
+85-second fixture budget to observe two unchanged real30-second protocol heartbeat
+intervals (its heartbeat assertion is bounded62seconds). Readiness15seconds and
+ordinary WS assertions1second are separately bounded. It always stops its owned PG via EXIT trap. Child process
 fixtures stop their server on suite exit. Full test inventory is committed at
 `server/tests-current/inventory.json`; fresh JUnit names must match it exactly,
 with zero skips/errors/failures and nonempty cases. The full TAP and JUnit XML,

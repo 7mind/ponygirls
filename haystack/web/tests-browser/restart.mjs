@@ -1,3 +1,4 @@
+import { prerequisites } from "./prerequisites.mjs";
 // Behavioral-Active-Blackbox-GoodCommunication: real nginx, Chromium, and backend restart.
 import assert from "node:assert/strict";
 import { spawn, execFile as execFileCallback } from "node:child_process";
@@ -9,15 +10,15 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { Failure } from "../../generated/typescript/haystack/api/Failure.ts";
+import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
+import { readProxyConfig, validateProxyConfig } from "./proxy-config.mjs";
 import { freePort, ownedDatabase, configFor, atomicConfig, startServer } from "./native.mjs";
 
 const conn = process.env.HAYSTACK_TEST_PG;
 const chromiumPath = process.env.HAYSTACK_CHROMIUM;
 const nginxPath = process.env.HAYSTACK_NGINX;
-if (!conn || !chromiumPath || !nginxPath) {
-  console.log("# SKIP backend restart: set HAYSTACK_TEST_PG, HAYSTACK_CHROMIUM, HAYSTACK_NGINX");
-  process.exit(0);
-}
+await prerequisites("restart");
 const execFile = promisify(execFileCallback);
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(webRoot, "..", "..");
@@ -26,17 +27,22 @@ const token = randomBytes(32).toString("base64url");
 const hashFile = path.join(dir, "token.sha");
 await writeFile(hashFile, createHash("sha256").update(token, "ascii").digest("hex"), { mode: 0o600 });
 
-const backendPort = await freePort();
-const proxyPort = await freePort();
-const base = `https://127.0.0.1:${proxyPort}`;
+let host;
+if (process.env.HAYSTACK_PROXY_CONFIG_FILE !== undefined) host = await readProxyConfig(process.env.HAYSTACK_PROXY_CONFIG_FILE);
+// Outside a filtered Nix build only, evaluate the actual Git module below.
+const backendPort = host?.backendPort ?? await freePort();
+const base = host?.publicUrl ?? `https://127.0.0.1:${await freePort()}`;
+const publicUrl = new URL(base);
+const proxyPort = Number(publicUrl.port || "443");
 const serverConfig = path.join(dir, "config.json");
 const auth = {
   activityProjectId: "agent-activity", cookieSecure: true,
   users: [{ id: "op", type: "human", displayName: "Operator", tokens: [{ id: "browser", hashFile }] }],
-  allowedHosts: ["127.0.0.1"], allowedOrigins: [base], insecureHttpOrigins: [], rateLimit: { windowMs: 60000, max: 600 },
+  allowedHosts: [publicUrl.hostname.replace(/^\[|\]$/gu, "")], allowedOrigins: [base], insecureHttpOrigins: [], rateLimit: { windowMs: 60000, max: 600 },
 };
 
-// Use the module's location policy, with the freshly built UI as its static root.
+// No file-mode Nix/Git invocation and no fallback for malformed input.
+if (host === undefined) {
 const expr = `let
   f = builtins.getFlake ${JSON.stringify(`git+file://${repoRoot}`)};
   cfg = (f.inputs.nixpkgs.lib.nixosSystem {
@@ -45,18 +51,25 @@ const expr = `let
       system.stateVersion = "26.11";
       smind.services.haystack = {
         enable = true; port = ${backendPort}; publicUrl = ${JSON.stringify(base)};
+        database = {
+          jdbcUrl = "jdbc:postgresql://127.0.0.1:15433/haystack_browser";
+          user = "haystack_browser"; passwordFile = "/run/haystack-browser/database-password";
+          readinessUnit = null;
+        };
         users.op = { type = "human"; tokens.browser.tokenHashFile = "/run/test-token.sha"; };
       };
     } ];
   }).config.services.nginx.virtualHosts."127.0.0.1";
 in {
+  backendPort = ${backendPort}; publicUrl = ${JSON.stringify(base)};
   inherit (cfg) root;
   locations = builtins.mapAttrs (_: l: {
     inherit (l) proxyPass proxyWebsockets tryFiles extraConfig;
   }) cfg.locations;
 }`;
 const evaluated = await execFile("nix", ["eval", "--json", "--impure", "--expr", expr], { cwd: repoRoot, timeout: 60000 });
-const host = JSON.parse(evaluated.stdout);
+host = await validateProxyConfig(JSON.parse(evaluated.stdout));
+}
 const locations = Object.entries(host.locations).map(([name, location]) => `location ${name} {
   ${location.proxyPass === null ? "" : `proxy_pass ${location.proxyPass}; proxy_set_header Host $http_host;`}
   ${location.proxyWebsockets ? "proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection $connection_upgrade;" : ""}
@@ -76,16 +89,16 @@ http {
   include ${path.resolve(nginxPath, "..", "..", "conf", "mime.types")};
   map $http_upgrade $connection_upgrade { default upgrade; '' close; }
   server {
-    listen 127.0.0.1:${proxyPort} ssl;
+    listen ${publicUrl.hostname}:${proxyPort} ssl;
     ssl_certificate ${dir}/cert.pem;
     ssl_certificate_key ${dir}/key.pem;
-    ${host.root === null ? "" : `root ${path.join(webRoot, "dist")};`}
+    ${host.root === null ? "" : `root ${JSON.stringify(host.root)};`}
     ${locations}
   }
 }`);
 
-const database = await ownedDatabase(conn, "haystack_restart");
-await atomicConfig(serverConfig, await configFor({ dir, connectionString: database.connectionString,
+const database = await ownedDatabase({ connectionString: conn, dir });
+await atomicConfig(serverConfig, await configFor({ database: database.runtime,
   port: backendPort, webRoot: path.join(webRoot, "dist"), auth }));
 let backend;
 let proxy;
@@ -126,7 +139,7 @@ try {
     assert.equal(response.status(), 503, `${endpoint} must report service unavailable`);
     assert.equal(response.headers()["cache-control"], "no-store");
     assert.equal(response.headers()["set-cookie"], undefined);
-    assert.equal((await response.json()).error.code, "unavailable");
+    assert.equal(Failure.jsonCodec().decode(BaboonCodecContext.Default, await response.json()).code, "unavailable");
   }
   await page.reload();
   await page.getByRole("alert").filter({ hasText: "Server unreachable" }).waitFor();

@@ -1,3 +1,4 @@
+import { prerequisites } from "./prerequisites.mjs";
 // Behavioral-Active-Blackbox-GoodCommunication: preview credentials survive launcher restarts.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -8,10 +9,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
 const chromiumPath = process.env.HAYSTACK_CHROMIUM;
-if (!chromiumPath) {
-  console.log("# SKIP preview restart: set HAYSTACK_CHROMIUM");
-  process.exit(0);
-}
+await prerequisites("preview");
 const haystackRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 let port;
 let stateDir;

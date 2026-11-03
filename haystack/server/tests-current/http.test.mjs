@@ -49,6 +49,16 @@ describe('current Scala HTTP/auth/domain',()=>{
   const old=decode(api.Item,await (await get(key,1)).json());assert.equal(old.document.json,current.document.json);assert.equal(old.metadata.createdBy,'bot');
   const now=decode(api.Item,await (await get(key)).json());assert.equal(now.metadata.modifiedBy,'alice');assert.equal(now.metadata.createdBy,'bot');
   const history=await f.call('/api/v1/history',encode(api.HistoryRequest,new api.HistoryRequest(key)),{token:f.tokens.bot});const h=decode(api.HistoryResult,await history.json());assert.deepEqual(h.revisions.map(x=>[x.revision,x.modifiedBy,x.tokenId]),[[2,'alice','browser'],[1,'bot','default']]);
+  // The same actual executable must preserve old accepted static labels, not
+  // Java's broader whitespace classification or a reattributed replay scope.
+  const users=f.config.auth.users;const legacyUser='legacy\u001cwriter';const legacyToken='legacy\u001ftoken';const legacyKey='http:legacy-identity';const legacyId=rid();
+  try{
+   await f.reload(auth=>{auth.users=users.map(user=>user.id==='alice'?{...user,id:legacyUser,tokens:user.tokens.map(token=>({...token,id:legacyToken}))}:user);});
+   const who=await f.call('/api/v1/whoami',undefined,{method:'GET',token:f.tokens.alice});assert.equal(who.status,200);const identity=decode(api.Identity,await who.json());assert.deepEqual([identity.userId,identity.tokenId],[legacyUser,legacyToken]);
+   const acknowledged=await f.put(legacyKey,document(),0,legacyId,f.tokens.alice);assert.equal(acknowledged.status,200);assert.equal(decode(api.PutResult,await acknowledged.json()).metadata.createdBy,legacyUser);
+   const retry=await f.put(legacyKey,document(),0,legacyId,f.tokens.alice);assert.equal(retry.status,200);assert.equal(decode(api.PutResult,await retry.json()).replayed,true);
+   const saved=await f.call('/api/v1/history',encode(api.HistoryRequest,new api.HistoryRequest(legacyKey)),{token:f.tokens.bot});const revisions=decode(api.HistoryResult,await saved.json()).revisions;assert.deepEqual(revisions.map(value=>[value.modifiedBy,value.tokenId]),[[legacyUser,legacyToken]]);
+  }finally{await f.reload(auth=>{auth.users=users;});}
  });
  it('CAS, terminal replay persistence, no ID mutation, UUIDv7 envelope, duplicate-key errors',async()=>{
   const key='http:cas';const doc=document();const id=rid();assert.equal((await f.put(key,doc,0,id)).status,200);
@@ -77,6 +87,12 @@ describe('current Scala HTTP/auth/domain',()=>{
  it('analyze UTF16 spans, parser-backed completion, observed values and invalid input',async()=>{
   const analyze=await f.call('/api/v1/query/analyze',encode(api.QueryRequest,new api.QueryRequest('"🐎 alpha" AND unknown:x',24)),{token:f.tokens.bot});const value=decode(api.AnalyzeResult,await analyze.json());assert.equal(value.valid,false);assert.equal(value.spans[0].start,15);assert.equal(value.spans[0].end,24);
   const complete=await f.call('/api/v1/complete',encode(api.QueryRequest,new api.QueryRequest('sta',3)),{token:f.tokens.bot});assert.ok(decode(api.CompletionResult,await complete.json()).suggestions.includes('status:'));
+  await fault(await f.call('/api/v1/complete',encode(api.QueryRequest,new api.QueryRequest('sta'+' '.repeat(4094),3)),{token:f.tokens.bot}),400,'invalid-query');
+  await fault(await f.call('/api/v1/complete',encode(api.QueryRequest,new api.QueryRequest('a😀b',2)),{token:f.tokens.bot}),400,'bad-envelope');
+  const zero='created-at >= "0000-01-01T00:00:00Z"';const zeroAnalyze=await f.call('/api/v1/query/analyze',encode(api.QueryRequest,new api.QueryRequest(zero,zero.length)),{token:f.tokens.bot});assert.equal(decode(api.AnalyzeResult,await zeroAnalyze.json()).valid,false);
+  await fault(await f.call('/api/v1/search',encode(api.SearchRequest,new api.SearchRequest(zero,undefined,20,undefined,new api.SearchSort('key','asc'))),{token:f.tokens.bot}),400,'invalid-query');
+  for(let batch=0;batch<2;batch++){const tags=Array.from({length:60},(_,index)=>'aa'+String(batch*60+index).padStart(3,'0'));if(batch===1)tags.push('zzneedle');assert.equal((await f.put('completion:dense-'+batch,document({tags}))).status,200);}
+  for(const fragment of ['tag:zz','tags:zz','TAG:ZZ']){const suggestions=await f.call('/api/v1/complete',encode(api.QueryRequest,new api.QueryRequest(fragment,fragment.length)),{token:f.tokens.bot});assert.equal(suggestions.status,200);assert.ok(decode(api.CompletionResult,await suggestions.json()).suggestions.includes(fragment.slice(0,fragment.indexOf(':'))+':zzneedle'),'eligible prefix must be selected before100 earlier tags');}
   const values=await f.call('/api/v1/values',encode(api.ValuesRequest,new api.ValuesRequest('type')),{token:f.tokens.bot});assert.ok(decode(api.ValuesResult,await values.json()).values.includes('fact'));
   await fault(await f.call('/api/v1/values',encode(api.ValuesRequest,new api.ValuesRequest('bad')),{token:f.tokens.bot}),404,'not-found');
   await fault(await f.call('/api/v1/get','{"key":"a:b","key":"c:d","revision":null}',{token:f.tokens.bot}),400,'bad-envelope');
