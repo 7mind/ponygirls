@@ -209,3 +209,34 @@ nonempty synthetic password; the backend full-run bootstrap uses SCRAM. This is
 focused adoption evidence, not the full mandatory Chronicle release result. Parent
 owns the durable full unfiltered run after all final inputs are integrated; no third
 600-second foreground full attempt was made.
+
+## Adopted-runtime integration file-only proof (01:21Z, exact committed inputs)
+
+Clean archived input **88a4e2d3ee4fe4168e9f6aeb14dcaac0c81af63f** includes
+Chronicle fa71+cc47 and shared physical engine0b2; actual committed Haystack9030a93f,
+Manure1113862e and retrieval f9ccc80d (including48a accounting and739 common-reader
+adoption). Fresh empty HOME/boot and only the same locked file:// artifact repository
+were used; no dependency/pin changes or lock regeneration required.
+
+Receipt `shared/service-runtime/target/validation-runs/20261103-adopted-offline-three.g9Q5ac/`
+retains archived source, source commit, full compile/assembly log, runtime PG log,
+exit0 and `jar-verification.json`. **All module Test/compile**, three real server
+assemblies and three-domain contract coassembly passed. Fresh full shared runtime
+owned SCRAM PG gate passed **9 suites /34 cases /0 failures/errors/skips** with
+unfiltered inventory/XML verification. No application test/full-release claim.
+
+All three jars again have exactly148 duplicate-free, byte-identical Baboon runtime
+classes from one compiled owner. Their shared physical JdbcTransactionEngine class
+maps are also byte-identical. Chronicle uses that engine via the managed blocking
+facade, while the other two services use the IO facade. Service-owned SQL resources
+are packaged (Haystack0001..0005, Manure manure-schema.sql, Chronicle original set).
+JAR SHA256s:
+
+- Chronicle `1ce5dc866d7b62551b07310b41f834b540048c2d7e894f982b6c533d5ce6aca1`
+- Haystack `1bbcf64000b38e3bbe3d50ca2a63e73b76e6ffe96847ace2a4d191772b4d3514`
+- Manure `149a37cbd90f63235d510fb53236eb521b57dd063d22ce7a5efcce6a5b8b9db5`
+
+Only those exact committed inputs are covered: newer/uncommitted Haystack/Manure
+SQL/DTO work and pending generic retrieval empty-source/final-lease fixes are **not**
+covered by this receipt. Parent owns the final immutable-source durable full
+Chronicle run after integration; no third foreground full run was started.
