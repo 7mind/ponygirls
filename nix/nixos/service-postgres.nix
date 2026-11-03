@@ -40,7 +40,12 @@ in {
           service // { ReadWritePaths = lib.unique ([ cfg.stateDirectory ] ++ builtins.filter (path: path != "${cfg.stateDirectory}/data") paths); };
         };
         config.preStart = lib.mkBefore "${policy.init}";
-      }; } // lib.mapAttrs' (key: d: lib.nameValuePair "ponygirls-database-${key}" {
+      };
+        # Stock setup sets PGPORT but otherwise defaults to /run/postgresql.
+        # Its readiness/recovery fence must use this provider's private peer
+        # socket, not retry the absent default forever while postgres is up.
+        postgresql-setup.environment.PGHOST = "${cfg.stateDirectory}/socket";
+      } // lib.mapAttrs'  (key: d: lib.nameValuePair "ponygirls-database-${key}" {
         description = "Provision isolated ${key} database/extensions (not app startup)";
         after = [ "postgresql.service" ];
         requires = [ "postgresql.service" ];

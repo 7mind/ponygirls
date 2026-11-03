@@ -61,6 +61,7 @@ assert lib.hasInfix ''local all "postgres" peer'' system.services.postgresql.aut
 assert system.services.postgresql.settings.listen_addresses == "127.0.0.1";
 assert system.services.postgresql.enable;
 assert system.services.postgresql.dataDir == "/var/lib/ponygirls-postgres-18/data";
+assert system.systemd.services.postgresql-setup.environment.PGHOST == "/var/lib/ponygirls-postgres-18/socket";
 assert system.systemd.services.postgresql.serviceConfig.ReadWritePaths == ["/var/lib/ponygirls-postgres-18"];
 assert withExtraAperture.systemd.services.postgresql.serviceConfig.ReadWritePaths == ["/var/lib/ponygirls-postgres-18" "/srv/operator-extra"];
 assert withExtraAperture.systemd.services.postgresql.serviceConfig.ProtectSystem == "strict";
