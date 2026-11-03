@@ -321,6 +321,8 @@
           tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
           tui-tmux = pkgs.callPackage ./nix/pkg/tui-tmux/default.nix { };
           haystack = self.lib.mkHaystackPackage { inherit pkgs; };
+          service-test-fixture-tools = pkgs.callPackage ./nix/pkg/services/test-fixture-tools.nix { };
+          haystack-proxy-fixture = import ./nix/tests/haystack-proxy-fixture.nix { inherit pkgs nixpkgs; haystackModule = self.nixosModules.haystack; haystackPackage = self.packages.${system}.haystack; };
           service-postgres-tools = pkgs.callPackage ./nix/pkg/services/postgres-tools.nix { };
           manure-clients = self.lib.mkManureClientPackage { inherit pkgs; };
           manure = self.lib.mkManurePackage { inherit pkgs; };
