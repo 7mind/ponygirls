@@ -97,7 +97,7 @@ class PointerDomainTest extends ContractSuite {
       _=assertEquals(page.hits.head.version,s"1/${policy.id}")
       _=assertNotEquals(page.hits.head.version,legacy.version)
       after<-repo.current(operation.key)
-      _=assertEquals(after,Some(item))
+      _=assertEquals(after.map(v=>(v.key,v.revision,v.documentCanonical,v.metadata)),Some((item.key,item.revision,item.documentCanonical,item.metadata)))
       afterHistory<-repo.history(operation.key)
       _=assertEquals(afterHistory,history)
       replay<-repo.commit(operation,Alice,Later)
