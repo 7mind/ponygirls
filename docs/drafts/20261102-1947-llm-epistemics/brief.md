@@ -1,9 +1,9 @@
 # Brief — epistemics of LLM-accelerated development (2026-11-02 … 11-03)
 
-Status: summary of journal entries J1–J25 for the user and the next agent;
-J21–J22 clarify the framework; J23–J24 record intake/framing; J25 proposes an
-operating methodology and skill/code components. No game acceptance,
-bounded-attention or efficacy result exists.
+Status: summary of journal entries J1–J26 for the user and the next agent;
+J21–J22 clarify the framework; J23–J24 record intake/framing; J25 proposes the
+method; J26 implements a user-requested provisional playbook and cooperative
+bookkeeping CLI. No game acceptance, bounded-attention or efficacy result exists.
 Source of truth for every claim: [journal](journal.md), [hypotheses](hypotheses.md),
 [references](references.md), the [design draft](belief-dag-design.md), the
 [validation-frame proposal](belief-network-validation.md), the
@@ -90,23 +90,30 @@ captures the procedure.
 Item 1 is the current direction. Items 2–5 are earlier proposals, not newly
 authorized by Q17/Q18; no field replay or policy-tool implementation is underway.
 
-1. **Methodology synthesis (J25; current request).** The user asked for a method
-   based on the unfinished case and possible skill/code components. Read
-   [methodology v0.1](belief-network-methodology.md): a provisional co-framing
-   playbook, later execution/acceptance modules, and a small provenance/projection/
-   storage/input/evidence kernel roadmap. No code or full skill was built,
-   installed or promoted. This is a design proposal, not a completed pilot result.
+1. **Provisional playbook/bookkeeping (J26; current request).** The user explicitly
+   requested implementation and subagents. The
+   [portable bundle](../../../scripts/belief-workflow/README.md) contains a provisional
+   SKILL.md and stdlib CLI (`snapshot/check/render/diff`), with 36 passing software
+   test methods on Python 3.14.8. No automatic discovery/global installation,
+   protected authority store, semantic approval parser or attention metric.
+   Writable subagent workspace assignment was policy-denied; readers designed/
+   reviewed, and the parent implemented/tested in its dedicated worktree. The
+   [methodology](belief-network-methodology.md) remains unvalidated end-to-end.
    **Underlying real-task case (Q18, J23–J24):** the separate `/home/pavel/work/warcraft-inspired-rts` workspace now has a compact
    five-goal compilation of chat confirmations C1–C8, plus their framing record
    and the larger 63-entry reference inventory. Scope: one-map AI annihilation;
    two conventional ground factions; gold/wood, supply, recruitment and research;
    shared fog/scouting; no AI economic/production bonuses; original retro-2D
    desktop-browser presentation, sound/help and pause/save/resume/restart. No
-   campaign, online battles, air/naval forces or magic. No game code exists.
+   campaign, online battles, air/naval forces or magic. No game code has been
+   produced in this workflow.
    The human requested ordinary chat, one consequential question at a time,
-   and no decisions-tool use for now; Q19–Q21 are older forms, not permission.
-   No attention ceiling was set before the walkthrough: this is an explicit
-   study deviation. Remaining-review cap versus no-hard-cap is still open.
+   and no decisions-tool questioning for now. Q19 is dismissed. Q20's answered
+   older form still includes oil/naval/air/magic, conflicting with C2/C5; a focused
+   chat clarification is pending. Do not silently widen the game or ratify the
+   rewritten file. Q21 objects to mechanical attention/overload measurement;
+   no numeric or explicit no-hard-cap choice follows. No initial cap or active-
+   attention measurement existed; do not invent a proxy or press for a number.
    Private cases remain unknown. Do not substitute a battle demo for the final
    target or infer human effort from elapsed time. The
    [validation-frame](belief-network-validation.md) and
@@ -136,8 +143,9 @@ authorized by Q17/Q18; no field replay or policy-tool implementation is underway
 
 ## Handover to the next agent
 
-**Read first, in order:** this brief; `journal.md` J25 and
-`belief-network-methodology.md` (current design request); J24 and the RTS README,
+**Read first, in order:** this brief; `journal.md` J26 and the prototype README
+at `scripts/belief-workflow/`; `belief-network-methodology.md`; J25 (design),
+J24 and the RTS README,
 compact network and framing record (partial case); J23 (earlier intake);
 then J21–J22 (framework) and J16–J19 (latest experiments); `belief-network-validation.md` and
 `belief-network-construction.md` (conceptual proposals); `hypotheses.md` (status column); `belief-dag-design.md` §5, §6, §11; the
@@ -195,17 +203,20 @@ a subject workspace.
   validation scripts after merging.
 
 **Open items for the user**
-- Current request is methodology/component design, not implementation of a
-  kernel, harness adapter or installed skill. Construction and human acceptance
-  through the network remain unexercised; the existing game target is unchanged.
+- The requested cooperative prototype exists, not a trusted human-input adapter
+  or globally installed skill. An inert generic candidate is in Haystack under
+  `corporate-activity:skill-draft-joint-belief-framing` r1, with companion paths.
+  End-to-end construction/acceptance remains unexercised; RTS scope clarification
+  is pending separately.
 - Stored Pilot DF sessions contain the user's skill files (read by Sol,
   about 8.8 MB, local repo only): the user decided to keep them (nothing to
   redact, 2026-11-03).
 - Q18 authorized one manual real-task tryout. C1–C8 now confirm the game outcome
   clauses in chat, not every inventory row or every sentence of a compilation.
-  The remaining-review attention policy is still open. No pre-walkthrough cap
-  existed; don't retroactively claim one. Do not use older pending forms as
-  authorization or override the requested chat-only walkthrough.
+  Formal answered/dismissed states are not semantic resolution or wider
+  authorization. Q20's old context must be reconciled with the scoped chat;
+  Q21 supplies a measurement objection, not a chosen limit. No initial cap existed;
+  don't retroactively claim one or infer measured overload reduction.
 - The unresolved research question remains how dialogue selects material
   contrasts without sharing the generator's omissions or recreating
   specification overload. No acceptance or tractability result exists yet.

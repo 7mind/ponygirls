@@ -1,8 +1,10 @@
 # Consequence-led belief workflow — methodology v0.1
 
-Status: **proposed operating method and component roadmap**, requested after the
-partial RTS framing case (J23–J24). Not a validated end-to-end procedure, installed
-skill, implemented kernel or authorization to begin construction. It operationalizes
+Status: **proposed operating method with an initial cooperative prototype**.
+After the partial RTS framing case (J23–J24), the user explicitly requested the
+[portable playbook and bookkeeping CLI](../../../scripts/belief-workflow/README.md)
+(J26). This is not a validated end-to-end procedure, installed skill, trusted
+ratification service or authorization to construct the RTS. It operationalizes
 [joint construction](belief-network-construction.md) and the
 [validation frame](belief-network-validation.md); the earlier
 [DAG design](belief-dag-design.md) remains a source of proposals, not existing tooling.
@@ -226,9 +228,12 @@ adapters rather than copying those procedures. The existing
 `agent-behaviour-pilot` draft concerns controlled agent-subject experiments and
 explicitly excludes human-participant pilots; it is not this operational method.
 
-These are component specifications, **not new installed/promoted skills**. The
-read-only procedure review recommends retaining the method as a provisional
-playbook rather than manufacturing a complete reusable SKILL.md from this case.
+At J25 these were component specifications, not a reusable skill established by
+recurrence. In J26 the user explicitly requested provisional implementation:
+a portable SKILL.md and limited checker/projector now exist, **not installed or
+promoted as validated practice**. The new authorship request does not turn the
+partial case into efficacy evidence. Trusted host capture, storage services and
+end-to-end human acceptance remain outside the implemented prototype.
 
 ### Code boundaries
 
@@ -305,6 +310,10 @@ missing or untrusted scope, and supplied interpretation states. Semantic evaluat
 separately challenges whether real replies were interpreted faithfully; fixture
 passes do not establish general ambiguity or topic-change detection.
 
+The [prototype suite](../../../scripts/belief-workflow/README.md#validation) in J26
+executes only implemented cooperative CLI contracts. Host/semantic validation and
+unimplemented storage guarantees below remain proposed, not passed.
+
 Challenges for the corresponding implemented responsibilities include:
 
 - Partial approvals, unrelated confirmations, ambiguous/qualified replies and
@@ -329,7 +338,8 @@ Challenges for the corresponding implemented responsibilities include:
 
 Negative controls must actually violate the property being checked. Generated
 scorer cases can share the generator's omissions; review real traces and retain
-failures. This test plan is proposed—no such prototype suite ran in this task.
+failures. This is the broader proposed test plan; J26's software results do not
+establish any unimplemented host, semantic, storage or human-workflow guarantee.
 
 ## 7. Order of work and research checks
 
@@ -347,8 +357,11 @@ failures. This test plan is proposed—no such prototype suite ran in this task.
 For evaluation, distinguish **faithful framing**, **conforming implementation**,
 **discrimination at acceptance**, **uncovered consequences**, **human effort** and
 **later usability**. Use independent/held-out cases where available and preserve
-clarification versus deliberate change versus unknown history. Measure active
-attention prospectively with consent and count the measurement burden itself.
+clarification versus deliberate change versus unknown history. No agreed validated
+mechanical attention/overload measure exists in this case (Q21); do not replace
+that gap with time, question counts or view size. Any future measurement needs
+prospective consent, disclosed limits and accounting for its own burden. Qualitative
+judgments can be recorded as such, not renamed quantitative overload evidence.
 Include false acceptance, false rejection, unfinished work and unchecked scope.
 
 One completed case would still establish only feasibility. Fewer questions,

@@ -1883,3 +1883,139 @@ implementation, skill/config installation, benchmark, deployment or push occurre
 Codegraph refused the targeted query because daemon ownership was in a foreign
 or unknown PID namespace; known sources were read directly, without attempting
 a daemon repair or new workspace index.
+
+## J26 — 2026-11-03 — User-requested provisional playbook and cooperative bookkeeping
+
+### Authorization and unresolved RTS scope
+
+> So, I think you should proceed with the proposed provisional playbook plus minimal bookkeeping automation. Use subagents
+
+This authorizes the standalone prototype [L11], not RTS construction, deployment,
+global installation, a trusted ratification service or a new experimental batch.
+The user also dismissed Q19 and answered Q20/Q21. Narrow reads of the answered
+records established their stored antecedents rather than assigning their answers
+to the current mutable Markdown file.
+
+Q20 r2 ratifies its five goals/desktop-retro scope “as written,” but its stored
+16:58 proposal still explicitly includes oil, land/sea/air/transport and magic.
+That conflicts with later scoped chat C2/C5. A focused ordinary-chat clarification
+was asked: should its ratification preserve C1–C8, including ground-only, no magic
+and no AI bonuses? No answer to that clarification has been observed. Formal
+“answered” is not semantic resolution, automatic last-write-wins intent revision,
+or permission to restore excluded mechanics. The generic tooling is independent;
+no RTS source baseline was rewritten or game code started.
+
+Q21 r2 expresses that the user sees no workable mechanical attention/overload
+metric. It supplies neither a numeric limit nor an explicit no-hard-cap choice.
+No metric, proxy score or forced numeric cap was introduced. There is no agreed
+validated measurement in this case, and no overload-reduction result. A time
+bound could be a participation choice, but would not itself measure overload.
+
+### Implemented scope
+
+`scripts/belief-workflow/` contains an explicitly provisional portable
+`joint-belief-framing` SKILL.md, Python stdlib CLI, format/usage reference,
+synthetic example and public batch-CLI tests. It is outside skill discovery and
+not registered in settings or Nix packaging. The playbook can be read explicitly;
+installation/activation is separate. No dependency install or service is needed.
+
+The four commands are `snapshot INPUT`, `check INPUT`, `render INPUT`, and
+`diff PREVIOUS CURRENT`. Inputs are explicit, results stdout and diagnostics
+stderr; the tool never mutates its inputs, follows artifact locators, executes
+reports or collects participant data. The explicit 4 MiB input limit fails
+rather than truncates. There is no managed store/CAS interface, host adapter,
+semantic approval parser, graph UI or automatic goal-support calculation.
+
+Records retain exact text, declared authors and opaque origin locators, proposal
+scope, attributed interpretations, exact claim/dependency revisions and reported
+evidence. Snapshot fingerprints preserve strings; existing mismatches are not
+repaired. History comparison rejects retained-record mutation/deletion even when
+hashes are recomputed. Active selections and reported outcomes are not authority.
+Evidence applicability means reference matching to declared selections, not real
+artifact freshness, verified reports, semantic support or exhaustive dependencies.
+Changing claim conditions or declared environment revisions does not automatically
+inherit old evidence. Unsolicited inputs need no proposal; only a claimed scoped-
+approval interpretation requires an exact antecedent and declared scope subset.
+
+### Subagents and reproductions
+
+Writable subagent assignment to prepared workspaces was POLICY_DENIED: the harness
+policy has no workspaceRoots. No writer started and no alternate write grant or
+policy bypass was attempted. The parent implemented in its dedicated worktree.
+Two read-only Sol workers supplied contract/test design and a full playbook draft,
+then independently inspected the actual artifacts:
+
+- Contract/design `ebc3e63f-f0d3-484f-8fa6-f1c525403645`; implementation review
+  `8f127079-cc6c-402a-ac84-c60f08a5fbcb`; focused final static review
+  `c11d347c-fb47-4e57-bf4b-02181b2c27e8`.
+- Playbook draft/overlap `ce065e71-ffac-4899-a594-d6f4ad692a42`; bundle review
+  `253eaf6c-c920-4f1e-8bfd-87a3753fcb91`; research-writeup consistency
+  `40d9b461-155b-4da6-b2b3-2b68aa7e02d7` (static; portability caveat resolved by
+  the parent's corrected successful rerun, not by this reviewer).
+
+The initial 32-method prototype suite failed three contracts for the expected
+reasons: omitted checked evidence scope, omitted dependency declarations and raw
+terminal/bidi controls in the Markdown projection. These were corrected only
+after their failing outputs were captured. Review then exposed omitted evidence
+authors and historical checked-environment declarations: two focused test methods
+produced three failing assertions before correction. A source-locator feature
+was first captured failing on the unsupported field; source-author preservation
+also failed before correction. Final rendering preserves those attributions and
+selected/referenced dependency versions, quotes Markdown/HTML/backticks as data,
+and visibly escapes control characters while snapshots retain original strings.
+
+One advisory review objection concerned diagnostics on stderr instead of its
+initial stdout recommendation. That recommendation was not a user requirement;
+the explicitly documented current CLI contract uses normal results-stdout/errors-
+stderr separation and empty success output on invalid input. It was retained,
+not “fixed” by weakening tests. Final static/bundle reviews reported no remaining
+material issue within their stated scope; reviewers did not execute code.
+
+### Verification and source binding
+
+Executed with Python 3.14.8 from the repository root:
+
+```bash
+python3 -m unittest discover -s scripts/belief-workflow/tests -v
+```
+
+Final result: **36 test methods, 0 failures, 0 errors, 0 skips**. Subtests are not
+independent trials. The documented example runs all four commands. A copied
+portable bundle also ran all four outside the checkout. Python compilation,
+skill-frontmatter/local-link checks and cache-ignore checks passed: 11 Markdown
+files, 39 local links, 75 unique reference IDs and J1–J26. Python 3.11 grammar
+parsing also passed, **not** a Python 3.11 runtime test. An initial portability
+helper used nonexistent diff-result keys and raised KeyError; after inspecting
+the actual `additions/selection_changes` contract, the corrected helper passed.
+The CLI was not changed to accommodate that verification-script defect. These are
+public CLI software-contract checks using real temporary files/processes,
+not human-intent, workflow-efficacy or cognitive-load tests. No unrelated Chronicle
+application suites or new model-subject experiments were run.
+
+Post-test source SHA-256:
+
+- `joint-belief-framing/SKILL.md`: `630c9f0b84e48fde99b40de1dc30674d42656fd32b71019ddaebe83ee80a0489`
+- `joint-belief-framing/scripts/bookkeeping.py`: `cec85dcbefa45e9219339d679ae0f8f9ab0bbd5cd01b188abad51ce283d75254`
+- `tests/test_bookkeeping.py`: `34327e4378f68a31b82e408917c81e7c408ea14e8bd111c9aeac9e81f3e31bdb`
+
+Paths above are relative to `scripts/belief-workflow/`. Document checks preserve
+the original journal prefix from `a6b7e59ca2d5f6c45c2ca92302f54b71ae61cbcc`,
+J1–J26 order, references and local links. RTS public artifacts retain J24's source
+binding; private intended cases remain unknown. Software output does not establish
+a completed game or informed human acceptance.
+
+### Provisional skill accounting
+
+At the user's explicit authorship request, a complete provisional playbook now
+exists. That supersedes J25's decision to retain only component specifications;
+it is not new evidence of recurrence or efficacy. The reader checked installed
+source metadata and distinguished adjacent taxonomy/dual-tests/tass procedures;
+the parent framing search at about 23:00:35Z returned `agent-behaviour-pilot` r2,
+whose same-revision body had been read earlier. Overlap assessment is best effort.
+
+The generic full SKILL.md and its supporting-file locations were saved as inert
+`corporate-activity:skill-draft-joint-belief-framing` **r1**, then read with `get`
+(23:23:42Z service revision). The typed Markdown body preserves frontmatter;
+metadata distinguishes observed software checks from hypothesized human benefits,
+with human attention required. No participant/private case data or code bundle
+was uploaded. No skill was installed or treated as authoritative by a status label.

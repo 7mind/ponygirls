@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "sources": {
+    "P@1": {
+      "kind": "proposal",
+      "by": "agent",
+      "source_ref": "synthetic:proposal-P",
+      "text": "Export a report locally; do not upload it.",
+      "scope": {"export": "Produce a local report.", "network": "Do not upload the report."}
+    },
+    "U@1": {"kind": "input", "by": "reported user", "source_ref": "synthetic:input-U", "text": "Yes to local export. File format remains open."},
+    "U2@1": {"kind": "input", "by": "reported user", "source_ref": "synthetic:input-U2", "text": "Also preserve all report conditions."}
+  },
+  "interpretations": {
+    "I@1": {"by": "agent", "input": "U@1", "kind": "scoped_approval", "proposal": "P@1", "scope": ["export"], "text": "Interpreted as local export only, not approval of the whole proposal."},
+    "I2@1": {"by": "agent", "input": "U2@1", "kind": "instruction", "proposal": null, "scope": [], "text": "An unsolicited instruction; no proposal required."}
+  },
+  "claims": {
+    "G@1": {"by": "agent", "kind": "goal", "text": "Produce a local report preserving all conditions.", "conditions": ["No condition is silently truncated."], "basis": ["I@1", "I2@1"], "dependencies": [], "evidence_route": "Inspect a public synthetic report.", "open": ["File format remains unresolved."]}
+  },
+  "dependencies": {},
+  "evidence": {},
+  "active": {"claims": {"G": "G@1"}, "dependencies": {}}
+}
