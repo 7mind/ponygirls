@@ -113,7 +113,11 @@ object Main extends IOApp:
         case _ => ()
       if recover then
         observation._1 match
-          case None if observation._3 =>
+          // A matching existing binding already establishes this root's domain
+          // ownership. Empty metadata can follow a committed last-row delete
+          // whose filesystem cleanup was interrupted; normal orphan recovery is
+          // then required. This refusal is ONLY for first, unbound adoption.
+          case None if observation._3 && observation._2.isEmpty =>
             val unexpected=Vector("staging","live").exists { name =>
               try directory.tree(RelativeName.parse(name),config.limits.cleanupEntries,68).nonEmpty
               catch case _: NoSuchFileException => false

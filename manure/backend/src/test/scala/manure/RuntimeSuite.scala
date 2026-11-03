@@ -41,6 +41,27 @@ final class RuntimeSuite extends FunSuite:
       yield ()
     }.unsafeRunSync()
   }
+  test("already-bound empty metadata reopens after last-row deletion and recovers its orphan staging") {
+    BackendFixture.configuration.use { (config,token,_) =>
+      val identity = new Auth(config.users).authenticate(token).get
+      for
+        id <- Main.resources(config).use { services => for
+          initialized <- services.artifacts.init(identity,InitUpload("last session",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None))
+          _ <- services.database.transaction { c =>
+            // Exact crash/cancel window: authoritative deletion committed, next
+            // filesystem cleanup has not run. Existing root_owner is untouched.
+            new PostgresTxn(c,services.projection).delete(initialized.artifact.id)
+          }
+        yield initialized.artifact.id }
+        _ <- IO.blocking(assert(Files.exists(config.dataDir.resolve("staging/"+id))))
+        _ <- Main.resources(config).use(_ => IO.unit)
+        _ <- IO.blocking {
+          assert(!Files.exists(config.dataDir.resolve("staging/"+id)))
+          assert(!Files.exists(config.dataDir.resolve("staging/"+id+".json")))
+        }
+      yield ()
+    }.unsafeRunSync()
+  }
   test("legacy SQLite physical root with empty PG fails migration-required before any metadata mutation") {
     BackendFixture.configuration.use { (config,_,_) => for
       _ <- IO.blocking {
