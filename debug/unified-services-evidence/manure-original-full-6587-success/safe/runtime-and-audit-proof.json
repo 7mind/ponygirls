@@ -1,0 +1,99 @@
+{
+  "sourceCommit": "65879bdd6174f747ba17f2b7678c3c7c9f7536c5",
+  "requestedAcceleration": "kvm-or-tcg",
+  "hostKvmAccessibleAtRuntimePreflight": false,
+  "selectedAcceleration": "UNKNOWN; no direct selected-accelerator trace",
+  "baseOverride": null,
+  "fullBaseSha256": "87e6276ee297247ef0a7c5b8891624e3aa2ea4ede28ca098cedfc4adcd18c6c2",
+  "audits": [
+    {
+      "vm": "edge",
+      "retainedRecordShape": [
+        "argv",
+        "mapping"
+      ],
+      "printedRecordCount": 1,
+      "attachedImageCount": 2,
+      "labUnixChannelCount": 3,
+      "requestedPolicy": "kvm-or-tcg",
+      "machineArguments": [
+        "accel=kvm:tcg",
+        "memory-backend=mem0",
+        "q35,smm=on"
+      ],
+      "cpuArguments": [
+        "max"
+      ],
+      "globalArguments": [
+        "driver=cfi.pflash01,property=secure,value=on"
+      ],
+      "retainedPrintedDerivativeSha256": "c630cfa44d6324a17cb39c54df58b65909c79f1a17d85e8989e0fea6607d428b",
+      "privateArgvNotPublished": true,
+      "originalDeletedJsonlByteHashAvailable": false
+    },
+    {
+      "vm": "strict",
+      "retainedRecordShape": [
+        "argv",
+        "mapping"
+      ],
+      "printedRecordCount": 1,
+      "attachedImageCount": 2,
+      "labUnixChannelCount": 3,
+      "requestedPolicy": "kvm-or-tcg",
+      "machineArguments": [
+        "accel=kvm:tcg",
+        "memory-backend=mem0",
+        "q35,smm=on"
+      ],
+      "cpuArguments": [
+        "max"
+      ],
+      "globalArguments": [
+        "driver=cfi.pflash01,property=secure,value=on"
+      ],
+      "retainedPrintedDerivativeSha256": "5510720a0dec835ed4252584d442bc8183c57bd6b44f6a61e762b1c9c74502a7",
+      "privateArgvNotPublished": true,
+      "originalDeletedJsonlByteHashAvailable": false
+    }
+  ],
+  "postRunImageProof": {
+    "candidateImages": 4,
+    "validatedImages": 4,
+    "backingNoneCount": 4,
+    "formats": [
+      {
+        "format": "qcow2",
+        "backing": "none",
+        "stdoutLine": 2405
+      },
+      {
+        "format": "raw",
+        "backing": "none",
+        "stdoutLine": 2406
+      },
+      {
+        "format": "raw",
+        "backing": "none",
+        "stdoutLine": 2407
+      },
+      {
+        "format": "qcow2",
+        "backing": "none",
+        "stdoutLine": 2408
+      }
+    ],
+    "mappedAttachedCount": 4,
+    "mappedAttachedEqualsPostrunDiscovered": true,
+    "statusMarkerStdoutLines": {
+      "foundCandidateImages4": 2404,
+      "validatedImages4": 2409,
+      "attachmentMappingMatched": 2410,
+      "runtimeContainedOK": 2521,
+      "innerLabRemovalVerified": 2522
+    }
+  },
+  "scope": "Actual effective pre-exec guards plus immutable runtime postrun contained regular/backing/mapping checks completed; no general-confinement/all-host claim. No current image/PG access performed during evidence collection.",
+  "retainedManifestIsParsedPrintedDerivative": true,
+  "originalDeletedManifestByteHashNotInvented": true
+}

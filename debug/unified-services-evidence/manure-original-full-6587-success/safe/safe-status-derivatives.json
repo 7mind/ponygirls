@@ -1,0 +1,38 @@
+{
+  "derivative": true,
+  "notByteExactOriginal": true,
+  "originalArtifactDigests": {
+    "exit.json": "72b37e6310334a302b32a8ce4f3aa049fe6ea89e8ffac4b158b1cd17c84e4651",
+    "owned-cleanup.json": "58791e21cdb6343c48d25279f5d1287da238348cf43fd5d88cd8a6175d1b7adc"
+  },
+  "runId": "20261103T150756Z.fb152b3a",
+  "exit": {
+    "at": "2026-11-03T15:17:48.804884+00:00",
+    "passed": true,
+    "supervisorExit": 0,
+    "operatorSignals": []
+  },
+  "ownedCleanup": {
+    "at": "2026-11-03T15:17:48.782900+00:00",
+    "runtimeExit": 0,
+    "ownedAbsence": "verified-by-subreaper-and-pidfds",
+    "ownedLive": [],
+    "kernelDirectChildren": [],
+    "cleanupReason": "runtime-exit"
+  },
+  "freshRecordedIdentities": {
+    "observedAt": "2026-11-03T15:25:06.945166+00:00",
+    "ownedIdentityCount": 8,
+    "ownedCounts": {
+      "recorded-identity-absent": 8
+    },
+    "supervisorIdentitySeparately": "recorded-identity-absent",
+    "scope": "Recorded identities only; NOT fresh unknown-subtree or whole-host absence; no signals."
+  },
+  "freshRootPresence": {
+    "observedAt": "2026-11-03T15:25:06.945175+00:00",
+    "innerDisposableLabPresent": false,
+    "outerRootRetained": true,
+    "scope": "Presence observations only; no deletion. Private exact locators remain in original artifacts."
+  }
+}
