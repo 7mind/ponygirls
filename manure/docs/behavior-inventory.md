@@ -423,10 +423,21 @@ Authenticated ready/unexpired metadata+manifest-path corpus only; lexical/semant
 - [`shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala`](../../shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala).
 - [`test_target_search.TargetSearchTests.test_metadata_only_heartbeat_publication_modes_outage_and_profile_space`](../../manure/tests/test_target_search.py).
 
-**OPEN—blocks full release acceptance:**
-- Actual target now proves controlled-provider heartbeat, semantic/hybrid identity, not-ready/outage, profile cutover/restart, metadata-only inputs and delete eligibility. Remaining service-adapter assertions: negative kind/visibility/creator filters before count/limit, expiry during delivery, and concrete evidence/provenance coordinates/identity. Shared authorization/fencing tests and codec goldens remain complementary, not live-provider quality evidence.
+**Mapped/implemented in `a12c3c58`:** negative visibility/kind/creator filters
+in all three modes; exact Name evidence plus a separately queried best
+ManifestPath/text/pointer, finite scores and consistent source/generation/space;
+real API60s TTL with a5s controlled HTTP model query crossing expiry, followed
+by empty semantic and lexical results. No fake clock or expiry-row mutation.
+Existing heartbeat/not-ready/outage/cutover/delete/secret-exclusion and actual
+close/restart assertions remain. This closes the outstanding semantic adapter
+assertion clause, not live-provider relevance/quality.
 
-The actual-target test exercises shared-worker heartbeat across a4s document call/3s lease, actual server close/restart and same-URL/dimension revision cutover. This is controlled-provider correctness/lifetime evidence, not live-provider relevance/quality. Mid-operation graceful publish/sweeper/stuck-worker shutdown remains separately open.
+Receipt `20261103T101950Z-jvm.MRR5I7` was re-read at
+`2026-11-03T10:24:25Z`: focused actual JVM/helper-PG1 method,0 failures/errors/
+skips, exit0, `currentTestSuccess:true`, `releaseAcceptance:false`. Its recorded
+search test source SHA exactly matches integrated `a12c3c58`. Full unfiltered
+current/native/runtime gates remain mandatory; active publish/sweeper/stuck
+worker lifetime is still a separate open group.
 
 ### retired-server-activation
 
@@ -509,5 +520,5 @@ Separately authorized production activation is not implied.
 After parent `5f3905ec` integration and explicit retirement registration, a
 35-method focused retirement/client-secret/preflight/inventory diagnostic
 passed0 failures/errors/skips. The declared inventory is now31 modules/325
-methods, not a completed325-method run. Four invariant clauses remain open;
+methods, not a completed325-method run. Three invariant clauses remain open after the concrete `a12c3c58` search closure;
 full acceptance still cannot be inferred from this component diagnostic.

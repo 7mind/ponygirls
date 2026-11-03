@@ -1499,9 +1499,22 @@
           "testId": "test_target_search.TargetSearchTests.test_metadata_only_heartbeat_publication_modes_outage_and_profile_space"
         }
       ],
-      "openGaps": [
-        "Actual target now proves controlled-provider heartbeat, semantic/hybrid identity, not-ready/outage, profile cutover/restart, metadata-only inputs and delete eligibility. Remaining service-adapter assertions: negative kind/visibility/creator filters before count/limit, expiry during delivery, and concrete evidence/provenance coordinates/identity. Shared authorization/fencing tests and codec goldens remain complementary, not live-provider quality evidence."
-      ]
+      "openGaps": [],
+      "implementedAssertions": "a12c3c58 actual target adds negative visibility/kind/creator filters in all3 modes; exact Name and separately queried best ManifestPath evidence/text/pointer, finite score and source/generation/space consistency; real API60s expiry crossed by a5s controlled HTTP query yields no stale delivery. Existing heartbeat/not-ready/outage/cutover/delete/metadata-only boundaries retained.",
+      "verificationEvidence": {
+        "sourceCommit": "a12c3c58",
+        "testSourceSha256": "d26cbf2d93ae3284fb51ed7eab750aebba7f1ef01c3415bb2cdbca91b7d71049",
+        "receipt": "20261103T101950Z-jvm.MRR5I7",
+        "observedAtUtc": "2026-11-03T10:24:25Z",
+        "mode": "focused actual JVM / owned least-privilege helper PG / controlled embedding HTTP",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "exitStatus": 0,
+        "releaseAcceptance": false,
+        "scopeWarning": "Exact source hash matched receipt test-inputs. Controlled-provider correctness only; full current/native/provider acceptance and live-provider relevance quality are not implied."
+      }
     },
     {
       "id": "retired-server-activation",
