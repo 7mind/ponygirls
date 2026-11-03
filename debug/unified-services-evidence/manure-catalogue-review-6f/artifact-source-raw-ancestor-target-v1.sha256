@@ -1,4 +1,0 @@
-c9b5a087b57a58c160347b340b061cc6d86a64c683d90dc2b4edc8ad3823e9d3  build.sbt
-9be6ba2173ba1fb03142f6ed3d949d62ed3fde79b666f53c7692c12d06a80c2f  deps.lock.json
-390513f4d977a6cedf69a6844ea67dcb15284754ef87f0289a2b6b40bfe14318  lockfile-config.json
-60bcf836d17a97f6eda60cbbec73a6edad96c0ce98f558fe98ae82b4981de6cd  manure/migration/schema.sql

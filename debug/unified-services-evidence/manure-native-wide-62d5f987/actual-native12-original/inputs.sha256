@@ -1,8 +1,0 @@
-9318c06043c06b95e7cc4ceafbc6c9b3f22bd685dd43bb01896497d175f7a835  /nix/store/vy90bri36mygbj211vklcgzpilq8ff9a-manure-native-artifact-0.1.0/libexec/manure-server
-1ed47d780d8a78f14eaad4e75c3e57c841604bb04180a8aaecdaec4c58feb3a1  /nix/store/vy90bri36mygbj211vklcgzpilq8ff9a-manure-native-artifact-0.1.0/share/manure/compiled-inputs.sha256
-5d80fcf663d3b959a385e0fd46d12e92643464ecc2c848271bc25daaae9c907d  /nix/store/rpgyw9j2diprbjbchpsp1qs2zwqdba6d-probe.py
-91dce775f62e9d799d0ae2ff2b683f0f530d667c0524dcde07fc695903723e04  /nix/store/ifwl7l3gmgz1h235jspmh9hahq5aa6s4-launch-short.py
-a38a5afe5ee9dbecf559a4da8add538c0b4931507e889197e368e08f2b9d7af1  /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/debug/manure-full-frozen-fixture/provider-env.json
-3b3113185fa153682c951079bb839d1fa429a04e362daf5bada522848bde4c62  /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/debug/manure-full-frozen-fixture/with-owned-postgres.py
-7b344e945bf064a6a96c361777fd4eaf25a81d1df11a2b339520b38035cdd4ce  /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/debug/manure-full-frozen-fixture/provision-owned-database.py
-22c7f6e767a8f3d06c89669f2c3c884b2ab03353de8fd6449974d0464f2ac1c3  /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/debug/manure-full-frozen-fixture/provider.py

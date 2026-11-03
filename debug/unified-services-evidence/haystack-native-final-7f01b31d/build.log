@@ -1,7 +1,0 @@
-these 2 derivations will be built:
-  /nix/store/66k9wzvxc4zfd7l47q4n9aidp11xmyf3-haystack-native-current-transport.drv
-  /nix/store/p98in2gi8n6aphz7fdl7wnk9qw7vx507-haystack-native-complete-browser.drv
-building '/nix/store/p98in2gi8n6aphz7fdl7wnk9qw7vx507-haystack-native-complete-browser.drv'...
-haystack-native-complete-browser> {"artifactKind": "native", "artifactSha256": "6d9df244606896b34508ad8c67e3c90f2882079197a7a3615f202c7d78a2eb76", "browserCases": 36, "cases": 61, "compiledInputManifestSha256": "f3dcfce4a71a58e590cefc5cd1f56e5d2c2d6ec89a0ed4eaa12c5d3602337dfc", "exitStatuses": [0, 0, 0], "failuresAndErrors": 0, "installedAssets": {"assets/index-BLXqb06i.css": "e66562e52008b670b69d34af4d3cd10e654dea595bb844b5546097ebbae0453a", "assets/index-GqNvSOtV.js": "12e84a0dc8cd69fdd1eee71b1c3814ecaa6f9b274923f1c0984ed42ccf5f5782", "index.html": "e81bc9fdf344d05543742d530ae9f6fad5ceb67aa62a9d02607175da0ec9d0c5"}, "inventoryExact": true, "inventorySha256": "4e5db06835e906a511737c59274f40dbe44c7513d23ef3afa28ba70726f9d6f3", "markupCases": 1, "mode": "browser", "proxyJsonSha256": "bb42e2812bcc8a1de3ef1b38ec3afbc4b73076cc846df9e1e615ba30937757db", "skips": 0, "sourceAndArtifactUnchanged": true, "sourceManifestSha256": "58f3413cc2d6669181582644d794deb275a1d4b4674d4c1b54dc24917ed68da3", "sourceRevision": "7f01b31d2e64ecac39d2c0b47e68069df1afd7d5"}
-building '/nix/store/66k9wzvxc4zfd7l47q4n9aidp11xmyf3-haystack-native-current-transport.drv'...
-haystack-native-current-transport> haystack: 34 native cases, zero failures/errors/skips

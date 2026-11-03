@@ -1,3 +1,0 @@
-ponygirls=git+file:///home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-unified-services?rev=6898977a024bde7ff97ed72a9dc0b16518c7d92c
-nix-config=git+file:///home/pavel/work/flakes/nix-config/.worktrees/wt-nix-config-unified-services?rev=c3e8a7b5653ea6bbb4075f6f4c6d9a523df1db4d
-paddock=git+file:///home/pavel/work/flakes/paddock/.worktrees/wt-paddock-unified-services?rev=71637f117870db70e88d2b7744d4fec6aed81c57

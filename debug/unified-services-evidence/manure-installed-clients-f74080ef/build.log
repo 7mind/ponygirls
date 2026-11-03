@@ -1,7 +1,0 @@
-this derivation will be built:
-  /nix/store/4vd5k9ccxph3iw71pqrlkflh3r1sk9nr-manure-client-test.drv
-building '/nix/store/4vd5k9ccxph3iw71pqrlkflh3r1sk9nr-manure-client-test.drv'...
-manure-client-test> manure-client: installed dashboard + unlock assets through native server OK
-manure-client-test> manure-client: manual MCP exchange OK (8 tools, whoami)
-manure-client-test> manure-client: SDK interop OK
-manure-client-test> manure-client: CLI cache precedence + resume + round-trip OK

@@ -1,9 +1,0 @@
-v24.21.0
-11.19.0
-initdb (PostgreSQL) 18.6
-psql (PostgreSQL) 18.6
-OpenSSL 3.5.9 29 Sep 2026 (Library: OpenSSL 3.5.9 29 Sep 2026)
-Chromium 156.0.8078.79 
-nginx version: nginx/1.30.6
-50482ab45dca1419863865fa25c009efba593277553aeb17d974d4decc625d63  /nix/store/fqriy9vihl23l4md56qgiks8z0d2xdlw-chromium-156.0.8078.79/bin/chromium
-0e35948bccec2ab091129da9400fb1d9308e8e2cb4b4c51cd7d9414360b0c081  /nix/store/bpcwls9sj5ba12i8p5j3wmsm2hvzyqcw-nginx-1.30.6/bin/nginx

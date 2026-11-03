@@ -1,7 +1,0 @@
-{
-  "revision": "be4cb86972c820ea2ae0e2c6f886057f0604c2ec",
-  "startedAt": "2026-11-03T16:00:35.358847+00:00",
-  "scope": "actual owned VM NixOS module/systemd/PG lifecycle; synthetic CLI adapters, not native app semantics",
-  "credentials": "local Nix daemon identity only, no external sessions",
-  "expectedOutput": "/nix/store/4s7dildmqxw0vkmrv1zrnqlfr1jvj5gy-vm-test-run-shared-provider-actual-module-unit-lifecycle"
-}

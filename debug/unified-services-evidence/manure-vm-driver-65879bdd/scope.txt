@@ -1,1 +1,0 @@
-BUILD ONLY original full fixture; serve-only Manure exit143 classification; no diagnostic overlay, testScript override, caps or deadline change.

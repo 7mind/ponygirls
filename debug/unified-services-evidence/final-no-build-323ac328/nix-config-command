@@ -1,1 +1,0 @@
-nix flake check --no-build --no-write-lock-file --override-input ponygirls git+file:///home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-unified-services\?rev=323ac32879606c494b54568a085c7ab61a9c13d2 git+file:///home/pavel/work/flakes/nix-config/.worktrees/wt-nix-config-unified-services\?rev=c3e8a7b5653ea6bbb4075f6f4c6d9a523df1db4d 

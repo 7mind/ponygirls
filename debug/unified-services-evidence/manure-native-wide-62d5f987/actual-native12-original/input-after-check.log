@@ -1,8 +1,0 @@
-/nix/store/vy90bri36mygbj211vklcgzpilq8ff9a-manure-native-artifact-0.1.0/libexec/manure-server: OK
-/nix/store/vy90bri36mygbj211vklcgzpilq8ff9a-manure-native-artifact-0.1.0/share/manure/compiled-inputs.sha256: OK
-/nix/store/rpgyw9j2diprbjbchpsp1qs2zwqdba6d-probe.py: OK
-/nix/store/ifwl7l3gmgz1h235jspmh9hahq5aa6s4-launch-short.py: OK
-/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/debug/manure-full-frozen-fixture/provider-env.json: OK
-/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/debug/manure-full-frozen-fixture/with-owned-postgres.py: OK
-/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/debug/manure-full-frozen-fixture/provision-owned-database.py: OK
-/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/debug/manure-full-frozen-fixture/provider.py: OK
