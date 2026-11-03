@@ -261,6 +261,13 @@ class SearchTest extends FunSuite {
     assert(foreign.nonEmpty)
     intercept[InvalidCursor](Search.search(fixture, SearchInput("todo", limit = 1, cursor = foreign)))
   }
+  test("modified-at cursors preserve nanosecond Instant metadata exactly") {
+    // Regression: Instant.now can carry more precision than a query literal.
+    val rows = Vector(row("p:a", at = Instant.parse("2026-10-07T18:00:00.123456789Z")),
+      row("p:b", at = Instant.parse("2026-10-07T18:00:00.123456790Z")))
+    assertEquals(traverse(rows, SearchInput("", limit = 1, sort = SearchSort("modified-at"))), Vector("p:a", "p:b"))
+    assertEquals(traverse(rows, SearchInput("", limit = 1, sort = SearchSort("modified-at", "desc"))), Vector("p:b", "p:a"))
+  }
   test("limit 1–100 validation and default 20") {
     assertEquals(SearchInput("").limit, 20)
     Vector(-1, 0, 101).foreach(n => intercept[InvalidQuery](Search.search(fixture, SearchInput("", limit = n))))

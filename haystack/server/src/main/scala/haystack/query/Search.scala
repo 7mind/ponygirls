@@ -105,7 +105,10 @@ object Search {
         case "key" | "project" => if (p.value != p.project) bad()
         case "revision" => if (!p.value.matches("[1-9][0-9]*") || p.value.toLongOption.isEmpty) bad()
         case "modified-at" =>
-          if (!Parser.isUtcInstant(p.value) || p.value.startsWith("0000-") || Instant.parse(p.value).toString != p.value) bad()
+          // Metadata is an Instant and can carry all nine fractional digits.
+          // Query literals remain the documented RFC3339 microsecond subset.
+          if (!p.value.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z") ||
+              p.value.startsWith("0000-") || Instant.parse(p.value).toString != p.value) bad()
         case "human-attention" => if (!Set("required", "cleared").contains(p.value)) bad()
         case _ =>
           val max = if (sort.field == "title") 512 else 128
