@@ -64,16 +64,27 @@ abstract class CatalogueContract(postgres: Boolean) extends FunSuite:
       actual <- walk(f,query(sort,direction))
       _ <- IO(assertEquals(actual,expected(values,query(sort,direction))))
     yield () }}
-  test("ROOT lowercase is not casefold; NUL/supplementary text and SQL wildcard characters are literal") { run { f => for
-    values <- seed(f)
-    _ <- Vector("İ\u0000X","i\u0307\u0000x","strasse","STRASSE","straße","Σ","σ","𐀀","%_'\\\u0000","00000000000000000000000000000001").traverse_ { text =>
-      val q=query().copy(query=text)
-      walk(f,q).map { actual =>
-        val matched=values.filter(a => Exact.matching(a.name).contains(Exact.matching(text)) || Exact.matching(a.id).contains(Exact.matching(text)))
-        assertEquals(actual,expected(matched,q))
+  test("normative full Unicode casefold matches independently expected historical values") { run { f =>
+    val names=Vector("Straße","STRASSE","straße","Σ","σ","ς","ΟΣ","οσ","ος","ﬃ","FFI","İ\u0000X","i\u0307\u0000x","𐐀\u0000","𐐨\u0000","a%_'\\\u0000")
+    val values=names.zipWithIndex.map { (name,i) => fixture(f).head.copy(id=f"${i+1}%032x",name=name,state=UploadState.Uploading) }
+    val strasse=Set("Straße","STRASSE","straße")
+    val sigma=Set("Σ","σ","ς","ΟΣ","οσ","ος")
+    val words=Set("ΟΣ","οσ","ος")
+    val checks=Vector(
+      "strasse" -> strasse, "straße" -> strasse, "STRASSE" -> strasse,
+      "Σ" -> sigma, "σ" -> sigma, "ς" -> sigma, "οσ" -> words, "ος" -> words,
+      "FFI" -> Set("ﬃ","FFI"), "ﬃ" -> Set("ﬃ","FFI"),
+      "İ\u0000X" -> Set("İ\u0000X","i\u0307\u0000x"),
+      "𐐨\u0000" -> Set("𐐀\u0000","𐐨\u0000"), "𐐀\u0000" -> Set("𐐀\u0000","𐐨\u0000"),
+      "%_'\\\u0000" -> Set("a%_'\\\u0000"))
+    for
+      _ <- f.metadata.transaction(tx => values.foreach(tx.put))
+      _ <- checks.traverse_ { (text,names) =>
+        val q=query().copy(query=text)
+        walk(f,q).map(actual => assertEquals(actual,expected(values.filter(a => names(a.name)),q)))
       }
-    }
-  yield () }}
+    yield ()
+  }}
   test("expiry authorization and state/visibility filtering happen before keyset LIMIT") { run { f => for
     values <- seed(f)
     combinations = for
