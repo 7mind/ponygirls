@@ -480,6 +480,7 @@
         "test_current_target_harness.TargetHarnessSafetyTests.test_database_requires_explicit_createdb_opt_in_before_any_process",
         "test_current_target_harness.TargetHarnessSafetyTests.test_empty_or_non_argv_launcher_never_starts_a_process",
         "test_current_target_harness.TargetHarnessSafetyTests.test_missing_launcher_fails_not_skips_or_python_fallback",
+        "test_current_target_harness.TargetHarnessSafetyTests.test_tools_descriptor_control_characters_refuse_before_owned_fixture_invocation",
         "test_current_target_harness.TargetHarnessSafetyTests.test_unsafe_provider_urls_never_provision_or_reset_any_database"
       ]
     },
@@ -974,9 +975,26 @@
           "testId": "test_browser_dashboard.DashboardSeparateCase.test_b7_hostile_sibling_js_cannot_mutate_dashboard"
         }
       ],
-      "openGaps": [
-        "UNRESOLVED B7 actual-full failure: frozen141 JVM full20261103T105033Z-jvm.Tni3eR failed both sibling/separate hostile-sibling cases. URL-only capture aggregation can mix legitimate200 controls with rejected403 attempts; fixture phase+request-ID+Origin correlation correction is separately owned and not yet accepted here. Retain valid200 controls,403 security/state assertions and all case IDs; require corrected-source focused proof and fresh full rerun, never waive/filter failures."
-      ]
+      "openGaps": [],
+      "correctedFailureAdjudication": {
+        "observedAt": "2026-11-03T11:34:21Z",
+        "status": "Known17 historical failures corrected and re-executed in scoped proofs; NOT whole final-source acceptance",
+        "finalCompiledSource": "4f0e10c7652ba69b6f2ca23e2309ebb15a824551",
+        "proofs": [
+          {
+            "scope": "B7 Separate/Sibling exact two methods; all baseline200 controls and403/state/session assertions retained or strengthened; exact phase/Origin/CDP-hop correlation",
+            "sourceCommit": "0fe93f09e2bf04d2f711e1f6cf20638648c48cba",
+            "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-contract/manure/backend/target/target-runs/20261103T110457Z-jvm.0NXv5H",
+            "summarySha256": "a78ad3b4a10ac22e8a48759a3196c5841dae39fb62bc7898c53a737c55ff3520",
+            "result": "2/2 PASS,0 failures/errors/skips,19.743s; focused/releaseAcceptance:false. Four test/helper hashes match committed correction; Node17 also passed."
+          }
+        ],
+        "mandatoryPending": [
+          "Fresh final-source full JVM335+17Node+74TS",
+          "Fresh final-source full native335+17Node+74TS with actual build-source CMP",
+          "All other preserved external release gates"
+        ]
+      }
     },
     {
       "id": "manifest-serving",
@@ -1747,7 +1765,7 @@
     },
     {
       "id": "current-full-validation",
-      "invariant": "All CURRENT cases and mandatory Node/TypeScript gates must complete successfully against each frozen source-bound JVM/native artifact. Scoped proofs cannot replace or hide actual full-run failures; unknown browser/client causes remain unresolved until adjudicated and re-executed without weakened assertions.",
+      "invariant": "All CURRENT cases and mandatory Node/TypeScript gates must complete successfully against EACH frozen source-bound JVM/native artifact. Historical141 remains failed8F9E; scoped corrections close only its specific defects. No mode/global release success before complete fresh actual335+17+74 execution without skips or filtering.",
       "sourceRefs": [
         {
           "path": "manure/scripts/target-suite.py",
@@ -1826,17 +1844,89 @@
         {
           "path": "manure/tests/test_client_realserver.py",
           "testId": "test_client_realserver.TestRealServer.test_grant_revocation_real_server"
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/HttpSuite.scala",
+          "marker": "test(\"content form redirects have exactly zero framed body bytes and preserve cookie and location effects\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/HttpSuite.scala",
+          "marker": "test(\"locked external landing alone prompts; unknown assets and revoked file grants are never a 200 password form\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/HttpSuite.scala",
+          "marker": "test(\"anonymous capabilities advertise the exact policy used by current catalogue cursors\""
         }
       ],
-      "openGaps": [
-        "UNRESOLVED complete frozen141 JVM run observed2026-11-03T11:05:32Z: all334 declared Python IDs executed,8 failures+9 errors,0 skips; currentTestSuccess:false/releaseAcceptance:false. Besides B7x2, dashboard UX, path TLS, unlock asset/logout/rotation variants and client grant revocation fail/error. Do not infer root causes or drop assertions from focused successes. All17 Node cases and74 TypeScript vectors passed only for those frozen inputs; full JVM rerun on corrected source and complete native334/17/74 plus other external gates remain required."
-      ],
+      "openGaps": [],
       "observedEvidence": {
         "observedAt": "2026-11-03T11:05:32Z",
         "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/manure/backend/target/target-runs/20261103T105033Z-jvm.Tni3eR",
         "source": "141d6eb4e88a12b063b0da4b13f4f773fe5b8559",
         "artifactSha256": "cc113b0a0b976e2df9cd0f4de0bc73da0b30383f9cce09e8e3517212991f6e0f",
         "result": "Completed full334 Python,8 failures9 errors0 skips; Node8+9 passed, TS74 passed; overall FAILED. Immutable old receipt retains historical three-gap list; this register supersedes only those coverage statuses, never edits the receipt."
+      },
+      "correctedFailureAdjudication": {
+        "observedAt": "2026-11-03T11:34:21Z",
+        "status": "Known17 historical failures corrected and re-executed in scoped proofs; NOT whole final-source acceptance",
+        "finalCompiledSource": "4f0e10c7652ba69b6f2ca23e2309ebb15a824551",
+        "proofs": [
+          {
+            "scope": "B7 Separate/Sibling exact two methods; all baseline200 controls and403/state/session assertions retained or strengthened; exact phase/Origin/CDP-hop correlation",
+            "sourceCommit": "0fe93f09e2bf04d2f711e1f6cf20638648c48cba",
+            "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-contract/manure/backend/target/target-runs/20261103T110457Z-jvm.0NXv5H",
+            "summarySha256": "a78ad3b4a10ac22e8a48759a3196c5841dae39fb62bc7898c53a737c55ff3520",
+            "result": "2/2 PASS,0 failures/errors/skips,19.743s; focused/releaseAcceptance:false. Four test/helper hashes match committed correction; Node17 also passed."
+          },
+          {
+            "scope": "Dashboard UX(all14subscenarios) and unchanged pathTLS test; first default-page assertion independently checks ALL25 rows against actual CreatedAt+raw-ID order, not sequential names",
+            "sourceCommit": "66fef8e2",
+            "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-offline/manure/backend/target/target-runs/20261103T112156Z-jvm.wDGCXe",
+            "summarySha256": "130875c03c1153c0eabffb8085e02bce9acf28d9a83a56bf71a5a325edd8b0d1",
+            "result": "2/2 JVM PASS,0 failures/errors/skips,81.686s; reported Git HEAD40af was before commit, actual test-input SHA entries match all three committed web/test files. Original pathTLS assertions unchanged."
+          },
+          {
+            "scope": "Same dashboard UX/pathTLS exact two methods and all14subscenarios against actual source-bound immutable native8sj",
+            "sourceCommit": "7874594eaf072ed18ca2d9893401f65d831cbfe9",
+            "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-offline/manure/backend/target/target-runs/20261103T112645Z-native.JdEmgo",
+            "summarySha256": "130875c03c1153c0eabffb8085e02bce9acf28d9a83a56bf71a5a325edd8b0d1",
+            "result": "2/2 native PASS,0 failures/errors/skips,78.119s; actual141 ELF hash41094c42...eedafd and compiled manifest7f110ed2...50e86. This scoped proof does NOT certify final HTTP/capability changes or whole native acceptance."
+          },
+          {
+            "scope": "WHOLE unlock module34 methods plus real-server grant-revocation method; includes all13 prior HTTP-related failures/errors and successful controls unchanged",
+            "sourceCommit": "8656366409d0aab355cf0880ee8c14f7080f710c",
+            "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-port/manure/backend/target/target-runs/20261103T111713Z-jvm.wJHwl8",
+            "summarySha256": "1337c4221a3cf5011f05850418576bceca5b3044c071ac4b7d554aca1c25d3eb",
+            "result": "35/35 JVM PASS,0 failures/errors/skips,40.543s; reported Git HEAD455a was fail-first test commit, but actual compiled input manifest112a8687...d5caf2 and Http.scala SHA match committed865 fix. Explicit303 Content-Length0 and locked-entrypoint-only prompt, no auth/deadline/DDL changes. Secondary30s teardown error disappears with primary revoked-file status fixed, not by extending deadline."
+          }
+        ],
+        "mandatoryPending": [
+          "Fresh final-source full JVM335+17Node+74TS",
+          "Fresh final-source full native335+17Node+74TS with actual build-source CMP",
+          "All other preserved external release gates"
+        ]
+      }
+    },
+    {
+      "id": "owned-fixture-boundary",
+      "invariant": "Validate explicit public provider/tools descriptors before owned fixture/helper invocation. Actual NUL/newline tool paths reject exit2 before any PG/service/fixture effects; valid five tool pins remain usable.",
+      "sourceRefs": [
+        {
+          "path": "manure/scripts/run-owned-target.sh",
+          "marker": "invalid explicit public tools descriptor"
+        }
+      ],
+      "targetRefs": [
+        {
+          "path": "manure/tests/test_current_target_harness.py",
+          "testId": "test_current_target_harness.TargetHarnessSafetyTests.test_tools_descriptor_control_characters_refuse_before_owned_fixture_invocation"
+        }
+      ],
+      "openGaps": [],
+      "observedEvidence": {
+        "failFirst": "f7d3eb13: actual owned blackbox NUL and LF subtests each returned(3,fixtureInvoked:true), expected(2,false); no PG/model/service launched.",
+        "fix": "bfdfd121: actual NUL/LF checks, constant diagnostic, exit2 before fixture. Same two negatives plus valid five-pin positive control pass; all5 harness methods pass0 errors/skips.",
+        "scope": "Portable launcher only, not a compiled/native input; new CURRENT method increases final unfiltered expected IDs334→335, never changes historical141 execution count."
       }
     }
   ],
@@ -1886,5 +1976,11 @@
     }
   ],
   "plannedCurrentModules": [],
-  "legacySourceEntrypointsRetirementScope": "Public Python module main refuses before startup effects and Python manure-server console registration is absent; historical helpers remain unsupported importable migration/source-format seams. No production activation/state deletion is implied."
+  "legacySourceEntrypointsRetirementScope": "Public Python module main refuses before startup effects and Python manure-server console registration is absent; historical helpers remain unsupported importable migration/source-format seams. No production activation/state deletion is implied.",
+  "finalSourceAcceptanceStatus": {
+    "source": "4f0e10c7652ba69b6f2ca23e2309ebb15a824551",
+    "status": "PENDING fresh unfiltered JVM/native335+17Node+74TS and other preserved external gates; no global release/completion claim",
+    "historical141": "FAILED334 executed,8 failures9 errors0 skips; immutable receipt unchanged",
+    "componentProof": "124 backend11suites+29POSIX,0 failures/errors/skips,20261103T113032Z.IjnVPo; caps-vs-cursor identity follows retained1/124 fail-first; scoped corrections do not replace full runs"
+  }
 }

@@ -29,8 +29,9 @@ if [[ -n ${MANURE_ACCEPTANCE_TOOLS_JSON:-} ]]; then
 import json,shlex,sys
 with open(sys.argv[1]) as source: value=json.load(source)
 allowed={'MANURE_PLAYWRIGHT_CORE_PATH','MANURE_CHROMIUM_BIN','MANURE_MCP_SDK_PATH','MANURE_OPENSSL_BIN','FONTCONFIG_FILE'}
-if not isinstance(value,dict) or set(value)!=allowed or any(not isinstance(v,str) or not v.startswith('/') or '\\0' in v or '\\n' in v for v in value.values()):
-    raise SystemExit('invalid explicit public tools descriptor')
+if not isinstance(value,dict) or set(value)!=allowed or any(not isinstance(v,str) or not v.startswith('/') or '\0' in v or '\n' in v for v in value.values()):
+    print('invalid explicit public tools descriptor',file=sys.stderr)
+    raise SystemExit(2)
 for key in sorted(value):print('export '+key+'='+shlex.quote(value[key]))
 PY
  source "$base/tools.env"
