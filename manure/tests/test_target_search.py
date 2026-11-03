@@ -10,6 +10,7 @@ import hashlib
 import http.client
 import http.server
 import json
+import math
 import os
 from pathlib import Path
 import socket
@@ -26,8 +27,8 @@ from target_server import OwnedDatabase,TargetServer
 
 class ControlledEmbedding:
     def __init__(self):
-        self.lock=threading.Lock();self.calls=[];self.document_started=threading.Event()
-        self.fail_documents=False;self.fail_all=False;self.slow_document_once=4.0
+        self.lock=threading.Lock();self.calls=[];self.document_started=threading.Event();self.query_started=threading.Event()
+        self.fail_documents=False;self.fail_all=False;self.slow_document_once=4.0;self.slow_query_once=0
         owner=self
         class Handler(http.server.BaseHTTPRequestHandler):
             protocol_version='HTTP/1.1'
@@ -41,14 +42,17 @@ class ControlledEmbedding:
                 with owner.lock:
                     owner.calls.append({'model':value['model'],'inputs':list(inputs),'authorization':self.headers.get('Authorization')})
                     failure=owner.fail_all or owner.fail_documents and document
-                    delay=owner.slow_document_once if document and not failure else 0
-                    if delay:owner.slow_document_once=0
+                    delay=(owner.slow_document_once if document else owner.slow_query_once) if not failure else 0
+                    if delay:
+                        if document:owner.slow_document_once=0
+                        else:owner.slow_query_once=0
                 if document:owner.document_started.set()
+                else:owner.query_started.set()
                 if delay:time.sleep(delay)
                 if failure:
                     payload=b'{"error":"controlled fixture outage"}';status=503
                 else:
-                    vectors=[{'index':i,'embedding':[1.0,.125,0.0] if 'hayneedle' in text.lower() else [.125,1.0,.25]} for i,text in enumerate(inputs)]
+                    vectors=[{'index':i,'embedding':[.125,1.0,0.0] if 'catalogue/hayneedle.bin' in text.lower() else [1.0,.125,0.0] if 'hayneedle' in text.lower() else [.125,1.0,.25]} for i,text in enumerate(inputs)]
                     payload=json.dumps({'data':list(reversed(vectors))}).encode();status=200
                 try:
                     self.send_response(status);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(payload)))
@@ -101,7 +105,7 @@ class TargetSearchTests(unittest.TestCase):
                 payload=b'BINARY_SECRET_NOT_APPROVED_FOR_EMBEDDING\0'*9000
                 sha=hashlib.sha256(payload).hexdigest()
                 initialized=client.init_upload('metadata hayneedle','dir','external',[
-                    {'kind':'file','path':'catalogue/hayneedle.bin','size':len(payload),'sha256':sha},{'kind':'dir','path':'empty'}])
+                    {'kind':'file','path':'catalogue/hayneedle.bin','size':len(payload),'sha256':sha},{'kind':'dir','path':'empty'}],expires_in_s=60)
                 aid=initialized['artifact_id'];password=initialized['external_password']
                 for offset in range(0,len(payload),262144):client.put_chunk(aid,'catalogue/hayneedle.bin',offset,payload[offset:offset+262144])
                 self.assertEqual(model.snapshot(),[],'ordinary upload called the model')
@@ -123,6 +127,23 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertNotEqual(hit['embedding_profile'],hit['embedding_space'])
                 self.assertEqual(hit['policy_id'],'manure-metadata-paths-v1');self.assertTrue(hit['generation_id'])
                 self.assertEqual(hybrid['hits'][0]['embedding_space'],hit['embedding_space'])
+                path_page=client.search('catalogue/hayneedle.bin','semantic')
+                evidence_hits=semantic['hits']+path_page['hits']
+                coordinates={(e['field'],e['text'],e['path']) for item in evidence_hits for e in item['evidence']}
+                self.assertIn(('name','metadata hayneedle',None),coordinates)
+                self.assertIn(('manifestpath','catalogue/hayneedle.bin','catalogue/hayneedle.bin'),coordinates)
+                for item in evidence_hits:
+                    self.assertEqual(item['source_version'],hit['source_version'])
+                    self.assertEqual(item['generation_id'],hit['generation_id'])
+                    self.assertEqual(item['embedding_space'],hit['embedding_space'])
+                    for evidence in item['evidence']:
+                        self.assertIn(evidence['field'],('name','manifestpath'));self.assertTrue(math.isfinite(evidence['score']))
+                        if evidence['field']=='manifestpath':
+                            self.assertIn(evidence['path'],('catalogue/hayneedle.bin','empty'));self.assertEqual(evidence['text'],evidence['path'])
+                        else:self.assertIsNone(evidence['path']);self.assertEqual(evidence['text'],'metadata hayneedle')
+                for filters in ({'visibility':'public'},{'kind':'file'},{'created_by_user':'not-the-creator'}):
+                    for mode in ('lexical','semantic','hybrid'):
+                        self.assertEqual(client.search('hayneedle',mode,**filters)['hits'],[])
                 encoded=json.dumps(model.snapshot(),ensure_ascii=False)
                 for secret in (token,password,sha,'BINARY_SECRET_NOT_APPROVED_FOR_EMBEDDING'):
                     self.assertNotIn(secret,encoded)
@@ -154,6 +175,23 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertNotEqual(replacement['embedding_space'],hit['embedding_space'])
                 self.assertNotEqual(replacement['generation_id'],hit['generation_id'])
                 self.assertEqual(replacement['source_version'],hit['source_version'])
+                # Real API TTL (minimum sixty seconds), real elapsed wall time:
+                # no metadata/projection mutation or fake service clock. Read the
+                # exact owned timestamp only to schedule a model call spanning it.
+                expires=float(database.runtime_sql(f"SELECT expires_at_s_value FROM manure.artifacts WHERE id=convert_to('{aid}','UTF8')"))
+                remaining=expires-time.time();self.assertGreater(remaining,3);self.assertLessEqual(remaining,60)
+                time.sleep(max(0,remaining-3))
+                model.query_started.clear();model.slow_query_once=5;delivered=[]
+                def expiring_query():
+                    try:delivered.append(client.search('hayneedle','semantic'))
+                    except BaseException as error:delivered.append(type(error).__name__)
+                query_thread=threading.Thread(target=expiring_query,daemon=True);query_thread.start()
+                self.assertTrue(model.query_started.wait(timeout=5))
+                self.assertLess(time.time(),expires,'fixture query did not start before the real expiry')
+                query_thread.join(timeout=10);self.assertFalse(query_thread.is_alive())
+                self.assertEqual(len(delivered),1);self.assertIsInstance(delivered[0],dict)
+                self.assertEqual(delivered[0]['hits'],[],'stale pre-provider clock delivered expired metadata')
+                self.assertEqual(client.search('hayneedle','lexical')['hits'],[])
                 client.delete(aid)
                 self.assertEqual(client.search('hayneedle','semantic')['hits'],[])
             finally:
