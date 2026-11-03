@@ -16,9 +16,12 @@ in pkgs.runCommand "haystack-native-current-transport" ({
   chmod -R u+w source
   cd source
   ln -s ${dependencies}/lib/node_modules haystack/node_modules
-  # Toolchain-only adaptation: sandbox has no /bin/sh. Preserve all assertions.
+  # Toolchain-only adaptations: sandbox has neither /bin/sh nor /usr/bin/env.
+  # Preserve helper timeout/failure/cleanup assertions and pin both interpreters.
   substituteInPlace haystack/server/tests-current/fixture.mjs \
     --replace-fail "'/bin/sh'" "'${pkgs.runtimeShell}'"
+  substituteInPlace haystack/server/tests-current/provision.test.mjs \
+    --replace-fail "#!/usr/bin/env node" "#!${pkgs.nodejs}/bin/node"
   readelf -lW ${native}/libexec/haystack-server > headers.txt
   readelf -dW ${native}/libexec/haystack-server > dynamic.txt
   ! grep -q INTERP headers.txt
@@ -41,6 +44,7 @@ in pkgs.runCommand "haystack-native-current-transport" ({
   python3 ${./native-receipt.py} --service haystack \
     --artifact ${native}/libexec/haystack-server --runtime-source ${sources.haystackServer} \
     --test-source ${sources.haystackTests} --inventory haystack/server/tests-current/inventory.json --xml "$out/transport.xml" --output "$out/receipt.json"
+  sha256sum haystack/server/tests-current/*.mjs > "$out/executed-test-source.sha256"
   cp headers.txt dynamic.txt "$out/"
   cp ${native}/share/haystack/compiled-inputs.sha256 "$out/"
 ''

@@ -370,9 +370,13 @@
             inherit pkgs;
             manurePackage = self.packages.${system}.manure;
           };
+          manure-config = import ./nix/tests/manure-config.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
+          manure-backend = import ./nix/tests/manure-backend.nix { inherit pkgs; squishLib = inputs.squish.lib; };
           manure-unittests = import ./nix/tests/manure-unittests.nix {
             inherit pkgs;
-            manurePackage = self.packages.${system}.manure;
+            backendCheck = self.checks.${system}.manure-backend;
+            installedClientCheck = self.checks.${system}.manure-client;
+            nativeCheck = self.checks.${system}.manure-native;
           };
           haystack-nixos-eval =
             let
@@ -969,6 +973,7 @@
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
           haystack-proxy = import ./nix/tests/haystack-proxy.nix { inherit pkgs inputs; };
           haystack-native = import ./nix/tests/haystack-native.nix { inherit pkgs; haystackPackage = self.packages.${system}.haystack; };
+          readme-hm-server = import ./nix/tests/readme-hm-server.nix { inherit pkgs inputs; ponygirls = self; };
           shared-services-modules = import ./nix/tests/shared-services-modules.nix { inherit pkgs nixpkgs inputs; };
           shared-postgres-modules = import ./nix/tests/shared-postgres-modules.nix { inherit pkgs nixpkgs; };
           shared-postgres = import ./nix/tests/shared-postgres.nix { inherit pkgs; };
@@ -1016,10 +1021,7 @@
             touch $out
           '';
           podman-module = podmanModuleCheck;
-          manure-browser = import ./nix/tests/manure-browser.nix {
-            inherit pkgs;
-            manurePackage = self.packages.${system}.manure;
-          };
+          manure-browser = import ./nix/tests/manure-browser.nix { nativeCheck = self.checks.${system}.manure-native; };
           manure-vm = import ./nix/tests/manure-vm.nix {
             inherit pkgs nixpkgs;
             manureModule = self.nixosModules.manure;
