@@ -102,3 +102,11 @@ and exact role/database HBA rules there. `POSTGRES_HOME` optionally prefixes PAT
 If no helper is configured, direct fixture-admin creation additionally requires
 `HAYSTACK_FIXTURE_ADMIN_AUTHORIZED=1`; only the owned runner sets that marker.
 A configured helper failure never enters the direct-admin lane.
+
+Cleanup uses the **same helper** as argv `[helper, "--drop", databaseName]`.
+It must validate that the generated-prefix database was registered/provisioned
+by this owned fixture, remove its HBA/role/credential resources, and return exit0
+with strict stdout `{}` within10seconds. The fixture calls it after stopping the
+server, including failed startup/provisioning; restart does not drop the database.
+Invalid/nonzero/timeout cleanup fails the gate. There is no fallback to runtime
+credentials for cleanup. Helpers must never drop an unregistered/external DB.
