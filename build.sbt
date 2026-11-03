@@ -1,6 +1,7 @@
 ThisBuild / scalaVersion := "3.9.0"
 ThisBuild / organization := "dev.chronicle"
 ThisBuild / version := "0.1.0"
+lazy val contractCoassembly = taskKey[File]("Coassemble the three current generated domains with exactly one canonical compiled runtime")
 lazy val verifySingleBaboonRuntime = taskKey[Unit]("Prove every Baboon runtime class has exactly one compiled classpath owner")
 lazy val verifyBaboonRuntime = taskKey[Unit]("Verify domain runtime sources against the one canonical runtime")
 lazy val baboonRuntime = project.in(file("shared/baboon-runtime")).settings(
@@ -120,7 +121,31 @@ lazy val manureServer = project.in(file("manure/backend")).dependsOn(manureContr
 )
 lazy val root = project.in(file(".")).aggregate(baboonRuntime, contracts, chronicleServer, losslessJson, manureStorage, serviceRuntime, modelHttp, retrievalCore, retrievalPostgres, haystackContracts, manureContracts, haystackServer, manureServer).settings(
   name := "backend-foundation",
-  publish / skip := true
+  publish / skip := true,
+  contractCoassembly := {
+    val compiled = Seq(
+      (baboonRuntime / Compile / compile).value,
+      (contracts / Compile / compile).value,
+      (haystackContracts / Compile / compile).value,
+      (manureContracts / Compile / compile).value
+    )
+    val roots = Seq(
+      (baboonRuntime / Compile / classDirectory).value,
+      (contracts / Compile / classDirectory).value,
+      (haystackContracts / Compile / classDirectory).value,
+      (manureContracts / Compile / classDirectory).value
+    )
+    val files = roots.flatMap(root => (root ** "*.class").get.map(f => f -> f.relativeTo(root).get.getPath.replace('\\', '/')))
+    val owners = files.groupBy(_._2)
+    owners.foreach { case (name, found) => require(found.size == 1, "duplicate coassembled class: " + name) }
+    val runtime = files.filter(_._2.startsWith("baboon/runtime/"))
+    require(runtime.nonEmpty && runtime.forall(_._1.toPath.startsWith(roots.head.toPath)), "noncanonical compiled runtime owner")
+    Seq("chronicle/api/", "haystack/api/", "manure/api/").foreach(prefix => require(files.exists(_._2.startsWith(prefix)), "missing compiled domain: " + prefix))
+    val output = target.value / "contracts-coassembly.jar"
+    IO.zip(files.sortBy(_._2), output, Some(315532800000L))
+    streams.value.log.info("Coassembled all three current domains: " + files.size + " classes; " + runtime.size + " runtime classes from exactly one canonical owner")
+    output
+  }
 )
 lazy val chronicleServer = project.in(file("chronicle")).dependsOn(contracts, serviceRuntime, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
   name := "chronicle-server",

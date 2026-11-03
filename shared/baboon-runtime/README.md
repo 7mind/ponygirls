@@ -10,3 +10,10 @@ can regenerate runtime-only output from the current Chronicle model.
 
 Only current domain models/codecs are supported. This shared compiler runtime does
 not add any historical domain codecs or wire compatibility requirement.
+
+`contractCoassembly` compiles all three actual current domains and packages their
+classes and canonical runtime into `target/contracts-coassembly.jar`. It rejects
+all duplicate class names, verifies each domain is present and that every runtime
+class comes only from `baboonRuntime`. This is a contract bundle/proof, not an
+executable service or a substitute for application/native acceptance. App assemblies
+also execute `verifySingleBaboonRuntime` over their actual compiled classpaths.

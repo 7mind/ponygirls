@@ -66,3 +66,33 @@ secondary rollback-failure diagnostics. No fake SQL engine or auto-mocks.
 - Existing dependency lock unchanged: no new artifact/pin required. This is not
   yet final three-service coassembly, file-only offline or native validation,
   nor the full Chronicle/application/browser/retrieval release suite.
+
+## Three-domain and file-only followup
+
+At ~00:41Z, clean git-archive input **54eb0274227293d217170ba8b553a094c15298d0**
+was compiled from scratch in a disposable copy retained at
+`shared/service-runtime/target/validation-runs/20261103-offline.Kb2g7B/`.
+Fresh empty HOME/SBT boot, `COURSIER_MODE=offline`, only
+`file:///nix/store/nbir0l4pyslr5x1b85nafpgyi14zwywi-coursier-cache/https/repo.maven.apache.org/maven2/`
+as repository, pinned development-shell toolchain. Existing deps.lock.json used
+unchanged; no artifact/pin regeneration needed. Compiled canonical11, current
+Chronicle112/Haystack31/Manure39 domain sources, service runtime+tests and actual
+retrieval modules. Chronicle assembly verified 148 runtime classes with exactly
+one classpath owner. Jar SHA256:
+`78c1751c1f949d4f41fd49eaabd0d31b83a3eb15dc26b7e371d20fd47bbb408d`.
+No network repository fallback was configured; this is file-only dependency
+resolution, not a claim of a network-namespace sandbox test.
+
+At ~00:42Z `contractCoassembly` passed with **1435 total classes**, all three
+current domains present and **148 Baboon runtime classes from exactly one compiled
+canonical owner**. The task rejects any duplicate class, uses deterministic zip
+timestamps, and creates `target/contracts-coassembly.jar` (a contract bundle, not a
+service stub). The independent pinned runtime-only generation check also passed
+for all three actual domain root runtime sets. Logs:
+`/tmp/unified-runtime-domain-check.log`, `/tmp/unified-runtime-coassembly.log`.
+
+Haystack server assembly on earlier committed f5f27da5 input could not yet finish
+because Config imported an uncommitted service-owned ProjectionPolicy; this was a
+source-commit availability boundary, not a build error to fix with stubs. Manure
+server code was not yet committed at this observation. Final three executable
+assemblies and service/native acceptance still await their actual source commits.
