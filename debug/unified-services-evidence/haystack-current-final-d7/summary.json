@@ -1,0 +1,79 @@
+{
+  "observedAt": "2026-11-03T13:40:23.975423+00:00",
+  "scope": "Final current d7 Haystack exact-input evidence, not deployment/reindex/activation or wider-service completion",
+  "sourceProductionRevision": "d7bbc273bdad19c3b37fdf607e133d6f98bdfd00",
+  "nativeProducerRevision": "63e83da0809a2105a4cccd37f92660350ebb4c43",
+  "laterIntegratedRootRevisionCompared": "323ac32879606c494b54568a085c7ab61a9c13d2",
+  "unrelatedLaterPiConsumerCommit": "d5b54a52ead4b4a166f1f424c326ba1f9d2bcb53",
+  "compiledProductionInputs": 105,
+  "compiledInputManifestSHA256": "8df08d58b045a90d9f400ad345b633c7cc312eb3b8095ae3b3e29dc79ca12efc",
+  "JVM": {
+    "artifactSHA256": "be806162bbd6062d618c0e0b240351edbcc741fe3028bef78a13ce81f7b0af45",
+    "assemblyReused": true,
+    "processCases": 34,
+    "atomicXMLLeafCases": 61,
+    "nodeAtomicCountIncludingGroup": 62,
+    "browserJourneys": 36,
+    "SSR": 1,
+    "gateExits": [
+      0,
+      0
+    ],
+    "browserSubprocessExits": [
+      0,
+      0,
+      0
+    ],
+    "failuresErrorsSkips": 0,
+    "originalOuterExitStatus": 1
+  },
+  "native": {
+    "artifactSHA256": "d001828b20d7dd3efaef5d822a1ceeae843e1c46aec9b16699aa9242b7bd553f",
+    "processCases": 34,
+    "atomicXMLLeafCases": 61,
+    "nodeAtomicCountIncludingGroup": 62,
+    "browserJourneys": 36,
+    "SSR": 1,
+    "browserSubprocessExits": [
+      0,
+      0,
+      0
+    ],
+    "failuresErrorsSkips": 0,
+    "storeReceipts": [
+      "/nix/store/dpndsbph9yhi0nnryfiyckrc3y3h1wxg-haystack-native-current-transport",
+      "/nix/store/s83l543xhkalx9mjmxw8ccfnwigdi4fk-haystack-native-complete-browser"
+    ]
+  },
+  "additionalNativePointerDomain": {
+    "cases": 4,
+    "failuresErrorsSkips": 0,
+    "testExit": 0,
+    "originalOuterExitStatus": 1,
+    "keyASCIIUTF16Units": 4096,
+    "keyGzipBytes": 3132,
+    "RFC6901PointerUTF16Units": 4106,
+    "textUTF16Units": 37,
+    "textCodePoints": 35,
+    "ordinaryApprovedPrefix": "/public",
+    "unchangedMaxChunkBytes": 8192,
+    "embedding": null,
+    "scope": "supplementary actual native proof; not replacement for whole suites"
+  },
+  "cleanupComposition": {
+    "originalRunnerStatusesRemain": [
+      1,
+      1
+    ],
+    "originalCleanupReceiptsRemainFailed": true,
+    "additionalClockQualifiedReadonlyAdjudication": 0,
+    "parentDeletionReceiptExit": 0,
+    "originalReportsUnchanged": true,
+    "exactTwoRootsAbsent": true,
+    "noGlobalRunnerZeroClaim": true
+  },
+  "priorJVM705Pointer4": "parent-owned separate permanent real-PG/full-suite archive; not recounted or rerun in this bundle",
+  "noCredentialConfigHOMEEnvPropertyOrExecutableCopies": true,
+  "noPublicationOutsideGit": true,
+  "noGatesOrVMsRerun": true
+}

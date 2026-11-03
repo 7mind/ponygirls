@@ -1,0 +1,35 @@
+{
+  "observedAt": "2026-11-03T13:40:23.975423+00:00",
+  "method": "read-only git show revision:path byte SHA256 against actual native compiled-input manifest; not a new build or gate",
+  "manifestSHA256": "8df08d58b045a90d9f400ad345b633c7cc312eb3b8095ae3b3e29dc79ca12efc",
+  "comparisons": [
+    {
+      "revision": "d7bbc273bdad19c3b37fdf607e133d6f98bdfd00",
+      "productionEntries": 105,
+      "allFileBytesMatchActualNativeManifest": true
+    },
+    {
+      "revision": "63e83da0809a2105a4cccd37f92660350ebb4c43",
+      "productionEntries": 105,
+      "allFileBytesMatchActualNativeManifest": true
+    },
+    {
+      "revision": "323ac32879606c494b54568a085c7ab61a9c13d2",
+      "productionEntries": 105,
+      "allFileBytesMatchActualNativeManifest": true
+    }
+  ],
+  "unrelatedPiConsumerCommit": {
+    "revision": "d5b54a52ead4b4a166f1f424c326ba1f9d2bcb53",
+    "ownDeltaPaths": [
+      "nix/pkg/pi-extensions/ponygirls-context-archive/README.md",
+      "nix/pkg/pi-extensions/ponygirls-context-archive/index.ts",
+      "nix/pkg/pi-extensions/ponygirls-context-archive/src/archive.ts",
+      "nix/pkg/pi-extensions/ponygirls-context-archive/tests/archive.test.mjs",
+      "nix/pkg/pi-extensions/ponygirls-context-archive/tests/extension.test.mjs",
+      "nix/pkg/pi-extensions/ponygirls-context-archive/tests/host.test.mjs"
+    ],
+    "intersectsProduction105": false,
+    "qualification": "pi branch commit alone is not the final integrated Hst source tree; current clean integrated Root323ac compared independently"
+  }
+}

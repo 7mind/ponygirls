@@ -1,0 +1,32 @@
+{
+  "scope": "Explicit sanitized derivative; NOT fabricated raw first-attempt stderr/snapshot",
+  "authority": "Parent user task report of its own observed execution; local empty receipt and subsequent receipt/snapshot independently read",
+  "firstAttempt": {
+    "reportedResult": "fresh-observer-refuses BEFORE mutation",
+    "reportedStderrLocation": "Parent tool session only; raw stderr not available in this worktree, NOT invented/copied",
+    "emptyRawReceiptSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "emptyRawReceiptBytes": 0,
+    "firstFreshSnapshotAvailable": false,
+    "possibleSelfAnchoringCause": "Parent Bash argv reportedly contained literal shortroot path in post-check; plausible readable cmdline anchor",
+    "causality": "INFERENCE ONLY; first fresh snapshot NOT captured, therefore not established cause"
+  },
+  "isolatedReadonlyAfterRefusal": {
+    "rawFile": "qualified-postrun-decision/parent-observation-after-refusal.json",
+    "eligibleForConditionalReview": true,
+    "relatedRootMatches": [],
+    "inspectionErrors": []
+  },
+  "secondAttempt": {
+    "reportedCommand": "SAME immutable cleanup/SAME explicit approval flags; Parent omitted literal root from command",
+    "immutableCleanupSha256": "1696a292978921c87722591408576dd0efe2e83b9f8ae3750965bed5f148c73b",
+    "rawReceiptFile": "qualified-postrun-decision/parent-deletion-receipt-2.json",
+    "deleted": true,
+    "recursiveDeletion": false,
+    "signalsSent": 0,
+    "parentReportedPathAbsent": true,
+    "preparingAgentRecheckedDeletedPath": false
+  },
+  "preservation": "Original body12PASS/provider0/command1/runner1/cleanupfalse retained byte-exact. First empty receipt remains empty; NEW second receipt separate. OldlongTMPDIR runner never launched, no fake failed application case.",
+  "qualifiedDecisionLimitations": "Current REALTIME-BOOTTIME mapping is NOT unconditional historicalclock/later protected access proof. No before-root baseline invented, no fixed PID allowlist, no privilege bypass or signals. Parent explicitly accepted limitations.",
+  "noNewExecution": "This bundling task ran no probe/API/test/deletion; only own worktree files were read/copied. No fresh otherWT/input lookup; actual input checks are captured at run/observer observation time."
+}

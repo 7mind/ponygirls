@@ -1,0 +1,6 @@
+2026-11-03 12:56:41.182 GMT [4152453] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit
+2026-11-03 12:56:41.182 GMT [4152453] LOG:  listening on IPv4 address "127.0.0.1", port 58497
+2026-11-03 12:56:41.183 GMT [4152453] LOG:  Unix-domain socket path "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-port/debug/haystack-pg-long-path-repro/same-long-tmpdir/ponygirls-owned-pg-g8a00t1p/cluster/socket/.s.PGSQL.58497" is too long (maximum 107 bytes)
+2026-11-03 12:56:41.183 GMT [4152453] WARNING:  could not create Unix-domain socket in directory "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-port/debug/haystack-pg-long-path-repro/same-long-tmpdir/ponygirls-owned-pg-g8a00t1p/cluster/socket"
+2026-11-03 12:56:41.183 GMT [4152453] FATAL:  could not create any Unix-domain sockets
+2026-11-03 12:56:41.185 GMT [4152453] LOG:  database system is shut down

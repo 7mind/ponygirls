@@ -1,0 +1,36 @@
+{
+  "observedAt": "2026-11-03T13:16:39.924699+00:00",
+  "shortTmp": "/tmp/hsnw.12mFYf",
+  "sameUID": 1001,
+  "cleanupSelfExcludedPID": 111224,
+  "sameUIDProcessesInspected": 302,
+  "exactRootAnchoredCmdlineAndCwd": true,
+  "relatedProcesses": [],
+  "inspectionErrors": [
+    {
+      "pid": 203221,
+      "errorClass": "PermissionError"
+    },
+    {
+      "pid": 229655,
+      "errorClass": "PermissionError"
+    },
+    {
+      "pid": 2540450,
+      "errorClass": "PermissionError"
+    },
+    {
+      "pid": 2540707,
+      "errorClass": "PermissionError"
+    },
+    {
+      "pid": 2569210,
+      "errorClass": "PermissionError"
+    }
+  ],
+  "remainingPostmasterPidfiles": [],
+  "noSignalsOrPIDGuessing": true,
+  "removed": false,
+  "retainedForInspection": true,
+  "ownedProcessAbsenceEstablished": false
+}

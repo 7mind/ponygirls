@@ -1,0 +1,17 @@
+{
+  "artifactKind": "jvm",
+  "mode": "core",
+  "cases": 34,
+  "failuresAndErrors": 0,
+  "skips": 0,
+  "inventoryExact": true,
+  "sourceAndArtifactUnchanged": true,
+  "exitStatuses": [
+    0
+  ],
+  "artifactSha256": "be806162bbd6062d618c0e0b240351edbcc741fe3028bef78a13ce81f7b0af45",
+  "compiledInputManifestSha256": "8df08d58b045a90d9f400ad345b633c7cc312eb3b8095ae3b3e29dc79ca12efc",
+  "sourceManifestSha256": "45173163ea18a6cd9e0ed1b4b17a6ead084af405bb2edcc1b5ae9cf8633c335e",
+  "sourceRevision": "d7bbc273bdad19c3b37fdf607e133d6f98bdfd00",
+  "inventorySha256": "81e10496df939b080e688e733da74a6fb6ff625163c577722c87e99382a6f5cc"
+}

@@ -1,0 +1,31 @@
+{
+  "observedAt": "2026-11-03T13:16:19.408436+00:00",
+  "scope": "ORCHESTRATION PREPARATION ONLY; no jobs/services/probe launched, no tracked app or otherWT writes",
+  "launch": "bash /nix/store/j99bxrrvci1vz5xp95h71qx2k1lyvfvs-run-short.sh",
+  "runnerSha256": "67e421d590365b73cfa8ff834f61c0fed2f959cdfb9991620b63ebb3f608e613",
+  "bootstrap": "/nix/store/ifwl7l3gmgz1h235jspmh9hahq5aa6s4-launch-short.py",
+  "bootstrapSha256": "91dce775f62e9d799d0ae2ff2b683f0f530d667c0524dcde07fc695903723e04",
+  "unchangedProbe": "/nix/store/rpgyw9j2diprbjbchpsp1qs2zwqdba6d-probe.py",
+  "unchangedProbeSha256": "5d80fcf663d3b959a385e0fd46d12e92643464ecc2c848271bc25daaae9c907d",
+  "checks": 12,
+  "bodyDeadlineSeconds": 180,
+  "source": "62d5f9877d9df9ae2d059c5cec5facff09b182b5",
+  "compiledManifestSha256": "1ed47d780d8a78f14eaad4e75c3e57c841604bb04180a8aaecdaec4c58feb3a1",
+  "elfSha256": "9318c06043c06b95e7cc4ceafbc6c9b3f22bd685dd43bb01896497d175f7a835",
+  "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-port/debug/manure-native-wide-probe/result-short",
+  "supersedesNotToLaunch": "/nix/store/ls63zlljsmfihgcmhk5i8sz0sf2i53bf-run.sh",
+  "oldPreparationAndImmutableBytesPreserved": true,
+  "sharedReproProvenance": {
+    "source": "parent user report; not duplicated or independently executed here",
+    "failure": "PG18.6 Unix socket >107 bytes with long task reportTMPDIR",
+    "reportedLogSha256Prefix": "28b1e2f",
+    "fullLogSha256": "not supplied/unknown; not invented",
+    "sameActualFrozenWrapper": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/debug/manure-full-frozen-fixture/with-owned-postgres.py",
+    "observedCurrentWrapperSha256": "3b3113185fa153682c951079bb839d1fa429a04e362daf5bada522848bde4c62",
+    "otherComponentWorktreeUsed": false
+  },
+  "shortRoot": "NEW mkdtemp /tmp/mnw-<random>,0700/currentUID+euid,600scope/UID/nonce marker; HOME stays private controlledlongreport/runtime-home; TMPDIR shortroot inherited by owned PG wrapper AND unchanged TargetServer probe temp paths",
+  "cleanup": "After synchronous provider-wrapper return (provider pg_ctl finally outside unchanged child180s deadline), recheck root dev/inode/uid/mode/marker; bounded pidfile inventory plus complete sameUID /proc cmdline+cwd anchor inspection; missingpidfile explicitlyNOTproof. Tolerates observed disappearance/Z/X exit races; failsclosed inspection/permission/identity errors/live anchoredPID/unboundlivePIDfile; no signals; unsafe root retained. Recheck immediately before rmtree. Overall fails unless cleanup proof true.",
+  "parentBgBudget": "same>=1000s allowance; no335 rerun/no appchanges",
+  "validation": "bash -n, all embeddedPython AST, no kill/killpg/send_signal in shortroot cleanup, old probe/runner exactSHA unchanged, no result dirs; preponly"
+}
