@@ -314,7 +314,10 @@
           codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
           ponygirls-pi-ui = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = self.packages.${system}.pi-coding-agent; };
-          ponygirls-pi-extensions = pkgs.callPackage ./nix/pkg/pi-extensions/package.nix { ponygirls-pi-ui = self.packages.${system}.ponygirls-pi-ui; };
+          ponygirls-pi-settings = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = self.packages.${system}.pi-coding-agent; };
+          ponygirls-pi-extensions = pkgs.callPackage ./nix/pkg/pi-extensions/package.nix {
+            inherit (self.packages.${system}) ponygirls-pi-ui ponygirls-pi-settings;
+          };
           pi-search-hub = pkgs.callPackage ./nix/pkg/pi-search-hub/package.nix { };
           codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix { src = inputs.codegraph; };
           crawl4ai-mcp = pkgs.callPackage ./nix/pkg/crawl4ai/mcp.nix { };
@@ -790,6 +793,28 @@
             : ${self.packages.${system}.ponygirls-pi-extensions}
             touch $out
           '';
+          ponygirls-pi-settings = pkgs.runCommand "ponygirls-pi-settings-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
+            PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            export HOME=$TMPDIR
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-pi-settings} ponygirls-pi-settings
+            chmod -R u+w ponygirls-pi-settings
+            cd ponygirls-pi-settings
+            mkdir -p node_modules/@earendil-works ../node_modules/@ponygirls
+            ln -s "$PI_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_SDK_ROOT/node_modules/@types" node_modules/@types
+            ln -s ${self.packages.${system}.ponygirls-pi-settings} ../node_modules/@ponygirls/pi-settings
+            tsc -p tsconfig.json
+            node --test tests/*.test.ts
+            cd ..
+            node --input-type=module -e 'import { parseToggleCommand } from "@ponygirls/pi-settings"; if (parseToggleCommand("on").enabled !== true) throw new Error("Compiled settings import failed")'
+            test ! -e ${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-pi-settings
+            test "$(readlink ${self.packages.${system}.ponygirls-pi-extensions}/node_modules/@ponygirls/pi-settings)" = ${self.packages.${system}.ponygirls-pi-settings}
+            touch $out
+          '';
           ponygirls-model-picker = pkgs.runCommand "ponygirls-model-picker-test" {
             nativeBuildInputs = [ pkgs.nodejs ];
             PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
@@ -841,6 +866,8 @@
             cp -r ${./nix/pkg/pi-extensions/ponygirls-context-archive} context-archive
             chmod -R u+w context-archive
             cd context-archive
+            mkdir -p node_modules/@ponygirls
+            ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
             mkdir -p node_modules/@earendil-works
             ln -s "$sdk" node_modules/@earendil-works/pi-coding-agent
             for package in pi-ai pi-agent-core pi-tui; do
@@ -864,6 +891,7 @@
             cd ponygirls-decisions
             mkdir -p node_modules/@earendil-works
             mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
             ln -s "$PI_DECISIONS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
             ln -s "$PI_DECISIONS_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
             ln -s "$PI_DECISIONS_SDK_ROOT/node_modules/typebox" node_modules/typebox

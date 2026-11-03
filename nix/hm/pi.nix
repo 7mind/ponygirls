@@ -62,10 +62,11 @@ let
   # extension-package warning and installs a duplicate copy —
   # ronnieops/pi-search-hub#33). See the derivation header for the full story.
   piSearchHub = pkgs.callPackage ../pkg/pi-search-hub/package.nix { };
-  # The ponygirls extensions as one tree, linking the shared UI kit
-  # (@ponygirls/pi-ui) into its node_modules; see pkg/pi-extensions/package.nix.
+  # The ponygirls extensions as one tree, linking the shared UI/settings
+  # libraries into its node_modules; see pkg/pi-extensions/package.nix.
   piExtensions = pkgs.callPackage ../pkg/pi-extensions/package.nix {
     ponygirls-pi-ui = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = piBase; };
+    ponygirls-pi-settings = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = piBase; };
   };
 
   # Provider/API-key secrets are no longer injected by the pi wrapper. They are
