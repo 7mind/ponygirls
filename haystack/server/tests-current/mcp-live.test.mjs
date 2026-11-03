@@ -72,6 +72,19 @@ describe('current generated WS invalidations heartbeat and session security',()=
   const cookie=await login(f);
   for(const [payload,code,binary] of [['{',1007,false],[JSON.stringify({kind:'ping'}),1007,false],['binary',1003,true],['x'.repeat(1025),1009,false]]){const live=await open(f,cookie);const closed=once(live.socket,'close');live.socket.send(payload,{binary});assert.equal((await closed)[0],code);}
  });
+ it('per-token live capacity is8 and overflow is retryable1013 without evicting established sessions',async()=>{
+  const cookie=await login(f);const established=[];try{
+   for(let i=0;i<8;i++)established.push(await open(f,cookie));
+   const excess=new WebSocket(f.base.replace('http:','ws:')+'/api/v1/live',{headers:{Origin:f.base,Cookie:cookie}});excess.on('error',()=>{});assert.equal((await once(excess,'close'))[0],1013);
+   assert.ok(established.every(live=>live.socket.readyState===WebSocket.OPEN));
+  }finally{await Promise.all(established.map(live=>close(live.socket)));}
+ });
+ it('idle heartbeat revalidates a revoked token within the real30second interval',{timeout:35000},async()=>{
+  const idle=await fixture();try{
+   const live=await open(idle,await login(idle));const closed=once(live.socket,'close');const started=Date.now();await idle.reload(auth=>{auth.users=auth.users.filter(u=>u.id!=='alice');});
+   const [code]=await Promise.race([closed,sleep(32000).then(()=>{throw new Error('revocation heartbeat deadline exceeded');})]);assert.equal(code,4401);assert.ok(Date.now()-started>=29000,'production heartbeat interval must not be shortened for tests');
+  }finally{await idle.stop();}
+ });
  it('logout/login session replacement and loaded-token revocation close sockets4401',async()=>{
   const cookie=await login(f);const live=await open(f,cookie);let closed=once(live.socket,'close');await f.call('/api/v1/logout',{}, {headers:{Origin:f.base,Cookie:cookie}});assert.equal((await closed)[0],4401);
   const second=await open(f,await login(f));closed=once(second.socket,'close');await f.call('/api/v1/login',encode(api.LoginRequest,new api.LoginRequest(f.tokens.alice)),{headers:{Origin:f.base,Cookie:cookie}});assert.equal((await closed)[0],4401);
@@ -87,6 +100,14 @@ describe('mixed HTTP authority cookies',()=>{
    const who=await f.call('/api/v1/whoami',undefined,{method:'GET',headers:{Host:host,Origin:origin,Cookie:cookie.split(';')[0]}});assert.equal(who.status,200);assert.ok(who.headers.get('set-cookie').startsWith(name+'='));
    const wrongName=name==='haystack-dev'?'__Host-haystack':'haystack-dev';const wrong=await f.call('/api/v1/whoami',undefined,{method:'GET',headers:{Host:host,Origin:origin,Cookie:wrongName+'='+f.tokens.alice}});assert.equal(wrong.status,401);
   }
+ });
+ it('mixed-authority live sessions select only the current cookie and reject cross-authority Origin',async()=>{
+  for(const [host,origin,name,other] of [[`haystack.test:${f.port}`,`http://haystack.test:${f.port}`,'haystack-dev','__Host-haystack'],['haystack.test:8445','https://haystack.test:8445','__Host-haystack','haystack-dev']]){
+   const cookie=name+'='+f.tokens.alice+'; '+other+'=not-the-session';const live=await open(f,cookie,{Host:host,Origin:origin});const pong=once(live.socket,'message');live.socket.send(JSON.stringify(encode(api.LiveFrame,new api.LiveFrame('ping',undefined,undefined,'mixed',123,undefined))));assert.equal(decode(api.LiveFrame,JSON.parse(String((await pong)[0]))).nonce,'mixed');
+   const closed=once(live.socket,'close');const logout=await f.call('/api/v1/logout',{}, {headers:{Host:host,Origin:origin,Cookie:cookie}});assert.equal(logout.status,200);assert.equal((await closed)[0],4401);
+   const wrong=new WebSocket(f.base.replace('http:','ws:')+'/api/v1/live',{headers:{Host:host,Origin:origin,Cookie:other+'='+f.tokens.alice}});wrong.on('error',()=>{});assert.equal((await once(wrong,'close'))[0],4401);
+  }
+  const cross=new WebSocket(f.base.replace('http:','ws:')+'/api/v1/live',{headers:{Host:`haystack.test:${f.port}`,Origin:'https://haystack.test:8445',Cookie:'haystack-dev='+f.tokens.alice}});cross.on('error',()=>{});assert.equal(await new Promise(resolve=>cross.once('unexpected-response',(_,response)=>{response.resume();resolve(response.statusCode);})),403);cross.terminate();
  });
  it('allowed but mismatched Origin/Host cannot read or log in; absent opt-in cannot downgrade',async()=>{
   for(const [host,origin] of [[`haystack.test:${f.port}`,'https://haystack.test:8445'],['haystack.test:8445',`http://haystack.test:${f.port}`]]){const r=await f.call('/api/v1/whoami',undefined,{method:'GET',token:f.tokens.alice,headers:{Host:host,Origin:origin}});assert.equal(r.status,403);}

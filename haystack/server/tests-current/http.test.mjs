@@ -1,5 +1,7 @@
 import {describe,it,before,after} from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
+import {randomUUID} from 'node:crypto';
 import {fixture,api,encode,decode,document,rid,sleep} from './fixture.mjs';
 
 describe('current Scala HTTP/auth/domain',()=>{
@@ -97,6 +99,22 @@ describe('current Scala HTTP/auth/domain',()=>{
    const denied=await limited.call('/api/v1/whoami',undefined,{method:'GET',token:limited.tokens.bot});assert.equal(denied.status,429);assert.equal(decode(api.Failure,await denied.json()).code,'rate-limited');
    assert.equal((await limited.call('/api/v1/whoami',undefined,{method:'GET',token:limited.tokens.alice})).status,200);
   }finally{await limited.stop();}
+ });
+ it('actual reverse proxy preserves no-store and identities while allowlisted logs omit body/key/token canaries',async()=>{
+  const rows=[];const proxy=http.createServer((request,response)=>{
+   const started=Date.now();const outgoing=http.request({host:'127.0.0.1',port:f.port,path:request.url,method:request.method,headers:{...request.headers,host:`127.0.0.1:${f.port}`}},incoming=>{
+    rows.push({route:'api',requestId:randomUUID(),status:incoming.statusCode,durationMs:Date.now()-started});response.writeHead(incoming.statusCode,incoming.headers);incoming.pipe(response);
+   });outgoing.on('error',()=>{response.writeHead(503,{'Cache-Control':'no-store'});response.end();});request.pipe(outgoing);
+  });await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
+  try{
+   const base=`http://127.0.0.1:${proxy.address().port}`;const headers=token=>({'Content-Type':'application/json',Authorization:'Bearer '+token,'X-Haystack-Version':'1.0.0'});
+   for(const [token,user] of [[f.tokens.alice,'alice'],[f.tokens.bot,'bot']]){const r=await fetch(base+'/api/v1/whoami',{headers:headers(token)});assert.equal(r.status,200);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(decode(api.Identity,await r.json()).userId,user);}
+   const title='LOG-TITLE-CANARY';const key='http:LOG-KEY-CANARY';const query='LOG-QUERY-CANARY';
+   const put=await fetch(base+'/api/v1/put',{method:'POST',headers:headers(f.tokens.alice),body:JSON.stringify(encode(api.PutRequest,new api.PutRequest(key,new api.DocumentPayload(document({title})),0,rid())))});assert.equal(put.status,200);
+   for(const text of [query,'unknown:"'+query+'"'])await fetch(base+'/api/v1/search',{method:'POST',headers:headers(f.tokens.alice),body:JSON.stringify(encode(api.SearchRequest,new api.SearchRequest(text,undefined,20,undefined,new api.SearchSort('key','asc'))))});
+   const logs=JSON.stringify(rows)+'\n'+f.output();for(const secret of [title,key,query,f.tokens.alice,f.tokens.bot,'Bearer '])assert.ok(!logs.includes(secret));
+   assert.ok(f.logs().some(row=>row.route==='put'&&row.result==='ok'&&row.userId==='alice'));assert.equal(rows.length,5);
+  }finally{await new Promise(resolve=>proxy.close(resolve));}
  });
  it('reload revocation and fail-closed invalid replacement, without session secret logging',async()=>{
   const canary='SECRET-QUERY-CANARY';await f.call('/api/v1/search',encode(api.SearchRequest,new api.SearchRequest(canary,undefined,20,undefined,new api.SearchSort('key','asc'))),{token:f.tokens.bot});
