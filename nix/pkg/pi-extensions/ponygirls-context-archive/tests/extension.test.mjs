@@ -23,6 +23,7 @@ function fixture(t, backend) {
     registerTool: (tool) => tools.set(tool.name, tool), getActiveTools: () => active, setActiveTools: (tools) => { active = tools; },
   };
   const ctx = { sessionManager: manager, mode: "rpc", model: { contextWindow: 80000 }, signal: undefined,
+    getContextUsage: () => undefined,
     abort: () => { aborts++; }, ui: { notify: (message, level) => notifications.push({ message, level }), setWidget: (...args) => widgets.push(args) } };
   registerContextArchive(pi, preferences);
   const command = (args) => commands.get("context-archive").handler(args, ctx);
@@ -81,6 +82,58 @@ test("tree tool-loadout restoration and explicit ON reconcile recall without ove
   f.setActive(["bash", RECALL_TOOL]);
   f.handlers.get("session_tree")({}, f.ctx);
   assert.ok(!f.active().includes(RECALL_TOOL), "OFF also wins over a restored branch loadout without archives");
+});
+
+test("provider-aware usage drives both archive selection and numeric status", async (t) => {
+  const f = fixture(t, "memory"); productionHistory(f.manager); f.start(); await f.command("on");
+  f.ctx.model = { contextWindow: 1000000 };
+  f.ctx.getContextUsage = () => ({ tokens: 806884, contextWindow: 1000000, percent: 80.6884 });
+  assert.ok(f.boundary().entries.length > 0);
+  await f.command("status");
+  assert.match(f.notifications.at(-1).message, /806884.*1000000/);
+  assert.match(f.notifications.at(-1).message, /700000/);
+});
+
+test("unknown usage falls back to the projection; resolved usage capacity wins over selected model capacity", async (t) => {
+  const f = fixture(t, "memory"); productionHistory(f.manager); f.start(); await f.command("on");
+  f.ctx.getContextUsage = () => ({ tokens: null, contextWindow: 80000, percent: null });
+  assert.ok(f.boundary().entries.length > 0);
+  f.ctx.getContextUsage = () => ({ tokens: 80000, contextWindow: 1000000, percent: 8 });
+  assert.equal(f.boundary(), undefined, "do not compare resolved usage against another model's smaller capacity");
+  await f.command("status"); assert.match(f.notifications.at(-1).message, /80000 \/ 1000000/);
+});
+
+test("pending edits and compaction invalidate provider usage before publication", async (t) => {
+  const f = fixture(t, "memory"); productionHistory(f.manager); f.start(); await f.command("on");
+  f.ctx.getContextUsage = () => ({ tokens: 806884, contextWindow: 1000000, percent: 80.6884 });
+  const user = f.manager.getBranch().find((e) => e.type === "message" && e.message.role === "user");
+  for (const draft of [
+    { type: "context_edit", targetId: user.id, replacement: { content: "Small replacement" } },
+    { type: "compaction", summary: "Small checkpoint", firstKeptEntryId: null },
+  ]) assert.equal(f.boundary({ entries: [draft] }), undefined);
+});
+
+test("pending custom messages add estimated tokens to valid provider pressure", async (t) => {
+  const f = fixture(t, "memory"); productionHistory(f.manager); f.start(); await f.command("on");
+  f.ctx.getContextUsage = () => ({ tokens: 699000, contextWindow: 1000000, percent: 69.9 });
+  assert.equal(f.boundary(), undefined);
+  const draft = { type: "custom_message", customType: "foreign", content: "n".repeat(8000), display: false };
+  const planned = f.boundary({ entries: [draft] });
+  assert.deepEqual(planned.entries[0], draft);
+  assert.ok(planned.entries.some((e) => e.type === "context_edit"));
+});
+
+test("foreign-edited content still counts toward fallback pressure and remains protected", async (t) => {
+  const f = fixture(t, "memory"); productionHistory(f.manager); f.start(); await f.command("on");
+  f.ctx.model = { contextWindow: 1000000 };
+  const user = f.manager.getBranch().find((e) => e.type === "message" && e.message.role === "user");
+  const draft = { type: "context_edit", targetId: user.id, replacement: { content: "n".repeat(2800000) } };
+  const preview = SessionManager.inMemory("/fixture", undefined, [f.manager.getHeader(), ...f.manager.getEntries()]);
+  apply(preview, [draft]);
+  const planned = f.boundary({ entries: [draft], context: { contextEntries: preview.buildSessionProjection().entries } });
+  assert.deepEqual(planned.entries[0], draft);
+  assert.ok(planned.entries.slice(1).some((e) => e.type === "context_edit"));
+  assert.ok(!planned.entries.slice(1).some((e) => e.type === "context_edit" && e.targetId === user.id));
 });
 
 test("aborted/error boundaries and aborted signals cannot archive or restore", async (t) => {

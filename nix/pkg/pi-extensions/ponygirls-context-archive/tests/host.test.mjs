@@ -9,7 +9,7 @@ import { ARCHIVE_TYPE, RECALL_TOOL, recallArchive } from "../src/archive.ts";
 import { productionHistory, usage } from "./fixtures.mjs";
 
 const extensionPath = resolve(import.meta.dirname, "../index.ts");
-async function fixture(t) {
+async function fixture(t, contextWindow) {
   const dir = mkdtempSync(join(tmpdir(), "context-archive-host-"));
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
@@ -18,17 +18,21 @@ async function fixture(t) {
     additionalExtensionPaths: [extensionPath], noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true });
   await loader.reload(); assert.deepEqual(loader.getExtensions().errors, []);
   const runtime = await sdk.ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
-  const contexts = []; const replies = [];
+  const contexts = []; const replies = []; const usages = [];
   runtime.registerProvider("archive-fixture", { api: "openai-completions", apiKey: "fixture-only", baseUrl: "http://fixture.invalid",
-    models: [{ id: "scripted", name: "Scripted", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 80000, maxTokens: 1000 }],
+    models: [{ id: "scripted", name: "Scripted", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow, maxTokens: 1000 }],
     streamSimple(model, context, options) {
       contexts.push(structuredClone(context));
       const reply = replies.shift(); assert.notEqual(reply, undefined, "no unexpected inference/continuation");
       const stream = createAssistantMessageEventStream();
       const finish = () => {
         const content = typeof reply === "string" ? [{ type: "text", text: reply }] : reply === null ? [] : reply;
+        const input = context.messages.reduce((n, m) => n + sdk.estimateTokens(m), 0);
+        const reported = usages.shift();
         const message = { role: "assistant", content, api: model.api, provider: model.provider, model: model.id, usage,
           stopReason: options.signal.aborted ? "aborted" : content.some((p) => p.type === "toolCall") ? "toolUse" : "stop", timestamp: Date.now() };
+        const output = sdk.estimateTokens(message);
+        message.usage = reported === undefined ? { ...usage, input, output, totalTokens: input + output } : reported;
         stream.push({ type: "start", partial: message }); stream.push({ type: "done", reason: message.stopReason, message }); stream.end();
       };
       if (reply === null) options.signal.addEventListener("abort", finish, { once: true }); else queueMicrotask(finish);
@@ -44,7 +48,7 @@ async function fixture(t) {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
     rmSync(dir, { recursive: true, force: true });
   });
-  return { dir, session, manager, contexts, replies, errors, ids };
+  return { dir, session, manager, contexts, replies, usages, errors, ids };
 }
 async function eventually(check) {
   const deadline = Date.now() + 5000;
@@ -53,7 +57,7 @@ async function eventually(check) {
 
 // Behavioral-active good-communication: real Pi loader, runtime, JSONL, boundaries, tool loop.
 test("real Pi: default off -> archive -> bounded exact tool recovery -> immediate disable -> reload", { timeout: 20000 }, async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, 80000);
   f.replies.push("No reduction by default"); await f.session.prompt("Continue with full history");
   assert.equal(f.manager.getEntries().some((e) => e.type === "context_edit"), false);
   assert.ok(!f.contexts[0].messages.filter((m) => m.role === "system").flatMap((m) => m.toolsAdded ?? []).some((tool) => tool.name === RECALL_TOOL));
@@ -88,8 +92,31 @@ test("real Pi: default off -> archive -> bounded exact tool recovery -> immediat
   assert.deepEqual(f.errors, []);
 });
 
+test("real Pi: cached provider usage triggers archival and is invalidated after edits and compaction", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, 1000000);
+  await f.session.prompt("/context-archive on");
+  const before = readFileSync(f.manager.getSessionFile(), "utf8");
+  f.usages.push({ ...usage, input: 2, output: 391, cacheRead: 802001, cacheWrite: 4490, totalTokens: 806884 });
+  f.replies.push("Boundary with provider accounting"); await f.session.prompt("Continue");
+  const catalog = recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 });
+  assert.equal(catalog.total, 2, "cached tokens count toward the high watermark even when character estimate is low");
+  assert.ok(readFileSync(f.manager.getSessionFile(), "utf8").startsWith(before));
+  assert.ok(f.session.getContextUsage().tokens < 700000, "pre-edit provider usage must not trigger another batch at settlement");
+  await f.session.reload();
+  assert.ok(f.session.getContextUsage().tokens < 700000, "reload must retain usage invalidation");
+  const tail = f.manager.getBranch().findLast((e) => e.type === "message" && e.message.role === "assistant").id;
+  f.manager.appendCompaction("Small native checkpoint", tail, 806884);
+  assert.equal(f.session.getContextUsage().tokens, null, "pre-compaction usage must not be reused");
+  await f.session.reload();
+  f.replies.push("Fresh small response"); await f.session.prompt("Continue after compaction");
+  assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 2);
+  assert.ok(f.session.getContextUsage().tokens < 700000);
+  assert.equal(f.contexts.length, 2, "archiving never starts an extra request");
+  assert.deepEqual(f.errors, []);
+});
+
 test("real Pi: explicit ON repairs an independently deactivated recovery tool", { timeout: 15000 }, async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, 80000);
   await f.session.prompt("/context-archive on");
   f.session.setActiveToolsByName(["bash"]);
   assert.ok(!f.session.getActiveToolNames().includes(RECALL_TOOL));
@@ -99,7 +126,7 @@ test("real Pi: explicit ON repairs an independently deactivated recovery tool", 
 });
 
 test("real Pi: abort cannot archive an otherwise eligible history or restart the run", { timeout: 15000 }, async (t) => {
-  const f = await fixture(t); await f.session.prompt("/context-archive on");
+  const f = await fixture(t, 80000); await f.session.prompt("/context-archive on");
   f.replies.push(null);
   const pending = f.session.prompt("Wait for cancellation"); await eventually(() => f.contexts.length === 1);
   await f.session.abort(); await pending;
@@ -108,7 +135,7 @@ test("real Pi: abort cannot archive an otherwise eligible history or restart the
 });
 
 test("real Pi: corrupt archive prevents a provider request rather than sending unverifiable stubs", { timeout: 15000 }, async (t) => {
-  const f = await fixture(t); await f.session.prompt("/context-archive on");
+  const f = await fixture(t, 80000); await f.session.prompt("/context-archive on");
   f.manager.appendCustomEntry(ARCHIVE_TYPE, { version: 999 });
   f.replies.push("Must never be requested");
   await f.session.prompt("Do not send unverifiable evidence");
@@ -117,7 +144,7 @@ test("real Pi: corrupt archive prevents a provider request rather than sending u
 });
 
 test("real Pi: native compaction excludes stubs but original archive remains available on reload", { timeout: 15000 }, async (t) => {
-  const f = await fixture(t); await f.session.prompt("/context-archive on");
+  const f = await fixture(t, 80000); await f.session.prompt("/context-archive on");
   f.replies.push("Archive first"); await f.session.prompt("Continue");
   const item = recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).items.find((i) => i.entryId === f.ids.output);
   const tail = f.manager.getBranch().findLast((e) => e.type === "message" && e.message.role === "assistant").id;

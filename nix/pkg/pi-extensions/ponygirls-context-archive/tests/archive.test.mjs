@@ -31,7 +31,8 @@ export function history(manager = SessionManager.inMemory()) {
   manager.appendMessage(assistant([{ type: "text", text: "Current state: work pending; do not confuse t1 with now." }], { timestamp: 4 }));
   return { manager, input, output, sibling };
 }
-const plan = (f, custom = policy) => planArchive(f.manager.getBranch(), f.manager.buildSessionProjection().entries, 4000, custom);
+const context = (tokens) => ({ tokens, protectedTargets: new Set() });
+const plan = (f, custom = policy) => planArchive(f.manager.getBranch(), f.manager.buildSessionProjection().entries, 4000, custom, context(null));
 const catalog = (manager) => recallArchive(manager.getBranch(), { action: "list", offset: 0, limit: 20 });
 
 // Behavioral-active blackbox/group: actual public SessionManager, no filesystem/provider.
@@ -68,14 +69,25 @@ test("mechanical release is deterministic, surgical, reversible and never a cont
   assert.deepEqual(plan(f).entries, [], "restored entries stay pinned against repeated off/on churn");
 });
 
+test("provider-accounted pressure triggers archival below the character-estimated watermark", () => {
+  const f = history();
+  const branch = f.manager.getBranch(); const projection = f.manager.buildSessionProjection().entries;
+  assert.equal(planArchive(branch, projection, 1000000, policy, context(null)).entries.length, 0);
+  const planned = planArchive(branch, projection, 1000000, policy, context(806884));
+  assert.equal(planned.entries.filter((e) => e.type === "context_edit").length, 2);
+  assert.match(planned.reason, /proposed/);
+});
+
 test("hysteresis, batch minimum, target bound, six-turn and token-floor protection", () => {
   const f = history();
-  assert.equal(planArchive(f.manager.getBranch(), f.manager.buildSessionProjection().entries, 1000000, policy).entries.length, 0);
+  assert.equal(planArchive(f.manager.getBranch(), f.manager.buildSessionProjection().entries, 1000000, policy, context(null)).entries.length, 0);
   assert.equal(plan(f, { ...policy, minBatchTokens: 100000 }).entries.length, 0);
   assert.equal(plan(f, { ...policy, keepRecentTurns: 6 }).entries.length, 0);
   assert.equal(plan(f, { ...policy, keepRecentTokens: 100000 }).entries.length, 0);
   assert.equal(plan(f, { ...policy, maxTargets: 1 }).entries.filter((e) => e.type === "context_edit").length, 1);
-  assert.throws(() => planArchive([], [], 0, policy), /positive model context/);
+  assert.throws(() => planArchive([], [], 0, policy, context(null)), /positive model context/);
+  assert.equal(planArchive(f.manager.getBranch(), f.manager.buildSessionProjection().entries, 4000, policy, context(0)).entries.length, 0);
+  for (const tokens of [-1, NaN, Infinity]) assert.throws(() => planArchive([], [], 4000, policy, context(tokens)), /non-negative context usage/);
 });
 
 for (const protection of ["labeled input", "labeled output", "error", "image", "unfinished sibling", "duplicate result", "foreign input edit", "foreign output edit", "name mismatch", "aborted assistant"]) {
@@ -111,8 +123,18 @@ test("signed calls and invalid arguments are never rewritten", () => {
 
 test("low-watermark crossing cannot discard an otherwise sufficient release batch", () => {
   const f = history();
-  const planned = planArchive(f.manager.getBranch(), f.manager.buildSessionProjection().entries, 8000, { ...policy, minBatchTokens: 4096 });
+  const planned = planArchive(f.manager.getBranch(), f.manager.buildSessionProjection().entries, 8000, { ...policy, minBatchTokens: 4096 }, context(null));
   assert.equal(planned.entries.filter((e) => e.type === "context_edit").length, 2);
+});
+
+test("batch release uses provider pressure for the low watermark, not the smaller character estimate", () => {
+  const f = history();
+  f.manager.appendMessage(assistant([{ type: "toolCall", id: "later-call", name: "read", arguments: { path: "later.txt" } }]));
+  f.manager.appendMessage({ role: "toolResult", toolCallId: "later-call", toolName: "read", content: [{ type: "text", text: "q".repeat(20000) }], isError: false, timestamp: 5 });
+  f.manager.appendMessage(assistant([{ type: "text", text: "current" }]));
+  const projection = f.manager.buildSessionProjection().entries;
+  const highPressure = planArchive(f.manager.getBranch(), projection, 100000, policy, context(80000));
+  assert.equal(highPressure.entries.filter((e) => e.type === "context_edit").length, 3);
 });
 
 test("hash-verified exact paging includes original invocation, metadata and historical warning", () => {
