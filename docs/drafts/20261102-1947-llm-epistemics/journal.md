@@ -1571,3 +1571,89 @@ touched documents, 23 local links/anchors and 130 reference uses; J1–J22 are
 ordered, R1–R64 present, and the journal's byte prefix from source base
 `4c2044f6f6028ff181b4568e0c6861b008023a2e` is unchanged. Application suites and
 experimental runners were not executed for these documentation-only changes.
+
+---
+
+## J23 — 2026-11-03 — Real-task intake: Warcraft-II-inspired web RTS
+
+### User input
+
+Q18 revision 2, read before intake work:
+
+> Yes; I will supply a real task
+
+Task (verbatim):
+
+> Build a complete, playable RTS in the spirit of Warcraft 2, delivered as a web application in a separate working directory. Start by building an inventory of the fetures and description of game mechanics. Consider using webgl if that brings us closer to the result.
+
+### Observed work and current boundary
+
+The manual tryout has entered task intake/framing, not implementation or
+acceptance evaluation. A fresh directory was created at
+`/home/pavel/work/warcraft-inspired-rts`, outside any Git repository. It contains
+a README, feature/mechanics inventory and proposed belief network; no game code,
+dependency manifest, installed engine or assets. No Git repository was
+initialized merely to satisfy worktree policy. These external planning files
+are not versioned by the ponygirls documentation commit.
+
+The inventory [L7] contains 63 uniquely identified candidate features across
+lifecycle, economy/supply, construction/technology, units/combat/magic,
+world/navigation/fog, orders/UI, AI/balance, modes/content, and presentation/web
+delivery. It also describes unit/building/spell roles and connected mechanics.
+Entries are explicitly unimplemented and unratified; exact historical balance,
+proprietary assets and an exact campaign recreation are not promised.
+
+Five proposed outcome beliefs cover complete play, strategic breadth, coherent
+control/information, functioning opposition and finished web delivery. The long
+inventory is supporting detail, not a demand that the human approve every row,
+and agreeing a summary would not automatically ratify all candidate details.
+
+Public reference pages were fetched to ground mechanics and the rendering
+assessment; provenance and truncation are recorded in the inventory. Official
+classic guides establish reference economy/combined-arms, role, fog, order and
+transport descriptions; a long manual extraction supplied only its opening and
+table of contents. The current PixiJS renderer page recommends WebGL; this is
+not a benchmark or evidence that any RTS system exists. WebGL-accelerated 2D
+is a candidate, not a locked technology or a substitute for gameplay.
+
+Known material scope questions remain: what “complete” includes among campaign,
+skirmish and network multiplayer; whether the five proposed outcomes and
+original retro/desktop scope capture intent; and the human's attention ceiling.
+Q19–Q21 were created for these. Their answers must be read before dependent work;
+no implementation starts before the baseline is agreed. No private human cases
+have been requested or read. Session timestamps are not reported as active
+human time.
+
+This task is substantially larger than the bounded component originally
+envisaged. That is an exposed scale/tractability obstacle, not permission to
+silently deliver the first small battle demo as the final game. Implementation
+stages, if later authorized, must preserve the agreed final outcome.
+
+### Artifact binding at the framing check
+
+Post-review binding observed 2026-11-03T17:02:58Z, after the initial structure
+check at 16:59:14Z. Inline Python checked three planning documents, four local
+links, 63 unique feature ids and five proposed goals, and the absence of game
+code/dependency manifests in the new directory. SHA-256:
+
+- `README.md`: `97fcd6963e55c1b1df05fd14e1f750b28201cd20d7a4b588a97076fe74e2c05a`
+- `docs/drafts/20261103-1650-feature-inventory.md`: `7d0fdc26532d508579789812355c75d87583d9567d60bb1d71d36989bfff5137`
+- `docs/drafts/20261103-1650-belief-network.md`: `9ff5ee52e5898f2be2fb3c7acc335fb8577fbc873ec07f8e8a9c2a59e5d7697a`
+
+These checks establish document structure/source identity, not game behavior,
+intent fidelity, human usability or efficacy. A read-only subagent supplied a
+completeness/dependency challenge and reviewed the resulting drafts. It asked
+for clearer mode applicability, content bounds and mode-specific acceptance
+coverage, and tighter source attribution; these were added without inventing
+human approval. This is assistance to framing, not a batch of model-subject
+experiments. A focused follow-up found no further material framing correction;
+its source-binding warning was handled by recomputing and recording the reviewed
+files' identities above. The reviewer did not independently compute hashes.
+No successful human trial supports a reusable skill yet.
+
+Research-document validation uses `git diff --check` and inline Python checks
+for local links, reference ids, J1–J23 order and the unchanged journal prefix
+from source base `6a53068a6e7dd6e6e8afb7fc8959c8b9db7469f5`. The product drafts'
+hashes are checked against the recorded binding. No application tests, game
+playthroughs, rendering benchmarks, deployments or new model-subject runs were
+performed; there is no runnable RTS to test yet.

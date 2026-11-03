@@ -1,7 +1,8 @@
 # Brief — epistemics of LLM-accelerated development (2026-11-02 … 11-03)
 
-Status: summary of journal entries J1–J22 for the user and the next agent;
-J21–J22 clarify the current direction without adding experimental results.
+Status: summary of journal entries J1–J23 for the user and the next agent;
+J21–J22 clarify the framework; J23 records real-task intake/framing, not new
+acceptance or efficacy results.
 Source of truth for every claim: [journal](journal.md), [hypotheses](hypotheses.md),
 [references](references.md), the [design draft](belief-dag-design.md), the
 [validation-frame proposal](belief-network-validation.md), the
@@ -85,23 +86,23 @@ captures the procedure.
 
 ## 5. Current focus and parked options
 
-Item 1 is the current direction. Items 2–5 are earlier proposals, not new work
-authorized by Q17; no replay, implementation or policy change is underway.
+Item 1 is the current direction. Items 2–5 are earlier proposals, not newly
+authorized by Q17/Q18; no field replay or policy-tool implementation is underway.
 
-1. **Conceptual clarification first (Q17, J21; current direction).** The user
-   specifies prompt → joint planning/belief-network construction → autonomous
-   work → post-delivery validation against initial intent. The network is for
-   the human's later use, not primarily a recall test. The
-   [validation-frame proposal](belief-network-validation.md) separates
-   intent→network faithfulness from network→code conformance and proposes
-   acceptance criteria, still unratified. The
-   [construction proposal](belief-network-construction.md) develops the dialogue
-   and two conditional paper walkthroughs; its outcome is a baseline with known
-   limits, not proof of complete intent capture. A future human-side tryout must
-   establish its construct and scoring before execution; predictions and
-   explain-back are possible diagnostics, not the primary outcome. Storage
-   syntax (OC-8) and scenario layout (OC-1) need not precede a manual tryout;
-   provisional dialogue limits (OC-5) would matter. No new pilot is underway.
+1. **Real-task manual framing (Q18, J23; current phase).** The user supplied a
+   complete Warcraft-II-inspired web RTS as the task and requested a feature/
+   mechanics inventory first. Separate workspace:
+   `/home/pavel/work/warcraft-inspired-rts`. Its README links 63 candidate feature
+   entries and a five-goal proposed belief network. No game code exists; final
+   modes/content, the acceptance envelope and human attention ceiling await
+   agreement (Q19–Q21; read current answers before acting). Private human cases
+   remain unknown. This is a larger task than the bounded component envisaged;
+   do not silently redefine the final target as a small demo. The
+   [validation-frame](belief-network-validation.md) and
+   [construction](belief-network-construction.md) notes supply proposed methods,
+   not evidence that the tryout works. Autonomous work begins only after joint
+   baseline agreement; no deployment or push. Source hashes/provenance are in J23.
+   The external planning files are not versioned by ponygirls.
 2. **Field replay** (agent side): ponygirls just before commit `c1bb530a`
    ("ponygirls-bg-tasks: completion notices never wait for user input"), the
    original prompt verbatim (session
@@ -125,8 +126,8 @@ authorized by Q17; no replay, implementation or policy change is underway.
 
 ## Handover to the next agent
 
-**Read first, in order:** this brief; `journal.md` J21–J22 (current direction),
-then J16–J19 (latest experiments); `belief-network-validation.md` and
+**Read first, in order:** this brief; `journal.md` J23 (current task/status),
+then J21–J22 (framework) and J16–J19 (latest experiments); `belief-network-validation.md` and
 `belief-network-construction.md` (conceptual proposals); `hypotheses.md` (status column); `belief-dag-design.md` §5, §6, §11; the
 pilot repo `README.md` and `protocols/pilot-e.md`, `pilot-5-7.md`.
 
@@ -183,8 +184,9 @@ a subject workspace.
 - Stored Pilot DF sessions contain the user's skill files (read by Sol,
   about 8.8 MB, local repo only): the user decided to keep them (nothing to
   redact, 2026-11-03).
-- Q17 chose conceptual clarification, not a new pilot or field replay. The
-  construction note proposes which distinctions to preserve; its criteria and
-  execution policy remain unratified. The unresolved research question is how
-  the dialogue selects material contrasts without sharing the generator's
-  omissions or recreating specification overload.
+- Q18 authorized one manual real-task tryout; the RTS is at intake/framing only.
+  Read Q19–Q21 for mode/content scope, proposed outcome ratification and active
+  human-attention ceiling. Do not start code based on pending questions.
+- The unresolved research question remains how dialogue selects material
+  contrasts without sharing the generator's omissions or recreating
+  specification overload. No acceptance or tractability result exists yet.
