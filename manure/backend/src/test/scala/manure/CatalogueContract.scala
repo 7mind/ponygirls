@@ -210,5 +210,13 @@ abstract class CatalogueContract(postgres: Boolean) extends FunSuite:
     yield ()
   }}
 
+  test("pinned Unicode16 full fold agrees with every scalar Python oracle and fixed string vectors") {
+    val vectors=Vector("Straße Σ İ" -> "strasse σ i\u0307", "ΟΣ ος ς" -> "οσ οσ σ",
+      "ﬃ ﬀ ﬂ" -> "ffi ff fl", "𐐀\u0000İ" -> "𐐨\u0000i\u0307", "\u1c89" -> "\u1c8a")
+    vectors.foreach((source,folded) => assertEquals(Exact.matching(source),folded))
+    assertEquals(UnicodeCaseFoldProbe.allScalarsDigest(),UnicodeCaseFold.AllScalarSha256)
+    assertEquals(UnicodeCaseFold.Version,"16.0.0")
+  }
+
 final class MemoryCatalogueSuite extends CatalogueContract(false)
 final class PostgresCatalogueSuite extends CatalogueContract(true)

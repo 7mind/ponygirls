@@ -6,8 +6,9 @@ import java.util.Base64
 import manure.{api => wire}
 import baboon.runtime.shared.BaboonCodecContext
 
-/** Shared pure current policy. PostgreSQL executes the same typed selection in
-  * SQL; the handwritten dummy uses select. Neither accepts SQL from a caller.
+/** Normative full Unicode16 casefold filtering and unsigned UTF8 ordering.
+  * PostgreSQL executes the same typed selection in SQL; the handwritten dummy
+  * uses select. Neither accepts SQL from a caller or normalizes stored names.
   */
 object CataloguePolicy:
   enum Value:
@@ -52,14 +53,14 @@ object CataloguePolicy:
     case Value.Count(v) => Json.fromLong(v)
     case Value.Time(v) => Json.fromDouble(v).getOrElse(throw DomainError("bad-envelope"))
   def encode(p: Position,q: wire.CatalogueQuery): String = Base64.getUrlEncoder.withoutPadding().encodeToString(Exact.utf8(
-    Json.obj("policy" -> Json.fromString("utf8-lower-root-v1"),"query" -> Json.fromString(fingerprint(q)),"value" -> json(p.value),"id" -> Json.fromString(p.id)).noSpaces))
+    Json.obj("policy" -> Json.fromString("utf8-casefold-16.0.0-v1"),"query" -> Json.fromString(fingerprint(q)),"value" -> json(p.value),"id" -> Json.fromString(p.id)).noSpaces))
   private def decode(value: String,q: wire.CatalogueQuery): Position =
     try
       Require(value.length <= 8192 && value.matches("[A-Za-z0-9_-]+"), "bad-envelope")
       val bytes = Base64.getUrlDecoder.decode(value)
       Require(Base64.getUrlEncoder.withoutPadding().encodeToString(bytes) == value, "bad-envelope")
       val obj = parser.parse(Exact.string(bytes)).toOption.flatMap(_.asObject).getOrElse(throw DomainError("bad-envelope"))
-      Require(obj.keys.toSet == Set("policy","query","value","id") && obj("policy").flatMap(_.asString).contains("utf8-lower-root-v1") &&
+      Require(obj.keys.toSet == Set("policy","query","value","id") && obj("policy").flatMap(_.asString).contains("utf8-casefold-16.0.0-v1") &&
         obj("query").flatMap(_.asString).contains(fingerprint(q)), "bad-envelope")
       val id = obj("id").flatMap(_.asString).getOrElse(throw DomainError("bad-envelope"))
       Require(id.matches("[0-9a-f]{32}"), "bad-envelope")

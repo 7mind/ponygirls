@@ -4,9 +4,11 @@ import java.sql.Connection
 import ponygirls.runtime.Migration
 import scala.util.Using
 
-/** App-computed ROOT-lower UTF8 bytea; never send arbitrary names through PG
-  * text/lower. Original authoritative strings/binary64 bytes remain untouched.
-  * Migration 3 is runtime-owned, separate from canonical offline schema SQL.
+/** App-computed full Unicode16 casefold UTF8 bytea, never PG text/lower.
+  * Original authoritative strings/binary64 bytes remain untouched. Startup
+  * backfill recomputes this derived value for every source before serving.
+  * Migration3's historical name/SQL/checksum MUST remain immutable; the fold
+  * correction changes derived values and current cursor policy, not its DDL.
   */
 object CatalogueProjection:
   lazy val migration: Migration =
