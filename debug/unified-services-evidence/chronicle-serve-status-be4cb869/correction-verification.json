@@ -1,0 +1,66 @@
+{
+  "scope": "NixOS Chronicle serve-only exit classification policy, paired with actual recorded native143 and pinned classifier red; pure module/controlled checks only, no live manager or new app/finalizer acceptance",
+  "observedAt": "2026-11-03T15:50:50.640335+00:00",
+  "baselineCommit": "ce75ee0c309319ea29295737c6580a98300f0ec6",
+  "moduleFailFirstExitStatus": 1,
+  "moduleFailFirstSHA256": "470996e2fa5770f3069e6325e7877de4ee2c1dda83fc250847c9e9c955e00f5d",
+  "moduleFailFirstBytes": 1084,
+  "fixedFocusedNixModuleAndContractsExitStatus": 0,
+  "executedControls": {
+    "nixosHarness": {
+      "tests": 15,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    },
+    "hmHarness": {
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    }
+  },
+  "topLevelModuleAssertions": 34,
+  "additionalModuleAssertionStatements": 4,
+  "recordedNativeNormal143RecognizedByNewPolicy": true,
+  "originalPinnedEmptySetClassificationFalsePreserved": true,
+  "originalExternalRedEvidenceUnmodified": true,
+  "compiledNative231InputsIdentical": true,
+  "invariants": {
+    "chronicleMigrateHasNoSuccessOverride": true,
+    "chronicleMigrateUnchanged": true,
+    "chronicleStatuses": [
+      143
+    ],
+    "hm658Drv": "/nix/store/c7z8jp7jka4bbhawa5x76shmclcdgnw7-vm-test-run-hm-shared-provider-actual-user-manager-lifecycle.drv",
+    "hm658Output": "/nix/store/h2jl1pw0dwnm6j8a9ypz07xzyb2ffj0v-vm-test-run-hm-shared-provider-actual-user-manager-lifecycle",
+    "hmAtUnchangedOriginalProvenanceDrvIdentical": true,
+    "hmAtUnchangedOriginalProvenanceOutputIdentical": true,
+    "hmChangedCanonicalUnits": [],
+    "hmPreexistingChronicle143Unchanged": true,
+    "hmProvenanceNote": "Pure identity comparison only: retain original658 test-script provenance, no execution or relabeling. A new source revision stamp alone otherwise changes the check derivation.",
+    "manureFullDriverUnchanged": true,
+    "manureFullDrv": "/nix/store/k705n2n7j1pxhjfgylfx1rn9fw2hh6pr-vm-test-run-manure-vm.drv",
+    "manureFullDrvUnchanged": true,
+    "manureFullOutputUnchanged": true,
+    "manureFullScriptSHA256": "87e6276ee297247ef0a7c5b8891624e3aa2ea4ede28ca098cedfc4adcd18c6c2",
+    "manureFullScriptUnchanged": true,
+    "nativeChronicleArtifactUnchanged": true,
+    "nativeManureArtifactUnchanged": true,
+    "nixosChangedServiceConfigFields": [
+      "SuccessExitStatus"
+    ],
+    "nixosChangedUnitTexts": [
+      "chronicle.service"
+    ],
+    "nixosCommandsDepsHardeningPreserved": true,
+    "nixosEntireChronicleUnitOtherwiseIdentical": true,
+    "providerUnchanged": true
+  },
+  "filesSHA256": {
+    "nix/nixos/chronicle.nix": "dc6d81b5815728e02af2464fd948ab0f6c164deb1d767559596000f290390fb0",
+    "nix/tests/shared-services-modules.nix": "e186c8e34842e633615f30ae4d1fbff93ce73979265e3a63c02184b24817d3c7"
+  },
+  "newNixOS9PreparationOrGuestJobs": false,
+  "noApplicationRebuildRerunOrPolicyExpansion": true
+}

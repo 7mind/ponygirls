@@ -1,0 +1,16 @@
+{
+  "derivation": "allowlisted fields from original owned-cleanup.json and event kind/seq/time only",
+  "rawReceiptSHA256": "fb8d36bfb4666d61d7b22af42a3f9cc05c0982c29ec1b8d2df42d5551887775f",
+  "at": "2026-11-03T15:41:38.746132+00:00",
+  "runtimeExit": 1,
+  "ownedAbsence": "verified-by-subreaper-and-pidfds",
+  "ownedLive": [],
+  "kernelDirectChildren": [],
+  "rootIsNotWholeSubtree": true,
+  "signalAttemptsAreNotAbsence": true,
+  "ownedIdentityCount": 21,
+  "actualNativeIdentityRegistered": true,
+  "genericSignalAttemptCount": 0,
+  "environmentCommandsArgumentsAndPGProcessDetailsOmitted": true,
+  "scope": "owned descendant closure at recorded instant; not whole-host absence"
+}

@@ -1,0 +1,21 @@
+{
+  "sourceRevision": "65879bdd6174f747ba17f2b7678c3c7c9f7536c5",
+  "elfSHA256": "04dd2eaeb172c3f426b209b96901abad2ddf353644493c19c94bf5e69b3cdde1",
+  "compiledInputs": 231,
+  "compiledInputManifestSHA256": "c5b7a3b6334332160d86dd86c32ffbffab6d9ae283e213e12e56c78590bf58eb",
+  "genericSupervisorSHA256": "d4b8825efae7b8e0b4964a2c13fb82707d9cfa0139c8546bc1864200a1731a77",
+  "pinsSHA256": "879ea03e7173f1b6a62c6227b49199678e404f5848349edbefd0a206bbbc7013",
+  "privateRoot": "/tmp/cns.x8nktpy8",
+  "privateRootCreationIdentity": {
+    "uid": 1001,
+    "mode": "0o700",
+    "device": 64769,
+    "inode": 1178378,
+    "markerName": ".owned-chronicle-probe",
+    "markerSHA256": "702d723d0b06c912d097b6a5dd138dc8b9afbc56cef8a7da6df368f9fc2bee8c"
+  },
+  "creationIdentityCapturedBeforeLeafLaunch": true,
+  "privateRootRetained": true,
+  "priorVMSettlement": "parent explicit confirmation, not inferred from old job history",
+  "mode": "fixed application CLI probe, NOT VM/no driver or audit bypass"
+}

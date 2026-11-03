@@ -1,0 +1,9 @@
+{
+  "source": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-workflow-fixture/chronicle/tests/workflow.test.ts",
+  "sourceSHA256": "b84942d08686d4dfcc03dd2ea617636a8af3b42c82a825d430c4c0a994aa8ca1",
+  "modelExcerptSHA256": "704816431242c9430c33d9c1f31605bda2e3565eebf819d728f585e8869d3879",
+  "configExcerptSHA256": "3c3634aed89e5cbf566f563d6140e6d0cf5583605ac074b92e900460e7b3f4f9",
+  "modelChange": "same controlled workflow behavior plus16384-byte/5sec transport bounds; this status-only probe requires ZERO model hits",
+  "databaseRebinding": "only existing owned leastpriv descriptor; unchanged native app/config schema",
+  "omittedOptionalScope": "NO new group/RPC/durability/restart. Existing workflows already cover behavior; no new resource-finalization claim."
+}
