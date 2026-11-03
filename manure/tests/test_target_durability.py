@@ -139,6 +139,15 @@ class TargetDurabilityTests(unittest.TestCase):
                 self.assertEqual((root/'data'/'live'/aid/'file.bin').read_bytes(),data)
                 kill(server);server=None;thread.join(timeout=10);self.assertFalse(thread.is_alive())
                 self.assertEqual(outcome,['unacknowledged'])
+                # Killing the application need not interrupt PostgreSQL's current
+                # bounded statement immediately. Observe its eventual disconnect
+                # rollback BEFORE requesting DDL (which would contend on its lock).
+                deadline=time.monotonic()+25
+                while time.monotonic()<deadline:
+                    if database.runtime_sql("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND usename=current_user AND wait_event='PgSleep'")=='0':break
+                    time.sleep(.1)
+                else:self.fail('crashed target PostgreSQL statement did not terminate')
+                self.assertEqual(database.runtime_sql(f"SELECT convert_from(state,'UTF8') FROM manure.artifacts WHERE id=convert_to('{aid}','UTF8')"),'publishing')
                 database.runtime_sql('DROP TRIGGER pause_ready_fixture ON manure.artifacts; DROP FUNCTION manure.pause_ready_fixture();')
                 server=TargetServer(config,str(root),owned_database=database,close_database=False);c=client(server,token,root,'recovered-cache')
                 self.assertEqual(c.get_artifact(aid)['state'],'ready')

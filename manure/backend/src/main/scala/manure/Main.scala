@@ -120,7 +120,7 @@ object Main extends IOApp:
             Require(!unexpected,"migration-required")
           case _ => ()
     })
-    _ <- Resource.eval(stage("schema",IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema),Migration(2,"physical-root-binding","CREATE TABLE IF NOT EXISTS manure.root_owner(singleton boolean PRIMARY KEY CHECK(singleton),identity bytea NOT NULL)")))))
+    _ <- Resource.eval(stage("schema",IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema),Migration(2,"physical-root-binding","CREATE TABLE IF NOT EXISTS manure.root_owner(singleton boolean PRIMARY KEY CHECK(singleton),identity bytea NOT NULL)"),CatalogueProjection.migration))))
     _ <- Resource.eval(services.database.transaction { c =>
       if recover then
         // File/hash validation above ran without an open DB transaction. Both
@@ -139,7 +139,10 @@ object Main extends IOApp:
     def loop(after: Option[String]): IO[Unit] = services.database.transaction { c =>
       val tx = new PostgresTxn(c,services.projection)
       val batch = tx.artifacts(after,1000)
-      batch.foreach(a => services.projection.put(c,a))
+      batch.foreach { a =>
+        CatalogueProjection.backfill(c,a)
+        services.projection.put(c,a)
+      }
       batch.lastOption.map(_.id).filter(_ => batch.size == 1000)
     }.flatMap {
       case Some(next) => loop(Some(next))
@@ -150,12 +153,17 @@ object Main extends IOApp:
     val sweeper = (IO.sleep(config.sweepInterval) *> services.artifacts.sweep().void.handleErrorWith(_ => IO.unit)).foreverM
     val poll = config.embedding.map(_.pollInterval).getOrElse(1.second)
     val indexer = (services.worker.once().handleErrorWith(_ => IO.pure(false)).flatMap(worked => if worked then IO.cede else IO.sleep(poll))).foreverM
+    // Count admitted requests THROUGH response-stream finalization using the
+    // standard http4s cancellation-safe middleware, not just response creation.
+    // One additional transport slot is reserved for immediate bounded rejection.
+    org.http4s.server.middleware.MaxActiveRequests.httpApp[IO](config.maxConnections.toLong,services.http.overloaded).flatMap { admission =>
     EmberServerBuilder.default[IO]
       .withHost(Host.fromString(config.listenAddress).getOrElse(throw DomainError("bad-envelope")))
       .withPort(Port.fromInt(config.port).getOrElse(throw DomainError("bad-envelope")))
-      .withMaxConnections(config.maxConnections).withMaxHeaderSize(16384)
+      .withMaxConnections(math.min(Int.MaxValue.toLong,config.maxConnections.toLong+1).toInt).withMaxHeaderSize(16384)
+      .withRequestHeaderReceiveTimeout(config.requestTimeout).withIdleTimeout(config.requestTimeout)
       .withShutdownTimeout(config.requestTimeout+5.seconds)
-      .withHttpApp(services.http.app).build.use { server =>
+      .withHttpApp(admission(services.http.app)).build.use { server =>
         val port = server.address.getPort
         val effective = if config.port == 0 then
           val uri = java.net.URI.create(config.apiOrigin.value)
@@ -165,4 +173,5 @@ object Main extends IOApp:
           IO.println("MANURE_READY " + Json.obj("apiOrigin" -> Json.fromString(effective),"port" -> Json.fromInt(port),"pid" -> Json.fromLong(ProcessHandle.current().pid())).noSpaces) *>
           (sweeper,indexer).parTupled.void
       }
+    }
   }}

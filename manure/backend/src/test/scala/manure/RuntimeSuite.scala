@@ -15,12 +15,30 @@ final class RuntimeSuite extends FunSuite:
       def initialize = Main.resources(config).use { services => for
         _ <- IO(assert(services != null))
         versions <- services.database.transaction(c => Jdbc.rows(c,"SELECT version FROM ponygirls_runtime_migrations WHERE namespace='manure' ORDER BY version")(_.getInt(1)))
-        _ <- IO(assertEquals(versions,Vector(1,2)))
+        _ <- IO(assertEquals(versions,Vector(1,2,3)))
       yield () }
       initialize *> initialize *> IO.blocking {
         val root = ConfinedDirectory.open(config.dataDir,PosixNative.shared(sys.env("MANURE_POSIX_LIBRARY")))
         root.close()
       }
+    }.unsafeRunSync()
+  }
+  test("production startup backfills ROOT-lower projection before the real bounded SQL catalogue query") {
+    BackendFixture.configuration.use { (config,token,_) =>
+      val identity = new Auth(config.users).authenticate(token).get
+      for
+        id <- Main.resources(config).use { services =>
+          services.artifacts.init(identity,InitUpload("Straße\u0000馬",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None)).map(_.artifact.id)
+        }
+        _ <- JdbcDatabase.resource(config.database).use(_.transaction(c => Jdbc.exec(c,"UPDATE manure.artifacts SET name_match=NULL")))
+        _ <- Main.resources(config).use { services =>
+          val catalogue = new Catalogue(services.artifacts,config.limits,SystemDomainClock)
+          val query = manure.api.CatalogueQuery("straße\u0000",true,None,None,manure.api.CatalogueSort.Name,manure.api.SortDirection.Asc,2,None)
+          catalogue.list(identity,query).flatMap { (rows,cursor) => IO {
+            assertEquals(rows.map(_.id),Vector(id));assertEquals(cursor,None)
+          }}
+        }
+      yield ()
     }.unsafeRunSync()
   }
   test("legacy SQLite physical root with empty PG fails migration-required before any metadata mutation") {
