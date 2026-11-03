@@ -1,0 +1,242 @@
+TAP version 13
+# Subtest: revocation while a real HTTP body is held denies dispatch without a committed item or replay
+ok 1 - revocation while a real HTTP body is held denies dispatch without a committed item or replay
+  ---
+  duration_ms: 3705.204936
+  type: 'test'
+  ...
+# Subtest: failed real live handshakes and normal socket close release all per-token capacity
+ok 2 - failed real live handshakes and normal socket close release all per-token capacity
+  ---
+  duration_ms: 4011.443884
+  type: 'test'
+  ...
+# Subtest: healthy automatic protocol pongs keep a socket live across two real30second heartbeat intervals
+ok 3 - healthy automatic protocol pongs keep a socket live across two real30second heartbeat intervals
+  ---
+  duration_ms: 60757.481222
+  type: 'test'
+  ...
+# Subtest: current Scala HTTP/auth/domain
+    # Subtest: exact bearer, missing/wrong credentials, ambiguous cookie+bearer, no-store errors
+    ok 1 - exact bearer, missing/wrong credentials, ambiguous cookie+bearer, no-store errors
+      ---
+      duration_ms: 28.458655
+      type: 'test'
+      ...
+    # Subtest: current version info and explicit removed/future version rejection
+    ok 2 - current version info and explicit removed/future version rejection
+      ---
+      duration_ms: 5.411191
+      type: 'test'
+      ...
+    # Subtest: login ignores stale cookies; rolling cookie flags/restart persistence/logout
+    ok 3 - login ignores stale cookies; rolling cookie flags/restart persistence/logout
+      ---
+      duration_ms: 646.187476
+      type: 'test'
+      ...
+    # Subtest: Host and Origin validation, cookie CSRF, bearer without browser Origin
+    ok 4 - Host and Origin validation, cookie CSRF, bearer without browser Origin
+      ---
+      duration_ms: 62.199111
+      type: 'test'
+      ...
+    # Subtest: full lossless document, Unicode/prototype keys/numbers, tags/links order, both identities stamp history
+    ok 5 - full lossless document, Unicode/prototype keys/numbers, tags/links order, both identities stamp history
+      ---
+      duration_ms: 671.698951
+      type: 'test'
+      ...
+    # Subtest: CAS, terminal replay persistence, no ID mutation, UUIDv7 envelope, duplicate-key errors
+    ok 6 - CAS, terminal replay persistence, no ID mutation, UUIDv7 envelope, duplicate-key errors
+      ---
+      duration_ms: 159.282594
+      type: 'test'
+      ...
+    # Subtest: concurrent same-ID commits produce one durable revision and stable replay outcomes
+    ok 7 - concurrent same-ID commits produce one durable revision and stable replay outcomes
+      ---
+      duration_ms: 59.47291
+      type: 'test'
+      ...
+    # Subtest: global complete-set sorting, scope-bound saved cursor, live archive semantics
+    ok 8 - global complete-set sorting, scope-bound saved cursor, live archive semantics
+      ---
+      duration_ms: 180.605812
+      type: 'test'
+      ...
+    # Subtest: analyze UTF16 spans, parser-backed completion, observed values and invalid input
+    ok 9 - analyze UTF16 spans, parser-backed completion, observed values and invalid input
+      ---
+      duration_ms: 169.344256
+      type: 'test'
+      ...
+    # Subtest: explicit metadata lexical retrieval, pointer provenance, archived/scope filters, semantic unavailable
+    ok 10 - explicit metadata lexical retrieval, pointer provenance, archived/scope filters, semantic unavailable
+      ---
+      duration_ms: 73.097271
+      type: 'test'
+      ...
+    # Subtest: dynamic successes/faults are no-store/no-referrer and oversized envelopes fail closed
+    ok 11 - dynamic successes/faults are no-store/no-referrer and oversized envelopes fail closed
+      ---
+      duration_ms: 12.571012
+      type: 'test'
+      ...
+    # Subtest: configured principal rate admission rejects overflow without changing identities
+    ok 12 - configured principal rate admission rejects overflow without changing identities
+      ---
+      duration_ms: 1314.452626
+      type: 'test'
+      ...
+    # Subtest: actual reverse proxy preserves no-store and identities while allowlisted logs omit body/key/token canaries
+    ok 13 - actual reverse proxy preserves no-store and identities while allowlisted logs omit body/key/token canaries
+      ---
+      duration_ms: 59.414409
+      type: 'test'
+      ...
+    # Subtest: reload revocation and fail-closed invalid replacement, without session secret logging
+    ok 14 - reload revocation and fail-closed invalid replacement, without session secret logging
+      ---
+      duration_ms: 518.490849
+      type: 'test'
+      ...
+    1..14
+ok 4 - current Scala HTTP/auth/domain
+  ---
+  duration_ms: 7435.961378
+  type: 'suite'
+  ...
+# Subtest: official Node MCP client against Scala executable
+    # Subtest: initialize/list exactly3 annotated tools and no resources/prompts
+    ok 1 - initialize/list exactly3 annotated tools and no resources/prompts
+      ---
+      duration_ms: 38.961611
+      type: 'test'
+      ...
+    # Subtest: whole-document CAS/replay/get exact lossless text/search pagination and qualified keys
+    ok 2 - whole-document CAS/replay/get exact lossless text/search pagination and qualified keys
+      ---
+      duration_ms: 131.593394
+      type: 'test'
+      ...
+    # Subtest: maximum escaped ID cursor; unsupported args and protocol methods are explicit
+    ok 3 - maximum escaped ID cursor; unsupported args and protocol methods are explicit
+      ---
+      duration_ms: 88.807666
+      type: 'test'
+      ...
+    # Subtest: MCP Bearer-only both cookie names, no-store, unsupported versions and methods
+    ok 4 - MCP Bearer-only both cookie names, no-store, unsupported versions and methods
+      ---
+      duration_ms: 12.89497
+      type: 'test'
+      ...
+    1..4
+ok 5 - official Node MCP client against Scala executable
+  ---
+  duration_ms: 1402.91127
+  type: 'suite'
+  ...
+# Subtest: current generated WS invalidations heartbeat and session security
+    # Subtest: generated ping echoes finite clock/nonce and HTTP+MCP commits invalidate once, never replay/conflict
+    ok 1 - generated ping echoes finite clock/nonce and HTTP+MCP commits invalidate once, never replay/conflict
+      ---
+      duration_ms: 251.270643
+      type: 'test'
+      ...
+    # Subtest: foreign origin forbidden, cookie missing/bearer rejected4401, wrong cookie name not fallback
+    ok 2 - foreign origin forbidden, cookie missing/bearer rejected4401, wrong cookie name not fallback
+      ---
+      duration_ms: 8.988872
+      type: 'test'
+      ...
+    # Subtest: invalid JSON/heartbeat/binary/oversized frames close permanently, no content leak
+    ok 3 - invalid JSON/heartbeat/binary/oversized frames close permanently, no content leak
+      ---
+      duration_ms: 173.768838
+      type: 'test'
+      ...
+    # Subtest: per-token live capacity is8 and overflow is retryable1013 without evicting established sessions
+    ok 4 - per-token live capacity is8 and overflow is retryable1013 without evicting established sessions
+      ---
+      duration_ms: 15.132367
+      type: 'test'
+      ...
+    # Subtest: idle heartbeat revalidates a revoked token within the real30second interval
+    ok 5 - idle heartbeat revalidates a revoked token within the real30second interval
+      ---
+      duration_ms: 31349.836353
+      type: 'test'
+      ...
+    # Subtest: logout/login session replacement and loaded-token revocation close sockets4401
+    ok 6 - logout/login session replacement and loaded-token revocation close sockets4401
+      ---
+      duration_ms: 286.790171
+      type: 'test'
+      ...
+    1..6
+ok 6 - current generated WS invalidations heartbeat and session security
+  ---
+  duration_ms: 35050.730278
+  type: 'suite'
+  ...
+# Subtest: mixed HTTP authority cookies
+    # Subtest: exact opted-in authority alone selects plain cookie, other authorities remain Secure
+    ok 1 - exact opted-in authority alone selects plain cookie, other authorities remain Secure
+      ---
+      duration_ms: 14.027995
+      type: 'test'
+      ...
+    # Subtest: mixed-authority live sessions select only the current cookie and reject cross-authority Origin
+    ok 2 - mixed-authority live sessions select only the current cookie and reject cross-authority Origin
+      ---
+      duration_ms: 99.970188
+      type: 'test'
+      ...
+    # Subtest: allowed but mismatched Origin/Host cannot read or log in; absent opt-in cannot downgrade
+    ok 3 - allowed but mismatched Origin/Host cannot read or log in; absent opt-in cannot downgrade
+      ---
+      duration_ms: 255.14507
+      type: 'test'
+      ...
+    1..3
+ok 7 - mixed HTTP authority cookies
+  ---
+  duration_ms: 3371.901244
+  type: 'suite'
+  ...
+# Subtest: occupied listeners and children without their own fresh readiness marker receive zero fixture probes
+ok 8 - occupied listeners and children without their own fresh readiness marker receive zero fixture probes
+  ---
+  duration_ms: 15875.114945
+  type: 'test'
+  ...
+# Subtest: configured fixture provision failures are bounded sanitized cleaned and never fall back to app CREATEDB
+ok 9 - configured fixture provision failures are bounded sanitized cleaned and never fall back to app CREATEDB
+  ---
+  duration_ms: 10339.619984
+  type: 'test'
+  ...
+# Subtest: production Main handles SIGTERM with clean resource drain and exit0
+ok 10 - production Main handles SIGTERM with clean resource drain and exit0
+  ---
+  duration_ms: 644.374574
+  type: 'test'
+  ...
+# Subtest: controlled provider uses approved corpus only, durable worker publication and explicit outage without write coupling
+ok 11 - controlled provider uses approved corpus only, durable worker publication and explicit outage without write coupling
+  ---
+  duration_ms: 3690.057307
+  type: 'test'
+  ...
+1..11
+# tests 34
+# suites 4
+# pass 34
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 149004.974747
