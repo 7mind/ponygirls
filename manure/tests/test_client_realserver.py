@@ -1,6 +1,6 @@
 """Real-server roundtrips: visibilities, token-free external, resume, grants.
 
-Uses manure.server.create_server with port 0, api_origin http://127.0.0.1:0,
+Uses the actual configured replacement executable with port 0, current API,
 loopback_dev True, content_suffix artifacts.localhost, null shells.
 Reports integration defects via failing output; never patches server/.
 
@@ -17,29 +17,29 @@ import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
+from uuid import uuid4
+
+from manure import current_protocol as cp
+from target_server import TargetServer
 
 
 def _make_server(tmp: str):
-    from manure.domain import ServerConfig, UserConfig, TokenRef
-    from manure.server import create_server
     from manure import auth as authmod
-    token = authmod.generate_token()
-    digest = authmod.sha256_hex(token)
-    hash_file = os.path.join(tmp, "tok.hash")
-    Path(hash_file).write_text(digest + "\n")
-    token_file = os.path.join(tmp, "tok.txt")
-    Path(token_file).write_text(token + "\n")
-    data_dir = os.path.join(tmp, "data")
-    os.makedirs(data_dir, exist_ok=True)
-    cfg = ServerConfig(
-        listen_address="127.0.0.1", port=0, data_dir=data_dir,
-        api_origin="http://127.0.0.1:0", content_suffix="artifacts.localhost",
-        loopback_dev=True, dashboard_dir=None, unlock_shell_dir=None,
-        users=(UserConfig(id="u-agent", type="agent",
-                          tokens=(TokenRef(id="t1", hash_file=hash_file),)),),
-    )
-    server = create_server(cfg)
-    return server, token
+    token=authmod.generate_token();digest=authmod.sha256_hex(token)
+    hash_file=os.path.join(tmp,"tok.hash");Path(hash_file).write_text(digest+"\n")
+    os.chmod(hash_file,0o600)
+    Path(tmp,"tok.txt").write_text(token+"\n");Path(tmp,"tok.txt").chmod(0o600)
+    data_dir=os.path.join(tmp,"data");os.makedirs(data_dir,exist_ok=True)
+    config={"listen_address":"127.0.0.1","port":0,"data_dir":data_dir,
+        "api_origin":"http://127.0.0.1:0","content_suffix":"artifacts.localhost",
+        "loopback_dev":True,"dashboard_dir":None,"unlock_shell_dir":None,"chunk_bytes":262144,
+        "sweep_interval_s":3600,"rate_limit_per_min":10000,
+        "users":[{"id":"u-agent","type":"agent","tokens":[{"id":"t1","hashFile":hash_file}]}]}
+    return TargetServer(config,tmp),token
+
+
+def _content_payload(command):
+    return cp.dumps(cp.ContentEnvelope(uuid4(),cp.API_VERSION,command))
 
 
 class _LocalhostResolver:
@@ -208,8 +208,8 @@ class TestRealServer(unittest.TestCase):
                     + (f":{parsed.port}" if parsed.port else "")
                 with _LocalhostResolver():
                     conn = _hc.HTTPConnection(parsed.hostname, parsed.port, timeout=30)
-                    payload = json.dumps({"grant": grant["grant"]}).encode()
-                    conn.request("POST", "/__manure/grant", body=payload,
+                    payload = _content_payload(cp.ContentCommand_RedeemGrant(grant["grant"]))
+                    conn.request("POST", "/__manure/current", body=payload,
                                  headers={"Content-Type": "application/json",
                                           "Origin": base,
                                           "Content-Length": str(len(payload))})
@@ -221,8 +221,8 @@ class TestRealServer(unittest.TestCase):
                     conn.close()
                     # Wrong grant value is isolated.
                     conn2 = _hc.HTTPConnection(parsed.hostname, parsed.port, timeout=30)
-                    bad = json.dumps({"grant": "bogus-grant-value"}).encode()
-                    conn2.request("POST", "/__manure/grant", body=bad,
+                    bad = _content_payload(cp.ContentCommand_RedeemGrant("bogus-grant-value"))
+                    conn2.request("POST", "/__manure/current", body=bad,
                                   headers={"Content-Type": "application/json",
                                            "Origin": base,
                                            "Content-Length": str(len(bad))})
@@ -468,8 +468,8 @@ class TestRealServer(unittest.TestCase):
                 parsedB = urllib.parse.urlparse(curls["b.txt"])
                 with _LocalhostResolver():
                     conn = _hc.HTTPConnection(parsedA.hostname, parsedA.port, timeout=30)
-                    payload = json.dumps({"grant": gA["grant"]}).encode()
-                    conn.request("POST", "/__manure/grant", body=payload,
+                    payload = _content_payload(cp.ContentCommand_RedeemGrant(gA["grant"]))
+                    conn.request("POST", "/__manure/current", body=payload,
                                  headers={"Content-Type": "application/json",
                                           "Origin": base,
                                           "Content-Length": str(len(payload))})
@@ -525,8 +525,8 @@ class TestRealServer(unittest.TestCase):
                     + (f":{parsed.port}" if parsed.port else "")
                 with _LocalhostResolver():
                     conn = _hc.HTTPConnection(parsed.hostname, parsed.port, timeout=30)
-                    payload = json.dumps({"password": old_pw}).encode()
-                    conn.request("POST", "/__manure/unlock", body=payload,
+                    payload = _content_payload(cp.ContentCommand_Unlock(old_pw))
+                    conn.request("POST", "/__manure/current", body=payload,
                                  headers={"Content-Type": "application/json",
                                           "Origin": cog,
                                           "Content-Length": str(len(payload))})
@@ -562,8 +562,8 @@ class TestRealServer(unittest.TestCase):
                     conn1.close()
                     # Old password revoked.
                     conn2 = _hc.HTTPConnection(parsed.hostname, parsed.port, timeout=30)
-                    payload_old = json.dumps({"password": old_pw}).encode()
-                    conn2.request("POST", "/__manure/unlock", body=payload_old,
+                    payload_old = _content_payload(cp.ContentCommand_Unlock(old_pw))
+                    conn2.request("POST", "/__manure/current", body=payload_old,
                                   headers={"Content-Type": "application/json",
                                            "Origin": cog,
                                            "Content-Length": str(len(payload_old))})
@@ -587,8 +587,8 @@ class TestRealServer(unittest.TestCase):
                 gi = c.create_grant(aid_i)
                 with _LocalhostResolver():
                     conn3 = _hc.HTTPConnection(parsedi.hostname, parsedi.port, timeout=30)
-                    payi = json.dumps({"grant": gi["grant"]}).encode()
-                    conn3.request("POST", "/__manure/grant", body=payi,
+                    payi = _content_payload(cp.ContentCommand_RedeemGrant(gi["grant"]))
+                    conn3.request("POST", "/__manure/current", body=payi,
                                   headers={"Content-Type": "application/json",
                                            "Origin": base,
                                            "Content-Length": str(len(payi))})
@@ -597,7 +597,7 @@ class TestRealServer(unittest.TestCase):
                     resp3.read()
                     conn3.close()
                     conn4 = _hc.HTTPConnection(parsedi.hostname, parsedi.port, timeout=30)
-                    conn4.request("POST", "/__manure/grant", body=payi,
+                    conn4.request("POST", "/__manure/current", body=payi,
                                   headers={"Content-Type": "application/json",
                                            "Origin": base,
                                            "Content-Length": str(len(payi))})
@@ -615,7 +615,7 @@ class TestRealServer(unittest.TestCase):
         """A2: limit/cursor exhausts; state/include_expired discriminate.
 
         Fixtures: 1 uploading (init-only), 2 ready live, 1 ready expired
-        (deterministic past expires_at_s via test-only store, unswept).
+        (real 60-second TTL through public API, unswept).
         Ignoring state or include_expired must fail."""
         from manure.client import ManureClient
         import time as _time
@@ -638,19 +638,19 @@ class TestRealServer(unittest.TestCase):
                     Path(p).write_bytes(b"x-" + vis.encode())
                     r = c.upload_path(p, access=vis, fresh=True)
                     aids_live[vis] = r["artifact_id"]
-                # Ready expired fixture (deterministic past, no sweep).
+                # Ready expired fixture (real minimum TTL, no private DB mutation).
                 p_exp = os.path.join(td, "x.txt")
                 Path(p_exp).write_bytes(b"expired-bytes")
-                r_exp = c.upload_path(p_exp, access="internal", fresh=True)
+                r_exp = c.upload_path(p_exp, access="internal", fresh=True, expires_in_s=60)
                 aid_exp = r_exp["artifact_id"]
-                past = int(_time.time()) - 100
-                store = getattr(server, "_store", None)
-                self.assertIsNotNone(store)
-                assert store is not None
-                db = getattr(store, "_db", None)
-                self.assertIsNotNone(db)
-                db.execute("UPDATE artifacts SET expires_at_s=? WHERE id=?",
-                           (float(past), aid_exp))
+                deadline=_time.monotonic()+75
+                while True:
+                    try:c.get_artifact(aid_exp)
+                    except Exception as error:
+                        if getattr(error,"code",None)=="expired":break
+                        raise
+                    if _time.monotonic()>=deadline:self.fail("real TTL authorization cutoff missed")
+                    _time.sleep(0.2)
                 # Paginate live (exclude expired) limit=1 until exhausted.
                 seen: list[str] = []
                 cursor: str | None = None

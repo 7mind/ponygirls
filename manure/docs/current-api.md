@@ -192,3 +192,25 @@ need conversion to current typed fixtures; all assertions/cases remain present.
 No successful full historical-suite claim is made. The baseline 353-method
 register is retained as the migration checklist, not replaced by these 27
 component methods/cases. Real target-binary fixture migration proceeds separately.
+
+### Actual-target test harness
+
+`tests/target_server.py` requires explicit `MANURE_TEST_SERVER_COMMAND_JSON`
+(nonempty JSON argv array, appends `serve CONFIG`),
+`MANURE_TEST_ALLOW_CREATEDB=1`, `MANURE_TEST_JDBC_URL`,
+`MANURE_TEST_JDBC_USER`, `MANURE_TEST_JDBC_PASSWORD_FILE`, and `psql` on PATH.
+The provider must be an owned disposable cluster with CREATEDB permission.
+Every fixture creates `manure_browser_<randomhex>` and drops only that owned
+name; it never truncates/resets an arbitrary supplied database. Passwords use
+an O_EXCL/0600 temporary PGPASSFILE, never argv. Launcher config includes the
+required finite JDBC bounds. Root preexists. `MANURE_POSIX_LIBRARY` selects
+shared JNI mode for JVM checks; without it the fixture requests linked native
+mode, not a Python/JVM fallback.
+
+Readiness requires the target's exact `MANURE_READY {apiOrigin,port,pid}` record
+and a successful unauthenticated generated Version command **after** migration,
+reconcile and HTTP bind. Missing launcher/provider/opt-in fails, not skips.
+Shutdown waits for the real child before dropping its owned DB. Tests seed via
+public typed API only; browser TLS retains the controlled Host-preserving edge.
+Real TTL waits replace private clocks. See behavior-inventory.md for precise
+executed component scope and remaining full-target acceptance requirements.

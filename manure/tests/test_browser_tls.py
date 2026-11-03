@@ -60,7 +60,7 @@ class TlsSmokeCase(unittest.TestCase):
         # is rejected even with a valid Host: the edge owns TLS.
         port = urllib.parse.urlsplit(self.api).port
         direct = bf.TestHttp().request(
-            "GET", f"http://127.0.0.2:{port}/api/v1/health",
+            "GET", f"http://127.0.0.2:{port}/api/current/health",
             headers={"Host": bf.TLS_API_HOST})
         self.assertEqual(direct.status, 403, direct.body[:300])
         self.assertEqual(direct.json()["error"]["code"], "tls-required")
@@ -210,17 +210,18 @@ class TlsSmokeCase(unittest.TestCase):
             "async function run() {"
             "  const base = '" + self.api + "';"
             "  const vid = '" + vid + "';"
-            "  await attempt('read', base + '/api/v1/artifacts',"
-            "    {credentials:'include'});"
-            "  await attempt('grants', base + '/api/v1/artifacts/' + vid + '/grants',"
+            "  const envelope = command => JSON.stringify({requestId:crypto.randomUUID(),apiVersion:'1.0.0',command});"
+            "  await attempt('read', base + '/api/current',"
+            "    {method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},"
+            "     body:envelope({ListArtifacts:{query:{query:'',includeExpired:false,visibility:null,state:null,sort:'CreatedAt',direction:'Desc',limit:50,cursor:null}}})});"
+            "  await attempt('grants', base + '/api/current',"
+            "    {method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},"
+            "     body:envelope({CreateGrant:{artifactId:vid}})});"
+            "  await attempt('logout', base + '/api/current/logout',"
             "    {method:'POST', credentials:'include',"
             "     headers:{'Content-Type':'application/x-www-form-urlencoded'},"
             "     body:'x=1'});"
-            "  await attempt('logout', base + '/api/v1/logout',"
-            "    {method:'POST', credentials:'include',"
-            "     headers:{'Content-Type':'application/x-www-form-urlencoded'},"
-            "     body:'x=1'});"
-            "  await attempt('login', base + '/api/v1/login',"
+            "  await attempt('login', base + '/api/current/login',"
             "    {method:'POST', credentials:'include',"
             "     headers:{'Content-Type':'application/x-www-form-urlencoded'},"
             "     body:'token=" + token + "'});"
@@ -265,11 +266,11 @@ class TlsSmokeCase(unittest.TestCase):
         self.assertTrue(atk["login"].startswith("BLOCKED"), atk)
         self.assertEqual(atk["cookie"], "", atk)
         bf.assert_no_secrets_in_request_urls(self, out_clean, [token])
-        login_reqs = [q for q in _reqs(out_clean, "/api/v1/login")
+        login_reqs = [q for q in _reqs(out_clean, "/api/current/login")
                       if q["method"] == "POST" and q["origin"] == hostile_origin]
         self.assertTrue(login_reqs, bf.requests_log(out_clean))
         self.assertEqual(login_reqs[0]["cookieNames"], [], login_reqs[0])
-        self.assertTrue(any(r["status"] == 403 for r in _resps(out_clean, "/api/v1/login")),
+        self.assertTrue(any(r["status"] == 403 for r in _resps(out_clean, "/api/current/login")),
                         bf.responses_log(out_clean))
         clean_cookies = [r for r in out_clean if r.get("op") == "cookies"][0]["cookies"]
         self.assertFalse([c for c in clean_cookies if c["name"] == SESSION], clean_cookies)
@@ -289,11 +290,10 @@ class TlsSmokeCase(unittest.TestCase):
              "fn": "() => new Promise((res) => setTimeout(() => res(true), 1000))"},
             {"op": "eval", "fn": "() => document.title"},
         ])
-        grants_reqs = [q for q in _reqs(out_strict, "/grants") if vid in q["url"]]
-        self.assertTrue(grants_reqs, "no strict grants POST")
-        self.assertEqual(grants_reqs[0]["cookieNames"], [], grants_reqs[0])
-        self.assertTrue(any(r["status"] == 401 for r in _resps(out_strict, "/grants")),
-                        bf.responses_log(out_strict))
+        strict_mutation=[q for q in _reqs(out_strict,"/api/current/logout") if q["method"]=="POST"]
+        self.assertTrue(strict_mutation,"no strict logout form POST")
+        self.assertEqual(strict_mutation[0]["cookieNames"],[],strict_mutation[0])
+        self.assertTrue(any(r["status"]==401 for r in _resps(out_strict,"/api/current/logout")),bf.responses_log(out_strict))
 
         # -- PLANTED None/Secure (TESTONLY, real TLS): forces dispatch, 403.
         out_login = self._browser([
@@ -335,19 +335,17 @@ class TlsSmokeCase(unittest.TestCase):
         self.assertTrue(atk["login"].startswith("BLOCKED"), atk)
         self.assertEqual(atk["cookie"], "", atk)
         bf.assert_no_secrets_in_request_urls(self, out, [token, val])
-        grants_reqs = [q for q in _reqs(out, "/grants") if vid in q["url"]]
-        grants_req = [q for q in grants_reqs if q["origin"] == hostile_origin]
-        self.assertTrue(grants_req, grants_reqs)
-        self.assertEqual(grants_req[0]["cookieNames"], [SESSION], grants_req[0])
-        self.assertIn("application/x-www-form-urlencoded",
-                        grants_req[0]["headers"].get("Content-Type", ""))
-        self.assertTrue(any(r["status"] == 403 for r in _resps(out, "/grants") if vid in r["url"]),
-                        bf.responses_log(out))
-        logout_req = [q for q in _reqs(out, "/api/v1/logout")
+        # JSON commands now preflight. They are blocked before credential
+        # dispatch; form Logout below still proves authenticated wrong-Origin
+        # 403 in real Chromium with the planted None/Secure cookie.
+        preflights=[q for q in _reqs(out,"/api/current") if q["method"]=="OPTIONS" and q["origin"]==hostile_origin]
+        self.assertTrue(preflights,"no typed-API preflight observed")
+        self.assertFalse(any(200<=r["status"]<300 for r in _resps(out,"/api/current")),bf.responses_log(out))
+        logout_req = [q for q in _reqs(out, "/api/current/logout")
                       if q["method"] == "POST" and q["origin"] == hostile_origin]
         self.assertTrue(logout_req, bf.requests_log(out))
         self.assertEqual(logout_req[0]["cookieNames"], [SESSION], logout_req[0])
-        self.assertTrue(any(r["status"] == 403 for r in _resps(out, "/api/v1/logout")),
+        self.assertTrue(any(r["status"] == 403 for r in _resps(out, "/api/current/logout")),
                         bf.responses_log(out))
         # TARGETED state unchanged: victim info + exact bytes, session survives.
         # self.http carries the fixture TLS (insecure) context; bearer checks
@@ -356,31 +354,25 @@ class TlsSmokeCase(unittest.TestCase):
         insecure = _ssl.create_default_context()
         insecure.check_hostname = False
         insecure.verify_mode = _ssl.CERT_NONE
-        info = self.http.request("GET", f"{self.api}/api/v1/artifacts/{vid}",
-                                 headers=bearer)
+        info = self.http.current((self.api), bf.cp.Command_GetArtifact(vid), headers=bearer)
         self.assertEqual(info.status, 200, info.body[:300])
-        tls_content = (f"{self.api}/api/v1/artifacts/{vid}/files/"
+        tls_content = (f"{self.api}/api/current/artifacts/{vid}/files/"
                        + urllib.parse.quote("note.txt", safe="") + "/content")
         blob = self.http.request("GET", tls_content, headers=bearer)
         self.assertEqual(blob.status, 200, blob.body[:300])
         self.assertEqual(blob.body, b"tls victim bytes")
         # HTTP complements (urllib, no SameSite/preflight): fresh insecure jars.
         jar = bf.TestHttp(ssl_context=insecure)
-        login_ok = jar.request("POST", self.api + "/api/v1/login",
-                               body={"token": token},
-                               headers={"Origin": self.api})
+        login_ok = jar.current((self.api), bf.cp.Command_Login(({"token": token})["token"]), headers={"Origin": self.api})
         self.assertEqual(login_ok.status, 200, login_ok.body[:300])
         self.assertTrue(jar.cookies_for(self.api))
         evil = {"Origin": "https://evil.example"}
-        bad_grants = jar.request(
-            "POST", f"{self.api}/api/v1/artifacts/{vid}/grants",
-            body="x=1", content_type="application/x-www-form-urlencoded",
-            headers=evil)
+        bad_grants = jar.current((self.api), bf.cp.Command_CreateGrant(vid), headers=evil)
         self.assertEqual(bad_grants.status, 403, bad_grants.body[:300])
-        still = jar.request("GET", self.api + "/api/v1/whoami")
+        still = jar.current((self.api), bf.cp.Command_Whoami())
         self.assertEqual(still.status, 200, still.body[:300])
         bad_login = bf.TestHttp(ssl_context=insecure).request(
-            "POST", self.api + "/api/v1/login",
+            "POST", self.api + "/api/current/login",
             body=urllib.parse.urlencode({"token": token}),
             content_type="application/x-www-form-urlencoded", headers=evil)
         self.assertEqual(bad_login.status, 403, bad_login.body[:300])

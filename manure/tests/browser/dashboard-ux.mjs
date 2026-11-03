@@ -29,14 +29,16 @@ const check = async (name, run) => {
       window.fetch = (url, options) => {
         const state = window.__ux;
         const value = String(url);
-        if (state.failSession && value.endsWith("/whoami")) return Promise.reject(new Error("test-offline"));
-        if (state.failLogout && value.endsWith("/logout")) return Promise.reject(new Error("test-offline"));
-        const listPage = value.includes("/artifacts?") && value.includes("cursor=");
-        if (listPage && state.failList) { state.failList = false; return Promise.resolve(new Response('{"error":{"code":"unavailable"}}', { status: 503, headers: { "Content-Type": "application/json" } })); }
-        const response = original(url, options);
-        if (state.holdInfoId && value.endsWith("/artifacts/" + state.holdInfoId)) { state.holdInfoId = null; return response.then((res) => new Promise((resolve) => { state.releaseInfo = () => resolve(res); })); }
-        if (listPage && state.holdList) { state.holdList = false; return response.then((res) => new Promise((resolve) => { state.releaseList = () => resolve(res); })); }
-        if (value.endsWith("/external-password:rotate") && state.holdRotate) { state.holdRotate = false; return response.then((res) => new Promise((resolve) => { state.releaseRotate = () => resolve(res); })); }
+        let envelope;try { envelope=JSON.parse(options?.body || "null"); } catch (_) { envelope=null; }
+        const command=new URL(value,location.href).pathname==="/api/current" ? envelope?.command : null;
+        if (state.failSession && command?.Whoami) return Promise.reject(new Error("test-offline"));
+        if (state.failLogout && command?.Logout) return Promise.reject(new Error("test-offline"));
+        const listPage=command?.ListArtifacts?.query.cursor != null;
+        if (listPage && state.failList) { state.failList=false; return Promise.resolve(new Response(JSON.stringify({requestId:envelope.requestId,result:{Error:{failure:{code:"Unavailable",message:"controlled fixture",retryAfterSeconds:1}}}}),{status:503,headers:{"Content-Type":"application/json"}})); }
+        const response=original(url,options);
+        if (state.holdInfoId && command?.GetArtifact?.artifactId===state.holdInfoId) { state.holdInfoId=null;return response.then(res=>new Promise(resolve=>{state.releaseInfo=()=>resolve(res);})); }
+        if (listPage && state.holdList) { state.holdList=false;return response.then(res=>new Promise(resolve=>{state.releaseList=()=>resolve(res);})); }
+        if (command?.RotateExternalPassword && state.holdRotate) { state.holdRotate=false;return response.then(res=>new Promise(resolve=>{state.releaseRotate=()=>resolve(res);})); }
         return response;
       };
     });
@@ -203,7 +205,7 @@ await check("expired artifacts remain deletable from the catalogue", async (page
   page.once("dialog", (dialog) => dialog.accept());
   await page.locator('[data-action=delete]').click();
   await count(page, 0);
-  assert.equal((await page.request.get(input.base + "/api/v1/artifacts/" + input.expiredId)).status(), 404);
+  assert.equal((await page.request.post(input.base+"/api/current",{data:{requestId:crypto.randomUUID(),apiVersion:"1.0.0",command:{GetArtifact:{artifactId:input.expiredId}}}})).status(),404);
 });
 
 await check("password reveals clear on dismiss, navigation and confirmed logout", async (page, context) => {
