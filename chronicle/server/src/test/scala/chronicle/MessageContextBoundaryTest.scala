@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class MessageContextBoundaryTest extends munit.FunSuite {
   private val vector=ProblemPublicationFixtures.vector
   private def context(f: ReadSourceFixture,id: UUID,anchor: Span,admission: ReadAdmission): MessageContextResult = {
-    val reader=new PostgresArchive(new Database(f.config.copy(jdbcUrl=f.probe.url(f.config.jdbcUrl)),f.catalog),f.config)
+    val reader=new PostgresArchive(Fixtures.database(f.config.copy(jdbcUrl=f.probe.url(f.config.jdbcUrl)),f.catalog),f.config)
     reader.readMessageContext("a",id,ContentView(1,None),anchor,2048,2048,ReadMaterialization.admitted(f.probe.admission(admission,_ => ())))
   }
   private def args(id: UUID,messageId: String): Json=Json.obj("sessionId"->Json.fromString(id.toString),"view"->Wire.encode(ContentView.codecJson,ContentView(1,None)),"anchor"->Wire.encode(Span.codecJson,Span(messageId,0,1)),"beforeBytes"->Json.fromInt(4),"afterBytes"->Json.fromInt(4))
@@ -40,7 +40,7 @@ class MessageContextBoundaryTest extends munit.FunSuite {
     f.db.transaction(c => Sql.exec(c,"UPDATE ch_messages SET value=jsonb_set(value,'{role}',to_jsonb(repeat('x',70000))) WHERE session_id=?",out.sessionId))
     assertEquals(intercept[DomainError](context(f,out.sessionId,Span(original.messages.head.id,0,1),new ReadAdmission { def consume(bytes: Long): Unit=() })).code,"read-budget")
     assertEquals(payloads(f),Nil)
-    val selected=f.config.copy(jdbcUrl=f.probe.url(f.config.jdbcUrl)); val reader=new PostgresArchive(new Database(selected,f.catalog),selected)
+    val selected=f.config.copy(jdbcUrl=f.probe.url(f.config.jdbcUrl)); val reader=new PostgresArchive(Fixtures.database(selected,f.catalog),selected)
     assertEquals(intercept[DomainError](reader.readMessageContext("a",out.sessionId,ContentView(1,None),Span(original.messages.head.id,0,1),0,0)).code,"read-budget")
     assertEquals(payloads(f),Nil)
   }}
@@ -89,13 +89,13 @@ class MessageContextBoundaryTest extends munit.FunSuite {
     val database=f.db.transaction(c => Sql.one(c,"SELECT current_database()")(_.getString(1)).get)
     val identifier="\""+database.replace("\"","\"\"")+"\""
     f.db.transaction { c =>
-      Sql.exec(c,s"CREATE ROLE $role LOGIN"); Sql.exec(c,s"REVOKE TEMP ON DATABASE $identifier FROM PUBLIC")
+      Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'"); Sql.exec(c,s"REVOKE TEMP ON DATABASE $identifier FROM PUBLIC")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
       Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_messages TO $role")
       Sql.exec(c,s"GRANT SELECT(session_id,revision) ON ch_revisions TO $role")
     }
     try {
-      val config=f.config.copy(databaseUser=role); val db=new Database(config,f.catalog); val reader=new PostgresArchive(db,config)
+      val config=f.config.copy(databaseUser=role); val db=Fixtures.database(config,f.catalog); val reader=new PostgresArchive(db,config)
       assertEquals(intercept[java.sql.SQLException](db.transaction(c => Sql.exec(c,"CREATE TEMP TABLE forbidden(i integer)"))).getSQLState,"42501")
       assertEquals(reader.readMessageContext("a",out.sessionId,ContentView(1,None),Span(original.messages.head.id,0,1),4,4).excerpts.head.text,original.messages.head.text.take(5))
     } finally f.db.transaction { c => Sql.exec(c,s"GRANT TEMP ON DATABASE $identifier TO PUBLIC"); Sql.exec(c,s"DROP OWNED BY $role"); Sql.exec(c,s"DROP ROLE $role") }

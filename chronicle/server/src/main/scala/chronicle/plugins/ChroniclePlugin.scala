@@ -9,7 +9,7 @@ import org.http4s.client.Client
 object ChroniclePlugin extends PluginDef {
   make[logstage.IzLogger].fromValue(logstage.IzLogger())
   make[IndexProfileCatalog].from { (config: Config) => IndexProfileCatalog.current(config) }
-  make[Database]
+  make[Database].fromResource[DatabaseResource]
   make[Auth]
   make[PostgresArchive]
   make[SessionArchive].from[PostgresArchive]

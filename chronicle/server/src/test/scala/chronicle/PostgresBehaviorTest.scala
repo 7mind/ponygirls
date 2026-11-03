@@ -243,7 +243,7 @@ class PostgresBehaviorTest extends munit.FunSuite {
     assert(blocked,s"expected database lock wait: $prefix")
   }
   test("BG-GoodCommunication: new-head supersession and publication use source-before-job lock order") { database { (c,db,a,auth) =>
-    val timed=c.copy(jdbcUrl=c.jdbcUrl+"?options=-c%20statement_timeout%3D5000"); val timedDb=new Database(timed,IndexProfileCatalog.legacyOnly(timed))
+    val timed=c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=scala.concurrent.duration.DurationInt(5).seconds)); val timedDb=new Database(timed,IndexProfileCatalog.legacyOnly(timed))
     val archive=new PostgresArchive(timedDb,timed); val request=Fixtures.snapshot()
     archive.ingest("a",request); val old=archive.claim(Set(c.profile),ClaimScope.AllOwners,300).get
     val executor=java.util.concurrent.Executors.newFixedThreadPool(2)
@@ -263,7 +263,7 @@ class PostgresBehaviorTest extends munit.FunSuite {
     } finally { executor.shutdownNow(); executor.awaitTermination(6,java.util.concurrent.TimeUnit.SECONDS) }
   }}
   test("BG-GoodCommunication regression: confirmed rebuild waits behind in-flight publication and rejects its now-stale preview") { database { (c,db,a,auth) =>
-    val timed=c.copy(jdbcUrl=c.jdbcUrl+"?options=-c%20statement_timeout%3D5000")
+    val timed=c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=scala.concurrent.duration.DurationInt(5).seconds))
     val timedDb=new Database(timed,IndexProfileCatalog.legacyOnly(timed)); val oldArchive=new PostgresArchive(timedDb,timed)
     val out=oldArchive.ingest("a",Fixtures.snapshot())
     val old=oldArchive.claim(Set(timed.profile),ClaimScope.AllOwners,300).get
@@ -290,7 +290,7 @@ class PostgresBehaviorTest extends munit.FunSuite {
     } finally { executor.shutdownNow(); executor.awaitTermination(6,java.util.concurrent.TimeUnit.SECONDS) }
   }}
   test("BG-GoodCommunication regression: publisher waiting for a target switch rechecks the committed target") { database { (c,db,a,auth) =>
-    val timed=c.copy(jdbcUrl=c.jdbcUrl+"?options=-c%20statement_timeout%3D5000")
+    val timed=c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=scala.concurrent.duration.DurationInt(5).seconds))
     val timedDb=new Database(timed,IndexProfileCatalog.legacyOnly(timed)); val oldArchive=new PostgresArchive(timedDb,timed)
     oldArchive.ingest("a",Fixtures.snapshot()); val old=oldArchive.claim(Set(timed.profile),ClaimScope.AllOwners,300).get
     val next=timed.copy(embedding=timed.embedding.copy(revision="maintenance-first"))

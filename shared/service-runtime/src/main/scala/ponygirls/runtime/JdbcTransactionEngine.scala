@@ -30,6 +30,7 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
           }
         }
         Using.resource(owner) { _ =>
+          configure(c)
           c.setAutoCommit(false)
           try {
             val result = f(c)
@@ -60,6 +61,21 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
     case other => other
   }
 
+  private def configure(c: Connection): Unit = {
+    // Startup `options=-c ...` would override a stricter role/database timeout.
+    // Read the effective numeric pg_settings value and only tighten it. One trusted,
+    // bound constant-size setup query, fully exhausted before the caller transaction.
+    val sql = """SELECT set_config(s.name,least(coalesce(nullif(s.setting::bigint,0),v.bound),v.bound)::text,false)
+      FROM pg_settings s JOIN (VALUES ('statement_timeout',?::bigint),('lock_timeout',?::bigint),
+      ('idle_in_transaction_session_timeout',?::bigint)) v(name,bound) ON s.name=v.name"""
+    Using.resource(c.prepareStatement(sql)) { p =>
+      p.setLong(1,config.limits.statementTimeout.toMillis)
+      p.setLong(2,config.limits.lockTimeout.toMillis)
+      p.setLong(3,config.limits.idleTransactionTimeout.toMillis)
+      Using.resource(p.executeQuery()) { r => while (r.next()) () }
+    }
+  }
+
   private def connect(): Connection = {
     def seconds(d: FiniteDuration): String = math.max(1L, (d.toMillis + 999L) / 1000L).toString
     val limits = config.limits
@@ -70,7 +86,6 @@ private[runtime] final class JdbcTransactionEngine(config: JdbcConfig, factory: 
     props.setProperty("loginTimeout", seconds(limits.connectTimeout))
     props.setProperty("socketTimeout", seconds(limits.socketTimeout))
     props.setProperty("tcpKeepAlive", "true")
-    props.setProperty("options", s"-c statement_timeout=${limits.statementTimeout.toMillis} -c lock_timeout=${limits.lockTimeout.toMillis} -c idle_in_transaction_session_timeout=${limits.idleTransactionTimeout.toMillis}")
     factory.open(config.jdbcUrl, props)
   }
 }
