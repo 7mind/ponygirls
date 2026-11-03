@@ -401,8 +401,13 @@ in
         Install.WantedBy = [ "default.target" ];
       };
       "${cfg.unitPrefix}-manure" =
-        (unit "Agentic services native Manure (low-security path hosting)" (setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ])
-          "${cfg.manure.package}/bin/manure-server --config ${manureConfig}") // { Unit = { Description = "Agentic services native Manure (low-security path hosting)"; After = setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ]; Requires = [ "${cfg.unitPrefix}-manure-migrate.service" ]; Wants = setupDeps; }; };
+        let base = unit "Agentic services native Manure (low-security path hosting)" (setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ])
+          "${cfg.manure.package}/bin/manure-server --config ${manureConfig}";
+        in base // {
+          Unit = { Description = "Agentic services native Manure (low-security path hosting)"; After = setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ]; Requires = [ "${cfg.unitPrefix}-manure-migrate.service" ]; Wants = setupDeps; };
+          # Preserve every base serve field; migration must still reject 143.
+          Service = base.Service // { SuccessExitStatus = [ 143 ]; };
+        };
     };
     systemd.user.timers = lib.optionalAttrs stores.haystack.enable {
       "${cfg.unitPrefix}-haystack-backup" = {

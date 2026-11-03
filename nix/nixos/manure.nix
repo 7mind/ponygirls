@@ -532,6 +532,8 @@ in
         Group = "manure";
         RuntimeDirectory = "manure";
         RuntimeDirectoryMode = "0700";
+        # IOApp's normal TERM shutdown runs its hooks, then returns 128 + SIGTERM.
+        SuccessExitStatus = [ 143 ];
         Restart = "on-failure";
         NoNewPrivileges = true;
         ProtectSystem = "strict";
