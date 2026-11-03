@@ -40,16 +40,31 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
     total <- f.metadata.transaction(_.reservation)
     _ <- IO(assertEquals(total,0L))
   yield () }}
-  test("incomplete owner gates precede publishing recovery and mutation effects") { run { f => for
+  test("shared incomplete reads and abort coexist with owner-only upload mutations") { run { f => for
     a <- f.artifacts.init(f.identity,request())
-    _ <- fails("session-not-owned",f.artifacts.info(f.other,a.artifact.id))
-    _ <- fails("session-not-owned",f.artifacts.status(f.other,a.artifact.id))
+    visible <- f.artifacts.info(f.other,a.artifact.id)
+    _ <- IO(assertEquals(visible.id,a.artifact.id))
+    status <- f.artifacts.status(f.other,a.artifact.id)
+    _ <- IO(assertEquals(status.state,UploadState.Uploading))
+    page <- new Catalogue(f.artifacts,f.config.limits,f.clock).list(f.other,manure.api.CatalogueQuery("",false,None,None,manure.api.CatalogueSort.CreatedAt,manure.api.SortDirection.Desc,20,None))
+    _ <- IO(assert(page._1.exists(_.id == a.artifact.id)))
+    _ <- fails("session-not-owned",f.artifacts.patch(f.other,a.artifact.id,ArtifactPatch(Some("forbidden"),None,TtlPatch.Unchanged)))
+    updated <- f.artifacts.patch(f.identity,a.artifact.id,ArtifactPatch(Some("owner patch"),None,TtlPatch.Unchanged))
+    _ <- IO(assertEquals(updated.artifact.name,"owner patch"))
     _ <- fails("session-not-owned",f.artifacts.putChunk(f.other,a.artifact.id,"資料/file.txt",0,bytes,SecretCodec.sha256(bytes)))
-    _ <- fails("session-not-owned",f.artifacts.delete(f.other,a.artifact.id))
     _ <- f.metadata.transaction(tx => tx.put(a.artifact.copy(state=UploadState.Publishing)))
     _ <- fails("session-not-owned",f.artifacts.finish(f.other,a.artifact.id))
     state <- f.metadata.transaction(_.artifact(a.artifact.id).get.state)
     _ <- IO(assertEquals(state,UploadState.Publishing))
+    _ <- f.artifacts.delete(f.other,a.artifact.id)
+    _ <- fails("not-found",f.artifacts.info(f.identity,a.artifact.id))
+  yield () }}
+  test("any manager may rotate an incomplete external password without advancing activity") { run { f => for
+    a <- f.artifacts.init(f.identity,request(Visibility.External))
+    _ <- IO { f.clock.now += 5 }
+    password <- f.artifacts.rotate(f.other,a.artifact.id)
+    updated <- f.artifacts.info(f.other,a.artifact.id)
+    _ <- IO { assert(SecretCodec.verify(password,updated.externalPasswordHash.get)); assertEquals(updated.lastActivityAt,a.artifact.lastActivityAt) }
   yield () }}
   test("chunk ACK follows file+parent fsync and durable receipt commit; retry heals corrupt bytes") { run { f => for
     a <- f.artifacts.init(f.identity,request())
