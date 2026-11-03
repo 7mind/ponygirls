@@ -253,6 +253,52 @@ final class FilesystemBehavior(bridge: PosixNative, childCommand: Vector[String]
     }
   }
 
+  test("metadata and worker lease retains physical claim without an open file") {
+    fixture { temp =>
+      val root = Files.createDirectory(temp.resolve("root"))
+      val directory = ConfinedDirectory.open(root, bridge)
+      val lease = directory.lease()
+      try
+        lease.validate()
+        assertEquals(lease.run(17), 17)
+        intercept[OpenRootLeases](directory.close())
+        intercept[RootAlreadyClaimed](ConfinedDirectory.open(root, bridge))
+        Files.move(root, temp.resolve("renamed"))
+        intercept[RootAlreadyClaimed](ConfinedDirectory.open(temp.resolve("renamed"), bridge))
+        var touched = false
+        intercept[IOException](lease.run { touched = true })
+        assert(!touched, "root validation must precede DB effects")
+      finally
+        lease.close()
+        lease.close()
+        directory.close()
+      intercept[java.nio.channels.ClosedChannelException](lease.run(1))
+      Using.resource(ConfinedDirectory.open(temp.resolve("renamed"), bridge))(_.forceRootDirectory())
+    }
+  }
+
+  test("strict bounded publication topology and raw orphan cleanup") {
+    fixture { temp =>
+      Files.createDirectories(temp.resolve("tree/資料"))
+      Files.writeString(temp.resolve("tree/資料/file"), "payload")
+      Using.resource(ConfinedDirectory.open(temp, bridge)) { directory =>
+        val entries = directory.tree(name("tree"), 2, 2)
+        assertEquals(entries.map(e => (e.name.value,e.directory)).toSet, Set(("資料",true),("資料/file",false)))
+        intercept[IOException](directory.tree(name("tree"), 1, 2))
+        Files.createSymbolicLink(temp.resolve("tree/link"), temp.resolve("tree/資料/file"))
+        intercept[IOException](directory.tree(name("tree"), 3, 3))
+        val fd = bridge.openRoot(temp.resolve("tree").toString.getBytes(UTF_8))
+        try
+          val file = bridge.createFile(fd, Array('x'.toByte, 0xff.toByte))
+          bridge.close(file)
+        finally bridge.close(fd)
+        assertEquals(directory.cleanupChildren(name("tree"), Set("資料"), 10, 10), 2)
+        assertEquals(Files.readString(temp.resolve("tree/資料/file")), "payload")
+        assertEquals(directory.cleanupChildren(name("tree"), Set.empty, 10, 10), 1)
+      }
+    }
+  }
+
   test("close is idempotent; closed directory and file reject IO") {
     fixture { temp =>
       val directory = ConfinedDirectory.open(temp, bridge)
