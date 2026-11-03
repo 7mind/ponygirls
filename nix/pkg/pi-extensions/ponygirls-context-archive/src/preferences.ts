@@ -3,24 +3,33 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname } from "node:path";
 import { DEFAULT_POLICY } from "./archive.ts";
 
-export interface ArchiveDefaults {
-  enabled: boolean;
+export interface ArchiveThresholds {
   highWatermark: number;
   lowWatermark: number;
+}
+export interface ArchiveDefaults extends ArchiveThresholds {
+  enabled: boolean;
 }
 export const DEFAULT_PREFERENCES: Readonly<ArchiveDefaults> = {
   enabled: false, highWatermark: DEFAULT_POLICY.highWatermark, lowWatermark: DEFAULT_POLICY.lowWatermark,
 };
 
-export function validatePreferences(value: unknown): ArchiveDefaults {
+export function validateThresholds(value: unknown): ArchiveThresholds {
   if (typeof value !== "object" || value === null || Array.isArray(value) ||
-      !("enabled" in value) || typeof value.enabled !== "boolean" ||
       !("highWatermark" in value) || typeof value.highWatermark !== "number" || !Number.isFinite(value.highWatermark) ||
       !("lowWatermark" in value) || typeof value.lowWatermark !== "number" || !Number.isFinite(value.lowWatermark) ||
       value.lowWatermark < 0 || value.lowWatermark >= value.highWatermark || value.highWatermark > 1) {
-    throw new Error("Expected enabled:boolean and finite watermarks 0 <= lowWatermark < highWatermark <= 1");
+    throw new Error("Expected finite watermarks 0 <= lowWatermark < highWatermark <= 1");
   }
-  return { enabled: value.enabled, highWatermark: value.highWatermark, lowWatermark: value.lowWatermark };
+  return { highWatermark: value.highWatermark, lowWatermark: value.lowWatermark };
+}
+
+export function validatePreferences(value: unknown): ArchiveDefaults {
+  if (typeof value !== "object" || value === null || Array.isArray(value) ||
+      !("enabled" in value) || typeof value.enabled !== "boolean") {
+    throw new Error("Expected enabled:boolean in context archive defaults");
+  }
+  return { enabled: value.enabled, ...validateThresholds(value) };
 }
 
 export interface PreferenceStore {

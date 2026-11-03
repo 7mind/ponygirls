@@ -43,7 +43,7 @@ for (const backend of ["memory", "filesystem"]) {
       { ...DEFAULT_PREFERENCES, lowWatermark: 0.7 },
       { enabled: true, highWatermark: 0.8 },
     ]) {
-      assert.throws(() => store.write(invalid), /watermarks/);
+      assert.throws(() => store.write(invalid), /enabled:boolean|watermarks/);
       assert.deepEqual(store.read(), DEFAULT_PREFERENCES);
     }
     store.write({ enabled: true, highWatermark: 1, lowWatermark: 0 });

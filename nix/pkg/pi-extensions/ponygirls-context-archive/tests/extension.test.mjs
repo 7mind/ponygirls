@@ -7,7 +7,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { registerContextArchive, BADGE_KEY } from "../index.ts";
 import { DEFAULT_PREFERENCES, FilePreferenceStore } from "../src/preferences.ts";
-import { SESSION_SETTING_TYPE } from "../src/session-settings.ts";
+import { SESSION_SETTING_TYPE, SESSION_THRESHOLDS_TYPE, sessionOverrides } from "../src/session-settings.ts";
 import { ARCHIVE_TYPE, RECALL_TOOL } from "../src/archive.ts";
 import { apply, MemoryPreferences, productionHistory } from "./fixtures.mjs";
 
@@ -106,37 +106,90 @@ for (const backend of ["memory", "filesystem"]) {
     await other.command("status"); assert.match(other.notifications.at(-1).message, /ON \(inherited global default\)/);
   });
 
+  test(`${backend}: threshold commands are session-local and do not modify global defaults`, async (t) => {
+    const f = fixture(t, backend); f.start();
+    const before = structuredClone(f.preferences.read());
+    await f.command("thresholds 80 55");
+    assert.deepEqual(f.preferences.read(), before);
+    await f.command("status");
+    assert.match(f.notifications.at(-1).message, /archive trigger 64000 \(80%\).*44000 \(55%\)/);
+  });
+
   test(`${backend}: global thresholds change real selection while session override stays ON`, async (t) => {
     const f = fixture(t, backend); productionHistory(f.manager); f.start(); await f.command("on");
-    await f.command("thresholds 100 90");
+    await f.command("default thresholds 100 90");
     assert.equal(f.preferences.read().enabled, false);
     assert.equal(f.boundary(), undefined, "higher trigger suppresses this otherwise eligible history");
-    await f.command("thresholds 60 40");
+    await f.command("default thresholds 60 40");
     assert.ok(f.boundary().entries.length > 0);
     assert.deepEqual(f.preferences.read(), { enabled: false, highWatermark: 0.6, lowWatermark: 0.4 });
     f.ctx.getContextUsage = () => ({ tokens: 71000, contextWindow: 80000, percent: 88.75 });
     await f.command("status");
     assert.match(f.notifications.at(-1).message, /48000 \(60%\).*32000 \(40%\)/);
     assert.match(f.notifications.at(-1).message, /ON \(session override/);
-    await f.command("thresholds 70 60");
+    await f.command("default thresholds 70 60");
     assert.equal(f.boundary().entries.filter((e) => e.type === "context_edit").length, 1);
-    await f.command("thresholds 70 40");
+    await f.command("default thresholds 70 40");
     assert.equal(f.boundary().entries.filter((e) => e.type === "context_edit").length, 2);
   });
 
   test(`${backend}: invalid command arity and threshold values cannot mutate settings`, async (t) => {
     const f = fixture(t, backend); f.start();
     const before = structuredClone(f.preferences.read());
-    for (const args of ["on extra", "off extra", "inherit extra", "status extra", "default", "default yes", "default on extra", "thresholds 70", "thresholds 70 50 extra", "thresholds 101 50", "thresholds 50 50", "thresholds 0 0", "thresholds 70 -1", "thresholds NaN 20", "thresholds Infinity 20", "thresholds 70x 20", "thresholds 0x46 20"]) {
+    const invalidPairs = ["thresholds 70", "thresholds 70 50 extra", "thresholds 101 50", "thresholds 50 50", "thresholds 0 0", "thresholds 70 -1", "thresholds NaN 20", "thresholds Infinity 20", "thresholds 70x 20", "thresholds 0x46 20"];
+    for (const args of ["on extra", "off extra", "inherit extra", "status extra", "default", "default yes", "default on extra", "thresholds inherit extra", "default thresholds", "default thresholds inherit", ...invalidPairs.flatMap((value) => [value, `default ${value}`])]) {
       await f.command(args);
       assert.deepEqual(f.preferences.read(), before, args);
       assert.equal(f.manager.getEntries().length, 0, args);
       assert.ok(["warning", "error"].includes(f.notifications.at(-1).level), args);
     }
     await f.command("thresholds 75.5 0");
-    assert.deepEqual(f.preferences.read(), { enabled: false, highWatermark: 0.755, lowWatermark: 0 });
+    assert.deepEqual(f.preferences.read(), before);
+    assert.deepEqual(sessionOverrides(f.manager.getEntries(), f.manager.getSessionId()).thresholds, { highWatermark: 0.755, lowWatermark: 0 });
     await f.command("thresholds 57 25");
     assert.match(f.notifications.at(-1).message, /\(57%\).*\(25%\)/);
+  });
+}
+
+for (const backend of ["memory", "filesystem"]) {
+  test(`${backend}: enablement and threshold layers inherit independently across sessions`, async (t) => {
+    const f = fixture(t, backend); productionHistory(f.manager); f.start();
+    const other = controller(backend === "filesystem" ? new FilePreferenceStore(f.preferences.path) : f.preferences, SessionManager.inMemory()); other.start();
+    await f.command("on"); await f.command("thresholds 100 90");
+    await other.command("default on"); await other.command("default thresholds 60 40");
+    assert.equal(f.boundary(), undefined, "session pair wins over new global defaults");
+    await f.command("status");
+    assert.match(f.notifications.at(-1).message, /Threshold source: session override; global defaults 60% \/ 40%/);
+    await other.command("status");
+    assert.match(other.notifications.at(-1).message, /48000 \(60%\).*32000 \(40%\)/);
+    assert.match(other.notifications.at(-1).message, /Threshold source: inherited global defaults/);
+    await f.command("inherit");
+    assert.equal(f.boundary(), undefined, "enablement inheritance leaves the session pair intact");
+    await other.command("default off"); await f.command("on");
+    await f.command("thresholds inherit");
+    assert.ok(f.boundary().entries.length > 0, "threshold inheritance leaves explicit ON intact");
+    await other.command("default thresholds 70 50");
+    await f.command("status");
+    assert.match(f.notifications.at(-1).message, /ON \(session override; global default OFF\)/);
+    assert.match(f.notifications.at(-1).message, /56000 \(70%\).*40000 \(50%\)/);
+    assert.match(f.notifications.at(-1).message, /Threshold source: inherited global defaults/);
+  });
+
+  test(`${backend}: effective session pair controls both watermarks across branch navigation and reload`, async (t) => {
+    const f = fixture(t, backend); productionHistory(f.manager); const anchor = f.manager.getLeafId(); f.start();
+    await f.command("on"); await f.command("default thresholds 100 90");
+    assert.equal(f.boundary(), undefined);
+    f.ctx.getContextUsage = () => ({ tokens: 71000, contextWindow: 80000, percent: 88.75 });
+    await f.command("thresholds 70 60");
+    assert.equal(f.boundary().entries.filter((e) => e.type === "context_edit").length, 1);
+    await f.command("thresholds 70 40");
+    assert.equal(f.boundary().entries.filter((e) => e.type === "context_edit").length, 2);
+    f.manager.branch(anchor); f.handlers.get("session_tree")({}, f.ctx);
+    const reloaded = controller(f.preferences, f.manager); reloaded.start();
+    assert.equal(reloaded.boundary().entries.filter((e) => e.type === "context_edit").length, 2);
+    await f.command("thresholds inherit");
+    assert.equal(reloaded.boundary(), undefined);
+    assert.deepEqual(f.preferences.read(), { enabled: false, highWatermark: 1, lowWatermark: 0.9 });
   });
 }
 
@@ -146,6 +199,7 @@ test("session toggles leave legacy global defaults byte-identical and inherit us
   f.start(); await f.command("off");
   assert.equal(readFileSync(f.preferences.path, "utf8"), legacy);
   await f.command("inherit");
+  await f.command("thresholds 80 55"); await f.command("thresholds inherit");
   assert.ok(f.active().includes(RECALL_TOOL));
   assert.equal(readFileSync(f.preferences.path, "utf8"), legacy);
 });
@@ -153,15 +207,19 @@ test("session toggles leave legacy global defaults byte-identical and inherit us
 test("failed session append or global write cannot report a successful settings mutation", async (t) => {
   const f = fixture(t, "memory"); f.start();
   f.pi.appendEntry = () => { throw new Error("append denied"); };
-  await f.command("on");
-  assert.equal(f.manager.getEntries().length, 0);
-  assert.equal(f.notifications.at(-1).level, "error");
-  assert.match(f.notifications.at(-1).message, /append denied/);
+  for (const command of ["on", "thresholds 80 55", "thresholds inherit"]) {
+    await f.command(command);
+    assert.equal(f.manager.getEntries().length, 0);
+    assert.equal(f.notifications.at(-1).level, "error");
+    assert.match(f.notifications.at(-1).message, /append denied/);
+  }
   f.preferences.write = () => { throw new Error("write denied"); };
-  await f.command("default on");
-  assert.deepEqual(f.preferences.read(), DEFAULT_PREFERENCES);
-  assert.equal(f.notifications.at(-1).level, "error");
-  assert.match(f.notifications.at(-1).message, /write denied/);
+  for (const command of ["default on", "default thresholds 80 55"]) {
+    await f.command(command);
+    assert.deepEqual(f.preferences.read(), DEFAULT_PREFERENCES);
+    assert.equal(f.notifications.at(-1).level, "error");
+    assert.match(f.notifications.at(-1).message, /write denied/);
+  }
 });
 
 test("tree tool-loadout restoration and explicit ON reconcile recall without overriding a manual inactive tool on ordinary requests", async (t) => {
@@ -283,6 +341,19 @@ test("invalid session settings stop selection visibly and a later explicit overr
   assert.match(f.notifications.at(-1).message, /Threshold status unavailable due to settings error/);
   await f.command("on");
   assert.ok(f.boundary().entries.length > 0);
+  assert.equal(f.aborts(), 0);
+});
+
+test("invalid threshold state cannot be repaired by ON and valid overrides cannot bypass corrupt defaults", async (t) => {
+  const f = fixture(t, "memory"); productionHistory(f.manager); f.start(); await f.command("on");
+  f.manager.appendCustomEntry(SESSION_THRESHOLDS_TYPE, { version: 1, sessionId: f.manager.getSessionId(), thresholds: { highWatermark: 0.4, lowWatermark: 0.8 } });
+  assert.equal(f.boundary(), undefined);
+  await f.command("on"); assert.equal(f.boundary(), undefined);
+  await f.command("thresholds inherit"); assert.ok(f.boundary().entries.length > 0);
+  await f.command("thresholds 70 50");
+  f.preferences.failure = "invalid global defaults";
+  assert.equal(f.boundary(), undefined);
+  assert.match(f.notifications.at(-1).message, /invalid global defaults/);
   assert.equal(f.aborts(), 0);
 });
 

@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import * as sdk from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { ARCHIVE_TYPE, RECALL_TOOL, recallArchive } from "../src/archive.ts";
-import { SESSION_SETTING_TYPE, sessionOverride } from "../src/session-settings.ts";
+import { SESSION_SETTING_TYPE, sessionOverrides } from "../src/session-settings.ts";
 import { productionHistory, usage } from "./fixtures.mjs";
 
 const extensionPath = resolve(import.meta.dirname, "../index.ts");
@@ -90,7 +90,7 @@ test("real Pi: default off -> archive -> bounded exact tool recovery -> immediat
   f.replies.push("Reload retained off"); await f.session.prompt("Check after reload");
   assert.match(JSON.stringify(f.contexts[5]), /Historical invocation/);
   assert.equal(existsSync(join(f.dir, "context-archive.json")), false, "session controls never create a global defaults file");
-  assert.equal(sessionOverride(f.manager.getEntries(), f.manager.getSessionId()), false);
+  assert.equal(sessionOverrides(f.manager.getEntries(), f.manager.getSessionId()).enabled, false);
   assert.deepEqual(f.errors, []);
 });
 
@@ -126,15 +126,15 @@ test("real Pi: session override persists through reload/resume; new forks inheri
   await f.session.reload();
   assert.ok(!f.session.getActiveToolNames().includes(RECALL_TOOL));
   const resumed = sdk.SessionManager.open(f.manager.getSessionFile());
-  assert.equal(sessionOverride(resumed.getEntries(), resumed.getSessionId()), false);
+  assert.equal(sessionOverrides(resumed.getEntries(), resumed.getSessionId()).enabled, false);
   assert.ok(resumed.getEntries().some((e) => e.type === "custom" && e.customType === SESSION_SETTING_TYPE));
   const forked = sdk.SessionManager.forkFrom(f.manager.getSessionFile(), join(f.dir, "child"), f.dir);
   assert.notEqual(forked.getSessionId(), resumed.getSessionId());
-  assert.equal(sessionOverride(forked.getEntries(), forked.getSessionId()), null);
+  assert.deepEqual(sessionOverrides(forked.getEntries(), forked.getSessionId()), { enabled: null, thresholds: null });
   const branchFile = resumed.createBranchedSession(resumed.getLeafId());
   const branched = sdk.SessionManager.open(branchFile);
   assert.notEqual(branched.getSessionId(), f.manager.getSessionId());
-  assert.equal(sessionOverride(branched.getEntries(), branched.getSessionId()), null);
+  assert.deepEqual(sessionOverrides(branched.getEntries(), branched.getSessionId()), { enabled: null, thresholds: null });
   f.replies.push("Disabled for this session"); await f.session.prompt("Continue without archival");
   assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 0);
   await f.session.prompt("/context-archive inherit");
@@ -147,14 +147,38 @@ test("real Pi: session override persists through reload/resume; new forks inheri
 test("real Pi: configured trigger suppresses then permits archival at completed boundaries", { timeout: 15000 }, async (t) => {
   const f = await fixture(t, 80000);
   await f.session.prompt("/context-archive on");
-  await f.session.prompt("/context-archive thresholds 100 90");
+  await f.session.prompt("/context-archive default thresholds 100 90");
   f.replies.push("Below configured trigger"); await f.session.prompt("Continue");
   assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 0);
-  await f.session.prompt("/context-archive thresholds 60 40");
+  await f.session.prompt("/context-archive default thresholds 60 40");
   f.replies.push("Above configured trigger"); await f.session.prompt("Continue again");
   assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 2);
   assert.deepEqual(JSON.parse(readFileSync(join(f.dir, "context-archive.json"), "utf8")), { version: 2, enabled: false, highWatermark: 0.6, lowWatermark: 0.4 });
   assert.equal(f.contexts.length, 2);
+  assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: session thresholds persist across reload/resume, ignore global updates and reset independently", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, 80000);
+  await f.session.prompt("/context-archive default on");
+  await f.session.prompt("/context-archive default thresholds 60 40");
+  await f.session.prompt("/context-archive thresholds 100 90");
+  f.replies.push("Session trigger keeps full context"); await f.session.prompt("Continue");
+  assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 0);
+  await f.session.reload();
+  const resumed = sdk.SessionManager.open(f.manager.getSessionFile());
+  assert.deepEqual(sessionOverrides(resumed.getEntries(), resumed.getSessionId()), { enabled: null, thresholds: { highWatermark: 1, lowWatermark: 0.9 } });
+  await f.session.prompt("/context-archive default thresholds 65 50");
+  f.replies.push("Session trigger still wins"); await f.session.prompt("Continue again");
+  assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 0);
+  const forked = sdk.SessionManager.forkFrom(f.manager.getSessionFile(), join(f.dir, "threshold-child"), f.dir);
+  assert.deepEqual(sessionOverrides(forked.getEntries(), forked.getSessionId()), { enabled: null, thresholds: null });
+  await f.session.prompt("/context-archive thresholds inherit");
+  f.replies.push("Global trigger now applies"); await f.session.prompt("Continue with default thresholds");
+  assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 2);
+  assert.deepEqual(sessionOverrides(f.manager.getEntries(), f.manager.getSessionId()), { enabled: null, thresholds: null });
+  assert.deepEqual(JSON.parse(readFileSync(join(f.dir, "context-archive.json"), "utf8")), { version: 2, enabled: true, highWatermark: 0.65, lowWatermark: 0.5 });
+  assert.equal(f.contexts.length, 3);
   assert.deepEqual(f.errors, []);
 });
 
