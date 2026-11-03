@@ -68,7 +68,10 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
   override def complete(fragment:String):IO[Vector[String]]=database.transaction { c=>
     val colon=fragment.indexOf(':')
     val field=if(colon>=0)fragment.take(colon).toLowerCase(java.util.Locale.ROOT)else ""
-    val observed=if(Set("type","status","importance","tag","tags").contains(field))values(c,if(field=="tag")"tags" else field)else Vector.empty
+    val observed=if(field=="tag" || field=="tags") {
+      val prefix=fragment.substring(colon+1).toLowerCase(java.util.Locale.ROOT)
+      rows(c,"SELECT DISTINCT tag COLLATE \"C\" AS value FROM item_tag_values WHERE starts_with(tag_folded,?) ORDER BY value LIMIT 100",Seq(prefix))(_.getString(1))
+    } else if(Set("type","status","importance").contains(field))values(c,field)else Vector.empty
     val ids=if(fragment.length<2)Vector.empty else rows(c,"SELECT project_id,item_id FROM items WHERE strpos(project_id||':'||item_id,?)>0 ORDER BY (haystack_encode_component(project_id)||':'||haystack_encode_component(item_id)) COLLATE \"C\" LIMIT 20",Seq(fragment))(r=>QualifiedId.encodeKey(ItemKey(r.getString(1),r.getString(2))))
     haystack.query.Search.completeChoices(fragment,observed,ids)
   }
@@ -134,6 +137,7 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
       val a=c.createArrayOf("text",words.toArray[AnyRef]); val b=c.createArrayOf("text",segments.toArray[AnyRef])
       try { p.setArray(3,a); p.setArray(4,b); p.executeUpdate(); () } finally { a.free(); b.free() }
     }
+    TagValuesProjection.replace(c,k,item.document.tags)
   }
   private def encodeOutcome(result: Either[Fault,CommitSuccess]): String = result.fold(
     e => Json.obj("kind"->Json.fromString(e.code),"message"->Json.fromString(e.message),"currentRevision"->e.currentRevision.fold(Json.Null)(Json.fromLong)),

@@ -34,7 +34,7 @@ Names case-insensitive; ID/string values exact, case-sensitive.
 | `type/status/importance/human-attention:V` | metadata equality; `human-attention` ∈ required/cleared |
 | `tag:V` / `tags:V` | exact case-sensitive tag membership (aliases; quote when `V` holds spaces/colons) |
 | `created-by/modified-by:U` | author user ID equality |
-| `created-at/modified-at OP "ts"` | `OP` ∈ `= != < <= > >=`; `ts` validated UTC/RFC3339 instant |
+| `created-at/modified-at OP "ts"` | `OP` ∈ `= != < <= > >=`; `ts` validated UTC/RFC3339 instant in years0001..9999 (no year0000/expanded years; at most6 fractional digits) |
 | `archived:true\|false\|all` | archive selector (see §3) |
 | `field["PTR"] OP V` | JSON predicate (see §4) |
 | `exists["PTR"]` / `NOT exists["PTR"]` | path presence |
@@ -130,3 +130,12 @@ tag:"machine learning" NOT tag:wip
 archived:all field["/observations/count"] >= 3
 NOT exists["/review"] modified-at >= "2026-10-01T00:00:00Z"
 ```
+
+## Bounded completion projection
+
+Current tag completion ROOT-lowercases labels and the prefix in the application
+(without NFKC rewriting of exact labels). Migration0006 atomically backfills only
+current tags into the same derived projection regular writes/startup use. The
+SQL prefix predicate precedes the100-observed-value bound and20-suggestion bound,
+so a rare eligible suffix cannot disappear behind earlier nonmatching labels.
+This is not SQL locale lower(), a whole-document scan, or a count/exhaustive facet.
