@@ -60,6 +60,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
   }
   private def failure(error:Throwable):Response[IO]={
     val (code,spans,current)=error match {
+      case f:Fault if f.code=="config"=>("unavailable",List.empty[api.Span],None)
       case f:Fault=>(f.code,List.empty[api.Span],f.currentRevision.map(_.toInt))
       case _:ponygirls.retrieval.RetrievalError=>("unavailable",List.empty[api.Span],None)
       case q:haystack.query.InvalidQuery=>("invalid-query",q.diagnostics.map(d=>api.Span(d.message,d.span.start,d.span.end)).toList,None)
@@ -129,13 +130,16 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     }}}
     case r @ POST -> Root / "api" / "v1" / "values" =>handled {authed(r) { _=>body(r).flatMap(raw=>service.values(Wire.decode(api.ValuesRequest.codecJson,raw).field)).map(values=>ok(api.ValuesResult.codecJson,api.ValuesResult(values.toList))) }}
     case r @ GET -> Root / "api" / "v1" / "live" =>handled {socket(r,ws)}
-    case r @ POST -> Root / "mcp" =>handled {
+    case r @ POST -> Root / "mcp" =>IO.defer {
       IO {version(r);val auth=getAuth();val a=Sessions.resolve(auth,headers(r),mcp=true);limiter.check(a.principal,auth.config.rateLimit);a}.flatMap { a=>
         val accept=all(r,"Accept").mkString(",")
         if(!accept.contains("application/json") || !accept.contains("text/event-stream")) throw Fault("bad-envelope","unsupported accept")
         if(all(r,"MCP-Protocol-Version").exists(_!="2025-11-25")) throw Fault("bad-envelope","unsupported MCP version")
         body(r).flatMap(raw=>new Mcp(service).handle(a.principal,raw)).map(_.fold(json(Status.Accepted,Json.Null))(json(Status.Ok,_)))
       }
+    }.handleError { error=>
+      val code=error match{case f:Fault=>f.code;case _=>"unavailable"}
+      json(status(code),Json.obj("jsonrpc"->Json.fromString("2.0"),"id"->Json.Null,"error"->Json.obj("code"->Json.fromInt(if(code=="unauthorized"||code=="ambiguous-credentials") -32001 else -32000),"message"->Json.fromString(code))))
     }
     case r if r.uri.path.renderString=="/mcp"=>IO.pure(json(Status.MethodNotAllowed,Json.Null).putHeaders(Header.Raw(CIString("Allow"),"POST")))
     case r if r.method==Method.GET && !r.uri.path.renderString.startsWith("/api/")=>handled(static(r))
@@ -146,7 +150,8 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       core(request).semiflatMap { response=>
         val path=request.uri.path.renderString
         val label=if(path=="/mcp") "mcp" else if(path.startsWith("/api/")) path.split("/").lastOption.filter(Set("login","logout","whoami","get","put","search","history","analyze","complete","values","live","retrieve","health","versions")).getOrElse("unknown") else "static"
-        val event=Json.obj("requestId"->Json.fromString(java.util.UUID.randomUUID().toString),"route"->Json.fromString(label),"status"->Json.fromInt(response.status.code),"result"->Json.fromString(if(response.status.isSuccess) "ok" else "fault"),"durationMs"->Json.fromLong((System.nanoTime()-start)/1000000))
+        val principal=scala.util.Try(Sessions.resolve(getAuth(),headers(request),mcp=label=="mcp")).toOption.map(_.principal)
+        val event=Json.obj("requestId"->Json.fromString(java.util.UUID.randomUUID().toString),"route"->Json.fromString(label),"status"->Json.fromInt(response.status.code),"result"->Json.fromString(if(response.status.isSuccess) "ok" else "fault"),"durationMs"->Json.fromLong((System.nanoTime()-start)/1000000)).deepMerge(principal.fold(Json.obj())(p=>Json.obj("userId"->Json.fromString(p.userId),"tokenId"->Json.fromString(p.tokenId))))
         IO.println(event.noSpaces).as(response)
       }
     }
@@ -159,7 +164,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       if(!target.startsWith(base)|| !Files.isRegularFile(target)|| !target.toRealPath().startsWith(base)) None else Some(target)
     }.flatMap {
       case None=>IO.pure(json(Status.NotFound,Json.Null))
-      case Some(file)=>StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file),Some(r)).getOrElseF(IO.pure(json(Status.NotFound,Json.Null))).map(_.putHeaders(Header.Raw(CIString("Referrer-Policy"),"no-referrer"),Header.Raw(CIString("Cache-Control"),if(file.getFileName.toString=="index.html") "no-store" else "public, max-age=31536000, immutable")))
+      case Some(file)=>StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file),Some(r)).getOrElseF(IO.pure(json(Status.NotFound,Json.Null))).map(_.putHeaders(Header.Raw(CIString("Referrer-Policy"),"no-referrer"),Header.Raw(CIString("Cache-Control"),if(file.getFileName.toString.matches("[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\\.(js|css|woff2?|svg|png|jpg|webp)")) "public, max-age=31536000, immutable" else "no-store")))
     }
   }
   private def socket(r:Request[IO],ws:WebSocketBuilder2[IO]):IO[Response[IO]]=IO.defer {
@@ -206,7 +211,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
                 }
               }
             }.drain
-            outgoing=Stream.fromQueueUnterminated(session.queue).evalMap { frame=>
+            outgoing=Stream.repeatEval(hub.take(session)).evalMap { frame=>
               if(frame.isInstanceOf[WebSocketFrame.Close]) IO.pure(frame)
               else hub.authorized(session,getAuth()).map(ok=>if(ok)frame else WebSocketFrame.Close(4401,"Session revoked").fold(throw _,identity))
             }.takeThrough(!_.isInstanceOf[WebSocketFrame.Close]).concurrently(heartbeat)

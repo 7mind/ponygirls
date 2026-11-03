@@ -59,8 +59,8 @@ final class Mcp(service:ItemService) {
     val c=args.hcursor
     def text(key:String):String=c.get[String](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)
     def optionalText(key:String):Option[String]=c.get[Option[String]](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)
-    def number(key:String):Long=c.get[Long](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)
-    def optionalNumber(key:String):Option[Long]=c.get[Option[Long]](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)
+    def number(key:String):Long={if(!c.downField(key).focus.exists(_.isNumber))throw Fault("bad-envelope","invalid tool arguments");c.get[Long](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)}
+    def optionalNumber(key:String):Option[Long]={if(c.downField(key).focus.exists(j=> !j.isNull && !j.isNumber))throw Fault("bad-envelope","invalid tool arguments");c.get[Option[Long]](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)}
     name match {
       case "get"=>service.get(text("key"),optionalNumber("revision")).map { item=>
         content(s"${item.key.qualified} revision ${item.revision}\nmodified ${item.metadata.modifiedAt} by ${item.metadata.modifiedBy}\ndocument_json:\n${item.documentCanonical}",obj("key"->str(item.key.qualified),"revision"->Json.fromLong(item.revision),"document_json"->str(item.documentCanonical),"metadata"->Wire.encode(haystack.api.Metadata.codecJson,Wire.metadata(item.metadata))))
