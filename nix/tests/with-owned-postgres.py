@@ -47,6 +47,14 @@ def main():
                     'jdbcUrl':f'jdbc:postgresql://127.0.0.1:{port}/{d["name"]}',
                     'user':d['user'],'passwordFile':d['passwordFile'],
                     'limits':{'maxConnections':8,'maxQueued':32,'queueTimeoutMs':5000,'connectTimeoutMs':5000,'statementTimeoutMs':d['statementTimeoutMs'],'lockTimeoutMs':d['lockTimeoutMs'],'idleTransactionTimeoutMs':d['idleTransactionTimeoutMs'],'socketTimeoutMs':35000 if key=='chronicle' else 40000}})
+            haystack=json.loads(env['PONYGIRLS_TEST_DATABASE_HAYSTACK'])
+            manure=json.loads(env['PONYGIRLS_TEST_DATABASE_MANURE'])
+            env.update(HAYSTACK_OWNED_TEST_DB='1',HAYSTACK_TEST_JDBC=haystack['jdbcUrl'],
+                HAYSTACK_TEST_DB_USER=haystack['user'],HAYSTACK_TEST_DB_PASSWORD_FILE=haystack['passwordFile'],
+                HAYSTACK_TEST_PG=haystack['jdbcUrl'].removeprefix('jdbc:'),
+                HAYSTACK_FIXTURE_WORK_DIR=str(root),HAYSTACK_OWNED_PGDATA=data,
+                MANURE_TEST_JDBC_URL=manure['jdbcUrl'],MANURE_TEST_JDBC_USER=manure['user'],
+                MANURE_TEST_JDBC_PASSWORD_FILE=manure['passwordFile'],MANURE_TEST_ALLOW_CREATEDB='1')
             child=subprocess.Popen(sys.argv[1:],env=env,start_new_session=True)
             try:
                 return child.wait(timeout=3600)
