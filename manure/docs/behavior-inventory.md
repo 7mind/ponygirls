@@ -15,7 +15,7 @@ Node test names. No declaration means no silent omission: a new root/nested
 case ID, an import resolving outside the assigned source, or a missing concrete
 mapping causes the inventory self-check to fail.
 
-The frozen register currently declares **29 CURRENT Python modules /312 case
+The frozen register currently declares **30 CURRENT Python modules /320 case
 IDs**, **17 Node cases** across both browser-boundary/CDP suites, and the
 **74-vector generated TypeScript codec check**. These are declared inventory
 sizes, **not execution/pass counts**. All client, CLI, MCP, browser, offline and
@@ -47,6 +47,7 @@ authorized by test registration.
 | `test_client_external` | 5 | controlled local/pure |
 | `test_client_hardening` | 49 | controlled local/pure |
 | `test_client_realserver` | 14 | target, sdk |
+| `test_client_secret_files` | 8 | controlled local/pure |
 | `test_client_stateful` | 3 | controlled local/pure |
 | `test_client_transport` | 23 | controlled local/pure |
 | `test_credential_preflight` | 8 | controlled local/pure |
@@ -176,6 +177,13 @@ Canonical exact token/password/hash bytes; source ambiguity/configuration preced
 - [`test_credential_preflight.CredentialPreflightTests.test_common_pairs_reject_fifo_before_read`](../../manure/tests/test_credential_preflight.py).
 
 **Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+
+**Portable client file boundary:** [bounded regular references](client-secret-files.md)
+now add8 CURRENT regression methods for sole-configured FIFO refusal, managed
+symlink acceptance, descriptor-race/growth bounds, unchanged exact token codec
+and ambiguity-first CLI/MCP configuration. Baseline18 failures were reproduced
+with kill/reap deadlines; the68-method corrected diagnostic passed with0 skips.
+These file-boundary tests are not substitutes for actual target/artifact gates.
 
 ### shared-authority
 

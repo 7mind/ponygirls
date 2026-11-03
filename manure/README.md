@@ -154,8 +154,14 @@ Entry points: `manure` (CLI), `manure-server`, `manure-mcp`
 
 Secrets are fail-closed ambiguous — flags do **not** override env.
 **URL/token pairs** (`MANURE_URL`/`_FILE`, `MANURE_TOKEN`/`_FILE`):
-strip one trailing LF plus surrounding whitespace, empty = unset,
-**both halves set → `ambiguous-credentials`, exit 2, no network**.
+URL values strip one trailing LF plus surrounding whitespace; direct tokens
+are exact canonical43-character values (no trimming). Empty = unset;
+**both halves set → `ambiguous-credentials`, exit 2, before file I/O/network**.
+File references must resolve to regular files; trusted managed/agenix symlinks
+remain supported, but FIFOs/process substitution and other special files do not.
+Token/password files are bounded to44 bytes (45-byte maximum actual read);
+URL files to65,536 raw bytes with an explicit oversize error, not truncation.
+See [client file-boundary policy and regression evidence](docs/client-secret-files.md).
 **Passwords** (`--password`/`--password-file` plus
 `MANURE_EXTERNAL_PASSWORD`/`_FILE`): any two set across flags and
 env → exit 2 (observed: flag + env is rejected, not overridden —

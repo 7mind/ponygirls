@@ -125,6 +125,9 @@ class ClientSecretFileTests(unittest.TestCase):
             link.unlink();regular=root/'owned-regular';regular.write_bytes(TOKEN.encode()+b'\n');link.symlink_to(regular.name)
             self.child(root,link,expected='accepted',value=TOKEN)
             self.child(root,link,action='constructor',expected='accepted')
+            # Managed directories may themselves be symlinks (e.g. agenix).
+            directory_alias=root/'managed-directory';directory_alias.symlink_to(root,target_is_directory=True)
+            self.child(root,directory_alias/link.name,expected='accepted',value=TOKEN)
             self.child(root,link,action='mcp',expected='accepted',configuration={'MANURE_URL':ORIGIN,'MANURE_TOKEN_FILE':str(link)})
             regular.write_bytes(b' \thttp://127.0.0.1:9\n')
             self.child(root,link,kind='url',expected='accepted',value=ORIGIN)
