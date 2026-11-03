@@ -656,6 +656,20 @@
       ]
     },
     {
+      "module": "test_target_durability",
+      "path": "manure/tests/test_target_durability.py",
+      "classification": "current",
+      "requires": [
+        "target"
+      ],
+      "tests": [
+        "test_target_durability.TargetDurabilityTests.test_connection_admission_returns_503_while_body_worker_active",
+        "test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume",
+        "test_target_durability.TargetDurabilityTests.test_server_sigkill_after_rename_before_ready_commit_recovers",
+        "test_target_durability.TargetDurabilityTests.test_shutdown_drains_active_chunk_and_stream_and_releases_claim"
+      ]
+    },
+    {
       "module": "test_target_migration",
       "path": "manure/tests/test_target_migration.py",
       "classification": "current",
@@ -821,6 +835,10 @@
         {
           "path": "manure/backend/src/test/scala/manure/ArtifactsContract.scala",
           "marker": "test(\"any manager may rotate an incomplete external password without advancing activity\""
+        },
+        {
+          "path": "manure/tests/test_target_durability.py",
+          "testId": "test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume"
         }
       ],
       "openGaps": [],
@@ -945,12 +963,13 @@
         {
           "path": "manure/tests/test_cli_process.py",
           "testId": "test_cli_process.TestSubprocessKillResume.test_kill_manual_resume"
+        },
+        {
+          "path": "manure/tests/test_target_durability.py",
+          "testId": "test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume"
         }
       ],
-      "openGaps": [
-        "Real-adapter replacement assertion still needed for reverse-order/concurrent chunk PUTs and conflicting retry serialization.",
-        "Real target server SIGKILL after acknowledged receipt and restart must prove durable truthful progress. Current CLI SIGKILL kills the client, not the server."
-      ]
+      "openGaps": []
     },
     {
       "id": "publication-import",
@@ -989,11 +1008,13 @@
         {
           "path": "manure/tests/test_offline_conversion.py",
           "testId": "test_offline_conversion.PostgresContracts.test_killed_sql_connection_rolls_back_import_transaction"
+        },
+        {
+          "path": "manure/tests/test_target_durability.py",
+          "testId": "test_target_durability.TargetDurabilityTests.test_server_sigkill_after_rename_before_ready_commit_recovers"
         }
       ],
-      "openGaps": [
-        "Crash-window fault-injection is present, but real target process-death publication/ACK boundaries still require their own server-process SIGKILL assertion (not just source-state construction/clean target restart)."
-      ]
+      "openGaps": []
     },
     {
       "id": "quota-session",
@@ -1229,11 +1250,19 @@
         {
           "path": "manure/server/src/test/scala/manure/storage/FilesystemBehavior.scala",
           "marker": "test(\"root close refuses live pinned handles and retains claim after unlink and root rename\""
+        },
+        {
+          "path": "manure/tests/test_target_durability.py",
+          "testId": "test_target_durability.TargetDurabilityTests.test_shutdown_drains_active_chunk_and_stream_and_releases_claim"
+        },
+        {
+          "path": "manure/tests/test_target_durability.py",
+          "testId": "test_target_durability.TargetDurabilityTests.test_connection_admission_returns_503_while_body_worker_active"
         }
       ],
       "openGaps": [
-        "Real target needs stalled/partial-body rejection-before-effects and max-connections503+Retry-After assertion.",
-        "Real target graceful close with active chunk/publish/range stream/sweeper and stuck-worker claim retention is not established by standalone POSIX lease-close tests."
+        "Explicit actual-target stalled-body admission503+Retry-After assertion now exists, but current Ember connection cap blocks accepting the rejection request. Parent must capture bounded fail-first and fix application admission; fixture also must close the stalled request before its follow-up catalogue assertion. This unresolved actual behavior blocks acceptance.",
+        "Actual-target graceful chunk/stream shutdown and claim restart are now concrete. Active publish/sweeper shutdown and stuck-worker claim retention still require replacement assertions beyond standalone POSIX lease-close tests."
       ]
     },
     {
@@ -1382,17 +1411,5 @@
       "requirement": "Shared runtime/retrieval changes require full owned Chronicle/Haystack regressions per their instructions; Manure subset is not consumer evidence."
     }
   ],
-  "plannedCurrentModules": [
-    {
-      "module": "test_target_durability",
-      "path": "manure/tests/test_target_durability.py",
-      "tests": [
-        "test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume",
-        "test_target_durability.TargetDurabilityTests.test_server_sigkill_after_rename_before_ready_commit_recovers",
-        "test_target_durability.TargetDurabilityTests.test_shutdown_drains_active_chunk_and_stream_and_releases_claim",
-        "test_target_durability.TargetDurabilityTests.test_connection_admission_returns_503_while_body_worker_active"
-      ],
-      "status": "owner implementation pending; NOT a discovered/current gate yet. Explicitly promote once committed; open receipt/publication/admission groups remain blocking."
-    }
-  ]
+  "plannedCurrentModules": []
 }

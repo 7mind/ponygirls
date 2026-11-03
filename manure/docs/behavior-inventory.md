@@ -15,7 +15,7 @@ Node test names. No declaration means no silent omission: a new root/nested
 case ID, an import resolving outside the assigned source, or a missing concrete
 mapping causes the inventory self-check to fail.
 
-The frozen register currently declares **28 CURRENT Python modules /308 case
+The frozen register currently declares **29 CURRENT Python modules /312 case
 IDs**, **17 Node cases** across both browser-boundary/CDP suites, and the
 **74-vector generated TypeScript codec check**. These are declared inventory
 sizes, **not execution/pass counts**. All client, CLI, MCP, browser, offline and
@@ -59,6 +59,7 @@ authorized by test registration.
 | `test_mcp_hardening` | 11 | controlled local/pure |
 | `test_mcp_protocol` | 9 | sdk |
 | `test_offline_conversion` | 30 | offline-postgres |
+| `test_target_durability` | 4 | target |
 | `test_target_migration` | 2 | target |
 | `test_target_search` | 1 | target |
 
@@ -192,6 +193,10 @@ Every live authenticated manager lists/inspects/manifests/status/deletes/rotates
 
 **Treatment:** corrected positive assertions are implemented in both Memory and real-PG contracts; their actual execution and all separate artifact/runtime gates remain mandatory. This is not a claim of completed CURRENT/native acceptance.
 
+**New concrete actual-target assertion:** `test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume`.
+
+**Treatment:** real-target replacement assertions are now implemented/registered; their passing unfiltered JVM/native execution remains mandatory. No test execution is claimed by registration.
+
 ### origins
 
 Exact Host/port and Origin, trusted-peer XFP only; cookie/bearer ambiguity; same-origin management, separated content, no CORS and explicit low-security HTTP/path modes.
@@ -235,9 +240,10 @@ Chunk bytes+file/parent fsync precede receipt commit and ACK; aligned/tail/idemp
 - [`test_client_realserver.TestRealServer.test_chunk_resume_real_server`](../../manure/tests/test_client_realserver.py).
 - [`test_cli_process.TestSubprocessKillResume.test_kill_manual_resume`](../../manure/tests/test_cli_process.py).
 
-**OPEN—blocks full release acceptance:**
-- Real-adapter replacement assertion still needed for reverse-order/concurrent chunk PUTs and conflicting retry serialization.
-- Real target server SIGKILL after acknowledged receipt and restart must prove durable truthful progress. Current CLI SIGKILL kills the client, not the server.
+
+**New concrete actual-target assertion:** `test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume`.
+
+**Treatment:** real-target replacement assertions are now implemented/registered; their passing unfiltered JVM/native execution remains mandatory. No test execution is claimed by registration.
 
 ### publication-import
 
@@ -252,8 +258,10 @@ Verify→publishing commit→tree/rename/parent/root fsync→ready commit→clea
 - [`test_offline_conversion.PostgresContracts.test_process_death_after_commit_retries_without_duplicate_rows`](../../manure/tests/test_offline_conversion.py).
 - [`test_offline_conversion.PostgresContracts.test_killed_sql_connection_rolls_back_import_transaction`](../../manure/tests/test_offline_conversion.py).
 
-**OPEN—blocks full release acceptance:**
-- Crash-window fault-injection is present, but real target process-death publication/ACK boundaries still require their own server-process SIGKILL assertion (not just source-state construction/clean target restart).
+
+**New concrete actual-target assertion:** `test_target_durability.TargetDurabilityTests.test_server_sigkill_after_rename_before_ready_commit_recovers`.
+
+**Treatment:** real-target replacement assertions are now implemented/registered; their passing unfiltered JVM/native execution remains mandatory. No test execution is claimed by registration.
 
 ### quota-session
 
@@ -343,9 +351,14 @@ Malformed/oversized/stalled requests cannot mutate or revoke before body validat
 - [`test_browser_unlock.UnlockRateLimitCase.test_b3_browser_rate_limit_statuses`](../../manure/tests/test_browser_unlock.py).
 - [`test("root close refuses live pinned handles and retains claim after unlink and root rename"`](../../manure/server/src/test/scala/manure/storage/FilesystemBehavior.scala).
 
+
+**New concrete actual-target assertion:** `test_target_durability.TargetDurabilityTests.test_shutdown_drains_active_chunk_and_stream_and_releases_claim`.
+
+**New concrete actual-target assertion:** `test_target_durability.TargetDurabilityTests.test_connection_admission_returns_503_while_body_worker_active`.
+
 **OPEN—blocks full release acceptance:**
-- Real target needs stalled/partial-body rejection-before-effects and max-connections503+Retry-After assertion.
-- Real target graceful close with active chunk/publish/range stream/sweeper and stuck-worker claim retention is not established by standalone POSIX lease-close tests.
+- Explicit actual-target stalled-body admission503+Retry-After assertion now exists, but current Ember connection cap blocks accepting the rejection request. Parent must capture bounded fail-first and fix application admission; fixture also must close the stalled request before its follow-up catalogue assertion. This unresolved actual behavior blocks acceptance.
+- Actual-target graceful chunk/stream shutdown and claim restart are now concrete. Active publish/sweeper shutdown and stuck-worker claim retention still require replacement assertions beyond standalone POSIX lease-close tests.
 
 ### catalogue-current
 
@@ -396,12 +409,15 @@ Authenticated ready/unexpired metadata+manifest-path corpus only; lexical/semant
 - Actual target now proves controlled-provider heartbeat, semantic/hybrid identity, not-ready/outage, profile cutover/restart, metadata-only inputs and delete eligibility. Remaining service-adapter assertions: negative kind/visibility/creator filters before count/limit, expiry during delivery, and concrete evidence/provenance coordinates/identity. Shared authorization/fencing tests and codec goldens remain complementary, not live-provider quality evidence.
 
 The actual-target test closes/restarts the configured application using the shared worker/root resource lifetime, exercises a four-second document call beyond the three-second lease and a same-URL/dimension revision cutover. Controlled provider evidence is correctness/lifecycle evidence, not a live-provider relevance/quality result. It does not establish graceful cancellation during every active chunk/stream/model operation; the separate lifecycle gap remains explicit.
-`test_target_search.py` is now CURRENT with its exact declared method, after
-integration of parent source `26ad56aa`. Planned `test_target_durability.py` has
-four owner-supplied method names in `plannedCurrentModules`; these are **not
-silently counted as existing tests**. Once its source is committed, explicitly
-promote/register it and review the corresponding receipt/publication/admission
-gaps. An unregistered appearance fails; no optional-file append is restored.
+`test_target_search.py` and `test_target_durability.py` are CURRENT after parent
+sources `26ad56aa` and `712e9191`. The latter's four exact methods are registered,
+not optionally appended. Receipt/reverse-concurrent/server-SIGKILL and exact
+post-rename/pre-ready-commit recovery assertions now have concrete real-target
+replacements; registration is **not a passing execution claim**. The fixture
+uses only its owned service-role SQL trigger, no production fault hook or old
+Python backend. Admission remains a known failing invariant until bounded
+fail-first, fixture cleanup correction and application admission fix. Full
+active-publish/sweeper/stuck-worker shutdown coverage remains open separately.
 
 ## Separately required artifact/runtime gates
 
@@ -431,7 +447,7 @@ failures/errors/skips and correctly reported **releaseAcceptance:false**.
 At the first inventory checkpoint `599b2c6b`, a full invocation without
 provider/browser prerequisites exited1 with293 expected and0 executed tests—not
 a full-suite result. After the parent import/search integration the declared
-CURRENT count is308, not a completed308-test run. Open gaps remain as listed.
+CURRENT count after durability registration is312, not a completed312-test run. Open gaps remain as listed.
 
 Parent receipt `20261103T094915Z-jvm.hd5INM` was read after integration:1
 focused actual-target search method,0 failures/errors/skips and exit0. This is
