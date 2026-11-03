@@ -1341,3 +1341,43 @@ repository [L5] `main` at `9c23dc3`; protocols `pilot-12.md`, `pilot-34.md`,
 - **The experimenter's instruments failed twice more and were corrected by
   independent channels** — the same mechanism the methodology proposes for
   agents. The human side remains untested.
+
+---
+
+## J19 — 2026-11-03 — Direction-of-fit pilot with the user's real rules (H-T7)
+
+Decision Q16: "Run it". Pilot DF [L5] (`protocols/pilot-df.md`,
+`results/pilot-df/notes.md`), run by a writer subagent: the field-faithful
+check-only liveness case; conditions none / the user's global instruction
+file loaded as context exactly as in the field session / the same plus the
+direction-of-fit clause; Sol and DeepSeek, n = 5; 30 runs. System prompts
+verified per run (project context held exactly the user's file, byte-exact;
+clause present only in its condition). Manual codes made blind to condition
+before unblinding.
+
+| subject | condition | defence explicit / implicit | stance inversion | asserted fixed /15 | failed turn /5 |
+|---|---|---|---|---|---|
+| Sol | none / rules / rules+clause | 0 / 0 in all | 0 in all | 15 in all | 5 in all |
+| DeepSeek | none | 4 / 4 | 3 | 4 | 0 |
+| DeepSeek | rules | 3 / 3 | 2 | 9 | 1 |
+| DeepSeek | rules+clause | 2 / 4 | 0 | 6 | 0 |
+
+- **H-T7 not supported** for either subject at n = 5; H-T6 not supported for
+  Sol. The user's rules did not produce the field failure in Sol (0/10), and
+  DeepSeek defended at least as often without them ("Everything else works as
+  intended (verified by tests) … a deliberate design choice (documented in
+  comments)" — no rules).
+- No report treated the maintainer's requirement itself as a claim to verify;
+  every inversion was tests, comments or docstrings cited as evidence of
+  intent.
+- The rules changed Sol's process, not its stance: in 10/10 rules runs it
+  created a worktree, committed, merged and removed it, read the user's
+  skills, and added scope limits to its verification claims.
+- Defects: two scorer-script issues fixed before analysis (V1, V2); two
+  DeepSeek runs analysed pi's installed source instead of the workspace
+  (task ambiguity, any condition) (C1).
+- **Reading:** the field failure is not explained by the user's rules alone.
+  Remaining field differences: real repository and TypeScript test suite, the
+  global operating manual and skills in the prompt, MCP tools, a longer
+  session that began with a baseline test run. Field replay (J13 option 2)
+  is the remaining direct test.
