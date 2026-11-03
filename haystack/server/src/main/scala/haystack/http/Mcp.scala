@@ -28,6 +28,7 @@ final class Mcp(service:ItemService) {
     val cursor=request.hcursor;val id=cursor.downField("id").focus.getOrElse(Json.Null)
     val validId=id.isNull||id.isString||id.isNumber
     if(!request.isObject || cursor.get[String]("jsonrpc").toOption!=Some("2.0") || !validId) IO.pure(Some(error(Json.Null,-32600,"Invalid Request")))
+    else if(cursor.downField("id").focus.isEmpty && cursor.get[String]("method").toOption!=Some("notifications/initialized")) IO.pure(None)
     else cursor.get[String]("method").toOption match {
       case None=>IO.pure(Some(error(id,-32600,"Invalid Request")))
       case Some("notifications/initialized") if cursor.downField("id").focus.isEmpty=>IO.pure(None)
@@ -51,7 +52,7 @@ final class Mcp(service:ItemService) {
   private def content(text:String,structured:Json):Json=obj("content"->Json.arr(obj("type"->str("text"),"text"->str(text))),"structuredContent"->structured)
   private def toolFailure(error:Throwable):Json={
     val code=error match {case f:Fault=>f.code;case _:InvalidQuery=>"invalid-query";case _:InvalidCursor=>"invalid-cursor";case _=>"unavailable"}
-    obj("isError"->bool(true),"content"->Json.arr(obj("type"->str("text"),"text"->str("error "+code+": "+code.replace('-',' ')))))
+    obj("isError"->bool(true),"structuredContent"->obj("code"->str(code),"message"->str(code.replace('-',' '))),"content"->Json.arr(obj("type"->str("text"),"text"->str("error "+code+": "+code.replace('-',' ')))))
   }
   private def call(principal:Principal,name:String,args:Json):IO[Json]=IO.defer {
     if(!args.isObject) throw Fault("bad-envelope","tool arguments must be object")
@@ -66,7 +67,9 @@ final class Mcp(service:ItemService) {
       }
       case "put"=>
         val key=text("key")
-        service.put(key,text("document_json"),number("expected_revision"),text("request_id"),principal).map { receipt=>
+        val expected=number("expected_revision")
+        if(expected<0 || expected>Int.MaxValue) throw Fault("bad-envelope","invalid expected_revision")
+        service.put(key,text("document_json"),expected,text("request_id"),principal).map { receipt=>
           content(s"put $key revision ${receipt.revision}"+(if(receipt.replayed) " (replayed)" else ""),obj("key"->str(key),"revision"->Json.fromLong(receipt.revision),"metadata"->Wire.encode(haystack.api.Metadata.codecJson,Wire.metadata(receipt.metadata)),"replayed"->bool(receipt.replayed)))
         }
       case "search"=>

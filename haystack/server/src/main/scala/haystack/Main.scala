@@ -52,7 +52,7 @@ object Main extends IOApp {
       graph=new ModuleDef{
         make[ItemRepository].fromValue(repository)
         make[LiveHub].fromValue(hub)
-        make[ItemService].from((repo:ItemRepository,live:LiveHub)=>new ItemService(repo,live.changed))
+        make[ItemService].from((repo:ItemRepository,live:LiveHub)=>new ItemService(repo,(key,revision)=>live.changed(key,revision,getAuth())))
         make[HaystackRetrieval].fromValue(projection)
         make[Http].from((service:ItemService,live:LiveHub)=>new Http(getAuth,service,live,config.webRoot,projection))
         make[Services]

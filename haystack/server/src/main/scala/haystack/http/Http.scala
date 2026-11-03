@@ -172,20 +172,23 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     resolved match {
       case None=>ws.build(Stream.emit(WebSocketFrame.Close(4401,"Sign in required").fold(throw _,identity)),_.drain)
       case Some(a)=>
-        hub.register(a).allocated.flatMap { case(session,release)=>
+        hub.register(a).allocated.attempt.flatMap {
+          case Left(f:Fault) if f.code=="rate-limited"=>ws.build(Stream.emit(WebSocketFrame.Close(1013,"Too many live connections").fold(throw _,identity)),_.drain)
+          case Left(error)=>IO.raiseError(error)
+          case Right((session,release))=>
           for {
-            lastPong<-Ref.of[IO,Long](System.nanoTime())
+            nonce<-Ref.of[IO,(scodec.bits.ByteVector,Option[scodec.bits.ByteVector])]((scodec.bits.ByteVector.empty,None))
             pending<-Ref.of[IO,Boolean](false)
             incoming=(frame:WebSocketFrame)=>hub.authorized(session,getAuth()).flatMap {
               case false=>IO.unit
               case true=>frame match {
-                case WebSocketFrame.Text(text,true) if text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length<=1024=>IO.defer {
-                  val cursor=Wire.parse(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)).hcursor
-                  val nonce=cursor.get[String]("nonce").toOption;val stamp=cursor.get[Long]("clientTs").toOption
-                  if(cursor.get[String]("type").toOption!=Some("ping") || nonce.forall(n=>n.isEmpty||n.length>64) || stamp.isEmpty) hub.close(session,1007)
-                  else hub.send(session,WebSocketFrame.Text(Json.obj("type"->Json.fromString("pong"),"nonce"->Json.fromString(nonce.get),"clientTs"->Json.fromLong(stamp.get),"serverTs"->Json.fromLong(System.currentTimeMillis())).noSpaces))
+                case WebSocketFrame.Text(text,_) if text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>1024=>hub.close(session,1009)
+                case WebSocketFrame.Text(text,true)=>IO.defer {
+                  val ping=Wire.decode(api.LiveFrame.codecJson,Wire.parse(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                  if(ping.kind!="ping" || ping.nonce.forall(n=>n.isEmpty||n.length>64) || ping.clientTs.forall(!_.isFinite)) hub.close(session,1007)
+                  else hub.send(session,WebSocketFrame.Text(Wire.encode(api.LiveFrame.codecJson,api.LiveFrame("pong",None,None,ping.nonce,ping.clientTs,Some(System.currentTimeMillis().toDouble))).noSpaces))
                 }.handleErrorWith(_=>hub.close(session,1007))
-                case _:WebSocketFrame.Pong=>pending.set(false) *> lastPong.set(System.nanoTime())
+                case p:WebSocketFrame.Pong=>nonce.get.flatMap { case(current,previous)=>if(p.data==current || previous.contains(p.data))pending.set(false)else IO.unit }
                 case _:WebSocketFrame.Ping=>hub.send(session,WebSocketFrame.Pong())
                 case _:WebSocketFrame.Close=>hub.close(session,1000)
                 case _=>hub.close(session,1003)
@@ -195,11 +198,18 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
               hub.authorized(session,getAuth()).flatMap {
                 case false=>IO.unit
                 case true=>pending.getAndSet(true).flatMap { wasPending=>
-                  if(wasPending) hub.close(session,1001) else hub.send(session,WebSocketFrame.Ping())
+                  if(wasPending) hub.close(session,1001) else {
+                    val bytes=new Array[Byte](8);new java.security.SecureRandom().nextBytes(bytes)
+                    val fresh=scodec.bits.ByteVector(bytes)
+                    nonce.update(old=>(fresh,Some(old._1))) *> hub.send(session,WebSocketFrame.Ping(fresh))
+                  }
                 }
               }
             }.drain
-            outgoing=Stream.fromQueueUnterminated(session.queue).takeThrough(!_.isInstanceOf[WebSocketFrame.Close]).concurrently(heartbeat)
+            outgoing=Stream.fromQueueUnterminated(session.queue).evalMap { frame=>
+              if(frame.isInstanceOf[WebSocketFrame.Close]) IO.pure(frame)
+              else hub.authorized(session,getAuth()).map(ok=>if(ok)frame else WebSocketFrame.Close(4401,"Session revoked").fold(throw _,identity))
+            }.takeThrough(!_.isInstanceOf[WebSocketFrame.Close]).concurrently(heartbeat)
             response<-ws.withOnClose(release).build(outgoing,_.evalMap(incoming))
           } yield response
         }

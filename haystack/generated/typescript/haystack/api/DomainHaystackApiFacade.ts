@@ -13,6 +13,7 @@ import { HistoryRequest, HistoryRequest_JsonCodec } from './HistoryRequest.js';
 import { HistoryResult, HistoryResult_JsonCodec } from './HistoryResult.js';
 import { Identity, Identity_JsonCodec } from './Identity.js';
 import { Item, Item_JsonCodec } from './Item.js';
+import { LiveFrame, LiveFrame_JsonCodec } from './LiveFrame.js';
 import { LoginRequest, LoginRequest_JsonCodec } from './LoginRequest.js';
 import { LoginResult, LoginResult_JsonCodec } from './LoginResult.js';
 import { Metadata, Metadata_JsonCodec } from './Metadata.js';
@@ -46,6 +47,7 @@ class DomainHaystackApiV1_0_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(HistoryResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => HistoryResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Identity_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Identity_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Item_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Item_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(LiveFrame_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => LiveFrame_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(LoginRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => LoginRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(LoginResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => LoginResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Metadata_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Metadata_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -92,6 +94,7 @@ class DomainHaystackApiV1_0_0Meta implements BaboonMeta {
         "haystack.api/:#HistoryResult": ['1.0.0'],
         "haystack.api/:#Identity": ['1.0.0'],
         "haystack.api/:#Item": ['1.0.0'],
+        "haystack.api/:#LiveFrame": ['1.0.0'],
         "haystack.api/:#LoginRequest": ['1.0.0'],
         "haystack.api/:#LoginResult": ['1.0.0'],
         "haystack.api/:#Metadata": ['1.0.0'],
@@ -123,6 +126,7 @@ class DomainHaystackApiV1_0_0Meta implements BaboonMeta {
         "haystack.api/:#HistoryResult": { '1.0.0': 'identical' },
         "haystack.api/:#Identity": { '1.0.0': 'identical' },
         "haystack.api/:#Item": { '1.0.0': 'identical' },
+        "haystack.api/:#LiveFrame": { '1.0.0': 'identical' },
         "haystack.api/:#LoginRequest": { '1.0.0': 'identical' },
         "haystack.api/:#LoginResult": { '1.0.0': 'identical' },
         "haystack.api/:#Metadata": { '1.0.0': 'identical' },
