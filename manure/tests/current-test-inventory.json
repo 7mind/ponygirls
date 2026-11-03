@@ -5,6 +5,18 @@
   "scope": "All CURRENT Python modules/case IDs + Node/codec checks; architecture-retired implementation tests retain mapped requirements, not historical AST coverage claims.",
   "pythonModules": [
     {
+      "module": "test_artifact_source_manifest",
+      "path": "manure/tests/test_artifact_source_manifest.py",
+      "classification": "current",
+      "requires": [],
+      "tests": [
+        "test_artifact_source_manifest.ArtifactSourceManifestTests.test_git_ancestor_is_not_confused_with_repository_relative_git_metadata",
+        "test_artifact_source_manifest.ArtifactSourceManifestTests.test_manifest_matches_independent_selected_hashes_and_relative_paths_from_any_cwd",
+        "test_artifact_source_manifest.ArtifactSourceManifestTests.test_nested_build_metadata_and_generator_itself_never_enter_compiled_identity",
+        "test_artifact_source_manifest.ArtifactSourceManifestTests.test_target_ancestor_cannot_change_selected_compiled_inputs"
+      ]
+    },
+    {
       "module": "test_browser_access_modes",
       "path": "manure/tests/test_browser_access_modes.py",
       "classification": "current",
@@ -1613,6 +1625,37 @@
         }
       ],
       "openGaps": []
+    },
+    {
+      "id": "compiled-source-location-identity",
+      "invariant": "The same selected compiled source bytes have byte-identical SHA+relative-path manifests independently of checkout ancestors/cwd. Exclude only repository-relative target/.git components and noncompiled tooling, never legitimate source because an absolute ancestor is named target/.git. No count padding or blanket native-artifact invalidation.",
+      "sourceRefs": [
+        {
+          "path": "manure/scripts/artifact-source.py",
+          "marker": "root=Path(__file__).resolve().parents[2]"
+        }
+      ],
+      "targetRefs": [
+        {
+          "path": "manure/tests/test_artifact_source_manifest.py",
+          "testId": "test_artifact_source_manifest.ArtifactSourceManifestTests.test_git_ancestor_is_not_confused_with_repository_relative_git_metadata"
+        },
+        {
+          "path": "manure/tests/test_artifact_source_manifest.py",
+          "testId": "test_artifact_source_manifest.ArtifactSourceManifestTests.test_manifest_matches_independent_selected_hashes_and_relative_paths_from_any_cwd"
+        },
+        {
+          "path": "manure/tests/test_artifact_source_manifest.py",
+          "testId": "test_artifact_source_manifest.ArtifactSourceManifestTests.test_nested_build_metadata_and_generator_itself_never_enter_compiled_identity"
+        },
+        {
+          "path": "manure/tests/test_artifact_source_manifest.py",
+          "testId": "test_artifact_source_manifest.ArtifactSourceManifestTests.test_target_ancestor_cannot_change_selected_compiled_inputs"
+        }
+      ],
+      "openGaps": [
+        "Parent audit identified absolute-path target/.git filtering. Owned copied-source regression must first reproduce, then pass with repository-relative selection; previously correct ordinary/Nix-store ELF identities must not be invalidated globally."
+      ]
     }
   ],
   "externalReleaseGates": [
