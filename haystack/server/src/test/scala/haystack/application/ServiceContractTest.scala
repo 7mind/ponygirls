@@ -43,6 +43,21 @@ abstract class ServiceContract(adapter: RepositoryAdapter) extends ContractSuite
     _ = assertEquals(history.map(h => (h.revision, h.modifiedBy, h.tokenId)), Vector((3L, "bot", "t2"), (2L, "alice", "t1"), (1L, "bot", "t2")))
     old <- f.service.get("p:a", Some(2L)); _ = assertEquals(old.document.title, "human-edit")
   } yield () }
+  check("nanosecond server clocks yield durable microsecond receipt/get/history/replay equality") { f => for {
+    id <- IO(requestId())
+    _ <- f.clock.set(Now.plusNanos(123456789L))
+    first <- f.put(id = id)
+    _ = assertEquals(first.metadata.modifiedAt, Now.plusNanos(123456000L))
+    _ <- f.clock.set(Later.plusNanos(999999999L))
+    second <- f.put(document = doc("changed"), expected = 1L)
+    _ = assertEquals(second.metadata.modifiedAt, Later.plusNanos(999999000L))
+    got <- f.service.get("p:a"); _ = assertEquals(got.metadata, second.metadata)
+    old <- f.service.get("p:a", Some(1L)); _ = assertEquals(old.metadata, first.metadata)
+    history <- f.service.history("p:a")
+    _ = assertEquals(history.map(_.modifiedAt), Vector(second.metadata.modifiedAt, first.metadata.modifiedAt))
+    replay <- f.put(id = id); _ = assertEquals(replay, first.copy(replayed = true))
+    changes <- f.changed.get; _ = assertEquals(changes, Vector("p:a" -> 1L, "p:a" -> 2L))
+  } yield () }
   check("identical replay returns original acknowledgement and publishes no second notification") { f => for {
     id <- IO(requestId()); first <- f.put(id = id); _ <- f.clock.set(Later)
     replay <- f.put(id = id)

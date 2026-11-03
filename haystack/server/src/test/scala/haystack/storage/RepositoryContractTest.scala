@@ -22,6 +22,24 @@ abstract class RepositoryContract(adapter: RepositoryAdapter) extends ContractSu
     _ = assertEquals(current.map(_.metadata), Some(committed.metadata))
   } yield () }
 
+  check("microsecond receipts, current rows, snapshots, history and replay agree without JDBC rounding drift") { repo => for {
+    operation <- IO(op())
+    nanoFirst = Now.plusNanos(123456789L)
+    nanoSecond = Later.plusNanos(999999999L)
+    firstMicros = Now.plusNanos(123456000L)
+    secondMicros = Later.plusNanos(999999000L)
+    first <- repo.commit(operation, Alice, nanoFirst)
+    _ = assertEquals(first.metadata, ItemMetadata(firstMicros, "alice", firstMicros, "alice"))
+    second <- repo.commit(op(revision = 1L, document = doc("new")), Bot, nanoSecond)
+    _ = assertEquals(second.metadata, ItemMetadata(firstMicros, "alice", secondMicros, "bot"))
+    current <- repo.current(operation.key); old <- repo.revision(operation.key, 1L)
+    _ = assertEquals(current.get.metadata, second.metadata); _ = assertEquals(old.get.metadata, first.metadata)
+    history <- repo.history(operation.key)
+    _ = assertEquals(history.map(_.modifiedAt), Vector(secondMicros, firstMicros))
+    replay <- repo.commit(operation, Alice, Later.plusSeconds(5L))
+    _ = assertEquals(replay, first.copy(replayed = true))
+  } yield () }
+
   check("absent current/revision/history/allCurrent are empty") { repo => for {
     current <- repo.current(ItemKey("p", "absent")); revision <- repo.revision(ItemKey("p", "absent"), 1L)
     history <- repo.history(ItemKey("p", "absent")); all <- repo.allCurrent()

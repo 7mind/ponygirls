@@ -45,6 +45,9 @@ import pathlib, sys, xml.etree.ElementTree as ET
 root = pathlib.Path(sys.argv[1])
 suites = [ET.parse(p).getroot() for p in (root/'test-reports').glob('*.xml')]
 assert suites, 'no fresh XML test reports'
+expected = sorted((root/'inventory.txt').read_text().splitlines())
+observed = sorted(s.get('name') for s in suites)
+assert observed == expected, f'fresh XML/inventory mismatch: expected={expected}, observed={observed}'
 counts = {k: sum(int(s.get(k, '0')) for s in suites) for k in ('tests', 'failures', 'errors', 'skipped')}
 print(f'Fresh suites={len(suites)} {counts}')
 assert counts['failures'] == counts['errors'] == counts['skipped'] == 0, 'full production verification must execute without failures/errors/skips'
