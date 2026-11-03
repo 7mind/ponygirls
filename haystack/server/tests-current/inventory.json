@@ -1,4 +1,6 @@
 [
+  "revocation while a real HTTP body is held denies dispatch without a committed item or replay",
+  "failed real live handshakes and normal socket close release all per-token capacity",
   "exact bearer, missing/wrong credentials, ambiguous cookie+bearer, no-store errors",
   "current version info and explicit removed/future version rejection",
   "login ignores stale cookies; rolling cookie flags/restart persistence/logout",
