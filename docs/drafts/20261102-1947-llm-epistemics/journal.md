@@ -1476,3 +1476,98 @@ five touched documents' local links/anchors and reference ids, journal J1–J21
 ordering, and the unchanged byte prefix of the pre-existing journal. Source
 base: `26bfe420c7dc50793ba0a8101b13d45a43aaa76d`. No application code changed;
 application suites and the experimental runners were not executed.
+
+---
+
+## J22 — 2026-11-03 — Consequence-driven joint construction
+
+### User input (verbatim)
+
+> Ok, can you proceed then?
+
+This follows Q17 and the workflow clarification recorded in J21. The agreed
+scope is conceptual development of joint construction, acceptance criteria and
+paper counterexamples, not new subject runs or tooling.
+
+### Assessment — proposal and logical challenges, not efficacy evidence
+
+The [joint-construction note](belief-network-construction.md) proposes an
+acceptance boundary: expose the outcomes and conditions needed for later human
+judgment while hiding implementation alternatives that make no material
+difference to it. The guiding rule is **compress implementation, not unresolved
+intent**. This is a design criterion, not a completeness theorem.
+
+The earlier fixed S0–S7 questionnaire is refined into a loop: preserve the
+prompt/context; challenge the interpretation with consequential alternatives;
+resolve from existing intent or factual evidence where possible, otherwise ask;
+connect the answer and its reason to affected beliefs; present a candidate
+baseline and explicit open/deferred scope. A question should name a difference
+in acceptance, not merely a choice of implementation primitive. A suspected
+incompatibility may indict the agent's plan rather than the human's goals.
+
+Six preservation requirements are proposed: outcomes/observers, applicability
+conditions, consequential assumptions and their warrant, unresolved choices,
+observable violations without narrowing broader goals to examples, and
+provenance/version binding. Numerical dialogue caps remain unvalidated. A known
+material obstacle cannot disappear into an overflow count; any scope split
+must preserve cross-scope obligations, and many small batches may still exceed
+total affordable attention.
+
+Two conditional walkthroughs develop the existing atomic-update and
+background-notice examples. Their questions and answers are illustrative, not
+actual human decisions. A read-only subagent's adversarial analysis added these
+important challenges:
+
+- **Vacuous safety:** a store that never installs updates can satisfy narrow
+  old-or-new/no-mixture conditions. Successful completion needs its own clarified
+  consequence; power-loss durability and lost-update prevention are separate
+  questions, not silently inferred from “atomic.”
+- **Examples versus scope:** a slow reader losing files to cleanup can violate
+  a broad reader guarantee even when every named scenario passes. A failed
+  notice-delivery state is not excluded because the examples omitted it.
+- **Convenient evidence versus intent:** a process-crash harness does not decide
+  whether power loss is required. A test timeout is not a human-approved latency
+  limit; finite successful runs do not establish general liveness.
+- **Goal conformance versus authority:** waking a harness does not itself permit
+  consuming an unsent draft; ratifying an API assumption does not make the API
+  capable. Such consequences must not be laundered into implementation details.
+
+These are logical distinctions, not newly observed runtime defects. The
+construction note keeps both the intent→network and network→code gaps from J21.
+It also distinguishes ambiguity requiring human judgment from conformance
+failures the existing intent already decides: the human need not re-ratify a
+broad goal whenever the agent discovers another violating state.
+
+The Inquiry Cycle [R63] supplies related structure for questions, answers,
+justifications and approved requirements changes. Goal-level obstacle analysis
+[R52] supports handling exceptions before committing to implementation. Only
+opening excerpts were fetched; neither source establishes the proposed
+agent-mediated compression or human tractability. B4 records that hypothesis
+as proposed. The hardest open question remains how to select material contrasts
+without sharing the generator's omissions; the prior pilots suggest challenge
+channels, not complete selection or human efficacy.
+
+The earlier design now explicitly labels its fixed-stage protocol as the old
+proposal. Its atomic example no longer postpones a known writer-scope decision
+until after construction. No application code, installed instructions, pilot
+runner, or human-participant instrument changed.
+
+A second read-only review found further distinctions worth preserving: a
+successful-return condition does not guarantee that valid requests ever
+complete; writer concurrency alone need not violate atomic publication; a
+local-only refinement becoming inapplicable is not proof that its goal is
+impossible; and a finite wait before user input does not prove a causal input
+dependency. The note and old example were revised accordingly. The example's
+device-ID monitor was also narrowed to its actual informational scope [R64],
+not presented as evidence of locality or rename semantics. These are corrections
+to conceptual reasoning, not newly reproduced software defects. Review and
+best-effort installed-skill/Haystack overlap analysis found no tried new
+procedure to save as a skill candidate. A focused follow-up review found no
+remaining material defect in the revised passages; this is a bounded advisory
+verdict, not validation of the proposed workflow.
+
+Documentation checks: `git diff --check` plus inline Python validation of seven
+touched documents, 23 local links/anchors and 130 reference uses; J1–J22 are
+ordered, R1–R64 present, and the journal's byte prefix from source base
+`4c2044f6f6028ff181b4568e0c6861b008023a2e` is unchanged. Application suites and
+experimental runners were not executed for these documentation-only changes.

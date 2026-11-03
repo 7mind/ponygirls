@@ -170,4 +170,6 @@ These are logical counterexamples, not new experimental observations. They
 illustrate why the network must preserve both expectations and their boundaries.
 The next conceptual question is **what distinctions must reach the human before
 work, and what can safely remain in the hidden refinement until challenged?**
-Storage syntax and graph rendering do not settle that question.
+The [joint-construction proposal](belief-network-construction.md) develops that
+question with conditional paper walkthroughs, not a tested protocol. Storage
+syntax and graph rendering do not settle it.

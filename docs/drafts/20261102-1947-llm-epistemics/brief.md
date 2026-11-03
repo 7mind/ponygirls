@@ -1,11 +1,11 @@
 # Brief — epistemics of LLM-accelerated development (2026-11-02 … 11-03)
 
-Status: summary of journal entries J1–J21 for the user and the next agent;
-J21 clarifies the current direction without adding experimental results.
+Status: summary of journal entries J1–J22 for the user and the next agent;
+J21–J22 clarify the current direction without adding experimental results.
 Source of truth for every claim: [journal](journal.md), [hypotheses](hypotheses.md),
 [references](references.md), the [design draft](belief-dag-design.md), the
-[validation-frame proposal](belief-network-validation.md) and the
-pilot repository `~/work/epistemics-pilots` (local git, `main` at `3768c9e`).
+[validation-frame proposal](belief-network-validation.md), the
+[joint-construction proposal](belief-network-construction.md) and the pilot repository `~/work/epistemics-pilots` (local git, `main` at `3768c9e`).
 
 ## 1. Problem
 
@@ -22,12 +22,17 @@ their load bounded while agents do most of the work.
 - **Explicit epistemology** (J1): track who vouches for what — observed vs
   inferred vs assumed, human-ratified vs model-produced. Generated artifacts
   carry no authority over intent until a human ratifies them.
-- **Belief-level interface** (J10, design draft): the human maintains a
-  compact, high-level belief DAG — goals R, domain assumptions W, key
+- **Belief-level interface** (J10, J21, design draft): human and agent jointly
+  construct a compact, high-level belief DAG — goals R, domain assumptions W, key
   decisions, obstacles and their resolutions [Zave–Jackson, KAOS, GSN]; agents
   own the hidden refinement into spec, code and evidence. Hiding the spec is
   sound only if the belief→spec links are checked by channels independent of
   the generator.
+- **Joint construction** (J22, proposed): ask about differences that could
+  change later acceptance, not every implementation choice. Preserve positive
+  success obligations as well as safety, broad goals above examples, known
+  material obstacles, and the distinction between required and checked scope.
+  No human trial establishes that this achieves useful compression.
 - **Cybernetic framing** (J5): Quine's web of belief tested by generated
   artifacts; Beer's variety engineering — designed attenuation upward,
   amplification downward, sporadic audit (System 3*) and alarms.
@@ -89,7 +94,10 @@ authorized by Q17; no replay, implementation or policy change is underway.
    the human's later use, not primarily a recall test. The
    [validation-frame proposal](belief-network-validation.md) separates
    intent→network faithfulness from network→code conformance and proposes
-   acceptance criteria, still unratified. A future human-side tryout must
+   acceptance criteria, still unratified. The
+   [construction proposal](belief-network-construction.md) develops the dialogue
+   and two conditional paper walkthroughs; its outcome is a baseline with known
+   limits, not proof of complete intent capture. A future human-side tryout must
    establish its construct and scoring before execution; predictions and
    explain-back are possible diagnostics, not the primary outcome. Storage
    syntax (OC-8) and scenario layout (OC-1) need not precede a manual tryout;
@@ -117,9 +125,9 @@ authorized by Q17; no replay, implementation or policy change is underway.
 
 ## Handover to the next agent
 
-**Read first, in order:** this brief; `journal.md` J21 (current direction),
-then J16–J19 (latest experiments); `belief-network-validation.md` (conceptual
-proposal); `hypotheses.md` (status column); `belief-dag-design.md` §5, §6, §11; the
+**Read first, in order:** this brief; `journal.md` J21–J22 (current direction),
+then J16–J19 (latest experiments); `belief-network-validation.md` and
+`belief-network-construction.md` (conceptual proposals); `hypotheses.md` (status column); `belief-dag-design.md` §5, §6, §11; the
 pilot repo `README.md` and `protocols/pilot-e.md`, `pilot-5-7.md`.
 
 **Where things are**
@@ -175,7 +183,8 @@ a subject workspace.
 - Stored Pilot DF sessions contain the user's skill files (read by Sol,
   about 8.8 MB, local repo only): the user decided to keep them (nothing to
   redact, 2026-11-03).
-- Q17 chose conceptual clarification, not a new pilot or field replay. Review
-  the validation-frame proposal: which material distinctions must the joint
-  network preserve for later human acceptance, and which can remain in the
-  hidden refinement? Criteria and execution policy remain proposals.
+- Q17 chose conceptual clarification, not a new pilot or field replay. The
+  construction note proposes which distinctions to preserve; its criteria and
+  execution policy remain unratified. The unresolved research question is how
+  the dialogue selects material contrasts without sharing the generator's
+  omissions or recreating specification overload.
