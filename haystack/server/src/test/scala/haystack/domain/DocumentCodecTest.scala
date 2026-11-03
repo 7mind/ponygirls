@@ -88,7 +88,10 @@ class DocumentCodecTest extends munit.FunSuite {
     }
   }
   test("validate rejects over-depth ASTs parsed under wider shared-codec limits") {
-    val raw = document("[" * 64 + "0" + "]" * 64)
+    val admitted = document("[" * 64 + "0" + "]" * 64)
+    val admittedValue = LosslessJson.parse(admitted, DocumentCodec.Limits.copy(maxDepth = 128)).toOption.get
+    DocumentCodec.validate(admittedValue)
+    val raw = document("[" * 65 + "0" + "]" * 65)
     val value = LosslessJson.parse(raw, DocumentCodec.Limits.copy(maxDepth = 128)).toOption.get
     assertEquals(intercept[Fault](DocumentCodec.validate(value)).code, "invalid-document")
   }
@@ -102,21 +105,34 @@ class DocumentCodecTest extends munit.FunSuite {
       assertEquals(intercept[Fault](DocumentCodec.canonical(invalid)).code, "invalid-document")
     }
   }
-  test("field string and key bounds reject rather than truncate") {
+  test("field strings retain their leaf bound; object keys have only the document byte bound") {
     val string = "x" * DocumentCodec.StringLeafMax
     val raw = document("\"" + string + "\"")
     assertEquals(LosslessJson.encode(DocumentCodec.parse(raw).fields).length, string.length + 2)
     assertEquals(intercept[Fault](DocumentCodec.parse(document("\"" + string + "x\""))).code, "invalid-document")
-    assertEquals(intercept[Fault](DocumentCodec.parse(document("{\"" + string + "x\":0}"))).code, "invalid-document")
+    val longKey = string + "x"
+    val keyDocument = DocumentCodec.parse(document("{\"" + longKey + "\":0}"))
+    assertEquals(keyDocument.fields.asInstanceOf[LosslessJson.Obj].fields.head._1, longKey)
+    val emptyKeyDocument = document("{\"\":0}")
+    val maxKey = "k" * (DocumentCodec.DocumentMaxBytes - emptyKeyDocument.length)
+    DocumentCodec.parse(document("{\"" + maxKey + "\":0}"))
+    assertEquals(intercept[Fault](DocumentCodec.parse(document("{\"" + maxKey + "x\":0}"))).code, "bad-envelope")
   }
   test("source byte, nesting, number token bounds include exact edge") {
     val base = document()
     DocumentCodec.parse(base + " " * (DocumentCodec.DocumentMaxBytes - base.length))
     assertEquals(intercept[Fault](DocumentCodec.parse(base + " " * (DocumentCodec.DocumentMaxBytes - base.length + 1))).code, "bad-envelope")
     DocumentCodec.parse(document("[" * 63 + "0" + "]" * 63))
-    assertEquals(intercept[Fault](DocumentCodec.parse(document("[" * 64 + "0" + "]" * 64))).code, "bad-envelope")
+    DocumentCodec.parse(document("[" * 64 + "0" + "]" * 64))
+    DocumentCodec.parse(document("[" * 65 + "]" * 65))
+    assertEquals(intercept[Fault](DocumentCodec.parse(document("[" * 65 + "0" + "]" * 65))).code, "invalid-document")
+    assertEquals(intercept[Fault](DocumentCodec.parse(document("[" * 66 + "]" * 66))).code, "bad-envelope")
     DocumentCodec.parse(document("1" * 65536))
-    assertEquals(intercept[Fault](DocumentCodec.parse(document("1" * 65537))).code, "bad-envelope")
+    DocumentCodec.parse(document("1" * 65537))
+    DocumentCodec.parseRaw("1" * DocumentCodec.DocumentMaxBytes)
+    assertEquals(intercept[Fault](DocumentCodec.parseRaw("1" * (DocumentCodec.DocumentMaxBytes + 1))).code, "bad-envelope")
+    val oversizedToken = LosslessJson.parse("1" * (DocumentCodec.DocumentMaxBytes + 1), DocumentCodec.StoredLimits)
+    assertEquals(oversizedToken.left.toOption.map(_.code), Some("number-limit"))
   }
   test("PostgreSQL integral and scale admission is explicit and exact") {
     DocumentCodec.parse(document("1e131071"))
