@@ -40,6 +40,18 @@ final class ConfigSuite extends FunSuite {
       Files.deleteIfExists(link); Files.deleteIfExists(file); Files.delete(directory)
     }
   }
+  test("bounded raw trusted secret reader permits empty optional auth but DB password does not") {
+    val file = Files.createTempFile("runtime-optional-credential-", ".txt")
+    try {
+      assertEquals(BoundedSecretFile.read(file, 16384), "")
+      intercept[RuntimeFailure](CredentialFile.read(file))
+      Files.writeString(file, "x" * 20000)
+      intercept[RuntimeFailure](BoundedSecretFile.read(file, 16384))
+      Files.writeString(file, "value\n")
+      assertEquals(BoundedSecretFile.read(file, 16384), "value\n")
+      assertEquals(CredentialFile.read(file), "value")
+    } finally Files.deleteIfExists(file)
+  }
   test("migration versions and namespace are strictly validated") {
     val one = Migration(1, "first", "SELECT 1")
     Migration.validate("test.scope", List(one, Migration(2, "second", "SELECT 2")))

@@ -24,6 +24,7 @@ private[postgres] object Jdbc {
   def unkey(value: String): String = new String(Base64.getUrlDecoder.decode(value),UTF_8)
   def bytes(value: String): Array[Byte] = { RetrievalChecks(UTF_8.newEncoder().canEncode(value),"invalid","invalid Unicode retrieval value"); value.getBytes(UTF_8) }
 }
+private[postgres] final case class RetrievalPlan(sql: String,args: List[Jdbc.Value])
 final case class WorkClaim(jobId: String,sourceId: String,version: String,epoch: Long,fence: Long,run: String,profile: String,chunks: List[InputChunk])
 
 /** All operations run on the caller's Connection: projection/outbox/publication can
@@ -97,13 +98,15 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
       exec(c,"UPDATE pony_retrieval_sources SET eligible=false,epoch=epoch+1,published=NULL WHERE namespace=? AND id=?",ns,encoded)
       exec(c,"DELETE FROM pony_retrieval_audience WHERE namespace=? AND source_id=?",ns,encoded)
       exec(c,"DELETE FROM pony_retrieval_chunks WHERE namespace=? AND source_id=?",ns,encoded)
+      // A later explicit same-version restore must rebuild, not resurrect a stranded job.
+      exec(c,"DELETE FROM pony_retrieval_head_chunks WHERE namespace=? AND source_id=?",ns,encoded)
     }
   }
   def claim(c: Connection,leaseSeconds: Int): Option[WorkClaim] = {
     transaction(c); RetrievalChecks(leaseSeconds>0 && leaseSeconds<=86400,"invalid","invalid retrieval lease")
     profile.flatMap { p =>
-      val source=one(c,"""SELECT s.id FROM pony_retrieval_sources s WHERE s.namespace=? AND s.target_profile=? AND s.eligible AND EXISTS(
-        SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp()))) ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",ns,p.id)(_.getString(1))
+      val source=one(c,"""SELECT s.id FROM pony_retrieval_sources s WHERE s.namespace=? AND s.target_profile=? AND s.eligible AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(
+        SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp()))) ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",ns,p.id,EpochSeconds.fromInstant(java.time.Instant.now()).value)(_.getString(1))
       source.flatMap { id => one(c,"""UPDATE pony_retrieval_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?) WHERE namespace=? AND id=(
         SELECT j.id FROM pony_retrieval_jobs j JOIN pony_retrieval_sources s ON s.namespace=j.namespace AND s.id=j.source_id WHERE j.namespace=? AND j.source_id=? AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())) FOR UPDATE OF j SKIP LOCKED LIMIT 1) RETURNING id,epoch,fence,run_id,profile""",leaseSeconds,ns,ns,id) { r =>
           val version=one(c,"SELECT version FROM pony_retrieval_sources WHERE namespace=? AND id=?",ns,id)(_.getString(1)).get
@@ -113,7 +116,7 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
   }
   private def current(c: Connection,claim: WorkClaim): Boolean = {
     transaction(c)
-    val source=one(c,"SELECT epoch,target_profile,eligible FROM pony_retrieval_sources WHERE namespace=? AND id=? FOR UPDATE",ns,key(claim.sourceId))(r => r.getLong(1)==claim.epoch && r.getString(2)==claim.profile && r.getBoolean(3)).contains(true)
+    val source=one(c,"SELECT epoch,target_profile,eligible,version,input_digest FROM pony_retrieval_sources WHERE namespace=? AND id=? AND (expires_at IS NULL OR expires_at>?) FOR UPDATE",ns,key(claim.sourceId),EpochSeconds.fromInstant(java.time.Instant.now()).value)(r => r.getLong(1)==claim.epoch && r.getString(2)==claim.profile && r.getBoolean(3) && r.getString(4)==key(claim.version) && r.getString(5)==inputDigest(claim.chunks)).contains(true)
     source && one(c,"SELECT 1 FROM pony_retrieval_jobs WHERE namespace=? AND id=? AND epoch=? AND profile=? AND fence=? AND run_id=? AND state='Running' AND lease_until>clock_timestamp() FOR UPDATE",ns,claim.jobId,claim.epoch,claim.profile,claim.fence,claim.run)(_ => true).contains(true)
   }
   private def requireCurrent(c: Connection,claim: WorkClaim): Unit = RetrievalChecks(current(c,claim),"stale-claim","retrieval claim no longer current")
@@ -140,20 +143,32 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     }
   }
   def publish(c: Connection,claim: WorkClaim): String = {
-    requireCurrent(c,claim)
-    val p=profile.filter(_.id==claim.profile).getOrElse(throw RetrievalError("unavailable","retrieval profile not executable"))
-    RetrievalChecks(one(c,"SELECT count(*) FROM pony_retrieval_accepted WHERE namespace=? AND job_id=?",ns,claim.jobId)(_.getInt(1)).contains(claim.chunks.size),"incomplete-generation","cannot publish partial retrieval generation")
-    val generation=UUID.randomUUID().toString; val id=key(claim.sourceId)
-    exec(c,"INSERT INTO pony_retrieval_generations VALUES(?,?,?,?,?,?,?)",ns,generation,id,key(claim.version),p.id,p.space.id,bytes(p.policy))
-    exec(c,"DELETE FROM pony_retrieval_chunks WHERE namespace=? AND source_id=?",ns,id)
-    exec(c,"""INSERT INTO pony_retrieval_chunks(namespace,generation,source_id,id,chunk_id,ordinal,body,provenance,document,embedding,profile)
-      SELECT h.namespace,?,h.source_id,h.source_id||':'||h.chunk_id,h.chunk_id,h.ordinal,h.body,h.provenance,h.document,a.embedding,?
-      FROM pony_retrieval_head_chunks h JOIN pony_retrieval_accepted a ON a.namespace=h.namespace AND a.job_id=? AND a.ordinal=h.ordinal WHERE h.namespace=? AND h.source_id=?""",generation,p.id,claim.jobId,ns,id)
-    // Recheck deadline after potentially large insert. Roll back publication if it expired.
-    RetrievalChecks(current(c,claim),"stale-claim","retrieval claim expired during publication")
-    exec(c,"UPDATE pony_retrieval_sources SET published=? WHERE namespace=? AND id=?",generation,ns,id)
-    exec(c,"UPDATE pony_retrieval_jobs SET state='Complete',lease_until=NULL WHERE namespace=? AND id=?",ns,claim.jobId)
-    generation
+    transaction(c)
+    val completed=one(c,"""SELECT s.published FROM pony_retrieval_sources s JOIN pony_retrieval_jobs j ON j.namespace=s.namespace AND j.source_id=s.id
+      WHERE s.namespace=? AND s.id=? AND s.epoch=? AND s.version=? AND s.input_digest=? AND s.target_profile=? AND s.eligible
+      AND j.id=? AND j.fence=? AND j.run_id=? AND j.state='Complete'""",ns,key(claim.sourceId),claim.epoch,key(claim.version),inputDigest(claim.chunks),claim.profile,claim.jobId,claim.fence,claim.run)(_.getString(1))
+    completed.getOrElse {
+      requireCurrent(c,claim)
+      val p=profile.filter(_.id==claim.profile).getOrElse(throw RetrievalError("unavailable","retrieval profile not executable"))
+      RetrievalChecks(one(c,"SELECT count(*) FROM pony_retrieval_accepted WHERE namespace=? AND job_id=?",ns,claim.jobId)(_.getInt(1)).contains(claim.chunks.size),"incomplete-generation","cannot publish partial retrieval generation")
+      val savepoint=c.setSavepoint()
+      try {
+        val generation=UUID.randomUUID().toString; val id=key(claim.sourceId)
+        exec(c,"INSERT INTO pony_retrieval_generations VALUES(?,?,?,?,?,?,?)",ns,generation,id,key(claim.version),p.id,p.space.id,bytes(p.policy))
+        exec(c,"DELETE FROM pony_retrieval_chunks WHERE namespace=? AND source_id=?",ns,id)
+        exec(c,"""INSERT INTO pony_retrieval_chunks(namespace,generation,source_id,id,chunk_id,ordinal,body,provenance,document,embedding,profile)
+          SELECT h.namespace,?,h.source_id,h.source_id||':'||h.chunk_id,h.chunk_id,h.ordinal,h.body,h.provenance,h.document,a.embedding,?
+          FROM pony_retrieval_head_chunks h JOIN pony_retrieval_accepted a ON a.namespace=h.namespace AND a.job_id=? AND a.ordinal=h.ordinal WHERE h.namespace=? AND h.source_id=?""",generation,p.id,claim.jobId,ns,id)
+        // Recheck deadline after potentially large insert. Roll back even if caller catches the error.
+        RetrievalChecks(current(c,claim),"stale-claim","retrieval claim expired during publication")
+        exec(c,"UPDATE pony_retrieval_sources SET published=? WHERE namespace=? AND id=?",generation,ns,id)
+        exec(c,"UPDATE pony_retrieval_jobs SET state='Complete',lease_until=NULL WHERE namespace=? AND id=?",ns,claim.jobId)
+        c.releaseSavepoint(savepoint)
+        generation
+      } catch {
+        case scala.util.control.NonFatal(error) => c.rollback(savepoint); c.releaseSavepoint(savepoint); throw error
+      }
+    }
   }
   def fail(c: Connection,claim: WorkClaim): Unit = {
     if(current(c,claim)) exec(c,"UPDATE pony_retrieval_jobs SET state=CASE WHEN attempts>=5 THEN 'Failed' ELSE 'Queued' END,lease_until=NULL WHERE namespace=? AND id=?",ns,claim.jobId)
@@ -165,7 +180,7 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     val arguments=query.filters.toList.flatMap { case AttributeFilter.Equal(k,v) => List[Value](k.value,bytes(v.value)) }
     ("s.namespace=? AND s.eligible AND (? OR NOT s.archived) AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(SELECT 1 FROM pony_retrieval_audience acl WHERE acl.namespace=s.namespace AND acl.source_id=s.id AND acl.principal=?)"+attributes,List[Value](ns,query.includeArchived,query.now.value,key(query.principal))++arguments)
   }
-  def search(c: Connection,query: RetrievalQuery,vector: Option[List[Double]]): RetrievalPage = {
+  private[postgres] def plan(c: Connection,query: RetrievalQuery,vector: Option[List[Double]]): RetrievalPlan = {
     transaction(c)
     RetrievalChecks(query.principal.nonEmpty && query.text.length<=2048 && query.offset>=0 && query.limit>=1 && query.limit<=100 && query.filters.size<=32,"invalid","invalid retrieval query")
     val semantic=query.mode!=RetrievalMode.Lexical
@@ -178,14 +193,16 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     } else {
       val p=profile.getOrElse(throw RetrievalError("unavailable","semantic retrieval is not configured; lexical-only capability"))
       val v=Vectors.sql(vector.getOrElse(throw RetrievalError("unavailable","query embedding unavailable")),p.space.dimensions)
-      val incompatible=one(c,s"SELECT 1 FROM pony_retrieval_sources s JOIN pony_retrieval_generations g ON g.namespace=s.namespace AND g.id=s.published WHERE $scope AND g.space<>? LIMIT 1",(scopeArgs:+p.space.id)*)(_ => true).contains(true)
-      RetrievalChecks(!incompatible,"unavailable","visible publication has incompatible embedding space; explicit rebuild required")
+      val notReady=one(c,s"SELECT 1 FROM pony_retrieval_sources s WHERE $scope AND s.published IS NULL LIMIT 1",scopeArgs*)(_ => true).contains(true)
+      RetrievalChecks(!notReady,"unavailable","visible retrieval publication not ready")
+      val incompatible=one(c,s"SELECT 1 FROM pony_retrieval_sources s JOIN pony_retrieval_generations g ON g.namespace=s.namespace AND g.id=s.published WHERE $scope AND (g.space<>? OR g.profile<>?) LIMIT 1",(scopeArgs++List[Value](p.space.id,p.id))*)(_ => true).contains(true)
+      RetrievalChecks(!incompatible,"unavailable","visible publication has incompatible embedding space or corpus policy; explicit rebuild required")
       CandidateSql.configureStatements.foreach(exec(c,_))
       val fields="ch.id,ch.chunk_id,ch.source_id,g.version,ch.generation,ch.profile,g.space,ch.body,ch.provenance,ch.document,ch.embedding"
       // OFFSET 0 keeps live visibility/filter checks inside the ordered index scan before LIMIT.
       val authorized=s"(SELECT true FROM pony_retrieval_sources s WHERE s.namespace=ch.namespace AND s.id=ch.source_id AND s.published=ch.generation AND $scope OFFSET 0)"
-      val base=s"ch.namespace=? AND vector_dims(ch.embedding)=${p.space.dimensions} AND ch.profile IN(SELECT id FROM pony_retrieval_profiles WHERE namespace=? AND space=?) AND $authorized"
-      val baseArgs=List[Value](ns,ns,p.space.id)++scopeArgs
+      val base=s"ch.namespace=? AND vector_dims(ch.embedding)=${p.space.dimensions} AND ch.profile=? AND $authorized"
+      val baseArgs=List[Value](ns,p.id)++scopeArgs
       val ann=s"ann AS MATERIALIZED(SELECT $fields FROM pony_retrieval_chunks ch JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation WHERE $base ORDER BY ${CandidateSql.annDistance(p.space.dimensions,"ch.embedding")} LIMIT ${CandidatePolicy.candidatesPerLeg})"
       val (legs,legArgs)=if(query.mode==RetrievalMode.Hybrid && query.text.nonEmpty) {
         (s",lexical AS MATERIALIZED(SELECT $fields FROM pony_retrieval_chunks ch JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation WHERE $base AND ch.document @@ websearch_to_tsquery('english',?) ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT ${CandidatePolicy.candidatesPerLeg}),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",baseArgs++List[Value](query.text,query.text))
@@ -193,7 +210,12 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
       (s"WITH $ann$legs,"+CandidateSql.rerankCtes(query.mode,"source_id"),baseArgs++List[Value](v)++legArgs++List[Value](query.text,query.text,v))
     }
     val page=sql+",result_entities AS MATERIALIZED(SELECT * FROM sessions) SELECT counted.total,page.* FROM (SELECT count(*) AS total FROM result_entities) counted LEFT JOIN LATERAL(SELECT * FROM result_entities ORDER BY score DESC,source_id LIMIT ? OFFSET ?) page ON true ORDER BY page.score DESC,page.source_id"
-    val result=rows(c,page,(args++List[Value](query.limit,query.offset))*) { r =>
+    RetrievalPlan(page,args++List[Value](query.limit,query.offset))
+  }
+  def search(c: Connection,query: RetrievalQuery,vector: Option[List[Double]]): RetrievalPage = {
+    val compiled=plan(c,query,vector)
+    val semantic=query.mode!=RetrievalMode.Lexical
+    val result=rows(c,compiled.sql,compiled.args*) { r =>
       val hit=Option(r.getString("source_id")).map { id => RetrievalHit(unkey(id),unkey(r.getString("version")),r.getString("generation"),Option(r.getString("profile")),Option(r.getString("space")),readChunk(r),r.getDouble("score")) }
       (r.getLong("total"),hit)
     }
