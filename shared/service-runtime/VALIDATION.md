@@ -96,3 +96,23 @@ because Config imported an uncommitted service-owned ProjectionPolicy; this was 
 source-commit availability boundary, not a build error to fix with stubs. Manure
 server code was not yet committed at this observation. Final three executable
 assemblies and service/native acceptance still await their actual source commits.
+
+At ~00:45Z the reproducible `shared/baboon-runtime/test-build-guards.sh` passed:
+(1) isolated full-runtime fixture with one changed byte was rejected by the actual
+`verifyBaboonRuntime` task; (2) temporary in-process SBT settings deliberately
+compiled duplicate Chronicle root runtime classes, and the real app classpath guard
+rejected them (rather than relying on assembly dedup); (3) normal source settings
+were restored and single-owner verification + three-domain coassembly passed.
+Receipt: `target/baboon-validation/20261103T004545Z.Ij124i/`.
+The initial guard-script fixture attempt incorrectly placed inputs outside its
+`scala/` directory and was rejected for missing domain sources; its separate
+failed receipt is preserved, and is not counted as the intended mismatch proof.
+
+Actual Haystack source31102256 was subsequently merged without edits and both
+Haystack + Chronicle assemblies passed at ~00:44Z on integrated tree
+`4e3e2055af5414f359e8b8f5bb5ecd7c19d06f82`. Both ZIPs contain exactly148
+runtime classes without duplicate entries; Haystack contains all4 authoritative
+SQL resources. SHA256: Haystack
+`0354e3d4cf41af937190e024bc5088161c7487ec44f058694c78160b229d5868`,
+Chronicle `4a0a4584c26adbe0a53dea54dbbfd4c5c7dd97c9eab643d8f152f760f4da00fb`.
+This is JVM assembly evidence, not JVM/native service behavior acceptance.

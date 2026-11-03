@@ -17,3 +17,8 @@ all duplicate class names, verifies each domain is present and that every runtim
 class comes only from `baboonRuntime`. This is a contract bundle/proof, not an
 executable service or a substitute for application/native acceptance. App assemblies
 also execute `verifySingleBaboonRuntime` over their actual compiled classpaths.
+
+`test-build-guards.sh` exercises byte-mismatch and actual duplicate-compilation
+negative controls with isolated fixtures / temporary in-process sbt settings, then
+restores and checks normal coassembly. Requires the pinned Chronicle shell; retains
+fresh logs under `target/baboon-validation/`. It never edits domain sources.
