@@ -88,3 +88,12 @@ endpoint/model/revision/dimensions/prefixes/normalization; rebuild never mixes s
 
 Process readiness: stdout `MANURE_READY {"apiOrigin":"...","port":12345,"pid":123}`
 after migration/reconciliation/bind. No credential or request data in diagnostics.
+
+Imported destinations use `data_dir = /owned/disposable-target/data` and explicit
+`migration_receipt_dir = /owned/disposable-target`. The backend claims BOTH
+physical directories for its full lifecycle, verifies OWNER/COMPLETE source and
+PG destination/write-boundary bindings before recovery. An old SQLite root or
+nonempty payload tree with empty/unimported PG metadata fails `migration-required`;
+there is no empty-catalogue adoption. `migrate CONFIG.json` runs schema/retrieval
+bootstrap only under physical-root claims: no HTTP, recovery, sweeper, model call
+or async indexing. It does not import SQLite or authorize subsequent activation.
