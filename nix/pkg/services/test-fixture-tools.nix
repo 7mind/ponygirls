@@ -22,7 +22,7 @@ in runCommand "ponygirls-owned-service-test-tools" {
     --prefix PATH : ${environment.PG_BIN}:${lib.makeBinPath [pkgs.nodejs_24 pkgs.nix pkgs.openssl pkgs.curl pkgs.git pkgs.bash pkgs.coreutils python3]}
   makeWrapper ${python3}/bin/python3 "$out/bin/with-service-postgres" \
     --add-flags ${../../tests/with-owned-postgres.py} \
-    ${lib.concatStringsSep " \\\n    " (lib.mapAttrsToList (key: value: "--set ${key} ${lib.escapeShellArg (toString value)}") environment)} \
+    ${lib.concatStringsSep " \\\n    " (lib.mapAttrsToList (key: value: "--set ${key} ${lib.escapeShellArg (if builtins.isPath value then "${value}" else toString value)}") environment)} \
     --set HAYSTACK_TEST_PROVISION_COMMAND "$out/bin/provision-haystack" \
     --set MANURE_TEST_PROVISION_COMMAND "$out/bin/provision-manure" \
     --prefix PATH : ${environment.PG_BIN}:${lib.makeBinPath [python3 pkgs.coreutils]}
