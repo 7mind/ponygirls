@@ -119,10 +119,21 @@ in
       enable = mkOption {
         type = types.bool;
         default = true;
-        description = "Run Haystack, PostgreSQL, backups and its proxy listener. Disabling leaves all persistent files untouched.";
+        description = "Run native Haystack, backups and its proxy listener; PostgreSQL is an independent provider. Disabling leaves all persistent files untouched.";
       };
-      package = package (pkgs.callPackage ../pkg/haystack/package.nix { });
+      package = package (pkgs.callPackage ../pkg/haystack/package.nix { squishLib = inputs.squish.lib; });
       agentTokenFile = runtimePath "Absolute runtime 43-character agent token file. Existing token mismatches fail closed without rotation.";
+      database = import ../lib/service-database-options.nix { inherit lib; name = "haystack"; };
+      retrieval = {
+        policy = str "operator-approved-metadata-v1" "Explicit metadata projection policy identity.";
+        includeMetadata = mkOption { type = types.bool; default = true; };
+        approvedFieldPrefixes = strings "Explicit operator-approved JSON field pointer prefixes; empty means no arbitrary fields embedded.";
+        maxChunkBytes = mkOption { type = types.ints.positive; default = 8192; };
+        embedding = import ../lib/embedding-options.nix { inherit lib; };
+        maxConcurrent = mkOption { type = types.ints.positive; default = 2; };
+        maxQueued = mkOption { type = types.ints.unsigned; default = 8; };
+        batchSize = mkOption { type = types.ints.positive; default = 4; };
+      };
       activityProjectId = str "activity" "Default activity project ID.";
       legacyHosts = strings "Additional allowed backend Host names (not additional proxy listeners).";
       legacyOrigins = strings "Additional allowed backend origins.";
@@ -134,8 +145,9 @@ in
         default = true;
         description = "Run Manure and its proxy listener. Disabling leaves all persistent files untouched.";
       };
-      package = package (pkgs.callPackage ../pkg/manure/package.nix { });
+      package = package (pkgs.callPackage ../pkg/manure/package.nix { squishLib = inputs.squish.lib; });
       agentTokenFile = runtimePath "Absolute runtime 43-character agent token file. Existing token mismatches fail closed without rotation.";
+      database = import ../lib/service-database-options.nix { inherit lib; name = "manure"; };
       legacyOrigins = strings "Additional allowed backend API origins.";
       allowInsecureHttp = mkOption {
         type = types.bool;

@@ -30,6 +30,7 @@
 #   this). The VM handoff probes that use curl -sk / CERT_NONE verify
 #   TLS transport + Host routing only, NOT certificate trust/SAN — do not
 #   claim production assurance from skip-verification.
+{ mkManurePackage }:
 { config, lib, pkgs, ... }:
 let
   cfg = config.smind.services.manure;
@@ -80,6 +81,11 @@ let
   # `credential` key (the server's `hashFile` is filled in by the
   # launcher with an absolute $CREDENTIALS_DIRECTORY path). [R2]
   serverTemplate = {
+    database = { inherit (cfg.database) jdbcUrl user limits; passwordFile = "/run/credentials/manure.service/database-password"; };
+    native_mode = "linked";
+    posix_library = null;
+    dashboard_dir = if cfg.dashboardDir == null then "${cfg.package}/share/manure/web/dashboard" else cfg.dashboardDir;
+    unlock_shell_dir = if cfg.unlockShellDir == null then "${cfg.package}/share/manure/web/unlock" else cfg.unlockShellDir;
     listen_address = cfg.listenAddress;
     port = cfg.port;
     data_dir = cfg.dataDir;
@@ -118,13 +124,7 @@ let
     incomplete_session_ttl_s = cfg.incompleteSessionTtl;
     grant_ttl_s = cfg.grantTtl;
     one_time_grant_ttl_s = cfg.oneTimeGrantTtl;
-  } // lib.optionalAttrs (cfg.contentSuffix != null) {
-    content_suffix = cfg.contentSuffix;
-  } // lib.optionalAttrs (cfg.dashboardDir != null) {
-    dashboard_dir = cfg.dashboardDir;
-  } // lib.optionalAttrs (cfg.unlockShellDir != null) {
-    unlock_shell_dir = cfg.unlockShellDir;
-  };
+  } // lib.optionalAttrs (cfg.contentSuffix != null) { content_suffix = cfg.contentSuffix; };
 
   templateJson = pkgs.writeText "manure-config.template.json" (builtins.toJSON serverTemplate);
 
@@ -285,11 +285,13 @@ let
   };
 in
 {
+  imports = [ ./service-postgres.nix ];
   options.smind.services.manure = {
+    database = import ../lib/service-database-options.nix { inherit lib; name = "manure"; };
     enable = lib.mkEnableOption "manure file & directory hosting service";
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.callPackage ../pkg/manure/package.nix { };
+      default = mkManurePackage { inherit pkgs; };
       description = "manure server package (bundles the dashboard + unlock shells).";
     };
     listenAddress = lib.mkOption {
@@ -322,7 +324,7 @@ in
     dataDir = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/manure";
-      description = "Storage root (sqlite + staging + live). Created 0700 manure:manure via tmpfiles, including custom paths.";
+      description = "Storage payload root (PostgreSQL metadata is separately provisioned). Created 0700 manure:manure via tmpfiles, including custom paths.";
     };
     users = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule {
@@ -496,7 +498,8 @@ in
     systemd.services.manure = {
       description = "manure file & directory hosting service";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
+      after = [ "network.target" ] ++ lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+      requires = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
       serviceConfig = {
         ExecStart = "${launcher}/bin/manure-launcher";
         User = "manure";

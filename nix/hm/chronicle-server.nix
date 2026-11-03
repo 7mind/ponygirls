@@ -55,7 +55,7 @@ let
   setup = pkgs.writeShellScript "chronicle-setup" ''
     set -euo pipefail
     umask 077
-    mkdir -p ${lib.escapeShellArg state}/{credentials,postgres-socket,backups}
+    mkdir -p ${lib.escapeShellArg state}/{credentials,backups}
     ${lib.concatStrings (lib.mapAttrsToList (name: password: ''
       fingerprint="$(${pkgs.coreutils}/bin/sha256sum < ${lib.escapeShellArg password.revisionFile})"
       if [ ! -f ${lib.escapeShellArg "${credentials}/${name}.pbkdf2"} ] || [ ! -f ${lib.escapeShellArg "${credentials}/${name}.sha256"} ] || [ "$(<${lib.escapeShellArg "${credentials}/${name}.sha256"})" != "$fingerprint" ]; then
@@ -65,48 +65,18 @@ let
       fi
     '') cfg.passwords)}
   '';
-  postgres = pkgs.writeShellScript "chronicle-postgres" ''
-    set -euo pipefail
-    umask 077
-    if [ ! -e ${lib.escapeShellArg "${state}/postgres/PG_VERSION"} ]; then
-      ${cfg.database.package}/bin/initdb -D ${lib.escapeShellArg "${state}/postgres"} --auth-local=peer --auth-host=scram-sha-256 --encoding=UTF8 --locale=C.UTF-8
-    fi
-    test "$(<${lib.escapeShellArg "${state}/postgres/PG_VERSION"})" = ${lib.escapeShellArg (lib.versions.major cfg.database.package.version)}
-    exec ${cfg.database.package}/bin/postgres -D ${lib.escapeShellArg "${state}/postgres"} -k ${lib.escapeShellArg "${state}/postgres-socket"} \
-      -p ${toString cfg.database.port} -c listen_addresses=127.0.0.1 -c unix_socket_permissions=0700 \
-      -c random_page_cost=1.1 -c effective_io_concurrency=200 -c maintenance_io_concurrency=100
-  '';
-  database = pkgs.writeShellScript "chronicle-database" ''
-    set -euo pipefail
-    ready=0
-    for _ in {1..60}; do
-      if ${cfg.database.package}/bin/pg_isready -h ${lib.escapeShellArg "${state}/postgres-socket"} -p ${toString cfg.database.port} -d postgres; then ready=1; break; fi
-      sleep 1
-    done
-    test "$ready" = 1
-    export CHRONICLE_DB_PASSWORD
-    CHRONICLE_DB_PASSWORD="$(<${lib.escapeShellArg cfg.database.passwordFile})"
-    test -n "$CHRONICLE_DB_PASSWORD"
-    ${cfg.database.package}/bin/psql -X -v ON_ERROR_STOP=1 -h ${lib.escapeShellArg "${state}/postgres-socket"} -p ${toString cfg.database.port} -d postgres <<'SQL'
-    SELECT 'CREATE ROLE "${cfg.database.user}" LOGIN' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${cfg.database.user}')\gexec
-    \getenv password CHRONICLE_DB_PASSWORD
-    ALTER ROLE "${cfg.database.user}" PASSWORD :'password';
-    SELECT 'CREATE DATABASE "${cfg.database.name}" OWNER "${cfg.database.user}"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${cfg.database.name}')\gexec
-    SQL
-    unset CHRONICLE_DB_PASSWORD
-    ${cfg.database.package}/bin/psql -X -v ON_ERROR_STOP=1 -h ${lib.escapeShellArg "${state}/postgres-socket"} -p ${toString cfg.database.port} -d ${lib.escapeShellArg cfg.database.name} -c 'CREATE EXTENSION IF NOT EXISTS vector;'
-  '';
   service = description: dependencies: command: {
     Unit = { Description = description; After = dependencies; Requires = dependencies; X-Restart-Triggers = restartOn dependencies; };
     Service = { ExecStart = command; Restart = "on-failure"; RestartSec = 10; UMask = "0077"; NoNewPrivileges = true; };
     Install.WantedBy = [ "default.target" ];
   };
-  databaseUnit = unit "-database";
-  serverDependencies = [ databaseUnit ] ++ cfg.serverDependencies;
+  databaseUnits = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+  serverDependencies = databaseUnits ++ cfg.serverDependencies;
   runtimePath = path: lib.hasPrefix "/" path && path != builtins.storeDir && !(lib.hasPrefix "${builtins.storeDir}/" path);
 in {
+  imports = [ ./service-postgres.nix ];
   options.smind.hm.services.chronicle = {
-    enable = lib.mkEnableOption "a user-owned Chronicle server, PostgreSQL cluster and backups";
+    enable = lib.mkEnableOption "a user-owned Chronicle server consuming an explicit independently provisioned database";
     package = lib.mkOption { type = lib.types.package; default = mkChroniclePackage { inherit pkgs; }; };
     stateDirectory = lib.mkOption { type = lib.types.str; default = "${config.xdg.stateHome}/chronicle"; };
     unitPrefix = lib.mkOption { type = lib.types.strMatching "[a-zA-Z0-9_-]+"; default = "chronicle"; };
@@ -130,6 +100,7 @@ in {
       name = lib.mkOption { type = lib.types.strMatching "[a-z_][a-z0-9_]*"; default = "chronicle"; };
       user = lib.mkOption { type = lib.types.strMatching "[a-z_][a-z0-9_]*"; default = "chronicle"; };
       passwordFile = lib.mkOption { type = lib.types.str; };
+      readinessUnit = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
       restartTriggers = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ ]; };
     };
   };
@@ -151,23 +122,17 @@ in {
         Service = { Type = "oneshot"; ExecStart = setup; RemainAfterExit = true; UMask = "0077"; };
         Install.WantedBy = [ "default.target" ];
       };
-      "${cfg.unitPrefix}-postgres" = (service "Chronicle isolated PostgreSQL ${lib.versions.major cfg.database.package.version} + pgvector" [ (unit "-setup") ] postgres) // {
-        Service = { ExecStart = postgres; Restart = "on-failure"; RestartSec = 5; UMask = "0077"; KillSignal = "SIGINT"; TimeoutStopSec = 120; NoNewPrivileges = true; };
-      };
-      "${cfg.unitPrefix}-database" = {
-        Unit = { Description = "Prepare Chronicle database"; After = [ (unit "-postgres") ]; Requires = [ (unit "-postgres") ]; X-Restart-Triggers = cfg.database.restartTriggers ++ restartOn [ (unit "-postgres") ]; };
-        Service = { Type = "oneshot"; ExecStart = database; RemainAfterExit = true; UMask = "0077"; };
-      };
       "${cfg.unitPrefix}" = (service "Chronicle session archive" serverDependencies "${cfg.package}/bin/chronicle-server serve ${serverConfig}") // {
-        Unit = { Description = "Chronicle session archive"; PartOf = [ (unit "-postgres") ]; After = serverDependencies; Requires = serverDependencies; X-Restart-Triggers = cfg.restartTriggers ++ restartOn serverDependencies; };
+        Unit = { Description = "Chronicle session archive"; After = serverDependencies; Requires = serverDependencies; X-Restart-Triggers = cfg.restartTriggers ++ restartOn serverDependencies; };
         Service = { ExecStart = "${cfg.package}/bin/chronicle-server serve ${serverConfig}"; Restart = "on-failure"; RestartSec = 10; TimeoutStopSec = 60; SuccessExitStatus = [ 143 ]; UMask = "0077"; NoNewPrivileges = true; };
       };
       "${cfg.unitPrefix}-backup" = {
-        Unit = { Description = "Back up Chronicle database"; After = [ databaseUnit ]; Requires = [ databaseUnit ]; };
+        Unit = { Description = "Back up Chronicle database"; After = databaseUnits; Requires = databaseUnits; };
         Service = { Type = "oneshot"; UMask = "0077"; ExecStart = pkgs.writeShellScript "chronicle-backup" ''
           set -euo pipefail
           file=${lib.escapeShellArg "${state}/backups"}/chronicle-$(${pkgs.coreutils}/bin/date -u +%Y%m%dT%H%M%SZ).dump
-          ${cfg.database.package}/bin/pg_dump -h ${lib.escapeShellArg "${state}/postgres-socket"} -p ${toString cfg.database.port} -Fc ${lib.escapeShellArg cfg.database.name} > "$file.partial"
+          export PGPASSWORD="$(<${lib.escapeShellArg cfg.database.passwordFile})" PGCONNECT_TIMEOUT=5
+          ${cfg.database.package}/bin/pg_dump --no-password -h 127.0.0.1 -p ${toString cfg.database.port} -U ${lib.escapeShellArg cfg.database.user} -Fc ${lib.escapeShellArg cfg.database.name} > "$file.partial"
           mv "$file.partial" "$file"
           ${pkgs.findutils}/bin/find ${lib.escapeShellArg "${state}/backups"} -name 'chronicle-*.dump' -mtime +14 -delete
         ''; };
