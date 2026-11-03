@@ -39,6 +39,10 @@ assert valid linux && valid darwin && valid fileToken;
 assert !valid invalid;
 assert lib.all (cfg:
   cfg.programs.codex.settings.mcp_servers.crawl4ai.env_vars == [ "CRAWL4AI_API_TOKEN" ]
+  # settings.mcp_servers.<name> replaces the registry-derived table
+  # wholesale, so the codex override must carry the full stdio transport.
+  && lib.hasSuffix "/bin/crawl4ai-mcp" cfg.programs.codex.settings.mcp_servers.crawl4ai.command
+  && cfg.programs.codex.settings.mcp_servers.crawl4ai.args == [ settings.url ]
   && cfg.programs.mcp.servers.crawl4ai.args == [ settings.url ]
   && lib.hasSuffix "/bin/crawl4ai-mcp" cfg.programs.mcp.servers.crawl4ai.command
   && cfg.programs.mcp.servers.sentinel.command == "unchanged"
@@ -46,6 +50,7 @@ assert lib.all (cfg:
 ) [ linux darwin ];
 assert fileToken.programs.mcp.servers.crawl4ai.args == [ settings.url "/run/secrets/crawl4ai" ];
 assert fileToken.programs.codex.settings.mcp_servers.crawl4ai.env_vars == [ "CRAWL4AI_API_TOKEN" ];
+assert fileToken.programs.codex.settings.mcp_servers.crawl4ai.args == [ settings.url "/run/secrets/crawl4ai" ];
 assert lib.all (cfg:
   !(cfg.programs.mcp.servers ? crawl4ai)
   && !(cfg.programs.codex.settings.mcp_servers ? crawl4ai)

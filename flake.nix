@@ -344,6 +344,7 @@
           llm-skills-validation = import ./nix/tests/llm-skills-validation.nix { inherit pkgs; };
           agentic-services-credentials = import ./nix/tests/agentic-services-credentials.nix { inherit pkgs; };
           crawl4ai-hm-eval = import ./nix/tests/crawl4ai-hm-eval.nix { inherit pkgs nixpkgs; };
+          codex-mcp-guard-hm-eval = import ./nix/tests/codex-mcp-guard-hm-eval.nix { inherit pkgs nixpkgs inputs; };
           chronicle-web = self.packages.${system}.chronicle-web;
           chronicle-collector = self.packages.${system}.chronicle-collector;
           default-models = defaultModelsCheck;
