@@ -209,7 +209,7 @@
       "path": "manure/tests/test_catalogue.py",
       "classification": "architecture-retired",
       "requirementsRetained": true,
-      "retirementReason": "Direct SQLite storage/old REST catalogue architecture; current policy is explicitly different.",
+      "retirementReason": "Direct SQLite storage/old REST test architecture only; CONTRACT7.1 casefold matching, effective-query cursor binding and valid long queries remain required. No approval exists for ROOT-lower semantics.",
       "invariantGroups": [
         "catalogue-current"
       ]
@@ -1345,17 +1345,21 @@
     },
     {
       "id": "catalogue-current",
-      "invariant": "Sole current UTF8 unsigned-byte ordering with exact stored NUL/Unicode values, ROOT lowercase literal matching, all sorts/ties/null expiry last and typed query/filter/sort/limit-bound keyset positions; no legacy wire or casefold cursor obligations.",
+      "invariant": "Preserve CONTRACT7.1 Python Unicode casefold literal matching, no Unicode normalization/whitespace trim/truncation or extra query-length cap; bind cursors to the effective casefold-equivalent query/options. Retain exact UTF8 unsigned-byte text ordering, NUL/Unicode source strings, all sorts/ties/null expiry and typed exact keysets; no historical wire decoder is required.",
       "sourceRefs": [
         {
           "path": "manure/tests/test_catalogue.py"
         },
         {
           "path": "manure/docs/current-api.md",
-          "marker": "utf8-root-lower-v1"
+          "marker": "Catalogue requirements and open matching regression"
         },
         {
           "path": "manure/backend/src/main/scala/manure/Catalogue.scala"
+        },
+        {
+          "path": "manure/CONTRACT.md",
+          "marker": "using Python Unicode casefold"
         }
       ],
       "targetRefs": [
@@ -1381,7 +1385,8 @@
         },
         {
           "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
-          "marker": "test(\"ROOT lowercase is not casefold; NUL/supplementary text and SQL wildcard characters are literal\""
+          "marker": "test(\"ROOT lowercase is not casefold; NUL/supplementary text and SQL wildcard characters are literal\"",
+          "coverage": "Contrary implementation characterization, not proof of the required casefold invariant; must be corrected with the implementation."
         },
         {
           "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
@@ -1416,8 +1421,10 @@
           "marker": "test(\"trusted catalogue SQL has one keyset LIMIT and literal bytea parameters, never user SQL\""
         }
       ],
-      "openGaps": [],
-      "adjudication": "Python SQLite binary/casefold, old ASC default and old cursor decoder assertions intentionally retire. Replace with current utf8-root-lower-v1 semantics; stored names/epochs remain lossless."
+      "openGaps": [
+        "Functional regression OPEN: current ROOT-lower matching is not the required Python Unicode casefold (e.g. Straße/STRASSE and final sigma). Correct implementation/projection and independent dual+PG assertions; review effective casefold-equivalent cursor fingerprints and the unapproved1024 query-length rejection with bounded fail-first proof. Existing all-sort/SQL matrices do not close this behavior gap."
+      ],
+      "adjudication": "Review correction: the earlier claim that ROOT-lowercase replacement was an intentional approved change is withdrawn. ROOT is a functional regression against original CONTRACT7.1. The dual27-case and PG6-case matrices prove sorting/SQL/quota/locks, not permission to change casefold or reject valid long queries."
     },
     {
       "id": "cli-mcp",

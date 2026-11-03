@@ -147,7 +147,7 @@ a pass. An interruption is not an exit status or completed full suite.
 
 | Module | Architecture reason | Retained invariant groups |
 |---|---|---|
-| `test_catalogue` | Direct SQLite storage/old REST catalogue architecture; current policy is explicitly different. | `catalogue-current` |
+| `test_catalogue` | Direct SQLite/old REST test architecture only; required casefold/effective-query/valid-long-query behavior is retained, not replaced by ROOT lowercase. | `catalogue-current` |
 | `test_server_http_opt_in` | Constructs the retired Python HTTP server/config; current HTTP/TLS/browser target tests replace its transport. | `origins`, `credentials`, `manifest-serving` |
 | `test_server_lifecycle` | Constructs Python server/SQLite internals; preserve lifecycle/receipt/publish/range invariants through real replacement adapters. | `manifest-serving`, `receipts`, `publication-import`, `range-client` |
 | `test_server_limits` | Constructs Python socket/thread/semaphore/storage internals; requirements remain current, with explicit unresolved lifecycle/concurrency groups. | `quota-session`, `expiry-activity`, `admission-shutdown`, `credentials`, `filesystem-lifetime` |
@@ -370,17 +370,17 @@ Malformed/oversized/stalled requests cannot mutate or revoke before body validat
 
 ### catalogue-current
 
-Sole current UTF8 unsigned-byte ordering with exact stored NUL/Unicode values, ROOT lowercase literal matching, all sorts/ties/null expiry last and typed query/filter/sort/limit-bound keyset positions; no legacy wire or casefold cursor obligations.
+Preserve CONTRACT7.1 Python Unicode casefold literal matching, no Unicode normalization/whitespace trim/truncation or extra query-length cap; bind cursors to the effective casefold-equivalent query/options. Retain exact UTF8 unsigned-byte text ordering, NUL/Unicode source strings, all sorts/ties/null expiry and typed exact keysets; no historical wire decoder is required.
 
-**Source:** `manure/tests/test_catalogue.py`; `manure/docs/current-api.md` (`utf8-root-lower-v1`); `manure/backend/src/main/scala/manure/Catalogue.scala`.
+**Source:** CONTRACT§7.1; `manure/tests/test_catalogue.py`; [current API requirements](current-api.md); `Catalogue.scala`.
 
-**Concrete target assertions:**
+**Concrete current sort/keyset/SQL assertions (not approval of ROOT matching):**
 - [`test("metadata UTF8 NUL and IEEE754 timestamp bits roundtrip without normalization"`](../../manure/backend/src/test/scala/manure/DomainSuite.scala).
 - [`test_client_realserver.TestRealServer.test_pagination_filters_real_server`](../../manure/tests/test_client_realserver.py).
 - [`test_browser_dashboard_ux.DashboardUXTests.test_catalogue_detail_and_session_flows`](../../manure/tests/test_browser_dashboard_ux.py).
 - [`test_current_client.CurrentClientTests.test_typed_catalogue_patch_management_and_search`](../../manure/tests/test_current_client.py).
 - [`test(s"all metadata shared; $sort/$direction byte order, ties, NULL-last keyset traversal"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
-- [`test("ROOT lowercase is not casefold; NUL/supplementary text and SQL wildcard characters are literal"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("ROOT lowercase is not casefold; NUL/supplementary text and SQL wildcard characters are literal"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala). **Contrary matching characterization; not normative coverage.**
 - [`test("expiry authorization and state/visibility filtering happen before keyset LIMIT"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
 - [`test("cursor binds every effective option and enforces typed count/time/text/null positions"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
 - [`test("deleting a cursor boundary does not require a boundary-row lookup"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
@@ -390,9 +390,10 @@ Sole current UTF8 unsigned-byte ordering with exact stored NUL/Unicode values, R
 - [`test("forward catalogue projection bootstrap/backfill preserves original bytea and timestamp bits"`](../../manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala).
 - [`test("trusted catalogue SQL has one keyset LIMIT and literal bytea parameters, never user SQL"`](../../manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala).
 
-**Adjudication:** Python SQLite binary/casefold, old ASC default and old cursor decoder assertions intentionally retire. Replace with current utf8-root-lower-v1 semantics; stored names/epochs remain lossless.
+**Adjudication:** Review correction: the earlier claim that ROOT-lowercase replacement was an intentional approved change is withdrawn. ROOT is a functional regression against original CONTRACT7.1. The dual27-case and PG6-case matrices prove sorting/SQL/quota/locks, not permission to change casefold or reject valid long queries.
 
-**Treatment:** concrete replacement assertions implemented/registered; their unfiltered owning adapter/artifact/runtime execution remains mandatory. No new legacy compatibility is introduced.
+**OPEN—blocks full release acceptance:**
+- Functional regression OPEN: current ROOT-lower matching is not the required Python Unicode casefold (e.g. Straße/STRASSE and final sigma). Correct implementation/projection and independent dual+PG assertions; review effective casefold-equivalent cursor fingerprints and the unapproved1024 query-length rejection with bounded fail-first proof. Existing all-sort/SQL matrices do not close this behavior gap.
 
 ### cli-mcp
 
@@ -446,8 +447,9 @@ Portable Python cannot activate the legacy SQLite HTTP server; refuse before par
 `test_retired_server_entrypoint.py` are explicitly CURRENT, never optional-file
 appendages. The retirement boundary's five methods exercise real scrubbed child
 entrypoints/stdio and effect guards, while retaining portable CLI/MCP usability.
-The real PG admission and dual catalogue matrices now replace the earlier open
-quota/session/all-sort/cursor groups. The application rejection middleware and
+The real PG admission and dual catalogue matrices now map quota/session and
+all-sort/keyset/SQL assertions, but do not close the newly adjudicated functional
+casefold/effective-query/length regression. The application rejection middleware and
 fixture cleanup correction now have concrete source and the registered actual
 503 assertion; full release execution remains mandatory.
 
@@ -507,5 +509,5 @@ Separately authorized production activation is not implied.
 After parent `5f3905ec` integration and explicit retirement registration, a
 35-method focused retirement/client-secret/preflight/inventory diagnostic
 passed0 failures/errors/skips. The declared inventory is now31 modules/325
-methods, not a completed325-method run. Three invariant clauses remain open;
+methods, not a completed325-method run. Four invariant clauses remain open;
 full acceptance still cannot be inferred from this component diagnostic.
