@@ -4,9 +4,9 @@ import errno,json,os,pathlib,stat,struct,subprocess,sys,time
 def emit(value):
     print('UNIT_GRAPH_SAFE_DIAGNOSTIC '+json.dumps(value,sort_keys=True),flush=True)
 
-def acl_metadata(fd):
+def acl_metadata(fd, name='system.posix_acl_access'):
     try:
-        raw=os.getxattr(fd,'system.posix_acl_access')
+        raw=os.getxattr(fd,name)
         if len(raw)<4 or struct.unpack('<I',raw[:4])[0]!=2 or (len(raw)-4)%8:return {'validMetadataEncoding':False}
         return {'validMetadataEncoding':True,'entries':[{'tag':tag,'permissions':permissions,'id':identity} for tag,permissions,identity in struct.iter_unpack('<HHI',raw[4:])]}
     except OSError as error:return {'exceptionClass':type(error).__name__,'errno':error.errno}
@@ -16,7 +16,7 @@ def directory_metadata(path):
         fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
         try:
             info=os.fstat(fd);before=os.lstat(path)
-            return {'uid':info.st_uid,'gid':info.st_gid,'mode':oct(stat.S_IMODE(info.st_mode)),'directory':stat.S_ISDIR(info.st_mode),'notSymlink':not stat.S_ISLNK(before.st_mode),'identityMatchesNoFollow':(before.st_dev,before.st_ino)==(info.st_dev,info.st_ino),'writableByService':os.access(path,os.W_OK,effective_ids=True),'acl':acl_metadata(fd)}
+            return {'uid':info.st_uid,'gid':info.st_gid,'mode':oct(stat.S_IMODE(info.st_mode)),'directory':stat.S_ISDIR(info.st_mode),'notSymlink':not stat.S_ISLNK(before.st_mode),'identityMatchesNoFollow':(before.st_dev,before.st_ino)==(info.st_dev,info.st_ino),'writableByService':os.access(path,os.W_OK,effective_ids=True),'acl':acl_metadata(fd),'defaultAcl':acl_metadata(fd,'system.posix_acl_default')}
         finally:os.close(fd)
     except OSError as error:return {'exceptionClass':type(error).__name__,'errno':error.errno}
 
@@ -25,9 +25,9 @@ def metadata():
     result={'stage':'credential-metadata','uid':os.getuid(),'gid':os.getgid(),'effectiveGid':os.getegid(),'supplementaryGids':os.getgroups(),'credentialEnvPresent':bool(value),'credentialDirectoryEnvPresent':bool(directory),'referenceMatchesLoadedCredential':bool(value and directory and value==directory+'/database-password'),'monotonic':time.monotonic()}
     if value:
         try:
-            fd=os.open(value,os.O_RDONLY|os.O_NONBLOCK)
+            fd=os.open(value,os.O_RDONLY|os.O_NONBLOCK|os.O_NOFOLLOW)
             try:
-                info=os.fstat(fd);result.update(regular=stat.S_ISREG(info.st_mode),mode=oct(stat.S_IMODE(info.st_mode)),ownerUid=info.st_uid,ownerGid=info.st_gid,byteCount=info.st_size,acl=acl_metadata(fd))
+                info=os.fstat(fd);result.update(regular=stat.S_ISREG(info.st_mode),mode=oct(stat.S_IMODE(info.st_mode)),ownerUid=info.st_uid,ownerGid=info.st_gid,byteCount=info.st_size,acl=acl_metadata(fd),defaultAcl=acl_metadata(fd,'system.posix_acl_default'),identityMatchesNoFollow=(os.lstat(value).st_dev,os.lstat(value).st_ino)==(info.st_dev,info.st_ino))
             finally:os.close(fd)
         except OSError as error:result.update(exceptionClass=type(error).__name__,errno=error.errno)
     expected=os.environ.get('PONYGIRLS_TEST_EXPECTED_CREDENTIAL_DIRECTORY')
@@ -49,7 +49,7 @@ def metadata():
 
 _seen=set()
 def trace(frame,event,arg):
-    if event=='exception' and frame.f_code.co_filename.endswith('-provider.py') and frame.f_code.co_name in {'private_secret','verifier','sql','provision','initialize'}:
+    if event=='exception' and frame.f_code.co_filename.endswith('-provider.py') and frame.f_code.co_name in {'private_secret','loaded_systemd_secret','directory_fd','verifier','sql','provision','initialize'}:
         kind=arg[0].__name__;key=(frame.f_code.co_name,kind)
         if key not in _seen:
             _seen.add(key);value={'stage':'provider-exception-class','function':key[0],'exceptionClass':kind,'monotonic':time.monotonic()}

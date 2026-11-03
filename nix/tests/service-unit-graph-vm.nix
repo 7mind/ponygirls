@@ -18,7 +18,7 @@ EOF
     done
   '';
   observer = pkgs.writeTextDir "sitecustomize.py" (builtins.readFile ./service-unit-graph-diagnostic.py);
-  paths=[../nixos/service-postgres.nix ../hm/service-postgres.nix ../nixos/chronicle.nix ../nixos/haystack.nix ../nixos/manure.nix ../postgres/options.nix ../postgres/policy.nix ../postgres/provider.py ./service-unit-graph-vm.nix ./service-unit-graph-adapter.py ./service-unit-graph-snapshot.py ./service-unit-graph-vm.py ./service-unit-graph-controller.py ./service-unit-graph-diagnostic.py];
+  paths=[../nixos/service-postgres.nix ../hm/service-postgres.nix ../nixos/chronicle.nix ../nixos/haystack.nix ../nixos/manure.nix ../postgres/options.nix ../postgres/policy.nix ../postgres/provider.py ./service-unit-graph-vm.nix ./service-unit-graph-adapter.py ./service-unit-graph-snapshot.py ./service-unit-graph-vm.py ./service-unit-graph-controller.py ./service-unit-graph-diagnostic.py ./provider-loaded-systemd-contract.py];
   sourceManifest=pkgs.writeText "service-unit-graph-source-inputs.sha256" (lib.concatMapStrings (path:"${builtins.hashFile "sha256" path}  ${lib.removePrefix "${toString ../..}/" (toString path)}\n") paths);
   connection=name:{jdbcUrl="jdbc:postgresql://127.0.0.1:15434/${name}";user=name;passwordFile="/etc/unit-graph/${name}-database";readinessUnit="ponygirls-database-${name}.service";};
 in pkgs.testers.runNixOSTest {
@@ -82,7 +82,10 @@ in pkgs.testers.runNixOSTest {
     # credentials, UID, dependency graph and production generic errors stay as-is.
     systemd.services=lib.genAttrs (map (name: "ponygirls-database-${name}") ["chronicle" "haystack" "manure"]) (unitName: {
       environment={ PYTHONPATH="${observer}"; PONYGIRLS_TEST_EXPECTED_CREDENTIAL_DIRECTORY="/run/credentials/${unitName}.service"; };
-      serviceConfig.ExecStartPre="${pkgs.python3}/bin/python3 ${./service-unit-graph-diagnostic.py} ${config.ponygirls.servicePostgres.manifestFile}";
+      serviceConfig.ExecStartPre=[
+        "${pkgs.python3}/bin/python3 ${./service-unit-graph-diagnostic.py} ${config.ponygirls.servicePostgres.manifestFile}"
+        "${pkgs.python3}/bin/python3 ${./provider-loaded-systemd-contract.py} ${../postgres/provider.py} ${config.ponygirls.servicePostgres.manifestFile} ${lib.removePrefix "ponygirls-database-" unitName}"
+      ];
     });
     specialisation={
       app-package.configuration.smind.services.haystack.package=lib.mkForce (adapter "alternate");

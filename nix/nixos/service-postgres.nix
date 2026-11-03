@@ -53,7 +53,7 @@ in {
         serviceConfig = {
           Type = "oneshot";
           User = "postgres";
-          ExecStart = policy.provision key;
+          ExecStart = if d.createPassword then policy.provision key else policy.provisionSystemd key;
           RemainAfterExit = true;
           UMask = "0077";
           LoadCredential = lib.optional (!d.createPassword) "database-password:${d.passwordFile}";

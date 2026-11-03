@@ -7,6 +7,10 @@ import hashlib
 import hmac
 import json
 import os
+import errno
+import pwd
+import re
+import struct
 from pathlib import Path
 import secrets
 import stat
@@ -46,10 +50,109 @@ def private_secret(path, create=False):
         if not stat.S_ISREG(mode.st_mode) or mode.st_mode & 0o077:
             raise ProviderError('credential must be a private regular file')
         raw = inp.read(4097)
+    return decode_secret(raw)
+
+
+def decode_secret(raw):
     value = raw.removesuffix(b'\n')
     if not value or len(raw) > 4096 or b'\n' in value or b'\r' in value or b'\0' in value:
         raise ProviderError('credential must be nonempty bounded single-line UTF8')
     return value.decode('utf-8', errors='strict')
+
+
+class CredentialFilesystem:
+    """Narrow descriptor/metadata port; the production adapter never stages bytes."""
+    open = staticmethod(os.open)
+    close = staticmethod(os.close)
+    fstat = staticmethod(os.fstat)
+    stat = staticmethod(os.stat)
+    getxattr = staticmethod(os.getxattr)
+    read = staticmethod(os.read)
+    euid = staticmethod(os.geteuid)
+    egid = staticmethod(os.getegid)
+    service_identity = staticmethod(pwd.getpwnam)
+
+
+def exact_uid_acl(raw, uid, permissions):
+    # Linux POSIX ACL xattr version2; exactly owner, one named user, empty base
+    # group, matching mask, empty other. Never treat the mask as a group grant.
+    expected = [(1, permissions, 0xffffffff), (2, permissions, uid),
+                (4, 0, 0xffffffff), (16, permissions, 0xffffffff), (32, 0, 0xffffffff)]
+    return (len(raw) == 44 and struct.unpack('<I', raw[:4])[0] == 2
+            and list(struct.iter_unpack('<HHI', raw[4:])) == expected)
+
+
+def absent_acl(fs, fd, name):
+    try:
+        fs.getxattr(fd, name)
+    except OSError as error:
+        return error.errno == errno.ENODATA
+    return False
+
+
+def loaded_systemd_secret(cfg, key, fs=None, environment=None):
+    """ONLY explicit NixOS provisioning context; ordinary files stay strict.
+
+    The known systemd runtime root, expected unit/name, root-protected directory
+    descriptors and exact UID ACLs establish trust, not caller environment alone.
+    """
+    fs = CredentialFilesystem() if fs is None else fs
+    environment = os.environ if environment is None else environment
+    if cfg['adminRole'] != 'postgres' or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', key):
+        raise ProviderError('unsupported systemd credential context')
+    identity = fs.service_identity('postgres')
+    uid = fs.euid()
+    if uid == 0 or uid != identity.pw_uid or fs.egid() != identity.pw_gid:
+        raise ProviderError('unexpected systemd credential service identity')
+    unit = 'ponygirls-database-' + key + '.service'
+    directory = '/run/credentials/' + unit
+    if (environment.get('CREDENTIALS_DIRECTORY') != directory or
+            environment.get('PONYGIRLS_PASSWORD_FILE') != directory + '/database-password'):
+        raise ProviderError('unexpected systemd credential reference')
+    descriptors = []
+    def directory_fd(name, parent=None, unit_directory=False):
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        before = fs.stat(name, dir_fd=parent, follow_symlinks=False)
+        if not stat.S_ISDIR(before.st_mode):
+            raise ProviderError('invalid protected credential ancestor')
+        fd = fs.open(name, flags, dir_fd=parent); descriptors.append(fd)
+        info = fs.fstat(fd)
+        if ((before.st_dev, before.st_ino) != (info.st_dev, info.st_ino) or
+                not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0 or
+                stat.S_IMODE(info.st_mode) & 0o022 or not absent_acl(fs, fd, 'system.posix_acl_default')):
+            raise ProviderError('invalid protected credential ancestor')
+        if unit_directory:
+            if stat.S_IMODE(info.st_mode) != 0o550 or not exact_uid_acl(fs.getxattr(fd, 'system.posix_acl_access'), uid, 5):
+                raise ProviderError('invalid systemd credential directory ACL')
+        elif not absent_acl(fs, fd, 'system.posix_acl_access'):
+            raise ProviderError('unexpected protected ancestor ACL')
+        return fd
+    try:
+        root = directory_fd('/')
+        run = directory_fd('run', root)
+        credential_root = directory_fd('credentials', run)
+        bound = directory_fd(unit, credential_root, True)
+        before = fs.stat('database-password', dir_fd=bound, follow_symlinks=False)
+        if not stat.S_ISREG(before.st_mode):
+            raise ProviderError('credential must be a regular file')
+        fd = fs.open('database-password', os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=bound)
+        descriptors.append(fd); info = fs.fstat(fd)
+        if ((before.st_dev, before.st_ino) != (info.st_dev, info.st_ino) or
+                not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0 or
+                stat.S_IMODE(info.st_mode) != 0o440 or
+                not absent_acl(fs, fd, 'system.posix_acl_default') or
+                not exact_uid_acl(fs.getxattr(fd, 'system.posix_acl_access'), uid, 4)):
+            raise ProviderError('invalid systemd credential file ACL')
+        raw = bytearray()
+        while len(raw) < 4097:
+            chunk = fs.read(fd, 4097 - len(raw))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        return decode_secret(bytes(raw))
+    finally:
+        for fd in reversed(descriptors):
+            fs.close(fd)
 
 
 def saslprep(password):
@@ -125,10 +228,12 @@ def initialize(cfg):
         raise ProviderError('cross-major state reuse forbidden; use logical migration')
 
 
-def provision(cfg, key):
+def provision(cfg, key, loaded_credential=False):
     d = cfg['databases'][key]
     name, role = d['name'], d['user']
-    password = private_secret(os.environ.get('PONYGIRLS_PASSWORD_FILE', d['passwordFile']), d['createPassword'])
+    if loaded_credential and d['createPassword']:
+        raise ProviderError('loaded credentials cannot create password files')
+    password = loaded_systemd_secret(cfg, key) if loaded_credential else private_secret(os.environ.get('PONYGIRLS_PASSWORD_FILE', d['passwordFile']), d['createPassword'])
     deadline = time.monotonic() + 60
     while True:
         try:
@@ -196,7 +301,9 @@ def main():
     if command == 'init':
         initialize(cfg)
     elif command == 'provision':
-        provision(cfg, args[0])
+        if len(args) not in (1, 2) or (len(args) == 2 and args[1] != '--loaded-systemd-credential'):
+            raise ProviderError('unknown provisioning credential policy')
+        provision(cfg, args[0], len(args) == 2)
     else:
         raise ProviderError('unknown provider command')
 
