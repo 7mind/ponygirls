@@ -1,0 +1,150 @@
+{
+  "observedAt": "2026-11-03T13:34:59.238987+00:00",
+  "worktree": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-unified-nix",
+  "branch": "feature/unified-nix",
+  "HEAD": "26b3161800c42b5d8c7283d4d4907082339bff13",
+  "trackedChanges": [],
+  "untrackedNonIgnored": [],
+  "retainHeadAndAllOriginalAncestry": true,
+  "namedMilestoneCommits": {
+    "26b31618": "26b3161800c42b5d8c7283d4d4907082339bff13",
+    "b68f6114": "b68f611464711cabdc2c5bf288b3c1d660e523b1",
+    "faea7128": "faea7128b74ab70ab195cf3a44815d4b4f4d193a",
+    "468a3cbb": "468a3cbbd803d7c81962b3b04bb6f5802bfde88e",
+    "9330615d": "9330615d3848b737af5bc9a9495235628c97e482",
+    "37d22f90": "37d22f90c13252f535e3b3b3f392c929a1dacd56",
+    "c82998fd": "c82998fd4e52c1265c2724530921b90fae1fce9a",
+    "15964000": "15964000ad91ab31534d43f624c8cfc4d25ffc55",
+    "34f95a69": "34f95a69fff52fdea3473df0c93c579d698fcbbe"
+  },
+  "observedParentEvidenceCommit": "26d680a4391306061a929da0216f81fd1bbec692",
+  "ownHeadAlreadyAncestorOfObservedParentCommit": true,
+  "ownCommitsNotInObservedParentCommit": [],
+  "ignoredGroupsAtObservation": {
+    ".codegraph/.gitignore": {
+      "files": 1,
+      "bytes": 229
+    },
+    ".codegraph/codegraph.db": {
+      "files": 1,
+      "bytes": 147898368
+    },
+    ".codegraph/codegraph.db-shm": {
+      "files": 1,
+      "bytes": 32768
+    },
+    ".codegraph/codegraph.db-wal": {
+      "files": 1,
+      "bytes": 0
+    },
+    ".codegraph/codegraph.lock.flock": {
+      "files": 1,
+      "bytes": 0
+    },
+    ".codegraph/rebuild.pid.flock": {
+      "files": 1,
+      "bytes": 0
+    },
+    "debug/hm-preboot-b68-followup-26b31618": {
+      "files": 2,
+      "bytes": 3285
+    },
+    "debug/lifecycle-evidence-b68f6114": {
+      "files": 38,
+      "bytes": 871021
+    },
+    "debug/unit-graph-acl-37d22f90": {
+      "files": 9,
+      "bytes": 1122366
+    },
+    "debug/unit-graph-baseline-34f95a69": {
+      "files": 6,
+      "bytes": 146103
+    },
+    "debug/unit-graph-baseline-b812cfb3": {
+      "files": 8,
+      "bytes": 147043
+    },
+    "debug/unit-graph-baseline-bc09ea39": {
+      "files": 7,
+      "bytes": 186834
+    },
+    "debug/unit-graph-diagnostic-15964000": {
+      "files": 9,
+      "bytes": 198022
+    },
+    "debug/unit-graph-diagnostic-c82998fd": {
+      "files": 9,
+      "bytes": 202947
+    },
+    "debug/unit-graph-harness-baseline-b812": {
+      "files": 2,
+      "bytes": 10808
+    },
+    "debug/unit-graph-hm-26b31618": {
+      "files": 9,
+      "bytes": 839087
+    },
+    "debug/unit-graph-hm-468a3cbb": {
+      "files": 2,
+      "bytes": 5232
+    },
+    "debug/unit-graph-hm-b68f6114": {
+      "files": 8,
+      "bytes": 44494
+    },
+    "debug/unit-graph-hm-faea7128": {
+      "files": 2,
+      "bytes": 5232
+    },
+    "debug/unit-graph-nixos-468a3cbb": {
+      "files": 9,
+      "bytes": 1038598
+    },
+    "manure/manure": {
+      "files": 6,
+      "bytes": 420386
+    },
+    "manure/migration": {
+      "files": 2,
+      "bytes": 64209
+    },
+    "manure/scripts": {
+      "files": 1,
+      "bytes": 42120
+    },
+    "manure/tests": {
+      "files": 36,
+      "bytes": 1029880
+    },
+    "nix/postgres": {
+      "files": 1,
+      "bytes": 26486
+    },
+    "nix/tests": {
+      "files": 4,
+      "bytes": 50187
+    }
+  },
+  "retentionInstructions": {
+    "mustRetainUntilRootVerifiesCopies": [
+      "debug/hm-lifecycle-evidence-26b31618/",
+      "debug/unit-graph-hm-26b31618/",
+      "debug/unit-graph-hm-b68f6114/",
+      "debug/hm-preboot-b68-followup-26b31618/"
+    ],
+    "priorEvidenceKeepOrConfirmParentCopy": [
+      "debug/lifecycle-evidence-b68f6114/",
+      "debug/unit-graph-nixos-468a3cbb/",
+      "debug/unit-graph-acl-37d22f90/",
+      "debug/unit-graph-diagnostic-15964000/",
+      "debug/unit-graph-diagnostic-c82998fd/"
+    ],
+    "otherDebugHistory": "Keep until Root confirms retention/cleanup scope; do not publish raw logs without separate privacy review. Unlaunched runner directories are history, not acceptance.",
+    "generatedPythonBytecode": "Ignored manure/** and nix/** groups are generated import bytecode; not required runtime-evidence inputs. No deletion performed.",
+    "codegraph": "Foreign/unknown PID namespace ownership was reported; do not stop/delete daemon state without independent ownership adjudication.",
+    "externalTmpAndNixStore": "Temporary /tmp test logs and immutable /nix/store receipts referenced by evidence are outside this worktree; no cleanup authority exercised."
+  },
+  "cleanupPerformed": false,
+  "newJobsLaunched": false
+}
