@@ -2282,35 +2282,12 @@ def _run_sweep_once(store: ArtifactStore,
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="manure-server")
-    parser.add_argument("--config", default=None)
-    args = parser.parse_args(argv)
-    path = args.config or os.environ.get("MANURE_CONFIG")
-    if not path:
-        sys.stderr.write("manure-server: --config PATH or MANURE_CONFIG\n")
-        return 2
-    try:
-        config = ServerConfig.from_json_file(path)
-        server = create_server(config)
-    except (DomainError, AuthError, OSError, ValueError) as exc:
-        sys.stderr.write("manure-server: startup failed: %s\n" % (exc,))
-        return 1
-    sys.stderr.write("manure: serving %s (data %s)\n"
-                     % (server.effective_api_origin, config.data_dir))
-    import signal
-    stop = threading.Event()
-
-    def _halt(signum: int, frame: Any) -> None:
-        stop.set()
-
-    signal.signal(signal.SIGTERM, _halt)
-    signal.signal(signal.SIGINT, _halt)
-    try:
-        while not stop.wait(3600):
-            pass
-    finally:
-        server.close()
-    return 0
+    """Retired public entrypoint; historical helpers are not a server runtime."""
+    sys.stderr.write(
+        "manure.server is retired; use the built Scala manure-server binary "
+        "(no Python proxy).\n"
+    )
+    return 2
 
 
 if __name__ == "__main__":

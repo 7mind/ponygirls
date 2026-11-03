@@ -172,9 +172,11 @@ os.write(2, b"RETIREMENT_GUARD_READY\\n")
             [
                 sys.executable,
                 "-c",
-                "from manure.server import ServerConfig, create_server; "
-                "from manure.storage import ArtifactStore; "
-                "assert callable(create_server) and callable(ArtifactStore) and callable(ServerConfig)",
+                (
+                    "from manure.server import ServerConfig, create_server; "
+                    "from manure.storage import ArtifactStore; "
+                    "assert callable(create_server) and callable(ArtifactStore) and callable(ServerConfig)"
+                ),
             ],
             cwd=self.root,
             env=self.environment(),

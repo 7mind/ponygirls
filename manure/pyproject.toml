@@ -13,7 +13,6 @@ dependencies = []
 
 [project.scripts]
 manure = "manure.cli:main"
-manure-server = "manure.server:main"
 manure-mcp = "manure.mcp:main"
 
 [tool.setuptools.packages.find]

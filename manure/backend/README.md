@@ -2,6 +2,12 @@
 
 Main class `manure.Main`; executable CLI `manure-server serve CONFIG.json` or
 `manure-server --config CONFIG.json`. No Python production storage/server fallback.
+The portable Python package registers only `manure` and `manure-mcp`, never a
+server command. `python -m manure.server` fails closed (exit 2) before argument
+parsing, config/credential reads, storage or networking and points to the built
+Scala binary; it does not proxy to it. Retained `ArtifactStore`, validators and
+`create_server` definitions are unsupported historical test/oracle helpers, not
+public activation entrypoints.
 Payload root MUST already exist, with no symlink components; explicit JNI mode
 `linked` for native static deployment, `shared` plus absolute `posix_library` for
 JVM verification. Physical-root claim acquired BEFORE DB migrations or mutations.
