@@ -6,7 +6,7 @@ let
   state = cfg.stateDirectory;
   credentials = "${state}/credentials";
   unit = suffix: "${cfg.unitPrefix}${suffix}.service";
-  restartOn = units: map (name: config.xdg.configFile."systemd/user/${name}".source) units;
+  restartOn = units: map (name: config.xdg.configFile."systemd/user/${name}".source) (builtins.filter (name: builtins.hasAttr "systemd/user/${name}" config.xdg.configFile) units);
   settings = cfg.settings // {
     jdbcUrl = "jdbc:postgresql://127.0.0.1:${toString cfg.database.port}/${cfg.database.name}";
     databaseUser = cfg.database.user;

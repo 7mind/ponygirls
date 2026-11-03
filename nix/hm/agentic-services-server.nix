@@ -31,6 +31,7 @@ let
         (user: {
           id = user.id;
           type = user.type;
+          displayName = user.id;
           tokens = [
             {
               id = "default";

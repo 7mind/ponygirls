@@ -3,6 +3,7 @@
 Only owned mkdtemp clusters. No live endpoint or private content is accepted.
 """
 import argparse
+import hashlib
 import concurrent.futures
 import importlib.util
 import json
@@ -53,11 +54,12 @@ def main():
         def provision(key):
             result = run('python3', provider, 'provision', str(manifest), key)
             assert result.returncode == 0, f'provision {key}: {result.stderr!r}'
+        socket_dir = str(root/'cluster'/'socket')
         def query(role, database, query, ok=True):
             env = dict(os.environ, PGCONNECT_TIMEOUT='3')
             if role != admin:
                 env['PGPASSWORD'] = Path(config['databases'][role]['passwordFile']).read_text().strip()
-            result = run(pg+'/psql', '-X', '-w', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', str(root/'cluster'/'socket') if role == admin else '127.0.0.1', '-p', str(port), '-U', role, '-d', database, '-c', query, env=env)
+            result = run(pg+'/psql', '-X', '-w', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', socket_dir if role == admin else '127.0.0.1', '-p', str(port), '-U', role, '-d', database, '-c', query, env=env)
             assert (result.returncode == 0) == ok, f'{role}/{database}: unexpected SQL outcome'
             return result.stdout.decode().strip()
         check('init-owned-new-cluster', run('python3', provider, 'init', str(manifest)).returncode == 0)
@@ -91,7 +93,26 @@ def main():
                 check(f'{role}-no-admin-db-or-privileges',True)
                 query(role,role,'SELECT pg_sleep(2)',ok=False)
                 check(f'{role}-statement-timeout',True)
-            check('durability-settings', query(admin,'postgres',"SELECT current_setting('fsync') || ',' || current_setting('full_page_writes') || ',' || current_setting('synchronous_commit')") == 'on,on,on')
+            # Actual lock deadline, not merely a SHOW assertion.
+            lockenv = dict(os.environ, PGHOST='127.0.0.1', PGPORT=str(port), PGUSER='haystack', PGDATABASE='haystack', PGPASSWORD=hashes['haystack'].decode().strip())
+            locker = subprocess.Popen([pg+'/psql','-X','-w','-qAt'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=lockenv, text=True)
+            try:
+                locker.stdin.write('BEGIN; LOCK TABLE isolation_probe IN ACCESS EXCLUSIVE MODE; SELECT 123;\n')
+                locker.stdin.flush()
+                assert locker.stdout.readline().strip() == '123'
+                before = time.monotonic()
+                query('haystack','haystack','SELECT * FROM isolation_probe',ok=False)
+                check('lock-deadline-executed',time.monotonic()-before < 2)
+            finally:
+                locker.communicate('ROLLBACK;\n',timeout=5)
+            # Idle transaction timeout kills an actual idle session.
+            idle = subprocess.Popen([pg+'/psql','-X','-w','-qAt'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=lockenv, text=True)
+            idle.stdin.write('BEGIN; SELECT 456;\n'); idle.stdin.flush()
+            assert idle.stdout.readline().strip() == '456'
+            time.sleep(1.3)
+            _, idle_error = idle.communicate('SELECT 1;\n',timeout=5)
+            check('idle-transaction-deadline-executed',idle.returncode != 0 and 'idle-in-transaction timeout' in idle_error)
+            check('durability-settings' , query(admin,'postgres',"SELECT current_setting('fsync') || ',' || current_setting('full_page_writes') || ',' || current_setting('synchronous_commit')") == 'on,on,on')
             check('capacity-budget', int(query(admin,'postgres',"SHOW max_connections")) >= sum(d['maxConnections'] for d in config['databases'].values()) + config['adminReserve'])
             # Concurrent mixed serving and time-bounded job load across databases.
             def workload(role):
@@ -143,13 +164,47 @@ def main():
             check('original-credential-remains-valid',query('haystack','haystack','SELECT 1') == '1')
         finally:
             stop()
+        # Fresh-host logical restore: restore all managed roles/password verifiers
+        # and all complete databases into a SECOND empty owned cluster. Only the
+        # initdb-created admin CREATE statement is omitted, explicitly by name.
+        config['stateDirectory'] = str(root/'restored')
+        manifest.write_text(json.dumps(config))
+        check('fresh-host-init',run('python3',provider,'init',str(manifest)).returncode == 0)
+        data = str(root/'restored'/'data')
+        socket_dir = str(root/'restored'/'socket')
+        (root/'postgresql.conf').write_text(settings.replace(str(root/'cluster'/'socket'),socket_dir))
+        env['PGHOST'] = socket_dir
+        start()
+        try:
+            globals_sql = (root/'globals.sql').read_text()
+            admin_create = f'CREATE ROLE {admin};'
+            assert globals_sql.count(admin_create) == 1
+            globals_sql = globals_sql.replace(admin_create,'-- initdb already created the same administrator',1)
+            result = run(pg+'/psql','-X','-w','-qAt','-v','ON_ERROR_STOP=1','-d','postgres',env=env,input=globals_sql,text=True)
+            assert result.returncode == 0, 'fresh-host global-role restore failed'
+            for key in config['databases']:
+                result=run(pg+'/pg_restore','-C','-d','postgres',str(dumps[key]),env=env)
+                assert result.returncode == 0
+            check('fresh-host-globals-and-all-databases-logical-restore',all(query(k,k,'SELECT payload FROM isolation_probe') == k for k in config['databases']))
+            for role in config['databases']:
+                for other in config['databases']:
+                    if role != other:
+                        query(role,other,'SELECT 1',ok=False)
+            check('fresh-host-cross-database-isolation-retained',True)
+        finally:
+            stop()
+        config['stateDirectory'] = str(root/'cluster')
+        manifest.write_text(json.dumps(config))
         # Ownership/cross-major protections are tested without starting anything.
         (root/'cluster'/'ponygirls-provider-v1').unlink()
         check('unmarked-existing-cluster-rejected',run('python3',provider,'init',str(manifest)).returncode != 0)
         (root/'cluster'/'ponygirls-provider-v1').write_text('postgresql-18\n')
         (root/'cluster'/'data'/'PG_VERSION').write_text('17\n')
         check('cross-major-reuse-rejected',run('python3',provider,'init',str(manifest)).returncode != 0)
-    receipt = {'scope':'Disposable provider DB isolation/settings/durability/provisioning/logical restore/restart; not application or deployment acceptance', 'tests':passed,'cases':len(passed),'failures':0,'errors':0,'skips':0}
+    binding = {name: hashlib.sha256(Path(os.environ[key]).read_bytes()).hexdigest() for name,key in [('provider','PG_PROVIDER'),('policy','PG_POLICY'),('configuration','PG_CONFIGURATION'),('hba','PG_HBA')]}
+    binding['test'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    binding['postgresBin'] = pg
+    receipt = {'sourceBinding':binding,'scope':'Disposable provider DB isolation/settings/durability/provisioning/logical restore/restart; not application or deployment acceptance', 'tests':passed,'cases':len(passed),'failures':0,'errors':0,'skips':0}
     (output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
     print(json.dumps(receipt))
 

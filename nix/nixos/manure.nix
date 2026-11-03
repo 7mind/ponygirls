@@ -522,7 +522,9 @@ in
           (userId: user: lib.mapAttrsToList
             (tokenId: token: "${credName userId tokenId}:${token.tokenHashFile}")
             user.tokens)
-          cfg.users);
+          cfg.users) ++ [ "database-password:${cfg.database.passwordFile}" ];
+        TimeoutStopSec = 60;
+        UMask = "0077";
       };
     };
 

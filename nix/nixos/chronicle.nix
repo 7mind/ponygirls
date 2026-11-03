@@ -24,7 +24,7 @@ let
     allowedOrigin = if cfg.publicUrl == null then "configuration-required" else cfg.publicUrl;
     secureCookies = !(cfg.loopbackDevelopment || (cfg.allowInsecureHttp && cfg.publicUrl != null && lib.hasPrefix "http://" cfg.publicUrl));
     inherit (cfg) allowInsecureHttp;
-    jdbcUrl = if cfg.database.manageLocal then "jdbc:postgresql://127.0.0.1:5432/${cfg.database.name}" else cfg.database.jdbcUrl;
+    jdbcUrl = cfg.database.jdbcUrl;
     databaseUser = cfg.database.user;
     databasePasswordFile = "${credentialDir}/database-password";
     users = lib.mapAttrsToList (id: user: {
@@ -49,25 +49,10 @@ let
   loginList = map (u: u.login) (builtins.attrValues cfg.users);
   host = if cfg.publicUrl == null then "configuration-required" else
     builtins.head (lib.splitString "/" (lib.removePrefix "https://" (lib.removePrefix "http://" cfg.publicUrl)));
-  setupDatabase = pkgs.writeShellScript "chronicle-database-setup" ''
-    set -euo pipefail
-    export CHRONICLE_DB_PASSWORD
-    CHRONICLE_DB_PASSWORD="$(<"$CREDENTIALS_DIRECTORY/database-password")"
-    if [[ -z "$CHRONICLE_DB_PASSWORD" || "$CHRONICLE_DB_PASSWORD" == *$'\n'* || "$CHRONICLE_DB_PASSWORD" == *$'\r'* ]]; then
-      echo 'Chronicle: database password must be a nonempty single line' >&2
-      exit 1
-    fi
-    ${config.services.postgresql.package}/bin/psql --no-psqlrc --set ON_ERROR_STOP=1 --dbname postgres <<'SQL'
-    \getenv chronicle_password CHRONICLE_DB_PASSWORD
-    ALTER ROLE "${cfg.database.user}" WITH LOGIN PASSWORD :'chronicle_password';
-    SQL
-    unset CHRONICLE_DB_PASSWORD
-    ${config.services.postgresql.package}/bin/psql --no-psqlrc --set ON_ERROR_STOP=1 --dbname ${lib.escapeShellArg cfg.database.name} \
-      --command 'CREATE EXTENSION IF NOT EXISTS vector;'
-  '';
+
 in
 {
-  imports = [ ./chronicle-models.nix ];
+  imports = [ ./chronicle-models.nix ./service-postgres.nix ];
   options.smind.services.chronicle = {
     enable = lib.mkEnableOption "Chronicle semi-structured agent session archive";
     package = lib.mkOption { type = lib.types.package; default = mkChroniclePackage { inherit pkgs; }; };
@@ -118,8 +103,9 @@ in
       };
     };
     database = {
-      manageLocal = lib.mkOption { type = lib.types.bool; default = true; };
-      ssdTuning = lib.mkEnableOption "SSD-oriented planner and I/O concurrency defaults for the managed PostgreSQL cluster (cluster-wide, not a storage benchmark)" // { default = true; };
+      manageLocal = lib.mkOption { type = lib.types.bool; default = false; description = "Retired: must remain false. Configure the explicitly migrated shared servicePostgres provider separately."; };
+      readinessUnit = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
+      ssdTuning = lib.mkEnableOption "SSD-oriented planner and I/O concurrency defaults for the managed PostgreSQL cluster (cluster-wide, not a storage benchmark)" // { default = false; };
       name = lib.mkOption { type = lib.types.str; default = "chronicle"; };
       user = lib.mkOption { type = lib.types.str; default = "chronicle"; };
       passwordFile = lib.mkOption { type = lib.types.path; description = "Runtime database password file; never embed a password in jdbcUrl."; };
@@ -150,7 +136,7 @@ in
         { assertion = lib.all (t: builtins.hasAttr t.userId cfg.users && t.name != "" && builtins.stringLength t.name <= 128 && t.scopes != [ ] && builtins.length t.scopes == builtins.length (lib.unique t.scopes) && (!(builtins.elem "Raw" t.scopes) || builtins.elem "Read" t.scopes)) cfg.staticTokens; message = "Chronicle: static tokens require configured owners, bounded names and nonempty distinct valid scopes (Raw requires Read)."; }
         { assertion = builtins.length loginList == builtins.length (lib.unique loginList); message = "Chronicle: logins must be unique."; }
         { assertion = lib.all (p: !(lib.hasPrefix builtins.storeDir (toString p))) runtimeFiles; message = "Chronicle: all credential files must be runtime paths outside the Nix store."; }
-        { assertion = !cfg.database.manageLocal || (cfg.database.name == cfg.database.user && builtins.match "[a-z_][a-z0-9_]*" cfg.database.name != null); message = "Chronicle: managed database name and role must match and use lowercase SQL identifiers."; }
+        { assertion = !cfg.database.manageLocal; message = "Chronicle: implicit manageLocal has been retired. Migrate logically into the explicit shared servicePostgres provider and supply its connection fields/readinessUnit."; }
         { assertion = cfg.database.manageLocal || cfg.database.jdbcUrl != ""; message = "Chronicle: external database requires jdbcUrl and a preinstalled vector extension."; }
       ];
       users.groups.chronicle = { };
@@ -158,8 +144,8 @@ in
       systemd.services.chronicle = {
         description = "Chronicle agent session archive and search";
         wantedBy = [ "multi-user.target" ];
-        after = [ "network-online.target" ] ++ lib.optional cfg.database.manageLocal "chronicle-database.service";
-        requires = lib.optional cfg.database.manageLocal "chronicle-database.service";
+        after = [ "network-online.target" ] ++ lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+        requires = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
         serviceConfig = {
           User = "chronicle";
           Group = "chronicle";
@@ -185,36 +171,6 @@ in
         };
       };
     }
-    (lib.mkIf cfg.database.manageLocal {
-      services.postgresql = {
-        enable = true;
-        extensions = p: [ p.pgvector ];
-        settings = lib.mkIf cfg.database.ssdTuning {
-          random_page_cost = lib.mkDefault 1.1;
-          effective_io_concurrency = lib.mkDefault 200;
-          maintenance_io_concurrency = lib.mkDefault 100;
-        };
-        ensureDatabases = [ cfg.database.name ];
-        ensureUsers = [ { name = cfg.database.user; ensureDBOwnership = true; } ];
-        authentication = lib.mkBefore ''
-          host ${cfg.database.name} ${cfg.database.user} 127.0.0.1/32 scram-sha-256
-        '';
-      };
-      systemd.services.chronicle-database = {
-        description = "Chronicle database credentials and pgvector setup";
-        requires = [ "postgresql.service" "postgresql-setup.service" ];
-        after = [ "postgresql.service" "postgresql-setup.service" ];
-        before = [ "chronicle.service" ];
-        serviceConfig = {
-          Type = "oneshot";
-          User = "postgres";
-          LoadCredential = [ "database-password:${cfg.database.passwordFile}" ];
-          ExecStart = setupDatabase;
-          RemainAfterExit = true;
-          UMask = "0077";
-        };
-      };
-    })
     (lib.mkIf cfg.proxy.enable {
       services.nginx.enable = true;
       services.nginx.virtualHosts.${host} = {

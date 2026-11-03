@@ -382,6 +382,7 @@
                     {
                       system.stateVersion = "26.11";
                       smind.services.haystack.enable = true;
+                      smind.services.haystack.database = { jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/haystack"; passwordFile = "/run/secrets/haystack-database"; readinessUnit = "ponygirls-database-haystack.service"; };
                     }
                     extra)
                 ];
@@ -426,12 +427,14 @@
                       self.nixosModules.haystack
                       ({ lib, ... }: {
                         options.services.postgresql = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                        options.systemd.tmpfiles.rules = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ ]; };
                         options.systemd.services = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                         options.services.nginx = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                         options.networking.firewall = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                       })
                       ({ lib, ... }: lib.recursiveUpdate
-                        { smind.services.haystack.enable = true; }
+                        { smind.services.haystack.enable = true;
+                      smind.services.haystack.database = { jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/haystack"; passwordFile = "/run/secrets/haystack-database"; readinessUnit = "ponygirls-database-haystack.service"; }; }
                         extra)
                     ];
                   };
@@ -470,10 +473,11 @@
             # Digest credentials load via LoadCredential, never store material.
             assert builtins.elem "haystack-hash-w-agent-default:/run/secrets/agent-sha"
               full.systemd.services.haystack.serviceConfig.LoadCredential;
-            assert (builtins.elemAt full.services.postgresql.ensureUsers 0).name == "haystack";
+            assert !full.services.postgresql.enable;
+            assert builtins.elem "database-password:/run/secrets/haystack-database" full.systemd.services.haystack.serviceConfig.LoadCredential;
             # Setup waits for the database to exist (fresh clusters race without this).
-            assert builtins.elem "postgresql-setup.service" full.systemd.services.haystack-setup.after;
-            assert builtins.elem "postgresql-setup.service" full.systemd.services.haystack-setup.requires;
+            assert builtins.elem "ponygirls-database-haystack.service" full.systemd.services.haystack-setup.after;
+            assert builtins.elem "ponygirls-database-haystack.service" full.systemd.services.haystack-setup.requires;
             # Server-only host: we enable no proxy and open no firewall ports.
             assert !serverOnly.services.nginx.enable;
             assert serverOnly.networking.firewall.allowedTCPPorts == [ ];
@@ -484,7 +488,7 @@
             assert externalEdge.systemd.services.haystack.description != "";
             # Full host: proxy on, firewall still closed unless asked.
             assert full.services.nginx.virtualHosts ? "memory.example.net";
-            assert full.services.nginx.virtualHosts."memory.example.net".root == "${full.smind.services.haystack.package}/lib/node_modules/haystack/web/dist";
+            assert full.services.nginx.virtualHosts."memory.example.net".root == "${full.smind.services.haystack.package}/share/haystack/web";
             assert full.services.nginx.virtualHosts."memory.example.net".locations."/".proxyPass == null;
             assert full.services.nginx.virtualHosts."memory.example.net".locations."/api/".proxyWebsockets;
             assert full.services.nginx.virtualHosts."memory.example.net".locations."/mcp".proxyWebsockets;

@@ -76,7 +76,7 @@ let
     in
     assert allAssertions c;
     assert builtins.elem "ivm-haystack" names == flags.haystack;
-    assert builtins.elem "ivm-postgres" names == flags.haystack;
+    assert !(builtins.elem "ivm-postgres" names);
     assert builtins.elem "ivm-haystack-backup" names == flags.haystack;
     assert (c.systemd.user.timers ? ivm-haystack-backup) == flags.haystack;
     assert builtins.elem "ivm-manure" names == flags.manure;
@@ -138,7 +138,7 @@ let
         timers = builtins.attrNames cfg.systemd.user.timers;
         setup = units.ivm-services-setup.Service.ExecStart.text;
         crawl = units.ivm-crawl4ai.Service.ExecStart.text;
-        postgres = units.ivm-postgres.Service.ExecStart.text;
+        haystackConfig = artifacts.haystackConfig.value;
       }
     )
   );
@@ -155,7 +155,7 @@ assert disabled.systemd.user.services == { };
 assert disabled.systemd.user.timers == { };
 assert disabled.lib == { };
 assert disabled.home.packages == [ ];
-assert builtins.attrNames units == baseline.units;
+assert builtins.attrNames units == builtins.filter (n: !(builtins.elem n [ "ivm-postgres" "ivm-haystack-database" ])) baseline.units;
 assert builtins.attrNames cfg.systemd.user.timers == baseline.timers;
 assert builtins.all testCombo combos;
 assert allAssertions retired;
@@ -177,15 +177,19 @@ assert
     "agenix.service"
     "ivm-crawl4ai-redis.service"
   ];
-assert units.ivm-haystack-database.Unit.Requires == [ "ivm-postgres.service" ];
-assert units.ivm-postgres.Service.KillSignal == "SIGINT";
-assert units.ivm-postgres.Service.TimeoutStopSec == 120;
+assert builtins.elem "ponygirls-database-haystack.service" units.ivm-haystack.Unit.After;
+assert builtins.elem "ponygirls-database-manure.service" units.ivm-manure.Unit.After;
+assert !(units ? ivm-postgres);
 assert units.ivm-services-setup.Service.UMask == "0077";
 assert units.ivm-crawl4ai.Service.NoNewPrivileges;
 assert cfg.systemd.user.timers.ivm-haystack-backup.Timer.OnCalendar == "daily";
 assert cfg.systemd.user.timers.ivm-haystack-backup.Timer.Persistent;
-assert artifacts.haystackAuth.value == baseline.haystackAuth;
-assert artifacts.manureConfig.value == baseline.manureConfig;
+assert builtins.removeAttrs artifacts.haystackAuth.value [ "users" ] == builtins.removeAttrs baseline.haystackAuth [ "users" ];
+assert map (u: builtins.removeAttrs u [ "displayName" ]) artifacts.haystackAuth.value.users == baseline.haystackAuth.users;
+assert builtins.removeAttrs artifacts.manureConfig.value [ "database" "native_mode" "posix_library" "dashboard_dir" "unlock_shell_dir" ] == baseline.manureConfig;
+assert artifacts.manureConfig.value.database.passwordFile == "/run/secrets/manure-database";
+assert artifacts.haystackConfig.value.database.passwordFile == "/run/secrets/haystack-database";
+assert artifacts.haystackConfig.value.retrieval.embedding == null;
 assert http.lib.ponygirls.agenticServices.haystackAuth.value.cookieSecure == false;
 assert builtins.elem "http://services.example.test:8445"
   http.lib.ponygirls.agenticServices.haystackAuth.value.insecureHttpOrigins;
