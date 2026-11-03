@@ -218,7 +218,7 @@ class TagSearchTest extends munit.FunSuite {
     val database=f.db.transaction(c => Sql.one(c,"SELECT current_database()")(_.getString(1)).get)
     val identifier="\""+database.replace("\"","\"\"")+"\""
     f.db.transaction { c =>
-      Sql.exec(c,s"CREATE ROLE $role LOGIN"); Sql.exec(c,s"REVOKE TEMP ON DATABASE $identifier FROM PUBLIC")
+      Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'"); Sql.exec(c,s"REVOKE TEMP ON DATABASE $identifier FROM PUBLIC")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
       Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_generation_tags TO $role")
     }

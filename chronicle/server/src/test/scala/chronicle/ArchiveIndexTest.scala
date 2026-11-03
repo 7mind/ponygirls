@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 class ArchiveIndexTest extends munit.FunSuite {
   private def database(f: (Config,Database,PostgresArchive,PostgresArchiveIndex) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
+    val config=Fixtures.config(); val db=Fixtures.database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members CASCADE")
       Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
@@ -273,7 +273,7 @@ class ArchiveIndexTest extends munit.FunSuite {
     val separator=if(config.jdbcUrl.contains("?")) "&" else "?"
     val options=java.net.URLEncoder.encode("-c enable_indexscan=off -c enable_bitmapscan=off",java.nio.charset.StandardCharsets.UTF_8)
     val exactConfig=config.copy(jdbcUrl=config.jdbcUrl+separator+"options="+options)
-    val exactDb=new Database(exactConfig,IndexProfileCatalog.legacyOnly(exactConfig))
+    val exactDb=Fixtures.database(exactConfig,IndexProfileCatalog.legacyOnly(exactConfig))
     val exactIndex=new PostgresArchiveIndex(exactDb,new PostgresArchive(exactDb,exactConfig),exactConfig)
     def count(body: String): Long = {
       val q=query("mode:semantic ("+body+")",ArchiveSort.LastTimestamp,SortDirection.Desc,None,100)

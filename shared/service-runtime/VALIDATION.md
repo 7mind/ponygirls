@@ -169,3 +169,43 @@ and was not merged with any other XML. Own orphan fixture cluster
 explicitly stopped ~01:00Z; unrelated PostgreSQL processes were not touched. A
 separate retrieval-worker full run was observed and left alone, avoiding duplicate
 reruns. No tests, filters or real deadline/concurrency assertions were weakened.
+
+## Actual Chronicle shared-JDBC adoption (full release gate still parent-owned)
+
+2026-11-03 ~01:12Z fresh full shared runtime gate: **9 suites /34 cases /0 failures /
+0 errors /0 skips**, including synchronous finite admission, waiter expiry,
+interrupt reservation cleanup, close drain, safe SQL errors/secondary rollback
+failure and the same abstract transaction laws against Dummy, IO PG and blocking
+PG. Both facades delegate the same physical engine, without an IO runtime bridge.
+
+A focused Chronicle adoption run on an owned SCRAM cluster at ~01:10Z first exposed
+a real regression: startup driver options overwrote a stricter100ms role timeout;
+109 cases had1 failure (stricter elapsed bound), retained in a separate fresh
+receipt. The engine was corrected to tighten, never weaken, effective pg_settings
+bounds. Both facade tests explicitly verify role100ms/75ms/150ms remain stricter
+than configured larger bounds. The original elapsed assertion was not weakened.
+
+After that correction, exact instrumentation tests exposed the new single
+connection-setup query (metadata total3->4, pre-domain setup preceding RR selection,
+and the public-read no-per-request-deadline observer). Tests now explicitly account
+all statements: exact setup once/connection in autocommit, exact metadata total4/5
+including unchanged domain3/4, all domain queries RR on the same physical connection,
+and ordinary public reads still no local source-budget/cursor/deadline work. No
+hidden SQL/counter exclusions or broader numeric thresholds were introduced.
+
+Final targeted rerun at ~01:16Z: **9 suites /109 cases /0 failures /0 errors /
+0 skips**. Includes ChronicleJdbcRuntime5 (required eight-field config, bounded
+managed credential refs, real deadline+safe SQLState, actual distage close, twice
+successful migrate CLI with forbidden model endpoints and no generic re-ledger),
+Core7, ModelGraph1, ArchiveProjection15, PostgresBehavior22, RetryFailedActions19,
+OwnerReindexActions16, MessageContextBoundary10, McpSourceBoundary14.
+Fresh `20261103-chronicle-adoption-focused.*` directories under runtime validation
+runs preserve source patch/HEAD, XML and logs for each attempt; none were merged.
+
+Domain migration resources/order/initialization/backfill code are unchanged.
+Required real-JDBC proxy/schema probes use an explicit factory seam in test fixtures
+without relaxing production URL validation. PostgreSQL role fixtures now have a
+nonempty synthetic password; the backend full-run bootstrap uses SCRAM. This is
+focused adoption evidence, not the full mandatory Chronicle release result. Parent
+owns the durable full unfiltered run after all final inputs are integrated; no third
+600-second foreground full attempt was made.
