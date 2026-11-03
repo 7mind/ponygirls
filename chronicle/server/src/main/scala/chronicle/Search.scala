@@ -2,6 +2,7 @@ package chronicle
 import chronicle.api.*
 import java.util.UUID
 import java.sql.Connection
+import ponygirls.retrieval.{CandidatePolicy,CandidateSql,RetrievalMode,Vectors}
 
 trait SearchIndex {
   def search(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchResult
@@ -14,12 +15,12 @@ trait SearchIndex {
   def tags(reader: String,q: TagSearchQuery,materialization: ReadMaterialization): List[Facet]
 }
 object SearchPolicy {
-  val maxDimensions = 4000
-  val candidatesPerLeg = 1000
-  val efSearch = 200
-  val maxScanTuples = 200000
-  val scanMemoryMultiplier = 4
-  val reciprocalRankConstant = 60
+  val maxDimensions = Vectors.maxDimensions
+  val candidatesPerLeg = CandidatePolicy.candidatesPerLeg
+  val efSearch = CandidatePolicy.efSearch
+  val maxScanTuples = CandidatePolicy.maxScanTuples
+  val scanMemoryMultiplier = CandidatePolicy.scanMemoryMultiplier
+  val reciprocalRankConstant = CandidatePolicy.reciprocalRankConstant
   val facetValuesPerField = 100
   val facetFields = 3
   def rankingLimit(mode: SearchMode): Int = if(mode==SearchMode.Hybrid) candidatesPerLeg*2 else candidatesPerLeg
@@ -37,10 +38,7 @@ object SearchPolicy {
     values.mkString("[",",","]")
   }
   def configure(c: Connection): Unit = {
-    Sql.exec(c,"SET LOCAL hnsw.iterative_scan = strict_order")
-    Sql.exec(c,s"SET LOCAL hnsw.ef_search = $efSearch")
-    Sql.exec(c,s"SET LOCAL hnsw.max_scan_tuples = $maxScanTuples")
-    Sql.exec(c,s"SET LOCAL hnsw.scan_mem_multiplier = $scanMemoryMultiplier")
+    CandidateSql.configureStatements.foreach(Sql.exec(c,_))
   }
 }
 private[chronicle] final case class SearchStatement(sql: String,args: List[Sql.Param])
@@ -71,15 +69,14 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     } else {
       val dimensions=SearchPolicy.dimensions(config)
       val queryVector=SearchPolicy.vector(vector.getOrElse(throw DomainError("unavailable","query embedding unavailable")),config)
-      val ann=s"ann AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $authorized ORDER BY l2_normalize(ch.embedding)::halfvec($dimensions) <=> l2_normalize(?::vector)::halfvec($dimensions) LIMIT ${SearchPolicy.candidatesPerLeg})"
+      val ann=s"ann AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $authorized ORDER BY ${CandidateSql.annDistance(dimensions,"ch.embedding")} LIMIT ${SearchPolicy.candidatesPerLeg})"
       val annArgs: List[Sql.Param]=List(EmbeddingSpaceDescriptor.from(config.embedding).id)++acl++List(queryVector)
       val (legs,legArgs)=if(q.mode==SearchMode.Hybrid && q.query.nonEmpty) {
         (s",lexical AS MATERIALIZED(SELECT $fields FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND $lexicalPredicate$authorized ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT ${SearchPolicy.candidatesPerLeg}),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",List(EmbeddingSpaceDescriptor.from(config.embedding).id)++lexicalArgs++List(q.query))
       } else (",candidates AS(SELECT * FROM ann)",Nil)
-      // Cover-density rank can be positive even when a negated term makes the full query false.
-      val lexicalScore="CASE WHEN document @@ websearch_to_tsquery('english',?) THEN ts_rank_cd(document,websearch_to_tsquery('english',?)) ELSE 0 END"
-      val score=if(q.mode==SearchMode.Semantic) "1.0-distance" else s"(CASE WHEN lex>0 THEN 1.0/(${SearchPolicy.reciprocalRankConstant}+lr) ELSE 0 END)+1.0/(${SearchPolicy.reciprocalRankConstant}+vr)"
-      SearchStatement(s"WITH $ann$legs,ranked AS(SELECT *,$lexicalScore AS lex,embedding <=> ?::vector AS distance FROM candidates),ranked2 AS(SELECT *,row_number() OVER(ORDER BY lex DESC,id) AS lr,row_number() OVER(ORDER BY distance,id) AS vr FROM ranked),scored AS(SELECT *,$score AS score FROM ranked2),sessions AS(SELECT DISTINCT ON(session_id) * FROM scored ORDER BY session_id,score DESC,id)",annArgs++legArgs++List(q.query,q.query,queryVector))
+      // Shared executable reranking retains the exact original-vector/RRF/entity algorithm.
+      val mode=if(q.mode==SearchMode.Semantic) RetrievalMode.Semantic else RetrievalMode.Hybrid
+      SearchStatement(s"WITH $ann$legs,"+CandidateSql.rerankCtes(mode,"session_id"),annArgs++legArgs++List(q.query,q.query,queryVector))
     }
   }
   private[chronicle] def legacyStatement(reader: String,q: SearchQuery,vector: Option[List[Double]]): SearchStatement = {

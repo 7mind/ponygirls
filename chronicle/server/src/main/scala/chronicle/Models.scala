@@ -10,6 +10,7 @@ import io.circe.Json
 import java.util.UUID
 import java.nio.charset.StandardCharsets.UTF_8
 import scala.concurrent.duration.*
+import ponygirls.retrieval.{JsonHttp,EmbeddingCodec,RetrievalError}
 
 object Fragments {
   val maxBytes = 2048
@@ -30,17 +31,13 @@ object Fragments {
 trait Embedder { def documents(owner: String,text: List[String]): IO[List[List[Double]]]; def query(owner: String,text: String): IO[List[Double]] }
 object ModelHttp {
   def client(config: Config): Resource[IO,Client[IO]] =
-    EmberClientBuilder.default[IO].withTimeout(transportTimeout(config)).withIdleConnectionTime(transportTimeout(config)).withMaxResponseHeaderSize(16384).build
+    JsonHttp.client(transportTimeout(config))
   def transportTimeout(config: Config): FiniteDuration = config.annotation.timeoutSeconds.max(config.embedding.timeoutSeconds).seconds
 }
 final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: ModelAdmission) {
   def post(context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json): IO[Json] =
     postDecoded(context,endpoint,credentialFile,timeout,maxBytes,payload)(identity)
   def postDecoded[A](context: ModelCallContext,endpoint: String,credentialFile: String,timeout: Int,maxBytes: Int,payload: Json)(decode: Json => A): IO[A] = IO.defer {
-    val uri = Uri.fromString(endpoint).fold(_ => throw DomainError("config","invalid model endpoint"),identity)
-    val credential = Config.credential(credentialFile)
-    val base = Request[IO](Method.POST,uri).withEntity(payload.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"))
-    val req = if(credential.isEmpty) base else base.putHeaders(Header.Raw(CIString("Authorization"),s"Bearer $credential"))
     admission.request(context.purpose).use { _ => Ref.of[IO,ProviderUsage](ProviderUsage.unknown).flatMap { usage =>
       Resource.makeCase(telemetry.begin(context)) { (ticket,exit) =>
         val outcome=exit match {
@@ -50,13 +47,17 @@ final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: Mo
         }
         usage.get.flatMap(value => telemetry.finish(ticket,outcome,value))
       }.use { _ =>
-        client.run(req).use { response =>
-          if(!response.status.isSuccess) IO.raiseError(DomainError("model-http",s"model returned HTTP ${response.status.code}"))
-          else response.body.take(maxBytes.toLong+1).compile.to(Array).flatMap { bytes => IO.uncancelable { _ =>
-            IO { if(bytes.length>maxBytes) throw ModelRejection.from(ModelRejectionReason.ResponseByteBound); ModelOutput.parse(new String(bytes,UTF_8)) }
-              .flatTap(json => usage.set(ProviderUsage.parse(json,context.purpose))).map(decode)
-          }}
-        }.timeoutTo(timeout.seconds,IO.raiseError(DomainError("model-timeout","model deadline exceeded")))
+        JsonHttp.credential(credentialFile).flatMap { credential =>
+          JsonHttp.post(client,endpoint,credential,timeout.seconds,maxBytes,payload)(identity)
+        }.flatMap { json => IO.uncancelable { _ => usage.set(ProviderUsage.parse(json,context.purpose)).as(json).map(decode) } }
+          .handleErrorWith {
+            case error: RetrievalError => error.code match {
+              case "model-response-bound" => IO.raiseError(ModelRejection.from(ModelRejectionReason.ResponseByteBound))
+              case "model-json" => IO.raiseError(ModelRejection.from(ModelRejectionReason.ModelJsonInvalid))
+              case _ => IO.raiseError(DomainError(error.code,error.detail))
+            }
+            case error => IO.raiseError(error)
+          }
       }
     }}
   }
@@ -75,19 +76,10 @@ final class OpenAIEmbedder(http: ModelHttp,config: Config) extends Embedder {
     val cfg = config.embedding
     Check(text.forall(_.getBytes(UTF_8).length <= 16384),"invalid","embedding input bound including prefix")
     Check(text.nonEmpty && text.size<=16,"invalid","embedding batch bound")
-    val fields=List("model"->Json.fromString(cfg.model),"input"->Json.arr(text.map(Json.fromString)*),"encoding_format"->Json.fromString("float"))
-    val payload=Json.obj((fields++(if(cfg.sendDimensions) List("dimensions"->Json.fromInt(cfg.dimensions)) else Nil))*)
-    http.post(context,cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,payload).map { r =>
-      val data = r.hcursor.get[List[Json]]("data").fold(_ => throw DomainError("model-output","missing embedding data"),identity)
-      Check(data.size==text.size,"model-output","embedding count mismatch")
-      val indexed = data.map { j =>
-        val i = j.hcursor.get[Int]("index").fold(_ => throw DomainError("model-output","missing embedding index"),identity)
-        val v = j.hcursor.get[List[Double]]("embedding").fold(_ => throw DomainError("model-output","invalid embedding"),identity)
-        Check(v.size==cfg.dimensions && v.forall(_.isFinite) && v.exists(_ != 0.0),"model-output","invalid vector dimension/value")
-        (i,v)
-      }
-      Check(indexed.map(_._1).sorted == text.indices.toList,"model-output","invalid embedding indices")
-      indexed.sortBy(_._1).map(_._2)
+    val payload=EmbeddingCodec.payload(cfg.model,text,cfg.dimensions,cfg.sendDimensions)
+    http.post(context,cfg.endpoint,cfg.credentialFile,cfg.timeoutSeconds,cfg.maxResponseBytes,payload).map { json =>
+      try EmbeddingCodec.decode(json,text.size,cfg.dimensions)
+      catch { case error: RetrievalError => throw DomainError(error.code,error.detail) }
     }
   }
 }

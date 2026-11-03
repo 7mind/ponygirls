@@ -5,13 +5,10 @@ import java.sql.Connection
 import java.nio.charset.StandardCharsets.UTF_8
 
 enum IndexPolicy { case ContextAwareProblemsV1 }
-final case class EmbeddingSpaceDescriptor(endpointIdentity: String,model: String,revision: String,dimensions: Int,sendDimensions: Boolean,queryPrefix: String,documentPrefix: String,normalization: String) {
-  def json: Json = Json.arr(Json.fromString("embedding-space-v1"),Json.fromString(endpointIdentity),Json.fromString(model),Json.fromString(revision),Json.fromInt(dimensions),Json.fromBoolean(sendDimensions),Json.fromString(queryPrefix),Json.fromString(documentPrefix),Json.fromString(normalization))
-  def id: String = Wire.hash(json.noSpaces)
-}
+type EmbeddingSpaceDescriptor = ponygirls.retrieval.EmbeddingSpace
 object EmbeddingSpaceDescriptor {
   def from(config: EmbeddingConfig): EmbeddingSpaceDescriptor =
-    EmbeddingSpaceDescriptor(Wire.hash(config.endpoint),config.model,config.revision,config.dimensions,config.sendDimensions,config.queryPrefix,config.documentPrefix,"cosine")
+    ponygirls.retrieval.EmbeddingSpace(Wire.hash(config.endpoint),config.model,config.revision,config.dimensions,config.sendDimensions,config.queryPrefix,config.documentPrefix,"cosine")
 }
 final case class IndexProfile(profile: String,policy: IndexPolicy,embedding: EmbeddingSpaceDescriptor,descriptor: Json)
 final class IndexProfileCatalog private (val profiles: List[IndexProfile],val preferred: IndexProfile) {

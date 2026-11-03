@@ -11,6 +11,7 @@ import scala.util.control.NoStackTrace
   */
 object LosslessJson {
   val EncodingVersion = "lossless-json-v1"
+  private val MaximumNumberChars = 1024 * 1024
 
   /** Depth counts nested containers (a scalar has depth zero). Byte limits
     * apply to the complete original UTF-8 input, including whitespace.
@@ -24,7 +25,7 @@ object LosslessJson {
   ) {
     require(maxBytes >= 1 && maxBytes <= 16 * 1024 * 1024, "maxBytes must be 1..16777216")
     require(maxDepth >= 0 && maxDepth <= 128, "maxDepth must be 0..128")
-    require(maxNumberChars >= 1 && maxNumberChars <= 65536, "maxNumberChars must be 1..65536")
+    require(maxNumberChars >= 1 && maxNumberChars <= MaximumNumberChars, s"maxNumberChars must be 1..$MaximumNumberChars")
     require(maxExponentAbs >= 0 && maxExponentAbs <= 999999, "maxExponentAbs must be 0..999999")
   }
 
