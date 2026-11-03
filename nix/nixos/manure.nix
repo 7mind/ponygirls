@@ -30,6 +30,7 @@
 #   this). The VM handoff probes that use curl -sk / CERT_NONE verify
 #   TLS transport + Host routing only, NOT certificate trust/SAN — do not
 #   claim production assurance from skip-verification.
+{ mkManurePackage }:
 { config, lib, pkgs, ... }:
 let
   cfg = config.smind.services.manure;
@@ -80,9 +81,16 @@ let
   # `credential` key (the server's `hashFile` is filled in by the
   # launcher with an absolute $CREDENTIALS_DIRECTORY path). [R2]
   serverTemplate = {
+    database = { inherit (cfg.database) jdbcUrl user limits; passwordFile = "/run/credentials/manure.service/database-password"; };
+    native_mode = "linked";
+    posix_library = null;
+    dashboard_dir = if cfg.dashboardDir == null then "${cfg.package}/share/manure/web/dashboard" else cfg.dashboardDir;
+    unlock_shell_dir = if cfg.unlockShellDir == null then "${cfg.package}/share/manure/web/unlock" else cfg.unlockShellDir;
     listen_address = cfg.listenAddress;
     port = cfg.port;
     data_dir = cfg.dataDir;
+    migration_receipt_dir = cfg.migrationReceiptDirectory;
+    embedding = if cfg.embedding == null then null else cfg.embedding // { credentialFile = "/run/credentials/manure.service/embedding-key"; };
     api_origin = cfg.apiOrigin;
     content_mode = cfg.contentMode;
     loopback_dev = cfg.loopbackDev;
@@ -118,13 +126,7 @@ let
     incomplete_session_ttl_s = cfg.incompleteSessionTtl;
     grant_ttl_s = cfg.grantTtl;
     one_time_grant_ttl_s = cfg.oneTimeGrantTtl;
-  } // lib.optionalAttrs (cfg.contentSuffix != null) {
-    content_suffix = cfg.contentSuffix;
-  } // lib.optionalAttrs (cfg.dashboardDir != null) {
-    dashboard_dir = cfg.dashboardDir;
-  } // lib.optionalAttrs (cfg.unlockShellDir != null) {
-    unlock_shell_dir = cfg.unlockShellDir;
-  };
+  } // lib.optionalAttrs (cfg.contentSuffix != null) { content_suffix = cfg.contentSuffix; };
 
   templateJson = pkgs.writeText "manure-config.template.json" (builtins.toJSON serverTemplate);
 
@@ -175,11 +177,14 @@ let
                 sys.exit(1)
             # Absolute runtime path only; digest bytes never enter the config.
             tok["hashFile"] = os.path.join(cred_dir, name)
+    config["database"]["passwordFile"] = os.path.join(cred_dir,"database-password")
+    if config["embedding"] is not None:
+        config["embedding"]["credentialFile"] = os.path.join(cred_dir,"embedding-key")
     with open(out, "w", encoding="utf-8") as fh:
         os.chmod(out, 0o600)
         json.dump(config, fh)
     PYEOF
-    exec ${cfg.package}/bin/manure-server --config "$out"
+    exec ${cfg.package}/bin/manure-server "''${1:---config}" "$out"
   '';
 
   # Allowlisted access-log format: addresses, timing, and the query-less
@@ -285,11 +290,13 @@ let
   };
 in
 {
+  imports = [ ./service-postgres.nix ];
   options.smind.services.manure = {
+    database = import ../lib/service-database-options.nix { inherit lib; name = "manure"; };
     enable = lib.mkEnableOption "manure file & directory hosting service";
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.callPackage ../pkg/manure/package.nix { };
+      default = mkManurePackage { inherit pkgs; };
       description = "manure server package (bundles the dashboard + unlock shells).";
     };
     listenAddress = lib.mkOption {
@@ -319,10 +326,18 @@ in
       example = "artifacts.7mind.io";
       description = "Required in subdomain mode, optional in path mode. Content suffix; each artifact serves from <hex32>.<contentSuffix>. A separate registrable domain is strongly recommended when unrelated apps share the parent domain (§5.6).";
     };
+      embedding = import ../lib/embedding-options.nix { inherit lib; extraOptions = {
+        maxConcurrent = lib.mkOption { type = lib.types.ints.positive; };
+        maxQueued = lib.mkOption { type = lib.types.ints.unsigned; };
+        batchSize = lib.mkOption { type = lib.types.ints.positive; };
+        leaseSeconds = lib.mkOption { type = lib.types.ints.between 3 3600; };
+        pollIntervalMs = lib.mkOption { type = lib.types.ints.positive; };
+      }; };
+    migrationReceiptDirectory = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Offline converter control receipt root (OWNER/COMPLETE/import.sql), distinct from payload dataDir and operator credentials."; };
     dataDir = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/manure";
-      description = "Storage root (sqlite + staging + live). Created 0700 manure:manure via tmpfiles, including custom paths.";
+      description = "Storage payload root (PostgreSQL metadata is separately provisioned). Created 0700 manure:manure via tmpfiles, including custom paths.";
     };
     users = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule {
@@ -493,10 +508,24 @@ in
       "d ${cfg.dataDir} 0700 manure manure -"
     ];
 
+    systemd.services.manure-migrate = {
+      description = "Manure schema bootstrap under physical-root claims";
+      wantedBy = [ "multi-user.target" ];
+      after = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+      requires = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
+      serviceConfig = {
+        Type = "oneshot"; User = "manure"; Group = "manure"; RemainAfterExit = true;
+        RuntimeDirectory = "manure-migrate"; RuntimeDirectoryMode = "0700";
+        ExecStart = "${launcher}/bin/manure-launcher migrate";
+        LoadCredential = config.systemd.services.manure.serviceConfig.LoadCredential;
+        UMask = "0077"; TimeoutStartSec = 180;
+      };
+    };
     systemd.services.manure = {
       description = "manure file & directory hosting service";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
+      after = [ "network.target" "manure-migrate.service" ];
+      requires = [ "manure-migrate.service" ];
       serviceConfig = {
         ExecStart = "${launcher}/bin/manure-launcher";
         User = "manure";
@@ -519,7 +548,9 @@ in
           (userId: user: lib.mapAttrsToList
             (tokenId: token: "${credName userId tokenId}:${token.tokenHashFile}")
             user.tokens)
-          cfg.users);
+          cfg.users) ++ [ "database-password:${cfg.database.passwordFile}" ] ++ lib.optional (cfg.embedding != null) "embedding-key:${cfg.embedding.credentialFile}";
+        TimeoutStopSec = 60;
+        UMask = "0077";
       };
     };
 

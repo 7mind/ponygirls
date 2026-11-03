@@ -59,6 +59,10 @@ let
     with open(digest_file, "w") as fh:
         fh.write(digest + "\n")
     config = {
+        "database": json.loads(os.environ["PONYGIRLS_TEST_DATABASE_MANURE"]),
+        "native_mode":"linked", "posix_library":None, "embedding":None,
+        "dashboard_dir":os.path.join(pkg,"share/manure/web/dashboard"),
+        "unlock_shell_dir":os.path.join(pkg,"share/manure/web/unlock"),
         "port": port,
         "data_dir": data,
         "api_origin": "http://127.0.0.1:%d" % port,
@@ -70,18 +74,19 @@ let
     cfg_path = os.path.join(work, "config.json")
     with open(cfg_path, "w") as fh:
         json.dump(config, fh)
+    server_log = open(os.path.join(work,"server.log"),"wb")
     server = subprocess.Popen(
         [os.path.join(pkg, "bin", "manure-server"), "--config", cfg_path],
-        cwd=work, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cwd=work, stdout=server_log, stderr=server_log)
     try:
         base = "http://127.0.0.1:%d" % port
         for _ in range(200):
             try:
-                with urllib.request.urlopen(base + "/api/v1/health",
-                                            timeout=2) as r:
-                    if r.status == 200:
-                        break
+                from manure.client import ManureClient
+                ManureClient(base).version()
+                break
             except Exception:
+                if server.poll() is not None: raise SystemExit("native server exited before readiness (sanitized log): " + open(server_log.name).read())
                 time.sleep(0.05)
         else:
             raise SystemExit("server never became healthy")
@@ -239,9 +244,9 @@ let
   '';
 in
 pkgs.runCommand "manure-client-test"
-{
+({
   nativeBuildInputs = [ pkgs.coreutils python jq ];
-} ''
-  ${python}/bin/python "${driver}" "${manurePackage}" "${manurePackage}/${python.sitePackages}"
+} // (import ./owned-postgres-environment.nix { inherit pkgs; })) ''
+  ${python}/bin/python ${./with-owned-postgres.py} ${python}/bin/python "${driver}" "${manurePackage}" "${manurePackage}/lib/python"
   touch $out
 ''

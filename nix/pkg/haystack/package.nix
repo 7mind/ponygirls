@@ -1,39 +1,14 @@
-# Haystack server + bundled UI (Step 1 scaffold; service arrives Steps 2-7).
-{ lib, buildNpmPackage, nodejs, makeBinaryWrapper }:
-buildNpmPackage (finalAttrs: {
+{ lib, callPackage, runCommand, squishLib }:
+let
+  nativeArtifact = callPackage ../services/native.nix { inherit squishLib; service = "haystack"; };
+  web = callPackage ./web.nix { };
+in runCommand "haystack-0.1.0" {
   pname = "haystack";
   version = "0.1.0";
-
-  src = lib.cleanSourceWith {
-    src = ../../../haystack;
-    filter =
-      path: type:
-      let
-        base = baseNameOf path;
-      in
-      base != "node_modules" && base != "dist";
-  };
-
-  npmDepsHash = "sha256-WlhsXvvdzXnucSg0stQCCbL3u4ZqBauo3h4LMMBjPKE=";
-
-  nativeBuildInputs = [ makeBinaryWrapper ];
-
-  # Root `npm run build` builds server (tsc) then web (vite).
-  # Web output lands in web/dist next to server/dist, which is how the
-  # server locates its bundled UI at runtime (no network, no npm).
-  buildPhase = ''
-    runHook preBuild
-    npm run build
-    runHook postBuild
-  '';
-
-  postInstall = ''
-    makeWrapper ${nodejs}/bin/node "$out/bin/haystack-server" \
-      --add-flags "$out/lib/node_modules/haystack/server/dist/index.js"
-  '';
-
-  meta = {
-    description = "Haystack structured agent-memory service";
-    mainProgram = "haystack-server";
-  };
-})
+  passthru = { inherit nativeArtifact web; runtimeSource = nativeArtifact.runtimeSource; };
+  meta = { description = "Native Scala Haystack server and current web client"; mainProgram = "haystack-server"; platforms = [ "x86_64-linux" ]; license = lib.licenses.mit; };
+} ''
+  mkdir -p "$out/bin" "$out/share/haystack"
+  ln -s ${nativeArtifact}/libexec/haystack-server "$out/bin/haystack-server"
+  ln -s ${web}/share/haystack/web "$out/share/haystack/web"
+''
