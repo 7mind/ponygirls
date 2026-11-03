@@ -129,14 +129,15 @@ def provision(cfg, key):
     d = cfg['databases'][key]
     name, role = d['name'], d['user']
     password = private_secret(os.environ.get('PONYGIRLS_PASSWORD_FILE', d['passwordFile']), d['createPassword'])
-    for _ in range(60):
+    deadline = time.monotonic() + 60
+    while True:
         try:
             sql(cfg, 'postgres', 'SELECT 1;')
             break
         except ProviderError:
+            if time.monotonic() >= deadline:
+                raise ProviderError('database readiness deadline exceeded')
             time.sleep(1)
-    else:
-        raise ProviderError('database readiness deadline exceeded')
     # Separate provisioners serialize role/database creation, without CREATE
     # DATABASE inside a transaction. Holding one session lock also spans \gexec.
     sql(cfg, 'postgres', f'''
@@ -162,6 +163,8 @@ ALTER ROLE "{role}" SET log_parameter_max_length_on_error = '0';
 ALTER ROLE "{role}" CONNECTION LIMIT {d['maxConnections']};
 SELECT 'CREATE DATABASE "{name}"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='{name}')\\gexec
 REVOKE ALL ON DATABASE "{name}" FROM PUBLIC;
+SELECT format('REVOKE ALL ON DATABASE %I FROM %I','{name}',rolname)
+ FROM pg_roles WHERE rolname IN ({','.join("'"+other['user']+"'" for other in cfg['databases'].values())}) AND rolname <> '{role}'\gexec
 GRANT CONNECT, TEMPORARY ON DATABASE "{name}" TO "{role}";
 REVOKE CONNECT ON DATABASE postgres, template1 FROM PUBLIC;
 ALTER ROLE "{role}" IN DATABASE "{name}" SET statement_timeout = '{d['statementTimeoutMs']}ms';
@@ -170,9 +173,9 @@ ALTER ROLE "{role}" IN DATABASE "{name}" SET idle_in_transaction_session_timeout
 ALTER ROLE "{role}" IN DATABASE "{name}" SET work_mem = '{d['workMem']}';
 SELECT pg_advisory_unlock(70302618);
 ''', {'PONYGIRLS_SCRAM': verifier(password)})
-    sql(cfg, name, f'''
+    schemas = ''.join(f'CREATE SCHEMA IF NOT EXISTS "{schema}";\nREVOKE ALL ON SCHEMA "{schema}" FROM PUBLIC;\nGRANT USAGE, CREATE ON SCHEMA "{schema}" TO "{role}";\n' for schema in d['schemas'])
+    sql(cfg, name, schemas + f'''
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-GRANT USAGE, CREATE ON SCHEMA public TO "{role}";
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ''')

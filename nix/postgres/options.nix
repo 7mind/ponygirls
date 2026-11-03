@@ -26,6 +26,7 @@ in {
         name = mkOption { type = identifier; default = name; };
         user = mkOption { type = identifier; default = name; };
         passwordFile = mkOption { type = types.str; description = "Private runtime file, never plaintext/store material. Existing contents are preserved."; };
+        schemas = mkOption { type = types.listOf identifier; default = [ "public" ]; description = "Explicit administrator-owned schemas with USAGE/CREATE granted to this role; never grants broad database CREATE."; };
         createPassword = mkOption { type = types.bool; default = false; description = "Explicit permission to create a missing random DB credential (never replace an existing one)."; };
         maxConnections = mkOption { type = types.ints.between 1 256; default = 12; };
         statementTimeoutMs = mkOption { type = types.ints.positive; default = 30000; };
@@ -35,10 +36,14 @@ in {
       }; }));
       description = "Independent provisioned databases; do not derive this set from app enable flags. No automatic deletion/credential rotation.";
     };
+    manifestFile = mkOption { type = types.path; readOnly = true; description = "Generated nonsecret provider manifest for explicit backup tooling (runtime credential references only)."; };
     connections = mkOption { type = types.attrsOf types.anything; readOnly = true; description = "Explicit JDBC connection fields and database-scoped readiness units for service consumers."; };
   };
   config = lib.mkIf cfg.enable {
     assertions = [
+      { assertion = lib.all (key: builtins.match "[a-z_][a-z0-9_]*" key != null) (builtins.attrNames cfg.databases); message = "Shared PostgreSQL database keys must be safe unit-name identifiers."; }
+      { assertion = lib.all (d: d.schemas != [ ] && builtins.length (lib.unique d.schemas) == builtins.length d.schemas && lib.all (s: s != "information_schema" && !(lib.hasPrefix "pg_" s)) d.schemas) (builtins.attrValues cfg.databases); message = "Shared PostgreSQL schema grants must be explicit, distinct and non-reserved."; }
+
       { assertion = lib.versions.major cfg.package.version == "18"; message = "Shared PostgreSQL is pinned to major 18; use logical migration into new state, not in-place reuse."; }
       { assertion = runtimePath cfg.stateDirectory && lib.all (d: runtimePath d.passwordFile) (builtins.attrValues cfg.databases); message = "PostgreSQL state/passwords must be absolute runtime paths outside the store."; }
       { assertion = cfg.maxConnections >= cfg.adminReserve + lib.foldl' (n: d: n + d.maxConnections) 0 (builtins.attrValues cfg.databases); message = "Shared PostgreSQL max_connections must cover every service limit plus adminReserve."; }
