@@ -27,7 +27,7 @@ to 575 seconds plus a ten-second termination grace; individual assertion,
 heartbeat, concurrency and restart deadlines are unchanged. Use the parent's
 background execution lane rather than extending foreground tool timeouts.
 
-`inventory.json` is checked exactly against all 56 JUnit leaf cases (57 Node
+`inventory.json` is checked exactly against all 60 JUnit leaf cases (61 Node
 cases including the helper-mode group), 34 main browser checks, the HTTPS
 restart, preview restart, and markup case. The original 36 atomic cases remain.
 A fresh report records source and inventory hashes, dependency identities,
@@ -65,3 +65,37 @@ disposable loopback cluster. Direct manual harness invocations must provide
 that authorization explicitly; supplying a connection URL alone is insufficient.
 The preview owns a separate disposable cluster and installs the extension as
 administrator before starting a NOSUPERUSER/NOCREATEDB/NOCREATEROLE runtime.
+
+## Actual NixOS proxy input (filtered source builds)
+
+Set `HAYSTACK_PROXY_CONFIG_FILE=/absolute/evaluated-proxy.json` to consume JSON
+from the **actual evaluated NixOS module**, with exactly this shape:
+
+```json
+{
+  "backendPort": 15433,
+  "publicUrl": "https://127.0.0.1:15434",
+  "root": "/nix/store/ACTUAL-package-assets",
+  "locations": {
+    "/api/": {"proxyPass":"http://127.0.0.1:15433/api/","proxyWebsockets":true,"tryFiles":null,"extraConfig":"ACTUAL module value"}
+  }
+}
+```
+
+This is a shape illustration, **not** a proxy fixture or substitute policy. The
+producer must export all actual locations and their selected fields. The
+consumer uses declared loopback ports and origin, requires every `proxyPass` to
+match that backend port, and serves `root` unchanged (nullable; no substitution
+with local `web/dist`). Non-null roots must contain the actual `index.html`.
+Malformed or missing configured files fail closed: no Nix/Git evaluation or
+fallback runs. The exact file is copied and SHA256-bound before/after acceptance.
+Only the current generated direct `Failure` codec is accepted for gateway errors.
+
+Without this variable, the ordinary Git-checkout path evaluates the actual
+module with explicit external database consumer fields (`jdbcUrl`, `user`,
+`passwordFile`, `readinessUnit = null`). It is not a canned proxy template.
+
+Filtered Nix sources need no `.git`, fake Git stub or Nix executable when the
+JSON is supplied. Set `HAYSTACK_SOURCE_REVISION` to the real 40-hex source commit
+identity when `.git` is absent; full source-file hashes remain the binding, not
+the label alone. The native/JAR artifact remains independently SHA256-bound.
