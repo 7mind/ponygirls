@@ -968,6 +968,7 @@
           '';
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
           haystack-native = import ./nix/tests/haystack-native.nix { inherit pkgs; haystackPackage = self.packages.${system}.haystack; };
+          shared-services-modules = import ./nix/tests/shared-services-modules.nix { inherit pkgs nixpkgs inputs; };
           shared-postgres-modules = import ./nix/tests/shared-postgres-modules.nix { inherit pkgs nixpkgs; };
           shared-postgres = import ./nix/tests/shared-postgres.nix { inherit pkgs; };
           chronicle-modules = import ./nix/tests/chronicle-modules.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
