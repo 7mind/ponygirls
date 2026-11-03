@@ -57,7 +57,10 @@ object Lexer {
 object Parser {
   private val instantShape = "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(\\.\\d{1,6})?Z$".r
   def isUtcInstant(text: String): Boolean = text match {
-    case instantShape(y, m, d, h, min, sec, fraction) =>
+    // Current query literals use civil UTC years 0001..9999. Java's
+    // astronomical year zero is not PostgreSQL timestamp text and was already
+    // excluded from cursor timestamps; reject it before either adapter runs.
+    case instantShape(y, m, d, h, min, sec, fraction) if y != "0000" =>
       try {
         LocalDateTime.of(y.toInt, m.toInt, d.toInt, h.toInt, min.toInt, sec.toInt,
           Option(fraction).fold(0)(f => (f.substring(1) + "000000000").take(9).toInt)).toInstant(ZoneOffset.UTC)

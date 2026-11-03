@@ -25,7 +25,6 @@ const FIREFOX = process.env.HAYSTACK_FIREFOX;
 const ARTIFACTS = process.env.HAYSTACK_UI_ARTIFACTS;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, "..");
-const serverRoot = path.resolve(here, "..", "..", "server");
 
 if (!CONN || (!CHROMIUM && !FIREFOX)) {
   console.log("# SKIP browser leg: set HAYSTACK_TEST_PG and HAYSTACK_CHROMIUM (or HAYSTACK_FIREFOX)");
@@ -155,7 +154,6 @@ browser = FIREFOX
 if (ARTIFACTS) await mkdir(ARTIFACTS, { recursive: true });
 const results = [];
 const check = async (name, fn) => {
-  if (process.env.HAYSTACK_BROWSER_CHECK && !name.startsWith(process.env.HAYSTACK_BROWSER_CHECK)) return;
   console.log(`# check - ${name}`);
   try {
     await fn();

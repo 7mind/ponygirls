@@ -34,7 +34,7 @@ object TestSupport {
   }
   def database: Resource[IO, JdbcDatabase] = JdbcDatabase.resource(databaseConfig)
   def wipe(db: JdbcDatabase): IO[Unit] = db.transaction { c =>
-    Sql.update(c, "TRUNCATE items,item_revisions,item_links,item_search,write_requests")
+    Sql.update(c, "TRUNCATE items,item_revisions,item_links,item_search,item_tag_values,write_requests")
     if (Sql.rows(c, "SELECT to_regclass('item_index_jobs') IS NOT NULL")(_.getBoolean(1)).head)
       Sql.update(c, "TRUNCATE item_index_jobs")
     ()

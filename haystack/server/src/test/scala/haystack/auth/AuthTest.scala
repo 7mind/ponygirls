@@ -7,7 +7,7 @@ import java.security.MessageDigest
 import java.util.Base64
 import scala.jdk.CollectionConverters.*
 
-private[auth] object AuthFixtures {
+private[haystack] object AuthFixtures {
   val AliceToken: String = Base64.getUrlEncoder.withoutPadding.encodeToString(Array.fill[Byte](32)(1))
   val BotToken: String = Base64.getUrlEncoder.withoutPadding.encodeToString(Array.fill[Byte](32)(2))
   val RotationToken: String = Base64.getUrlEncoder.withoutPadding.encodeToString(Array.fill[Byte](32)(3))
