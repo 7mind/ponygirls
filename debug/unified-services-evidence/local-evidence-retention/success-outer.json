@@ -1,0 +1,17 @@
+{
+  "scope": "Opaque source-bound preservation, NOT strict entry-set/deletion verification",
+  "job": "bgt-3600d4e94a1a288c",
+  "jobExitStatus": 0,
+  "archiveRecordedSha256": "4231be18f340ae0c1a05a8c90e9f0decb9263dc1530b483b726beaeaebe9002a",
+  "archiveBytes": 477,
+  "parentIndependentArchiveRehash": false,
+  "emptyGNUCompare": true,
+  "archiveBoundaryBeforeAfterEqual": true,
+  "markerSha256": "8df7fb0e0881067a9eb8795f52a5b2a41427e0cfbdbc46a36a88db91e36f473b",
+  "device": 64769,
+  "inode": 915426,
+  "sourceUntouched": true,
+  "sourceRemoved": false,
+  "deletionApproved": false,
+  "codeAtExecution": "v1 cleanup-helper9e897896/preserve-success7ebbc0d6; not relabeled after later archive hardlink-guard correction"
+}
