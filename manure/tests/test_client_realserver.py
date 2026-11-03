@@ -872,8 +872,10 @@ import { pathToFileURL } from 'node:url';
 const p = JSON.parse(fs.readFileSync(0, 'utf8'));
 const { Client } = await import(pathToFileURL(p.sdk + '/dist/esm/client/index.js'));
 const { StdioClientTransport } = await import(pathToFileURL(p.sdk + '/dist/esm/client/stdio.js'));
+const env = { ...process.env };
+for (const key of ['MANURE_URL','MANURE_URL_FILE','MANURE_TOKEN','MANURE_TOKEN_FILE','MANURE_CACHE_DIR','MANURE_ALLOW_INSECURE_HTTP']) delete env[key];
 const transport = new StdioClientTransport({ command: p.python, args: ['-m', 'manure.mcp'],
-  cwd: p.cwd, env: { ...process.env, PYTHONPATH: p.modules,
+  cwd: p.cwd, env: { ...env, PYTHONPATH: p.modules,
     MANURE_URL: p.origin, MANURE_TOKEN: p.token, MANURE_CACHE_DIR: p.cache } });
 const client = new Client({ name: 'manure-real-service-probe', version: '1' }, { capabilities: {} });
 try {

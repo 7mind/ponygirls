@@ -84,13 +84,16 @@ class OwnedDatabase:
 
 
 class TargetServer:
-    def __init__(self,config:dict,directory:str):
+    def __init__(self,config:dict,directory:str,*,owned_database=None,close_database=True):
         command=json.loads(_required('MANURE_TEST_SERVER_COMMAND_JSON'))
         if not isinstance(command,list) or not command or not all(isinstance(v,str) and v for v in command):
             raise RuntimeError('MANURE_TEST_SERVER_COMMAND_JSON must be a nonempty argv array')
         self.config=dict(config);self.process=None;self.database=None;self.closed=False
         self._stdout=deque(maxlen=100);self._stderr=deque(maxlen=100)
-        self.database=OwnedDatabase(directory)
+        if owned_database is not None and not isinstance(owned_database,OwnedDatabase):
+            raise RuntimeError('existing fixture database must be an OwnedDatabase')
+        self.database=owned_database if owned_database is not None else OwnedDatabase(directory)
+        self.close_database=close_database
         self.config['database']=self.database.config()
         library=os.environ.get('MANURE_POSIX_LIBRARY')
         self.config['native_mode']='shared' if library else 'linked'
@@ -114,7 +117,10 @@ class TargetServer:
             for thread in self.threads:thread.start()
             deadline=time.monotonic()+90
             while True:
-                if self.process.poll() is not None:raise RuntimeError('target executable exited before readiness')
+                if self.process.poll() is not None:
+                    for thread in self.threads:thread.join(timeout=5)
+                    # Production adapter emits fixed stage/category diagnostics only.
+                    raise RuntimeError('target executable exited before readiness: '+''.join(self._stderr)[-4096:])
                 remaining=deadline-time.monotonic()
                 if remaining<=0:raise RuntimeError('target executable readiness deadline exceeded')
                 try:message=ready.get(timeout=min(0.1,remaining))
@@ -174,7 +180,7 @@ class TargetServer:
                 if self.process.stdout:self.process.stdout.close()
                 if self.process.stderr:self.process.stderr.close()
         finally:
-            if self.database is not None:self.database.close()
+            if self.database is not None and getattr(self,'close_database',True):self.database.close()
             self.closed=True
 
     def __enter__(self):return self
