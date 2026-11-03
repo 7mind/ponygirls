@@ -966,6 +966,7 @@
             python3 ${./nix/tests/chronicle-validation-policy.py} ${./chronicle/scripts/validation-report.py} ${./nix/pkg/chronicle/validation-evidence.py}
             touch "$out"
           '';
+          manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
           haystack-native = import ./nix/tests/haystack-native.nix { inherit pkgs; haystackPackage = self.packages.${system}.haystack; };
           shared-postgres-modules = import ./nix/tests/shared-postgres-modules.nix { inherit pkgs nixpkgs; };
           shared-postgres = import ./nix/tests/shared-postgres.nix { inherit pkgs; };
