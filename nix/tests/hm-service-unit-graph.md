@@ -31,8 +31,8 @@ The driver owns baseline/results per `HmLifecycle` instance. Guest, controller,
 source identity, output and VM-start callback are required explicit dependencies;
 only the Nix test-script entry boundary consumes injected driver globals. Chain
 selection and probe selection have no argument defaults. The fast harness type
-checks this driver and executes five controlled contracts (including rejection
-of any unselected database/migration/app activation), without monkeypatching or
+checks this driver and executes five context contracts plus two entry-loader
+checks (including rejection of any unselected database/migration/app activation), without monkeypatching or
 claiming real VM execution. The three database files have distinct known
 synthetic per-name values, exercising independent credential wiring.
 

@@ -2,6 +2,8 @@
 """Behavioral-Active/Blackbox-Atomic manual-chain contract + typed API guards.
 These controlled driver tests do not claim actual user-manager/PG acceptance.
 """
+import ast
+import importlib.machinery
 import importlib.util
 import inspect
 import json
@@ -9,6 +11,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import textwrap
 import unittest
 
 ROOT = pathlib.Path(os.environ['HM_GRAPH_TEST_SOURCE_DIR'])
@@ -105,6 +108,34 @@ class HmFixtureContract(unittest.TestCase):
                 instance = self.make(pathlib.Path(directory), unit)
                 with self.assertRaises(AssertionError):
                     instance.manual({})
+
+    def entry_loader(self):
+        source = (ROOT / 'hm-service-unit-graph-vm.nix').read_text()
+        chunk = '    def load_module' + source.split('    def load_module', 1)[1].split('    fixture=load_module', 1)[0]
+        tree = ast.parse(textwrap.dedent(chunk))
+        namespace = {'importlib': importlib, 'sys': sys}
+        exec(compile(tree, 'actual-hm-nix-entry-loader', 'exec'), namespace)
+        return tree.body[0], namespace['load_module']
+
+    def test_actual_entry_loader_rejects_none_spec_without_fallback(self):
+        _tree, load = self.entry_loader()
+        with self.assertRaisesRegex(AssertionError, 'file-backed spec'):
+            load('controlled_none_spec', '/not-a-module.unsupported_fixture_suffix')
+
+    def test_actual_entry_none_loader_guard_precedes_module_creation(self):
+        tree, _load = self.entry_loader()
+        guard = next(node for node in tree.body if isinstance(node, ast.Assert)
+                     and ast.unparse(node.test) == 'loader is not None')
+        creation = next(node for node in tree.body if isinstance(node, ast.Assign)
+                        and isinstance(node.value, ast.Call)
+                        and ast.unparse(node.value.func) == 'importlib.util.module_from_spec')
+        self.assertLess(tree.body.index(guard), tree.body.index(creation))
+        namespace_spec = importlib.machinery.ModuleSpec('controlled_namespace', loader=None)
+        # Execute the actual guard unchanged, with a genuine loader-less spec.
+        # No module monkeypatch, alternate loader or typecheck suppression.
+        with self.assertRaisesRegex(AssertionError, 'executable loader'):
+            exec(compile(ast.Module(body=[guard], type_ignores=[]), 'actual-hm-none-loader-guard', 'exec'),
+                 {'loader': namespace_spec.loader})
 
     def test_exact_seven_case_inventory_survives_refactor(self):
         with tempfile.TemporaryDirectory() as directory:

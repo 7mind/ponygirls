@@ -92,9 +92,12 @@ in pkgs.testers.runNixOSTest {
     import importlib.util, os, pathlib, sys
     def load_module(name, path):
         spec=importlib.util.spec_from_file_location(name,path)
+        assert spec is not None, "fixture module requires a file-backed spec"
+        loader=spec.loader
+        assert loader is not None, "fixture module requires an executable loader"
         module=importlib.util.module_from_spec(spec)
         sys.modules[name]=module
-        spec.loader.exec_module(module)
+        loader.exec_module(module)
         return module
     fixture=load_module("hm_graph_fixture","${./hm-service-unit-graph-vm.py}")
     controller=load_module("hm_graph_controller","${./service-unit-graph-controller.py}")
