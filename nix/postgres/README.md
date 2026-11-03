@@ -116,3 +116,17 @@ workloads, restart/reconnect, individual DB restore, fresh-host global roles plu
 all databases restore, credential preservation/FIFO/Unicode, shipped backup and
 matched snapshot tools. These do not replace full JVM/browser/native domain and
 migration/recovery suites; a built ELF or Nix evaluation alone is not acceptance.
+
+### NixOS first-boot mount boundary
+
+The stock NixOS PostgreSQL unit mounts a custom `dataDir` via `ReadWritePaths`
+**before** any `ExecStartPre`. The shared provider's data directory must instead
+remain absent until the no-adoption initializer creates it and its ownership
+marker. Precreating even an empty unmarked data directory is deliberately refused.
+The adapter therefore transforms only stock's `${stateDirectory}/data` aperture
+into the exact existing, private `stateDirectory` aperture, allowing legitimate
+marker/socket/data writes there. Other separately configured operator apertures
+are preserved; unsupported non-list forms fail explicitly. `ProtectSystem=strict`,
+all other stock hardening, `User=postgres`, and provider ownership/major/identity
+checks remain unchanged. This is not a broad `/var/lib` write allowance and does
+not authorize activation or adoption of any existing cluster.

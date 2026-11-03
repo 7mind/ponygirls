@@ -27,7 +27,25 @@ in {
       };
       systemd.tmpfiles.rules = [ "d ${cfg.stateDirectory} 0700 postgres postgres -" "d ${cfg.stateDirectory}/socket 0700 postgres postgres -" "d ${cfg.stateDirectory}/backups 0700 postgres postgres -" ];
       # Run before NixOS's automatic initdb; unmarked existing data fails closed.
-      systemd.services = { postgresql.preStart = lib.mkBefore "${policy.init}"; } // lib.mapAttrs' (key: d: lib.nameValuePair "ponygirls-database-${key}" {
+      systemd.services = { postgresql = { lib, ... }: {
+        # Stock custom-dataDir ReadWritePaths mounts BEFORE ExecStartPre. data
+        # must remain absent until our no-adoption initializer creates it. The
+        # already-private managed root is the exact required writable boundary
+        # for ownership marker, socket and data. Transform only stock's child
+        # aperture, retaining every separately configured operator aperture.
+        options.serviceConfig = lib.mkOption { apply = service:
+          let paths = service.ReadWritePaths or [ ];
+          in assert lib.assertMsg (builtins.isList paths && lib.all builtins.isString paths)
+            "shared PostgreSQL: ReadWritePaths must be a list of strings so additional operator apertures can be preserved";
+          service // { ReadWritePaths = lib.unique ([ cfg.stateDirectory ] ++ builtins.filter (path: path != "${cfg.stateDirectory}/data") paths); };
+        };
+        config.preStart = lib.mkBefore "${policy.init}";
+      };
+        # Stock setup sets PGPORT but otherwise defaults to /run/postgresql.
+        # Its readiness/recovery fence must use this provider's private peer
+        # socket, not retry the absent default forever while postgres is up.
+        postgresql-setup.environment.PGHOST = "${cfg.stateDirectory}/socket";
+      } // lib.mapAttrs'  (key: d: lib.nameValuePair "ponygirls-database-${key}" {
         description = "Provision isolated ${key} database/extensions (not app startup)";
         after = [ "postgresql.service" ];
         requires = [ "postgresql.service" ];

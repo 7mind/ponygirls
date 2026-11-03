@@ -63,10 +63,20 @@ def run_all(plans,bootstrap,execute):
 
 def bootstrap():
     global base
+    print('UNIT_GRAPH_BOOTSTRAP_PHASE launch-owned-VM',flush=True)
     start_all()
-    server.wait_for_unit('multi-user.target')
-    base=server.succeed('readlink -f /run/current-system').strip()
-    ready();probes()
+    try:
+        print('UNIT_GRAPH_BOOTSTRAP_PHASE wait-multi-user-bounded-120s',flush=True)
+        server.wait_for_unit('multi-user.target',timeout=120)
+        base=server.succeed('readlink -f /run/current-system').strip()
+        initial=snapshot()
+        print('UNIT_GRAPH_BOOTSTRAP_STATE '+json.dumps(initial,sort_keys=True),flush=True)
+        assert not any(initial[u]['ActiveState']=='failed' for u in DATABASES+MIGRATIONS),'database/readiness/migration bootstrap failed; inspect safe provider observer milestones'
+        ready();probes()
+    except Exception:
+        try:print('UNIT_GRAPH_BOOTSTRAP_FAILURE_STATE '+json.dumps(snapshot(),sort_keys=True),flush=True)
+        except Exception:print('UNIT_GRAPH_BOOTSTRAP_FAILURE_STATE unavailable',flush=True)
+        raise
 
 PLANS=[('boot-three-consumers-one-provider-independent-ready-and-migrations',lambda item:ready())]
 
@@ -134,4 +144,5 @@ PLANS.append(('actual-disabled-module-preserves-provider-db-and-others-stays-dis
 
 run_all(PLANS,bootstrap,lambda plan:case(*plan))
 save()
+print('UNIT_GRAPH_TERMINAL '+(out/'lifecycle-receipt.json').read_text().replace('\n',' '),flush=True)
 assert len(results)==9 and all(c['status']=='pass' for c in results),'actual module lifecycle matrix failed; inspect lifecycle-receipt.json (no dependency fix has been assumed)'

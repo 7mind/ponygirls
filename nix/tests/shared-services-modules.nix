@@ -62,6 +62,12 @@ assert serviceUnits.chronicle-migrate.Unit.Requires==["ponygirls-database-chroni
 assert !(builtins.elem "embedding.service" serviceUnits.chronicle-migrate.Unit.After);
 assert !(serviceUnits.ponygirls-postgres.Unit?PartOf);
 assert system.services.postgresql.enable;
+# Actual stock custom-dataDir hardening mounts before ExecStartPre. Only the
+# existing managed root can be mandatory; init itself must create absent data
+# and its marker/socket without adopting an unmarked preexisting directory.
+assert system.systemd.services.postgresql.serviceConfig.ReadWritePaths==[system.ponygirls.servicePostgres.stateDirectory];
+assert system.systemd.services.postgresql.serviceConfig.ProtectSystem=="strict";
+assert !(builtins.any (rule: lib.hasPrefix "d ${system.ponygirls.servicePostgres.stateDirectory}/data " rule) system.systemd.tmpfiles.rules);
 assert !(system.systemd.services?ponygirls-postgres);
 assert system.systemd.services.haystack-setup.requires==["ponygirls-database-haystack.service"];
 assert system.systemd.services.manure-migrate.requires==["ponygirls-database-manure.service"];
