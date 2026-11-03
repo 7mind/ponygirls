@@ -40,6 +40,15 @@ final class HttpSuite extends FunSuite:
     rejected <- h.app.run(command(wire.Command.Version(),None).withEntity("""{"requestId":"01234567-89ab-4def-8123-456789abcdef","apiVersion":"0.0.0","command":{"Version":{}}}"""))
     _ <- IO(assertEquals(rejected.status.code,400))
   yield () }}
+  test("anonymous capabilities advertise the exact policy used by current catalogue cursors") { run { (f,h) => for
+    response <- h.app.run(command(wire.Command.GetCapabilities(),None))
+    body <- response.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)))
+    capabilities = body.result.asInstanceOf[wire.Result.CapabilityInfo].capabilities
+    query = wire.CatalogueQuery("Straße",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,1,None)
+    cursor = CataloguePolicy.encode(CataloguePolicy.Position(CataloguePolicy.Value.Text("Straße"),"a"*32),query)
+    policy = CurrentWire.parse(Exact.string(java.util.Base64.getUrlDecoder.decode(cursor))).hcursor.get[String]("policy").toOption.get
+    _ <- IO { assertEquals(response.status.code,200);assertEquals(policy,"utf8-casefold-16.0.0-v1");assertEquals(capabilities.cataloguePolicy,policy) }
+  yield () }}
   test("host/origin/cookie-bearer ambiguity and static module containment") { run { (f,h) => for
     host <- h.app.run(command(wire.Command.Version(),None).putHeaders(Header.Raw(CIString("Host"),"attacker.test")))
     _ <- IO(assertEquals(host.status.code,400))
