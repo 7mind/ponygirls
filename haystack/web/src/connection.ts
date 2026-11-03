@@ -1,3 +1,6 @@
+import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
+import { LiveFrame } from "../../generated/typescript/haystack/api/LiveFrame.ts";
+
 export type ConnectionState = "NEW" | "ALIVE" | "STALE" | "DEAD";
 interface Ping { sent: number; missed: boolean }
 interface RttSample { at: number; value: number }
@@ -177,8 +180,10 @@ export class ConnectionManager {
     try { frame = JSON.parse(String(event.data)); }
     catch { this.stop("Invalid server JSON"); return; }
     if (typeof frame !== "object" || frame === null) { this.stop("Invalid server frame"); return; }
-    const message = frame as { type?: unknown; nonce?: unknown; clientTs?: unknown; serverTs?: unknown; key?: unknown; revision?: unknown };
-    if (message.type === "pong" && typeof message.nonce === "string" && typeof message.serverTs === "number") {
+    let message: LiveFrame;
+    try { message = LiveFrame.jsonCodec().decode(BaboonCodecContext.Default, frame); }
+    catch { this.stop("Invalid server frame"); return; }
+    if (message.kind === "pong" && typeof message.nonce === "string" && typeof message.serverTs === "number" && Number.isFinite(message.serverTs)) {
       const ping = c.pings.get(message.nonce);
       if (ping === undefined || ping.sent !== message.clientTs) return;
       c.pings.delete(message.nonce);
@@ -187,7 +192,7 @@ export class ConnectionManager {
       // A matching pong resolves only its request; other expired pings remain failures.
       for (const [nonce, other] of c.pings) if (other.missed) c.pings.delete(nonce);
       this.promote(c);
-    } else if (message.type === "changed" && typeof message.key === "string" &&
+    } else if (message.kind === "changed" && typeof message.key === "string" &&
                typeof message.revision === "number" && Number.isSafeInteger(message.revision) && message.revision > 0) {
       if (c.id === this.activeId && c.state === "ALIVE") this.listener.changed(message.key, message.revision);
     } else this.stop("Invalid server frame");
@@ -198,7 +203,8 @@ export class ConnectionManager {
     const nonce = this.runtime.nonce();
     const now = this.runtime.now();
     c.pings.set(nonce, { sent: now, missed: false }); c.lastPing = now; c.sent++;
-    c.socket.send(JSON.stringify({ type: "ping", nonce, clientTs: now }));
+    c.socket.send(JSON.stringify(LiveFrame.jsonCodec().encode(BaboonCodecContext.Default,
+      new LiveFrame("ping", undefined, undefined, nonce, now, undefined))));
     this.publish();
   }
 
