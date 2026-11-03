@@ -1195,3 +1195,52 @@ sessions might. What the data does show is that framing matters less than the
 rules for these models, and that "epistemic hygiene" phrasing may push agents
 to treat docstrings as evidence of intent — the mechanism H-T6 proposes for
 the field instance.
+
+---
+
+## J16 — 2026-11-03 — Recombinations of the prior art into runnable pilots
+
+### User input (verbatim)
+
+> History mining is complicate because the history is scattered across
+> multiple hosts. Anyway, any pilots we still can run? You said that the prior
+> art is deep - any possible creative recombination?
+
+### Assessment (proposals; none run)
+
+History mining is dropped. Recombinations, each with a pilot:
+
+1. **Evidence faithfulness** — mutation testing [R46] and defeaters [R47] at
+   the belief level: a test is evidence for a belief only if it fails on a
+   belief-violating implementation (the J10 field failure had tests passing on
+   violating code). Pilot without subject runs: Pilot E2 agent-written suites
+   against the naive and per-file-rename stores.
+2. **Assumption discovery by environment perturbation** — Zave–Jackson W
+   [R51] and fault injection, aimed at tacit assumptions [R14]: violate
+   candidate assumptions mechanically and report which ones the code silently
+   relies on. Pilot without subject runs: the six E2 implementations under
+   concurrent saves (both families silently assumed a single writer, J11).
+3. **Ask only where the generator is uncertain** — rate–distortion and
+   decoder side information (J4, [R26], [R29]): sampling the generator
+   reveals where its prior diverges from a predictable default; scatter marks
+   underspecification the human must settle. Pilot: per-decision variation
+   from existing Pilot B data (3 runs per task), then 8 samples per task across
+   two families against the planted ambiguities (extends B2).
+4. **Scenario selection by disagreement** — example-based clarification
+   [R43] as active learning: the scenarios shown for ratification are those
+   that split plausible implementations, maximising information per item of
+   attention. Pilot: score candidate scenarios by how many implementation
+   variants they separate.
+5. **Cross-family adversarial audit** — System 3* [R36] under correlated
+   errors [R7]: the other family is asked only to break the belief. Pilot: Sol
+   audits DeepSeek's E1b reports and diffs; compare with same-family review.
+6. **Theory recoverability** — Naur's dead program [R13]: a fresh agent sees
+   only the final code and tests and must state the belief, assumptions and
+   obstacles. Pilot: recovery scored against the ratified belief and planted
+   obstacles.
+7. **Ratified scenarios** (B3) — still the untested countermeasure to scope
+   narrowing.
+
+Priority by information per cost: 1 and 2 (analysis of existing artifacts),
+then 3, 5 and 7 (small runs), then 4 and 6. Human-side pilots remain the only
+test of the overload claim.
