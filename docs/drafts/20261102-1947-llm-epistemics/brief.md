@@ -1,8 +1,8 @@
 # Brief — epistemics of LLM-accelerated development (2026-11-02 … 11-03)
 
-Status: summary of journal entries J1–J23 for the user and the next agent;
-J21–J22 clarify the framework; J23 records real-task intake/framing, not new
-acceptance or efficacy results.
+Status: summary of journal entries J1–J24 for the user and the next agent;
+J21–J22 clarify the framework; J23–J24 record real-task intake and conversational
+framing. No game acceptance, bounded-attention or efficacy result exists.
 Source of truth for every claim: [journal](journal.md), [hypotheses](hypotheses.md),
 [references](references.md), the [design draft](belief-dag-design.md), the
 [validation-frame proposal](belief-network-validation.md), the
@@ -89,20 +89,24 @@ captures the procedure.
 Item 1 is the current direction. Items 2–5 are earlier proposals, not newly
 authorized by Q17/Q18; no field replay or policy-tool implementation is underway.
 
-1. **Real-task manual framing (Q18, J23; current phase).** The user supplied a
-   complete Warcraft-II-inspired web RTS as the task and requested a feature/
-   mechanics inventory first. Separate workspace:
-   `/home/pavel/work/warcraft-inspired-rts`. Its README links 63 candidate feature
-   entries and a five-goal proposed belief network. No game code exists; final
-   modes/content, the acceptance envelope and human attention ceiling await
-   agreement (Q19–Q21; read current answers before acting). Private human cases
-   remain unknown. This is a larger task than the bounded component envisaged;
-   do not silently redefine the final target as a small demo. The
+1. **Real-task conversational framing (Q18, J23–J24; current phase).** The
+   separate `/home/pavel/work/warcraft-inspired-rts` workspace now has a compact
+   five-goal compilation of chat confirmations C1–C8, plus their framing record
+   and the larger 63-entry reference inventory. Scope: one-map AI annihilation;
+   two conventional ground factions; gold/wood, supply, recruitment and research;
+   shared fog/scouting; no AI economic/production bonuses; original retro-2D
+   desktop-browser presentation, sound/help and pause/save/resume/restart. No
+   campaign, online battles, air/naval forces or magic. No game code exists.
+   The human requested ordinary chat, one consequential question at a time,
+   and no decisions-tool use for now; Q19–Q21 are older forms, not permission.
+   No attention ceiling was set before the walkthrough: this is an explicit
+   study deviation. Remaining-review cap versus no-hard-cap is still open.
+   Private cases remain unknown. Do not substitute a battle demo for the final
+   target or infer human effort from elapsed time. The
    [validation-frame](belief-network-validation.md) and
-   [construction](belief-network-construction.md) notes supply proposed methods,
-   not evidence that the tryout works. Autonomous work begins only after joint
-   baseline agreement; no deployment or push. Source hashes/provenance are in J23.
-   The external planning files are not versioned by ponygirls.
+   [construction](belief-network-construction.md) notes are methods, not efficacy
+   evidence. No deployment or push. Current artifact binding is in J24; J23's
+   hashes describe the earlier snapshot. Product drafts are not versioned here.
 2. **Field replay** (agent side): ponygirls just before commit `c1bb530a`
    ("ponygirls-bg-tasks: completion notices never wait for user input"), the
    original prompt verbatim (session
@@ -126,7 +130,8 @@ authorized by Q17/Q18; no field replay or policy-tool implementation is underway
 
 ## Handover to the next agent
 
-**Read first, in order:** this brief; `journal.md` J23 (current task/status),
+**Read first, in order:** this brief; `journal.md` J24 (current task/status),
+the RTS README, compact network and framing record; J23 (earlier intake);
 then J21–J22 (framework) and J16–J19 (latest experiments); `belief-network-validation.md` and
 `belief-network-construction.md` (conceptual proposals); `hypotheses.md` (status column); `belief-dag-design.md` §5, §6, §11; the
 pilot repo `README.md` and `protocols/pilot-e.md`, `pilot-5-7.md`.
@@ -169,9 +174,11 @@ a subject workspace.
 - Work in a git worktree per change (`.worktrees/wt-<repo>-<slug>`), commit,
   fast-forward merge, remove the worktree. Nothing has been pushed; do not
   push without an explicit request.
-- Ask decisions through the `decisions` tool; do not build before the user
-  asks (they redirected once, J3). Tokens and model usage are not budget
-  constrained for this work (user statement, Q10).
+- Normally ask through `decisions`; **current RTS exception:** the human asked
+  for ordinary interactive chat, one consequential question at a time, and no
+  decisions-tool use for now. Do not build before the user authorizes that stage
+  (they redirected once, J3). Tokens/model usage are not budget constrained
+  (Q10); the still-open human-attention ceiling is a separate condition.
 - Report every number with its coding; distinguish observed from inferred;
   read runs before trusting unanimous or extreme results; have an
   independent channel (subagent review, cross-family audit) check
@@ -184,9 +191,11 @@ a subject workspace.
 - Stored Pilot DF sessions contain the user's skill files (read by Sol,
   about 8.8 MB, local repo only): the user decided to keep them (nothing to
   redact, 2026-11-03).
-- Q18 authorized one manual real-task tryout; the RTS is at intake/framing only.
-  Read Q19–Q21 for mode/content scope, proposed outcome ratification and active
-  human-attention ceiling. Do not start code based on pending questions.
+- Q18 authorized one manual real-task tryout. C1–C8 now confirm the game outcome
+  clauses in chat, not every inventory row or every sentence of a compilation.
+  The remaining-review attention policy is still open. No pre-walkthrough cap
+  existed; don't retroactively claim one. Do not use older pending forms as
+  authorization or override the requested chat-only walkthrough.
 - The unresolved research question remains how dialogue selects material
   contrasts without sharing the generator's omissions or recreating
   specification overload. No acceptance or tractability result exists yet.

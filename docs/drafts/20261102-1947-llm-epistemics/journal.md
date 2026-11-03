@@ -1657,3 +1657,110 @@ from source base `6a53068a6e7dd6e6e8afb7fc8959c8b9db7469f5`. The product drafts'
 hashes are checked against the recorded binding. No application tests, game
 playthroughs, rendering benchmarks, deployments or new model-subject runs were
 performed; there is no runnable RTS to test yet.
+
+## J24 — 2026-11-03 — Conversational outcome framing and compact RTS baseline
+
+### Interaction and scoped authority
+
+Following intake, the human requested an ordinary interactive chat walkthrough,
+one consequential question at a time, without the decisions tool for now. C1–C8
+in the RTS framing record [L8] preserve the resulting scoped confirmations:
+
+- C1: one map against AI, victory by destroying all enemy buildings and units;
+  no campaign or online battles for this delivery.
+- C2–C3: ground-only warfare and two playable factions with troop/play-style
+  identity rather than just team colors.
+- C4–C5: workers gather gold/wood; supply, recruitment, technology/research and
+  base development for both sides; distinct conventional melee/ranged/siege-like
+  roles, without spellcasters, mana or magic.
+- C6: hidden unexplored terrain, remembered explored terrain and hidden unseen
+  enemy movements; AI scouting/memory, not live hidden-player knowledge.
+- C7: normal faction costs, production times and supply for AI, with no resource
+  or production bonuses; difficulty comes from its decisions instead.
+- C8: modern desktop-browser mouse/keyboard play; original retro-2D artwork,
+  recognizable animated troops/buildings, sound/readable UI and controls/help;
+  start, pause, save/resume and restart without developer intervention. The
+  human's reply to that proposal was **“yes”**.
+
+These are eight recorded confirmation acts inside **one unfinished task/tryout**,
+not eight independent experimental samples. C1–C8 confirm their antecedent
+clauses; they do not ratify every inventory row or create a separate wholesale
+human approval of every sentence in a compiled document. Q19–Q21 are the earlier
+forms; their pending status is not implementation permission. The requested chat
+channel governs this walkthrough. This entry supersedes J23's prospective
+handover instruction to obtain those scope choices through the forms; it does
+not alter that historical journal entry.
+
+### Compact view versus provenance and agent work
+
+The live network was consolidated into five stable outcome ids: R-PLAY, R-RTS,
+R-CONTROL, R-OPPOSITION and R-WEB. It is 84 text lines by `splitlines()` count;
+that is document structure, **not a human-load metric**. The full pre-consolidation
+C1–C7 draft is preserved unchanged after the archival marker in the new framing
+record, with a provenance/C8 prefix. Its SHA-256 is
+`74c0836c8ea8e81c863ac6239a78bcb8d1467eaa2cb54368ef397533dfcc7c5b`.
+The old draft's proposed/open labels are historical, not current requirements.
+
+The compact view distinguishes confirmed clauses from supporting engineering
+obligations and agent-owned design. Reliable selection/orders/navigation are
+supporting obligations of playable RTS controls, not separately elicited
+algorithms. Reciprocal annihilation defeat is labelled an ordinary-match
+proposal, not falsely attributed to a human answer. Exact names, rosters, costs,
+timings, balance, map geometry and renderer remain design work within the stated
+outcomes. Browser/GPU/audio/storage capability, representative full-match
+performance and competent opposition remain unobserved, not facts established
+by the user's acceptance of desired behavior.
+
+The 63-entry inventory remains the larger reference/design universe. Human
+scope clarifications exclude its air/naval/magic and campaign/online branches;
+keeping those entries does not reinstate them or make everything else required.
+Private human intended cases have not been requested or read. No game code,
+dependency manifest, installed engine or assets exist yet.
+
+### Attention precondition was missed
+
+No human-attention ceiling was agreed **before** this walkthrough. This misses
+the planned pre-tryout condition; it cannot be repaired by retrospectively
+calling the initial framing budget-controlled. The remaining clarification/
+review policy—set a ceiling or explicitly proceed without a hard cap—is still
+open in chat. It is separate from token usage, development time and billing.
+Session timestamps are not active-human-effort measurements. There is no
+bounded-effort, overload-reduction, usability or acceptance result.
+
+### Review and reusable-pattern assessment
+
+A read-only Sol subagent reviewed the compact view against the recorded C1–C8
+context (task `3ddf46fc-575d-4ead-b5a4-bc4a87b9b054`, settled
+2026-11-03T21:05:42Z). It found no material fidelity/authority defect, including
+around AI symmetry versus faction differences, inferred control obligations,
+C8's scope and the explicitly proposed loss convention. This is a second reading
+of a compilation, not an independent human-intent oracle or proof of exhaustive
+capture; no private cases or game behavior were examined. The reviewer did not
+independently compute artifact hashes. Its follow-up review of the brief, J24
+and L8 (task `8694ae39-fad2-4222-9f45-87219a796eb3`) found no material corrections.
+
+The same focused review considered skill reuse. No new skill is justified by
+this incomplete case. Best-effort overlap search immediately before delegation
+returned the existing `corporate-activity:skill-draft-agent-behaviour-pilot` r2;
+installed-skill descriptions supplied no direct belief-framing protocol. This
+is not a complete novelty audit or evidence of a successful new procedure.
+No skill draft was manufactured or saved, and no new model-subject pilot ran.
+
+### Artifact binding and checks
+
+The external product workspace is still outside Git; these files are **not**
+versioned by this research commit. Binding observed at 2026-11-03T21:02:46Z:
+
+- `README.md`: `89f9c4d4244d41db57c09322aa40d758cc587ebb80b9c43ee3b590cca4d891cc`
+- `docs/drafts/20261103-1650-belief-network.md`: `4a18a988f4cbeb2183e2747a695eb36552b3966ce2f5bcc344aaf963c56c9490`
+- `docs/drafts/20261103-1650-feature-inventory.md`: `8281241b6d0907eb259fc316538a8f42b6c64357ae182c89bb9da57a5034d13b`
+- `docs/drafts/20261103-1650-framing-record.md`: `f942cee3ae1621d772a5317c992de84a2fc35c3d249861af2b52f7b21fd16656`
+
+Inline Python checked four planning documents, ten local links, five goal
+headers, archived-source byte identity and absence of application source/
+manifest files. Research checks use `git diff --check`, local-link/reference-id
+validation, J1–J24 ordering and unchanged journal prefix from source base
+`e1a5bd1278719e65c866e348738cfb3b87f4ebd0`; the final artifact binding is checked
+again against the files. These checks establish document/provenance invariants,
+not intent fidelity, game behavior or efficacy. No application tests,
+playthroughs, rendering benchmarks, deployment or push occurred.
