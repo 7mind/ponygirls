@@ -41,10 +41,12 @@ def main():
         config.update(stateDirectory=str(root/'cluster'), port=port, adminRole=admin, postgresBin=pg)
         for key, d in config['databases'].items():
             d['passwordFile'] = str(root/'secrets'/key)
+        # Fail-first: reproduce the missing scoped schema grant before adding it.
+        config['databases']['manure']['schemas'] = ['public']
         manifest = root/'provider.json'
         manifest.write_text(json.dumps(config))
         # Rewrite only paths/admin identity for the OWNED disposable cluster.
-        hba = Path(os.environ['PG_HBA']).read_text().replace('local all nixbld peer', f'local all {admin} peer')
+        hba = Path(os.environ['PG_HBA']).read_text().replace('local all "nixbld" peer', f'local all "{admin}" peer')
         hba = hba.replace('host all all 0.0.0.0/0 reject','host unicode_probe unicode_probe 127.0.0.1/32 scram-sha-256\nhost all all 0.0.0.0/0 reject')
         (root/'hba').write_text(hba)
         settings = Path(os.environ['PG_CONFIGURATION']).read_text()
@@ -74,7 +76,17 @@ def main():
         try:
             for key in config['databases']:
                 provision(key)
-            check('three-independent-databases', query(admin, 'postgres', "SELECT count(*) FROM pg_database WHERE datname IN ('haystack','manure','chronicle')") == '3')
+            fail_env=dict(os.environ, PGHOST='127.0.0.1',PGPORT=str(port),PGUSER='manure',PGDATABASE='manure',PGPASSWORD=Path(config['databases']['manure']['passwordFile']).read_text().strip())
+            failed_schema=run(pg+'/psql','-X','-w','-qAt','-v','ON_ERROR_STOP=1','-v','VERBOSITY=sqlstate','-c','CREATE SCHEMA IF NOT EXISTS manure',env=fail_env)
+            check('manure-schema-fail-first-sqlstate42501',failed_schema.returncode!=0 and b'42501' in failed_schema.stderr)
+            config['databases']['manure']['schemas']=['public','manure']
+            manifest.write_text(json.dumps(config));provision('manure')
+            # PG checks database CREATE even for IF NOT EXISTS. Service schema
+            # bootstrap must guard the CREATE itself, not broaden DB privileges.
+            query('manure','manure','CREATE SCHEMA IF NOT EXISTS manure',ok=False)
+            query('manure','manure',"DO $$ BEGIN IF to_regnamespace('manure') IS NULL THEN CREATE SCHEMA manure; END IF; END $$; CREATE TABLE manure.scoped_probe(id int);")
+            check('manure-explicit-schema-grant-without-database-create',query('manure','manure',"SELECT has_database_privilege(current_user,current_database(),'CREATE')")=='f')
+            check('three-independent-databases' , query(admin, 'postgres', "SELECT count(*) FROM pg_database WHERE datname IN ('haystack','manure','chronicle')") == '3')
             hashes = {k: Path(d['passwordFile']).read_bytes() for k,d in config['databases'].items()}
             for role in config['databases']:
                 check(f'{role}-non-superuser', query(admin,'postgres',f"SELECT NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) FROM pg_roles WHERE rolname='{role}'") == 't')
@@ -129,6 +141,22 @@ def main():
             check('idle-transaction-deadline-executed',idle.returncode != 0 and 'idle-in-transaction timeout' in idle_error)
             check('durability-settings' , query(admin,'postgres',"SELECT current_setting('fsync') || ',' || current_setting('full_page_writes') || ',' || current_setting('synchronous_commit')") == 'on,on,on')
             check('capacity-budget', int(query(admin,'postgres',"SHOW max_connections")) >= sum(d['maxConnections'] for d in config['databases'].values()) + config['adminReserve'])
+            # Exercise the shipped backup implementation, not only raw CLI
+            # rehearsals below. Matched payload snapshots claim BOTH roots.
+            backup_spec=importlib.util.spec_from_file_location('backup',os.environ['PG_BACKUP_TOOL'])
+            backup_module=importlib.util.module_from_spec(backup_spec);backup_spec.loader.exec_module(backup_module)
+            backup_module.backup(config,root/'tool-backup')
+            check('shipped-logical-backup-tool',all((root/'tool-backup'/(key+'.dump')).stat().st_size>0 for key in config['databases']) and (root/'tool-backup'/'globals.sql').stat().st_mode & 0o777 == 0o600)
+            payload=root/'payload';payload.mkdir();(payload/'live').mkdir();(payload/'staging').mkdir();(payload/'live'/'fixture').write_bytes(b'owned-payload\x00bytes')
+            control=root/'control';control.mkdir();(control/'COMPLETE').write_text('owned-control-receipt')
+            config_path=root/'service-config.json';config_path.write_text('{"data_dir":"synthetic-owned-root"}')
+            try:
+                backup_module.matched(config,root/'forbidden-snapshot',payload,control,config_path,os.environ['PG_OFFLINE_TOOL'],False)
+                raise AssertionError('unquiesced snapshot accepted')
+            except ValueError: pass
+            backup_module.matched(config,root/'matched-snapshot',payload,control,config_path,os.environ['PG_OFFLINE_TOOL'],True)
+            check('shipped-matched-pg-payload-control-snapshot',(root/'matched-snapshot'/'COMPLETE').is_file() and (root/'matched-snapshot'/'payload'/'live'/'fixture').read_bytes()==b'owned-payload\x00bytes' and (root/'matched-snapshot'/'migration-control'/'COMPLETE').read_text()=='owned-control-receipt' and (root/'matched-snapshot'/'postgres'/'manure.dump').stat().st_size>0)
+            check('shipped-matched-snapshot-requires-quiescence',not (root/'forbidden-snapshot').exists())
             # Concurrent mixed serving and time-bounded job load across databases.
             def workload(role):
                 query(role,role,'SELECT pg_sleep(2)',ok=False)

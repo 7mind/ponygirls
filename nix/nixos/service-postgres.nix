@@ -10,6 +10,7 @@ in {
       adminRole = lib.mkDefault "postgres";
     }; }
     (lib.mkIf cfg.enable {
+      ponygirls.servicePostgres.manifestFile = policy.manifest;
       assertions = [{ assertion = cfg.adminRole == "postgres"; message = "NixOS shared PostgreSQL administration runs as postgres."; }];
       # Deliberately reuse NixOS's ONE provider, never a hidden second daemon.
       services.postgresql = {

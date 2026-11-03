@@ -13,6 +13,8 @@ let
   disabledApp = hm { systemd.user.services.haystack.Service.ExecStart = "/example/other-package/haystack-server"; };
   tuned = hm { ponygirls.servicePostgres = { sharedBuffers = "16GB"; effectiveCacheSize = "128GB"; maintenanceWorkMem = "1GB"; trackIoTiming = true; randomPageCost = 1.1; effectiveIoConcurrency = 200; maintenanceIoConcurrency = 100; }; };
   tunedPolicy = import ../postgres/policy.nix { inherit lib pkgs; cfg = tuned.ponygirls.servicePostgres; };
+  hyphenAdmin = hm { home.username = "pavel-shirshov"; };
+  hyphenPolicy = import ../postgres/policy.nix { inherit lib pkgs; cfg = hyphenAdmin.ponygirls.servicePostgres; };
   overBudget = hm { ponygirls.servicePostgres.maxConnections = 32; };
   system = (nixpkgs.lib.nixosSystem {
     system = pkgs.stdenv.hostPlatform.system;
@@ -28,6 +30,8 @@ let
 in
 assert lib.all (a: a.assertion) base.assertions;
 assert !(lib.all (a: a.assertion) overBudget.assertions);
+assert lib.all (a: a.assertion) hyphenAdmin.assertions;
+assert lib.hasInfix ''local all "pavel-shirshov" peer'' hyphenPolicy.hbaText;
 assert builtins.attrNames hmUnits == [ "ponygirls-database-chronicle" "ponygirls-database-haystack" "ponygirls-database-manure" "ponygirls-postgres" ];
 assert lib.all (name: hmUnits.${name}.Unit.Requires == [ "ponygirls-postgres.service" ]) dbNames;
 assert !(hmUnits.ponygirls-postgres.Unit ? PartOf);

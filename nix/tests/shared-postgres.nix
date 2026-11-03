@@ -18,6 +18,7 @@ let
     databases = builtins.listToAttrs (map (name: { inherit name; value = {
       inherit name;
       user = name;
+      schemas = if name == "manure" then [ "public" "manure" ] else [ "public" ];
       passwordFile = "/unused/${name}";
       createPassword = true;
       maxConnections = 12;
@@ -36,8 +37,11 @@ in pkgs.runCommand "shared-postgresql-18-provider-rehearsal" {
   export PG_HBA=${policy.hba}
   export PG_POLICY=${policy.manifest}
   export PG_PROVIDER=${../postgres/provider.py}
+  export PG_BACKUP_TOOL=${../postgres/backup.py}
+  export PG_OFFLINE_TOOL=${../../manure/migration/offline.py}
   export PG_CONFIGURATION=${policy.configuration}
   mkdir -p "$out"
-  python3 ${./provider-files-test.py} ${../postgres/provider.py}
+  python3 ${./provider-files-test.py} ${../postgres/provider.py} "$out/credential-boundaries.json"
+  python3 ${./provider-admin-test.py} "$out/hyphen-admin.json"
   python3 ${./shared-postgres-test.py} --output "$out"
 ''

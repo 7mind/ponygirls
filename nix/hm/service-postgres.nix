@@ -10,6 +10,7 @@ in {
       adminRole = lib.mkDefault config.home.username;
     }; }
     (lib.mkIf cfg.enable {
+      ponygirls.servicePostgres.manifestFile = policy.manifest;
       assertions = [{ assertion = pkgs.stdenv.hostPlatform.isLinux; message = "The HM shared PostgreSQL adapter requires Linux/systemd. All HM services share the Unix owner's trust boundary: role ACLs do NOT isolate secrets from same-UID processes."; }];
       systemd.user.services = {
         ponygirls-postgres = {
