@@ -18,13 +18,16 @@ EOF
     done
   '';
   observer = pkgs.writeTextDir "sitecustomize.py" (builtins.readFile ./service-unit-graph-diagnostic.py);
-  paths=[../nixos/service-postgres.nix ../hm/service-postgres.nix ../nixos/chronicle.nix ../nixos/haystack.nix ../nixos/manure.nix ../postgres/options.nix ../postgres/policy.nix ../postgres/provider.py ./service-unit-graph-vm.nix ./service-unit-graph-adapter.py ./service-unit-graph-snapshot.py ./service-unit-graph-vm.py ./service-unit-graph-controller.py ./service-unit-graph-diagnostic.py ./provider-loaded-systemd-contract.py];
+  paths=[../nixos/service-postgres.nix ../hm/service-postgres.nix ../nixos/chronicle.nix ../nixos/haystack.nix ../nixos/manure.nix ../postgres/options.nix ../postgres/policy.nix ../postgres/provider.py ./service-unit-graph-vm.nix ./service-unit-graph-adapter.py ./service-unit-graph-snapshot.py ./service-unit-graph-vm.py ./service-unit-graph-controller.py ./service-unit-graph-diagnostic.py ./provider-loaded-systemd-contract.py ./service-unit-graph-restart-evidence.py];
   sourceManifest=pkgs.writeText "service-unit-graph-source-inputs.sha256" (lib.concatMapStrings (path:"${builtins.hashFile "sha256" path}  ${lib.removePrefix "${toString ../..}/" (toString path)}\n") paths);
   connection=name:{jdbcUrl="jdbc:postgresql://127.0.0.1:15434/${name}";user=name;passwordFile="/etc/unit-graph/${name}-database";readinessUnit="ponygirls-database-${name}.service";};
 in pkgs.testers.runNixOSTest {
   name="shared-provider-actual-module-unit-lifecycle";
   defaults={lib,...}:{
     virtualisation.useNixStoreImage=true;
+    # Writable overlay is guest-owned tmpfs over the isolated EROFS disk image.
+    # No host store/dirs/devices are shared or made writable.
+    virtualisation.writableStore=true;virtualisation.writableStoreUseTmpfs=true;
     virtualisation.mountHostNixStore=false;
     virtualisation.useHostCerts=false;
     virtualisation.sharedDirectories=lib.mkForce {};
@@ -44,6 +47,7 @@ in pkgs.testers.runNixOSTest {
   nodes.server={config,lib,...}:{
     imports=[chronicleModule haystackModule manureModule];
     system.stateVersion="26.11";
+    assertions=[{assertion=config.virtualisation.writableStore && config.virtualisation.writableStoreUseTmpfs && !config.virtualisation.mountHostNixStore && config.virtualisation.sharedDirectories=={} && builtins.elem "ro" config.fileSystems."/nix/.ro-store".options && config.fileSystems."/nix/store".overlay.upperdir=="/nix/.rw-store/upper";message="Unit graph VM requires guest-only tmpfs overlay over isolated read-only store image, never host store/shares";}];
     ponygirls.servicePostgres={
       enable=true;
       maxConnections=64;adminReserve=8;sharedBuffers="64MB";
@@ -76,6 +80,7 @@ in pkgs.testers.runNixOSTest {
       "unit-graph/unused-model"={text="not-used-no-model-process\n";mode="0400";};
       "unit-graph/unused-password-hash"={text="synthetic-adapter-never-authenticates\n";mode="0400";};
       "unit-graph/synthetic-token-hash"={text=lib.concatStrings (lib.genList (_:"a") 64)+"\n";mode="0400";};
+      "unit-graph/restart-evidence"={source=pkgs.writeShellScript "unit-graph-restart-evidence" ''exec ${pkgs.python3}/bin/python3 ${./service-unit-graph-restart-evidence.py} "$@"'';mode="0555";};
       "unit-graph/snapshot"={source=pkgs.writeShellScript "unit-graph-snapshot" ''exec ${pkgs.python3}/bin/python3 ${./service-unit-graph-snapshot.py} "$@"'';mode="0555";};
     };
     # Add metadata-only observation to the ACTUAL database units. ExecStart,

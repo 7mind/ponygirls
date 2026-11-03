@@ -3,7 +3,7 @@
 No systemd, VM, PG, model or production process is selected or contacted.
 Actual adapter readiness boundary/actual driver functions are exercised.
 """
-import ast,datetime,importlib.util,json,os,pathlib,select,signal,subprocess,sys,tempfile,time,types,unittest
+import ast,copy,datetime,importlib.util,json,os,pathlib,select,signal,subprocess,sys,tempfile,time,types,unittest
 ROOT=pathlib.Path(os.environ.get('UNIT_GRAPH_TEST_SOURCE_DIR',pathlib.Path(__file__).parent))
 
 def functions():
@@ -93,6 +93,40 @@ sys.settrace(trace);sys.argv=[source,'haystack','base','serve',config];runpy.run
         records=space['run_all']([('first',lambda _:None),('second',lambda _:self.fail('must not run'))],lambda:None,lambda plan:space['case'](*plan))
         self.assertEqual(records[0]['status'],'invalid-fixture');self.assertEqual(records[0]['failedPhase'],'restore')
         self.assertEqual(records[1]['status'],'not-executed');self.assertEqual(records[1]['blockedByPhase'],'restore')
+
+    def test_actual_automatic_restart_evidence_survives_NRestarts_reset(self):
+        space=functions();unit='postgresql.service'
+        before={unit:{'MainPID':1,'InvocationID':'old','NRestarts':0,'startCount':1,'restartScheduledCount':0}}
+        after={unit:{'ActiveState':'active','MainPID':2,'InvocationID':'new','NRestarts':0,'startCount':2,'restartScheduledCount':1}}
+        space.update(capture_restart_cursor=lambda:{'cursor':'boundary','bootId':'a'*32},automatic_restarts_since=lambda _:{'count':1,'events':[]},PROVIDER=unit,server=types.SimpleNamespace(succeed=lambda _:None),ready=lambda:None,probes=lambda:None,snapshot=lambda:after,wait=lambda predicate,_:after if predicate(after) else self.fail('did not recognize active new PID'))
+        space['crash']({'before':before})
+
+    def test_manual_selected_chains_keep_unselected_database_inactive(self):
+        space=functions();apps=['chronicle.service','haystack.service','manure.service'];migrations=['chronicle-migrate.service','haystack-setup.service','manure-migrate.service'];databases=['ponygirls-database-'+n+'.service' for n in ['chronicle','haystack','manure']];provider='postgresql.service';units=[provider]+databases+migrations+apps
+        inactive={u:{'ActiveState':'inactive','InvocationID':'id','adapterStartedInvocations':['id']} for u in units}
+        provider_only=copy.deepcopy(inactive);provider_only[provider]['ActiveState']='active'
+        selected=copy.deepcopy(provider_only)
+        for u in apps[:2]+migrations[:2]+databases[:2]:selected[u]['ActiveState']='active'
+        states=iter([inactive,provider_only,selected]);current=[inactive]
+        def wait(predicate,description,**_kwargs):
+            current[0]=next(states)
+            if not predicate(current[0]):raise TimeoutError(description)
+            return current[0]
+        space.update(APPS=apps,MIGRATIONS=migrations,DATABASES=databases,PROVIDER=provider,UNITS=units,server=types.SimpleNamespace(succeed=lambda _:None),wait=wait,snapshot=lambda:current[0],probes=lambda _:None)
+        space['manual']({})
+
+    def test_restart_cursor_rejects_before_boundary_other_unit_and_old_boot(self):
+        path=ROOT/'service-unit-graph-restart-evidence.py';spec=importlib.util.spec_from_file_location('restart_evidence',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        unit='postgresql.service';boot='a'*32
+        def event(cursor,who=unit,which=boot,message=module.RESTART_ID):return {'__CURSOR':cursor,'_BOOT_ID':which,'UNIT':who,'MESSAGE_ID':message}
+        records=[event('before'),event('boundary'),event('other-unit','foreign.service'),event('old-boot',which='b'*32),event('wrong-message',message='other'),event('fresh')]
+        class Journal:
+            scope='system'
+            def after(self,cursor,boot_id):
+                assert cursor=='boundary' and boot_id==boot
+                return records[2:]
+        evidence=module.fresh_restarts(Journal(),{'cursor':'boundary','bootId':boot},unit)
+        self.assertEqual([e['cursor'] for e in evidence],['fresh'])
 
     def phase_failure(self,phase):
         space=functions();calls=0

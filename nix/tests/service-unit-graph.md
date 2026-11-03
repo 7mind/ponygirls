@@ -38,7 +38,7 @@ Build/run only through the parent's supervised background lane.
 
 Readiness installs the adapter's signal handler **before** its ready event.
 Reconnect success must be fresh evidence from the active, same intended systemd
-invocation, never an aggregate event from a dead/replaced process. Twelve
+invocation, never an aggregate event from a dead/replaced process. Fifteen
 controlled actual-adapter/driver regressions gate these rules separately.
 
 The pinned framework defaults `requiredFeatures.kvm=true` independently of
@@ -46,3 +46,18 @@ The pinned framework defaults `requiredFeatures.kvm=true` independently of
 `requiredFeatures.kvm=false` emulated-execution capability and retains the real
 QEMU TCG fallback. Required features are exactly `nixos-test`; neither the host's
 features nor its configuration are changed. Guest execution remains mandatory.
+
+The original37d runtime matrix established all-three boot, isolated app restart,
+explicit provider restart and current-invocation role SQL recovery. Its red crash
+metric was `NRestarts` resetting after stock `postgresql.target` restarts; fresh
+`SD_MESSAGE_UNIT_RESTART_SCHEDULED` evidence is now captured after a pre-fault
+journal cursor, matched to the exact provider/current boot, alongside new PID,
+invocation/start count and all three fresh role probes. Manual selected recovery
+requires exactly its two selected DB/migrate/app chains while explicitly keeping
+the unselected whole chain inactive; ordinary all-ready still checks all three.
+
+Guest configuration switches require a writable **guest-only tmpfs overlay**
+over the isolated read-only EROFS store image. Host store mounting remains false
+and host sharing remains empty. This fixes actual `register-nix-paths` read-only
+`.links` activation failures rather than ignoring exit4 or skipping the real
+package/module switch and baseline restoration assertions.
