@@ -1,0 +1,31 @@
+{
+  "listenHost": "127.0.0.1",
+  "listenPort": 47328,
+  "webRoot": "/nix/store/REPLACE-haystack-web",
+  "authReloadMs": 1000,
+  "auth": {
+    "activityProjectId": "agent-activity",
+    "users": [{"id":"operator","type":"human","displayName":"Operator","tokens":[{"id":"browser","hashFile":"$CREDENTIALS_DIRECTORY/operator.sha256"}]}],
+    "cookieSecure": true,
+    "allowedHosts": ["haystack.example"],
+    "allowedOrigins": ["https://haystack.example"],
+    "insecureHttpOrigins": [],
+    "rateLimit": {"windowMs":60000,"max":600}
+  },
+  "database": {
+    "jdbcUrl": "jdbc:postgresql://127.0.0.1:15433/haystack",
+    "user": "haystack",
+    "passwordFile": "$CREDENTIALS_DIRECTORY/database-password",
+    "limits": {"maxConnections":8,"maxQueued":32,"queueTimeoutMs":5000,"connectTimeoutMs":5000,"statementTimeoutMs":30000,"lockTimeoutMs":5000,"idleTransactionTimeoutMs":30000,"socketTimeoutMs":40000}
+  },
+  "retrieval": {
+    "policy":"operator-approved-metadata-v1",
+    "includeMetadata":true,
+    "approvedFieldPrefixes":[],
+    "maxChunkBytes":8192,
+    "embedding":null,
+    "maxConcurrent":2,
+    "maxQueued":8,
+    "batchSize":4
+  }
+}
