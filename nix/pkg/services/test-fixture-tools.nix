@@ -7,6 +7,7 @@ in runCommand "ponygirls-owned-service-test-tools" {
   meta={description="Owned disposable shared-provider fixtures; never application runtime dependencies";platforms=["x86_64-linux"];};
 } ''
   mkdir -p "$out/bin"
+  makeWrapper ${pkgs.bash}/bin/bash "$out/bin/validate-haystack-native" --add-flags ${../../../scripts/haystack-native-acceptance.sh}
   for service in haystack manure; do
     makeWrapper ${python3}/bin/python3 "$out/bin/provision-$service" \
       --add-flags ${../../tests/provision-owned-database.py} \

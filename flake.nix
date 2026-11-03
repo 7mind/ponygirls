@@ -974,6 +974,13 @@
           '';
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
           haystack-proxy = import ./nix/tests/haystack-proxy.nix { inherit pkgs inputs; haystackPackage = self.packages.${system}.haystack; };
+          haystack-browser = import ./nix/tests/haystack-browser.nix {
+            inherit pkgs;
+            haystackPackage = self.packages.${system}.haystack;
+            proxyFixture = self.packages.${system}.haystack-proxy-fixture;
+            fixtureTools = self.packages.${system}.service-test-fixture-tools;
+            sourceRevision = self.rev or "";
+          };
           haystack-native = import ./nix/tests/haystack-native.nix { inherit pkgs; haystackPackage = self.packages.${system}.haystack; };
           chronicle-operations-example = import ./nix/tests/chronicle-operations-example.nix { inherit pkgs nixpkgs inputs; ponygirls = self; };
           readme-hm-server = import ./nix/tests/readme-hm-server.nix { inherit pkgs inputs; ponygirls = self; };

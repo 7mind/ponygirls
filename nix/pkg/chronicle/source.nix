@@ -33,6 +33,7 @@ in {
   haystackServer = backendSource "haystack-native-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/models" "haystack/server/src/main" "haystack/migrations" ]);
   manureServer = backendSource "manure-native-source" (common ++ shared ++ [ "manure/generated/scala" "manure/models" "manure/migration/schema.sql" "manure/scripts/artifact-source.py" "manure/backend/src/main" "manure/migrations" "manure/server/src/main" "manure/server/native-image" ]);
   haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/server/src" "haystack/migrations" "haystack/tests" "haystack/server/tests-current" "haystack/scripts" "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
+  haystackBrowserTests = backendSource "haystack-browser-tests-source" (common ++ shared ++ [ "haystack" ]);
   manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ [ "manure" ]);
   manureTests = backendSource "manure-native-tests-source" (common ++ shared ++ [ "manure/generated/scala" "manure/backend/src" "manure/migrations" "manure/server/src" "manure/server/native-image" "manure/tests" ]);
   backendTests = backendSource "chronicle-backend-tests-source" (runtime ++ tests);
