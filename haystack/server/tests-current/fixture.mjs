@@ -66,10 +66,10 @@ export async function fixture(overrides={},configure=async()=>{}){
     {id:'bot',type:'agent',displayName:'Bot',tokens:[{id:'default',hashFile:path.join(dir,'bot.sha')}]},
   ],...overrides});
   Object.assign(config.retrieval,{approvedFieldPrefixes:['']});
-  await configure(config,{dir,port,base});
+  try{await configure(config,{dir,port,base});}catch(error){await dropDatabase();throw error;}
   const configPath=path.join(dir,'config.json');
   const save=async()=>{await writeFile(configPath+'.tmp',JSON.stringify(config),{mode:0o600});await rename(configPath+'.tmp',configPath);};
-  await save();let processHandle;let output='';let errors='';
+  try{await save();}catch(error){await dropDatabase();throw error;}let processHandle;let output='';let errors='';
   const start=async()=>{
     processHandle=spawn('/bin/sh',['-c','exec '+process.env.HAYSTACK_SERVER_COMMAND+' serve "$1"','haystack-test',configPath],{cwd:root,stdio:['ignore','pipe','pipe']});
     processHandle.stdout.on('data',bytes=>{output+=bytes;});processHandle.stderr.on('data',bytes=>{errors+=bytes;});

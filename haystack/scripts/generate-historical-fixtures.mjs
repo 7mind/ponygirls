@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // Characterization tooling ONLY. Imports the actual retained old production TS
 // build; never loaded by the Scala service, current client or deployed runtime.
-// Run: cd haystack && npm run build -w server && node scripts/generate-historical-fixtures.mjs
+// Run: cd haystack && npm run build:characterization -w server && node scripts/generate-historical-fixtures.mjs
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { validateDocument } from '../server/dist/domain/document.js';
-import { parseRaw, canonicalize } from '../server/dist/domain/json.js';
-import { ItemService } from '../server/dist/application/service.js';
-import { InMemoryItemRepository } from '../server/dist/storage/memory.js';
+import { validateDocument } from '../characterization/node/dist/domain/document.js';
+import { parseRaw, canonicalize } from '../characterization/node/dist/domain/json.js';
+import { ItemService } from '../characterization/node/dist/application/service.js';
+import { InMemoryItemRepository } from '../characterization/node/dist/storage/memory.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'server/src/test/resources/haystack/historical');
@@ -20,8 +20,12 @@ const sources = [
   'server/src/domain/document.ts', 'server/src/domain/json.ts', 'server/src/domain/qid.ts',
   'server/src/application/service.ts', 'server/src/storage/memory.ts', 'server/src/mcp/adapter.ts', 'package-lock.json',
 ];
-const sourceDigests = Object.fromEntries(await Promise.all(sources.map(async name => [name, hash(await readFile(path.join(root, name)))])));
-const adapter = await readFile(path.join(root, 'server/src/mcp/adapter.ts'), 'utf8');
+// Manifest keys intentionally remain original baseline source labels.
+const physical = name => name === 'server/src/mcp/adapter.ts'
+  ? path.join(root, 'characterization/node/evidence/mcp-adapter.ts.txt')
+  : name.startsWith('server/src/') ? path.join(root, 'characterization/node/src', name.slice('server/src/'.length)) : path.join(root, name);
+const sourceDigests = Object.fromEntries(await Promise.all(sources.map(async name => [name, hash(await readFile(physical(name)))])));
+const adapter = await readFile(physical('server/src/mcp/adapter.ts'), 'utf8');
 assert.match(adapter, /document_json: z\.string\(\)\.min\(1\)\.max\(1024 \* 1024 \+ 1024\)/);
 const oldMcpMaxUtf16 = 1024 * 1024 + 1024;
 const document = (fields, tags = '[]') => `{"title":"historical synthetic","description":"synthetic fixture only","fields":${fields},"type":"fact","status":"actual","importance":"low","human-attention":"cleared","links":[],"tags":${tags}}`;

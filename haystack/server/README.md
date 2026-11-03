@@ -3,7 +3,7 @@
 Main class `haystack.Main`; independent assembly `haystack/server/target/haystack-server.jar`.
 `haystack-server serve CONFIG.json`, `migrate CONFIG.json`, `check-config CONFIG.json`.
 The native binary has the same CLI; there is no Node fallback. `migrate` applies
-0001–0004 and reconciles authoritative `activityProjectId`; `serve` does this
+0001–0005 and reconciles authoritative `activityProjectId`; `serve` does this
 again before accepting requests, then initializes/rebuilds approved retrieval
 projections on disposable/offline migration runs. It never rewrites history.
 
