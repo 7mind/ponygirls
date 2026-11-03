@@ -3,7 +3,7 @@
 Main class `haystack.Main`; independent assembly `haystack/server/target/haystack-server.jar`.
 `haystack-server serve CONFIG.json`, `migrate CONFIG.json`, `check-config CONFIG.json`.
 The native binary has the same CLI; there is no Node fallback. `migrate` applies
-0001–0004 and reconciles authoritative `activityProjectId`; `serve` does this
+0001–0005 and reconciles authoritative `activityProjectId`; `serve` does this
 again before accepting requests, then initializes/rebuilds approved retrieval
 projections on disposable/offline migration runs. It never rewrites history.
 
@@ -102,3 +102,11 @@ and exact role/database HBA rules there. `POSTGRES_HOME` optionally prefixes PAT
 If no helper is configured, direct fixture-admin creation additionally requires
 `HAYSTACK_FIXTURE_ADMIN_AUTHORIZED=1`; only the owned runner sets that marker.
 A configured helper failure never enters the direct-admin lane.
+
+Cleanup uses the **same helper** as argv `[helper, "--drop", databaseName]`.
+It must validate that the generated-prefix database was registered/provisioned
+by this owned fixture, remove its HBA/role/credential resources, and return exit0
+with strict stdout `{}` within10seconds. The fixture calls it after stopping the
+server, including failed startup/provisioning; restart does not drop the database.
+Invalid/nonzero/timeout cleanup fails the gate. There is no fallback to runtime
+credentials for cleanup. Helpers must never drop an unregistered/external DB.

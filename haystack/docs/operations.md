@@ -1,4 +1,10 @@
-# Haystack — operations guide (Step 11)
+# Haystack — current Scala/native operations
+
+[Exact required configuration and CLI](../server/README.md), [current API](api.md),
+[assertion/migration register](port-contract-inventory.md). The former Node server
+and import-dependent tests are retired. All examples below operate only on
+operator-selected/disposable state; no live activation, migration or rotation is
+implied by this documentation.
 
 ## Token provisioning and rotation
 
@@ -6,7 +12,7 @@ Tokens are 32 random bytes, canonical unpadded base64url (43 chars).
 Generate outside the Nix store (example on a trusted machine):
 
 ```sh
-node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))" > agent.token
+node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64url'))" > agent.token
 chmod 600 agent.token
 sha256sum agent.token | cut -d' ' -f1 > agent.sha   # digest file
 ```
@@ -55,10 +61,11 @@ The independent outage screen requires the nginx proxy.
 
 The browser restart regression runs a real backend process and nginx over
 HTTPS with a disposable certificate, using the module's location policy.
-After building both workspaces, run from `haystack/` with PostgreSQL,
+After building the Scala assembly/native executable and UI, run from `haystack/` with PostgreSQL,
 Chromium, nginx, Nix, OpenSSL, and PostgreSQL tools available:
 
 ```sh
+HAYSTACK_SERVER_COMMAND=/absolute/path/haystack-server \
 HAYSTACK_TEST_PG=postgresql://postgres@127.0.0.1:5432/haystack_test \
 HAYSTACK_CHROMIUM=/path/to/chromium HAYSTACK_NGINX=/path/to/nginx \
 npm run test:browser -w web
@@ -66,8 +73,7 @@ npm run test:browser -w web
 
 This uses dedicated `haystack_browser` and `haystack_restart` databases,
 recreated by the test. The launcher regression also runs its own disposable
-PostgreSQL instance on a separate port. Missing runtime inputs produce
-explicit skip markers.
+PostgreSQL instance on a separate port. Full release verification must execute all cases with zero skips; missing prerequisites fail the gate, not a successful release.
 
 ## Backup and restore
 
@@ -81,7 +87,8 @@ Restore into a fresh instance (verified 2026-10-08 on disposable PG 18.6):
 ```sh
 pg_restore -d haystack_restored trial.dump
 # then boot the BUILT package (not a source checkout) against it:
-HAYSTACK_AUTH_JSON=... HAYSTACK_DATABASE_URL=... haystack-server
+haystack-server check-config /runtime/config.json
+haystack-server serve /runtime/config.json
 ```
 
 Verified post-restore: current items, full history with authors/token IDs,
@@ -91,9 +98,10 @@ a namespace change needs a reviewed migration, never a fresh database.
 
 ## Upgrades
 
-- Item revisions are immutable; replay digests (`haystack-op-v1`) keep
-  their comparison semantics across upgrades — old request IDs are never
-  reinterpreted with a new algorithm (golden vector in tests).
+- Item revisions are immutable. Current `haystack-op-scala-v1` is deliberate;
+  historical JS replay rows remain, but cross-format identities are refused.
+  Reconcile retained acknowledged outcomes/history before a deliberate new write;
+  never automatically replace an uncertain old request ID. See model.md cutover.
 - Schema changes ship as ordered `migrations/*.sql` with ledger +
   advisory lock; a failed migration fails startup without partial apply.
   Never auto-upgrade the PostgreSQL major version; never recreate data.
@@ -110,8 +118,8 @@ a namespace change needs a reviewed migration, never a fresh database.
 ## Resource tuning
 
 Role/database-scoped settings via `tuning` (applied by `haystack-setup`
-as `ALTER ROLE ... IN DATABASE`): SSD/NVMe planner profile, bounded pool
-(default 8), per-operation `work_mem`, statement/lock/idle timeouts, JIT
+as `ALTER ROLE ... IN DATABASE`): SSD/NVMe planner profile, bounded JDBC admission
+(default config example8 active/32 queued; DriverManager-per-transaction, not a pool), per-operation `work_mem`, statement/lock/idle timeouts, JIT
 off for short interactive queries. Cluster-wide settings
 (`shared_buffers`, WAL/checkpoint, IO) need an explicit operator-approved
 cluster profile — the module never retunes unrelated databases.
@@ -162,3 +170,30 @@ still report their own outcomes independently of live-channel health.
   browser cookies (logout), and check proxy/application logs for the
   allowlisted schema (no bodies/keys/credentials should be present —
   verify with canary greps as in the test suites).
+
+## Port acceptance commands and evidence
+
+Use the pinned Chronicle shell. `bash haystack/scripts/test-postgres-scala.sh`
+starts an owned PostgreSQL18+pgvector and requires every discovered real-PG suite
+with exact inventory/XML equality and zero failures/skips.
+
+`haystack/scripts/test-current.sh` is the bounded actual executable HTTP/MCP/WS,
+proxy/restart/SIGTERM/model-provider gate, with official SDK, full static inventory,
+TAP+JUnit+source and exact ELF/JAR hashes. See server/README for all required env,
+least-privilege provision/drop helper and deadlines. It is not a health smoke.
+
+`haystack/tests-deploy/local-boot.sh PACKAGE` selects that same full native gate.
+No Node or JVM fallback counts as native acceptance. Browser harnesses launch the
+selected actual executable, seed through generated current public API, preserve
+all original security/UI/editor/connection assertions, and require independent
+full browser evidence. A successful build is not proof of these behavioral legs.
+
+SQL0001–0005 and store activity reconciliation run before listen. Startup rebuilds
+current search/shared retrieval projections in bounded128-key batches, locking
+and rereading each source before transactional projection, never rewriting item
+text/history/replays. Metadata/value/completion queries are bounded SQL, not a
+whole-document download. Shared IndexingWorker renews leases during model IO;
+ordinary reads/writes do not depend on provider success. Corpus/profile changes
+require reviewed rebuild/cutover; approvals never infer secrets from arbitrary
+fields. Dynamic logs carry fixed allowlisted labels/counters only. Per-role PG
+logging controls must come from the per-host provider, not cluster-wide changes.

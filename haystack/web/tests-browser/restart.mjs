@@ -8,8 +8,8 @@ import path from "node:path";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import pg from "pg";
 import { chromium } from "playwright-core";
+import { freePort, ownedDatabase, configFor, atomicConfig, startServer } from "./native.mjs";
 
 const conn = process.env.HAYSTACK_TEST_PG;
 const chromiumPath = process.env.HAYSTACK_CHROMIUM;
@@ -26,22 +26,15 @@ const token = randomBytes(32).toString("base64url");
 const hashFile = path.join(dir, "token.sha");
 await writeFile(hashFile, createHash("sha256").update(token, "ascii").digest("hex"), { mode: 0o600 });
 
-async function freePort() {
-  const socket = http.createServer();
-  await new Promise((resolve) => socket.listen(0, "127.0.0.1", resolve));
-  const port = socket.address().port;
-  await new Promise((resolve) => socket.close(resolve));
-  return port;
-}
 const backendPort = await freePort();
 const proxyPort = await freePort();
 const base = `https://127.0.0.1:${proxyPort}`;
-const authFile = path.join(dir, "auth.json");
-await writeFile(authFile, JSON.stringify({
+const serverConfig = path.join(dir, "config.json");
+const auth = {
   activityProjectId: "agent-activity", cookieSecure: true,
   users: [{ id: "op", type: "human", displayName: "Operator", tokens: [{ id: "browser", hashFile }] }],
-  allowedHosts: ["127.0.0.1"], allowedOrigins: [base],
-}), { mode: 0o600 });
+  allowedHosts: ["127.0.0.1"], allowedOrigins: [base], insecureHttpOrigins: [], rateLimit: { windowMs: 60000, max: 600 },
+};
 
 // Use the module's location policy, with the freshly built UI as its static root.
 const expr = `let
@@ -91,30 +84,14 @@ http {
   }
 }`);
 
-const admin = new pg.Client(conn);
-await admin.connect();
-await admin.query("DROP DATABASE IF EXISTS haystack_restart");
-await admin.query("CREATE DATABASE haystack_restart");
-await admin.end();
-const backendConn = conn.replace(/haystack_test/, "haystack_restart");
+const database = await ownedDatabase(conn, "haystack_restart");
+await atomicConfig(serverConfig, await configFor({ dir, connectionString: database.connectionString,
+  port: backendPort, webRoot: path.join(webRoot, "dist"), auth }));
 let backend;
 let proxy;
 let browser;
 async function startBackend() {
-  const child = spawn(process.execPath, [path.join(webRoot, "..", "server", "dist", "index.js")], {
-    env: { ...process.env, HAYSTACK_AUTH_JSON: authFile, HAYSTACK_DATABASE_URL: backendConn,
-      HAYSTACK_LISTEN: "127.0.0.1", HAYSTACK_PORT: String(backendPort), HAYSTACK_STATIC_DIR: path.join(webRoot, "dist") },
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-  backend = child;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (child.exitCode !== null) throw new Error(`Backend exited during startup: ${child.exitCode}`);
-    try {
-      if ((await fetch(`http://127.0.0.1:${backendPort}/api/v1/health`, { signal: AbortSignal.timeout(1000) })).ok) return;
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("Backend startup timed out");
+  backend = await startServer(serverConfig, backendPort, path.join(dir, "server.log"));
 }
 async function stop(child) {
   if (child === undefined || child.exitCode !== null) return;
@@ -169,5 +146,6 @@ try {
   if (browser !== undefined) await browser.close();
   await stop(backend);
   await stop(proxy);
+  await database.close();
   await rm(dir, { recursive: true, force: true });
 }

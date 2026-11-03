@@ -13,7 +13,7 @@ it('controlled provider uses approved corpus only, durable worker publication an
  let release;let blocked=true;let outage=false;const gate=new Promise(resolve=>{release=resolve;});const calls=[];
  const provider=http.createServer(async(request,response)=>{const body=[];for await(const chunk of request)body.push(chunk);const input=JSON.parse(Buffer.concat(body).toString());calls.push(input);
   if(outage){response.writeHead(503);response.end('{}');return;}
-  if(blocked)await gate;
+  if(blocked&&input.input.some(text=>text.startsWith('DOC:')))await gate;
   const data=input.input.map((text,index)=>({index,embedding:text.includes('harbour')?[1,0]:[0,1]}));response.setHeader('Content-Type','application/json');response.end(JSON.stringify({data}));
  });
  await new Promise(resolve=>provider.listen(0,'127.0.0.1',resolve));let f;
@@ -28,10 +28,14 @@ it('controlled provider uses approved corpus only, durable worker publication an
   assert.equal((await f.call('/api/v1/get',encode(api.GetRequest,new api.GetRequest('model:one',undefined)),{token:f.tokens.bot})).status,200);
   const browse=await f.call('/api/v1/search',encode(api.SearchRequest,new api.SearchRequest('','model',20,undefined,new api.SearchSort('key','asc'))),{token:f.tokens.bot});assert.equal(browse.status,200);
   const serialized=JSON.stringify(calls);assert.ok(serialized.includes('harbour'));assert.ok(!serialized.includes(canary));assert.ok(!serialized.includes('9001'));
-  blocked=false;release();
   const semantic=()=>f.call('/api/v1/retrieve',encode(api.RetrieveRequest,new api.RetrieveRequest('harbour',api.RetrievalMode.Semantic,'model',false,0,10)),{token:f.tokens.alice});
-  let page;const deadline=Date.now()+5000;while(Date.now()<deadline){const response=await semantic();assert.equal(response.status,200);page=decode(api.RetrieveResult,await response.json());if(page.sources.length)break;await sleep(50);}
-  assert.equal(page.sources.length,1);assert.equal(page.sources[0].key,'model:one');assert.equal(page.sources[0].revision,1);assert.equal(page.countScope,'CandidateWindow');for(const identity of [page.sources[0].profile,page.sources[0].embeddingSpace,page.sources[0].policy])assert.match(identity,/^[0-9a-f]{64}$/);assert.ok(page.sources[0].field);assert.ok(Number.isInteger(page.sources[0].start));assert.ok(page.sources[0].end>page.sources[0].start);assert.ok(page.rankingLimit>0);assert.ok(calls.some(c=>c.input.some(text=>text.startsWith('QUERY:'))));
+  // Query embeddings are available while the document batch is deliberately
+  // blocked: this proves the current typed publication-not-ready response,
+  // rather than mistaking a provider outage or an empty fallback for readiness.
+  const notReady=await semantic();assert.equal(notReady.status,503);assert.equal(decode(api.Failure,await notReady.json()).code,'unavailable');
+  blocked=false;release();
+  let page;const deadline=Date.now()+5000;while(Date.now()<deadline){const response=await semantic();if(response.status===503){assert.equal(decode(api.Failure,await response.json()).code,'unavailable');await sleep(50);continue;}assert.equal(response.status,200);page=decode(api.RetrieveResult,await response.json());if(page.sources.length)break;await sleep(50);}
+  assert.ok(page,'complete generation must become ready within the original5second deadline');assert.equal(page.sources.length,1);assert.equal(page.sources[0].key,'model:one');assert.equal(page.sources[0].revision,1);assert.equal(page.countScope,'CandidateWindow');for(const identity of [page.sources[0].profile,page.sources[0].embeddingSpace,page.sources[0].policy])assert.match(identity,/^[0-9a-f]{64}$/);assert.ok(page.sources[0].field);assert.ok(Number.isInteger(page.sources[0].start));assert.ok(page.sources[0].end>page.sources[0].start);assert.ok(page.rankingLimit>0);assert.ok(calls.some(c=>c.input.some(text=>text.startsWith('QUERY:'))));
   outage=true;const unavailable=await semantic();assert.equal(unavailable.status,503);assert.equal(decode(api.Failure,await unavailable.json()).code,'unavailable');
   const update=await f.put('model:one',document({title:'harbour updated',fields:{public:'harbour next',private:canary}}),1);assert.equal(update.status,200);
   const lexical=await f.call('/api/v1/retrieve',encode(api.RetrieveRequest,new api.RetrieveRequest('harbour',api.RetrievalMode.Lexical,'model',false,0,10)),{token:f.tokens.alice});assert.equal(lexical.status,200);assert.equal(decode(api.RetrieveResult,await lexical.json()).sources[0].revision,2);

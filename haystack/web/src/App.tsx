@@ -64,6 +64,7 @@ export function App() {
   // Stable identity: Detail's data effect depends on this. An inline closure
   // would remount item data (and wipe save outcomes) on every App render.
   const handleAuthLost = useCallback(() => {
+    api.clearSessionWrites();
     setPrincipal(null);
     setBoot("login");
   }, []);

@@ -218,6 +218,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
       setStatus(`Saved as revision ${out.revision}.`);
       await load(true);
     } catch (err) {
+      if (err instanceof AuthError) { onAuthLost(); return; }
       if (err instanceof ApiError && err.code === "conflict") {
         setStatus("Conflicted again — reload and reconcile manually.");
         return;
@@ -244,6 +245,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
       setStatus("Attention cleared (attributed revision).");
       await load(true);
     } catch (err) {
+      if (err instanceof AuthError) { onAuthLost(); return; }
       setStatus(`Clear failed: ${err instanceof Error ? err.message : "unknown"}`);
     }
   }
@@ -267,6 +269,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
       setStatus(`Restored revision ${revision} as new revision ${out.revision}.`);
       await load(true);
     } catch (err) {
+      if (err instanceof AuthError) { onAuthLost(); return; }
       setStatus(`Restore failed: ${err instanceof Error ? err.message : "unknown"}`);
     }
   }

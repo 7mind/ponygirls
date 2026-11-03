@@ -32,26 +32,32 @@ export async function fixture(overrides={},configure=async()=>{}){
   const config=JSON.parse(await readFile(path.join(root,'haystack/docs/scala-config.example.json'),'utf8'));
   Object.assign(config,{listenPort:port,webRoot:null,authReloadMs:100});
   const databaseName='haystack_current_'+randomBytes(8).toString('hex');
-  let database;
-  if(process.env.HAYSTACK_TEST_PROVISION_COMMAND){
-    const command=process.env.HAYSTACK_TEST_PROVISION_COMMAND;
-    assert.ok(path.isAbsolute(command),'provision helper must be an absolute executable path');
-    let output;
-    try{output=await promisify(execFile)(command,[databaseName],{encoding:'buffer',timeout:10000,killSignal:'SIGKILL',maxBuffer:16384});}catch{throw new Error('owned fixture provisioning failed; no runtime-identity fallback');}
-    let provisioned;try{provisioned=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(output.stdout));}catch{throw new Error('invalid owned fixture provisioning response');}
-    assert.ok(provisioned&&typeof provisioned==='object'&&!Array.isArray(provisioned),'invalid fixture database descriptor');
-    assert.deepEqual(Object.keys(provisioned).sort(),['jdbcUrl','passwordFile','user']);
-    for(const key of ['jdbcUrl','passwordFile','user'])assert.ok(typeof provisioned[key]==='string'&&provisioned[key].length>0);
-    assert.ok(provisioned.jdbcUrl.startsWith('jdbc:postgresql://'));
-    const target=new URL(provisioned.jdbcUrl.slice(5));assert.ok(['127.0.0.1','localhost','[::1]'].includes(target.hostname));
-    assert.equal(target.pathname,'/'+databaseName);assert.equal(target.username,'');assert.equal(target.password,'');assert.equal(target.search,'');assert.equal(target.hash,'');
-    assert.ok(path.isAbsolute(provisioned.passwordFile));assert.ok((await readFile(provisioned.passwordFile)).length>0);
-    database=provisioned;
+  let database;let dropped=false;let dropDatabase=async()=>{};
+  const helper=process.env.HAYSTACK_TEST_PROVISION_COMMAND;
+  const invokeHelper=async args=>{
+    if(!path.isAbsolute(helper))throw new Error('provision helper must be an absolute executable path');
+    let output;try{output=await promisify(execFile)(helper,args,{encoding:'buffer',timeout:10000,killSignal:'SIGKILL',maxBuffer:16384});}catch{throw new Error('owned fixture provisioning command failed; no runtime-identity fallback');}
+    try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(output.stdout));}catch{throw new Error('invalid owned fixture provisioning response');}
+  };
+  if(helper){
+    dropDatabase=async()=>{if(dropped)return;const response=await invokeHelper(['--drop',databaseName]);if(!response||typeof response!=='object'||Array.isArray(response)||Object.keys(response).length)throw new Error('invalid owned fixture cleanup response');dropped=true;};
+    try{
+      const provisioned=await invokeHelper([databaseName]);
+      if(!provisioned||typeof provisioned!=='object'||Array.isArray(provisioned)||Object.keys(provisioned).sort().join(',')!=='jdbcUrl,passwordFile,user')throw new Error('invalid fixture database descriptor');
+      for(const key of ['jdbcUrl','passwordFile','user'])if(typeof provisioned[key]!=='string'||!provisioned[key].length)throw new Error('invalid fixture database descriptor');
+      if(!provisioned.jdbcUrl.startsWith('jdbc:postgresql://'))throw new Error('invalid fixture database descriptor');
+      const target=new URL(provisioned.jdbcUrl.slice(5));
+      if(!['127.0.0.1','localhost','[::1]'].includes(target.hostname)||target.pathname!=='/'+databaseName||target.username||target.password||target.search||target.hash||!path.isAbsolute(provisioned.passwordFile)||(await readFile(provisioned.passwordFile)).length===0)throw new Error('invalid fixture database descriptor');
+      database=provisioned;
+    }catch{let clean=true;try{await dropDatabase();}catch{clean=false;}throw new Error(clean?'owned fixture provisioning failed; no runtime-identity fallback':'owned fixture provisioning and cleanup failed; no runtime-identity fallback');}
   }else{
     assert.equal(process.env.HAYSTACK_FIXTURE_ADMIN_AUTHORIZED,'1','direct CREATE DATABASE needs explicit owned fixture-admin authorization');
     const databaseUrl=new URL(process.env.HAYSTACK_TEST_JDBC.replace(/^jdbc:/,''));
-    const admin=new pg.Client({host:databaseUrl.hostname,port:Number(databaseUrl.port),database:databaseUrl.pathname.slice(1),user:process.env.HAYSTACK_TEST_DB_USER,password:(await readFile(process.env.HAYSTACK_TEST_DB_PASSWORD_FILE,'utf8')).trimEnd()});
-    await admin.connect();try{await admin.query('CREATE DATABASE "'+databaseName+'"');}finally{await admin.end();}
+    const admin=()=>new pg.Client({host:databaseUrl.hostname,port:Number(databaseUrl.port),database:databaseUrl.pathname.slice(1),user:process.env.HAYSTACK_TEST_DB_USER,password});
+    const password=(await readFile(process.env.HAYSTACK_TEST_DB_PASSWORD_FILE,'utf8')).trimEnd();
+    const command=async sql=>{const client=admin();await client.connect();try{await client.query(sql);}finally{await client.end();}};
+    await command('CREATE DATABASE "'+databaseName+'"');
+    dropDatabase=async()=>{if(dropped)return;await command('DROP DATABASE "'+databaseName+'" WITH (FORCE)');dropped=true;};
     database={jdbcUrl:process.env.HAYSTACK_TEST_JDBC.replace(/\/[^/]+$/,'/'+databaseName),user:process.env.HAYSTACK_TEST_DB_USER,passwordFile:process.env.HAYSTACK_TEST_DB_PASSWORD_FILE};
   }
   Object.assign(config.database,database);
@@ -60,10 +66,10 @@ export async function fixture(overrides={},configure=async()=>{}){
     {id:'bot',type:'agent',displayName:'Bot',tokens:[{id:'default',hashFile:path.join(dir,'bot.sha')}]},
   ],...overrides});
   Object.assign(config.retrieval,{approvedFieldPrefixes:['']});
-  await configure(config,{dir,port,base});
+  try{await configure(config,{dir,port,base});}catch(error){await dropDatabase();throw error;}
   const configPath=path.join(dir,'config.json');
   const save=async()=>{await writeFile(configPath+'.tmp',JSON.stringify(config),{mode:0o600});await rename(configPath+'.tmp',configPath);};
-  await save();let processHandle;let output='';let errors='';
+  try{await save();}catch(error){await dropDatabase();throw error;}let processHandle;let output='';let errors='';
   const start=async()=>{
     processHandle=spawn('/bin/sh',['-c','exec '+process.env.HAYSTACK_SERVER_COMMAND+' serve "$1"','haystack-test',configPath],{cwd:root,stdio:['ignore','pipe','pipe']});
     processHandle.stdout.on('data',bytes=>{output+=bytes;});processHandle.stderr.on('data',bytes=>{errors+=bytes;});
@@ -72,7 +78,7 @@ export async function fixture(overrides={},configure=async()=>{}){
     assert.ok(ready,'server readiness deadline');
   };
   const stop=async()=>{if(!processHandle)return [0,null];if(processHandle.exitCode!==null||processHandle.signalCode!==null)return [processHandle.exitCode,processHandle.signalCode];const exited=once(processHandle,'exit');processHandle.kill('SIGTERM');const timeout=setTimeout(()=>processHandle.kill('SIGKILL'),3000);const result=await exited;clearTimeout(timeout);return result;};
-  await start();
+  try{await start();}catch(error){await stop();await dropDatabase();throw error;}
   const call=async(route,value,options={})=>{
     const headers={'Content-Type':'application/json','X-Haystack-Version':'1.0.0',...(options.token?{Authorization:'Bearer '+options.token}:{}),...options.headers};
     const body=value===undefined?undefined:typeof value==='string'?value:JSON.stringify(value);
@@ -83,5 +89,5 @@ export async function fixture(overrides={},configure=async()=>{}){
     return fetch(base+route,{method:options.method??'POST',headers,...(body===undefined?{}:{body})});
   };
   const put=(key,doc=document(),expected=0,id=rid(),token=tokens.bot)=>call('/api/v1/put',encode(api.PutRequest,new api.PutRequest(key,new api.DocumentPayload(doc),expected,id)),{token});
-  return {dir,port,base,tokens,config,configPath,call,put,stop,start,async restart(){await stop();await start();},async reload(change){change(config.auth);await save();await sleep(250);},async save(){await save();await sleep(250);},logs:()=>output.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}}),output:()=>output+'\n'+errors};
+  return {dir,port,base,tokens,config,configPath,call,put,async stop(){const result=await stop();await dropDatabase();return result;},start,async restart(){await stop();await start();},async reload(change){change(config.auth);await save();await sleep(250);},async save(){await save();await sleep(250);},logs:()=>output.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}}),output:()=>output+'\n'+errors};
 }

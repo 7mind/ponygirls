@@ -181,3 +181,17 @@ test("API session auth loss clears pending but an unreadable success keeps it un
   t.mock.method(globalThis, "fetch", async () => new Response("unauthenticated", { status: 401 }));
   await assert.rejects(api.whoami(), AuthError); assert.equal(api.pendingWrite(), undefined);
 });
+
+test("WebSocket auth loss and observed identity changes discard the previous session's pending lane", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), identity));
+  await api.whoami();
+  t.mock.method(globalThis, "fetch", async () => new Response("offline", { status: 503 }));
+  await assert.rejects(api.put("p:i", documentJson, 7, "old-session-id"), NetworkError);
+  api.clearSessionWrites(); assert.equal(api.pendingWrite(), undefined);
+  t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), identity));
+  await api.whoami();
+  t.mock.method(globalThis, "fetch", async () => new Response("offline", { status: 503 }));
+  await assert.rejects(api.put("p:i", documentJson, 7, "old-session-id"), NetworkError);
+  t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), new Identity("other", "human", "other-token", "agent-activity")));
+  await api.whoami(); assert.equal(api.pendingWrite(), undefined);
+});
