@@ -1284,3 +1284,60 @@ test of the overload claim.
   meta-talk, requirement-as-claim stance, "by design / docstring-confirmed"
   defences, paths fixed or flagged (with the corrected oracle, J16 Pilot 5
   amendment).
+
+---
+
+## J18 — 2026-11-03 — Seven agent-side pilots (J16 recombinations) and two oracle corrections
+
+### Decision
+
+Q15: "All agent-side (1–7)". Pilots 1, 2, 5, 7 by the experimenter; 3+4 and
+6 by two writer subagents in separate worktrees under the same discipline
+(pre-registration, committed scorer validation, reading rule). Pilot
+repository [L5] `main` at `9c23dc3`; protocols `pilot-12.md`, `pilot-34.md`,
+`pilot-5-7.md`, `pilot-6.md`; notes under `results/pilot-*/`.
+
+### Results
+
+| # | Pilot | Result (coding named) | Reading |
+|---|---|---|---|
+| 1 | Evidence faithfulness: author test suites vs belief-violating stores | every suite has ≥1 test failing on both violators for a behavioural reason; Sol's strongest kill-at-every-boundary tests (r2, r3) fail on violators because they patch the author's internals | agent tests are partly mechanism-coupled: evidence about the design, not reusable belief-level evidence |
+| 2 | Assumption discovery by perturbation | DeepSeek stores: concurrent saves raise in 39–40/40 rounds, one returns inconsistent states; readers see incomplete states in two (18/315, 56/374 loads). Sol stores: 0 errors | hidden assumptions (single writer, no concurrent reader) surface mechanically, without asking |
+| 3 | Generator uncertainty (4 samples × 2 families, ambiguous vs disambiguated tasks) | pooled entropy 0.479 vs 0; 11 vs 0 points flagged; flags come from cross-family disagreement (9); within Sol 1/24, within DeepSeek 6/24; 13/24 ambiguous points show the same answer in both families | sampling one strong model hides ambiguity; a second family exposes about half; shared conventions hide the rest (e.g. both return −500 cents for a 150 % discount) |
+| 4 | Scenario selection by disagreement | hits (amendment A1, scenario must exercise the point): Sol 10 vs own-first-3 8 vs random 4.9; DeepSeek 9 vs 5 vs 4.0 | selecting scenarios that split implementations beats both baselines; partly circular (same implementations score and define truth) |
+| 5 | Cross-family audit of E1b artifacts | corrected truth: Sol auditing DeepSeek 10/10 violations, 0 false alarms; DeepSeek auditing its own family 9/10, 0; no false alarms on Sol artifacts | in the auditor role the same family flags every defence it produced as author; confounded with the audit prompt's enumeration of all situations |
+| 6 | Theory recoverability (fresh readers, code and tests only) | intent recovered 22/24 strict (24/24 lenient); assumptions named in all runs (ceiling); control doubted 4/4; Sol readers found latent defects in 2 DeepSeek trees by experiment, DeepSeek readers none | the theory is largely recoverable from artifacts; readers who experiment act as auditors |
+| 7 | Ratified scenarios against narrowing (B3) | DeepSeek supervisor kept: control 1/5 (implicit), scenarios 0/5; unenumerated failed-turn fully fixed 4/5 vs 0/5; unenumerated compaction 5/5 in both | B3 inconclusive (failure rare in this batch); a possible enumeration side effect on one unnamed path |
+
+### Corrections (both found by an independent channel)
+
+1. **Liveness oracle too lenient** (found by the Pilot 5 auditors): the hidden
+   failed-turn check called `turn_finished()` on an idle harness. Corrected
+   and rescored: 7 DeepSeek path results flipped to "not fixed" in Pilots E,
+   R and 7; no category changed. J11's DeepSeek "unasserted path" counts are
+   superseded (`results/pilot-e/p7/notes.md`).
+2. **E2 crash harness too narrow** (found by Pilot 6 readers, reproduced by
+   the experimenter): with equal-size old and new record sets, and with two
+   interruptions in a row, DeepSeek r2 and r3 return mixed or wrong states.
+   E2 is 4/6 atomic (Sol 3/3, DeepSeek 1/3), not 6/6 as in J11. Their
+   count-based consistency checks are exactly what equal sizes defeat.
+
+### Assessment
+
+- **Strongest agent-side results so far:** mechanical perturbation finds
+  hidden assumptions (2); cross-family sampling and audit expose ambiguity and
+  defences that one family hides (3, 5); readers that experiment recover the
+  theory and find what the author's tests missed (6). Each is a channel
+  independent of the generator's testimony, as J1, J5 and J10 required.
+- **Agent-written tests are weak evidence for beliefs** (1): they verify the
+  author's mechanism; belief-level checks must be implementation-independent
+  and varied (the experimenter's own oracle failed twice for lack of
+  variation).
+- **Shared conventions are the blind spot of every cross-model method** (3):
+  13/24 ambiguous points looked settled because both families defaulted the
+  same way (C4 in practice).
+- **The authoring frame, not knowledge, produces the defence** (5) — with
+  the enumeration confound; and scenarios did not demonstrably remove it (7).
+- **The experimenter's instruments failed twice more and were corrected by
+  independent channels** — the same mechanism the methodology proposes for
+  agents. The human side remains untested.
