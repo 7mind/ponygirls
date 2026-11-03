@@ -45,8 +45,7 @@ object Main extends IOApp {
       hub<-LiveHub.create
       projection=new HaystackRetrieval(database,config.retrieval.policy,new PostgresRetrieval("haystack",config.retrieval.embedding.map(e=>RetrievalProfile(e.space,config.retrieval.policy.id))),embedding,config.retrieval.batchSize)
       repository=new PostgresItemRepository(database,Some(projection))
-      items<-repository.allCurrent()
-      _<-projection.initialize(items)
+      _<-repository.initializeProjection()
       // Every reload is fail-closed; invalid/unreadable replacement config
       // revokes access until repaired, rather than retaining stale authority.
       reload=(IO.sleep(config.authReloadMs.millis) *> IO.blocking { val next=Config.load(file);if(next.auth.activityProjectId!=config.auth.activityProjectId)throw haystack.domain.Fault("config","activity namespace mismatch");Auth.load(next.auth) }.attempt.flatMap(value=>IO(reference.set(value)))).foreverM

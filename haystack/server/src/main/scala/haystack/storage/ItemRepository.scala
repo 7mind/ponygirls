@@ -10,6 +10,7 @@ trait ItemRepository {
   def revision(key: ItemKey, revision: Long): IO[Option[StoredItem]]
   def history(key: ItemKey): IO[Vector[RevisionMeta]]
   def allCurrent(): IO[Vector[StoredItem]]
+  def search(input:haystack.query.SearchInput):IO[haystack.query.SearchResult]=allCurrent().map(haystack.query.Search.search(_,input))
   /** Includes terminal validation/CAS outcomes. An IO failure is uncertain,
     * never permission to retry under a new identity. */
   def commit(operation: AcceptedOperation, principal: Principal, now: Instant): IO[CommitSuccess]
