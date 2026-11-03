@@ -345,6 +345,22 @@
       ]
     },
     {
+      "module": "test_client_secret_files",
+      "path": "manure/tests/test_client_secret_files.py",
+      "classification": "current",
+      "requires": [],
+      "tests": [
+        "test_client_secret_files.ClientSecretFileTests.test_ambiguity_still_precedes_any_file_open",
+        "test_client_secret_files.ClientSecretFileTests.test_growth_after_fstat_still_has_bounded_actual_reads",
+        "test_client_secret_files.ClientSecretFileTests.test_nonregular_missing_and_dangling_references_are_sanitized",
+        "test_client_secret_files.ClientSecretFileTests.test_resolved_regular_leaf_raced_to_fifo_never_blocks_or_reads",
+        "test_client_secret_files.ClientSecretFileTests.test_sole_fifo_reference_rejects_helpers_constructor_cli_and_mcp",
+        "test_client_secret_files.ClientSecretFileTests.test_symlink_to_fifo_rejects_but_managed_regular_symlinks_work",
+        "test_client_secret_files.ClientSecretFileTests.test_token_exact_ascii_codec_and_single_optional_lf",
+        "test_client_secret_files.ClientSecretFileTests.test_url_reference_transport_bound_utf8_and_strip_semantics"
+      ]
+    },
+    {
       "module": "test_client_stateful",
       "path": "manure/tests/test_client_stateful.py",
       "classification": "current",
@@ -798,6 +814,38 @@
         {
           "path": "manure/tests/test_credential_preflight.py",
           "testId": "test_credential_preflight.CredentialPreflightTests.test_common_pairs_reject_fifo_before_read"
+        },
+        {
+          "path": "manure/tests/test_client_secret_files.py",
+          "testId": "test_client_secret_files.ClientSecretFileTests.test_ambiguity_still_precedes_any_file_open"
+        },
+        {
+          "path": "manure/tests/test_client_secret_files.py",
+          "testId": "test_client_secret_files.ClientSecretFileTests.test_growth_after_fstat_still_has_bounded_actual_reads"
+        },
+        {
+          "path": "manure/tests/test_client_secret_files.py",
+          "testId": "test_client_secret_files.ClientSecretFileTests.test_nonregular_missing_and_dangling_references_are_sanitized"
+        },
+        {
+          "path": "manure/tests/test_client_secret_files.py",
+          "testId": "test_client_secret_files.ClientSecretFileTests.test_resolved_regular_leaf_raced_to_fifo_never_blocks_or_reads"
+        },
+        {
+          "path": "manure/tests/test_client_secret_files.py",
+          "testId": "test_client_secret_files.ClientSecretFileTests.test_sole_fifo_reference_rejects_helpers_constructor_cli_and_mcp"
+        },
+        {
+          "path": "manure/tests/test_client_secret_files.py",
+          "testId": "test_client_secret_files.ClientSecretFileTests.test_symlink_to_fifo_rejects_but_managed_regular_symlinks_work"
+        },
+        {
+          "path": "manure/tests/test_client_secret_files.py",
+          "testId": "test_client_secret_files.ClientSecretFileTests.test_token_exact_ascii_codec_and_single_optional_lf"
+        },
+        {
+          "path": "manure/tests/test_client_secret_files.py",
+          "testId": "test_client_secret_files.ClientSecretFileTests.test_url_reference_transport_bound_utf8_and_strip_semantics"
         }
       ],
       "openGaps": []
