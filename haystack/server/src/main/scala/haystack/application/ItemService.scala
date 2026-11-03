@@ -24,7 +24,7 @@ final class ItemService(repo: ItemRepository, changed: (String,Long) => IO[Unit]
     // Notification is advisory; a disconnect cannot undo a committed write.
     _ <- if (result.replayed) IO.unit else changed(key,result.revision).handleErrorWith(_ => IO.unit)
   } yield result
-  def search(input: SearchInput): IO[SearchResult] = repo.allCurrent().map(Search.search(_,input))
+  def search(input: SearchInput): IO[SearchResult] = repo.search(input)
   def complete(fragment: String): IO[Vector[String]] = repo.allCurrent().map(Search.complete(_,fragment))
   def values(field: String): IO[Vector[String]] = repo.allCurrent().flatMap { items =>
     val values = field match {

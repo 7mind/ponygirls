@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
+import * as api from "../../web/dashboard/current/manure/api/index.js";
+import {BaboonCodecContext} from "../../web/dashboard/current/BaboonSharedRuntime.js";
+import {randomUUID} from "node:crypto";
+const codecContext=BaboonCodecContext.Default;
 
 let raw = "";
 for await (const chunk of process.stdin) raw += chunk;
@@ -18,7 +22,7 @@ const cleanError = (error) => {
   for (const secret of secrets) text = text.split(secret).join("[REDACTED]");
   return text;
 };
-const endpoint = (name) => input.base + "/api/v1/artifacts/" + input.artifacts[name].artifact_id;
+const endpoint = (name) => input.base + "/api/current/artifacts/" + input.artifacts[name].artifact_id;
 const content = (name) => input.artifacts[name].content_url.replace(/\/$/, "");
 
 // Preserve the content Host while connecting to loopback; Node has no Chromium
@@ -39,10 +43,23 @@ const wire = (url, { method = "GET", body, headers = {} } = {}) => new Promise((
   request.on("error", reject);
   request.end(bytes);
 });
-const info = async (page, name) => {
-  const response = await page.request.get(endpoint(name));
-  assert.equal(response.status(), 200);
-  return response.json();
+const management = async (page,command) => {
+  const request=new api.ClientEnvelope(randomUUID(),"1.0.0",command);
+  const response=await page.request.post(input.base+"/api/current",{data:api.ClientEnvelope_JsonCodec.instance.encode(codecContext,request),headers:{Origin:input.base}});
+  const result=api.ServerEnvelope_JsonCodec.instance.decode(codecContext,await response.json());
+  assert.equal(result.requestId,request.requestId);
+  return {response,result:result.result};
+};
+const contentWire = (base,command,headers={}) => {
+  const envelope=new api.ContentEnvelope(randomUUID(),"1.0.0",command);
+  return wire(base+"/__manure/current",{method:"POST",body:api.ContentEnvelope_JsonCodec.instance.encode(codecContext,envelope),headers:{Origin:new URL(base).origin,...headers}});
+};
+const info = async (page,name) => {
+  const {response,result}=await management(page,new api.Command_GetArtifact(input.artifacts[name].artifact_id));
+  assert.equal(response.status(),200);assert.ok(result instanceof api.Result_ArtifactInfo);
+  const a=result.artifact;
+  return {artifact_id:a.artifactId,name:a.name,kind:a.kind==="Directory"?"dir":"file",visibility:a.visibility.toLowerCase(),state:a.state.toLowerCase(),
+    expires_at:a.expiresAt,file_count:a.fileCount,total_bytes:a.totalBytes};
 };
 const metadataMode = (page) => page.locator("#detail-list dt").evaluateAll((nodes) =>
   nodes.find((node) => node.textContent === "Access")?.nextElementSibling.textContent);
@@ -106,9 +123,12 @@ const check = async (name, run) => {
       const state = window.__accessProbe = { patches: [], completed: 0, metadataPending: 0, fault: null, hold: null, release: null, failLogout: false, failMetadata: false, lost: false };
       window.fetch = (url, options = {}) => {
         const target = new URL(String(url), location.href);
-        if (state.failLogout && target.pathname === "/api/v1/logout") return Promise.reject(new Error("test-offline"));
-        if ((options.method || "GET").toUpperCase() !== "PATCH") {
-          if ((options.method || "GET").toUpperCase() === "GET" && /^\/api\/v1\/artifacts\/[0-9a-f]{32}$/.test(target.pathname)) {
+        let envelope;
+        try { envelope=JSON.parse(options.body || "null"); } catch (_) { envelope=null; }
+        const command=target.pathname==="/api/current" ? envelope?.command : null;
+        if (state.failLogout && command?.Logout) return Promise.reject(new Error("test-offline"));
+        if (!command?.PatchArtifact) {
+          if (command?.GetArtifact) {
             if (state.failMetadata) { state.failMetadata = false; return Promise.reject(new Error("test-metadata-offline")); }
             state.metadataPending++;
             return realFetch(url, options).then(async (response) => {
@@ -118,12 +138,12 @@ const check = async (name, run) => {
           }
           return realFetch(url, options);
         }
-        state.patches.push({ path: target.pathname, body: JSON.parse(options.body) });
+        state.patches.push({ path: target.pathname, body: command.PatchArtifact });
         state.completed = 0;
         const fault = state.fault;
         state.fault = null;
         if (fault === "network") return Promise.reject(new Error("test-offline"));
-        if (fault === "server") return Promise.resolve(new Response('{"error":{"code":"unavailable"}}', { status: 503, headers: { "Content-Type": "application/json" } }));
+        if (fault === "server") return Promise.resolve(new Response(JSON.stringify({requestId:envelope.requestId,result:{Error:{failure:{code:"Unavailable",message:"controlled fixture",retryAfterSeconds:1}}}}), { status: 503, headers: { "Content-Type": "application/json" } }));
         const hold = state.hold;
         state.hold = null;
         const send = () => realFetch(url, options).then(async (response) => {
@@ -164,16 +184,16 @@ await check("all six access transitions preserve metadata and enforce real acces
   for (const target of ["external", "public", "internal", "public", "external", "internal"]) {
     if (source === "internal") {
       const mint = async () => {
-        const response = await page.request.post(endpoint(name) + "/grants", { data: {}, headers: { Origin: input.base } });
-        assert.equal(response.status(), 200);
-        return (await response.json()).grant;
+        const {response,result}=await management(page,new api.Command_CreateGrant(input.artifacts[name].artifact_id));
+        assert.equal(response.status(),200);assert.ok(result instanceof api.Result_GrantCreated);
+        return result.grant;
       };
-      const redeemed = await wire(content(name) + "/__manure/grant", { method: "POST", body: { grant: await mint() }, headers: { Origin: input.base } });
+      const redeemed = await contentWire(content(name),new api.ContentCommand_RedeemGrant(await mint()),{Origin:input.base});
       assert.equal(redeemed.status, 200);
       oldGrants.push(redeemed.cookie);
       oldHandoffs.push(await mint());
     } else if (source === "external") {
-      const unlocked = await wire(content(name) + "/__manure/unlock", { method: "POST", body: { password: currentPassword }, headers: { Origin: new URL(content(name)).origin } });
+      const unlocked = await contentWire(content(name),new api.ContentCommand_Unlock(currentPassword));
       assert.equal(unlocked.status, 200);
       oldGrants.push(unlocked.cookie);
       oldPasswords.push(currentPassword);
@@ -187,7 +207,7 @@ await check("all six access transitions preserve metadata and enforce real acces
     assert.equal(dialogs.count - confirmations, target === "public" ? 1 : 0);
     const patches = await page.evaluate(() => window.__accessProbe.patches);
     assert.equal(patches.length, before + 1);
-    assert.deepEqual(patches.at(-1), { path: new URL(endpoint(name)).pathname, body: { visibility: target } });
+    assert.deepEqual(patches.at(-1), {path:"/api/current",body:{artifactId:input.artifacts[name].artifact_id,patch:{name:null,visibility:target[0].toUpperCase()+target.slice(1),expiry:{Keep:{}}}}});
     const updated = await info(page, name);
     assert.equal(updated.visibility, target);
     assert.equal(updated.name, original.name);
@@ -195,25 +215,25 @@ await check("all six access transitions preserve metadata and enforce real acces
     assert.equal(updated.file_count, original.file_count);
     assert.equal(updated.total_bytes, original.total_bytes);
     assert.equal(Object.hasOwn(updated, "external_password"), false);
-    assert.equal((await wire(content(name) + "/__manure/manifest")).status, target === "public" ? 200 : 401);
+    assert.equal((await contentWire(content(name),new api.ContentCommand_GetManifest())).status, target === "public" ? 200 : 401);
     assert.equal((await wire(endpoint(name) + "/files/index.html/content")).status, target === "public" ? 200 : 401);
     const authenticated = await page.request.get(endpoint(name) + "/files/index.html/content");
     assert.equal(authenticated.status(), 200);
     assert.equal(await authenticated.text(), "<h1>access payload</h1>");
     for (const grant of oldHandoffs) {
-      const rejected = await wire(content(name) + "/__manure/grant", { method: "POST", body: { grant }, headers: { Origin: input.base } });
+      const rejected = await contentWire(content(name),new api.ContentCommand_RedeemGrant(grant),{Origin:input.base});
       assert.equal(rejected.status, target === "internal" ? 403 : 400);
     }
     if (target !== "public") {
-      for (const cookie of oldGrants) assert.equal((await wire(content(name) + "/__manure/manifest", { headers: { Cookie: cookie } })).status, 401);
+      for (const cookie of oldGrants) assert.equal((await contentWire(content(name),new api.ContentCommand_GetManifest(),{Cookie:cookie})).status, 401);
     }
-    for (const value of oldPasswords) assert.notEqual((await wire(content(name) + "/__manure/unlock", { method: "POST", body: { password: value }, headers: { Origin: new URL(content(name)).origin } })).status, 200);
+    for (const value of oldPasswords) assert.notEqual((await contentWire(content(name),new api.ContentCommand_Unlock(value))).status, 200);
     if (target === "external") {
       currentPassword = await password(page);
       assert.equal(oldPasswords.includes(currentPassword), false, "re-entering external must generate a fresh password");
-      const unlocked = await wire(content(name) + "/__manure/unlock", { method: "POST", body: { password: currentPassword }, headers: { Origin: new URL(content(name)).origin } });
+      const unlocked = await contentWire(content(name),new api.ContentCommand_Unlock(currentPassword));
       assert.equal(unlocked.status, 200);
-      assert.equal((await wire(content(name) + "/__manure/manifest", { headers: { Cookie: unlocked.cookie } })).status, 200);
+      assert.equal((await contentWire(content(name),new api.ContentCommand_GetManifest(),{Cookie:unlocked.cookie})).status, 200);
       assert.equal(await page.locator("#rotate-button").isVisible(), true);
       await page.locator("#rotate-dismiss-button").click();
     } else assert.equal(await page.locator("#rotate-button").isVisible(), false);
@@ -361,7 +381,7 @@ if (input.includeRaces) {
     assert.equal(await page.locator("#rotate-button").isEnabled(), true);
     await page.locator("#rotate-button").click();
     const value = await password(page);
-    const unlocked = await wire(content("lost") + "/__manure/unlock", { method: "POST", body: { password: value }, headers: { Origin: new URL(content("lost")).origin } });
+    const unlocked = await contentWire(content("lost"),new api.ContentCommand_Unlock(value));
     assert.equal(unlocked.status, 200);
   });
 
@@ -398,9 +418,8 @@ if (input.includeRaces) {
     await page.locator("#access-save-button").click();
     await page.waitForFunction(() => window.__accessProbe.release !== null);
     await openDetail(page, "other");
-    const newer = await page.request.patch(endpoint(name), {
-      data: { visibility: "public" }, headers: { Origin: input.base },
-    });
+    const {response:newer}=await management(page,new api.Command_PatchArtifact(input.artifacts[name].artifact_id,
+      new api.ArtifactPatch(null,api.Visibility.Public,new api.ExpiryChange_Keep())));
     assert.equal(newer.status(), 200);
     await openDetail(page, name);
     await savedMode(page, "public");

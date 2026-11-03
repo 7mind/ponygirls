@@ -192,3 +192,42 @@ need conversion to current typed fixtures; all assertions/cases remain present.
 No successful full historical-suite claim is made. The baseline 353-method
 register is retained as the migration checklist, not replaced by these 27
 component methods/cases. Real target-binary fixture migration proceeds separately.
+
+### Actual-target test harness
+
+`tests/target_server.py` requires explicit `MANURE_TEST_SERVER_COMMAND_JSON`
+(nonempty JSON argv array, appends `serve CONFIG`),
+`MANURE_TEST_ALLOW_CREATEDB=1`, `MANURE_TEST_JDBC_URL`,
+`MANURE_TEST_JDBC_USER`, `MANURE_TEST_JDBC_PASSWORD_FILE`, and `psql` on PATH.
+The provider must be an owned disposable cluster with CREATEDB permission.
+Every fixture creates `manure_browser_<randomhex>` and drops only that owned
+name; it never truncates/resets an arbitrary supplied database. Passwords use
+an O_EXCL/0600 temporary PGPASSFILE, never argv. Launcher config includes the
+required finite JDBC bounds. Root preexists. `MANURE_POSIX_LIBRARY` selects
+shared JNI mode for JVM checks; without it the fixture requests linked native
+mode, not a Python/JVM fallback.
+
+Readiness requires the target's exact `MANURE_READY {apiOrigin,port,pid}` record
+and a successful unauthenticated generated Version command **after** migration,
+reconcile and HTTP bind. Missing launcher/provider/opt-in fails, not skips.
+Shutdown waits for the real child before dropping its owned DB. Tests seed via
+public typed API only; browser TLS retains the controlled Host-preserving edge.
+Real TTL waits replace private clocks. See behavior-inventory.md for precise
+executed component scope and remaining full-target acceptance requirements.
+
+
+### Retained client fixture verification update
+
+At committed source `3f5bba8162dad31fc8042ec3bb69e37837c506aa`, all114 retained
+client-only hardening/transport/external/stateful/CLIresume/MCP protocol/hardening
+methods now use current typed fixtures and pass without skips. Combined with
+current codec/client/fixture-safety/markup/asset hygiene, the fresh Python run is
+145 methods,0 failures/errors/skips; Node boundary/CDP run16 cases,0 failures/skips.
+The official SDK1.32.1 controlled-current-HTTP stdio leg executes. Full logs and
+source SHA binding are in `/tmp/manure-contract-evidence.Dc9gQ7`; the behavior
+register records the earlier redirect-fixture failure/fix and current remaining
+actual-target acceptance gates. The earlier old-fixture failures are historical,
+not the current client-only suite status. No Python legacy server/API fallback
+was introduced to make these pass. The nested real-target environment test
+retains its real target prerequisite and must run under the parent's owned
+PostgreSQL/executable fixture.

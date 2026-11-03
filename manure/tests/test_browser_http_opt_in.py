@@ -4,8 +4,6 @@ import socket
 from unittest.mock import patch
 
 import browser_fixtures as bf
-from test_server_security import _init
-from test_server_path_mode import _PathHttp
 
 
 class HttpOptInBrowserCase(unittest.TestCase):
@@ -14,13 +12,12 @@ class HttpOptInBrowserCase(unittest.TestCase):
             'api_origin': 'http://manure-http.test:0',
             'loopback_dev': False, 'allow_insecure_http': True})
         self.addCleanup(fix.close)
-        http = _PathHttp(fix.server.bound_port, fix.api_base)
-        internal = _init(http, fix.identity.token, data=b'<title>HTTP-INTERNAL</title>', path='index.html')
-        public = _init(http, fix.identity.token, visibility='public', data=b'<title>HTTP-PUBLIC</title>', path='index.html')
         lookup = socket.getaddrinfo
         def local_dns(host, port, *args, **kw):
             return lookup('127.0.0.1' if host == 'manure-http.test' else host, port, *args, **kw)
         with patch('socket.getaddrinfo', local_dns):
+            internal = bf.upload_fixture(fix,name='internal-http',kind='dir',visibility='internal',files={'index.html':b'<title>HTTP-INTERNAL</title>'})['artifact_id']
+            public = bf.upload_fixture(fix,name='public-http',kind='dir',visibility='public',files={'index.html':b'<title>HTTP-PUBLIC</title>'})['artifact_id']
             external = bf.upload_fixture(fix, name='external-http', kind='dir', visibility='external',
                                          files={'index.html': b'<title>HTTP-EXTERNAL</title>'})
         # Exercise the real packaged dashboard and grant form navigation.
@@ -41,8 +38,8 @@ class HttpOptInBrowserCase(unittest.TestCase):
             {'op': 'waitForEval', 'fn': '() => document.title === "HTTP-PUBLIC"'},
             {'op': 'goto', 'url': fix.api_base + '/'},
             {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
-            {'op': 'eval', 'fn': 'async () => (await fetch("/api/v1/logout", {method:"POST"})).status'},
-            {'op': 'eval', 'fn': 'async () => (await fetch("/api/v1/whoami")).status'},
+            {'op': 'eval', 'fn': 'async () => (await fetch("/api/current", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId:"00000000-0000-4000-8000-000000000001",apiVersion:"1.0.0",command:{Logout:{}}})})).status'},
+            {'op': 'eval', 'fn': 'async () => (await fetch("/api/current", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId:"00000000-0000-4000-8000-000000000001",apiVersion:"1.0.0",command:{Whoami:{}}})})).status'},
         ], host_resolver_rules='MAP manure-http.test 127.0.0.1')
         self.assertTrue(all(x['ok'] for x in out), [x for x in out if not x['ok']])
         cookies = next(x['cookies'] for x in out if x['op'] == 'cookies')

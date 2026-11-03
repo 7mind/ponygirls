@@ -3,7 +3,7 @@
   "allowedOrigin":"http://127.0.0.1:8448", "secureCookies":false, "allowInsecureHttp":false,
   "jdbcUrl":"jdbc:postgresql://127.0.0.1:5432/chronicle",
   "databaseUser":"chronicle", "databasePasswordFile":"/run/credentials/chronicle/database",
-  "databaseLimits":{"maxConnections":8,"maxQueued":32,"queueTimeoutMs":5000,"connectTimeoutMs":5000,"statementTimeoutMs":30000,"lockTimeoutMs":5000,"idleTransactionTimeoutMs":30000,"socketTimeoutMs":35000},
+  "databaseLimits":{"maxConnections":8,"maxQueued":32,"queueTimeoutMs":5000,"connectTimeoutMs":5000,"statementTimeoutMs":30000,"lockTimeoutMs":35000,"idleTransactionTimeoutMs":60000,"socketTimeoutMs":35000},
   "users":[{"id":"operator","login":"operator","passwordHashFile":"/run/credentials/chronicle/operator","enabled":true}],
   "staticTokens":[],
   "maxBodyBytes":8388608, "maxFiles":16, "maxFileBytes":4194304, "maxMessages":10000,

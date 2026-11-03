@@ -36,6 +36,8 @@ export class ApiError extends Error {
 }
 
 import { stringify } from "lossless-json";
+import { WriteCoordinator } from "./pending-write.ts";
+export { PendingWriteBlocked } from "./pending-write.ts";
 import { parseRaw as parse } from "./lossless-json.ts";
 import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
 import {
@@ -54,7 +56,7 @@ interface Codec<T> {
 async function request(path: string, init: RequestInit): Promise<Response> {
   let res: Response;
   try { res = await fetch(path, init); } catch { throw new NetworkError(); }
-  if (res.status === 401) throw new AuthError();
+  if (res.status === 401) { writes.clear(); throw new AuthError(); }
   if (res.status === 502 || res.status === 503 || res.status === 504) throw new NetworkError();
   return res;
 }
@@ -226,9 +228,28 @@ export function uuidv7(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+const writes = new WriteCoordinator<PutResult>(
+  async (op) => {
+    const result = await call("/api/v1/put", PutResult.jsonCodec(), encode(PutRequest.jsonCodec(),
+      new PutRequest(op.key, new DocumentPayload(op.documentJson), op.expectedRevision, op.requestId)));
+    if (result.key !== op.key || !Number.isSafeInteger(result.revision) || result.revision < 1 || typeof result.replayed !== "boolean" ||
+        typeof result.metadata.modifiedAt !== "string" || typeof result.metadata.modifiedBy !== "string")
+      throw new ApiError(200, { code: "unavailable", message: "bad response" });
+    return result;
+  },
+  // A decoded terminal client fault establishes an outcome; transport failures,
+  // unreadable 2xx responses, request timeout and server failures do not.
+  (error) => error instanceof AuthError || (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408),
+);
 export const api = {
-  login: (token: string) => call("/api/v1/login", LoginResult.jsonCodec(), encode(LoginRequest.jsonCodec(), new LoginRequest(token))),
-  logout: () => call("/api/v1/logout", Ack.jsonCodec()),
+  pendingWrite: writes.snapshot,
+  subscribePendingWrite: writes.subscribe,
+  retryPendingWrite: () => writes.retry(),
+  login: async (token: string) => {
+    const result = await call("/api/v1/login", LoginResult.jsonCodec(), encode(LoginRequest.jsonCodec(), new LoginRequest(token)));
+    writes.clear(); return result;
+  },
+  logout: async () => { const result = await call("/api/v1/logout", Ack.jsonCodec()); writes.clear(); return result; },
   whoami: async (): Promise<Principal> => {
     const identity = await call("/api/v1/whoami", Identity.jsonCodec(), undefined, "GET");
     return { userId: identity.userId, type: identity.userType as Principal["type"], tokenId: identity.tokenId, activityProjectId: identity.activityProjectId };
@@ -236,7 +257,7 @@ export const api = {
   get: async (key: string, revision?: number) => toItem(await call("/api/v1/get", WireItem.jsonCodec(),
     encode(GetRequest.jsonCodec(), new GetRequest(key, revision)))),
   put: (key: string, documentJson: string, expectedRevision: number, requestId: string) =>
-    call("/api/v1/put", PutResult.jsonCodec(), encode(PutRequest.jsonCodec(), new PutRequest(key, new DocumentPayload(documentJson), expectedRevision, requestId))),
+    writes.execute({ key, documentJson, expectedRevision, requestId }),
   search: async (query: string, opts?: { project?: string; limit?: number; cursor?: string; sort?: SearchSort }) => {
     const sort = opts?.sort ?? { field: "key", direction: "asc" };
     const result = await call("/api/v1/search", SearchResult.jsonCodec(), encode(SearchRequest.jsonCodec(),

@@ -70,3 +70,15 @@ test('errors expose enumerated code only, not untrusted secret-bearing messages'
   };
   await assert.rejects(boundary.request(fetch,boundary.whoami()),error=>error.message==='unauthorized'&&error.status===401&&!String(error).includes('CANARY'));
 });
+
+test('opted-in insecure HTTP context does not require secure-only crypto.randomUUID',()=>{
+  const original=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+  const getRandomValues=crypto.getRandomValues.bind(crypto);
+  try {
+    Object.defineProperty(globalThis,'crypto',{configurable:true,value:{getRandomValues}});
+    assert.equal(typeof crypto.randomUUID,'undefined');
+    const first=boundary.requestId(),second=boundary.requestId();
+    assert.match(first,/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.notEqual(first,second);
+  } finally { Object.defineProperty(globalThis,'crypto',original); }
+});

@@ -109,3 +109,11 @@ stricter existing role/database setting, applied by one fully consumed bound
 `pg_settings` setup query before the caller transaction. This fixed setup is
 explicitly accounted in SQL-observation tests; domain query work/isolation and
 admission/cursor/deadline contracts are not silently filtered or relaxed.
+
+Chronicle's explicit example/acceptance baseline uses statement30s, lock35s,
+idle-transaction60s and socket35s: the introduced infrastructure limits must not
+preempt the already-specified six-second archive wait, thirty-second observable
+archive statement deadline or renewal serialized past a five-second expiry.
+This changes no public query deadline. Chronicle's provider role must use the
+same lock/idle baseline, because stricter role settings are deliberately retained.
+Haystack/Manure and explicit operator reductions keep their own finite policies.
