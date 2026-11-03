@@ -101,7 +101,7 @@ object BackendFixture:
     projection = new SearchProjection(cfg,engine)
     _ <- Resource.eval(transactions.traverse_(_.transaction { c =>
       val sql = Files.readString(source.resolve("manure/migration/schema.sql"))
-      Using.resource(c.createStatement())(_.execute(sql)); projection.initialize(c)
+      Using.resource(c.createStatement())(_.execute(sql)); CatalogueProjection.initialize(c); projection.initialize(c)
     }))
     repo: Metadata = transactions.map(t => new PostgresMetadata(t,lease,projection)).getOrElse(new MemoryMetadata(lease))
     gate <- Resource.eval(Semaphore[IO](1L))

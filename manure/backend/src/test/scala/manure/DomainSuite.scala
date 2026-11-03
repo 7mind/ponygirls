@@ -21,8 +21,8 @@ final class DomainSuite extends FunSuite:
       assertEquals(java.lang.Double.doubleToRawLongBits(Exact.timestamp(Exact.timestamp(v))),java.lang.Double.doubleToRawLongBits(v))
     }
     assert(Exact.compare("\ue000","𐀀") < 0) // UTF8 byte/codepoint, NOT JVM UTF16 order.
-    assertEquals(Exact.matching("Straße Σ İ"),"straße σ i\u0307")
-    assert(!Exact.matching("Straße").contains("strasse")) // Current lowercase != historical casefold.
+    assertEquals(Exact.matching("Straße Σ İ"),"strasse σ i\u0307")
+    assert(Exact.matching("Straße").contains("strasse")) // Normative full fold, not ROOT lowercase.
   }
   test("manifest canonical path and topology bounds reject every traversal form") {
     Vector("","/x","C:x","a\\b","a//b","a/",".","..","a/../b","a/./b","api/x","__manure/x","a\u0000b","a\nb","a\u007fb",("x/"*64)+"x").foreach(v => intercept[DomainError](Manifest.path(v)))

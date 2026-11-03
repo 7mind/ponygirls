@@ -165,6 +165,23 @@ class OwnedDatabase:
             '-v','ON_ERROR_STOP=1','-c',statement],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
         if result.returncode:raise RuntimeError('owned target database provisioning/cleanup failed')
 
+    def runtime_sql(self,statement):
+        """Fixed test-owned SQL only, under the SAME non-owner runtime identity.
+
+        Used for exact PostgreSQL lock/trigger crash windows and readback; never
+        provisions a role, widens permissions or falls back to an administrator.
+        """
+        if not self.created or not isinstance(statement,str) or len(statement)>16384:
+            raise RuntimeError('invalid owned runtime SQL probe')
+        env={k:v for k,v in os.environ.items() if not k.startswith('PG')}
+        env.update(PGPASSFILE=str(self.passfile),PGCONNECT_TIMEOUT='10')
+        result=subprocess.run([self.psql,'-X','-qAt','--no-password','-h',self.parsed.hostname,
+            '-p',str(self.parsed.port or 5432),'-U',self.user,'-d',self.name,'-v','ON_ERROR_STOP=1','-c',statement],
+            env=env,capture_output=True,timeout=30)
+        if result.returncode or len(result.stdout)>65536 or len(result.stderr)>8192:
+            raise RuntimeError('owned runtime SQL probe failed (private diagnostics withheld)')
+        return result.stdout.decode('utf-8').strip()
+
     def migration_service(self,name):
         if not self.helper:
             return f'[{name}]\nhost={self.parsed.hostname}\nport={self.parsed.port or 5432}\ndbname={self.name}\nuser={self.user}\npassfile={self.passfile}\n'
@@ -197,11 +214,16 @@ class OwnedDatabase:
                 'statementTimeoutMs':30000,'lockTimeoutMs':5000,'idleTransactionTimeoutMs':30000,'socketTimeoutMs':30000}}
 
 
+def server_command():
+    command=json.loads(_required('MANURE_TEST_SERVER_COMMAND_JSON'))
+    if not isinstance(command,list) or not command or not all(isinstance(v,str) and v for v in command):
+        raise RuntimeError('MANURE_TEST_SERVER_COMMAND_JSON must be a nonempty argv array')
+    return command
+
+
 class TargetServer:
-    def __init__(self,config:dict,directory:str,*,owned_database=None,close_database=True):
-        command=json.loads(_required('MANURE_TEST_SERVER_COMMAND_JSON'))
-        if not isinstance(command,list) or not command or not all(isinstance(v,str) and v for v in command):
-            raise RuntimeError('MANURE_TEST_SERVER_COMMAND_JSON must be a nonempty argv array')
+    def __init__(self,config:dict,directory:str,*,owned_database=None,close_database=True,jdbc_limits=None):
+        command=server_command()
         self.config=dict(config);self.process=None;self.database=None;self.closed=False
         self._stdout=deque(maxlen=100);self._stderr=deque(maxlen=100)
         if owned_database is not None and not isinstance(owned_database,OwnedDatabase):
@@ -209,6 +231,11 @@ class TargetServer:
         self.database=owned_database if owned_database is not None else OwnedDatabase(directory)
         self.close_database=close_database
         self.config['database']=self.database.config()
+        if jdbc_limits is not None:
+            allowed=set(self.config['database']['limits'])
+            if not isinstance(jdbc_limits,dict) or not set(jdbc_limits)<=allowed or any(type(v) is not int or v<=0 for v in jdbc_limits.values()):
+                raise RuntimeError('invalid explicit owned JDBC limit override')
+            self.config['database']['limits'].update(jdbc_limits)
         library=os.environ.get('MANURE_POSIX_LIBRARY')
         self.config['native_mode']='shared' if library else 'linked'
         self.config['posix_library']=library
