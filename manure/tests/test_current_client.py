@@ -111,7 +111,7 @@ class CurrentClientTests(unittest.TestCase):
     def test_full_upload_fetch_empty_dirs_hashes_ranges_and_secret_free_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);src=root/'source';src.mkdir();(src/'empty').mkdir()
-            data=b'hello\x00current'*40000;(src/'é.bin').write_bytes(data)
+            data=b'hello\x00current'*200000;(src/'é.bin').write_bytes(data)
             transport=CurrentTransport();client=ManureClient(ORIGIN,TOKEN,cache_dir=root/'cache',transport=transport)
             result=client.upload_path(src,'external')
             self.assertEqual(result['external_password'],PASSWORD)
@@ -121,6 +121,8 @@ class CurrentClientTests(unittest.TestCase):
             self.assertEqual((root/'dest/é.bin').read_bytes(),data)
             self.assertTrue((root/'dest/empty').is_dir())
             self.assertTrue(any(m=='PUT' for m,*_ in transport.requests))
+            self.assertTrue(any(method=='GET' and 'Range' in headers for method,_,headers,_ in transport.requests),
+                            'fixture must exercise actual bounded range download, not a bare GET')
             self.assertTrue(all('/api/v1' not in url for _,url,_,_ in transport.requests))
 
     def test_restart_resume_uses_committed_ranges_without_restart_or_secret_cache(self):

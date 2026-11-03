@@ -1,4 +1,4 @@
-"""Client transport/auth/manifest/upload/fetch behavioral tests (contract v0.2).
+"""Current client transport/auth/manifest/upload/fetch behavioral tests.
 
 Covers: ambiguous credentials without network, exact token-file codec,
 loopback-only HTTP, bearer-only-to-API-origin, grant-jar exact-host,
@@ -19,6 +19,9 @@ import unittest
 import tempfile
 import urllib.parse
 from pathlib import Path
+from current_fixture import current_fixture
+from manure import current_protocol as cp
+from uuid import UUID
 
 
 def _import_client():
@@ -48,31 +51,32 @@ VALID_TOKEN_2 = _gen_token()
 ART_ID = "a" * 32
 
 
+@current_fixture
 class DummyTransport:
     """Shared dummy transport interface: canned routes + request log."""
 
     def __init__(self, routes: dict[tuple[str, str], tuple[int, dict, bytes]]):
-        # key: (METHOD, path+query) e.g. ("GET", "/api/v1/whoami")
+        # Application key: (generated command variant, artifact ID); raw keys are HTTP paths.
         self.routes = routes
         self.requests: list[dict] = []
 
     def request(self, method, url, headers, body):
         self.requests.append({"method": method, "url": url, "headers": dict(headers), "body": body})
         parsed = urllib.parse.urlparse(url)
-        key = (method.upper(), parsed.path + (("?" + parsed.query) if parsed.query else ""))
+        key = (method, parsed.path + (("?" + parsed.query) if parsed.query else ""))
         # fall back to path-only match
         if key not in self.routes:
-            key2 = (method.upper(), parsed.path)
+            key2 = (method, parsed.path)
             if key2 in self.routes:
                 key = key2
             else:
-                return (404, {"Content-Type": "application/json"}, b'{"error": {"code": "not-found", "message": "no route"}}')
+                return (404, {"Content-Type": "application/json"}, {"error":{"code":"not-found","message":"no route"}})
         status, hdrs, resp_body = self.routes[key]
         return (status, dict(hdrs), resp_body)
 
 
 def _json_body(obj) -> bytes:
-    return json.dumps(obj).encode()
+    return obj
 
 
 class TestAmbiguityNoNetwork(unittest.TestCase):
@@ -142,7 +146,7 @@ class TestLoopbackHttps(unittest.TestCase):
 
     def test_https_non_loopback_allowed(self):
         (ManureClient, *_r) = _import_client()
-        routes = {("GET", "/api/v1/whoami"): (200, {"Content-Type": "application/json"},
+        routes = {('Whoami', ''): (200, {"Content-Type": "application/json"},
                   _json_body({"user_id": "u", "type": "agent", "token_id": "t"}))}
         tr = DummyTransport(routes)
         c = ManureClient("https://artifacts.7mind.io", token=VALID_TOKEN, transport=tr)
@@ -152,7 +156,7 @@ class TestLoopbackHttps(unittest.TestCase):
 
     def test_http_loopback_allowed(self):
         (ManureClient, *_r) = _import_client()
-        routes = {("GET", "/api/v1/whoami"): (200, {"Content-Type": "application/json"},
+        routes = {('Whoami', ''): (200, {"Content-Type": "application/json"},
                   _json_body({"user_id": "u", "type": "agent", "token_id": "t"}))}
         for base in ("http://127.0.0.1:47329", "http://localhost:9", "http://foo.localhost:9"):
             tr = DummyTransport(routes)
@@ -181,13 +185,13 @@ class TestCredentialIsolation(unittest.TestCase):
         # stub transport to capture content request via fetch path: use direct _request
         # content manifest GET (public, anon) must not include Authorization
         tr2_routes = {
-            ("GET", "/__manure/manifest"): (200, {"Content-Type": "application/json"},
+            ("GET", "/credential-probe"): (200, {"Content-Type": "application/json"},
                 _json_body({"artifact_id": ART_ID, "state": "ready", "files": []})),
         }
         tr2 = DummyTransport(tr2_routes)
         c2 = ManureClient("http://127.0.0.1:8000", token=VALID_TOKEN, transport=tr2)
         # internal helper: content GET should not send bearer
-        status, hdrs, body = c2._request("GET", f"http://{ART_ID}.artifacts.localhost:8000/__manure/manifest")
+        status, hdrs, body = c2._request("GET", f"http://{ART_ID}.artifacts.localhost:8000/credential-probe")
         # find recorded request
         self.assertEqual(len(tr2.requests), 1)
         sent = tr2.requests[0]["headers"]
@@ -201,7 +205,7 @@ class TestCredentialIsolation(unittest.TestCase):
         c = ManureClient("http://127.0.0.1:8000", token=VALID_TOKEN, transport=tr)
         c._store_grant("aaa.artifacts.localhost", "mgrant-dev=GRANT1")
         # exact host sends cookie
-        s, h, b = c._request("GET", "http://aaa.artifacts.localhost:8000/__manure/manifest")
+        s, h, b = c._request("GET", "http://aaa.artifacts.localhost:8000/credential-probe")
         # transport recorded cookie?
         # Dummy returns 404 but we inspect sent headers
         sent = tr.requests[-1]["headers"]
@@ -209,12 +213,12 @@ class TestCredentialIsolation(unittest.TestCase):
         self.assertIn("cookie", lowered)
         self.assertIn("GRANT1", lowered["cookie"])
         # sibling host must NOT get cookie
-        s2, h2, b2 = c._request("GET", "http://bbb.artifacts.localhost:8000/__manure/manifest")
+        s2, h2, b2 = c._request("GET", "http://bbb.artifacts.localhost:8000/credential-probe")
         sent2 = tr.requests[-1]["headers"]
         lowered2 = {k.lower(): v for k, v in sent2.items()}
         self.assertNotIn("cookie", lowered2)
         # parent must not get cookie
-        s3, h3, b3 = c._request("GET", "http://artifacts.localhost:8000/__manure/manifest")
+        s3, h3, b3 = c._request("GET", "http://artifacts.localhost:8000/credential-probe")
         sent3 = tr.requests[-1]["headers"]
         lowered3 = {k.lower(): v for k, v in sent3.items()}
         self.assertNotIn("cookie", lowered3)
@@ -229,7 +233,7 @@ class TestCredentialIsolation(unittest.TestCase):
             def request(self, method, url, headers, body):
                 self.requests.append({"method": method, "url": url, "headers": dict(headers)})
                 parsed = urllib.parse.urlparse(url)
-                if parsed.path == "/api/v1/artifacts/x/files/f/content":
+                if parsed.path == "/api/current/artifacts/x/files/f/content":
                     # redirect cross-origin to evil (https: loopback rule allows https anywhere)
                     return (302, {"Location": "https://evil.example/stolen"}, b"")
                 if "evil.example" in url:
@@ -238,7 +242,7 @@ class TestCredentialIsolation(unittest.TestCase):
 
         rd = RedirectDummy()
         c = ManureClient("http://127.0.0.1:8000", token=VALID_TOKEN, transport=rd)
-        status, hdrs, body = c._request("GET", "http://127.0.0.1:8000/api/v1/artifacts/x/files/f/content")
+        status, hdrs, body = c._request("GET", "http://127.0.0.1:8000/api/current/artifacts/x/files/f/content")
         self.assertEqual(status, 200)
         self.assertEqual(len(rd.requests), 2)
         first_auth = {k.lower(): v for k, v in rd.requests[0]["headers"].items()}.get("authorization")
@@ -321,20 +325,20 @@ class TestUploadFetchRoundTripDummy(unittest.TestCase):
             fname = "hello.txt"
             # server state: init -> status(empty) -> chunk PUT -> publish -> files -> content
             routes = {
-                ("POST", "/api/v1/artifacts:init"): (200, {"Content-Type": "application/json"},
+                ('InitUpload', ''): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "chunk_bytes": 262144, "content_url": f"http://{ART_ID}.artifacts.localhost:8000"})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}/upload-status"): (200, {"Content-Type": "application/json"},
+                ('GetUploadStatus', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "state": "uploading", "chunk_bytes": 262144,
                                 "files": [{"path": fname, "size": len(content), "received_bytes": 0, "received_ranges": []}]})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}"): (200, {"Content-Type": "application/json"},
+                ('GetArtifact', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "name": "hello", "kind": "file", "visibility": "internal",
                                 "state": "ready", "created_by_user": "u", "created_at": "2026-10-08T00:00:00Z",
                                 "expires_at": None, "total_bytes": len(content), "file_count": 1,
                                 "content_url": f"http://{ART_ID}.artifacts.localhost:8000"})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+                ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "state": "ready",
                                 "files": [{"path": fname, "kind": "file", "size": len(content), "sha256": sha}]})),
-                ("POST", f"/api/v1/artifacts/{ART_ID}/publish"): (200, {"Content-Type": "application/json"},
+                ('FinishUpload', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "state": "ready", "content_url": f"http://{ART_ID}.artifacts.localhost:8000"})),
             }
 
@@ -342,8 +346,8 @@ class TestUploadFetchRoundTripDummy(unittest.TestCase):
                 def request(self, method, url, headers, body):
                     self.requests.append({"method": method, "url": url, "headers": dict(headers), "body": body})
                     parsed = urllib.parse.urlparse(url)
-                    key = (method.upper(), parsed.path + (("?" + parsed.query) if parsed.query else ""))
-                    if method.upper() == "PUT" and parsed.path == f"/api/v1/artifacts/{ART_ID}/chunks":
+                    key = (method, parsed.path + (("?" + parsed.query) if parsed.query else ""))
+                    if method == "PUT" and parsed.path == f"/api/current/artifacts/{ART_ID}/chunks":
                         qs = urllib.parse.parse_qs(parsed.query)
                         off = int(qs.get("offset", ["0"])[0])
                         # verify chunk sha header present
@@ -351,7 +355,7 @@ class TestUploadFetchRoundTripDummy(unittest.TestCase):
                         self.requests[-1]["chunk_sha"] = hdrl.get("x-chunk-sha256")
                         return (200, {"Content-Type": "application/json"},
                                 _json_body({"path": fname, "offset": off, "length": len(body), "received_bytes": off + len(body)}))
-                    if method.upper() == "GET" and parsed.path == f"/api/v1/artifacts/{ART_ID}/files/{fname}/content":
+                    if method == "GET" and parsed.path == f"/api/current/artifacts/{ART_ID}/files/{fname}/content":
                         # support Range
                         hdrl = {k.lower(): v for k, v in headers.items()}
                         rng = hdrl.get("range")
@@ -421,21 +425,21 @@ class TestUploadFetchRoundTripDummy(unittest.TestCase):
             data = b"A" * 600000
             Path(src).write_bytes(data)
             routes = {
-                ("POST", "/api/v1/artifacts:init"): (200, {"Content-Type": "application/json"},
+                ('InitUpload', ''): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "chunk_bytes": 262144, "content_url": "http://x"})),
                 # status shows first chunk already received
-                ("GET", f"/api/v1/artifacts/{ART_ID}/upload-status"): (200, {"Content-Type": "application/json"},
+                ('GetUploadStatus', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "state": "uploading", "chunk_bytes": 262144,
                                 "files": [{"path": "big.bin", "size": 600000, "received_bytes": 262144, "received_ranges": [[0, 262144]]}]})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}"): (200, {"Content-Type": "application/json"},
+                ('GetArtifact', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "name": "b", "kind": "file", "visibility": "internal",
                                 "state": "ready", "created_by_user": "u", "created_at": "2026-10-08T00:00:00Z",
                                 "expires_at": None, "total_bytes": 600000, "file_count": 1, "content_url": "http://x"})),
-                ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+                ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "state": "uploading",
                                 "files": [{"path": "big.bin", "kind": "file", "size": 600000,
                                            "sha256": hashlib.sha256(b"A" * 600000).hexdigest()}]})),
-                ("POST", f"/api/v1/artifacts/{ART_ID}/publish"): (200, {"Content-Type": "application/json"},
+                ('FinishUpload', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "state": "ready", "content_url": "http://x"})),
             }
 
@@ -444,8 +448,9 @@ class TestUploadFetchRoundTripDummy(unittest.TestCase):
                     self.requests.append({"method": method, "url": url, "headers": dict(headers), "body": body})
                     parsed = urllib.parse.urlparse(url)
                     if method == "PUT":
+                        offset=int(urllib.parse.parse_qs(parsed.query)["offset"][0])
                         return (200, {"Content-Type": "application/json"},
-                                _json_body({"path": "big.bin", "offset": 0, "length": len(body), "received_bytes": 0}))
+                                _json_body({"path": "big.bin", "offset": offset, "length": len(body), "received_bytes": offset+len(body)}))
                     return super().request(method, url, headers, body)
 
             tr = Rec(routes)
@@ -480,7 +485,7 @@ class TestUploadFetchRoundTripDummy(unittest.TestCase):
             content = b"good bytes"
             bad_sha = "0" * 64
             routes = {
-                ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+                ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "state": "ready",
                                 "files": [{"path": "f.bin", "kind": "file", "size": len(content), "sha256": bad_sha}]})),
             }
@@ -506,7 +511,7 @@ class TestUploadFetchRoundTripDummy(unittest.TestCase):
             content = b"abc"
             sha = hashlib.sha256(content).hexdigest()
             routes = {
-                ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+                ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "state": "ready",
                                 "files": [{"path": "f.bin", "kind": "file", "size": 3, "sha256": sha}]})),
             }
@@ -531,7 +536,7 @@ class TestUploadFetchRoundTripDummy(unittest.TestCase):
         (ManureClient, *_r) = _import_client()
         with tempfile.TemporaryDirectory() as td:
             routes = {
-                ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+                ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
                     _json_body({"artifact_id": ART_ID, "state": "ready",
                                 "files": [{"path": "../evil", "kind": "file", "size": 3, "sha256": "a" * 64}]})),
             }
@@ -542,7 +547,7 @@ class TestUploadFetchRoundTripDummy(unittest.TestCase):
 
 
 class LoopbackFixtureHandler(http.server.BaseHTTPRequestHandler):
-    """Minimal controllable fixture verifying REST: bearer, routes, chunk sha."""
+    """Minimal current-protocol HTTP peer verifying bearer and range delivery."""
 
     store: dict = {}
     log: list = []
@@ -551,7 +556,11 @@ class LoopbackFixtureHandler(http.server.BaseHTTPRequestHandler):
         pass
 
     def _send_json(self, code, obj, extra=None):
-        body = json.dumps(obj).encode()
+        if isinstance(obj,cp.ServerEnvelope):body=cp.dumps(obj)
+        else:
+            error=obj["error"]
+            code_name="".join(v.capitalize() for v in error["code"].split("-"))
+            body=cp.dumps(cp.ServerEnvelope(UUID(int=0),cp.Result_Error(cp.Failure(cp.ErrorCode(code_name),"fixture error",None))))
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -560,21 +569,26 @@ class LoopbackFixtureHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_POST(self):
+        assert self.path=="/api/current"
+        request=cp.decode(cp.ClientEnvelope,cp.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        auth=self.headers.get("Authorization","")
+        LoopbackFixtureHandler.log.append(("POST",self.path,auth))
+        if auth!=f"Bearer {VALID_TOKEN}":
+            return self._send_json(401,cp.ServerEnvelope(request.requestId,cp.Result_Error(cp.Failure(cp.ErrorCode.Unauthorized,"unauthorized",None))))
+        if isinstance(request.command,cp.Command_Whoami):
+            result=cp.Result_Identity(cp.Principal("u1","t1",cp.PrincipalType.Agent))
+        elif isinstance(request.command,cp.Command_GetManifest):
+            data=b"fixture-bytes"
+            result=cp.Result_ArtifactManifest(cp.Manifest(ART_ID,cp.ArtifactState.Ready,[cp.ManifestEntry_File("f.txt",len(data),hashlib.sha256(data).hexdigest())]))
+        else:raise AssertionError("unexpected current fixture command")
+        return self._send_json(200,cp.ServerEnvelope(request.requestId,result))
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         auth = self.headers.get("Authorization", "")
         LoopbackFixtureHandler.log.append(("GET", self.path, auth))
-        if parsed.path == "/api/v1/whoami":
-            if auth != f"Bearer {VALID_TOKEN}":
-                return self._send_json(401, {"error": {"code": "unauthorized", "message": "bad"}})
-            return self._send_json(200, {"user_id": "u1", "type": "agent", "token_id": "t1"})
-        if parsed.path == f"/api/v1/artifacts/{ART_ID}/files":
-            if auth != f"Bearer {VALID_TOKEN}":
-                return self._send_json(401, {"error": {"code": "unauthorized", "message": "bad"}})
-            data = b"fixture-bytes"
-            return self._send_json(200, {"artifact_id": ART_ID, "state": "ready",
-                "files": [{"path": "f.txt", "kind": "file", "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}]})
-        if parsed.path == f"/api/v1/artifacts/{ART_ID}/files/f.txt/content":
+        if parsed.path == f"/api/current/artifacts/{ART_ID}/files/f.txt/content":
             if auth != f"Bearer {VALID_TOKEN}":
                 return self._send_json(401, {"error": {"code": "unauthorized", "message": "bad"}})
             data = b"fixture-bytes"

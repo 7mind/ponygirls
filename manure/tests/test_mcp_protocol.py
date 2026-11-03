@@ -17,6 +17,8 @@ import unittest
 import unittest.mock
 import urllib.parse
 from pathlib import Path
+from current_fixture import current_fixture
+from manure import current_protocol as cp
 
 from manure.auth import generate_token as _gen_token  # canonical vectors (governor A1)
 VALID_TOKEN = _gen_token()
@@ -26,25 +28,26 @@ ART_ID = "d" * 32
 
 def _dummy_routes():
     def jb(o):
-        return json.dumps(o).encode()
+        return o
     return {
-        ("GET", "/api/v1/whoami"): (200, {"Content-Type": "application/json"},
+        ('Whoami', ''): (200, {"Content-Type": "application/json"},
             jb({"user_id": "u", "type": "agent", "token_id": "t"})),
-        ("GET", "/api/v1/artifacts"): (200, {"Content-Type": "application/json"},
+        ('ListArtifacts', ''): (200, {"Content-Type": "application/json"},
             jb({"artifacts": [], "next_cursor": None})),
-        ("GET", f"/api/v1/artifacts/{ART_ID}"): (200, {"Content-Type": "application/json"},
+        ('GetArtifact', ART_ID): (200, {"Content-Type": "application/json"},
             jb({"artifact_id": ART_ID, "name": "n", "kind": "file", "visibility": "internal",
                 "state": "ready", "created_by_user": "u", "created_at": "2026-10-08T00:00:00Z",
                 "expires_at": None, "total_bytes": 1, "file_count": 1, "content_url": "http://x"})),
-        ("GET", f"/api/v1/artifacts/{ART_ID}/files"): (200, {"Content-Type": "application/json"},
+        ('GetManifest', ART_ID): (200, {"Content-Type": "application/json"},
             jb({"artifact_id": ART_ID, "state": "ready", "files": []})),
-        ("DELETE", f"/api/v1/artifacts/{ART_ID}"): (200, {"Content-Type": "application/json"},
+        ('DeleteArtifact', ART_ID): (200, {"Content-Type": "application/json"},
             jb({"ok": True})),
-        ("POST", f"/api/v1/artifacts/{ART_ID}/external-password:rotate"): (200, {"Content-Type": "application/json"},
+        ('RotateExternalPassword', ART_ID): (200, {"Content-Type": "application/json"},
             jb({"external_password": _VALID_PW})),
     }
 
 
+@current_fixture
 class DummyTransport:
     def __init__(self, routes):
         self.routes = routes
@@ -53,12 +56,12 @@ class DummyTransport:
     def request(self, method, url, headers, body):
         self.requests.append({"method": method, "url": url})
         parsed = urllib.parse.urlparse(url)
-        key = (method.upper(), parsed.path + (("?" + parsed.query) if parsed.query else ""))
+        key = (method, parsed.path + (("?" + parsed.query) if parsed.query else ""))
         if key not in self.routes:
-            key = (method.upper(), parsed.path)
+            key = (method, parsed.path)
         if key not in self.routes:
             return (404, {"Content-Type": "application/json"},
-                    json.dumps({"error": {"code": "not-found", "message": "x"}}).encode())
+                    {"error":{"code":"not-found","message":"x"}})
         s, h, b = self.routes[key]
         return (s, dict(h), b)
 
@@ -232,10 +235,11 @@ class TestMcpProtocol(unittest.TestCase):
         from manure import client as client_mod
         from manure.client import ManureClient as Real
 
+        @current_fixture
         class FailTransport:
             def request(self, method, url, headers, body):
                 return (404, {"Content-Type": "application/json"},
-                        json.dumps({"error": {"code": "not-found", "message": "gone"}}).encode())
+                        {"error":{"code":"not-found","message":"gone"}})
 
         with unittest.mock.patch.object(client_mod, "ManureClient",
                                          side_effect=lambda *a, **kw: Real(*a, **{**kw, "transport": FailTransport()})) as MC:
@@ -324,29 +328,16 @@ await client.close();
             class _H(_hs.BaseHTTPRequestHandler):
                 def log_message(self, *a):
                     pass
-                def do_GET(self):
-                    if self.path == "/api/v1/whoami" and self.headers.get("Authorization") == f"Bearer {VALID}":
-                        body = _js.dumps({"user_id": "u", "type": "agent", "token_id": "t"}).encode()
-                        self.send_response(200)
-                        self.send_header("Content-Type", "application/json")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
-                        return
-                    if self.path == f"/api/v1/artifacts/{ART}/files":
-                        body = _js.dumps({"error": {"code": "not-found", "message": "gone"}}).encode()
-                        self.send_response(404)
-                        self.send_header("Content-Type", "application/json")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
-                        return
-                    body = _js.dumps({"error": {"code": "not-found", "message": "x"}}).encode()
-                    self.send_response(404)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                def do_POST(self):
+                    assert self.path=="/api/current"
+                    request=cp.decode(cp.ClientEnvelope,cp.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                    if isinstance(request.command,cp.Command_Whoami) and self.headers.get("Authorization")==f"Bearer {VALID}":
+                        result=cp.Result_Identity(cp.Principal("u","t",cp.PrincipalType.Agent));status=200
+                    else:
+                        result=cp.Result_Error(cp.Failure(cp.ErrorCode.NotFound,"not-found",None));status=404
+                    body=cp.dumps(cp.ServerEnvelope(request.requestId,result))
+                    self.send_response(status);self.send_header("Content-Type","application/json")
+                    self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
             _srv = _hs.ThreadingHTTPServer(("127.0.0.1", 0), _H)
             _port = _srv.server_address[1]
             _th.Thread(target=_srv.serve_forever, daemon=True).start()
