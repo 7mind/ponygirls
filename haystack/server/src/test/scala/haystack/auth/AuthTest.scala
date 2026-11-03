@@ -82,6 +82,15 @@ class TokensTest extends munit.FunSuite {
       }
     }
   } }
+  test("oversized credential files reject trailing payload instead of admitting a valid prefix") { directory { dir =>
+    val suffix = "x" * (2 * 1024 * 1024)
+    Vector(AliceToken, AliceToken + "\n").zipWithIndex.foreach { case (prefix, i) =>
+      assertEquals(intercept[Fault](Tokens.readToken(write(dir, s"large-token-$i", prefix + suffix))).code, "config")
+    }
+    Vector("a" * 64, "a" * 64 + "\n").zipWithIndex.foreach { case (prefix, i) =>
+      assertEquals(intercept[Fault](Tokens.readDigest(write(dir, s"large-digest-$i", prefix + suffix))).code, "config")
+    }
+  } }
   test("digest files strictly accept lowercase hex ASCII with at most final LF") { directory { dir =>
     val good = "a" * 64
     assertEquals(Tokens.readDigest(write(dir, "exact", good)), good)
@@ -130,6 +139,15 @@ class AuthConfigTest extends munit.FunSuite {
     val fault = intercept[Fault](Auth.load(change(config(dir))))
     assertEquals(fault.code, "config"); assert(!fault.message.contains(AliceToken)); assert(!fault.message.contains(BotToken))
   } } }
+  Vector('\u00a0', '\u2003', '\u2028', '\u2029', '\ufeff', '\t', '\n').zipWithIndex.foreach { case (space, i) =>
+    test(s"Unicode/ASCII whitespace $i cannot split or hide user/token attribution IDs") { directory { dir =>
+      val cfg = config(dir)
+      val badUser = cfg.users.head.copy(id = "alice" + space + "alias")
+      assertEquals(intercept[Fault](Auth.load(cfg.copy(users = Vector(badUser)))).code, "config")
+      val badToken = cfg.users.head.copy(tokens = Vector(cfg.users.head.tokens.head.copy(id = "browser" + space + "alias")))
+      assertEquals(intercept[Fault](Auth.load(cfg.copy(users = Vector(badToken)))).code, "config")
+    } }
+  }
   test("invalid namespace or unreadable/malformed credential never starts auth") { directory { dir =>
     val cfg = config(dir)
     assertEquals(intercept[Fault](Auth.load(cfg.copy(activityProjectId = ""))).code, "invalid-id")
