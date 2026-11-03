@@ -1,3 +1,4 @@
+import { prerequisites } from "./prerequisites.mjs";
 // Behavioral-Active-Blackbox-GoodCommunication: real nginx, Chromium, and backend restart.
 import assert from "node:assert/strict";
 import { spawn, execFile as execFileCallback } from "node:child_process";
@@ -14,10 +15,7 @@ import { freePort, ownedDatabase, configFor, atomicConfig, startServer } from ".
 const conn = process.env.HAYSTACK_TEST_PG;
 const chromiumPath = process.env.HAYSTACK_CHROMIUM;
 const nginxPath = process.env.HAYSTACK_NGINX;
-if (!conn || !chromiumPath || !nginxPath) {
-  console.log("# SKIP backend restart: set HAYSTACK_TEST_PG, HAYSTACK_CHROMIUM, HAYSTACK_NGINX");
-  process.exit(0);
-}
+await prerequisites("restart");
 const execFile = promisify(execFileCallback);
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(webRoot, "..", "..");
@@ -84,8 +82,8 @@ http {
   }
 }`);
 
-const database = await ownedDatabase(conn, "haystack_restart");
-await atomicConfig(serverConfig, await configFor({ dir, connectionString: database.connectionString,
+const database = await ownedDatabase({ connectionString: conn, dir });
+await atomicConfig(serverConfig, await configFor({ database: database.runtime,
   port: backendPort, webRoot: path.join(webRoot, "dist"), auth }));
 let backend;
 let proxy;

@@ -1,6 +1,7 @@
+import { prerequisites } from "./prerequisites.mjs";
 // Controlled browser tests: real Chromium (HAYSTACK_CHROMIUM) or explicit
 // Firefox (HAYSTACK_FIREFOX), real app + PG (HAYSTACK_TEST_PG), and built UI.
-// Skipped explicitly when the database or browser is unset — never a silent pass.
+// Missing required prerequisites fail acceptance; no skip or fallback path.
 //
 // Run after `npm run build` (UI), with HAYSTACK_SERVER_COMMAND selecting the built Scala/native executable:
 //   HAYSTACK_TEST_PG=... HAYSTACK_CHROMIUM=/nix/store/.../bin/chromium \
@@ -26,10 +27,7 @@ const ARTIFACTS = process.env.HAYSTACK_UI_ARTIFACTS;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, "..");
 
-if (!CONN || (!CHROMIUM && !FIREFOX)) {
-  console.log("# SKIP browser leg: set HAYSTACK_TEST_PG and HAYSTACK_CHROMIUM (or HAYSTACK_FIREFOX)");
-  process.exit(0);
-}
+await prerequisites("main");
 
 let database; let dir; let backend; let browser; let server;
 const sockets = new Set();
@@ -45,8 +43,8 @@ const cleanup = () => cleaning ??= (async () => {
 process.once("SIGTERM", () => { void cleanup().finally(() => process.exit(143)); });
 try {
 if (ARTIFACTS) await mkdir(ARTIFACTS, { recursive: true });
-database = await ownedDatabase(CONN, "haystack_browser");
 dir = await mkdtemp(path.join(os.tmpdir(), "haystack-uitest-"));
+database = await ownedDatabase({ connectionString: CONN, dir });
 const humanToken = randomBytes(32).toString("base64url");
 const agentToken = randomBytes(32).toString("base64url");
 const digestOf = (t) => createHash("sha256").update(t, "ascii").digest("hex");
@@ -99,7 +97,7 @@ const base = `http://127.0.0.1:${server.address().port}`;
 const insecureBase = `http://haystack.test:${server.address().port}`;
 auth.allowedOrigins = [base, insecureBase]; auth.insecureHttpOrigins = [base, insecureBase];
 const configFile = path.join(dir, "config.json");
-const config = await configFor({ dir, connectionString: database.connectionString, port: backendPort,
+const config = await configFor({ database: database.runtime, port: backendPort,
   webRoot: path.join(webRoot, "dist"), auth });
 await atomicConfig(configFile, config);
 backend = await startServer(configFile, backendPort, path.join(dir, "server.log"));

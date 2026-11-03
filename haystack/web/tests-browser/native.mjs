@@ -4,8 +4,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { writeFile, rename, appendFile } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
-import pg from "pg";
+export { ownedDatabase } from "./database.mjs";
 import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
 import { PutRequest, PutResult, DocumentPayload, GetRequest, Item, HistoryRequest, HistoryResult } from "../../generated/typescript/haystack/api/index.ts";
 
@@ -17,30 +16,12 @@ export async function freePort() {
   await new Promise((resolve) => socket.close(resolve));
   return port;
 }
-export async function ownedDatabase(connectionString, prefix) {
-  const name = `${prefix}_${randomBytes(6).toString("hex")}`;
-  const admin = new pg.Client({ connectionString });
-  await admin.connect();
-  try { await admin.query(`CREATE DATABASE "${name}"`); } finally { await admin.end(); }
-  const url = new URL(connectionString); url.pathname = "/" + name;
-  return {
-    connectionString: url.href,
-    async close() {
-      const admin = new pg.Client({ connectionString });
-      await admin.connect();
-      try { await admin.query(`DROP DATABASE "${name}" WITH (FORCE)`); } finally { await admin.end(); }
-    },
-  };
-}
-export async function configFor({ dir, connectionString, port, webRoot, auth }) {
-  const url = new URL(connectionString);
-  const passwordFile = `${dir}/database-password`;
-  await writeFile(passwordFile, decodeURIComponent(url.password) || "unused-test-password", { mode: 0o600 });
+export async function configFor({ database, port, webRoot, auth }) {
+  if (!database || Object.keys(database).sort().join(",") !== "jdbcUrl,passwordFile,user") throw new Error("validated runtime database descriptor required");
   return {
     listenHost: "127.0.0.1", listenPort: port, webRoot, authReloadMs: 1000, auth,
     database: {
-      jdbcUrl: `jdbc:postgresql://${url.hostname}:${url.port || "5432"}${url.pathname}`,
-      user: decodeURIComponent(url.username) || process.env.USER, passwordFile,
+      ...database,
       limits: { maxConnections: 8, maxQueued: 32, queueTimeoutMs: 5000, connectTimeoutMs: 5000,
         statementTimeoutMs: 30000, lockTimeoutMs: 5000, idleTransactionTimeoutMs: 30000, socketTimeoutMs: 40000 },
     },
