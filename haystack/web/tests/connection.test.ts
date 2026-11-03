@@ -1,6 +1,8 @@
 // Behavioral-Active-Blackbox-Atomic: controlled clock and transport; the
 // corresponding real transport/recovery paths run in tests-browser.
 import { test } from "node:test";
+import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
+import { LiveFrame } from "../../generated/typescript/haystack/api/LiveFrame.ts";
 import assert from "node:assert/strict";
 import { ConnectionManager, type ConnectionRuntime, type LiveSocket, type LiveSocketEvents } from "../src/connection.ts";
 
@@ -17,8 +19,8 @@ class TestSocket extends EventTarget implements LiveSocket {
   }
   message(frame: unknown): void { this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(frame) })); }
   pong(): void {
-    const ping = JSON.parse(this.frames[this.frames.length - 1]!);
-    this.message({ type: "pong", nonce: ping.nonce, clientTs: ping.clientTs, serverTs: 123 });
+    const ping = LiveFrame.jsonCodec().decode(BaboonCodecContext.Default, JSON.parse(this.frames[this.frames.length - 1]!));
+    this.message(LiveFrame.jsonCodec().encode(BaboonCodecContext.Default, new LiveFrame("pong", undefined, undefined, ping.nonce, ping.clientTs, 123)));
   }
   override addEventListener<K extends keyof LiveSocketEvents>(type: K, listener: (event: LiveSocketEvents[K]) => void): void {
     super.addEventListener(type, listener as EventListener);
@@ -75,10 +77,10 @@ test("only a correlated pong establishes liveness", () => {
   try {
     const socket = f.runtime.sockets[0]!; socket.open();
     assert.equal(f.manager.getStats().state, "NEW");
-    socket.message({ type: "pong", nonce: "unsolicited", clientTs: 1, serverTs: 2 });
+    socket.message({ kind: "pong", nonce: "unsolicited", clientTs: 1, serverTs: 2 });
     assert.equal(f.manager.getStats().state, "NEW");
     const ping = JSON.parse(socket.frames[0]!);
-    socket.message({ type: "pong", nonce: ping.nonce, clientTs: ping.clientTs + 1, serverTs: 2 });
+    socket.message({ kind: "pong", nonce: ping.nonce, clientTs: ping.clientTs + 1, serverTs: 2 });
     assert.equal(f.manager.getStats().state, "NEW");
     socket.pong(); assert.equal(f.manager.getStats().state, "ALIVE"); assert.equal(f.resyncs(), 1);
   } finally { f.manager.destroy(); }
