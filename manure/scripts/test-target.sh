@@ -30,7 +30,7 @@ case "$mode" in
   ;;
  *) echo 'jvm or native required' >&2; exit 1 ;;
 esac
-[[ $scope = core || $scope = full ]] || exit 1
+[[ $scope = core || $scope = full || $scope = focused ]] || exit 1
 if [[ $scope == full ]]; then
  : "${MANURE_PLAYWRIGHT_CORE_PATH:?full target run requires pinned playwright-core}"
  : "${MANURE_CHROMIUM_BIN:?full target run requires pinned Chromium}"

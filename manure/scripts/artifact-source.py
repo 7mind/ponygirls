@@ -8,9 +8,9 @@ import hashlib
 from pathlib import Path
 
 root=Path(__file__).resolve().parents[2]
-paths=[root/'build.sbt',root/'lockfile.json',root/'lockfile-config.json']
+paths=[root/'build.sbt',root/'lockfile.json',root/'lockfile-config.json',root/'manure/migration/schema.sql']
 for directory in ['project','manure/backend/src/main','manure/server/src/main','manure/server/native-image',
-                  'manure/generated/scala','shared/baboon-runtime/src/main','shared/service-runtime/src/main',
+                  'manure/generated/scala','shared/baboon-runtime/src/main','shared/lossless-json/src/main','shared/service-runtime/src/main',
                   'shared/model-http/src/main','shared/retrieval-core/src/main','shared/retrieval-postgres/src/main']:
     paths.extend(p for p in (root/directory).rglob('*') if p.is_file() and 'target' not in p.parts and '.git' not in p.parts)
 for path in sorted(set(paths)):

@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import java.sql.Connection
 import ponygirls.retrieval.*
-import ponygirls.retrieval.postgres.PostgresRetrieval
+import ponygirls.retrieval.postgres.{PostgresRetrieval,IndexingWorker,RetrievalTransactions}
 import manure.{api => wire}
 import io.circe.Json
 
@@ -65,7 +65,7 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
       val page = engine.search(c,query,values)
       val hits = page.hits.flatMap { hit =>
         // Fresh source authorization/expiry before returning any pinned metadata.
-        if !engine.visible(c,query,hit.id) then None
+        if !auth.live(identity) || !engine.visible(c,query.copy(now=EpochSeconds.fromDouble(clock.now)),hit.id) then None
         else
           val a = projection.pinned(c,hit.id,hit.version).copy(contentUrl=config.contentUrl(hit.id,origin))
           val field = if hit.chunk.provenance.field == "name" then wire.EvidenceField.Name else wire.EvidenceField.ManifestPath
@@ -85,19 +85,10 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
   */
 final class SearchWorker(database: JdbcTransactions,root: manure.storage.RootLease,engine: PostgresRetrieval,
   client: Option[EmbeddingClient],settings: Option[EmbeddingSettings]):
-  private def transaction[A](f: Connection => A): IO[A] = database.transaction(c => root.run(f(c)))
-  def once(): IO[Boolean] = client match
-    case None => IO.pure(false)
-    case Some(model) => transaction(c => engine.claim(c,settings.get.leaseSeconds)).flatMap {
-      case None => IO.pure(false)
-      case Some(claim) =>
-        val batches = claim.chunks.grouped(settings.get.batchSize).zipWithIndex.toList
-        batches.traverse_ { (chunks,index) =>
-          val start = index*settings.get.batchSize
-          transaction { c => engine.renew(c,claim,settings.get.leaseSeconds); engine.accepted(c,claim,start,chunks.size) }.flatMap { accepted =>
-            if accepted.nonEmpty then IO.unit
-            else model.documents(chunks.map(_.text)).flatMap(vectors => transaction(c => engine.accept(c,claim,start,vectors)))
-          }
-        } *> transaction(c => engine.publish(c,claim)).as(true)
-          .handleErrorWith(error => transaction(c => engine.fail(c,claim)).attempt *> IO.raiseError(error))
-    }
+  private val transactions = new RetrievalTransactions:
+    def transaction[A](f: Connection => A): IO[A] = database.transaction(c => root.run(f(c)))
+  private val worker = for
+    model <- client
+    config <- settings
+  yield new IndexingWorker(engine,transactions,model,config.batchSize,config.leaseSeconds,config.pollInterval)
+  def once(): IO[Boolean] = worker.fold(IO.pure(false))(_.once)
