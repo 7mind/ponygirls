@@ -34,7 +34,10 @@ if [[ -d "$xml" ]]; then mv "$xml" "$report/previous-test-reports"; fi
 git rev-parse HEAD >"$report/source-commit"
 git diff --binary HEAD >"$report/source-working-diff"
 printf 'Reports: %s\n' "$report"
-bash scripts/backend-sbt.sh 'haystackServer/Test/validationInventory' 'haystackServer/test' 2>&1 | tee "$report/tests.log"
+set +e
+bash scripts/backend-sbt.sh "$@" 'haystackServer/Test/validationInventory' 'haystackServer/test' 2>&1 | tee "$report/tests.log"
+status=${PIPESTATUS[0]}
+set -e
 cp haystack/server/target/validation-inventory.txt "$report/inventory.txt"
 if [[ -d "$xml" ]]; then cp -a "$xml" "$report/test-reports"; fi
 python3 - "$report" <<'PY'
@@ -46,3 +49,4 @@ counts = {k: sum(int(s.get(k, '0')) for s in suites) for k in ('tests', 'failure
 print(f'Fresh suites={len(suites)} {counts}')
 assert counts['failures'] == counts['errors'] == counts['skipped'] == 0, 'full production verification must execute without failures/errors/skips'
 PY
+exit "$status"
