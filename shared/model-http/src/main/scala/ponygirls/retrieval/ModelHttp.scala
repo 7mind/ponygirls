@@ -9,13 +9,15 @@ import org.http4s.client.Client
 import org.http4s.ember.client.EmberClientBuilder
 import org.typelevel.ci.CIString
 import java.nio.charset.StandardCharsets.UTF_8
-import java.nio.file.{Files,Path}
+import java.nio.file.Path
+import ponygirls.runtime.BoundedSecretFile
 import scala.concurrent.duration.*
 
 /** Full operation URL and explicit credential reference. Empty file contents mean no auth;
   * an absent/unreadable file is an error, never an ambient credential fallback.
   */
 final case class EmbeddingEndpoint(operationUrl: String,model: String,revision: String,dimensions: Int,sendDimensions: Boolean,documentPrefix: String,queryPrefix: String,normalization: String,credentialFile: String,deadline: FiniteDuration,maxResponseBytes: Int,maxBatch: Int,maxInputBytes: Int,maxRequestBytes: Int) {
+  override def toString: String = "EmbeddingEndpoint(<redacted>)"
   def space: EmbeddingSpace = EmbeddingSpace(RetrievalChecks.hash(operationUrl),model,revision,dimensions,sendDimensions,queryPrefix,documentPrefix,normalization)
   def validate(): Unit = {
     JsonHttp.operationUri(operationUrl); space.validate()
@@ -25,6 +27,7 @@ final case class EmbeddingEndpoint(operationUrl: String,model: String,revision: 
 
 /** No service policy/telemetry/annotation prompts. Can be composed with existing admission resources. */
 object JsonHttp {
+  private final case class DecoderFailure(error: Throwable) extends RuntimeException(null,null,false,false)
   def operationUri(endpoint: String): Uri = {
     val uri=Uri.fromString(endpoint).fold(_ => throw RetrievalError("config","invalid model endpoint"),identity)
     RetrievalChecks(Set("http","https").contains(uri.scheme.fold("")(_.value)) && uri.host.nonEmpty && uri.userInfo.isEmpty && uri.fragment.isEmpty,"config","full HTTP operation URL required")
@@ -36,14 +39,19 @@ object JsonHttp {
   }
   def credential(path: String): IO[String] = IO.blocking {
     try {
-      val file=Path.of(path)
-      RetrievalChecks(Files.size(file)<=16384,"config","model credential exceeds bound")
-      val value=Files.readString(file,UTF_8).stripTrailing()
+      // Shared raw bounded reader; model policy deliberately permits empty auth
+      // and retains Chronicle's trailing-whitespace stripping at this boundary.
+      val value=BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
       RetrievalChecks(!value.exists(c => c<' ' || c==127.toChar),"config","invalid model credential")
       value
     } catch { case error: RetrievalError => throw error; case _: Exception => throw RetrievalError("config","model credential file unavailable") }
   }
-  def post[A](client: Client[IO],endpoint: String,credential: String,deadline: FiniteDuration,maxBytes: Int,payload: Json)(decode: Json => A): IO[A] = IO.defer {
+  def post[A](client: Client[IO],endpoint: String,credential: String,deadline: FiniteDuration,maxBytes: Int,payload: Json)(decode: Json => A): IO[A] =
+    postF(client,endpoint,credential,deadline,maxBytes,payload)(json => IO(decode(json)))
+  /** Capture accepted usage/output BEFORE releasing response resources. Cancellation
+    * during release must not erase already accepted counters (Chronicle contract).
+    */
+  def postF[A](client: Client[IO],endpoint: String,credential: String,deadline: FiniteDuration,maxBytes: Int,payload: Json)(decode: Json => IO[A]): IO[A] = IO.defer {
     RetrievalChecks(deadline>Duration.Zero && maxBytes>0,"config","invalid model response/deadline bound")
     val base=Request[IO](Method.POST,operationUri(endpoint)).withEntity(payload.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"))
     RetrievalChecks(!credential.exists(c => c<' ' || c==127.toChar),"config","invalid model credential")
@@ -53,9 +61,13 @@ object JsonHttp {
       else response.body.take(maxBytes.toLong+1).compile.to(Array).flatMap { bytes => IO.uncancelable { _ => IO {
         RetrievalChecks(bytes.length<=maxBytes,"model-response-bound","model response byte bound exceeded")
         val text=try UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString catch { case _: Exception => throw RetrievalError("model-json","invalid model JSON") }
-        decode(io.circe.parser.parse(text).fold(_ => throw RetrievalError("model-json","invalid model JSON"),identity))
-      } } }
-    }.timeoutTo(deadline,IO.raiseError(RetrievalError("model-timeout","model deadline exceeded")))
+        io.circe.parser.parse(text).fold(_ => throw RetrievalError("model-json","invalid model JSON"),identity)
+      }.flatMap(json => decode(json).handleErrorWith(error => IO.raiseError(DecoderFailure(error)))) } }
+    }.timeoutTo(deadline,IO.raiseError(RetrievalError("model-timeout","model deadline exceeded"))).handleErrorWith {
+      case DecoderFailure(error) => IO.raiseError(error)
+      case error: RetrievalError => IO.raiseError(error)
+      case _ => IO.raiseError(RetrievalError("model-transport","model transport failed"))
+    }
   }
 }
 
