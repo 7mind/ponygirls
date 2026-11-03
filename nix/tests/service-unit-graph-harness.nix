@@ -6,6 +6,7 @@ pkgs.runCommand "actual-unit-graph-harness-controlled-regressions" {nativeBuildI
   cp ${./service-unit-graph-snapshot.py} source/service-unit-graph-snapshot.py
   cp ${./service-unit-graph-controller.py} source/service-unit-graph-controller.py
   cp ${./service-unit-graph-harness-test.py} source/service-unit-graph-harness-test.py
+  cp ${./service-unit-graph-restart-evidence.py} source/service-unit-graph-restart-evidence.py
   export UNIT_GRAPH_TEST_SOURCE_DIR="$PWD/source"
   mkdir "$out"
   python3 - "$out" <<'PY'
@@ -17,6 +18,9 @@ pkgs.runCommand "actual-unit-graph-harness-controlled-regressions" {nativeBuildI
     'test_replaced_child_old_success_is_not_reconnection',
     'test_aggregate_success_from_another_invocation_is_not_reconnection',
     'test_active_same_invocation_fresh_success_is_accepted',
+    'test_actual_automatic_restart_evidence_survives_NRestarts_reset',
+    'test_manual_selected_chains_keep_unselected_database_inactive',
+    'test_restart_cursor_rejects_before_boundary_other_unit_and_old_boot',
     'test_fault_assertion_is_not_misclassified_as_invalid_fixture',
     'test_precondition_failure_never_enters_fault',
     'test_precondition_failure_has_attributed_terminal_record',

@@ -974,6 +974,12 @@
           '';
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
           haystack-proxy = import ./nix/tests/haystack-proxy.nix { inherit pkgs inputs; haystackPackage = self.packages.${system}.haystack; };
+          hm-service-unit-graph-vm = import ./nix/tests/hm-service-unit-graph-vm.nix {
+            inherit pkgs;
+            chronicleHmModule=self.homeManagerModules.chronicleServer;
+            agenticHmModule=self.homeManagerModules.agenticServicesServer;
+            sourceRevision=self.rev or "";
+          };
           service-unit-graph-harness = import ./nix/tests/service-unit-graph-harness.nix { inherit pkgs; };
           service-unit-graph-vm = import ./nix/tests/service-unit-graph-vm.nix {
             inherit pkgs nixpkgs;

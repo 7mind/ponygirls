@@ -12,7 +12,9 @@ db=({'jdbcUrl':config['jdbcUrl'],'user':config['databaseUser'],'passwordFile':co
 url=urllib.parse.urlsplit(db['jdbcUrl'].removeprefix('jdbc:'))
 assert url.hostname=='127.0.0.1' and url.port==15434 and url.path=='/'+service
 assert url.username is None and url.password is None and not url.query
-secret=os.path.expandvars(db['passwordFile'].replace('%d',os.environ['CREDENTIALS_DIRECTORY']))
+secret=db['passwordFile']
+if '%d' in secret:secret=secret.replace('%d',os.environ['CREDENTIALS_DIRECTORY'])
+secret=os.path.expandvars(secret)
 password=pathlib.Path(secret).read_text().removesuffix('\n')
 assert password
 pg=os.environ['UNIT_GRAPH_PSQL']

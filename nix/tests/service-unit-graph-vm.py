@@ -1,7 +1,7 @@
 # Behavioral-Active / Blackbox-GoodCommunication: real systemd public lifecycle.
 # Specified matrix. Synthetic app CLIs are explicit; PG, module units/configs,
 # role authentication and switch-to-configuration are real inside one owned VM.
-import datetime,importlib.util,json,os,pathlib,shutil,time
+import datetime,importlib.util,json,os,pathlib,shlex,shutil,time
 controller_spec=importlib.util.spec_from_file_location("unit_graph_controller",CONTROLLER_SOURCE_PATH)
 controller=importlib.util.module_from_spec(controller_spec);controller_spec.loader.exec_module(controller)
 run_case,run_matrix=controller.run_case,controller.run_matrix
@@ -24,11 +24,13 @@ def wait(predicate,description,seconds=60):
         if predicate(state):return state
         time.sleep(0.25)
     raise AssertionError(description)
-def ready(apps=APPS):
-    required=[PROVIDER]+DATABASES+[m for a,m in zip(APPS,MIGRATIONS) if a in apps]+apps
+def ready_chains(apps,databases):
+    required=[PROVIDER]+databases+[m for a,m in zip(APPS,MIGRATIONS) if a in apps]+apps
     def valid(s):
         return all(s[u]['ActiveState']=='active' for u in required) and all(s[u]['InvocationID'] in s[u]['adapterStartedInvocations'] for u in required if u in APPS+MIGRATIONS)
     return wait(valid,'actual generated units/adapter readiness did not recover')
+def ready(apps=APPS):
+    return ready_chains(apps,DATABASES)
 def stable(before,after,units):
     for unit in units:
         for field in ['MainPID','ExecMainStartTimestampMonotonic','InvocationID','startCount']:
@@ -92,11 +94,21 @@ def provider_restart(item):
     assert after[PROVIDER]['MainPID']!=item['before'][PROVIDER]['MainPID']
 PLANS.append(('explicit-provider-restart-recovers-previously-active-complete-chain',provider_restart))
 
+def capture_restart_cursor():
+    return json.loads(server.succeed('/etc/unit-graph/restart-evidence capture --scope system'))
+def automatic_restarts_since(reference):
+    return json.loads(server.succeed('/etc/unit-graph/restart-evidence after --scope system --unit '+PROVIDER+' --cursor '+shlex.quote(reference['cursor'])+' --boot '+shlex.quote(reference['bootId'])))
+
 def crash(item):
+    reference=capture_restart_cursor()
     server.succeed('systemctl kill --kill-whom=main --signal=KILL '+PROVIDER)
     after=wait(lambda s:s[PROVIDER]['ActiveState']=='active' and s[PROVIDER]['MainPID'] not in [0,item['before'][PROVIDER]['MainPID']],'provider did not actually auto-restart')
     ready();probes()
-    assert after[PROVIDER]['NRestarts']>item['before'][PROVIDER]['NRestarts']
+    after=snapshot()
+    evidence=automatic_restarts_since(reference);item['automaticRestartEvidence']={'reference':reference,**evidence}
+    assert evidence['count']>0,'no fresh exact-unit same-boot automatic-restart event after fault boundary'
+    assert after[PROVIDER]['InvocationID']!=item['before'][PROVIDER]['InvocationID']
+    assert after[PROVIDER]['startCount']>item['before'][PROVIDER]['startCount']
 PLANS.append(('provider-crash-autorestart-bounded-unit-and-real-role-reconnection',crash))
 
 def inactive_consumer(item):
@@ -113,8 +125,8 @@ def manual(item):
     wait(lambda s:s[PROVIDER]['ActiveState']=='active','manual provider start failed')
     assert all(snapshot()[u]['ActiveState']=='inactive' for u in APPS)
     server.succeed('systemctl start chronicle.service haystack.service')
-    ready(['chronicle.service','haystack.service']);probes(['chronicle.service','haystack.service'])
-    assert snapshot()['manure.service']['ActiveState']=='inactive'
+    ready_chains(APPS[:2],DATABASES[:2]);probes(APPS[:2])
+    assert all(snapshot()[u]['ActiveState']=='inactive' for u in [APPS[2],MIGRATIONS[2],DATABASES[2]])
 PLANS.append(('manual-stop-start-policy-explicit-selected-app-recovery',manual))
 
 def migration(item):
