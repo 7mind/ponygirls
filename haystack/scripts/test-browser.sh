@@ -87,19 +87,21 @@ import json,pathlib,sys,xml.etree.ElementTree as ET
 report=pathlib.Path(sys.argv[1]); inventory=json.loads((report/'inventory.json').read_text())
 assert all(inventory.values()),'empty acceptance inventory'
 cases=list(ET.parse(report/'atomic.xml').iter('testcase')); names=[case.attrib['name'] for case in cases]
-assert sorted(names)==sorted(inventory['atomicLeafCases']),(len(names),len(inventory['atomicLeafCases']),names)
+atomic_exact=sorted(names)==sorted(inventory['atomicLeafCases'])
 failed=sum(len(c.findall('failure'))+len(c.findall('error')) for c in cases)
 skipped=sum(len(c.findall('skipped')) for c in cases)
 browser=(report/'browser.log').read_text(); actual=[line.removeprefix('ok - ') for line in browser.splitlines() if line.startswith('ok - ')]
 markup=[line.removeprefix('ok - ') for line in (report/'markup.log').read_text().splitlines() if line.startswith('ok - ')]
-assert sorted(actual)==sorted(inventory['browserCases']),(len(actual),len(inventory['browserCases']),actual)
-assert markup==inventory['markupCases'],markup
-assert '# SKIP' not in browser and '# 34 checks; 0 failures; 0 skipped' in browser,browser
+browser_exact=sorted(actual)==sorted(inventory['browserCases'])
+markup_exact=markup==inventory['markupCases']
+no_skips='# SKIP' not in browser and '# 34 checks; 0 failures; 0 skipped' in browser
 receipt={'artifactKind':next(line.split('=',1)[1] for line in (report/'source.txt').read_text().splitlines() if line.startswith('artifact-kind=')),
  'atomicLeafCases':len(cases),'browserCases':len(actual),'markupCases':len(markup),'failuresAndErrors':failed,'skipped':skipped,
- 'inventoryExact':True,'exitStatuses':list(map(int,sys.argv[2:])),'artifactUnchanged':True}
+ 'inventoryExact':atomic_exact and browser_exact and markup_exact,'exitStatuses':list(map(int,sys.argv[2:])),'artifactUnchanged':True,
+ 'atomicInventoryExact':atomic_exact,'browserInventoryExact':browser_exact,'markupInventoryExact':markup_exact,
+ 'missingBrowserCases':sorted(set(inventory['browserCases'])-set(actual)),'browserNoSkips':no_skips}
 (report/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
-assert cases and actual and not failed and not skipped and receipt['exitStatuses']==[0,0,0],receipt
+assert cases and actual and not failed and not skipped and no_skips and receipt['inventoryExact'] and receipt['exitStatuses']==[0,0,0],receipt
 PY
 printf 'atomic-status=%s\nmarkup-status=%s\nbrowser-status=%s\n' "$atomic_status" "$markup_status" "$browser_status" >> "$report/source.txt"
 echo "Browser report: $report"
