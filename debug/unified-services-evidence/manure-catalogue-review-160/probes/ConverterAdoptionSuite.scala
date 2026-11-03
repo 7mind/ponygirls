@@ -1,0 +1,129 @@
+package manure
+
+import cats.effect.IO
+import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
+import io.circe.Json
+import java.nio.file.{Files,Path}
+import java.util.concurrent.TimeUnit
+import ponygirls.runtime.JdbcDatabase
+import munit.FunSuite
+import scala.concurrent.duration.*
+
+/** Full actual SQLite -> archived160 converter -> PG -> Main adoption contracts. */
+class ConverterAdoptionSuite extends FunSuite {
+  override val munitTimeout=90.seconds
+  private val r=Path.of(sys.env("MANURE_SOURCE_ROOT"))
+  private def converter(mode:String,base:Path,params:Path):IO[Json]=IO.blocking {
+    val label=mode+"-"+java.util.UUID.randomUUID().toString
+    val out=base.resolve(label+".out");val err=base.resolve(label+".err")
+    val p=new ProcessBuilder("python3",r.resolve("probes/converter_fixture.py").toString,mode,base.toString,params.toString,sys.env("POSTGRES_HOME"))
+    val env=p.environment();env.clear();env.put("PATH",sys.env("PATH"));env.put("PYTHONPATH",r.resolve("manure").toString)
+    val child=p.redirectOutput(out.toFile).redirectError(err.toFile).start()
+    try {
+      if(!child.waitFor(60,TimeUnit.SECONDS)){child.destroyForcibly().waitFor();throw new AssertionError("controlled converter child deadline")}
+      if(child.exitValue()!=0)throw new AssertionError("controlled converter child failed: "+Files.readString(err).take(1200))
+      if(mode=="prepare"){
+        val evidence=r.resolve("converter-evidence").resolve(label);Files.createDirectories(evidence)
+        Vector("OWNER.json","COPY.json","PAYLOAD.json","COMPLETE").foreach(name=>Files.copy(base.resolve("converted").resolve(name),evidence.resolve(name)))
+        Files.copy(base.resolve("fixture.json"),evidence.resolve("fixture.json"))
+      }
+      CurrentWire.parse(Exact.string(Files.readAllBytes(out)))
+    } finally {child.destroyForcibly().waitFor()}
+  }
+  private def setting(original:Config):(Config,Path,Path)={
+    val base=original.dataDir.getParent
+    val control=base.resolve("converted")
+    val params=base.resolve("converter-params.json")
+    val value=Json.obj("jdbc"->Json.fromString(original.database.jdbcUrl),"user"->Json.fromString(original.database.user),"passwordFile"->Json.fromString(original.database.passwordFile.toString),"adminUser"->Json.fromString(sys.env("MANURE_TEST_JDBC_USER")),"adminPasswordFile"->Json.fromString(sys.env("MANURE_TEST_JDBC_PASSWORD_FILE")),"owner"->Json.fromString(original.users.head.id),"chunkBytes"->Json.fromInt(original.limits.chunkBytes))
+    Files.writeString(params,value.noSpaces)
+    val cfg=original.copy(dataDir=control.resolve("data"),migrationReceiptDir=Some(control),apiOrigin=ApiOrigin.parse("http://127.0.0.1:47329"),port=47329)
+    cfg.validate();(cfg,base,params)
+  }
+  private def read(base:Path):Json=CurrentWire.parse(Files.readString(base.resolve("fixture.json")))
+  private def mutate(cfg:Config,base:Path,params:Path,replace:Boolean):IO[Unit]=
+    if replace then converter("replace-identical",base,params).flatMap{proof=>IO{
+      assert(proof.hcursor.get[Boolean]("sameBytesInventory").contains(true))
+      assert(proof.hcursor.get[Boolean]("differentInode").contains(true))
+    }}
+    else IO.blocking{
+      val aid=read(base).hcursor.get[String]("artifactId").toOption.get
+      Files.writeString(cfg.dataDir.resolve("live/"+aid+"/file.txt"),"evil");()
+    }
+  private case class ImmutableState(tables:Vector[String],rows:Vector[Vector[String]],files:Vector[(String,String)])
+  private def immutableState(config:Config):IO[ImmutableState]=for{
+    db<-JdbcDatabase.resource(config.database).use(_.transaction{c=>
+      val tables=Jdbc.rows(c,"SELECT schemaname||'.'||tablename FROM pg_tables WHERE schemaname IN ('manure','manure_offline','public') ORDER BY schemaname,tablename")(_.getString(1))
+      val fixed=Vector("manure.artifacts","manure.receipts","manure.one_time_grants","manure.content_grants","manure_offline.destination")
+      val rows=fixed.map(table=>Jdbc.rows(c,"SELECT row_to_json(t)::text FROM "+table+" t ORDER BY row_to_json(t)::text")(_.getString(1)))
+      (tables,rows)
+    })
+    files<-IO.blocking{
+      import scala.jdk.CollectionConverters.*
+      val root=config.migrationReceiptDir.get
+      scala.util.Using.resource(Files.walk(root)){walk=>
+        val paths=walk.iterator().asScala.take(129).toVector
+        Require(paths.size<=128,"controlled-fixture-bound")
+        paths.map{path=>
+          val nofollow=java.nio.file.LinkOption.NOFOLLOW_LINKS
+          val identity=Files.getAttribute(path,"unix:dev",nofollow).toString+":"+Files.getAttribute(path,"unix:ino",nofollow).toString
+          val mode=Files.getPosixFilePermissions(path,nofollow).asScala.map(_.name()).toVector.sorted.mkString(",")
+          val value=if Files.isDirectory(path,nofollow) then "dir" else
+            Require(Files.isRegularFile(path,nofollow),"controlled-fixture-kind")
+            val bytes=scala.util.Using.resource(Files.newInputStream(path,nofollow))(_.readNBytes(2097153))
+            Require(bytes.length<=2097152,"controlled-fixture-bound");SecretCodec.sha256(bytes)
+          (root.relativize(path).toString,identity+":"+mode+":"+value)
+        }.sortBy(_._1)
+      }
+    }
+  }yield ImmutableState(db._1,db._2,files)
+  private def flags(cfg:Config):IO[(Boolean,Boolean)]=JdbcDatabase.resource(cfg.database).use(_.transaction { c =>
+    val adopted=Jdbc.rows(c,"SELECT to_regclass('manure.root_owner') IS NOT NULL")(_.getBoolean(1)).head
+    val writable=Jdbc.rows(c,"SELECT writes_started FROM manure_offline.destination")(_.getBoolean(1)).head
+    (adopted,writable)
+  })
+  test("160 actual converter authorized final positive -> Main reads acknowledged source bytes") {
+    BackendFixture.configuration.use { (original,_,_)=>for{
+      settings<-IO.blocking(setting(original));(cfg,base,params)=settings
+      prepared<-converter("prepare",base,params)
+      before<-flags(cfg)
+      _<-IO {assert(prepared.hcursor.get[Boolean]("completeBindsPayloadHash").contains(true));assertEquals(before,(false,false))}
+      marked<-converter("mark",base,params)
+      aid=read(base).hcursor.get[String]("artifactId").toOption.get
+      bytes<-Main.resources(cfg).use(_.artifacts.openContent(aid,"file.txt",None,None,None).use((_,file)=>IO.blocking(file.read(0,4))))
+      after<-flags(cfg)
+      _<-IO {println(s"REVIEW_160_CONVERTER_POSITIVE sourceBytes=${Exact.string(bytes)} before=$before after=$after");assertEquals(Exact.string(bytes),"good");assertEquals(after,(true,true))}
+    }yield() }.unsafeRunSync()
+  }
+  Vector(false,true).foreach { replace=>
+    test("160 actual converter refuses "+(if(replace)"replaced root" else "same-size changed bytes")+" BEFORE writes_started and Domain root adoption") {
+      BackendFixture.configuration.use { (original,_,_)=>for{
+        settings<-IO.blocking(setting(original));(cfg,base,params)=settings
+        _<-converter("prepare",base,params)
+        _<-mutate(cfg,base,params,replace)
+        beforeState<-immutableState(cfg)
+        marked<-converter("mark-expect-refusal",base,params)
+        result<-Main.resources(cfg).use(_=>IO.unit).attempt
+        after<-flags(cfg)
+        afterState<-immutableState(cfg)
+        _<-IO {assertEquals(afterState,beforeState,"rejected path changed PG rows/schema or FS entries/inodes/modes/bytes");println(s"REVIEW_160_PREMARK replace=$replace converterRefused=${marked.hcursor.get[Boolean]("refused").toOption} domainRefused=${result.isLeft} flags=$after");assert(marked.hcursor.get[Boolean]("refused").contains(true));assertEquals(result.left.toOption.collect {case e:DomainError=>e.code},Some("migration-required"));assertEquals(after,(false,false))}
+      }yield() }.unsafeRunSync()
+    }
+    test("160 actual converter -> mark-writable -> Main refuses "+(if(replace)"replaced root" else "same-size changed bytes")+" BEFORE first Domain adoption") {
+      BackendFixture.configuration.use { (original,_,_)=>for{
+        settings<-IO.blocking(setting(original));(cfg,base,params)=settings
+        _<-converter("prepare",base,params)
+        _<-converter("mark",base,params)
+        before<-flags(cfg)
+        _<-IO(assertEquals(before,(false,true)))
+        _<-mutate(cfg,base,params,replace)
+        aid=read(base).hcursor.get[String]("artifactId").toOption.get
+        beforeState<-immutableState(cfg)
+        result<-Main.resources(cfg).use(_.artifacts.openContent(aid,"file.txt",None,None,None).use((_,file)=>IO.blocking(file.read(0,4)))).attempt
+        after<-flags(cfg)
+        afterState<-immutableState(cfg)
+        _<-IO {assertEquals(afterState,beforeState,"rejected path changed PG rows/schema or FS entries/inodes/modes/bytes");println(s"REVIEW_160_FIRST_ADOPTION replace=$replace startupAccepted=${result.isRight} servedExpectedHash=${result.toOption.map(bytes=>SecretCodec.sha256(bytes)==SecretCodec.sha256("good"))} flags=$after");assertEquals(result.left.toOption.collect {case e:DomainError=>e.code},Some("migration-required"),"actual converter receipts did not stop wrong first Domain adoption");assertEquals(after,(false,true))}
+      }yield() }.unsafeRunSync()
+    }
+  }
+}
