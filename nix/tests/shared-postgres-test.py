@@ -46,7 +46,7 @@ def main():
         manifest = root/'provider.json'
         manifest.write_text(json.dumps(config))
         # Rewrite only paths/admin identity for the OWNED disposable cluster.
-        hba = Path(os.environ['PG_HBA']).read_text().replace('local all nixbld peer', f'local all {admin} peer')
+        hba = Path(os.environ['PG_HBA']).read_text().replace('local all "nixbld" peer', f'local all "{admin}" peer')
         hba = hba.replace('host all all 0.0.0.0/0 reject','host unicode_probe unicode_probe 127.0.0.1/32 scram-sha-256\nhost all all 0.0.0.0/0 reject')
         (root/'hba').write_text(hba)
         settings = Path(os.environ['PG_CONFIGURATION']).read_text()

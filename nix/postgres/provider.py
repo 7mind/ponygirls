@@ -164,7 +164,7 @@ ALTER ROLE "{role}" CONNECTION LIMIT {d['maxConnections']};
 SELECT 'CREATE DATABASE "{name}"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='{name}')\\gexec
 REVOKE ALL ON DATABASE "{name}" FROM PUBLIC;
 SELECT format('REVOKE ALL ON DATABASE %I FROM %I','{name}',rolname)
- FROM pg_roles WHERE rolname IN ({','.join("'"+other['user']+"'" for other in cfg['databases'].values())}) AND rolname <> '{role}'\gexec
+ FROM pg_roles WHERE rolname IN ({','.join("'"+other['user']+"'" for other in cfg['databases'].values())}) AND rolname <> '{role}'\\gexec
 GRANT CONNECT, TEMPORARY ON DATABASE "{name}" TO "{role}";
 REVOKE CONNECT ON DATABASE postgres, template1 FROM PUBLIC;
 ALTER ROLE "{role}" IN DATABASE "{name}" SET statement_timeout = '{d['statementTimeoutMs']}ms';

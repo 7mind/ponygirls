@@ -10,7 +10,7 @@ in {
     package = mkOption { type = types.package; default = pkgs.postgresql_18.withPackages (p: [ p.pgvector ]); };
     port = mkOption { type = types.port; default = 15434; };
     stateDirectory = mkOption { type = types.str; description = "NEW dedicated PostgreSQL 18 state root; never point at a legacy service cluster."; };
-    adminRole = mkOption { type = identifier; description = "Peer-authenticated OS owner: HM user or NixOS postgres."; };
+    adminRole = mkOption { type = types.strMatching "[a-z_][a-z0-9_-]{0,62}"; description = "Peer-authenticated OS owner: HM user or NixOS postgres."; };
     maxConnections = mkOption { type = types.ints.between 16 1000; default = 64; };
     adminReserve = mkOption { type = types.ints.between 3 64; default = 8; };
     sharedBuffers = mkOption { type = types.strMatching "[0-9]+(MB|GB)"; default = "128MB"; description = "Conservative baseline, not host sizing. Budget model memory, workers, temp IO and disk independently."; };

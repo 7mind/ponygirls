@@ -3,7 +3,7 @@
 { lib, pkgs, cfg }:
 let
   hbaText = (''
-    local all ${cfg.adminRole} peer
+    local all "${cfg.adminRole}" peer
     local all all reject
   '' + lib.concatMapStrings (d: ''
     host ${d.name} ${d.user} 127.0.0.1/32 scram-sha-256

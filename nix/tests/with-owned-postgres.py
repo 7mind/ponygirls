@@ -29,7 +29,7 @@ def main():
             # rehearsal separately executes the short real deadline cases.
             d.update(createPassword=True,statementTimeoutMs=30000,lockTimeoutMs=5000,idleTransactionTimeoutMs=30000)
         manifest=root/'provider.json';manifest.write_text(json.dumps(template))
-        hba=Path(os.environ['PG_HBA']).read_text().replace('local all nixbld peer',f'local all {admin} peer')
+        hba=Path(os.environ['PG_HBA']).read_text().replace('local all "nixbld" peer',f'local all "{admin}" peer')
         (root/'hba').write_text(hba)
         settings=Path(os.environ['PG_CONFIGURATION']).read_text().replace('/unused-evaluation-path/socket',str(root/'cluster'/'socket')).replace(os.environ['PG_HBA'],str(root/'hba')).replace('port = 15434',f'port = {port}')
         (root/'postgresql.conf').write_text(settings)
