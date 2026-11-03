@@ -69,9 +69,8 @@ class AccelerationTests(unittest.TestCase):
                 calls = []
                 def reached(executable, argv):
                     calls.append((executable, argv)); raise ExecReached()
-                with patch.object(audit.os, 'execv', reached):
-                    with self.assertRaises(ExecReached):
-                        audit._audit_exec('/sentinel-not-qemu', self.argv(policy), str(self.lab), acceleration_policy=policy)
+                with self.assertRaises(ExecReached):
+                    audit._audit_exec('/sentinel-not-qemu', self.argv(policy), str(self.lab), acceleration_policy=policy, project=ROOT, exec_entry=reached)
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(calls[0][0], '/sentinel-not-qemu')
                 records = [json.loads(x) for x in (self.lab / 'audit-edge.jsonl').read_text().splitlines()]
@@ -84,8 +83,8 @@ class AccelerationTests(unittest.TestCase):
                 for value in values:
                     changed = list(base); changed[changed.index(flag)+1] = value; variants.append(changed)
             for argv in variants:
-                with self.subTest(policy=policy.value, argv=argv[1:]), patch.object(audit.os, 'execv', self.sentinel), contextlib.redirect_stderr(io.StringIO()):
-                    self.assertEqual(audit._audit_exec('/sentinel-not-qemu', argv, str(self.lab), acceleration_policy=policy), audit.AUDIT_FAIL_EXIT)
+                with self.subTest(policy=policy.value, argv=argv[1:]), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(audit._audit_exec('/sentinel-not-qemu', argv, str(self.lab), acceleration_policy=policy, project=None, exec_entry=self.sentinel), audit.AUDIT_FAIL_EXIT)
                     self.assertFalse(list(self.lab.glob('audit-*.jsonl')))
     def test_existing_attachments_and_socket_net_device_rejections_in_both_policies(self):
         outside = self.base / 'outside'; outside.mkdir()
@@ -105,8 +104,35 @@ class AccelerationTests(unittest.TestCase):
                 variants = [base + ['-qmp', f'unix:{sockpath},server=on'], base + ['-netdev', 'bridge,id=b0'], base + ['-netdev', 'vde,id=v0'], base + ['-device', 'vfio-pci,host=00:01.0'], base + ['-device', 'vhost-user-fs-pci,chardev=x'], base + ['-fsdev', 'local,id=x,path=/tmp'], base + ['-virtfs', 'local,path=/tmp'], base + ['-blockdev', 'driver=file,filename=/tmp/x']]
                 changed = list(base); changed[-1] = f'file={link},if=none'; variants.append(changed)
                 for argv in variants:
-                    with self.subTest(policy=policy.value, argv=argv[1:]), patch.object(audit.os, 'execv', self.sentinel), contextlib.redirect_stderr(io.StringIO()):
-                        self.assertEqual(audit._audit_exec('/sentinel-not-qemu', argv, str(self.lab), acceleration_policy=policy), audit.AUDIT_FAIL_EXIT)
+                    with self.subTest(policy=policy.value, argv=argv[1:]), contextlib.redirect_stderr(io.StringIO()):
+                        self.assertEqual(audit._audit_exec('/sentinel-not-qemu', argv, str(self.lab), acceleration_policy=policy, project=None, exec_entry=self.sentinel), audit.AUDIT_FAIL_EXIT)
+    def test_q35_remains_unapproved_even_with_exact_anonymous_memory_pair(self):
+        pair = ['-object', 'memory-backend-memfd,id=mem0,size=1024M,share=on',
+                '-machine', 'memory-backend=mem0', '-machine', 'q35,smm=on',
+                '-global', 'driver=cfi.pflash01,property=secure,value=on']
+        for policy in audit.AccelerationPolicy:
+            with self.subTest(policy=policy.value), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(audit._audit_exec('/sentinel-not-qemu', self.argv(policy) + pair,
+                    str(self.lab), acceleration_policy=policy, project=None,
+                    exec_entry=self.sentinel), audit.AUDIT_FAIL_EXIT)
+                self.assertFalse(list(self.lab.glob('audit-*.jsonl')))
+    def test_cli_always_composes_real_authority_and_executable_entry(self):
+        expected_project = audit._repo_root()
+        calls = []
+        def observe_boundary(*args, **kwargs):
+            calls.append((args, kwargs)); return audit.AUDIT_FAIL_EXIT
+        # Localized CLI-boundary observation only: trusted root discovery and
+        # real os.execv are neither patched nor invoked as executable entries.
+        with patch.object(audit, '_audit_exec', observe_boundary):
+            self.assertEqual(audit.main(['audit-exec', '--acceleration-policy', 'kvm-or-tcg',
+                '--lab', str(self.lab), '/sentinel-not-qemu']), audit.AUDIT_FAIL_EXIT)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1]['project'], expected_project)
+        self.assertIs(calls[0][1]['exec_entry'], os.execv)
+        self.assertIs(calls[0][1]['acceleration_policy'], audit.AccelerationPolicy.KVM_OR_TCG)
+        with self.assertRaises(TypeError):
+            audit._audit_exec('/never-exec', [], str(self.lab),
+                acceleration_policy=audit.AccelerationPolicy.KVM_ONLY)
     def make_driver(self, names=('edge', 'strict'), vlans=None, containers=None, backdoor=False):
         # Deliberately synthetic driver CONTROL fixture, never represented as an
         # actual generated Manure driver. The runtime subprocess is intercepted.

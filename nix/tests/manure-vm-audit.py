@@ -46,6 +46,7 @@ import subprocess
 import sys
 from pathlib import Path
 from enum import Enum
+from typing import Callable, NoReturn
 
 AUDIT_FAIL_EXIT = 125
 
@@ -515,12 +516,9 @@ def _selftest_policy(acceleration_policy: AccelerationPolicy) -> int:
         try:
             audit_argv(argv, lab=lab, project=project, acceleration_policy=acceleration_policy)
         except AuditError as exc:
-            original_root = globals()["_repo_root"]
-            try:
-                globals()["_repo_root"] = lambda: project
-                rc = _audit_exec("/no-real-qemu-selftest", argv, str(lab), acceleration_policy=acceleration_policy)
-            finally:
-                globals()["_repo_root"] = original_root
+            rc = _audit_exec("/no-real-qemu-selftest", argv, str(lab),
+                             acceleration_policy=acceleration_policy,
+                             project=project, exec_entry=_selftest_no_exec)
             if rc != AUDIT_FAIL_EXIT or list(lab.glob("audit-*.jsonl")):
                 failures.append(label + "-pre-exec")
                 print(f"selftest {label}: FAIL — pre-exec path did not refuse cleanly", flush=True)
@@ -562,6 +560,12 @@ def _selftest_policy(acceleration_policy: AccelerationPolicy) -> int:
         pair = ["-object", "memory-backend-memfd,id=mem0,size=1024M,share=on",
                 "-machine", "memory-backend=mem0"]
         expect_accept("pinned-anonymous-memory-pair", argv + pair, lab=lab, project=None)
+        # Parent reports current EVAL includes this extra pinned-generator
+        # machine. It is NOT yet approved from an observed built driver.
+        expect_reject("unapproved-q35-with-exact-memory-pair",
+                      argv + pair + ["-machine", "q35,smm=on", "-global",
+                                     "driver=cfi.pflash01,property=secure,value=on"],
+                      lab=lab, project=None)
         other = (AccelerationPolicy.KVM_OR_TCG if acceleration_policy is AccelerationPolicy.KVM_ONLY
                  else AccelerationPolicy.KVM_ONLY)
         wrong_policy = _base_argv(lab=lab, acceleration_policy=other) + ["-drive", f"file={good},if=none"]
@@ -720,15 +724,9 @@ def _selftest_policy(acceleration_policy: AccelerationPolicy) -> int:
         # This fixture's declared project=None must stay true even when all
         # owned temp directories live inside the real checkout. A narrow manual
         # dummy models that authority; never exec anything even on a regression.
-        original_root, original_exec = globals()["_repo_root"], os.execv
-        def no_exec(*_args):
-            raise AssertionError("selftest attempted executable entry")
-        try:
-            globals()["_repo_root"] = lambda: None
-            os.execv = no_exec
-            rc = _audit_exec("/bin/false", bad_argv, str(lab), acceleration_policy=acceleration_policy)
-        finally:
-            globals()["_repo_root"], os.execv = original_root, original_exec
+        rc = _audit_exec("/bin/false", bad_argv, str(lab),
+                         acceleration_policy=acceleration_policy,
+                         project=None, exec_entry=_selftest_no_exec)
         if rc != AUDIT_FAIL_EXIT:
             failures.append("exec-refuses-outside")
             print("selftest exec-refuses-outside: FAIL — exit was not 125", flush=True)
@@ -738,7 +736,7 @@ def _selftest_policy(acceleration_policy: AccelerationPolicy) -> int:
         else:
             print("selftest exec-refuses-outside: correctly refused pre-exec", flush=True)
         # Exec-path lab handling: unresolvable lab fails closed (no exec).
-        rc = _audit_exec("/bin/false", _base_argv(lab=lab, acceleration_policy=acceleration_policy), str(lab / "does-not-exist"), acceleration_policy=acceleration_policy)
+        rc = _audit_exec("/bin/false", _base_argv(lab=lab, acceleration_policy=acceleration_policy), str(lab / "does-not-exist"), acceleration_policy=acceleration_policy, project=None, exec_entry=_selftest_no_exec)
         if rc != AUDIT_FAIL_EXIT:
             failures.append("exec-refuses-bad-lab")
             print("selftest exec-refuses-bad-lab: FAIL", flush=True)
@@ -799,27 +797,30 @@ def _selftest_policy(acceleration_policy: AccelerationPolicy) -> int:
     return 0
 
 
+def _selftest_no_exec(_executable: str, _argv: list[str]) -> NoReturn:
+    raise AssertionError("selftest attempted executable entry (no guest permitted)")
+
+
 def selftest() -> int:
-    original_exec = os.execv
-    def no_exec(*_args):
-        raise AssertionError("selftest attempted executable entry (no guest permitted)")
-    try:
-        os.execv = no_exec
-        for policy in AccelerationPolicy:
-            print(f"selftest acceleration-policy={policy.value}", flush=True)
-            if _selftest_policy(policy) != 0:
-                return 1
-    finally:
-        os.execv = original_exec
+    for policy in AccelerationPolicy:
+        print(f"selftest acceleration-policy={policy.value}", flush=True)
+        if _selftest_policy(policy) != 0:
+            return 1
     return 0
 
 
-def _audit_exec(real_qemu: str, argv: list[str], lab_text: str, *, acceleration_policy: AccelerationPolicy) -> int:
+def _audit_exec(
+    real_qemu: str, argv: list[str], lab_text: str, *,
+    acceleration_policy: AccelerationPolicy, project: Path | None,
+    exec_entry: Callable[[str, list[str]], NoReturn],
+) -> int:
     """Pre-exec audit used by the wrapper: validate, log, then exec.
 
     The lab arrives as an explicit baked literal (no TMPDIR guessing and
     no name-pattern heuristics: both failed in prelim against driver-set
-    TMPDIR values outside our control).
+    TMPDIR values outside our control). Authority and executable entry are
+    required explicit dependencies: tests use manual dummies, while the CLI
+    always supplies trusted discovery and the real os.execv.
     """
     try:
         lab_path = Path(lab_text).resolve(strict=True)
@@ -839,7 +840,6 @@ def _audit_exec(real_qemu: str, argv: list[str], lab_text: str, *, acceleration_
         if not lab_path.is_relative_to(yolo_resolved):
             sys.stderr.write("vm-audit: FAIL — lab outside YOLO root (fail closed)\n")
             return AUDIT_FAIL_EXIT
-    project = _repo_root()
     try:
         mapping = audit_argv(list(argv), lab=lab_path, project=project, acceleration_policy=acceleration_policy)
     except AuditError as exc:
@@ -852,7 +852,7 @@ def _audit_exec(real_qemu: str, argv: list[str], lab_text: str, *, acceleration_
     except OSError as exc:
         sys.stderr.write(f"vm-audit: FAIL — cannot write audit log: {exc}\n")
         return AUDIT_FAIL_EXIT
-    os.execv(real_qemu, [real_qemu, *list(argv)[1:]])
+    exec_entry(real_qemu, [real_qemu, *list(argv)[1:]])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -870,7 +870,11 @@ def main(argv: list[str] | None = None) -> int:
     rest = list(args.rest)
     if rest and rest[0] == "--":
         rest = rest[1:]
-    return _audit_exec(args.real_qemu, ["qemu"] + rest, args.lab, acceleration_policy=AccelerationPolicy(args.acceleration_policy))
+    # CLI authority and executable entry are always real/trusted. The internal
+    # dependency seam has no CLI override, default, alternate root or skip mode.
+    return _audit_exec(args.real_qemu, ["qemu"] + rest, args.lab,
+                       acceleration_policy=AccelerationPolicy(args.acceleration_policy),
+                       project=_repo_root(), exec_entry=os.execv)
 
 
 if __name__ == "__main__":
