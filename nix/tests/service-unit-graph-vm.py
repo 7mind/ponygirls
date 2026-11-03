@@ -134,4 +134,5 @@ PLANS.append(('actual-disabled-module-preserves-provider-db-and-others-stays-dis
 
 run_all(PLANS,bootstrap,lambda plan:case(*plan))
 save()
+print('UNIT_GRAPH_TERMINAL '+(out/'lifecycle-receipt.json').read_text().replace('\n',' '),flush=True)
 assert len(results)==9 and all(c['status']=='pass' for c in results),'actual module lifecycle matrix failed; inspect lifecycle-receipt.json (no dependency fix has been assumed)'

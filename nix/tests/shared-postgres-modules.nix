@@ -16,7 +16,7 @@ let
   hyphenAdmin = hm { home.username = "pavel-shirshov"; };
   hyphenPolicy = import ../postgres/policy.nix { inherit lib pkgs; cfg = hyphenAdmin.ponygirls.servicePostgres; };
   overBudget = hm { ponygirls.servicePostgres.maxConnections = 32; };
-  system = (nixpkgs.lib.nixosSystem {
+  systemEvaluation = nixpkgs.lib.nixosSystem {
     system = pkgs.stdenv.hostPlatform.system;
     modules = [ ../nixos/service-postgres.nix {
       system.stateVersion = "26.11";
@@ -24,7 +24,14 @@ let
       boot.loader.grub.enable = false;
       fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
     } ];
-  }).config;
+  };
+  system = systemEvaluation.config;
+  withExtraAperture = (systemEvaluation.extendModules { modules=[{
+    systemd.services.postgresql.serviceConfig.ReadWritePaths=["/srv/operator-extra"];
+  }]; }).config;
+  invalidAperture = (systemEvaluation.extendModules { modules=[{
+    systemd.services.postgresql.serviceConfig.ReadWritePaths=lib.mkForce "/srv/not-a-list";
+  }]; }).config;
   hmUnits = base.systemd.user.services;
   dbNames = map (name: "ponygirls-database-${name}") (builtins.attrNames databases);
 in
@@ -54,6 +61,11 @@ assert lib.hasInfix ''local all "postgres" peer'' system.services.postgresql.aut
 assert system.services.postgresql.settings.listen_addresses == "127.0.0.1";
 assert system.services.postgresql.enable;
 assert system.services.postgresql.dataDir == "/var/lib/ponygirls-postgres-18/data";
+assert system.systemd.services.postgresql.serviceConfig.ReadWritePaths == ["/var/lib/ponygirls-postgres-18"];
+assert withExtraAperture.systemd.services.postgresql.serviceConfig.ReadWritePaths == ["/var/lib/ponygirls-postgres-18" "/srv/operator-extra"];
+assert withExtraAperture.systemd.services.postgresql.serviceConfig.ProtectSystem == "strict";
+assert withExtraAperture.systemd.services.postgresql.serviceConfig.User == "postgres";
+assert !(builtins.tryEval invalidAperture.systemd.services.postgresql.serviceConfig.ReadWritePaths).success;
 assert !(system.systemd.services ? ponygirls-postgres);
 assert system.systemd.services.ponygirls-database-haystack.requires == [ "postgresql.service" ];
 assert system.services.postgresql.settings.fsync;
