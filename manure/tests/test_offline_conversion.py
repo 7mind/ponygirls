@@ -589,7 +589,8 @@ class PostgresContracts(unittest.TestCase):
 
     def test_bad_destination_payload_never_writes_metadata(self):
         def stop(stage):
-            raise RuntimeError(stage)
+            if stage == "files_durable":
+                raise RuntimeError(stage)
 
         with self.assertRaises(RuntimeError):
             self.import_data(failpoint=stop)
@@ -649,6 +650,276 @@ class PostgresContracts(unittest.TestCase):
                 "SELECT count(*) FROM manure.artifacts WHERE name=decode('6e65772d61636b','hex');"
             ),
             "7",
+        )
+
+    def assert_boundary_refusal_preserves_state(self):
+        """Regression: an adoption failure must never mutate PG or repair bytes."""
+        saved_records = {
+            name: (self.destination / name).read_bytes()
+            for name in ("COPY.json", "PAYLOAD.json", "COMPLETE")
+            if (self.destination / name).exists()
+        }
+        rows = M.pg_tables(self.pg)
+        current = M.inventory(self.destination / "data")
+        source = M.inventory(self.source)
+        for operation in (
+            lambda: M.mark_writable(self.destination, self.pg, self.identity),
+            self.import_data,
+            lambda: M.verify_destination(
+                self.bundle, self.destination, self.pg, self.identity
+            ),
+        ):
+            with self.assertRaises(M.Refused):
+                operation()
+            self.assertEqual(
+                self.pg.run("SELECT writes_started FROM manure_offline.destination;"),
+                "f",
+            )
+            self.assertEqual(M.pg_tables(self.pg), rows)
+            self.assertEqual(M.inventory(self.destination / "data"), current)
+            self.assertEqual(
+                {
+                    name: (self.destination / name).read_bytes()
+                    for name in saved_records
+                },
+                saved_records,
+            )
+        self.assertEqual(M.inventory(self.source), source)
+        self.assertEqual(M.verify_bundle(self.bundle, self.identity)[0], self.identity)
+
+    def test_payload_receipt_binds_every_raw_path_hash_and_actual_data_inode(self):
+        self.import_data()
+        content = (self.destination / "PAYLOAD.json").read_bytes()
+        receipt = json.loads(content)
+        st = (self.destination / "data").stat()
+        entries = M.payload_entries(M.payload_inventory(self.manifest))
+        self.assertEqual(
+            receipt,
+            {
+                "format": "manure-payload-1",
+                "source": self.identity,
+                "destination": self.owner["id"],
+                "device": st.st_dev,
+                "inode": st.st_ino,
+                "entries": entries,
+            },
+        )
+        self.assertEqual(entries[0], {"path": "", "kind": "dir"})
+        self.assertTrue(
+            any(bytes.fromhex(e["path"]).endswith(os.fsencode(PATH)) for e in entries)
+        )
+        self.assertTrue(
+            any(
+                bytes.fromhex(e["path"]).endswith(b"/empty") and e["kind"] == "dir"
+                for e in entries
+            )
+        )
+        self.assertTrue(all("mtime_ns" not in e for e in entries))
+        self.assertEqual(
+            json.loads((self.destination / "COMPLETE").read_bytes()),
+            {
+                "source": self.identity,
+                "destination": self.owner["id"],
+                "payloadManifestSha256": hashlib.sha256(content).hexdigest(),
+            },
+        )
+        # Target receipt comparison deliberately ignores mutable mtimes. The
+        # source snapshot still retains and checks its nanosecond timestamps.
+        file = (
+            self.destination / "data" / "live" / self.fixture["ids"]["external"] / PATH
+        )
+        st = file.stat()
+        os.utime(file, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        M.mark_writable(self.destination, self.pg, self.identity)
+        self.assertEqual(
+            self.pg.run("SELECT writes_started FROM manure_offline.destination;"), "t"
+        )
+        self.assertEqual((self.destination / "PAYLOAD.json").read_bytes(), content)
+
+    def test_same_size_corrupt_payload_before_mark_is_never_adopted_or_reblessed(self):
+        self.import_data()
+        file = (
+            self.destination / "data" / "live" / self.fixture["ids"]["external"] / PATH
+        )
+        st = file.stat()
+        file.write_bytes(b"X" * len(PAYLOAD))
+        os.utime(file, ns=(st.st_atime_ns, st.st_mtime_ns))
+        self.assert_boundary_refusal_preserves_state()
+        self.assertEqual(file.read_bytes(), b"X" * len(PAYLOAD))
+
+    def test_replaced_data_inode_with_identical_bytes_before_mark_is_not_adopted(self):
+        self.import_data()
+        data = self.destination / "data"
+        replacement = self.destination / "replacement"
+        M.copy_tree(data, replacement)
+        self.assertEqual(M.inventory(data), M.inventory(replacement))
+        data.rename(self.destination / "original-data")
+        replacement.rename(data)
+        self.assert_boundary_refusal_preserves_state()
+
+    def test_new_or_missing_entries_before_mark_are_not_adopted(self):
+        self.import_data()
+        added = self.destination / "data" / "live" / "unrecorded"
+        added.mkdir()
+        self.assert_boundary_refusal_preserves_state()
+        added.rmdir()
+        # Restore parent mtime to isolate the negative to absent topology.
+        (
+            self.destination
+            / "data"
+            / "live"
+            / self.fixture["ids"]["external"]
+            / "empty"
+        ).rmdir()
+        self.assert_boundary_refusal_preserves_state()
+
+    def test_missing_or_corrupt_final_proofs_are_not_regenerated_in_place(self):
+        self.import_data()
+        payload = self.destination / "PAYLOAD.json"
+        original = payload.read_bytes()
+        for corruption in (b"not-json", original + b"\n"):
+            payload.write_bytes(corruption)
+            self.assert_boundary_refusal_preserves_state()
+        payload.write_bytes(original)
+        complete = self.destination / "COMPLETE"
+        marker = json.loads(complete.read_bytes())
+        marker["payloadManifestSha256"] = "0" * 64
+        complete.write_bytes(M.canonical(marker))
+        self.assert_boundary_refusal_preserves_state()
+        # Existing COMPLETE without PAYLOAD is old/partial output, not an
+        # invitation to compute a new receipt over whichever bytes exist now.
+        payload.unlink()
+        self.assert_boundary_refusal_preserves_state()
+        self.assertFalse(payload.exists())
+
+    def test_bound_copy_restart_before_rename_and_after_payload_receipt(self):
+        for stage in ("copy_bound", "payload_receipt_durable"):
+
+            def stop(actual, wanted=stage):
+                if actual == wanted:
+                    raise RuntimeError(actual)
+
+            with self.assertRaises(RuntimeError):
+                self.import_data(failpoint=stop)
+            self.assertFalse((self.destination / "COMPLETE").exists())
+            if stage == "copy_bound":
+                self.assertFalse((self.destination / "data").exists())
+                self.assertTrue((self.destination / "incoming").is_dir())
+            else:
+                payload = (self.destination / "PAYLOAD.json").read_bytes()
+        self.import_data()
+        self.assertEqual((self.destination / "PAYLOAD.json").read_bytes(), payload)
+        self.assertEqual(self.pg.run("SELECT count(*) FROM manure.artifacts;"), "7")
+
+    def test_postcommit_pre_receipt_replaced_root_cannot_be_blessed_on_retry(self):
+        def stop(stage):
+            if stage == "metadata_committed":
+                raise RuntimeError(stage)
+
+        with self.assertRaises(RuntimeError):
+            self.import_data(failpoint=stop)
+        self.assertFalse((self.destination / "PAYLOAD.json").exists())
+        self.assertFalse((self.destination / "COMPLETE").exists())
+        data = self.destination / "data"
+        M.copy_tree(data, self.destination / "replacement")
+        data.rename(self.destination / "original-data")
+        (self.destination / "replacement").rename(data)
+        self.assert_boundary_refusal_preserves_state()
+        self.assertFalse((self.destination / "PAYLOAD.json").exists())
+        self.assertFalse((self.destination / "COMPLETE").exists())
+
+    def test_old_converter_completion_without_payload_proofs_requires_new_destination(
+        self,
+    ):
+        self.import_data()
+        (self.destination / "COPY.json").unlink()
+        (self.destination / "PAYLOAD.json").unlink()
+        (self.destination / "COMPLETE").write_bytes(
+            M.canonical({"source": self.identity, "destination": self.owner["id"]})
+        )
+        self.assert_boundary_refusal_preserves_state()
+        self.assertFalse((self.destination / "COPY.json").exists())
+        self.assertFalse((self.destination / "PAYLOAD.json").exists())
+
+    def test_postcommit_pre_receipt_corruption_never_gets_a_fresh_hash_receipt(self):
+        def stop(stage):
+            if stage == "metadata_committed":
+                raise RuntimeError(stage)
+
+        with self.assertRaises(RuntimeError):
+            self.import_data(failpoint=stop)
+        file = (
+            self.destination / "data" / "live" / self.fixture["ids"]["external"] / PATH
+        )
+        st = file.stat()
+        file.write_bytes(b"X" * len(PAYLOAD))
+        os.utime(file, ns=(st.st_atime_ns, st.st_mtime_ns))
+        self.assert_boundary_refusal_preserves_state()
+        self.assertFalse((self.destination / "PAYLOAD.json").exists())
+        self.assertFalse((self.destination / "COMPLETE").exists())
+
+    def test_no_payload_completion_receipt_before_pg_readback_verifies(self):
+        def corrupt(stage):
+            if stage == "metadata_committed":
+                self.pg.run(
+                    "UPDATE manure.artifacts SET name=decode('6368616e676564','hex');"
+                )
+
+        with self.assertRaises(M.Refused):
+            self.import_data(failpoint=corrupt)
+        self.assertFalse((self.destination / "PAYLOAD.json").exists())
+        self.assertFalse((self.destination / "COMPLETE").exists())
+        self.assertEqual(
+            self.pg.run("SELECT writes_started FROM manure_offline.destination;"), "f"
+        )
+        self.assertEqual(self.pg.run("SELECT count(*) FROM manure.artifacts;"), "7")
+        self.assertEqual(M.verify_bundle(self.bundle, self.identity)[0], self.identity)
+
+    def test_dangling_final_proof_is_not_treated_as_missing_for_restart(self):
+        def stop(stage):
+            if stage == "metadata_committed":
+                raise RuntimeError(stage)
+
+        with self.assertRaises(RuntimeError):
+            self.import_data(failpoint=stop)
+        payload = self.destination / "PAYLOAD.json"
+        payload.symlink_to(self.destination / "does-not-exist")
+        with self.assertRaises(M.Refused):
+            self.import_data()
+        self.assertTrue(payload.is_symlink())
+        self.assertFalse((self.destination / "COMPLETE").exists())
+        self.assertEqual(
+            self.pg.run("SELECT writes_started FROM manure_offline.destination;"), "f"
+        )
+
+    def test_active_payload_owner_blocks_writable_boundary(self):
+        self.import_data()
+        with M.claim(self.destination / "data"), self.assertRaises(M.Refused):
+            M.mark_writable(self.destination, self.pg, self.identity)
+        self.assertEqual(
+            self.pg.run("SELECT writes_started FROM manure_offline.destination;"), "f"
+        )
+        M.mark_writable(self.destination, self.pg, self.identity)
+
+    def test_mark_after_new_writes_refuses_before_scanning_old_payload_inventory(self):
+        self.import_data()
+        M.mark_writable(self.destination, self.pg, self.identity)
+        # This new topology is deliberately outside the old receipt. It must
+        # survive refused importer/mark calls, with no inventory refresh.
+        data = self.destination / "data"
+        new = data / "new-after-writes"
+        new.write_bytes(b"acknowledged new bytes")
+        proof = (self.destination / "PAYLOAD.json").read_bytes()
+        for operation in (
+            lambda: M.mark_writable(self.destination, self.pg, self.identity),
+            self.import_data,
+        ):
+            with self.assertRaises(M.Refused):
+                operation()
+        self.assertEqual(new.read_bytes(), b"acknowledged new bytes")
+        self.assertEqual((self.destination / "PAYLOAD.json").read_bytes(), proof)
+        self.assertEqual(
+            self.pg.run("SELECT writes_started FROM manure_offline.destination;"), "t"
         )
 
     def test_ownership_and_nonempty_destination_refused(self):
