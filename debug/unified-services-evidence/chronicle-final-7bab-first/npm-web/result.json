@@ -1,0 +1,12 @@
+{
+  "stage": "npm-web",
+  "command": [
+    "npm",
+    "ci"
+  ],
+  "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web",
+  "startedAt": "2026-11-03T10:10:38.485584+00:00",
+  "finishedAt": "2026-11-03T10:10:40.050252+00:00",
+  "commandExitStatus": 0,
+  "status": "passed"
+}

@@ -1,0 +1,20 @@
+{
+  "stage": "jvm-workflow",
+  "command": [
+    "npm",
+    "test"
+  ],
+  "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/tests",
+  "startedAt": "2026-11-03T10:20:29.205039+00:00",
+  "finishedAt": "2026-11-03T10:20:32.720627+00:00",
+  "commandExitStatus": 1,
+  "status": "failed",
+  "counts": {
+    "tests": 1,
+    "pass": 0,
+    "fail": 1,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  }
+}

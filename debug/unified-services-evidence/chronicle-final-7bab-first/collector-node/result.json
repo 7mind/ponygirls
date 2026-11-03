@@ -1,0 +1,20 @@
+{
+  "stage": "collector-node",
+  "command": [
+    "npm",
+    "test"
+  ],
+  "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/collector",
+  "startedAt": "2026-11-03T10:10:44.654505+00:00",
+  "finishedAt": "2026-11-03T10:10:49.974660+00:00",
+  "commandExitStatus": 0,
+  "status": "passed",
+  "counts": {
+    "tests": 125,
+    "pass": 125,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  }
+}
