@@ -71,10 +71,14 @@ export async function fixture(overrides={},configure=async()=>{}){
   const save=async()=>{await writeFile(configPath+'.tmp',JSON.stringify(config),{mode:0o600});await rename(configPath+'.tmp',configPath);};
   try{await save();}catch(error){await dropDatabase();throw error;}let processHandle;let output='';let errors='';
   const start=async()=>{
+    // A free-port observation is not a reservation. Never ask another process
+    // for health or send it synthetic credentials if the bind was lost.
+    await new Promise((resolve,reject)=>{const check=net.createServer();check.once('error',()=>reject(new Error('fixture listen port unavailable; refusing probes')));check.listen(port,'127.0.0.1',()=>check.close(error=>error?reject(error):resolve()));});
+    let currentOutput='';let ownReady=false;
     processHandle=spawn('/bin/sh',['-c','exec '+process.env.HAYSTACK_SERVER_COMMAND+' serve "$1"','haystack-test',configPath],{cwd:root,stdio:['ignore','pipe','pipe']});
-    processHandle.stdout.on('data',bytes=>{output+=bytes;});processHandle.stderr.on('data',bytes=>{errors+=bytes;});
+    processHandle.stdout.on('data',bytes=>{output+=bytes;currentOutput=(currentOutput+bytes.toString()).slice(-16384);ownReady ||= currentOutput.split(/\r?\n/u).includes('haystack: ready');});processHandle.stderr.on('data',bytes=>{errors+=bytes;});
     const deadline=Date.now()+15000;let ready=false;
-    while(Date.now()<deadline){if(processHandle.exitCode!==null)throw new Error('server exited before readiness: '+output);try{const r=await fetch(base+'/api/v1/health',{headers:{Connection:'close'}});await r.text();if(r.ok){ready=true;break;}}catch{}await sleep(50);}
+    while(Date.now()<deadline){if(processHandle.exitCode!==null||processHandle.signalCode!==null)throw new Error('server exited before readiness: '+output);if(ownReady){try{const r=await fetch(base+'/api/v1/health',{headers:{Connection:'close'}});await r.text();if(r.ok&&processHandle.exitCode===null&&processHandle.signalCode===null){ready=true;break;}}catch{}}await sleep(50);}
     assert.ok(ready,'server readiness deadline');
   };
   const stop=async()=>{if(!processHandle)return [0,null];if(processHandle.exitCode!==null||processHandle.signalCode!==null)return [processHandle.exitCode,processHandle.signalCode];const exited=once(processHandle,'exit');processHandle.kill('SIGTERM');const timeout=setTimeout(()=>processHandle.kill('SIGKILL'),3000);const result=await exited;clearTimeout(timeout);return result;};
