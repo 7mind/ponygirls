@@ -1,0 +1,93 @@
+{
+  "scope": "actual HM modules/systemd USER manager/real PG with explicit synthetic CLI adapters; NOT native app/HTTP/model acceptance",
+  "trustBoundary": "all HM services share alice UID1000; role ACLs do not isolate credentials from same-UID processes",
+  "sourceRevision": "65879bdd6174f747ba17f2b7678c3c7c9f7536c5",
+  "cases": [
+    {
+      "name": "HM-boot-three-consumers-one-user-provider",
+      "status": "pass",
+      "phases": {
+        "precondition": "pass",
+        "fault": "pass",
+        "post-observation": "pass",
+        "restore": "pass"
+      },
+      "faultEntered": true
+    },
+    {
+      "name": "HM-own-app-restart-isolates-provider-others",
+      "status": "pass",
+      "phases": {
+        "precondition": "pass",
+        "fault": "pass",
+        "post-observation": "pass",
+        "restore": "pass"
+      },
+      "faultEntered": true
+    },
+    {
+      "name": "HM-explicit-provider-restart-recovers-active-chain",
+      "status": "pass",
+      "phases": {
+        "precondition": "pass",
+        "fault": "pass",
+        "post-observation": "pass",
+        "restore": "pass"
+      },
+      "faultEntered": true
+    },
+    {
+      "name": "HM-provider-crash-autorestart-fresh-role-reconnect",
+      "status": "pass",
+      "phases": {
+        "precondition": "pass",
+        "fault": "pass",
+        "post-observation": "pass",
+        "restore": "pass"
+      },
+      "faultEntered": true
+    },
+    {
+      "name": "HM-stopped-consumer-stays-stopped",
+      "status": "pass",
+      "phases": {
+        "precondition": "pass",
+        "fault": "pass",
+        "post-observation": "pass",
+        "restore": "pass"
+      },
+      "faultEntered": true
+    },
+    {
+      "name": "HM-intentional-manual-stop-start-selected-recovery",
+      "status": "pass",
+      "phases": {
+        "precondition": "pass",
+        "fault": "pass",
+        "post-observation": "pass",
+        "restore": "pass"
+      },
+      "faultEntered": true
+    },
+    {
+      "name": "HM-actual-disabled-module-stays-disabled",
+      "status": "pass",
+      "phases": {
+        "precondition": "pass",
+        "fault": "pass",
+        "post-observation": "pass",
+        "restore": "pass"
+      },
+      "faultEntered": true
+    }
+  ],
+  "mandatoryCases": 7,
+  "faultsExecuted": 7,
+  "failures": 0,
+  "phaseErrors": 0,
+  "notExecuted": [],
+  "invalidFixtureCases": [],
+  "caseTimesWithinActualClientRun": true,
+  "cleanupEvidenceScope": "Visible namespace/expected-output/retained worker identities only, not whole-host or subreaper",
+  "lifecycleReceiptSha256": "6ccbb6c1c70770a35354850b88bcc8df070668d3e0d7c62cac5d942d759aa02e"
+}
