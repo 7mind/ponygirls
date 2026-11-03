@@ -22,20 +22,21 @@ final case class ProjectionPolicy(name:String,includeMetadata:Boolean,approvedFi
   }
   val prefixes:Vector[Vector[String]]=approvedFieldPrefixes.map(decode)
   if(name.isEmpty || maxChunkBytes<4 || maxChunkBytes>256*1024 || approvedFieldPrefixes.distinct.size!=approvedFieldPrefixes.size) throw Fault("config","invalid projection policy")
-  val id:String=RetrievalChecks.hash(io.circe.Json.arr(io.circe.Json.fromString("haystack-projection-v1"),io.circe.Json.fromString(name),io.circe.Json.fromBoolean(includeMetadata),io.circe.Json.arr(approvedFieldPrefixes.map(io.circe.Json.fromString)*),io.circe.Json.fromInt(maxChunkBytes)).noSpaces)
+  val id:String=RetrievalChecks.hash(io.circe.Json.arr(io.circe.Json.fromString("haystack-projection-v2"),io.circe.Json.fromString(name),io.circe.Json.fromBoolean(includeMetadata),io.circe.Json.arr(approvedFieldPrefixes.map(io.circe.Json.fromString)*),io.circe.Json.fromInt(maxChunkBytes)).noSpaces)
   def approved(path:Vector[String]):Boolean=prefixes.exists(prefix=>path.startsWith(prefix))
 }
 
 final class HaystackRetrieval(val database:JdbcDatabase,val policy:ProjectionPolicy,val store:PostgresRetrieval,val embedding:Option[EmbeddingClient],val batchSize:Int) {
   private def pointer(parts:Vector[String]):String=parts.map(_.replace("~","~0").replace("/","~1")).mkString("/","/","")
+  private def chunkId(field:String,ptr:String,start:Int):String=RetrievalChecks.hash(io.circe.Json.arr(io.circe.Json.fromString("haystack-chunk-id-v1"),io.circe.Json.fromString(field),io.circe.Json.fromString(ptr),io.circe.Json.fromInt(start)).noSpaces)
   private def chunks(field:String,ptr:String,text:String):List[InputChunk]={
     val out=List.newBuilder[InputChunk];var start=0;var at=0;var bytes=0
     while(at<text.length){
       val cp=text.codePointAt(at);val length=Character.charCount(cp);val width=if(cp<128)1 else if(cp<2048)2 else if(cp<65536)3 else 4
-      if(bytes+width>policy.maxChunkBytes && at>start){out+=InputChunk(s"$field:$ptr:$start",text.substring(start,at),ChunkProvenance(field,Some(ptr),Some(start),Some(at)));start=at;bytes=0}
+      if(bytes+width>policy.maxChunkBytes && at>start){out+=InputChunk(chunkId(field,ptr,start),text.substring(start,at),ChunkProvenance(field,Some(ptr),Some(start),Some(at)));start=at;bytes=0}
       at+=length;bytes+=width
     }
-    if(at>start)out+=InputChunk(s"$field:$ptr:$start",text.substring(start,at),ChunkProvenance(field,Some(ptr),Some(start),Some(at)))
+    if(at>start)out+=InputChunk(chunkId(field,ptr,start),text.substring(start,at),ChunkProvenance(field,Some(ptr),Some(start),Some(at)))
     out.result()
   }
   def project(item:StoredItem):SourceProjection={
