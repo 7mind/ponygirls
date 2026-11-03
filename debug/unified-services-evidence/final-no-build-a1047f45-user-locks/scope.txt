@@ -1,0 +1,1 @@
+Full x86_64-linux no-build; aarch64-linux/Darwin omitted. User-authored lock commits preserved byte-exact, no agent pin update/push/activation. Ponygirls rewritten-main ancestry integration awaits Q11.
