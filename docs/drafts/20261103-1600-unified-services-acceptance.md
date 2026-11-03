@@ -60,4 +60,6 @@ Normal exit143, signal termination15, manager clean-exit classification and actu
 
 ## Remaining work
 
-Finish private evidence/authorized cleanup and resolve Q11 before any history reconciliation. No push, pin update, production migration, credential rotation or activation is authorized by this acceptance summary. Detailed provenance and original outcomes remain in `20261103-0017-unified-services-execution.md` and the named bundles.
+All required application and infrastructure gates have passed. The four completed Manure VM temporary roots were removed only after fresh preservation/identity checks; their private backups remain. The Chronicle probe root `/tmp/cns.x8nktpy8` is explicitly retained, not forced through the VM-specific validator. Task worktrees and late evidence remain intact pending authorized integration/retirement.
+
+**Q11 is the remaining integration decision:** preserve both histories, discuss integration without old ancestry, or leave integration to the user. Until answered, no history reconciliation or original-main integration is performed. Per Q1, publication and portable pin updates remain user-controlled. No push, pin update, production migration, credential rotation or activation is authorized by this acceptance summary. Detailed provenance and original outcomes remain in `20261103-0017-unified-services-execution.md` and the named bundles.
