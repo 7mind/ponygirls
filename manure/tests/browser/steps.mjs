@@ -9,6 +9,7 @@
  * and execution continues, so one browser launch yields all evidence.
  *
  * Ops:
+ *   networkPhase {phase}                    -> {phase} (allowlisted test phase)
  *   goto {url}                              -> {url, status}
  *   fill {selector, value}                  -> {ok}
  *   click {selector, waitForUrl?}           -> {ok, url}
@@ -77,6 +78,13 @@ try {
 async function runStep(ctx, step) {
   const page = ctx.pages[ctx.current];
   switch (step.op) {
+    case "networkPhase": {
+      if (!["setup", "victim-login", "hostile-clean", "hostile-auth"].includes(step.phase)) {
+        throw new Error("unknown test network phase");
+      }
+      ctx.networkPhase = step.phase;
+      return {phase: step.phase};
+    }
     case "goto": {
       const res = await page.goto(step.url, { waitUntil: "load", timeout: 15000 });
       return { url: page.url(), status: res ? res.status() : null };

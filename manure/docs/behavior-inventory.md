@@ -24,13 +24,47 @@ actual-target modules are included; there is no six-core-only release gate.
 **Seven old Python-server/SQLite implementation test modules are architecture-
 retired from the CURRENT selector, not their domain/security/durability
 requirements.** Their grouped requirements map to concrete current Python,
-Scala/PG and filesystem tests below, with real gaps left open. Their source is
+Scala/PG and filesystem tests below, with real unresolved full-run failures left open. Their source is
 retained. The public Python server entrypoint is now **retired/fail-closed** in parent
 `5f3905ec`: the console registration is removed and module `main` returns2 with
 a constant message before parsing/config/credentials/network/storage effects.
 Historical helper imports remain unsupported source-format/migration seams.
 This does not authorize production activation, old-state deletion, migration or
 credential rotation.
+
+## Observed coverage closures versus unresolved full acceptance
+
+Observed/re-read **2026-11-03T11:05:32Z**. The three earlier open *coverage*
+clauses (`expiry-activity`, `admission-shutdown`, `catalogue-current`) now have
+concrete executed proofs, not merely registered source. They are closed below.
+This does **not** make the release green: the frozen141 **full JVM run has now
+completed FAILED**,334/334 Python IDs executed,8 failures and9 errors,0 skips.
+Its17 Node cases and74 TypeScript vectors completed successfully for those
+frozen inputs only. Full runtime/native/provider/consumer acceptance remains
+pending, and no deployment/credential/state action is authorized.
+
+| Observed evidence | Exact scope and result | Explicit non-claim |
+|---|---|---|
+| `manure-port/.../validation-runs/20261103T105429Z.402iMz` (`af93a8d7`) | 121 backend cases/11 suites +29 filesystem cases;0 failures/errors/skips. Recorded ArtifactsContract/PostgresAdmissionSuite/RuntimeSuite source hashes match this source. | JVM/owned-PG/descriptor tests, not whole CURRENT/native/browser acceptance. |
+| `manure-port/.../target-runs/20261103T103937Z-jvm.ieH49n` (`cf46b0d1`) | Actual JVM/helper-owned least-privilege PG; all8 TargetDurability +2 converter-to-target methods PASS,98.451s,0 failures/errors/skips; exact current test hashes match. | Focused10 only, stored `releaseAcceptance:false`. |
+| `manure-port/.../target-runs/20261103T101950Z-jvm.MRR5I7` | Real target semantic-adapter method PASS66.105s; all3-mode negative filters/provenance and real60s minimum TTL/5s query crossing expiry; current search test hash matches. | Focused1, not live-provider quality, nor full CURRENT/native acceptance. |
+| Actual immutable native artifact141 `check-casefold`, freshly executed in an empty owned cwd | Exit0; Unicode16.0.0,1112064 scalars, framed SHA`5f578437c5eaa594f59de533d294d0a0cfa0070ea0b41308000f745e96cd9136`; cwd unchanged. | Pure scalar gate, not native HTTP/PG/FS/browser acceptance. |
+| `manure-full-validation/.../target-runs/20261103T105033Z-jvm.Tni3eR` (`141d6eb4`) | Completed full334 Python with8 failures+9 errors,0 skips; Node8+9 and TS74 PASS; `currentTestSuccess:false`, `releaseAcceptance:false`. | This is a failed full run, not an interrupted/in-progress or successful release receipt. |
+
+The report roots above are under
+`/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-<owner>/manure/backend/target/`.
+Exact absolute paths, artifact/source identities and immutable summary hashes
+are in the JSON group evidence. Old receipts keep their original gap snapshots;
+none is overwritten, filtered or retroactively declared successful.
+
+Native scalar evidence: executable
+`/nix/store/8sj7d0crw5ca59k2mgxa81xy4l1kw7hk-manure-native-artifact-0.1.0/libexec/manure-server`,
+ELF SHA`41094c42db753275fa716ae6c864634ce82519941dc8d433cb569c9c33eedafd`.
+Its immutable `share/manure/compiled-inputs.sha256` exactly matches the current
+`artifact-source.py` output byte-for-byte (103 selected inputs), manifest
+SHA`7f110ed24d2bc3918fb32d6da88be065796dd869f4a56d2095b8b65f8b950e86`.
+This check initialized no service config, credentials, database or model. The
+complete native334/17/74 and linked-native29 filesystem gates remain separate.
 
 ## CURRENT Python modules (unfiltered in `full`)
 
@@ -155,7 +189,7 @@ a pass. An interruption is not an exit status or completed full suite.
 | `test_server_limits` | Constructs Python socket/thread/semaphore/storage internals; requirements remain current, with explicit unresolved lifecycle/concurrency groups. | `quota-session`, `expiry-activity`, `admission-shutdown`, `credentials`, `filesystem-lifetime` |
 | `test_server_path_mode` | Imports Python HTTP/config; current generated target/path/TLS browser scenarios replace transport-specific assumptions. | `origins`, `manifest-serving`, `grants-secrets`, `expiry-activity` |
 | `test_server_security` | Imports Python server/SQLite hooks; domain/security rules remain current including adjudicated shared incomplete authority. | `shared-authority`, `credentials`, `origins`, `manifest-serving`, `grants-secrets`, `filesystem-lifetime` |
-| `test_storage_durability` | Direct Python ArtifactStore/SQLite internals are not the replacement PG/FS service. Synthetic source-state construction remains permitted ONLY in migration tests. | `receipts`, `publication-import`, `quota-session`, `expiry-activity`, `filesystem-lifetime`, `admission-shutdown`, `grants-secrets` |
+| `test_storage_durability` | Direct Python ArtifactStore/SQLite internals are not the replacement PG/FS service. Synthetic source-state construction and the explicitly registered historical supported-query oracle remain complementary only, never target-serving acceptance. | `receipts`, `publication-import`, `quota-session`, `expiry-activity`, `filesystem-lifetime`, `admission-shutdown`, `grants-secrets` |
 
 Only this explicit frozen implementation allowlist may be architecture-retired;
 new/current client/CLI/MCP/browser modules cannot be relabeled to escape full.
@@ -302,11 +336,20 @@ Original-precision expiry cuts authorization immediately (410 authenticated API,
 - [`test_browser_dashboard.ExpiredDeleteCase.test_a2_expired_artifact_can_be_deleted_from_list`](../../manure/tests/test_browser_dashboard.py).
 - [`test("any manager may rotate an incomplete external password without advancing activity"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
 
-**New concrete but not-yet-green assertions:** ArtifactsContract activity
-allowlist and failed-publish/startup cases from `ffbdd5f5` (Memory and real PG).
+- [`test("only successful PATCH and chunk including duplicate ACK refresh idle activity; reads and rejected mutations do not"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test("failed publish mark and startup recovery are not successful-publish activity; ready commit and idempotency are exact"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test("real PG sweep revalidates stale idle page after durable receipt commit and actual advisory wait"`](../../manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala).
+- [`test("real PG sweep revalidates stale idle page across P2-to-P5 process gate without a long SQL transaction"`](../../manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala).
+- [`test_target_durability.TargetDurabilityTests.test_shutdown_waits_active_sweep_callback_then_restart_removes_orphan_tree`](../../manure/tests/test_target_durability.py).
 
-**OPEN—blocks full release acceptance:**
-- P2 activity fix and success-only user publish/startup-preservation behavior now implemented; parent reported corrected Memory/PG unit run green. Keep OPEN pending observed source-bound allowlist/failed-publish execution and real sweep SQL callback/lock proof. The new6f6369b0 active-sweep target assertion is registered, not yet claimed passing.
+**Coverage clause CLOSED by executed assertions:** the source-bound121-case
+backend receipt executes the success-only activity allowlist and both real-PG
+stale-page/fresh-row races. Receipt bytes/ACK/activity/reservations remain exact;
+its independent raw runtime callback visibly waits in PostgreSQL, not a Java
+FIFO. Across P2/P5 the process gate remains held but the SQL transaction has
+ended (independent try-advisory succeeds). The focused actual10-target receipt
+also executes active-sweeper shutdown and retained claim. No expiry-row mutation,
+failed-publish activity refresh or whole-runtime acceptance is inferred.
 
 ### grants-secrets
 
@@ -370,8 +413,16 @@ Malformed/oversized/stalled requests cannot mutate or revoke before body validat
 - [`test_target_durability.TargetDurabilityTests.test_connection_admission_returns_503_while_body_worker_active`](../../manure/tests/test_target_durability.py).
 - [`MaxActiveRequests`](../../manure/backend/src/main/scala/manure/Main.scala).
 
-**OPEN—blocks full release acceptance:**
-- 6f6369b0 now implements actual active-publish, active-sweep and stalled-JDBC shutdown/physical-claim assertions with owned PG waits and unchanged production defaults. OPEN until source-bound actual execution proves all new methods green; no runtime/native pass is implied by registration.
+- [`test_target_durability.TargetDurabilityTests.test_shutdown_waits_active_publish_and_keeps_physical_claim_until_ready_commit`](../../manure/tests/test_target_durability.py).
+- [`test_target_durability.TargetDurabilityTests.test_shutdown_waits_active_sweep_callback_then_restart_removes_orphan_tree`](../../manure/tests/test_target_durability.py).
+- [`test_target_durability.TargetDurabilityTests.test_shutdown_retains_claim_until_stalled_jdbc_worker_hits_its_configured_deadline`](../../manure/tests/test_target_durability.py).
+
+**Coverage clause CLOSED by actual target execution:** all8 durability methods
+plus both converter-to-target cases passed together in the source-bound98.451s
+focused JVM/helper-PG receipt. This includes active publish, active sweep and
+stalled SQL callback claim retention, ACK/SIGKILL resume, post-rename restart,
+actual503 admission and root/import guards. No production defaults or security
+assertions were relaxed. Full unfiltered JVM/native acceptance is still required.
 
 ### catalogue-current
 
@@ -385,7 +436,7 @@ Preserve CONTRACT7.1 Python Unicode casefold literal matching, no Unicode normal
 - [`test_browser_dashboard_ux.DashboardUXTests.test_catalogue_detail_and_session_flows`](../../manure/tests/test_browser_dashboard_ux.py).
 - [`test_current_client.CurrentClientTests.test_typed_catalogue_patch_management_and_search`](../../manure/tests/test_current_client.py).
 - [`test(s"all metadata shared; $sort/$direction byte order, ties, NULL-last keyset traversal"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
-- [`test("normative full Unicode casefold matches independently expected historical values"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala). **Source now corrected in3e4bd126; compiled/native closure still pending.**
+- [`test("normative full Unicode casefold matches independently expected historical values"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala). **Corrected in3e4bd126; compiled dual/PG and actual native-scalar proof now observed below.**
 - [`test("expiry authorization and state/visibility filtering happen before keyset LIMIT"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
 - [`test("cursor binds every effective option and enforces typed count/time/text/null positions"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
 - [`test("deleting a cursor boundary does not require a boundary-row lookup"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
@@ -405,8 +456,22 @@ replacement-target acceptance**. Independent dual/PG and native tests remain
 mandatory. The source table is now pinned Unicode16 full fold (`3e4bd126`);
 all-scalar JVM proof is not native proof.
 
-**OPEN—blocks full release acceptance:**
-- Full Unicode16 fold, effective-folded query fingerprint and removal of the unapproved1024 cap are now implemented with independent dual assertions; actual-source executable scalar probe is registered in6f6369b0. Catalogue remains OPEN until compiled corrected full assertions and source-bound actual-native all-scalar proof are observed; no closure from source presence.
+- [`test("current casefold-equivalent queries share the same typed cursor and next page"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("literal queries beyond 1024 UTF16 units remain accepted and results stay bounded"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("unpaired UTF16 query surrogates still reject before metadata lookup"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test("pinned Unicode16 full fold agrees with every scalar Python oracle and fixed string vectors"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
+- [`test_target_durability.TargetDurabilityTests.test_all_scalar_casefold_probe_runs_in_actual_source_bound_executable`](../../manure/tests/test_target_durability.py).
+
+**Coverage clause CLOSED by compiled and actual-native scalar evidence:** the
+121-case backend report includes both31-case catalogue legs and complete
+Unicode16 scalar oracle checks. Full casefold, effective-equivalent current
+cursors and valid long queries are restored; malformed UTF16 still rejects.
+The freshly executed source-bound native scalar probe matches all1112064
+scalars exactly, independently of JVM-only/source-table presence. UTF8 unsigned
+ordering, authoritative NUL/Unicode/IEEE data and immutable v3 DDL remain intact.
+The parent additionally reports the unchanged17 independent160 regression/control
+probes all passing at10:34:35Z; this documentation task did not re-execute those
+reviewer probes. Native scalar coverage is not whole native acceptance.
 
 ### cli-mcp
 
@@ -450,7 +515,8 @@ Receipt `20261103T101950Z-jvm.MRR5I7` was re-read at
 skips, exit0, `currentTestSuccess:true`, `releaseAcceptance:false`. Its recorded
 search test source SHA exactly matches integrated `a12c3c58`. Full unfiltered
 current/native/runtime gates remain mandatory; active publish/sweeper/stuck
-worker lifetime is still a separate open group.
+worker lifetime now has separate concrete passing target evidence above. The
+stored focused semantic receipt remains scoped and is not a full release pass.
 
 ### retired-server-activation
 
@@ -471,11 +537,36 @@ Portable Python cannot activate the legacy SQLite HTTP server; refuse before par
 `test_retired_server_entrypoint.py` are explicitly CURRENT, never optional-file
 appendages. The retirement boundary's five methods exercise real scrubbed child
 entrypoints/stdio and effect guards, while retaining portable CLI/MCP usability.
-The real PG admission and dual catalogue matrices now map quota/session and
-all-sort/keyset/SQL assertions, but do not close the newly adjudicated functional
-casefold/effective-query/length regression. The application rejection middleware and
-fixture cleanup correction now have concrete source and the registered actual
-503 assertion; full release execution remains mandatory.
+The real PG admission and dual catalogue matrices now execute quota/session,
+all-sort/keyset/SQL and corrected full-fold/effective-query/valid-long-query
+assertions. The three earlier missing-assertion/execution clauses are closed on the
+concrete evidence above, not by waiving any full gate. Actual full browser/client
+failures below remain unresolved; focused successes never replace that evidence.
+
+### current-full-validation — UNRESOLVED
+
+The complete frozen141 JVM receipt actually executed334 declared Python IDs and
+failed8 cases with9 additional errors,0 skips. Both B7 hostile-sibling cases,
+dashboard UX, path TLS, unlock assets/logout/rotation across variants and client
+grant revocation need correction/adjudication and fresh execution. The JSON maps
+**every failed/error ID** concretely. These are not silently relabeled retired,
+removed from counts, converted to skips, blamed on production, or erased by
+component passes.
+
+**B7 remains explicitly OPEN in `origins`:** the current URL-only fixture
+aggregation can mix legitimate200 controls with rejected403 attempts. The
+separately owned correction must correlate phase, request ID and Origin while
+preserving valid200 controls,403 security assertions and unchanged-state checks.
+No source-presence or planned fix closes this failure. Other failure root causes
+are not inferred by this register update.
+
+The frozen141 full run is now completed, not still running; Node17 and TS74
+passed for those exact inputs. No accepted full JVM or full native334/17/74
+receipt is established. Corrected-source focused checks and a complete fresh
+unfiltered rerun remain mandatory, along with all external gates. These new
+open failure clauses keep `full` strictly NONZERO even if another focused scope
+passes. Old immutable receipts retain their historical three-gap snapshot;
+they are never edited to reflect this later coverage adjudication.
 
 ## Separately required artifact/runtime gates
 
@@ -484,6 +575,7 @@ fixture cleanup correction now have concrete source and the registered actual
 - **native-current-full**: The SAME CURRENT inventory against the actual source-bound native artifact, including HTTP/TLS/PG/FS/browser/import/restart. Command: `manure/scripts/test-target.sh native <absolute ELF> <matching source manifest> full`.
 - **native-filesystem-parity**: Complete linked-native filesystem behavior inventory, not JVM-only evidence.
 - **provider-nix-isolation**: One owned PG provider with service-isolated roles/databases, least-privilege helper provisioning/drop, Nix/runtime/credential/restart graph validation; not proved by an admin-only test fallback.
+- **native-unicode-casefold**: Actual source-bound ELF all1112064-scalar probe, not a JVM/source-table substitute. Artifact141 proof above is observed; rerun for any changed compiled candidate. It does not establish complete native HTTP/PG/FS/browser acceptance.
 - **shared-consumer-regressions**: Shared runtime/retrieval changes require full owned Chronicle/Haystack regressions per their instructions; Manure subset is not consumer evidence.
 
 ## Current component verification and historical evidence
@@ -504,8 +596,10 @@ inventory/credential/current-codec diagnostic executed37 methods with0
 failures/errors/skips and correctly reported **releaseAcceptance:false**.
 At the first inventory checkpoint `599b2c6b`, a full invocation without
 provider/browser prerequisites exited1 with293 expected and0 executed tests—not
-a full-suite result. After the parent import/search integration the declared
-CURRENT count after durability registration is312, not a completed312-test run. Open gaps remain as listed.
+a full-suite result. At that earlier parent import/search checkpoint the declared
+CURRENT count was312, not a completed312-test run. The current declared334 and
+failed complete334-case receipt are distinguished above; open full-failure
+clauses remain as listed.
 
 Parent receipt `20261103T094915Z-jvm.hd5INM` was read after integration:1
 focused actual-target search method,0 failures/errors/skips and exit0. This is
