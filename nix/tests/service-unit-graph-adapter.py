@@ -30,12 +30,12 @@ if mode=='migrate':
     sql('CREATE TABLE IF NOT EXISTS public.unit_graph_migrations (entry bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY); INSERT INTO public.unit_graph_migrations DEFAULT VALUES;')
     event('unit_graph_adapter_start')
 else:
-    event('unit_graph_adapter_start')
     requested=False
     def request(_signal,_frame):
         global requested
         requested=True
     signal.signal(signal.SIGUSR1,request)
+    event('unit_graph_adapter_start')
     while True:
         if requested:
             requested=False

@@ -26,10 +26,23 @@ The baseline is run **before** any dependency-policy edit. It can disprove an
 assumed defect; a green baseline is not grounds for an unnecessary `PartOf` fix.
 Manual stop/start is deliberately distinguished from restart: stop leaves apps
 down; starting the provider alone must not resurrect them; explicitly starting
-selected consumers restores their own chains. This proposed explicit-operator
+selected consumers restores their own chains. This root-approved explicit-operator
 manual-stop policy is recorded in the receipt, not inferred from `PartOf`.
 
-`lifecycle-receipt.json` records every case (including red ones), typed before/
-after state and zero skips. The source manifest is retained. A failed matrix
+`lifecycle-receipt.json` records every mandatory case, typed before/after and
+restored state, precondition/fault/post-observation/restore phases, invalid-fixture
+classification and explicit not-executed inventory. Bootstrap/observation/restore
+failures cannot masquerade as Requires regressions or zero-skip completion. The source manifest is retained. A failed matrix
 exits nonzero; no production dependency patch is included with this test.
 Build/run only through the parent's supervised background lane.
+
+Readiness installs the adapter's signal handler **before** its ready event.
+Reconnect success must be fresh evidence from the active, same intended systemd
+invocation, never an aggregate event from a dead/replaced process. Twelve
+controlled actual-adapter/driver regressions gate these rules separately.
+
+The pinned framework defaults `requiredFeatures.kvm=true` independently of
+`qemu.forceAccel=false`. The fixture explicitly selects the documented
+`requiredFeatures.kvm=false` emulated-execution capability and retains the real
+QEMU TCG fallback. Required features are exactly `nixos-test`; neither the host's
+features nor its configuration are changed. Guest execution remains mandatory.

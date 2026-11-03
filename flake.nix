@@ -974,6 +974,7 @@
           '';
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
           haystack-proxy = import ./nix/tests/haystack-proxy.nix { inherit pkgs inputs; haystackPackage = self.packages.${system}.haystack; };
+          service-unit-graph-harness = import ./nix/tests/service-unit-graph-harness.nix { inherit pkgs; };
           service-unit-graph-vm = import ./nix/tests/service-unit-graph-vm.nix {
             inherit pkgs nixpkgs;
             chronicleModule=self.nixosModules.chronicle;

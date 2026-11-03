@@ -17,8 +17,8 @@ EOF
       chmod +x "$out/bin/$service-server"
     done
   '';
-  paths=[../nixos/service-postgres.nix ../hm/service-postgres.nix ../nixos/chronicle.nix ../nixos/haystack.nix ../nixos/manure.nix ../postgres/options.nix ../postgres/policy.nix ../postgres/provider.py ./service-unit-graph-vm.nix ./service-unit-graph-adapter.py ./service-unit-graph-snapshot.py ./service-unit-graph-vm.py];
-  sourceManifest=pkgs.writeText "service-unit-graph-source-inputs.sha256" (lib.concatMapStrings (path:"${builtins.hashFile "sha256" path}  ${baseNameOf path}\n") paths);
+  paths=[../nixos/service-postgres.nix ../hm/service-postgres.nix ../nixos/chronicle.nix ../nixos/haystack.nix ../nixos/manure.nix ../postgres/options.nix ../postgres/policy.nix ../postgres/provider.py ./service-unit-graph-vm.nix ./service-unit-graph-adapter.py ./service-unit-graph-snapshot.py ./service-unit-graph-vm.py ./service-unit-graph-controller.py];
+  sourceManifest=pkgs.writeText "service-unit-graph-source-inputs.sha256" (lib.concatMapStrings (path:"${builtins.hashFile "sha256" path}  ${lib.removePrefix "${toString ../..}/" (toString path)}\n") paths);
   connection=name:{jdbcUrl="jdbc:postgresql://127.0.0.1:15434/${name}";user=name;passwordFile="/etc/unit-graph/${name}-database";readinessUnit="ponygirls-database-${name}.service";};
 in pkgs.testers.runNixOSTest {
   name="shared-provider-actual-module-unit-lifecycle";
@@ -35,6 +35,11 @@ in pkgs.testers.runNixOSTest {
   sshBackdoor.enable=false;
   # Prefer acceleration if available; TCG is still a real VM, never a skip.
   qemu.forceAccel=false;
+  # Pinned nixos/lib/testing/run.nix defaults this independently of forceAccel.
+  # Its documented emulated-execution switch is an honest TCG capability, not a
+  # fake host KVM feature and not a skip. The real guest still has to boot/run.
+  requiredFeatures.kvm=false;
+  globalTimeout=2100;
   nodes.server={config,lib,...}:{
     imports=[chronicleModule haystackModule manureModule];
     system.stateVersion="26.11";
@@ -80,6 +85,7 @@ in pkgs.testers.runNixOSTest {
   testScript=''
     SOURCE_REVISION = "${sourceRevision}"
     SOURCE_MANIFEST = "${sourceManifest}"
+    CONTROLLER_SOURCE_PATH = "${./service-unit-graph-controller.py}"
     exec(compile(open("${./service-unit-graph-vm.py}").read(), "service-unit-graph-vm.py", "exec"))
   '';
 }

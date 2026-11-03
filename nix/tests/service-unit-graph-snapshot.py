@@ -2,7 +2,7 @@
 """Only allowlisted systemd state/start counts and synthetic-fixture events."""
 import json,subprocess,sys
 units=sys.argv[1:]
-properties='Id,LoadState,ActiveState,SubState,MainPID,ExecMainStartTimestampMonotonic,InvocationID,NRestarts'
+properties='Id,LoadState,ActiveState,SubState,MainPID,ExecMainStartTimestampMonotonic,InvocationID,NRestarts,Requires,After,PartOf,BindsTo,Wants'
 result=subprocess.run(['systemctl','show','--no-pager','--property='+properties,*units],check=True,stdout=subprocess.PIPE,text=True,timeout=10)
 state={}
 for block in result.stdout.strip().split('\n\n'):
@@ -12,7 +12,7 @@ for block in result.stdout.strip().split('\n\n'):
         values[key]=int(values.get(key,'0'))
     assert values['ActiveState'] and values['SubState'] and values['LoadState']
     if values['ActiveState']=='active':assert values['InvocationID']
-    values.update(startCount=0,adapterStartedInvocations=[],probeSuccessCount=0,adapterTags=[])
+    values.update(startCount=0,adapterStartedInvocations=[],probeSuccessCount=0,probeSuccessByInvocation={},adapterTags=[])
     state[unit]=values
 assert set(state)==set(units)
 journal=subprocess.run(['journalctl','-b','--no-pager','-o','json','--output-fields=MESSAGE_ID,UNIT,_SYSTEMD_UNIT,MESSAGE'],check=True,stdout=subprocess.PIPE,text=True,timeout=10)
@@ -27,5 +27,7 @@ for line in journal.stdout.splitlines():
     if not isinstance(message,dict):continue
     if message.get('event')=='unit_graph_adapter_start':
         state[unit]['adapterStartedInvocations'].append(message['invocation']);state[unit]['adapterTags'].append(message['tag'])
-    if message.get('event')=='unit_graph_adapter_sql_probe_ok':state[unit]['probeSuccessCount']+=1
+    if message.get('event')=='unit_graph_adapter_sql_probe_ok':
+        state[unit]['probeSuccessCount']+=1
+        invocation=message['invocation'];counts=state[unit]['probeSuccessByInvocation'];counts[invocation]=counts.get(invocation,0)+1
 print(json.dumps(state,sort_keys=True))
