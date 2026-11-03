@@ -13,7 +13,7 @@ import { chromium } from "playwright-core";
 import { Failure } from "../../generated/typescript/haystack/api/Failure.ts";
 import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
 import { readProxyConfig, validateProxyConfig } from "./proxy-config.mjs";
-import { freePort, ownedDatabase, configFor, atomicConfig, startServer } from "./native.mjs";
+import { freePort, ownedDatabase, configFor, atomicConfig, startServer, assertPortAvailable } from "./native.mjs";
 
 const conn = process.env.HAYSTACK_TEST_PG;
 const chromiumPath = process.env.HAYSTACK_CHROMIUM;
@@ -34,6 +34,8 @@ const backendPort = host?.backendPort ?? await freePort();
 const base = host?.publicUrl ?? `https://127.0.0.1:${await freePort()}`;
 const publicUrl = new URL(base);
 const proxyPort = Number(publicUrl.port || "443");
+await assertPortAvailable(backendPort);
+await assertPortAvailable(proxyPort, publicUrl.hostname.replace(/^\[|\]$/gu, ""));
 const serverConfig = path.join(dir, "config.json");
 const auth = {
   activityProjectId: "agent-activity", cookieSecure: true,
@@ -104,7 +106,7 @@ let backend;
 let proxy;
 let browser;
 let context;
-const diagnostic = { phase: "startup", responses: [], pageErrors: [], failedRequests: [] };
+const diagnostic = { phase: "startup", responses: [], pageErrors: [], failedRequests: [], allowedHosts: auth.allowedHosts, allowedOrigins: auth.allowedOrigins };
 async function startBackend() {
   backend = await startServer(serverConfig, backendPort, path.join(dir, "server.log"));
 }
@@ -124,12 +126,22 @@ try {
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
   context = ctx;
   const page = await ctx.newPage();
-  page.on("response", (response) => {
-    if (diagnostic.responses.length < 200) diagnostic.responses.push({ path: new URL(response.url()).pathname, status: response.status() });
+  page.on("response", async (response) => {
+    if (diagnostic.responses.length < 200) {
+      const entry = { path: new URL(response.url()).pathname, status: response.status(), contentType: response.headers()["content-type"] };
+      diagnostic.responses.push(entry);
+      if (entry.path === "/api/v1/login" && entry.status >= 400) try { entry.code = Failure.jsonCodec().decode(BaboonCodecContext.Default, await response.json()).code; } catch { entry.code = "not-current-json-failure"; }
+    }
   });
   page.on("pageerror", (error) => { if (diagnostic.pageErrors.length < 20) diagnostic.pageErrors.push(error.message); });
   page.on("requestfailed", (request) => {
     if (diagnostic.failedRequests.length < 20) diagnostic.failedRequests.push({ path: new URL(request.url()).pathname, error: request.failure()?.errorText });
+  });
+  page.on("request", async (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/login") {
+      const headers = await request.allHeaders();
+      diagnostic.loginTransport = { origin: headers.origin ?? null, fetchSite: headers["sec-fetch-site"] ?? null };
+    }
   });
   diagnostic.phase = "login";
   assert.equal((await page.goto(base)).status(), 200, "UI shell must be served by nginx");

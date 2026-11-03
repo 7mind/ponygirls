@@ -99,3 +99,15 @@ test("all acceptance entrypoints fail rather than skip when required dependencie
     assert.match(child.stderr, /HAYSTACK_SERVER_COMMAND is required/u, script);
   }
 });
+
+test("occupied fixture ports are rejected without probing or contacting another listener", async () => {
+  const { assertPortAvailable } = await import("../tests-browser/native.mjs");
+  const { createServer } = await import("node:http");
+  let requests = 0;
+  const server = createServer((_request, response) => { requests++; response.end("not this fixture"); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try { await assert.rejects(assertPortAvailable(port), /occupied; refusing to contact an existing listener/); assert.equal(requests, 0); }
+  finally { await new Promise((resolve) => server.close(resolve)); }
+  await assertPortAvailable(port);
+});
