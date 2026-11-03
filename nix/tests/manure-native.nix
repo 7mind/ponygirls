@@ -48,7 +48,7 @@ in pkgs.runCommand "manure-native-full-target" ({
   root=pathlib.Path(sys.argv[1]); summary=json.loads((root/'summary.json').read_text()); inventory=json.loads((root/'inventory.json').read_text())
   assert summary['scope']=='full' and summary['tests']>0 and summary['tests']==summary['expected']==len(inventory['tests']) and summary['inventoryMatches']
   assert all(summary[k]==0 for k in ['failures','errors','skipped','expectedFailures','unexpectedSuccesses'])
-  summary.update(runtimeSource='${sources.manureServer}',testSource='${sources.manureTargetTests}',artifact='${native}/libexec/manure-server',scope='complete-service-owned-full-target-native-inventory; not deployment acceptance')
+  summary.update(artifactKind='native',targetScope=summary['scope'],runtimeSource='${sources.manureServer}',testSource='${sources.manureTargetTests}',artifact='${native}/libexec/manure-server',scope='complete-service-owned-full-target-native-inventory; not deployment acceptance')
   (root/'receipt.json').write_text(json.dumps(summary,indent=2)+'\n')
   PY
 ''

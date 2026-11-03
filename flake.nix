@@ -370,9 +370,12 @@
             inherit pkgs;
             manurePackage = self.packages.${system}.manure;
           };
+          manure-backend = import ./nix/tests/manure-backend.nix { inherit pkgs; squishLib = inputs.squish.lib; };
           manure-unittests = import ./nix/tests/manure-unittests.nix {
             inherit pkgs;
-            manurePackage = self.packages.${system}.manure;
+            backendCheck = self.checks.${system}.manure-backend;
+            installedClientCheck = self.checks.${system}.manure-client;
+            nativeCheck = self.checks.${system}.manure-native;
           };
           haystack-nixos-eval =
             let
@@ -1016,10 +1019,7 @@
             touch $out
           '';
           podman-module = podmanModuleCheck;
-          manure-browser = import ./nix/tests/manure-browser.nix {
-            inherit pkgs;
-            manurePackage = self.packages.${system}.manure;
-          };
+          manure-browser = import ./nix/tests/manure-browser.nix { nativeCheck = self.checks.${system}.manure-native; };
           manure-vm = import ./nix/tests/manure-vm.nix {
             inherit pkgs nixpkgs;
             manureModule = self.nixosModules.manure;
