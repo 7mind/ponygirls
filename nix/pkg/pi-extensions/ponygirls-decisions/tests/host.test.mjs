@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { SESSION_SETTING_TYPE } from "../index.ts";
+import { sessionEnabled } from "@ponygirls/pi-settings";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -91,6 +93,17 @@ function answerExternally(dir, answer) {
 }
 
 const providerRoles = (context) => JSON.parse(context).messages.map((m) => m.role);
+
+function declaredTools(context) {
+  const parsed = JSON.parse(context);
+  const names = new Set((parsed.tools ?? []).map((tool) => tool.name));
+  for (const message of parsed.messages) {
+    if (message.role !== "system") continue;
+    for (const tool of message.toolsRemoved ?? []) names.delete(tool.name);
+    for (const tool of message.toolsAdded ?? []) names.add(tool.name);
+  }
+  return names;
+}
 
 async function eventually(check, message) {
   const deadline = Date.now() + 7000;
@@ -269,4 +282,73 @@ test("real Pi: resuming with an undelivered answer folds it into an immediate fi
   assert.match(resumed.contexts[0], /Q1 \[answered\] \[this session\] Which storage\?/);
   assert.match(resumed.contexts[0], /Initial request/);
   assert.deepEqual(resumed.errors, []);
+});
+
+test("real Pi: OFF suppresses answer admission and automatic context, manual inbox works, ON reconciles", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, [[ask], "Independent work", "Still working independently", "Re-enabled with the saved answer"]);
+  await f.session.prompt("Ask the storage question");
+  assert.ok(declaredTools(f.contexts[0]).has("decisions"));
+  await f.session.prompt("/decisions off");
+  f.session.setActiveToolsByName(["decisions", "hold"]);
+  assert.equal(f.calls(), 2, "control command never makes inference");
+  assert.ok(!f.session.getActiveToolNames().includes("decisions"));
+  assert.equal(existsSync(join(f.dir, "decisions.json")), false, "session controls never write global defaults");
+  await f.session.prompt("/decisions answer Q1 Answer saved while OFF");
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(f.calls(), 2, "disabled polling must not wake the agent");
+  await f.session.prompt("Continue independent work while decisions is disabled");
+  assert.doesNotMatch(f.contexts[2], /Project decisions:|User answer:|Answer saved while OFF/);
+  assert.ok(!declaredTools(f.contexts[2]).has("decisions"), "explicit activation cannot expose a hidden tool to the provider");
+  await f.session.prompt("/decisions on");
+  await eventually(() => f.calls() === 4, "ON must reconcile the outstanding answer");
+  await f.session.waitForIdle();
+  assert.ok(f.session.getActiveToolNames().includes("decisions"));
+  assert.match(f.contexts[3], /Answer saved while OFF/);
+  assert.ok(declaredTools(f.contexts[3]).has("decisions"));
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(f.calls(), 4, "reconciled answer must not repeatedly wake the origin");
+  assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: global OFF is inert at startup; session settings survive reload/resume, branches and forks", { timeout: 15000 }, async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "decisions-host-"));
+  const defaults = '{"version":1,"enabled":false}\n';
+  writeFileSync(join(dir, "decisions.json"), defaults);
+  const f = await fixture(t, ["No automatic decisions"], { dir });
+  assert.ok(!f.session.getActiveToolNames().includes("decisions"));
+  assert.equal(existsSync(join(dir, "decisions", "questions.sqlite")), false, "OFF startup must not initialize question storage");
+  await f.session.prompt("/decisions status");
+  await f.session.prompt("/decisions on");
+  assert.ok(f.session.getActiveToolNames().includes("decisions"));
+  assert.equal(readFileSync(join(dir, "decisions.json"), "utf8"), defaults);
+  await f.session.prompt("/decisions default on");
+  await f.session.prompt("/decisions off");
+  await f.session.reload();
+  assert.ok(!f.session.getActiveToolNames().includes("decisions"));
+  await f.session.prompt("Continue without decision automation");
+  const resumed = sdk.SessionManager.open(f.manager.getSessionFile());
+  assert.equal(sessionEnabled(resumed.getEntries(), resumed.getSessionId(), SESSION_SETTING_TYPE), false);
+  const anchor = resumed.getEntries().find((e) => e.type === "custom" && e.customType === SESSION_SETTING_TYPE).id;
+  resumed.branch(anchor);
+  assert.equal(sessionEnabled(resumed.getEntries(), resumed.getSessionId(), SESSION_SETTING_TYPE), false);
+  const fork = sdk.SessionManager.forkFrom(f.manager.getSessionFile(), join(dir, "child"), dir);
+  assert.notEqual(fork.getSessionId(), resumed.getSessionId());
+  assert.equal(sessionEnabled(fork.getEntries(), fork.getSessionId(), SESSION_SETTING_TYPE), null);
+  await f.session.prompt("/decisions inherit");
+  assert.ok(f.session.getActiveToolNames().includes("decisions"));
+  assert.equal(f.calls(), 1);
+  assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: OFF filters a previously admitted notice but does not retract its wake intent", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, [[ask], "Independent work", { waitForRelease: true, content: [] }, "Completed without decision context"]);
+  await f.session.prompt("Ask the storage question");
+  const running = f.session.prompt("Start held model request");
+  await eventually(() => f.calls() === 3, "held request must start");
+  await f.session.prompt("/decisions answer Q1 Admitted before OFF");
+  await f.session.prompt("/decisions off");
+  f.release(); await running; await f.session.waitForIdle();
+  assert.equal(f.calls(), 4, "the retained ingress owns the already-admitted wake");
+  assert.doesNotMatch(f.contexts[3], /Project decisions:|Admitted before OFF/);
+  assert.deepEqual(f.errors, []);
 });

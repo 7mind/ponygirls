@@ -7,6 +7,9 @@ import { registerDecisions } from "../index.ts";
 import { SqliteDecisionStore } from "../src/store.ts";
 
 function fixture(t) {
+  const preferences = { path: "memory:decisions", value: { enabled: true }, failure: null,
+    read() { if (this.failure !== null) throw new Error(this.failure); return { ...this.value }; },
+    write(value) { this.value = { ...value }; } };
   const entries = [];
   const dir = mkdtempSync(join(tmpdir(), "decisions-extension-"));
   const path = join(dir, "decisions", "questions.sqlite");
@@ -16,13 +19,17 @@ function fixture(t) {
   const messages = [];
   const notifications = [];
   let tool;
+  let active = ["bash"];
   let tick;
   let watching = false;
   let unavailable = false;
   let projectFailure = false;
   const pi = {
     on: (name, fn) => handlers.set(name, fn),
-    registerTool: (value) => { tool = value; },
+    registerTool: (value) => { tool = value; if (value.exposure === undefined || value.exposure === "direct") active = [...new Set([...active, value.name])]; },
+    getActiveTools: () => active,
+    setActiveTools: (value) => { active = value; },
+    appendEntry: (customType, data) => entries.push({ type: "custom", customType, data }),
     registerMessageRenderer() {},
     registerShortcut() {},
     registerCommand: (name, value) => commands.set(name, value),
@@ -30,13 +37,13 @@ function fixture(t) {
   };
   const ctx = {
     cwd: dir, mode: "rpc", hasUI: true, isIdle: () => true,
-    sessionManager: { getSessionId: () => "origin", getBranch: () => entries },
+    sessionManager: { getSessionId: () => "origin", getBranch: () => entries, getEntries: () => entries },
     ui: {
       notify: (message, level) => notifications.push({ message, level }),
       setWidget: (...args) => widgets.push(args),
     },
   };
-  registerDecisions(pi, { databasePath: path, openStore: (file) => {
+  registerDecisions(pi, { preferences, databasePath: path, openStore: (file) => {
     const store = new SqliteDecisionStore(file);
     const list = store.list.bind(store);
     const get = store.get.bind(store);
@@ -53,7 +60,9 @@ function fixture(t) {
     watch: (refresh) => { tick = refresh; watching = true; return () => { watching = false; }; } });
   t.after(() => { handlers.get("session_shutdown")({}, ctx); rmSync(dir, { recursive: true, force: true }); });
   const start = () => handlers.get("session_start")({}, ctx);
-  return { path, ctx, entries, messages, widgets, notifications, start, tick: () => tick(), watching: () => watching,
+  return { path, pi, ctx, entries, messages, widgets, notifications, preferences, start, tick: () => tick(), watching: () => watching,
+    setActive: (value) => { active = value; },
+    active: () => active, tool: () => tool, completions: (prefix) => commands.get("decisions").getArgumentCompletions(prefix),
     setUnavailable: (value) => { unavailable = value; }, failProject: () => { projectFailure = true; },
     call: (params, id) => tool.execute(id, params, undefined, () => {}, ctx),
     command: (text) => commands.get("decisions").handler(text, ctx), handlers };
@@ -70,7 +79,7 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal(key, "decisions");
   assert.equal(options.placement, "borderBottomLeft");
   const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
-  assert.equal(factory(null, theme).render(80)[0], " ? 1 ");
+  assert.equal(factory(null, theme).render(80)[0], " ? 1 · Ctrl+Shift+D ");
   const tagged = { bg: (color, s) => `[${color}]${s}[/${color}]`, fg: (color, s) => `<${color}>${s}</${color}>` };
   assert.equal(factory(null, tagged).renderCompact(10), "[toolPendingBg] <warning>?</warning><text>1</text> [/toolPendingBg]");
   assert.equal((await f.call({ action: "list" }, "list")).details.total, 1);
@@ -237,4 +246,166 @@ test("a failed session start never lets historical answers reach the provider", 
   const transformed = f.handlers.get("context")({ messages: [original] }, f.ctx);
   assert.match(transformed.messages[0].content, /verification is unavailable/);
   assert.doesNotMatch(transformed.messages[0].content, /Historical approval/);
+});
+
+// Specified behavioral/blackbox-group: user commands and model-facing effects.
+test("session OFF hides the tool and suppresses badges, reminders and answer wake-ups without losing questions", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Keep this question" }, "own");
+  assert.ok(f.active().includes("decisions"));
+  await f.command("off");
+  assert.deepEqual(f.preferences.read(), { enabled: true });
+  assert.equal(f.tool().exposure, "hidden");
+  assert.ok(!f.active().includes("decisions"));
+  assert.equal(f.widgets.at(-1)[1], undefined);
+  assert.equal(f.handlers.get("before_agent_start")({}, f.ctx), undefined);
+  await assert.rejects(f.call({ action: "ask", question: "Must not be created" }, "disabled"), /disabled/i);
+  await f.command("answer Q1 Kept while disabled");
+  f.tick();
+  assert.equal(f.messages.length, 0);
+  await f.command("");
+  assert.match(f.notifications.at(-1).message, /Q1 \[answered\]/);
+  await f.command("on");
+  assert.equal(f.tool().exposure, "direct");
+  assert.ok(f.active().includes("decisions"));
+  assert.equal(f.messages.length, 1, "missed answers are delivered on re-enable");
+  assert.match(f.messages[0].message.content, /Kept while disabled/);
+  f.tick(); assert.equal(f.messages.length, 1);
+});
+
+test("disabled context omits automatic decisions messages without mutating transcript history", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Pending" }, "own");
+  const reminder = { role: "custom", ...f.handlers.get("before_agent_start")({}, f.ctx).message };
+  await f.command("answer Q1 Old answer");
+  const answer = { role: "custom", ...f.messages[0].message };
+  const user = { role: "user", content: "Continue independent work" };
+  await f.command("off");
+  const messages = [user, reminder, answer];
+  assert.deepEqual(f.handlers.get("context")({ messages }, f.ctx).messages, [user]);
+  assert.match(answer.content, /Old answer/);
+  assert.equal(messages.length, 3);
+});
+
+test("global defaults are observed on requests and polls; explicit session settings take precedence", async (t) => {
+  const f = fixture(t); f.start();
+  await f.command("status"); assert.match(f.notifications.at(-1).message, /ON.*inherited global default/);
+  await f.command("default off");
+  assert.deepEqual(f.preferences.read(), { enabled: false });
+  assert.ok(!f.active().includes("decisions"));
+  await f.command("on");
+  assert.deepEqual(f.preferences.read(), { enabled: false });
+  await f.command("status"); assert.match(f.notifications.at(-1).message, /ON.*session override; global default OFF/);
+  await f.command("inherit");
+  assert.ok(!f.active().includes("decisions"));
+  f.preferences.write({ enabled: true }); f.tick();
+  assert.ok(f.active().includes("decisions"));
+  await f.command("off");
+  f.preferences.write({ enabled: false }); f.tick();
+  f.preferences.write({ enabled: true });
+  assert.equal(f.handlers.get("before_agent_start")({}, f.ctx), undefined);
+  assert.ok(!f.active().includes("decisions"));
+  await f.command("inherit"); assert.ok(f.active().includes("decisions"));
+  f.preferences.write({ enabled: false });
+  f.handlers.get("context")({ messages: [] }, f.ctx);
+  assert.ok(!f.active().includes("decisions"));
+});
+
+test("session controls survive restart and branch navigation while new session IDs inherit", async (t) => {
+  const f = fixture(t); f.start();
+  await f.command("off"); f.start();
+  assert.ok(!f.active().includes("decisions"));
+  f.handlers.get("session_tree")({}, f.ctx);
+  assert.ok(!f.active().includes("decisions"));
+  f.ctx.sessionManager.getSessionId = () => "fork"; f.start();
+  assert.ok(f.active().includes("decisions"));
+  f.ctx.sessionManager.getSessionId = () => "origin"; f.start();
+  assert.ok(!f.active().includes("decisions"));
+  await f.command("inherit"); assert.ok(f.active().includes("decisions"));
+});
+
+test("corrupt defaults disable automation visibly even with a session ON, and recover", async (t) => {
+  const f = fixture(t); f.start(); await f.command("on");
+  f.preferences.failure = "invalid defaults";
+  f.tick(); f.tick();
+  assert.equal(f.tool().exposure, "hidden");
+  assert.equal(f.notifications.filter((n) => n.level === "error").length, 1);
+  assert.match(f.notifications.at(-1).message, /invalid defaults/);
+  await f.command("status"); assert.match(f.notifications.at(-1).message, /ERROR/);
+  assert.equal(f.handlers.get("before_agent_start")({}, f.ctx), undefined);
+  f.preferences.failure = null; f.tick();
+  assert.ok(f.active().includes("decisions"));
+});
+
+test("invalid controls do not mutate defaults or session records; write failures never report success", async (t) => {
+  const f = fixture(t); f.start();
+  for (const text of ["on extra", "off extra", "inherit extra", "default", "default yes", "default on extra", "status extra"]) {
+    await f.command(text);
+    assert.equal(f.entries.length, 0, text);
+    assert.deepEqual(f.preferences.read(), { enabled: true }, text);
+    assert.equal(f.notifications.at(-1).level, "error", text);
+  }
+  f.preferences.write = () => { throw new Error("write denied"); };
+  await f.command("default off");
+  assert.match(f.notifications.at(-1).message, /write denied/);
+  assert.equal(f.notifications.at(-1).level, "error");
+});
+
+test("toggle completions remain available without questions and include default values", async (t) => {
+  const f = fixture(t); f.start();
+  assert.ok(f.completions("").some((item) => item.value === "off"));
+  assert.deepEqual(f.completions("default ").map((item) => item.value), ["default on", "default off"]);
+  await f.command("off");
+  assert.ok(f.completions("sta").some((item) => item.value === "status"));
+});
+
+test("OFF clears a pending badge during a storage outage; settings work after project binding failure", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Pending" }, "own");
+  f.setUnavailable(true);
+  await f.command("off");
+  assert.equal(f.widgets.at(-1)[1], undefined);
+  assert.equal(f.tool().exposure, "hidden");
+  assert.equal(f.notifications.at(-1).level, "info");
+  f.failProject(); assert.throws(() => f.start(), /project resolution/);
+  await f.command("default off");
+  assert.deepEqual(f.preferences.read(), { enabled: false });
+  await f.command("status"); assert.match(f.notifications.at(-1).message, /OFF/);
+});
+
+test("a failed project binding cannot retain enabled automation from the previous session", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Pending" }, "own");
+  f.preferences.write({ enabled: false });
+  f.ctx.sessionManager.getSessionId = () => "replacement";
+  f.failProject(); assert.throws(() => f.start(), /project resolution/);
+  assert.equal(f.tool().exposure, "hidden");
+  assert.equal(f.widgets.at(-1)[1], undefined);
+});
+
+test("status and ordinary refreshes respect manual tool deactivation; ON and tree reconcile it", async (t) => {
+  const f = fixture(t); f.start();
+  f.setActive(["bash"]);
+  await f.command("status"); f.tick();
+  f.handlers.get("context")({ messages: [] }, f.ctx);
+  assert.deepEqual(f.active(), ["bash"]);
+  await f.command("on"); assert.ok(f.active().includes("decisions"));
+  f.setActive(["bash"]);
+  f.handlers.get("session_tree")({}, f.ctx);
+  assert.ok(f.active().includes("decisions"));
+});
+
+test("corrupt session override stops automation and a later explicit setting repairs it", async (t) => {
+  const f = fixture(t); f.start();
+  f.entries.push({ type: "custom", customType: "ponygirls.decisions.setting", data: { version: 1, sessionId: "origin", enabled: "false" } });
+  f.tick();
+  assert.equal(f.tool().exposure, "hidden");
+  assert.match(f.notifications.at(-1).message, /session setting/);
+  await f.command("inherit");
+  assert.ok(f.active().includes("decisions"));
+  f.pi.appendEntry = () => { throw new Error("append denied"); };
+  await f.command("off");
+  assert.equal(f.notifications.at(-1).level, "error");
+  assert.match(f.notifications.at(-1).message, /append denied/);
+  assert.ok(f.active().includes("decisions"));
 });

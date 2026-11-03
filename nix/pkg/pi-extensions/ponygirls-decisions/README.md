@@ -16,9 +16,9 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
 
 - `/decisions` or **Ctrl+Shift+D** opens the project's pending inbox.
 - `/decisions Q12` opens a particular question, including answered history.
-- The **? N** pending-count badge lives on the editor's bottom-left border alongside
-  the existing badges. In fullscreen mode it is clickable. When the border is too
-  narrow it shrinks to a compact `?N` chip.
+- The **? N · Ctrl+Shift+D** pending-count badge lives on the editor's bottom-left
+  border alongside the existing badges and shows the inbox shortcut. In fullscreen
+  mode it is clickable. When the border is too narrow it shrinks to a compact `?N` chip.
 - The inbox frame shows `pending N` / `all` tabs and the repository name (the
   directory owning the Git common directory, so worktrees show the main repository).
   Questions originating in the active session carry a `[this session]` marker in
@@ -40,6 +40,37 @@ Commands also work without custom terminal UI (for example, through RPC):
 /decisions dismiss Q13
 /decisions reopen Q12
 ```
+
+### Enable or disable automation
+
+Decisions automation is enabled by default. Controls use the same shared settings
+code and precedence as `/context-archive`:
+
+```text
+/decisions off           # disable for this session
+/decisions on            # enable for this session
+/decisions inherit       # follow the global default again
+/decisions default off   # change the global default
+/decisions default on
+/decisions status        # show effective state, source and defaults path
+```
+
+Session overrides survive reload/resume and apply across branches of that session.
+Pi does not persist a new session until its first conversation message; toggles in
+an otherwise empty or `--no-session` session are not durable across process exit.
+New sessions and forks with a different session ID inherit the global default.
+Global defaults live in `<agent-dir>/decisions.json`, independently of archive
+settings; inheriting sessions observe changes on the next request or settings poll
+(approximately one second). Explicit session overrides take precedence. Corrupt
+settings visibly disable automation rather than silently selecting a default.
+
+While off, the agent tool is hidden and calls are rejected, the badge is cleared,
+no new project summaries or answer wake-ups are admitted, and automatic decisions
+messages are omitted from future provider requests (the stored transcript is not
+rewritten). Previously admitted wake-ups cannot be cancelled by this extension;
+already-running requests/actions are not revoked. The manual inbox, shortcut and
+answer/dismiss/reopen commands remain available; questions are never deleted.
+Re-enabling reconciles outstanding answers once, using the existing receipt rules.
 
 Dismissing means “no answer”, not approval. The model tool cannot answer,
 reopen, dismiss, delete, or rewrite a question.
@@ -113,8 +144,8 @@ Concurrent writes allocate IDs atomically. Answer changes compare the question
 revision, so a stale editor cannot silently overwrite someone else's answer.
 Storage failures are visible; there is no in-memory fallback, reset, or automatic
 data deletion. Polling starts with the session, stops at shutdown/reload, and
-refreshes other sessions' changes approximately once a second. A failure retains
-the last badge instead of claiming the inbox is empty.
+refreshes other sessions' changes approximately once a second. While automation is enabled, a storage failure retains the last badge instead of
+claiming the inbox is empty. Disabling still clears it even during a storage outage.
 
 The database and its immediate directory are private to the Unix user. Questions,
 context, and answers remain plaintext local data and appear in relevant session
