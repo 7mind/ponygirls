@@ -19,7 +19,9 @@ let
   common = [ "build.sbt" "deps.lock.json" "project" "lockfile-config.json" "scripts/backend-sbt.sh" ];
   # Shared JVM inputs participate in consumer identities. Never include the full
   # repository: Manure/Haystack UIs, data and unrelated tooling are not inputs.
-  shared = [ "shared/lossless-json/src/main" ];
+  shared = [ "shared/lossless-json/src/main" "shared/baboon-runtime/src/main"
+    "shared/service-runtime/src/main" "shared/model-http/src/main"
+    "shared/retrieval-core/src/main" "shared/retrieval-postgres/src/main" ];
   manure = [ "manure/server/src" "manure/server/native-image" ];
   manureScripts = [ "scripts/manure-native-image.sh" "scripts/manure-probe-classpath.sh" ];
   runtime = common ++ shared ++ [ "chronicle/generated/scala" "chronicle/server/src/main" "chronicle/migrations" ];
@@ -28,6 +30,10 @@ in {
   # JVM derivations consume the active repository-root build. Non-JVM sources
   # deliberately retain their existing Chronicle-relative layouts and identities.
   server = backendSource "chronicle-server-source" runtime;
+  haystackServer = backendSource "haystack-native-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/server/src/main" "haystack/migrations" ]);
+  manureServer = backendSource "manure-native-source" (common ++ shared ++ [ "manure/generated/scala" "manure/backend/src/main" "manure/migrations" "manure/server/src/main" "manure/server/native-image" ]);
+  haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/server/src" "haystack/migrations" "haystack/tests" ]);
+  manureTests = backendSource "manure-native-tests-source" (common ++ shared ++ [ "manure/generated/scala" "manure/backend/src" "manure/migrations" "manure/server/src" "manure/server/native-image" "manure/tests" ]);
   backendTests = backendSource "chronicle-backend-tests-source" (runtime ++ tests);
   manurePosix = backendSource "manure-posix-source" [ "manure/server/src/main/c"
     "manure/server/src/main/java/manure/storage/PosixNative.java"
