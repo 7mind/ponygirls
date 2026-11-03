@@ -23,7 +23,21 @@ chmod 600 /secure/runtime/password-hash
 Provision the referenced credentials with your normal secret manager. Model key files may be explicitly empty for an unauthenticated local vLLM endpoint. They must still exist. The managed database password must be nonempty.
 
 ```nix
+{ config, inputs, ... }:
+let database = config.ponygirls.servicePostgres.connections.chronicle;
+in {
 imports = [ inputs.ponygirls.nixosModules.chronicle ];
+ponygirls.servicePostgres = {
+  enable = true;
+  stateDirectory = "/var/lib/ponygirls-postgres-18";
+  databases.chronicle = {
+    name = "chronicle";
+    user = "chronicle";
+    passwordFile = "/run/secrets/chronicle-db-password";
+    lockTimeoutMs = 35000;
+    idleTransactionTimeoutMs = 60000;
+  };
+};
 smind.services.chronicle = {
   enable = true;
   publicUrl = "https://chronicle.example.net";
@@ -31,7 +45,12 @@ smind.services.chronicle = {
     login = "alice";
     passwordHashFile = "/run/secrets/chronicle-alice-password-hash";
   };
-  database.passwordFile = "/run/secrets/chronicle-db-password";
+  database = {
+    inherit (database) jdbcUrl readinessUnit;
+    user = database.databaseUser;
+    passwordFile = database.databasePasswordFile;
+    limits.maxConnections = database.maxConnections;
+  };
   annotation = {
     requestPolicy = "strict-json-schema";
     endpoint = "http://127.0.0.1:8000/v1/chat/completions";
@@ -51,7 +70,14 @@ smind.services.chronicle = {
   };
   proxy.acmeHost = "chronicle.example.net"; # or terminate TLS at your existing edge
 };
+}
 ```
+
+The provider owns the single PostgreSQL service; Chronicle consumes its isolated
+database/role with finite JDBC limits and an independent readiness dependency.
+The new marked provider directory does not adopt an old cluster. Migrate existing
+data explicitly before activation; retain existing credentials and do not point
+the provider at an unmarked production directory.
 
 The backend remains loopback-only. The module does not open firewall ports. Without `proxy.acmeHost`, arrange TLS at the existing edge; the configured `publicUrl` must remain the exact browser Origin. Deliberately trusted private-network HTTP requires `allowInsecureHttp = true` and an `http://` `publicUrl`; it exposes credentials/data on the wire, keeps the backend loopback-only, and does not open firewall ports (see the server README). Standalone server JSON configuration is in `config.example.json`. All model endpoints are **full operation URLs**, not just `/v1` base URLs.
 
@@ -110,7 +136,7 @@ A role requires an immutable 40-character repository revision, a complete relati
 
 API 1.1 retrieves only currently published chunks through a dedicated projection, replaced atomically with publication. Lexical search uses GIN with `@@`; vector candidates use normalized half-precision HNSW and are reranked by full-precision cosine distance. Indexed dimensions are explicitly bounded to 4000, including Nemotron's 2048 dimensions. Stored original vectors and historical source generations remain intact. Filtered ANN uses iterative scanning and live ACLs, but approximation/scan budgets can omit candidates: semantic/hybrid counts describe the returned ranking window, not a global archive total. API 1.0 is an explicit legacy exact-search compatibility path, not a fallback from failed ANN.
 
-For a managed local PostgreSQL cluster, `database.ssdTuning=true` supplies overridable `mkDefault` settings: `random_page_cost=1.1`, `effective_io_concurrency=200`, `maintenance_io_concurrency=100`. These settings are cluster-wide, including other databases sharing it. Set `database.ssdTuning=false` to opt out or override `services.postgresql.settings` normally. External databases are not modified. No RAM size is guessed, and fsync/synchronous-commit durability is not weakened. Treat these as SSD-oriented starting values, not a storage benchmark; measure query plans/recall and the actual workload.
+Set host-wide tuning on the shared provider, not an application's retired local-cluster options: `ponygirls.servicePostgres.randomPageCost = 1.1`, `effectiveIoConcurrency = 200` and `maintenanceIoConcurrency = 100` are SSD-oriented starting values. Provider options also expose explicit buffer/cache/maintenance memory budgets. These settings affect every database in that cluster; external databases are not modified. No RAM size is guessed, and fsync/synchronous-commit durability must remain enabled. This is not a storage benchmark: measure query plans/recall and the actual workload.
 
 ## Users and agents
 

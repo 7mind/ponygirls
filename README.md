@@ -124,9 +124,10 @@ the actual application is `manure/backend`, including PostgreSQL metadata,
 durable uploads, grants and recovery. Native storage targets x86-64 Linux;
 Manure's standalone CLI/MCP client package does not require that server runtime.
 
-Each service exposes one current Baboon contract; owned clients move with it,
-without historical wire adapters. Stored documents, credentials and acknowledged
-writes remain migration invariants. See [Haystack's server/configuration guide](haystack/server/README.md),
+Haystack and Manure each expose one current Baboon contract; their owned clients
+move with it without historical wire adapters. Chronicle retains its documented
+versioned search contracts. Stored documents, credentials and acknowledged writes
+remain migration invariants. See [Haystack's server/configuration guide](haystack/server/README.md),
 [Manure's backend guide](manure/backend/README.md), and its
 [offline migration procedure](manure/docs/offline-conversion.md). Builds/tests
 use disposable fixtures; deployment and production-data migration are explicit
