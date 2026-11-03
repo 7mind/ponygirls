@@ -55,7 +55,11 @@
     "extra",
     "array",
     "null",
-    "exit"
+    "exit",
+    "evaluated proxy JSON preserves declared ports and its actual asset root without local dist substitution",
+    "every evaluated proxy target must match the declared loopback backend and exact input contract",
+    "configured proxy input fails on malformed duplicate invalid UTF8 or missing files without a fallback",
+    "proxy unavailability decodes only the direct current generated Failure and rejects retired nested errors"
   ],
   "browserCases": [
     "plain HTTP preview verifies heartbeat without secure-context APIs",

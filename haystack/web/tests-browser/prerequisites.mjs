@@ -21,7 +21,7 @@ export async function prerequisites(leg = "all") {
   else await executable("HAYSTACK_CHROMIUM");
   if (leg === "all" || leg === "restart") {
     await executable("HAYSTACK_NGINX");
-    for (const command of ["nix", "openssl"]) await exec("bash", ["-c", 'command -v "$1" >/dev/null', "prerequisite", command], { timeout: 10000 });
+    for (const command of ["openssl", ...(process.env.HAYSTACK_PROXY_CONFIG_FILE === undefined ? ["nix"] : [])]) await exec("bash", ["-c", 'command -v "$1" >/dev/null', "prerequisite", command], { timeout: 10000 });
   }
   if (leg === "all" || leg === "preview") {
     for (const command of ["initdb", "pg_ctl", "psql", "curl", "npm"]) await exec("bash", ["-c", 'command -v "$1" >/dev/null', "prerequisite", command], { timeout: 10000 });

@@ -17,7 +17,8 @@ cd "$root"
 [[ "$HAYSTACK_ARTIFACT_KIND" == jvm || "$HAYSTACK_ARTIFACT_KIND" == native ]]
 [[ "$HAYSTACK_SERVER_ARTIFACT_FILE" == /* && -f "$HAYSTACK_SERVER_ARTIFACT_FILE" ]]
 [[ "$HAYSTACK_CHROMIUM" == /* && -x "$HAYSTACK_CHROMIUM" && "$HAYSTACK_NGINX" == /* && -x "$HAYSTACK_NGINX" ]]
-for command in node npm initdb pg_ctl psql python3 timeout bash curl nix openssl sha256sum; do command -v "$command" >/dev/null; done
+for command in node npm initdb pg_ctl psql python3 timeout bash curl openssl sha256sum; do command -v "$command" >/dev/null; done
+if [[ "${HAYSTACK_PROXY_CONFIG_FILE+x}" != x ]]; then command -v nix >/dev/null; fi
 report="${HAYSTACK_REPORT_DIR:-$root/haystack/web/target/browser-report-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 [[ "$report" == /* ]] || { echo 'HAYSTACK_REPORT_DIR must be absolute' >&2; exit 2; }
 if [[ -e "$report" && -n "$(ls -A "$report")" ]]; then echo "refusing to overwrite an existing report: $report" >&2; exit 2; fi
@@ -34,19 +35,29 @@ if kind=='native':
 else: assert zipfile.is_zipfile(path),'JVM acceptance requires an assembly JAR'
 PY
 {
-  git rev-parse HEAD
-  git status --short
+  if [[ -e .git ]]; then git rev-parse HEAD; git status --short;
+  else
+    : "${HAYSTACK_SOURCE_REVISION:?filtered source without .git requires explicit source commit identity}"
+    [[ "$HAYSTACK_SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]] || exit 2
+    printf '%s\nsource-mode=filtered-no-git\n' "$HAYSTACK_SOURCE_REVISION"
+  fi
   printf 'artifact-kind=%s\n' "$HAYSTACK_ARTIFACT_KIND"
   printf '%s' "$HAYSTACK_SERVER_COMMAND" | sha256sum
   if [[ -n "${HAYSTACK_TEST_PROVISION_COMMAND:-}" ]]; then sha256sum "$HAYSTACK_TEST_PROVISION_COMMAND"; fi
-  find haystack/web/src haystack/web/tests haystack/web/tests-browser haystack/generated haystack/models haystack/migrations -type f -print0 | sort -z | xargs -0 sha256sum
+  if [[ "${HAYSTACK_PROXY_CONFIG_FILE+x}" == x ]]; then sha256sum "$HAYSTACK_PROXY_CONFIG_FILE"; fi
+  find haystack/web/src haystack/web/tests haystack/web/tests-browser haystack/generated/scala haystack/generated/typescript haystack/models haystack/migrations -type f -print0 | sort -z | xargs -0 sha256sum
   sha256sum haystack/quick-ui.sh haystack/package-lock.json haystack/web/package.json haystack/scripts/register-generated.mjs haystack/scripts/test-browser.sh nix/nixos/haystack.nix
 } > "$report/source.txt"
 {
-  node --version; npm --version; initdb --version; psql --version; nix --version; openssl version
+  node --version; npm --version; initdb --version; psql --version; openssl version
+  if [[ "${HAYSTACK_PROXY_CONFIG_FILE+x}" != x ]]; then nix --version; fi
   "$HAYSTACK_CHROMIUM" --version; "$HAYSTACK_NGINX" -v
   sha256sum "$HAYSTACK_CHROMIUM" "$HAYSTACK_NGINX"
 } > "$report/dependencies.txt" 2>&1
+if [[ "${HAYSTACK_PROXY_CONFIG_FILE+x}" == x ]]; then
+  sha256sum "$HAYSTACK_PROXY_CONFIG_FILE" > "$report/proxy-before.sha256"
+  cp "$HAYSTACK_PROXY_CONFIG_FILE" "$report/proxy-input.json"
+fi
 work="$(mktemp -d "${TMPDIR:-/tmp}/haystack-browser-pg.XXXXXX")"
 cleanup() { pg_ctl -D "$work/pg" -m immediate stop >"$report/cleanup.log" 2>&1 || true; rm -rf "$work"; }
 trap cleanup EXIT
@@ -82,6 +93,10 @@ set -e
 cat "$report/atomic.tap" "$report/atomic-runner.log" "$report/markup.log" "$report/browser.log"
 sha256sum "$HAYSTACK_SERVER_ARTIFACT_FILE" > "$report/artifact-after.sha256"
 cmp "$report/artifact-before.sha256" "$report/artifact-after.sha256"
+if [[ "${HAYSTACK_PROXY_CONFIG_FILE+x}" == x ]]; then
+  sha256sum "$HAYSTACK_PROXY_CONFIG_FILE" > "$report/proxy-after.sha256"
+  cmp "$report/proxy-before.sha256" "$report/proxy-after.sha256"
+fi
 python3 - "$report" "$atomic_status" "$markup_status" "$browser_status" <<'PY'
 import json,pathlib,sys,xml.etree.ElementTree as ET
 report=pathlib.Path(sys.argv[1]); inventory=json.loads((report/'inventory.json').read_text())
