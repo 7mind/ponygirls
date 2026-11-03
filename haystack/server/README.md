@@ -112,3 +112,8 @@ with strict stdout `{}` within10seconds. The fixture calls it after stopping the
 server, including failed startup/provisioning; restart does not drop the database.
 Invalid/nonzero/timeout cleanup fails the gate. There is no fallback to runtime
 credentials for cleanup. Helpers must never drop an unregistered/external DB.
+
+## Recorded port acceptance
+
+[Final source-qualified JVM/native/real-PG/browser receipts](../docs/port-acceptance-20261103.md)
+record complete owned-fixture acceptance, not deployment or production activation.
