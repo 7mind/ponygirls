@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeList, decodeString}
+import io.circe.Decoder.{decodeList, decodeOption, decodeString}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 
@@ -6,7 +6,9 @@ package haystack.api {
   final case class RetrieveResult(
     sources: List[RetrievedSource],
     mode: RetrievalMode,
-    countScope: String
+    countScope: String,
+    total: Long,
+    rankingLimit: Option[Int]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = RetrieveResult.baboonDomainVersion
     override def baboonDomainIdentifier: String = RetrieveResult.baboonDomainIdentifier
@@ -38,7 +40,9 @@ package haystack.api {
       Json.obj(
         "sources" -> Json.fromValues(value.sources.map(e => RetrievedSource_JsonCodec.instance.encode(ctx, e))),
         "mode" -> RetrievalMode_JsonCodec.instance.encode(ctx, value.mode),
-        "countScope" -> Json.fromString(value.countScope)
+        "countScope" -> Json.fromString(value.countScope),
+        "total" -> Json.fromString(value.total.toString),
+        "rankingLimit" -> value.rankingLimit.map(v => Json.fromInt(v)).getOrElse(Json.Null)
       )
     }
     
@@ -52,7 +56,9 @@ package haystack.api {
             sources <- getField(jsonObject, "sources").flatMap(v => decodeList(RetrievedSource_JsonCodec.circeDecoder)(v.hcursor))
             mode <- getField(jsonObject, "mode").flatMap(v => RetrievalMode_JsonCodec.circeDecoder(v.hcursor))
             countScope <- getField(jsonObject, "countScope").flatMap(v => decodeString(v.hcursor))
-          } yield RetrieveResult(sources,mode,countScope)
+            total <- getField(jsonObject, "total").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
+            rankingLimit <- getField(jsonObject, "rankingLimit").flatMap(v => decodeOption(BaboonJsonCodec.decodeInt)(v.hcursor))
+          } yield RetrieveResult(sources,mode,countScope,total,rankingLimit)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to RetrieveResult: object expected"))
       }
     }

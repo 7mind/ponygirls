@@ -32,7 +32,7 @@ private[storage] object Sql {
   }
 }
 
-final class PostgresItemRepository(database: JdbcDatabase) extends ItemRepository {
+final class PostgresItemRepository(database: JdbcDatabase, projection: Option[haystack.retrieval.HaystackRetrieval] = None) extends ItemRepository {
   import Sql.*
   private val columns = "project_id,item_id,revision,document_text,created_at,created_by,modified_at,modified_by"
   private def stored(r: ResultSet): StoredItem = {
@@ -95,7 +95,7 @@ final class PostgresItemRepository(database: JdbcDatabase) extends ItemRepositor
       val a=c.createArrayOf("text",words.toArray[AnyRef]); val b=c.createArrayOf("text",segments.toArray[AnyRef])
       try { p.setArray(3,a); p.setArray(4,b); p.executeUpdate(); () } finally { a.free(); b.free() }
     }
-    update(c,"INSERT INTO item_index_jobs(project_id,item_id,revision,projection_policy) VALUES(?,?,?,'metadata-string-leaves-v1') ON CONFLICT DO NOTHING",k.project,k.item,item.revision)
+    projection.foreach(_.put(c,item))
   }
   private def encodeOutcome(result: Either[Fault,CommitSuccess]): String = result.fold(
     e => Json.obj("kind"->Json.fromString(e.code),"currentRevision"->e.currentRevision.fold(Json.Null)(Json.fromLong)),
