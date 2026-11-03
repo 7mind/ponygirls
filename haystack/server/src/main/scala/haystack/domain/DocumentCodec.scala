@@ -30,6 +30,7 @@ object DocumentCodec {
 
   def validate(value: Value): ItemDocument = {
     if (LosslessJson.encodeUtf8(value).length > DocumentMaxBytes) invalid("document exceeds byte limit")
+    checkDepth(value, 0)
     val obj = value match {
       case o: Obj => o.fields.toMap
       case _ => invalid("document must be an object")
@@ -65,13 +66,27 @@ object DocumentCodec {
     val tags = obj.get("tags") match {
       case None => Vector.empty
       case Some(a: Arr) if a.values.size <= TagsMax => a.values.map {
-        case s: Str if s.value.nonEmpty && s.value.length <= MetaValueMax && s.value == s.value.strip() => s.value
+        case s: Str if s.value.nonEmpty && s.value.length <= MetaValueMax &&
+            !trimWhitespace(s.value.head) && !trimWhitespace(s.value.last) => s.value
         case _ => invalid("invalid tag")
       }
       case _ => invalid("invalid tags array")
     }
     PostgresAdmission.validate(value)
     ItemDocument(title, description, fields, docType, status, importance, attention, links, tags)
+  }
+
+  // JS/JSON presentation contract whitespace, including NBSP/BOM, not only ASCII trim.
+  private def trimWhitespace(c: Char): Boolean = Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '\uFEFF'
+
+  private def checkDepth(value: Value, depth: Int): Unit = value match {
+    case a: Arr =>
+      if (depth >= Limits.maxDepth) invalid("document exceeds depth limit")
+      a.values.foreach(checkDepth(_, depth + 1))
+    case o: Obj =>
+      if (depth >= Limits.maxDepth) invalid("document exceeds depth limit")
+      o.fields.foreach { case (_, v) => checkDepth(v, depth + 1) }
+    case _ => ()
   }
 
   private def checkLeaves(value: Value): Unit = value match {
