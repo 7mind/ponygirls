@@ -71,9 +71,9 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     RetrievalChecks(source.attributes.map(_.key).distinct.size==source.attributes.size,"invalid","duplicate projection attribute")
     val id=key(source.id); val version=key(source.version); val digest=inputDigest(source.chunks); val target=profile.fold("")(_.id)
     exec(c,"INSERT INTO pony_retrieval_sources(namespace,id,version,input_digest,target_profile,head_generation) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING",ns,id,version,digest,target,UUID.randomUUID().toString)
-    val old=one(c,"SELECT version,input_digest,target_profile,epoch FROM pony_retrieval_sources WHERE namespace=? AND id=? FOR UPDATE",ns,id)(r => (r.getString(1),r.getString(2),r.getString(3),r.getLong(4))).get
+    val old=one(c,"SELECT version,input_digest,target_profile,epoch,head_generation FROM pony_retrieval_sources WHERE namespace=? AND id=? FOR UPDATE",ns,id)(r => (r.getString(1),r.getString(2),r.getString(3),r.getLong(4),r.getString(5))).get
     RetrievalChecks(old._1!=version || old._2==digest,"conflict","source version reused with different retrieval content")
-    val changed=old._1!=version || old._2!=digest || old._3!=target || !one(c,"SELECT 1 FROM pony_retrieval_head_chunks WHERE namespace=? AND source_id=? LIMIT 1",ns,id)(_ => true).contains(true)
+    val changed=old._1!=version || old._2!=digest || old._3!=target || old._4==0L || old._5.isEmpty
     exec(c,"UPDATE pony_retrieval_sources SET eligible=?,archived=?,expires_at=NULLIF(?,'')::numeric WHERE namespace=? AND id=?",source.eligible,source.archived,source.expiresAt.fold("")(_.value.bigDecimal.toPlainString),ns,id)
     exec(c,"DELETE FROM pony_retrieval_attributes WHERE namespace=? AND source_id=?",ns,id)
     source.attributes.foreach(a => exec(c,"INSERT INTO pony_retrieval_attributes VALUES(?,?,?,?)",ns,id,a.key.value,bytes(a.value.value)))
@@ -95,7 +95,7 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     transaction(c)
     one(c,"SELECT id FROM pony_retrieval_sources WHERE namespace=? AND id=? FOR UPDATE",ns,key(id))(_.getString(1)).foreach { encoded =>
       exec(c,"UPDATE pony_retrieval_jobs SET state='Superseded',fence=fence+1 WHERE namespace=? AND source_id=?",ns,encoded)
-      exec(c,"UPDATE pony_retrieval_sources SET eligible=false,epoch=epoch+1,published=NULL WHERE namespace=? AND id=?",ns,encoded)
+      exec(c,"UPDATE pony_retrieval_sources SET eligible=false,epoch=epoch+1,published=NULL,head_generation='' WHERE namespace=? AND id=?",ns,encoded)
       exec(c,"DELETE FROM pony_retrieval_audience WHERE namespace=? AND source_id=?",ns,encoded)
       exec(c,"DELETE FROM pony_retrieval_chunks WHERE namespace=? AND source_id=?",ns,encoded)
       // A later explicit same-version restore must rebuild, not resurrect a stranded job.
@@ -105,6 +105,12 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
   def claim(c: Connection,leaseSeconds: Int): Option[WorkClaim] = {
     transaction(c); RetrievalChecks(leaseSeconds>0 && leaseSeconds<=86400,"invalid","invalid retrieval lease")
     profile.flatMap { p =>
+      // Keep terminal crash recovery observable; never strand the last lease as Running.
+      // Lock source before jobs, matching put/remove/publication lock order.
+      val exhausted=rows(c,"""SELECT s.id FROM pony_retrieval_sources s WHERE s.namespace=? AND s.target_profile=? AND EXISTS(
+        SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.state='Running' AND j.attempts>=5 AND j.lease_until<clock_timestamp())
+        ORDER BY s.id FOR UPDATE OF s SKIP LOCKED""",ns,p.id)(_.getString(1))
+      exhausted.foreach(id => exec(c,"UPDATE pony_retrieval_jobs SET state='Failed',fence=fence+1,lease_until=NULL WHERE namespace=? AND source_id=? AND profile=? AND state='Running' AND attempts>=5 AND lease_until<clock_timestamp()",ns,id,p.id))
       val source=one(c,"""SELECT s.id FROM pony_retrieval_sources s WHERE s.namespace=? AND s.target_profile=? AND s.eligible AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(
         SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp()))) ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",ns,p.id,EpochSeconds.fromInstant(java.time.Instant.now()).value)(_.getString(1))
       source.flatMap { id => one(c,"""UPDATE pony_retrieval_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?) WHERE namespace=? AND id=(

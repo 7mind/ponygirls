@@ -1,0 +1,51 @@
+Exact retained failed receipt: shared/retrieval-postgres/target/validation-runs/20261103T011653Z.az1Btu/run.log
+==> X ponygirls.retrieval.postgres.PublicationFenceTest.Blackbox-GoodCommunication regression: empty complete generation is idempotent under repeated same-version projection 0.091s munit.ComparisonFailException: shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala:134
+133:    f.store.put(empty); f.store.publishAll(); f.store.put(empty)
+134:    assertEquals(f.tx(c => f.index.claim(c,30)),None)
+135:    assertEquals(f.store.search(query(RetrievalMode.Semantic)).total,0L)
+values are not the same
+=> Obtained
+Some(
+  value = WorkClaim(
+    jobId = "80b48c10-38fc-42b5-b944-4da8c0e4e7e9",
+    sourceId = "empty",
+    version = "version-1",
+    epoch = 2,
+    fence = 1,
+    run = "30588aec-88ff-4f80-893f-1f29ace7ba73",
+    profile = "35486603e265dd1d3058bd4e9f00f364d419d4693159a5d1a3c8888794bbb28c",
+    chunks = Nil
+  )
+)
+=> Diff (- expected, + obtained)
+-None
++Some(
++  value = WorkClaim(
++    jobId = "80b48c10-38fc-42b5-b944-4da8c0e4e7e9",
++    sourceId = "empty",
++    version = "version-1",
+==> X ponygirls.retrieval.postgres.PublicationFenceTest.Effectual-GoodCommunication regression: crashed last-attempt lease becomes terminal Failed, not stranded Running 0.051s munit.ComparisonFailException: shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala:142
+141:    assertEquals(f.tx(c => f.index.claim(c,30)),None)
+142:    assertEquals(f.tx(c => Jdbc.one(c,"SELECT state FROM pony_retrieval_jobs WHERE id=?",claim.jobId)(_.getString(1))),Some("Failed"))
+143:  }
+values are not the same
+=> Obtained
+Some(
+  value = "Running"
+)
+=> Diff (- expected, + obtained)
+ Some(
+-  value = "Failed"
++  value = "Running"
+ )
+    at munit.FunSuite.assertEquals(FunSuite.scala:12)
+    at ponygirls.retrieval.postgres.PublicationFenceTest.$init$$$anonfun$15(PublicationFenceTest.scala:142)
+ponygirls.retrieval.postgres.PublicationFenceTest: finished 2.241s
+Test run ponygirls.retrieval.postgres.PublicationFenceTest finished: 2 failed, 0 ignored, 15 total 2.241s
+CONTROLLED ADVERSARIAL PRODUCTION PLAN
+{
+  "effectiveLocalKnobs" : {
+    "hnsw.iterative_scan" : "strict_order",
+    "hnsw.ef_search" : "200",
+    "hnsw.max_scan_tuples" : "200000",
+    "hnsw.scan_mem_multiplier" : "4",
