@@ -1142,3 +1142,105 @@ reading unless an independent channel audits them.
 - **Plan change:** E1c (decision Q12, option 1) gains two conditions,
   objective charter and charter plus ratified scenarios, with E2- and B-style
   measures added to the defence measure.
+
+---
+
+## J15 — 2026-11-03 — Rationale framing (Pilot R)
+
+### User input (verbatim)
+
+> My intuition tells me that we might need to run a quick experiment on the
+> explicit rationale - I see that generally agents are trained to value
+> fragile humans and for some obscure reason they tend to significantly shift
+> modalities when I instruct them to maintain epistemic hygiene. Hm.
+
+Decision Q13: "Run it as designed".
+
+### Run
+
+Pilot R [L5] (`protocols/pilot-r.md`, `results/pilot-r/notes-batch1.md`):
+identical six rules with four rationale paragraphs — none, fragile human,
+engineering (low-bandwidth intent channel), epistemic hygiene — on the
+check-only liveness case and the "atomic" refinement sheet; Sol and DeepSeek,
+n = 3; 48 runs, no errors. Operational reading of "modality shift": tone,
+size, hedging, care language, doing vs asking, omissions.
+
+### Results
+
+- **No detectable effect of the rationale at n = 3.** Within-cell spread
+  exceeded between-condition differences on coverage and size. Care or
+  reassurance phrases: zero in all 96 texts; hedging near zero everywhere.
+  The predicted care-mode under the fragile framing and audit-mode inflation
+  under the hygiene framing did not appear in lexical markers. H-O1 is not
+  supported at this resolution.
+- **The rules themselves moved behaviour** (descriptive, against Pilot E's
+  different policies): DeepSeek reported instead of fixing on the check-only
+  request and named most test-asserted holds as conflicts; Sol's refinement
+  sheets shrank from 21–24 to 16–18 lines at keyword coverage 7–8 of 8.
+- **Residual defence in DeepSeek, by framing:** none under the engineering
+  framing (one run cited rule 1 to reject test intent); one explicit
+  "intentional per docstring" under the fragile framing; two "by design,
+  docstring-confirmed" labellings under the hygiene framing; one disclosed
+  implicit preservation with rules only. The hygiene pattern matches H-T6
+  (n = 2, suggestive).
+- **Omissions persist:** 4 of 12 DeepSeek reports neither fixed nor named one
+  violating path — "report only conflicts" also loses items.
+
+### Assessment
+
+The user's observed modality shift was not reproduced in these markers, with
+two caveats: lexicons may miss the shift the user means (a concrete example
+would sharpen the measure), and short single tasks may not trigger it; long
+sessions might. What the data does show is that framing matters less than the
+rules for these models, and that "epistemic hygiene" phrasing may push agents
+to treat docstrings as evidence of intent — the mechanism H-T6 proposes for
+the field instance.
+
+---
+
+## J16 — 2026-11-03 — Recombinations of the prior art into runnable pilots
+
+### User input (verbatim)
+
+> History mining is complicate because the history is scattered across
+> multiple hosts. Anyway, any pilots we still can run? You said that the prior
+> art is deep - any possible creative recombination?
+
+### Assessment (proposals; none run)
+
+History mining is dropped. Recombinations, each with a pilot:
+
+1. **Evidence faithfulness** — mutation testing [R46] and defeaters [R47] at
+   the belief level: a test is evidence for a belief only if it fails on a
+   belief-violating implementation (the J10 field failure had tests passing on
+   violating code). Pilot without subject runs: Pilot E2 agent-written suites
+   against the naive and per-file-rename stores.
+2. **Assumption discovery by environment perturbation** — Zave–Jackson W
+   [R51] and fault injection, aimed at tacit assumptions [R14]: violate
+   candidate assumptions mechanically and report which ones the code silently
+   relies on. Pilot without subject runs: the six E2 implementations under
+   concurrent saves (both families silently assumed a single writer, J11).
+3. **Ask only where the generator is uncertain** — rate–distortion and
+   decoder side information (J4, [R26], [R29]): sampling the generator
+   reveals where its prior diverges from a predictable default; scatter marks
+   underspecification the human must settle. Pilot: per-decision variation
+   from existing Pilot B data (3 runs per task), then 8 samples per task across
+   two families against the planted ambiguities (extends B2).
+4. **Scenario selection by disagreement** — example-based clarification
+   [R43] as active learning: the scenarios shown for ratification are those
+   that split plausible implementations, maximising information per item of
+   attention. Pilot: score candidate scenarios by how many implementation
+   variants they separate.
+5. **Cross-family adversarial audit** — System 3* [R36] under correlated
+   errors [R7]: the other family is asked only to break the belief. Pilot: Sol
+   audits DeepSeek's E1b reports and diffs; compare with same-family review.
+6. **Theory recoverability** — Naur's dead program [R13]: a fresh agent sees
+   only the final code and tests and must state the belief, assumptions and
+   obstacles. Pilot: recovery scored against the ratified belief and planted
+   obstacles.
+7. **Ratified scenarios** (B3) — still the untested countermeasure to scope
+   narrowing.
+
+Priority by information per cost: 1 and 2 (analysis of existing artifacts),
+then 3, 5 and 7 (small runs), then 4 and 6. Human-side pilots remain the only
+test of the overload claim.
