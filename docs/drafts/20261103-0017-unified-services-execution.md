@@ -17,7 +17,7 @@ All under main checkout `/home/pavel/work/flakes/ponygirls/.worktrees/`:
 | Branch/worktree suffix | Owner | Files |
 |---|---|---|
 | unified-services | parent | integration, execution ledger, reviews, downstream integration |
-| unified-runtime | runtime/build worker | `build.sbt`, `project/`, dependency lock/config, `shared/service-runtime`, `shared/baboon-runtime`, common contract/runtime generation helpers |
+| unified-runtime | runtime/build worker | `build.sbt`, `project/`, dependency lock/config, `shared/service-runtime`, `shared/baboon-runtime`, common contract/runtime generation helpers; Chronicle JDBC/credential config, Database transaction boundary, Main migration CLI and DI lifecycle |
 | haystack-port | Haystack worker | `haystack/**` (new Scala server, models/generated, owned web/client changes, tests/docs) |
 | manure-port | Manure worker | `manure/**` (new backend, models/generated, FS seam extensions, client/MCP/web/tests, offline importer) |
 | retrieval-shared | retrieval worker | `shared/{retrieval-core,retrieval-postgres,model-http}/**`, Chronicle embedding/search/publication source/tests required by extraction |
@@ -44,10 +44,23 @@ Writers use explicit absolute precreated worktrees (`isolation:none` harness rou
 3. [in progress] Manure complete PG/filesystem service/current clients/import/recovery.
 4. [in progress] Shared retrieval/model implementations and unchanged Chronicle adapters.
 5. [in progress] Shared PG/Nix packages/modules/provisioning and tests.
-6. [pending] Integrate actual shared seams, hybrid adapters and downstream Paddock/Nix-config consumers.
+6. [in progress] Integrate actual shared seams, hybrid adapters and downstream Paddock/Nix-config consumers.
 7. [pending] Full application/native/browser/migration/recovery/security/retrieval validation, address failures without weakening assertions.
 8. [pending] Independent reviews, source/evidence audit, safe main integration and worktree cleanup; only then complete goal.
 
 ## Current observations
 
 Codegraph still refuses daemon PID-namespace ownership, so direct source inspection is used. No ledger MCP discovered; this committed file is the progress ledger. No live deployment or production-data observation is claimed. Available processors observed128; deliberate compiler/test parallelism remains memory-bounded and per-module DB tests serial where needed.
+
+### 2026-11-03 00:53 UTC integration checkpoint
+
+- Parent merged actual runtime/build through `e4492b23`, provider/source filter `527f2ea1`, actual Haystack `31102256`, Manure `57493cfc82f4efcde73b1e94c8831465eff1e494`, and retrieval/Chronicle extraction `d3de9f96`. These are implementation checkpoints, not final application acceptance. Later worker fixes still require integration and new checks.
+- Parent independently executed the unfiltered shared runtime real SCRAM PostgreSQL gate: **7 suites / 26 cases**, zero failures/errors/skips. Exact input/log/XML/inventory receipt: `shared/service-runtime/target/validation-runs/20261103T004218Z.5uP3Yr`; retained command log `debug/unified-services-evidence/parent-runtime-full.log`. New synchronous Chronicle adoption work will invalidate relevant reuse.
+- Runtime worker reports fresh file-only offline compilation and all three actual JVM assemblies, one canonical compiled Baboon owner, identical 148-class runtime maps and no duplicate ZIP entries. Source `1e245cce123e963a34c7b0d35cdb42c19de469cd`, receipt `shared/service-runtime/target/validation-runs/20261103-offline-three.l1gmkv`. Not native or service behavioral acceptance.
+- Retrieval worker reports fail-first real PG reproductions and corrections for same-version restore stranding and same-space/different-policy publication leakage; controlled FIFO proved metadata size was not an actual read bound. Reported shared gate: 8 suites / 52 cases, zero failures/errors/skips, receipt `20261103T004928Z.V5feoP`; final refactor/full Chronicle runs remain due. Adversarial selective ANN yielded **0/12** eligible matches under production finite approximate policy; exact execution of the same prelimit SQL yielded 12. Retain this quality limitation and plan diagnostics, not a passing exact-recall claim or silent exact fallback.
+- Nix worker reports provider 46-case real PG gate including fresh-host globals and three database restores, plus module/source/consumer evaluations. A Haystack native ELF from older `31102256` was built but is not accepted for the subsequently changed current LiveFrame contract. New native source-bound runs are required.
+- Parent independently reproduced provider `private_secret` opening an owned FIFO before regular-file validation, blocking until the bounded child was killed/reaped after two seconds. Source SHA256 `7c3e763a4a154283b3a2e10ac7339a33f3f555435c376c94d2f60ad36e658ca0`; reproduction `debug/20261103-0050-provider-fifo-repro.py`, log `debug/unified-services-evidence/provider-fifo-before.log`. Sent to provider owner; do not count corrected until rerun passes.
+- Parent inspected Chronicle's actual Database boundary: it still directly used unbounded DriverManager transactions despite shared injector consumption. Runtime worker now owns actual shared bounded JDBC adoption and an independent `migrate CONFIG` CLI, preserving domain SQL/backfill/transaction semantics; full affected Chronicle validation is mandatory.
+- Manure worker reports compiled actual backend and initial JVM real PG/FS tests, but complete baseline mapping/native/browser/import/restart acceptance remains due. Offline converter's explicit destination control root and `destination/data` payload root must both stay claimed; backend/target import rehearsal is being integrated. Existing legacy SQLite without an accepted target import must fail closed rather than expose an empty SQL catalogue.
+- Downstream mains observed clean. Dedicated branches/worktrees created at `paddock/.worktrees/wt-paddock-unified-services` and `nix-config/.worktrees/wt-nix-config-unified-services`. Q1 reread: user pushes and updates pins; locally validate using overrides. Preserve deployed credentials/origins/state and explicit Chronicle host resource tuning. No activation or pin edits authorized.
+
