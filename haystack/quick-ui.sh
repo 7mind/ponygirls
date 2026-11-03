@@ -34,6 +34,9 @@ initdb -D "$PGDATA" -U postgres --auth=trust >/dev/null
 pg_ctl -D "$PGDATA" -l "$WORK/pg.log" -o "-k $PGSOCK -p $PGPORT -c listen_addresses='127.0.0.1'" start >/dev/null
 psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE ROLE haystack_preview LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;' >/dev/null
 psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE DATABASE haystack OWNER haystack_preview;' >/dev/null
+# Extension installation is an explicit owned-cluster administrator operation;
+# the selected application runtime remains NOSUPERUSER/NOCREATEDB.
+psql -h "$PGSOCK" -p "$PGPORT" -U postgres -d haystack -c 'CREATE EXTENSION IF NOT EXISTS vector;' >/dev/null
 TOKEN_FILE="$HAYSTACK_DIR/../debug/haystack-ui/$PORT/token.txt"
 mkdir -p -- "$(dirname -- "$TOKEN_FILE")"
 TOKEN="$(node --input-type=module - "$TOKEN_FILE" <<'JS'
