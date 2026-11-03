@@ -114,6 +114,8 @@ final class ConfinedDirectory private (
     found.toVector
   }
 
+  def physicalIdentity: Vector[Long] = synchronized { checked(); identity }
+
   def forceRootDirectory(): Unit = synchronized {
     checked()
     call(bridge.sync(root))
