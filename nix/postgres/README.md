@@ -130,3 +130,32 @@ are preserved; unsupported non-list forms fail explicitly. `ProtectSystem=strict
 all other stock hardening, `User=postgres`, and provider ownership/major/identity
 checks remain unchanged. This is not a broad `/var/lib` write allowance and does
 not authorize activation or adoption of any existing cluster.
+
+### Strict files versus systemd's UID-ACL credentials
+
+Ordinary files (including HM) retain the original `077` group/other permission
+rejection, managed-reference/regular-file/bounded UTF-8 rules and password
+preservation. `0400`/`0600` private files remain supported. No generic group-read
+exception or new fallback is introduced.
+
+Only the NixOS database provisioning command selects the explicit
+`--loaded-systemd-credential` policy for an existing `LoadCredential` reference.
+It is bound to the expected `postgres` Unix identity and exactly
+`/run/credentials/ponygirls-database-KEY.service/database-password`, not an
+arbitrary environment-provided directory. Directory descriptors are walked with
+`O_NOFOLLOW`; root-owned ancestors must be non-writable and have no extra ACLs.
+The root-owned `0550` unit directory and `0440` regular file must have exactly
+systemd's observed named-service-UID access ACL: owner read/execute (directory)
+or read (file), one named UID with the same permissions, **empty group object**,
+matching mask, empty other. The apparent group bits are the ACL mask, not group
+access. No extra entries/default ACL, symlink, writable/world-readable metadata,
+foreign identity or descriptor/path identity mismatch is accepted. The final
+file is opened relative to the bound directory and the same 4096-byte/single-line
+UTF-8 decoder is used. No secret staging, chmod, role or authentication change.
+
+The pinned systemd `write_credential`/`credentials_dir_finalize_permissions`
+source and actual owned-VM metadata establish this transport shape. Fast contract
+cases compare ordinary real files and a hand-written descriptor adapter; the
+real `LoadCredential` FD/UID leg and controlled negative metadata/reference
+cases run before actual provisioning in the lifecycle VM. No metadata-only
+probe substitutes for the mandatory real-systemd positive/matrix run.

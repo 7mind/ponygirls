@@ -51,7 +51,7 @@ def main():
             temporary=root/'hba.tmp';temporary.write_text(text.replace('host all all 0.0.0.0/0 reject',rule+'host all all 0.0.0.0/0 reject'))
             os.replace(temporary,hba)
             subprocess.run([cfg['postgresBin']+'/pg_ctl','-D',str(root/'cluster'/'data'),'reload'],check=True,capture_output=True,timeout=10)
-        provider.provision(cfg,service)
+        provider.provision(cfg,service,False)
         registry[name]=service
         registry_path.write_text(json.dumps(registry))
         print(json.dumps({'jdbcUrl':f'jdbc:postgresql://127.0.0.1:{cfg["port"]}/{name}',

@@ -51,6 +51,11 @@ in {
     umask 077
     exec ${run "provision"} ${lib.escapeShellArg key}
   '';
+  provisionSystemd = key: pkgs.writeShellScript "ponygirls-database-${key}-loaded-credential" ''
+    set -euo pipefail
+    umask 077
+    exec ${run "provision"} ${lib.escapeShellArg key} --loaded-systemd-credential
+  '';
   init = pkgs.writeShellScript "ponygirls-postgres-init" ''
     set -euo pipefail
     umask 077
