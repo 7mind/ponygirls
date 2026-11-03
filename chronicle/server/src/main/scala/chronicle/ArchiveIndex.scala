@@ -1,6 +1,7 @@
 package chronicle
 
 import chronicle.api.*
+import ponygirls.retrieval.CandidateSql
 import io.circe.Json
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.UTF_8
@@ -174,7 +175,7 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
         val dimensions=SearchPolicy.dimensions(config)
         val vector=vectors.find(_.operand==operand).getOrElse(throw DomainError("unavailable","query embedding unavailable"))
         val value=SearchPolicy.vector(vector.values,config)
-        ctes+=s"a$index AS MATERIALIZED(SELECT ch.id,ch.session_id,ch.revision,ch.generation,ch.embedding <=> ?::vector AS distance FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (SELECT true FROM corpus c WHERE c.id=ch.session_id AND c.published=ch.generation AND (${restrictions.text}) OFFSET 0) ORDER BY l2_normalize(ch.embedding)::halfvec($dimensions) <=> l2_normalize(?::vector)::halfvec($dimensions) LIMIT ${SearchPolicy.candidatesPerLeg})"
+        ctes+=s"a$index AS MATERIALIZED(SELECT ch.id,ch.session_id,ch.revision,ch.generation,ch.embedding <=> ?::vector AS distance FROM ch_search_chunks ch WHERE vector_dims(ch.embedding)=$dimensions AND ${IndexProfiles.compatibleSql("ch.profile")} AND (SELECT true FROM corpus c WHERE c.id=ch.session_id AND c.published=ch.generation AND (${restrictions.text}) OFFSET 0) ORDER BY ${CandidateSql.annDistance(dimensions,"ch.embedding")} LIMIT ${SearchPolicy.candidatesPerLeg})"
         args+=value; args+=EmbeddingSpaceDescriptor.from(config.embedding).id; args++=restrictions.args; args+=value
       }
     }

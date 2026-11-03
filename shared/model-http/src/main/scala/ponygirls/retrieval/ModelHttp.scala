@@ -9,13 +9,15 @@ import org.http4s.client.Client
 import org.http4s.ember.client.EmberClientBuilder
 import org.typelevel.ci.CIString
 import java.nio.charset.StandardCharsets.UTF_8
-import java.nio.file.{Files,Path}
+import java.nio.file.{Files,Path,LinkOption,StandardOpenOption}
+import scala.util.Using
 import scala.concurrent.duration.*
 
 /** Full operation URL and explicit credential reference. Empty file contents mean no auth;
   * an absent/unreadable file is an error, never an ambient credential fallback.
   */
 final case class EmbeddingEndpoint(operationUrl: String,model: String,revision: String,dimensions: Int,sendDimensions: Boolean,documentPrefix: String,queryPrefix: String,normalization: String,credentialFile: String,deadline: FiniteDuration,maxResponseBytes: Int,maxBatch: Int,maxInputBytes: Int,maxRequestBytes: Int) {
+  override def toString: String = "EmbeddingEndpoint(<redacted>)"
   def space: EmbeddingSpace = EmbeddingSpace(RetrievalChecks.hash(operationUrl),model,revision,dimensions,sendDimensions,queryPrefix,documentPrefix,normalization)
   def validate(): Unit = {
     JsonHttp.operationUri(operationUrl); space.validate()
@@ -36,9 +38,16 @@ object JsonHttp {
   }
   def credential(path: String): IO[String] = IO.blocking {
     try {
+      // Explicit, trusted operator references may be managed symlinks (agenix).
+      // Resolve on every call, require regular leaf, and bound ACTUAL bytes read.
+      // This is not the adversarial payload-path filesystem capability boundary.
       val file=Path.of(path)
-      RetrievalChecks(Files.size(file)<=16384,"config","model credential exceeds bound")
-      val value=Files.readString(file,UTF_8).stripTrailing()
+      RetrievalChecks(file.isAbsolute,"config","model credential file unavailable")
+      val resolved=file.toRealPath()
+      RetrievalChecks(Files.isRegularFile(resolved,LinkOption.NOFOLLOW_LINKS),"config","model credential file unavailable")
+      val bytes=Using.resource(Files.newInputStream(resolved,StandardOpenOption.READ,LinkOption.NOFOLLOW_LINKS))(_.readNBytes(16385))
+      RetrievalChecks(bytes.length<=16384,"config","model credential exceeds bound")
+      val value=UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString.stripTrailing()
       RetrievalChecks(!value.exists(c => c<' ' || c==127.toChar),"config","invalid model credential")
       value
     } catch { case error: RetrievalError => throw error; case _: Exception => throw RetrievalError("config","model credential file unavailable") }
@@ -55,7 +64,10 @@ object JsonHttp {
         val text=try UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString catch { case _: Exception => throw RetrievalError("model-json","invalid model JSON") }
         decode(io.circe.parser.parse(text).fold(_ => throw RetrievalError("model-json","invalid model JSON"),identity))
       } } }
-    }.timeoutTo(deadline,IO.raiseError(RetrievalError("model-timeout","model deadline exceeded")))
+    }.timeoutTo(deadline,IO.raiseError(RetrievalError("model-timeout","model deadline exceeded"))).handleErrorWith {
+      case error: RetrievalError => IO.raiseError(error)
+      case _ => IO.raiseError(RetrievalError("model-transport","model transport failed"))
+    }
   }
 }
 
