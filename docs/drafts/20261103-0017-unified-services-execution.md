@@ -1,6 +1,6 @@
 # Unified services — active goal ledger
 
-Goal `703a26f8-76a4-4af7-9b6e-624a0abb2f83`: user requested “set yourself a goal and continue until all 3 services are unified and ported”. Controller observed PAUSED at 2026-11-03 01:33 UTC. Resume implementation only after authoritative goal state becomes active. The objective is incomplete; no foundation-only milestone is completion.
+Goal `703a26f8-76a4-4af7-9b6e-624a0abb2f83`: user requested “set yourself a goal and continue until all 3 services are unified and ported”. Controller verified ACTIVE again at 2026-11-03 09:19 UTC after the user reissued the objective. The pause checkpoints below are historical. The objective is incomplete; no foundation-only milestone is completion.
 
 Task base `e9fda183db02898aa4b2110e47febb816b2e9ffe` (2026-11-03 UTC). Main checkout clean at start. Preserve concurrent epistemics documentation. Source plan: [unified service stack](20261102-1915-unified-service-stack.md). Previous foundation/POSIX work is complete and tested; its receipts are historical exact-input evidence, not full-port acceptance.
 
@@ -47,6 +47,14 @@ Writers use explicit absolute precreated worktrees (`isolation:none` harness rou
 6. [in progress] Integrate actual shared seams, hybrid adapters and downstream Paddock/Nix-config consumers.
 7. [pending] Full application/native/browser/migration/recovery/security/retrieval validation, address failures without weakening assertions.
 8. [pending] Independent reviews, source/evidence audit, safe main integration and worktree cleanup; only then complete goal.
+
+## Resumed checkpoint — 2026-11-03 09:19 UTC
+
+- User reissued the same objective; authoritative goal is active, uncapped. Reused the five existing dedicated workers/worktrees. Original main checkouts observed clean; all component checkpoint heads observed unchanged/clean. Q1 freshly reread revision2: agent commits, user pushes/updates pins. Q10 freshly reread dismissed revision2 with no answer: not activation authority.
+- Runtime owner reproducing/fixing the 40 full Chronicle failures before another complete gate. Initial source findings distinguish missed explicit fixture factories/config validation from a genuine default-timeout narrowing: lock5s/idle30s preempt existing six-second wait, thirty-second statement budget and session expiry assertions. Approved explicit Chronicle baseline statement30s/lock35s/idle60s/socket35s, with effective stricter role/config minimum preserved. Parent Paddock consumer AND Chronicle role are aligned; no existing 6s/30s/401 assertion weakened.
+- Manure owner completing auth FIFO, full converter-to-target imported payload binding, least-privilege helper, complete inventory/manifest and full browser/native gates. Haystack owner completing current source-bound 575/30/native/browser gates and characterized identity/caret bounds. Shared reviewer independently probes immutable Haystack b501; service code owners remain sole writers.
+- Parent continues Paddock topology/config tests. Actual sixth evaluation preserved the required low-security warning assertion; Nix owner restored warning rather than weakening it. Old manual runtime scripts still use previous Manure wire paths/Haystack payload shapes and need a current-contract port before completion; downstream native config-validation gate still imports the retired Python ServerConfig and is being replaced with actual no-IO Scala check-config command.
+- No deployment, production migration, credentials rotation, push or pin updates. Long full suites remain parent-supervised background tasks on frozen committed inputs; no further foreground-600s orphan attempts.
 
 ## Paused checkpoint — 2026-11-03 01:35 UTC
 
