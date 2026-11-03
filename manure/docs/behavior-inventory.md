@@ -1,725 +1,447 @@
-# Manure invariant and executable-test register
-
-Source baseline: `e9fda183db02898aa4b2110e47febb816b2e9ffe`. This is an
-inventory/target mapping, not a claim that Python or replacement suites passed.
-Every discovered Python `test_*` method is listed below, including negative,
-crash, race, resource-bound, credential and browser branches. Nested subTest
-cases are additional assertions, not additional discovered methods. JS browser
-helpers are invoked by the listed Python browser cases; standalone
-`tests/browser/network-capture.test.mjs` must also remain in the check graph.
-
-## Invariant → observed source → executable characterization → target → migration
-
-| ID | Invariant and observed implementation | Characterization | Target and migration treatment |
-|---|---|---|---|
-| A | Exact canonical 32-byte base64url credentials, LF-only file allowance, no trim; auth.py is_canonical_token/load_token_file/load_hash_file/parse_cookies; server.py _auth/_api_login/_origin/_mutation_gate | server_security, client_transport/hardening, CLI, MCP, browser login | Preserve digests and cookie codecs; revalidate current live credential hashes, ambiguity before effects; generated Identity, Login/Logout/Whoami; no role privilege change |
-| B | Host+port and exact endpoint Origin, trusted-peer XFP only, no XFH/XFF trust; server.py _parse_authority/_request_endpoint/_is_secure/_dispatch | server_http_opt_in/security/path_mode, browser_tls/http_opt_in/isolation | Preserve exact aliases/default ports/HTTP opt-in; no CORS; API never exposed on content origins; current JSON POST reads are still classified by command for CSRF |
-| C | Immutable file/dir manifest, bounded sizes/depth/topology, empty dirs, index.html then index.htm, no listings; domain.py validate_manifest/validate_manifest_path; server.py _decode_content_path/_serve_content_path | server_lifecycle/security, client_transport/hardening | Typed File/Directory ADT; keep exact ordered paths/hashes, single-pass strict UTF-8 decoding, reserved api/__manure; import payload+manifest losslessly |
-| D | Atomic quota/session reservation, owner-only incomplete mutations, all-user inspect/delete/rotate; storage.py init_artifact and mutation methods; server.py _api_* | server_limits/security, storage_durability | PG transactional lock order replaces SQLite BEGIN IMMEDIATE, not best-effort SUM; preserve owner user/token attribution and reserved bytes; no public enumeration |
-| E | Write/fsync/receipt commit before ACK, reverse/concurrent chunks, idempotent re-PUT, corrupt/missing receipt reconciliation; storage.py put_chunk/reconcile | server_lifecycle, storage_durability, cli_process/resume | Same durability boundary with JDBC receipts+POSIX tree; retain uploading bytes/receipts/sidecars/global chunk size across offline migration; raw chunk stream + generated ChunkReceipt |
-| F | Publish verify→publishing commit→tree fsync→rename→parent/root fsync→ready commit→cleanup; recovery covers every missing/live/staging window; storage.py publish/reconcile | storage_durability, server_lifecycle/security/limits | Preserve fence/lock/claim semantics and recover before serving; never serve partial/publishing; FinishUpload ready retry idempotent, unfinished 409; import all 3 states |
-| G | Immediate expiry masked 404 content/anonymous vs 410 authenticated, patch clear/shorten/extend, activity allowlist, idle sweeper; storage.py sweep/patch_artifact; server.py _expired_fail | server_limits/path_mode, storage_durability | Preserve source binary64 epochs independently of whole-second API display; ExpiryChange Keep/Clear/Set; snapshot matched FS+SQLite/WAL with writes/sweep stopped |
-| H | One-time handoff, token/password/artifact-bound grant revocation, password once only; server.py _content_grant/_content_unlock/_content_auth_ok/_api_rotate; storage grant methods | server_security/path_mode, storage_durability, browser_handoff/unlock/access_modes | Preserve hashes/bindings/original expiry; generated CreateGrant and ContentCommand; no plaintext recovery; credentials never indexed or logged; forms still 303 adapters |
-| I | Descriptor-relative no-follow serving/writes/delete/sweep and physical-root exclusive lifetime claim; storage.py _resolve_parent/_rmtree_at and ArtifactStore lifecycle | storage_durability, server_security/limits/lifecycle, client_hardening | Use existing tested POSIX seam, no JVM startsWith fallback; single process/root; fail closed on alias retarget/root replacement; native acceptance remains mandatory |
-| J | Raw bounded range 200/206/416 streaming, API attachment vs content inline, finite body/admission/deadline, shutdown before releasing root ownership; server.py _read_body/_check_framing/_serve_fd_range/RunningServer.close | server_limits/lifecycle/security, client_external/hardening, cli_process | Preserve malformed framing rejection before effects, partial body cannot mutate, shutdown waits chunks/publish/sweeper/streams; current raw paths only |
-| K | Catalogue full-SQL filters/keysets, typed query-bound cursor, null expiry last, literal casefold search, legacy ASC route; domain.py CatalogueQuery and storage.py list_artifacts | catalogue, server_lifecycle pagination, client_realserver | Intentional replacement: single createdAt DESC catalogue, unsigned exact UTF-8 byte ordering, ROOT lowercase utf8-root-lower-v1 (see current-api vectors); no old cursor decoder. Preserve names incl NUL with bytea, no normalization |
-| L | Client exact-host or origin+mount grant jar; no bearer to content; cross-origin body redirects refused, GET credentials dropped, hostile responses bounded; client.py _request/StdlibTransport/_ranged_download | client_transport/hardening/external, server_http_opt_in | Preserve hardening unchanged while replacing only DTO boundary/routes; generated current envelopes validated strictly; no old server compatibility transport |
-| M | Restart-safe secret-free upload cache, manifest/source pinning, resume received ranges, ready/publishing handling, temp+range+hash fetch installation, symlink/TOCTOU refusal; client.py upload_path/_resolve_resume_state/_ranged_download/_install_staging | client_hardening/stateful/realserver, cli_resume/process | Keep cache keys/records and public CLI/MCP methods; adapt current results into existing local algorithm types, not legacy HTTP; non-generated once passwords never persisted |
-| N | MCP 2025-11-25 newline JSON-RPC lifecycle, strict schemas/ids/params/errors/stdout; mcp.py main/handle_tools_call/_validate_*; cli.py env/exit mapping | mcp_protocol/hardening/environment, client_realserver official SDK | Keep MCP external protocol, no Baboon JSON-RPC replacement; CLI/MCP call current client; official SDK against replacement executable mandatory, fake transport not substitute |
-| O | Dashboard escaped text/no storage, transient secrets cleared, handoff form, CSP/referrer split, isolation and low-security path warning, table/details/race UX; web/dashboard/app.js, web/unlock/unlock.js; server.py shell/header methods | all browser_* and dashboard_markup | Generated current browser codecs; preserve interactions/security assertions, both suffix modes+TLS+path cases; don't weaken browser waits or drop negative cases |
-| P | New metadata-only authenticated retrieval is distinct from exact catalogue | No historical search suite; replacement needs lexical/semantic/hybrid, ACL-before-limit/count, expiry/delete/stale jobs, provider outage/shape/deadline and profile/rebuild tests | Search typed modes/countScope/provenance/evidence; no model calls on writes/catalogue/serve, no secrets/binary contents in model corpus. Future required cases are not claimed as implemented/passed |
-
-Each row below links a complete discovered method to one or more invariant rows.
-The test name is its exact scenario (not merely a happy-path suite label).
-Migration means retain that scenario against the replacement adapter/executable,
-except K's explicitly changed wire/casefold/ordering/cursor assertions; source
-SQL/private-Python assertions become PG/JDBC checks, never silently removed.
-
-## Complete discovered-method inventory
-
-### `test_browser_access_modes.py` — 2 methods
-
-Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [DashboardAccessModeTests.test_subdomain_access_transitions](../tests/test_browser_access_modes.py#L38)
-- [DashboardAccessModeTests.test_path_access_transitions_controls_and_races](../tests/test_browser_access_modes.py#L41)
-
-### `test_browser_dashboard.py` — 18 methods
-
-Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestAssetHygiene.test_dashboard_js_never_injects_html_or_touches_storage](../tests/test_browser_dashboard.py#L52)
-- [TestAssetHygiene.test_unlock_js_never_injects_html_or_touches_storage](../tests/test_browser_dashboard.py#L59)
-- [TestAssetHygiene.test_unlock_shell_uses_external_assets_only](../tests/test_browser_dashboard.py#L66)
-- [TestAssetHygiene.test_login_token_input_is_transient_password_field](../tests/test_browser_dashboard.py#L79)
-- [TestAssetHygiene.test_unlock_form_posts_urlencoded_to_own_origin](../tests/test_browser_dashboard.py#L86)
-- [TestAssetHygiene.test_grant_handoff_is_form_post_not_url](../tests/test_browser_dashboard.py#L94)
-- [DashboardFlows.test_b1_login_sets_session_cookie_and_clears_token](../tests/test_browser_dashboard.py#L138)
-- [DashboardFlows.test_b1_login_requires_exact_origin_http](../tests/test_browser_dashboard.py#L162)
-- [DashboardFlows.test_b1_dashboard_shell_csp_allows_content_suffix](../tests/test_browser_dashboard.py#L176)
-- [DashboardFlows.test_b1_api_dynamic_responses_carry_security_headers](../tests/test_browser_dashboard.py#L212)
-- [DashboardFlows.test_b7_wrong_origin_mutation_with_planted_cookie_changes_nothing](../tests/test_browser_dashboard.py#L223)
-- [DashboardFlows.test_d1_list_detail_delete_with_hostile_name](../tests/test_browser_dashboard.py#L247)
-- [DashboardFlows.test_d1_rotate_reveals_once_and_clears_on_dismiss](../tests/test_browser_dashboard.py#L298)
-- [DashboardFlows.test_a1_logout_clears_revealed_password_dom](../tests/test_browser_dashboard.py#L340)
-- [DashboardFlows.test_a2_detail_failure_is_visible_in_list](../tests/test_browser_dashboard.py#L379)
-- [DashboardFlows.test_b7_hostile_sibling_js_cannot_mutate_dashboard](../tests/test_browser_dashboard.py#L421)
-- [DashboardFlows.test_d1_open_public_and_external_from_dashboard](../tests/test_browser_dashboard.py#L646)
-- [ExpiredDeleteCase.test_a2_expired_artifact_can_be_deleted_from_list](../tests/test_browser_dashboard.py#L710)
-
-### `test_browser_dashboard_ux.py` — 1 methods
-
-Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [DashboardUXTests.test_catalogue_detail_and_session_flows](../tests/test_browser_dashboard_ux.py#L41)
-
-### `test_browser_handoff.py` — 2 methods
-
-Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [HandoffFlows.test_b2_dashboard_open_hands_off_to_content_origin](../tests/test_browser_handoff.py#L39)
-- [HandoffFlows.test_b2_one_time_grant_cannot_be_reused](../tests/test_browser_handoff.py#L106)
-
-### `test_browser_http_opt_in.py` — 1 methods
-
-Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [HttpOptInBrowserCase.test_login_internal_handoff_external_unlock_public_and_logout](../tests/test_browser_http_opt_in.py#L10)
-
-### `test_browser_isolation.py` — 6 methods
-
-Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [IsolationFlows.test_b4_artifacts_cannot_read_each_other](../tests/test_browser_isolation.py#L67)
-- [IsolationFlows.test_b4_content_responses_carry_isolation_headers](../tests/test_browser_isolation.py#L112)
-- [IsolationFlows.test_b4_management_paths_absent_from_content_origin](../tests/test_browser_isolation.py#L136)
-- [IsolationFlows.test_b4_framing_blocked_by_header](../tests/test_browser_isolation.py#L151)
-- [IsolationFlows.test_b5_api_bytes_are_attachment_and_never_execute](../tests/test_browser_isolation.py#L220)
-- [IsolationFlows.test_b6_reserved_prefixes_never_serve_user_content](../tests/test_browser_isolation.py#L274)
-
-### `test_browser_path_mode.py` — 4 methods
-
-Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [PathBrowserCase.test_internal_handoff_two_grants_and_nested_relative_assets](../tests/test_browser_path_mode.py#L19)
-- [PathBrowserCase.test_external_packaged_and_builtin_password_forms](../tests/test_browser_path_mode.py#L51)
-- [PathBrowserCase.test_public_canonical_mount_and_relative_assets](../tests/test_browser_path_mode.py#L75)
-- [PathTlsBrowserCase.test_secure_internal_handoff_external_unlock_and_cookie_binding](../tests/test_browser_path_mode.py#L87)
-
-### `test_browser_tls.py` — 5 methods
-
-Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TlsSmokeCase.test_tls_edge_required_without_proxy](../tests/test_browser_tls.py#L58)
-- [TlsSmokeCase.test_tls_login_sets_secure_host_cookies](../tests/test_browser_tls.py#L89)
-- [TlsSmokeCase.test_tls_handoff_across_separate_domains](../tests/test_browser_tls.py#L116)
-- [TlsSmokeCase.test_tls_external_unlock_round_trip](../tests/test_browser_tls.py#L160)
-- [TlsSmokeCase.test_tls_hostile_planted_none_secure_cannot_mutate](../tests/test_browser_tls.py#L183)
-
-### `test_browser_unlock.py` — 10 methods
-
-Invariant rows: **A B H O**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [UnlockFlows.test_b3_unlock_shell_round_trip_in_browser](../tests/test_browser_unlock.py#L59)
-- [UnlockFlows.test_b3_wrong_password_fails_generic_without_cookie](../tests/test_browser_unlock.py#L97)
-- [UnlockFlows.test_b3_rotation_kills_old_password_and_grants](../tests/test_browser_unlock.py#L162)
-- [UnlockFlows.test_b3_logout_clears_grant_cookie](../tests/test_browser_unlock.py#L198)
-- [UnlockFlows.test_b3_unlock_assets_served_locked_else_404](../tests/test_browser_unlock.py#L224)
-- [UnlockFlows.test_b3_password_pages_use_origin_only_referrer_policy](../tests/test_browser_unlock.py#L251)
-- [UnlockFlows.test_b3_browser_revocation_and_password_rotation](../tests/test_browser_unlock.py#L264)
-- [UnlockFlows.test_b3_no_password_appears_in_listings_or_manifest](../tests/test_browser_unlock.py#L332)
-- [UnlockRateLimitCase.test_b3_browser_rate_limit_statuses](../tests/test_browser_unlock.py#L369)
-- [UnlockRateLimitCase.test_b3_unlock_rate_limited_with_retry_after](../tests/test_browser_unlock.py#L401)
-
-### `test_catalogue.py` — 12 methods
-
-Invariant rows: **K**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [CatalogueStorageCase.test_all_sorts_directions_ties_and_null_expiry_across_pages](../tests/test_catalogue.py#L71)
-- [CatalogueStorageCase.test_unicode_literal_search_id_and_combined_filters](../tests/test_catalogue.py#L87)
-- [CatalogueStorageCase.test_search_casefold_expansion_is_not_limited_to_name_length](../tests/test_catalogue.py#L104)
-- [CatalogueStorageCase.test_cursor_binds_every_effective_query_option](../tests/test_catalogue.py#L110)
-- [CatalogueStorageCase.test_cursor_binds_effective_not_raw_search_or_default_options](../tests/test_catalogue.py#L129)
-- [CatalogueStorageCase.test_cursor_saves_boundary_value_across_mutation_and_deletion](../tests/test_catalogue.py#L138)
-- [CatalogueStorageCase.test_invalid_query_and_typed_cursors_are_domain_errors](../tests/test_catalogue.py#L160)
-- [CatalogueStorageCase.test_cursor_rejects_wrong_sort_value_types_before_sql](../tests/test_catalogue.py#L183)
-- [CatalogueStorageCase.test_sql_filters_and_sort_are_bounded_not_fetch_all_or_offset](../tests/test_catalogue.py#L202)
-- [CatalogueHttpCase.test_http_search_sort_and_legacy_defaults](../tests/test_catalogue.py#L243)
-- [CatalogueHttpCase.test_http_cursor_uses_clamped_limit](../tests/test_catalogue.py#L257)
-- [CatalogueHttpCase.test_http_bad_query_and_cursor_are_domain_errors](../tests/test_catalogue.py#L269)
-
-### `test_cli_process.py` — 3 methods
-
-Invariant rows: **E J M**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestSubprocessKillResume.test_kill_auto_resume](../tests/test_cli_process.py#L103)
-- [TestSubprocessKillResume.test_kill_manual_resume](../tests/test_cli_process.py#L104)
-- [TestOwnedFetchResumeRange.test_interrupted_fetch_resumes_exact_range](../tests/test_cli_process.py#L108)
-
-### `test_cli_resume.py` — 14 methods
-
-Invariant rows: **A E M N**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestEnvPrecedence.test_ambiguous_token_exits_2_no_network](../tests/test_cli_resume.py#L91)
-- [TestEnvPrecedence.test_ambiguous_url_exits_2](../tests/test_cli_resume.py#L105)
-- [TestEnvPrecedence.test_ambiguous_password_exits_2](../tests/test_cli_resume.py#L118)
-- [TestEnvPrecedence.test_missing_credentials_before_network](../tests/test_cli_resume.py#L133)
-- [TestEnvPrecedence.test_token_file_exact_bytes_via_cli](../tests/test_cli_resume.py#L140)
-- [TestEnvPrecedence.test_empty_env_treated_as_unset](../tests/test_cli_resume.py#L152)
-- [TestUploadCacheResume.test_upload_requires_access](../tests/test_cli_resume.py#L180)
-- [TestUploadCacheResume.test_upload_invalid_ttl_before_network](../tests/test_cli_resume.py#L192)
-- [TestUploadCacheResume.test_upload_json_stable_and_cache_no_secrets](../tests/test_cli_resume.py#L204)
-- [TestUploadCacheResume.test_external_generating_call_returns_password_once](../tests/test_cli_resume.py#L228)
-- [TestUploadCacheResume.test_resumed_external_prints_null_note](../tests/test_cli_resume.py#L243)
-- [TestUploadCacheResume.test_source_changed_exit_2](../tests/test_cli_resume.py#L280)
-- [TestUploadCacheResume.test_auto_resume_single_match](../tests/test_cli_resume.py#L303)
-- [TestUploadCacheResume.test_fresh_ignores_cache](../tests/test_cli_resume.py#L338)
-
-### `test_client_external.py` — 5 methods
-
-Invariant rows: **H J L M**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestExternalTokenFreeFetch.test_password_to_manifest_to_ranged_files](../tests/test_client_external.py#L131)
-- [TestExternalTokenFreeFetch.test_public_anon_fetch_no_password](../tests/test_client_external.py#L154)
-- [TestExternalTokenFreeFetch.test_subdomain_url_nested_view_path_keeps_subdomain_routing](../tests/test_client_external.py#L165)
-- [TestExternalTokenFreeFetch.test_path_mode_bare_origin_no_bearer_and_independent_grant_jar](../tests/test_client_external.py#L175)
-- [TestExternalTokenFreeFetch.test_fetch_resumes_partial_temp](../tests/test_client_external.py#L189)
-
-### `test_client_hardening.py` — 49 methods
-
-Invariant rows: **A C E F I J L M**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestB1RedirectBody.test_307_unlock_body_refused](../tests/test_client_hardening.py#L36)
-- [TestB1RedirectBody.test_308_chunk_body_refused_canary](../tests/test_client_hardening.py#L59)
-- [TestB1RedirectBody.test_get_redirect_drops_creds_still_follows](../tests/test_client_hardening.py#L82)
-- [TestB2Bounds.test_negative_and_nonint_sizes_rejected](../tests/test_client_hardening.py#L103)
-- [TestB2Bounds.test_chunk_bytes_bounds](../tests/test_client_hardening.py#L112)
-- [TestB2Bounds.test_oversized_range_ignored_before_write](../tests/test_client_hardening.py#L128)
-- [TestB2Bounds.test_content_range_mismatch_rejected](../tests/test_client_hardening.py#L185)
-- [TestB3Staging.test_existing_part_preserved](../tests/test_client_hardening.py#L232)
-- [TestB3Staging.test_manifest_temp_collision_both_orders](../tests/test_client_hardening.py#L262)
-- [TestB4Symlink.test_dest_symlink_ancestor_rejected_before_mkdir](../tests/test_client_hardening.py#L311)
-- [TestB4Symlink.test_empty_manifest_through_symlink_rejected](../tests/test_client_hardening.py#L332)
-- [TestB4Symlink.test_source_parent_swap_rejected](../tests/test_client_hardening.py#L350)
-- [TestB5ResumeAccess.test_cached_access_mismatch_rejected](../tests/test_client_hardening.py#L431)
-- [TestB5ResumeAccess.test_reports_actual_visibility](../tests/test_client_hardening.py#L442)
-- [TestB5ResumeAccess.test_ready_resume_no_puts_and_retires](../tests/test_client_hardening.py#L451)
-- [TestB7Credentials.test_malformed_direct_token_before_network](../tests/test_client_hardening.py#L464)
-- [TestB7Credentials.test_missing_file_normalized](../tests/test_client_hardening.py#L475)
-- [TestB7Credentials.test_invalid_port_before_network](../tests/test_client_hardening.py#L483)
-- [TestB7Credentials.test_ipv6_origin_bracketed](../tests/test_client_hardening.py#L490)
-- [TestB10Patch.test_shorten_extend_clear_bodies](../tests/test_client_hardening.py#L509)
-- [TestB4SwapDeterministic.test_source_file_swapped_to_symlink_rejected](../tests/test_client_hardening.py#L559)
-- [TestB4SwapDeterministic.test_fetch_final_swapped_to_symlink_refused](../tests/test_client_hardening.py#L579)
-- [TestB7SecretCanary.test_transport_error_hides_authorization](../tests/test_client_hardening.py#L607)
-- [TestB8TopologyHashes.test_topology_uses_valid_hashes](../tests/test_client_hardening.py#L626)
-- [TestB5RecoveryManifest.test_publishing_recovery_continues_not_success](../tests/test_client_hardening.py#L638)
-- [TestB5RecoveryManifest.test_server_manifest_mismatch_rejected](../tests/test_client_hardening.py#L695)
-- [TestB3NamespaceOwnership.test_preexisting_namespace_contents_preserved](../tests/test_client_hardening.py#L754)
-- [TestB3NamespaceOwnership.test_empty_manifest_creates_nothing_extra](../tests/test_client_hardening.py#L778)
-- [TestB3NamespaceOwnership.test_fallback_payload_collision_both_orders](../tests/test_client_hardening.py#L799)
-- [TestB3NamespaceOwnership.test_successful_replace_preserves_foreign_backup](../tests/test_client_hardening.py#L827)
-- [TestB3NamespaceOwnership.test_replace_unreadable_regular_destination](../tests/test_client_hardening.py#L867)
-- [TestB3NamespaceOwnership.test_backup_cleanup_never_unlinks_foreign_inode](../tests/test_client_hardening.py#L907)
-- [TestB3NamespaceOwnership.test_backup_verify_never_unlinks_foreign](../tests/test_client_hardening.py#L968)
-- [TestB4SwapHooks.test_ancestor_swap_between_init_and_read_sends_nothing](../tests/test_client_hardening.py#L1044)
-- [TestB4SwapHooks.test_staging_swap_between_verify_and_install](../tests/test_client_hardening.py#L1112)
-- [TestB11LongPaths.test_nested_path_over_255_roundtrip](../tests/test_client_hardening.py#L1155)
-- [TestB11LongPaths.test_interrupted_long_path_resume](../tests/test_client_hardening.py#L1184)
-- [TestB11LongPaths.test_slash_flatten_collision_impossible](../tests/test_client_hardening.py#L1232)
-- [TestB4BoundaryHooks.test_dest_ancestor_swap_before_parent_open](../tests/test_client_hardening.py#L1263)
-- [TestB4BoundaryHooks.test_staging_swap_at_rename_boundary](../tests/test_client_hardening.py#L1314)
-- [TestB4BoundaryHooks.test_cleanup_preserves_owned_namespace_unrelated](../tests/test_client_hardening.py#L1372)
-- [TestB3SidecarRace.test_foreign_sidecar_planted_during_claim](../tests/test_client_hardening.py#L1422)
-- [TestB4AncestorSwaps.test_single_file_hash_ancestor_swap](../tests/test_client_hardening.py#L1479)
-- [TestB4AncestorSwaps.test_single_file_parent_swap_redirects_nothing](../tests/test_client_hardening.py#L1497)
-- [TestB4AncestorSwaps.test_cleanup_ancestor_swap](../tests/test_client_hardening.py#L1559)
-- [TestB4AncestorSwaps.test_cleanup_swap_after_acquire_before_rmdir](../tests/test_client_hardening.py#L1606)
-- [TestB4AncestorSwaps.test_existing_hash_swap_at_open](../tests/test_client_hardening.py#L1666)
-- [TestB4ParentOpenHook.test_swap_at_install_parent_open_boundary](../tests/test_client_hardening.py#L1733)
-- [TestE1FailFirstRecords.test_e1_baseline_fail_fixed_pass_records](../tests/test_client_hardening.py#L1938)
-
-### `test_client_realserver.py` — 14 methods
-
-Invariant rows: **A C D E G H J K L M N**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestRealServer.test_internal_roundtrip](../tests/test_client_realserver.py#L76)
-- [TestRealServer.test_public_anon_fetch](../tests/test_client_realserver.py#L96)
-- [TestRealServer.test_external_token_free_fetch](../tests/test_client_realserver.py#L118)
-- [TestRealServer.test_chunk_resume_real_server](../tests/test_client_realserver.py#L148)
-- [TestRealServer.test_grant_isolation_real_server](../tests/test_client_realserver.py#L181)
-- [TestRealServer.test_cli_matrix_against_real_service](../tests/test_client_realserver.py#L245)
-- [TestRealServer.test_mcp_matrix_against_real_service](../tests/test_client_realserver.py#L318)
-- [TestRealServer.test_mcp_stdio_matrix_against_real_service](../tests/test_client_realserver.py#L373)
-- [TestRealServer.test_cross_artifact_cookie_isolation_real_server](../tests/test_client_realserver.py#L449)
-- [TestRealServer.test_grant_revocation_real_server](../tests/test_client_realserver.py#L501)
-- [TestRealServer.test_pagination_filters_real_server](../tests/test_client_realserver.py#L614)
-- [TestRealServer.test_ttl_updates_real_server](../tests/test_client_realserver.py#L692)
-- [TestRealServer.test_mcp_stdio_management_calls_against_real_service](../tests/test_client_realserver.py#L742)
-- [TestRealServer.test_official_sdk_lifecycle_against_real_service](../tests/test_client_realserver.py#L815)
-
-### `test_client_stateful.py` — 3 methods
-
-Invariant rows: **E L M**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestStatefulRoundtrip.test_upload_fetch_bytes_ranges](../tests/test_client_stateful.py#L159)
-- [TestStatefulRoundtrip.test_killed_process_auto_and_manual_resume](../tests/test_client_stateful.py#L186)
-- [TestStatefulRoundtrip.test_cli_commands_against_stateful](../tests/test_client_stateful.py#L248)
-
-### `test_client_transport.py` — 23 methods
-
-Invariant rows: **A C J L M**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestAmbiguityNoNetwork.test_constructor_token_and_file_ambiguous_no_network](../tests/test_client_transport.py#L83)
-- [TestAmbiguityNoNetwork.test_empty_values_are_unset_not_ambiguous](../tests/test_client_transport.py#L99)
-- [TestTokenFileCodec.test_exact_bytes_ok](../tests/test_client_transport.py#L106)
-- [TestTokenFileCodec.test_rejects](../tests/test_client_transport.py#L116)
-- [TestLoopbackHttps.test_http_non_loopback_rejected_before_network](../tests/test_client_transport.py#L137)
-- [TestLoopbackHttps.test_https_non_loopback_allowed](../tests/test_client_transport.py#L147)
-- [TestLoopbackHttps.test_http_loopback_allowed](../tests/test_client_transport.py#L157)
-- [TestLoopbackHttps.test_is_loopback_host](../tests/test_client_transport.py#L167)
-- [TestCredentialIsolation.test_bearer_only_to_api_origin](../tests/test_client_transport.py#L178)
-- [TestCredentialIsolation.test_grant_jar_exact_host](../tests/test_client_transport.py#L202)
-- [TestCredentialIsolation.test_cross_origin_redirect_drops_credentials](../tests/test_client_transport.py#L226)
-- [TestManifestValidation.test_validate_paths](../tests/test_client_transport.py#L256)
-- [TestManifestValidation.test_depth_limit](../tests/test_client_transport.py#L272)
-- [TestManifestValidation.test_topology_conflicts](../tests/test_client_transport.py#L281)
-- [TestTTL.test_parse](../tests/test_client_transport.py#L300)
-- [TestUploadFetchRoundTripDummy.test_upload_file_then_fetch_via_api](../tests/test_client_transport.py#L318)
-- [TestUploadFetchRoundTripDummy.test_upload_rejects_symlink](../tests/test_client_transport.py#L392)
-- [TestUploadFetchRoundTripDummy.test_upload_dir_includes_empty_dirs](../tests/test_client_transport.py#L405)
-- [TestUploadFetchRoundTripDummy.test_resume_skips_received_ranges](../tests/test_client_transport.py#L421)
-- [TestUploadFetchRoundTripDummy.test_fetch_verifies_hash_and_atomic](../tests/test_client_transport.py#L482)
-- [TestUploadFetchRoundTripDummy.test_fetch_refuses_symlink_overwrite](../tests/test_client_transport.py#L508)
-- [TestUploadFetchRoundTripDummy.test_fetch_rejects_hostile_manifest](../tests/test_client_transport.py#L535)
-- [TestLoopbackFixture.test_fixture_verifies_bearer_and_range](../tests/test_client_transport.py#L616)
-
-### `test_dashboard_markup.py` — 7 methods
-
-Invariant rows: **O**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [DashboardMarkupTests.test_catalogue_is_an_accessible_sortable_table](../tests/test_dashboard_markup.py#L40)
-- [DashboardMarkupTests.test_infinite_scroll_has_keyboard_and_failure_controls](../tests/test_dashboard_markup.py#L46)
-- [DashboardMarkupTests.test_detail_has_file_table_and_transient_password_actions](../tests/test_dashboard_markup.py#L54)
-- [DashboardMarkupTests.test_detail_offers_access_modes_and_live_feedback](../tests/test_dashboard_markup.py#L60)
-- [DashboardMarkupTests.test_dashboard_distinguishes_session_unavailability_from_login](../tests/test_dashboard_markup.py#L70)
-- [DashboardMarkupTests.test_path_mode_notice_is_an_icon_with_a_tooltip](../tests/test_dashboard_markup.py#L76)
-- [DashboardMarkupTests.test_both_shells_offer_dark_mode_without_external_assets](../tests/test_dashboard_markup.py#L89)
-
-### `test_mcp_environment.py` — 1 methods
-
-Invariant rows: **A N**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestMcpFixtureEnvironment.test_fixtures_ignore_ambient_client_configuration](../tests/test_mcp_environment.py#L12)
-
-### `test_mcp_hardening.py` — 11 methods
-
-Invariant rows: **N**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestMcpHardening.test_initialize_list_version_crashes_then_recovers](../tests/test_mcp_hardening.py#L36)
-- [TestMcpHardening.test_missing_initialize_fields_rejected](../tests/test_mcp_hardening.py#L52)
-- [TestMcpHardening.test_invalid_method_id_types_and_idless](../tests/test_mcp_hardening.py#L68)
-- [TestMcpHardening.test_initialized_before_initialize_ignored](../tests/test_mcp_hardening.py#L90)
-- [TestMcpHardening.test_limit_minimum_enforced](../tests/test_mcp_hardening.py#L104)
-- [TestMcpOfficialSchemas.test_initialize_clientinfo_members](../tests/test_mcp_hardening.py#L125)
-- [TestMcpOfficialSchemas.test_initialized_with_id_or_params_no_advance](../tests/test_mcp_hardening.py#L144)
-- [TestMcpOfficialSchemas.test_list_meta_accepted_ping_params_rejected](../tests/test_mcp_hardening.py#L163)
-- [TestMcpNullAndCapabilities.test_null_id_and_null_params_rejected](../tests/test_mcp_hardening.py#L185)
-- [TestMcpNullAndCapabilities.test_capabilities_members_typed](../tests/test_mcp_hardening.py#L209)
-- [TestMcpNullAndCapabilities.test_nullable_tool_args_accepted](../tests/test_mcp_hardening.py#L237)
-
-### `test_mcp_protocol.py` — 9 methods
-
-Invariant rows: **N**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [TestMcpProtocol.test_initialize_supported_echo](../tests/test_mcp_protocol.py#L101)
-- [TestMcpProtocol.test_initialize_unsupported_offers_downgrade](../tests/test_mcp_protocol.py#L112)
-- [TestMcpProtocol.test_full_lifecycle_ping_list_call](../tests/test_mcp_protocol.py#L119)
-- [TestMcpProtocol.test_jsonrpc_error_shapes](../tests/test_mcp_protocol.py#L151)
-- [TestMcpProtocol.test_parse_error_and_invalid_request](../tests/test_mcp_protocol.py#L168)
-- [TestMcpProtocol.test_stdout_purity](../tests/test_mcp_protocol.py#L187)
-- [TestMcpProtocol.test_tools_call_whoami_inprocess](../tests/test_mcp_protocol.py#L215)
-- [TestMcpProtocol.test_tools_call_domain_fault_iserror](../tests/test_mcp_protocol.py#L233)
-- [TestMcpProtocol.test_sdk_interop_if_available](../tests/test_mcp_protocol.py#L252)
-
-### `test_server_http_opt_in.py` — 5 methods
-
-Invariant rows: **A B H L**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [HttpOptInCase.test_config_default_and_strict_opt_in](../tests/test_server_http_opt_in.py#L40)
-- [HttpOptInCase.test_http_login_upload_grant_fetch_logout_and_https_isolation](../tests/test_server_http_opt_in.py#L54)
-- [HttpOptInCase.test_python_client_and_cli_http_require_explicit_opt_in](../tests/test_server_http_opt_in.py#L82)
-- [HttpOptInCase.test_redirect_http_opt_in_keeps_bearer_origin_scoping](../tests/test_server_http_opt_in.py#L120)
-- [HttpOptInCase.test_host_port_origin_and_forwarded_proto_fail_closed](../tests/test_server_http_opt_in.py#L141)
-
-### `test_server_lifecycle.py` — 18 methods
-
-Invariant rows: **C E F J K**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [LifecycleCase.test_f1_file_roundtrip_bytes_and_sha](../tests/test_server_lifecycle.py#L155)
-- [LifecycleCase.test_f2_dir_empty_dirs_index_and_manifest_json](../tests/test_server_lifecycle.py#L193)
-- [LifecycleCase.test_f2b_topology_rejections](../tests/test_server_lifecycle.py#L265)
-- [LifecycleCase.test_f6_resume_status_idempotent_conflict](../tests/test_server_lifecycle.py#L324)
-- [LifecycleCase.test_r1_reverse_order_chunks_publish](../tests/test_server_lifecycle.py#L403)
-- [LifecycleCase.test_r1_concurrent_chunks_publish](../tests/test_server_lifecycle.py#L427)
-- [LifecycleCase.test_r1_restart_with_corrupted_bytes_resumes](../tests/test_server_lifecycle.py#L461)
-- [LifecycleCase.test_r6_tiny_range_never_reads_whole_file](../tests/test_server_lifecycle.py#L501)
-- [LifecycleCase.test_r6_concurrent_ranged_downloads](../tests/test_server_lifecycle.py#L541)
-- [LifecycleCase.test_r11_http_fault_retry_download_verifies](../tests/test_server_lifecycle.py#L579)
-- [LifecycleCase.test_r11_http_actual_fsync_commit_faults_unserved_then_recover](../tests/test_server_lifecycle.py#L612)
-- [LifecycleCase.test_r11_http_tree_loss_resumes_without_restart](../tests/test_server_lifecycle.py#L727)
-- [LifecycleCase.test_r10_empty_file_roundtrip](../tests/test_server_lifecycle.py#L764)
-- [LifecycleCase.test_r10_empty_root_and_nested_dirs_survive_restart](../tests/test_server_lifecycle.py#L781)
-- [LifecycleCase.test_f7_publish_idempotent_and_publishing_conflict](../tests/test_server_lifecycle.py#L817)
-- [LifecycleCase.test_f7_publish_crash_windows_reconcile](../tests/test_server_lifecycle.py#L835)
-- [LifecycleCase.test_f8_pagination_order_cursor](../tests/test_server_lifecycle.py#L863)
-- [LifecycleCase.test_f8b_uploading_bytes_409_and_hash_mismatch](../tests/test_server_lifecycle.py#L902)
-
-### `test_server_limits.py` — 29 methods
-
-Invariant rows: **A D F G I J**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [LimitsCase.test_ttl_immediate_cutoff_and_sweep](../tests/test_server_limits.py#L127)
-- [LimitsCase.test_ttl_patch_shorten_extend_clear](../tests/test_server_limits.py#L160)
-- [LimitsCase.test_r5_oversized_mutations_rejected_without_effect](../tests/test_server_limits.py#L201)
-- [LimitsCase.test_r5_oversized_delete_preserves_artifact](../tests/test_server_limits.py#L241)
-- [LimitsCase.test_r5_oversized_logout_preserves_grants](../tests/test_server_limits.py#L275)
-- [LimitsCase.test_r5_stalled_body_preserves_state_password_grants](../tests/test_server_limits.py#L308)
-- [LimitsCase.test_r5_malformed_framing_and_canary](../tests/test_server_limits.py#L439)
-- [LimitsCase.test_oversized_json_body_413](../tests/test_server_limits.py#L486)
-- [LimitsCase.test_chunk_size_cap_and_alignment](../tests/test_server_limits.py#L494)
-- [LimitsCase.test_quota_reservation_concurrent_subset](../tests/test_server_limits.py#L536)
-- [LimitsCase.test_session_caps_429](../tests/test_server_limits.py#L567)
-- [LimitsCase.test_login_throttle_and_mutation_rate_limit](../tests/test_server_limits.py#L582)
-- [LimitsCase.test_r15_expiry_status_by_authentication](../tests/test_server_limits.py#L611)
-- [LimitsCase.test_r15_activity_allowlist](../tests/test_server_limits.py#L641)
-- [LimitsCase.test_idle_sessions_swept_and_activity_definition](../tests/test_server_limits.py#L676)
-- [LimitsCase.test_max_connections_503_with_retry_after](../tests/test_server_limits.py#L707)
-- [LimitsCase.test_r7_worker_bound_and_graceful_shutdown](../tests/test_server_limits.py#L741)
-- [LimitsCase.test_r7_close_orders_after_inflight_chunk_commit](../tests/test_server_limits.py#L805)
-- [LimitsCase.test_r7_close_orders_after_inflight_publish](../tests/test_server_limits.py#L848)
-- [LimitsCase.test_r7_close_waits_sweeper_and_streaming](../tests/test_server_limits.py#L890)
-- [LimitsCase.test_r7_stuck_worker_close_raises_and_retains_ownership](../tests/test_server_limits.py#L965)
-- [LimitsCase.test_r16_sweeper_and_handler_faults_hide_canaries](../tests/test_server_limits.py#L1026)
-- [ConfigCase.test_unknown_keys_fail_closed](../tests/test_server_limits.py#L1090)
-- [ConfigCase.test_users_required_and_chunk_range](../tests/test_server_limits.py#L1095)
-- [ConfigCase.test_dashboard_disabled_and_assets](../tests/test_server_limits.py#L1105)
-- [ConfigCase.test_direct_dataclass_construction_compat](../tests/test_server_limits.py#L1142)
-- [ConfigCase.test_r9_competing_server_same_data_dir](../tests/test_server_limits.py#L1176)
-- [ConfigCase.test_r12_direct_construction_validated](../tests/test_server_limits.py#L1194)
-- [ConfigCase.test_production_cookie_names_and_secure](../tests/test_server_limits.py#L1250)
-
-### `test_server_path_mode.py` — 9 methods
-
-Invariant rows: **B C G H**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [PathModeCase.test_public_root_relative_assets_nested_redirects_and_ranges](../tests/test_server_path_mode.py#L31)
-- [PathModeCase.test_internal_grants_coexist_bind_artifacts_and_revoke](../tests/test_server_path_mode.py#L52)
-- [PathModeCase.test_external_client_public_and_password_rotation](../tests/test_server_path_mode.py#L87)
-- [PathModeCase.test_handoff_exact_origin_artifact_binding_and_single_use](../tests/test_server_path_mode.py#L115)
-- [PathModeCase.test_custom_unlock_shell_rewrites_only_actual_root_url_attributes](../tests/test_server_path_mode.py#L128)
-- [PathModeCase.test_expiry_hides_content_and_manifest](../tests/test_server_path_mode.py#L150)
-- [PathConfigCase.test_original_positional_constructor_keeps_subdomain_default](../tests/test_server_path_mode.py#L161)
-- [PathConfigCase.test_ambiguous_artifact_shaped_api_hostname_rejected_in_path_mode](../tests/test_server_path_mode.py#L171)
-- [PathConfigCase.test_suffix_optional_only_for_path_mode_and_mode_validated](../tests/test_server_path_mode.py#L178)
-
-### `test_server_security.py` — 41 methods
-
-Invariant rows: **A B C D F H I J**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [SecurityCase.test_internal_authed_ok_anon_denied](../tests/test_server_security.py#L142)
-- [SecurityCase.test_external_password_flow_and_rotation](../tests/test_server_security.py#L165)
-- [SecurityCase.test_public_anon_ok](../tests/test_server_security.py#L257)
-- [SecurityCase.test_grants_rejected_for_external_and_public](../tests/test_server_security.py#L268)
-- [SecurityCase.test_every_user_lists_inspects_deletes](../tests/test_server_security.py#L279)
-- [SecurityCase.test_incomplete_mutation_owner_only](../tests/test_server_security.py#L294)
-- [SecurityCase.test_r17_noncanonical_provisioned_digest_never_authenticates](../tests/test_server_security.py#L338)
-- [SecurityCase.test_r17_noncanonical_token_file_rejected](../tests/test_server_security.py#L398)
-- [SecurityCase.test_ambiguous_credentials_no_side_effects](../tests/test_server_security.py#L407)
-- [SecurityCase.test_login_requires_exact_origin_and_sets_dev_cookie](../tests/test_server_security.py#L420)
-- [SecurityCase.test_bearer_allows_absent_origin_rejects_mismatch](../tests/test_server_security.py#L458)
-- [SecurityCase.test_single_use_grant_and_wrong_origin](../tests/test_server_security.py#L467)
-- [SecurityCase.test_content_host_rejects_api_and_unknown](../tests/test_server_security.py#L494)
-- [SecurityCase.test_unknown_init_top_level_field_rejected](../tests/test_server_security.py#L503)
-- [SecurityCase.test_unknown_patch_field_rejected](../tests/test_server_security.py#L513)
-- [SecurityCase.test_dir_entry_with_size_rejected_as_invalid_path](../tests/test_server_security.py#L530)
-- [SecurityCase.test_r12_duplicate_host_rejected](../tests/test_server_security.py#L561)
-- [SecurityCase.test_r12_malformed_authorities_rejected](../tests/test_server_security.py#L569)
-- [SecurityCase.test_r12_duplicate_origin_forbidden](../tests/test_server_security.py#L578)
-- [SecurityCase.test_r12_unsupported_method_gated](../tests/test_server_security.py#L604)
-- [SecurityCase.test_r12_production_port_enforced](../tests/test_server_security.py#L617)
-- [SecurityCase.test_d2_referrer_policy_split](../tests/test_server_security.py#L696)
-- [SecurityCase.test_f2_shell_assets_while_locked](../tests/test_server_security.py#L728)
-- [SecurityCase.test_r13_live_parent_swap_never_exposes_outside](../tests/test_server_security.py#L810)
-- [SecurityCase.test_bad_host_sets_no_cookies](../tests/test_server_security.py#L850)
-- [SecurityCase.test_tls_required_without_proxy_proto](../tests/test_server_security.py#L864)
-- [SecurityCase.test_f4_publishing_staging_window_owner_only](../tests/test_server_security.py#L910)
-- [SecurityCase.test_f4_stuck_publishing_keeps_409](../tests/test_server_security.py#L965)
-- [SecurityCase.test_f4_publishing_live_window_owner_only](../tests/test_server_security.py#L997)
-- [SecurityCase.test_f4_publishing_missing_tree_returns_to_uploading](../tests/test_server_security.py#L1040)
-- [SecurityCase.test_r3_token_removal_kills_grants_and_handoffs](../tests/test_server_security.py#L1094)
-- [SecurityCase.test_r3_credential_replacement_same_labels_kills_grants](../tests/test_server_security.py#L1114)
-- [SecurityCase.test_r3_logout_revokes_server_side_grants](../tests/test_server_security.py#L1133)
-- [SecurityCase.test_r2_crlf_filename_rejected_at_init](../tests/test_server_security.py#L1163)
-- [SecurityCase.test_r2_unicode_and_special_filenames](../tests/test_server_security.py#L1178)
-- [SecurityCase.test_r2_dir_redirect_encoding](../tests/test_server_security.py#L1219)
-- [SecurityCase.test_r13_unexpected_live_files_never_served](../tests/test_server_security.py#L1254)
-- [SecurityCase.test_r13_symlinked_live_serves_nothing](../tests/test_server_security.py#L1272)
-- [SecurityCase.test_r4_rejected_patch_leaves_grants_unchanged](../tests/test_server_security.py#L1291)
-- [SecurityCase.test_r14_content_error_and_control_headers](../tests/test_server_security.py#L1314)
-- [SecurityCase.test_security_headers_api_and_content](../tests/test_server_security.py#L1378)
-
-### `test_storage_durability.py` — 51 methods
-
-Invariant rows: **C D E F G H I J**. Target: preserve scenario under current protocol;
-K-only legacy wire/cursor expectations are replaced explicitly.
-
-- [ReceiptCoalescingSuite.test_coalesce_and_idempotent_reput](../tests/test_storage_durability.py#L38)
-- [ReceiptCoalescingSuite.test_gap_ranges_sorted](../tests/test_storage_durability.py#L49)
-- [StorageCase.test_bytes_without_row_and_row_without_bytes_reconcile](../tests/test_storage_durability.py#L87)
-- [StorageCase.test_publish_window_live_present_commits_ready](../tests/test_storage_durability.py#L110)
-- [StorageCase.test_publish_window_neither_tree_returns_to_uploading](../tests/test_storage_durability.py#L123)
-- [StorageCase.test_ready_stray_staging_cleaned](../tests/test_storage_durability.py#L133)
-- [StorageCase.test_orphan_live_tree_without_row_deleted](../tests/test_storage_durability.py#L149)
-- [StorageCase.test_concurrent_init_quota_subset](../tests/test_storage_durability.py#L160)
-- [StorageCase.test_sweep_expired_idle_orphans_grants](../tests/test_storage_durability.py#L182)
-- [StorageCase.test_r1_failed_receipt_commit_retry_safe](../tests/test_storage_durability.py#L194)
-- [StorageCase.test_r10_interrupted_publish_empty_root](../tests/test_storage_durability.py#L225)
-- [StorageCase.test_r8_sweep_vs_publish_invariants](../tests/test_storage_durability.py#L243)
-- [StorageCase.test_r8_init_vs_delete_leaves_no_debris](../tests/test_storage_durability.py#L278)
-- [StorageCase.test_r8_quota_failure_leaves_no_storage](../tests/test_storage_durability.py#L345)
-- [StorageCase.test_r4_unlock_rotate_race_never_honors_old_password](../tests/test_storage_durability.py#L356)
-- [StorageCase.test_r9_second_claim_fails_first_unaffected](../tests/test_storage_durability.py#L400)
-- [StorageCase.test_r9_claim_handoff_after_close](../tests/test_storage_durability.py#L424)
-- [StorageCase.test_r11_publish_faults_recover_without_restart](../tests/test_storage_durability.py#L434)
-- [StorageCase.test_r11_lost_p5_retry_completes](../tests/test_storage_durability.py#L468)
-- [StorageCase.test_r11_lost_p5_restart_recovers](../tests/test_storage_durability.py#L493)
-- [StorageCase.test_r11_recovery_fsync_fault_keeps_publishing](../tests/test_storage_durability.py#L511)
-- [StorageCase.test_r11_live_path_fsync_commit_order](../tests/test_storage_durability.py#L599)
-- [StorageCase.test_r11_recovery_path_fsync_commit_order](../tests/test_storage_durability.py#L622)
-- [StorageCase.test_r11_recovery_data_dir_fault_keeps_publishing_unserved](../tests/test_storage_durability.py#L647)
-- [StorageCase.test_r11_recovery_ready_commit_fault_keeps_publishing_unserved](../tests/test_storage_durability.py#L674)
-- [StorageCase.test_r11_missing_trees_rebuild_resumable](../tests/test_storage_durability.py#L697)
-- [StorageCase.test_r13_symlink_staging_blocked_and_never_served](../tests/test_storage_durability.py#L720)
-- [StorageCase.test_r11_chunk_write_fault_maps_and_retries](../tests/test_storage_durability.py#L756)
-- [StorageCase.test_r13_symlinked_parent_restart_touches_nothing_external](../tests/test_storage_durability.py#L789)
-- [StorageCase.test_r13_symlinked_staging_root_restart](../tests/test_storage_durability.py#L816)
-- [StorageCase.test_r9_simultaneous_start_single_winner](../tests/test_storage_durability.py#L839)
-- [StorageCase.test_r9_sigkill_releases_claim](../tests/test_storage_durability.py#L881)
-- [StorageCase.test_r9_failed_sqlite_startup_releases_claim](../tests/test_storage_durability.py#L936)
-- [StorageCase.test_r7_stuck_lock_close_raises_and_retains_ownership](../tests/test_storage_durability.py#L952)
-- [StorageCase.test_r7_closed_store_rejects_use](../tests/test_storage_durability.py#L989)
-- [StorageCase.test_r11_empty_root_loss_restart_recovers](../tests/test_storage_durability.py#L998)
-- [StorageCase.test_r11_reconcile_uploading_live_fsync_commit_order](../tests/test_storage_durability.py#L1021)
-- [StorageCase.test_r11_sigkill_chunk_receipt_resumes_truthfully](../tests/test_storage_durability.py#L1115)
-- [StorageCase.test_r11_sigkill_publish_lost_p5_recovers_ready](../tests/test_storage_durability.py#L1190)
-- [StorageCase.test_r13_top_level_roots_symlinked_reconcile_sweep_safe](../tests/test_storage_durability.py#L1251)
-- [StorageCase.test_r13_top_level_staging_symlinked_init_fails_closed](../tests/test_storage_durability.py#L1292)
-- [StorageCase.test_r9_alias_paths_contend_for_one_claim](../tests/test_storage_durability.py#L1307)
-- [StorageCase.test_r9_parent_alias_retarget_keeps_physical_binding](../tests/test_storage_durability.py#L1358)
-- [StorageCase.test_r9_root_replacement_fails_closed_before_touching](../tests/test_storage_durability.py#L1470)
-- [StorageCase.test_r9_startup_replacement_with_active_db_fails_closed](../tests/test_storage_durability.py#L1599)
-- [StorageCase.test_r9_failed_startup_closes_before_releasing](../tests/test_storage_durability.py#L1680)
-- [StorageCase.test_r9_post_close_admission_no_touch](../tests/test_storage_durability.py#L1754)
-- [StorageCase.test_r9_reconcile_cleanup_holds_ownership](../tests/test_storage_durability.py#L1822)
-- [StorageCase.test_r9_close_failure_retains_handle_and_claim](../tests/test_storage_durability.py#L1901)
-- [StorageCase.test_topology_validation_matrix](../tests/test_storage_durability.py#L1943)
-- [StorageCase.test_a1_pagination_sql_bounded_limit_plus_one](../tests/test_storage_durability.py#L1956)
-
-Total: **27 files, 353 discovered methods**. Baseline inventory generated
-from Python AST, not imported test modules; dependency-skipped and failure cases
-remain represented. Runtime counts/parameterizations must be recorded separately.
-
-## Required replacement evidence not supplied by this register
-
-Full historical domain/security/browser/client scenarios adapted to Scala service;
-codec goldens in Scala/TS/Python; Unicode/NUL/epoch conversion fixtures; real PG
-quota and receipt/publish/sweep races; all publish/receipt SIGKILL windows; JVM and
-native no-follow/claim/range/TLS/cookie acceptance; matched snapshot importer
-resumability/grants/expiry and rollback-boundary rehearsals; metadata retrieval
-ACL/profile/provider/outage tests; official MCP SDK + Chromium complete suites.
-No production switch, credential rotation, source-data deletion or legacy test
-retirement is authorized by generation or a subset passing.
-
-## Current-target migration status (2026-11-03)
-
-Original 353 discovered Python methods remain; no server/storage tests were
-removed. The tree now has 30 `test_*.py` files / 371 discovered methods, adding
-8 current-codec + 6 current-client + 4 target-harness safety methods. Node browser
-boundary has 7 cases; network capture has 9 (including new command-only logging).
-The original inventory above remains baseline provenance, not a claim that old
-REST callbacks are supported by the new client.
-
-* `browser_fixtures.py` now owns an actual target subprocess and a unique opted-in
-  disposable PostgreSQL database, seeds only through typed current commands/raw
-  chunks, and has no Python server/storage imports. Browser Python probes and
-  access-modes/dashboard-UX helpers use current DTOs; private clocks are replaced
-  by real minimum-60-second TTL expiry probes. Original browser scenario methods,
-  negative controls, race interactions, bytes/hash checks and deadlines remain.
-* `test_client_realserver.py` (14 methods) now starts the target executable;
-  it no longer mutates a private SQLite connection for expiry. Public API
-  60-second expiry preserves expired-but-unswept pagination assertions.
-* `test_cli_process.py` (3 methods) now uses the target executable and genuine
-  child CLI SIGKILL/resume. Audit/delay is client-transport-only, **after** actual
-  receipt ACK; no fake backend ACK can satisfy the assertions. Interrupted fetch
-  still proves exact resumed Range and byte identity.
-* Browser cross-origin JSON commands now require preflight. The two hostile
-  browser tests explicitly assert blocked current-API preflight, never call this
-  a dispatched-cookie 403 proof. Retained URLencoded Login/Logout form adapters
-  still prove actual cookie dispatch + wrong-Origin 403 (including planted
-  None/Secure over TLS). Targeted authenticated CreateGrant/Delete 403 and exact
-  victim byte/session preservation remain direct current-API HTTP complements.
-  This is the intentional current transport change, not a SameSite/preflight
-  shortcut claimed as proof of an authenticated mutation guard.
-* Additional insecure-HTTP regression: the dashboard uses CSPRNG getRandomValues
-  to build canonical v4 UUIDs; randomUUID is secure-context-only. The dedicated
-  check removes randomUUID and still exercises request-ID generation.
-
-Fresh static/component checks: Python current protocol/client/harness safety,
-markup and asset hygiene: **31 methods, 0 failures/errors/skips**; Node current
-boundary/network capture: **16 cases, 0 failures/skips**. All Python test sources
-compile; all browser `.mjs` sources parse. These do not execute PostgreSQL,
-Chromium, the replacement executable, native code or official MCP SDK.
-
-**Not yet executed:** all actual-target/browser/CLI-process scenarios above.
-The deliberate realserver smoke prerequisite probe fails (not skips) because
-`MANURE_TEST_SERVER_COMMAND_JSON` is absent in this worktree environment. The
-owned provider/JNI environment has not been started here. No full service or
-migration acceptance is claimed.
-
-**Historical pending list at `a324a0ad` (client-only items resolved below):** historical `test_client_transport.py`,
-`test_client_external.py`, `test_client_stateful.py`, fake-REST portions of
-`test_client_hardening.py`, CLI/MCP fake-transport helpers and the original
-server/storage suites must be rehosted against the current typed fixture or
-replacement adapter as appropriate. The exploratory historical hardening run
-recorded 8 failures and 18 error reports/49 methods, all retained for migration;
-those old callbacks are not a compatibility target and are not excluded from
-release acceptance. Realserver/browser adapters need actual runner execution
-and any resulting defects fixed before acceptance. Nothing here retires the
-Python source tests or authorizes a production switch.
-
-
-## Retained client fixture conversion complete (`3f5bba81`)
-
-The historical fake-REST callback migration above is now resolved for
-`test_client_hardening`, `test_client_transport`, `test_client_external`,
-`test_client_stateful`, `test_cli_resume`, `test_mcp_protocol` and
-`test_mcp_hardening`: **114 methods**, no removed methods or weakened domain,
-credential, containment, byte/hash, race, resume or stdout-purity assertions.
-
-`current_fixture.py` decodes actual current envelopes to generated Command or
-ContentCommand objects. Scenarios dispatch logical variant/artifact-ID keys and
-return in-process domain fixture values or typed Results, serialized by the
-current codec. It does not translate to legacy HTTP endpoints or consult the
-Python application server. Raw range/chunk requests stay raw. Controlled HTTP
-peers in stateful/transport/official-SDK tests implement current DTOs only.
-Exact PATCH assertions now use generated optional fields plus Keep/Clear/Set;
-receipt fixtures now echo the actual acknowledged offset/length. The IPv6
-bracket-origin regression uses a valid path-mode artifact URL. All original
-negative/race/foreign-inode/mutant-failure records remain. The full fixture
-conversion does not establish real PostgreSQL, process-crash durability or
-native behavior.
-
-`test_mcp_environment` still intentionally nests the actual-target management
-case. It now preserves only the explicit launcher/owned-PG/JNI fixture variables,
-while injecting invalid ambient client credentials/settings as before. This
-one method requires the target runner; it is not replaced by fake success.
-Original server/storage suites and actual target/browser/native acceptance
-remain the backend owner's work; none was retired here.
-
-Fresh committed-source verification at **2026-11-03T01:07:46Z**, source
-`3f5bba8162dad31fc8042ec3bb69e37837c506aa`:
-
-* Python 3.14.8: all seven complete client-only suites above plus current
-  codec/client/harness-safety, markup and asset hygiene: **145 methods,
-  0 failures/errors/skips**. Official MCP SDK **1.32.1** + Node24.21.0 controlled
-  current-HTTP stdio lifecycle executed, not skipped.
-* Node current browser-boundary and CDP capture: **16 cases, 0 failures/skips**.
-* Generated TypeScript/Python codec fixtures: **73 vectors** (20 commands,
-  48 results,4 content,1 chunk) pass. Browser/client ranges now also use a
-  2.6MB payload and assert an actual bounded Range request.
-* Receipt directory: `/tmp/manure-contract-evidence.Dc9gQ7` holds full logs,
-  exact source/tool identities and SHA256 list for all source/generated/web/test
-  inputs. No old/stale XML/report files were combined or filtered.
-* A prior final combined run at source `8efdc198` exposed one redirect-fixture
-  defect: the typed fixture tried to turn transport307 into an application
-  result. Full failing evidence remains at
-  `/tmp/manure-contract-evidence.byopNp`. `3f5bba81` passes transport3xx through
-  unchanged; the real cross-origin body-refusal assertion now passes against a
-  genuine current envelope, not an incidental fixture exception.
-
-No fresh actual-target service execution is claimed in this worker environment.
-The actual-target MCP environment regression and all realserver/CLI-process,
-Chromium, PostgreSQL, native, importer/recovery acceptance still need the owned
-runner. This component receipt is not the full-service completion gate.
-
-
-## Credential source-preflight security correction (`b27444a7`)
-
-Parent-authorized correction to client configuration precedence: known nonempty
-source references count as configured before opening them. Both direct value and
-file reference now mean `ambiguous-credentials` regardless of invalid direct
-shape, missing/empty/unreadable file or FIFO contents. No credentials rotate and
-no wire schema changes. `client.check_secret_pair_ambiguity` is presence-only;
-`resolve_secret_pair` and `ManureClient` call it before credential validation/I/O.
-CLI preflights URL/token and relevant fetch password sources globally; MCP
-preflights URL/token and HTTP configuration before any credential-file read.
-Canonical codecs, exact direct values, empty-as-unset rules, single-file decoding,
-no-network behavior and CLI exit2 remain intact.
-
-Regression file `test_credential_preflight.py` adds8 methods/35 controlled cases.
-Every child has an explicit minimal environment (no ambient client/model/PG
-values), synthetic canonical credentials, owned temp references only, network
-entrypoints forbidden, and a2-second real subprocess deadline for no-writer FIFO
-probes. An audit hook asserts **zero configured-reference opens and zero network
-attempts**, not merely a sanitized error after performing I/O. Exact scenarios:
-- [test_common_pairs_reject_fifo_before_read](../tests/test_credential_preflight.py#L83)
-- [test_common_pairs_missing_file_and_invalid_direct_are_still_ambiguous](../tests/test_credential_preflight.py#L89)
-- [test_constructor_checks_presence_before_direct_token_validation](../tests/test_credential_preflight.py#L97)
-- [test_cli_token_and_url_pairs_fail_before_fifo_or_missing_file](../tests/test_credential_preflight.py#L104)
-- [test_mcp_token_and_url_pairs_fail_before_fifo_or_missing_file](../tests/test_credential_preflight.py#L113)
-- [test_all_pairs_are_preflighted_before_reading_another_pairs_file](../tests/test_credential_preflight.py#L122)
-- [test_cli_password_sources_preflight_before_token_file_read_or_validation](../tests/test_credential_preflight.py#L129)
-- [test_mcp_invalid_http_configuration_precedes_token_file_read](../tests/test_credential_preflight.py#L141)
-
-Fail-first test commit `b5a3999c` against pre-fix application source `9b198e3e`:
-8 methods,33 failing controlled cases, exit1 in28.417s; real bounded FIFO blocks
-and wrong malformed/missing-file precedence reproduced. The passing constructor
-valid-direct cases are not misreported as failures. Fix commit
-`b27444a7654323b33d70621fe05fff5ba0b7ae24` includes the strengthened open/network
-audits. At2026-11-03T01:18:22Z, a fresh `env -i` run with only pinned executable
-PATH, scratch HOME, locale, source PYTHONPATH and explicitly selected SDK1.32.1
-passed **153 methods,0 failures/errors/skips**, including all previous145 plus
-these8. No live client/model/PG environment was inherited. Evidence directory
-`/tmp/manure-credential-preflight.6uqNS2` preserves full fail-first and committed
-fixed logs, source/tool identities, and baseline/fixed input SHA256 manifests.
-No prior reports were discarded/filtered into a pass. This is client/config
-security evidence, not actual-target/native/PostgreSQL/browser acceptance.
-The current Python source inventory is now31 files/379 discovered methods; all
-353 original methods remain. TargetServer was not changed by this correction.
+# Manure CURRENT release inventory and invariant register
+
+## Authority and scope
+
+Machine-readable authority: [`../tests/current-test-inventory.json`](../tests/current-test-inventory.json).
+Runner: [`../scripts/target-suite.py`](../scripts/target-suite.py).
+Contract: sole `manure.api/1.0.0`, including `SearchHit.embeddingSpace` after
+`embeddingProfile`; [current API](current-api.md).
+
+This register replaces the earlier historical AST-method listing as the release
+selector. **A historical method count is not coverage proof.** Current cases are
+actual `unittest` discovery IDs, including inherited browser matrices, and exact
+Node test names. No declaration means no silent omission: a new root/nested
+`test_*.py` or `*.test.mjs`, a missing registered module, an added/missing/duplicate
+case ID, an import resolving outside the assigned source, or a missing concrete
+mapping causes the inventory self-check to fail.
+
+The frozen register currently declares **27 CURRENT Python modules /293 case
+IDs**, **17 Node cases** across both browser-boundary/CDP suites, and the
+**74-vector generated TypeScript codec check**. These are declared inventory
+sizes, **not execution/pass counts**. All client, CLI, MCP, browser, offline and
+actual-target modules are included; there is no six-core-only release gate.
+
+**Seven old Python-server/SQLite implementation test modules are architecture-
+retired from the CURRENT selector, not their domain/security/durability
+requirements.** Their grouped requirements map to concrete current Python,
+Scala/PG and filesystem tests below, with real gaps left open. Their source is
+retained. The Python server entrypoints are **NOT retired/removed**, and no
+production activation, old-state deletion, migration or credential rotation is
+authorized by test registration.
+
+## CURRENT Python modules (unfiltered in `full`)
+
+| Module | Declared cases | Required execution inputs |
+|---|---:|---|
+| `test_browser_access_modes` | 2 | target, browser |
+| `test_browser_dashboard` | 29 | target, browser |
+| `test_browser_dashboard_ux` | 1 | target, browser |
+| `test_browser_handoff` | 4 | target, browser |
+| `test_browser_http_opt_in` | 1 | target, browser |
+| `test_browser_isolation` | 15 | target, browser |
+| `test_browser_path_mode` | 4 | target, browser |
+| `test_browser_tls` | 5 | target, browser |
+| `test_browser_unlock` | 34 | target, browser |
+| `test_cli_process` | 3 | target |
+| `test_cli_resume` | 14 | controlled local/pure |
+| `test_client_external` | 5 | controlled local/pure |
+| `test_client_hardening` | 49 | controlled local/pure |
+| `test_client_realserver` | 14 | target, sdk |
+| `test_client_stateful` | 3 | controlled local/pure |
+| `test_client_transport` | 23 | controlled local/pure |
+| `test_credential_preflight` | 8 | controlled local/pure |
+| `test_current_client` | 6 | controlled local/pure |
+| `test_current_protocol` | 9 | controlled local/pure |
+| `test_current_target_harness` | 4 | controlled local/pure |
+| `test_current_test_inventory` | 14 | controlled local/pure |
+| `test_dashboard_markup` | 7 | controlled local/pure |
+| `test_mcp_environment` | 1 | target |
+| `test_mcp_hardening` | 11 | controlled local/pure |
+| `test_mcp_protocol` | 9 | sdk |
+| `test_offline_conversion` | 17 | offline-postgres |
+| `test_target_migration` | 1 | target |
+
+`test_offline_conversion` uses Python ArtifactStore to create synthetic historical
+states and, in one complementary test, restores PG rows into a disposable SQLite
+copy for a historical source-format recovery rehearsal. This is explicitly **not
+proof of the replacement backend**. `test_target_migration` separately exercises
+the real configured executable after import, restart, original grants, resumable
+sessions, source preservation and writable fix-forward boundaries. No legacy
+HTTP/API adapter or Python backend fallback is used for target serving.
+
+Current CLI/client/MCP controlled peers are current generated-command test seams,
+not legacy REST translators. Actual-target and official-SDK legs remain mandatory;
+fake peers do not substitute for them.
+
+## Gate behavior and prerequisites
+
+```
+python3 manure/scripts/target-suite.py --check-inventory
+# Owning orchestrator: frozen source/artifact + disposable provider, supervised
+# in the background for the complete unfiltered application suites:
+manure/scripts/test-target.sh jvm full
+manure/scripts/test-target.sh native <absolute-ELF> <matching-source-manifest> full
+```
+
+`--check-inventory` validates registration, exact IDs and concrete references
+without executing tests; it always reports `releaseAcceptance:false`. It does
+not claim missing prerequisites are available or that open invariants passed.
+
+`full` always discovers **all CURRENT** cases and executes both Node suites plus
+the generated-codec check. No optional-file append or environment selector can
+remove current modules. Exact declared IDs must match executed IDs. There must
+be positive execution counts and **zero skips, expected failures, unexpected
+successes, failures or errors**. Missing prerequisites fail explicitly before
+execution (`classification:prerequisite-failed`, expected inventory retained,
+zero executed tests, not a skipped/pass suite). A newly unregistered module is
+an inventory error, never an automatically retired or ignored test.
+
+Full HTTP/target execution requires the least-privilege owned helper route:
+
+- `MANURE_TEST_PROVISION_COMMAND`: absolute executable path, **not JSON argv**;
+- `PONYGIRLS_OWNED_FIXTURE_ROOT/provider.json`: owned marker;
+- `PONYGIRLS_TEST_PROVISION_SERVICE=manure`;
+- `PG_PROVIDER`: absolute trusted code path, not an ambient PG connection;
+- explicit target launcher, pinned Node/SDK/Playwright/Chromium/openssl tools,
+  and required offline PG binaries.
+
+The runner only checks configuration/path/executable presence; it neither
+provisions a database nor reads credential-file contents. TargetServer and the
+owning provider perform bounded provisioning/lifecycle operations. Full mode
+**does not accept or retain admin-only `MANURE_TEST_JDBC_*`/`ALLOW_CREATEDB`
+fallback**. Legacy owned-JDBC opt-in is diagnostic `core`/`focused` only.
+
+Before importing test modules, the runner keeps only explicit tool/test-provider
+inputs, resets HOME/XDG under the fresh receipt, prepends this assigned source to
+PYTHONPATH, and discards ambient client/model/PG/proxy configuration. `PG_PROVIDER`
+is the explicit code-path exception; PGHOST/PGUSER/PGPASSWORD/PGPASSFILE/
+PGSERVICE* are not retained. Migration tests create their own owned PGSERVICEFILE
+after the guard. Discarded variable **names**, not values, are recorded.
+
+`core` and `focused` remain explicit iterative diagnostics. They can exit0 for
+successful scoped tests but always report `releaseAcceptance:false`; neither is
+release evidence. Focused names must resolve to declared CURRENT cases, cannot
+select retired implementations and cannot overlap/duplicate IDs.
+
+Full summary separates `currentTestSuccess` from `releaseAcceptance`.
+**Any `openInvariantGaps` forces full exit NONZERO even if every current test
+passes.** Closing a gap requires concrete replacement assertions/source review,
+then an explicit register update—not deletion because the old Python test no
+longer imports. Native/JVM/provider/consumer gates below are separately mandatory;
+a passing CURRENT gate for one artifact is not global service completion.
+
+Fresh receipts preserve inventory, registry/input SHA binding, prerequisite
+errors, full logs, and fsynced per-case outcomes. Subtest failures include their
+trace immediately, before final unittest summary, so an interrupted long run
+does not lose their cause. Existing evidence is never overwritten/filtered into
+a pass. An interruption is not an exit status or completed full suite.
+
+## Architecture-retired implementation modules
+
+| Module | Architecture reason | Retained invariant groups |
+|---|---|---|
+| `test_catalogue` | Direct SQLite storage/old REST catalogue architecture; current policy is explicitly different. | `catalogue-current` |
+| `test_server_http_opt_in` | Constructs the retired Python HTTP server/config; current HTTP/TLS/browser target tests replace its transport. | `origins`, `credentials`, `manifest-serving` |
+| `test_server_lifecycle` | Constructs Python server/SQLite internals; preserve lifecycle/receipt/publish/range invariants through real replacement adapters. | `manifest-serving`, `receipts`, `publication-import`, `range-client` |
+| `test_server_limits` | Constructs Python socket/thread/semaphore/storage internals; requirements remain current, with explicit unresolved lifecycle/concurrency groups. | `quota-session`, `expiry-activity`, `admission-shutdown`, `credentials`, `filesystem-lifetime` |
+| `test_server_path_mode` | Imports Python HTTP/config; current generated target/path/TLS browser scenarios replace transport-specific assumptions. | `origins`, `manifest-serving`, `grants-secrets`, `expiry-activity` |
+| `test_server_security` | Imports Python server/SQLite hooks; domain/security rules remain current including adjudicated shared incomplete authority. | `shared-authority`, `credentials`, `origins`, `manifest-serving`, `grants-secrets`, `filesystem-lifetime` |
+| `test_storage_durability` | Direct Python ArtifactStore/SQLite internals are not the replacement PG/FS service. Synthetic source-state construction remains permitted ONLY in migration tests. | `receipts`, `publication-import`, `quota-session`, `expiry-activity`, `filesystem-lifetime`, `admission-shutdown`, `grants-secrets` |
+
+Only this explicit frozen implementation allowlist may be architecture-retired;
+new/current client/CLI/MCP/browser modules cannot be relabeled to escape full.
+The exact original test sources remain in the tree for audit, migration fixtures
+and any still-needed characterization, not as a production compatibility oracle.
+
+## Invariant → source → concrete current assertion → migration/gap treatment
+
+The JSON contains exact file markers and qualified test IDs. References below
+are abbreviated for readability; every JSON reference is validated. A mapped
+assertion is a required case to execute, **not a claim it has passed**. These
+are domain groups, not one-to-one AST test-count parity.
+
+### credentials
+
+Canonical exact token/password/hash bytes; source ambiguity/configuration precedes any file/network I/O, bounded server secret-file acquisition.
+
+**Source:** `manure/manure/auth.py` (`def is_canonical_token`); `manure/manure/client.py` (`def check_secret_pair_ambiguity`); `manure/CONTRACT.md`.
+
+**Concrete target assertions:**
+- [`test("canonical token and strict credential byte rules preserve original hashes"`](../../manure/backend/src/test/scala/manure/DomainSuite.scala).
+- [`test("server hash-file reader rejects FIFO without waiting for a writer"`](../../manure/backend/src/test/scala/manure/SecretBoundarySuite.scala).
+- [`test("managed symlink reference allowed; oversized/CRLF/malformed hashes refuse bounded"`](../../manure/backend/src/test/scala/manure/SecretBoundarySuite.scala).
+- [`test_credential_preflight.CredentialPreflightTests.test_all_pairs_are_preflighted_before_reading_another_pairs_file`](../../manure/tests/test_credential_preflight.py).
+- [`test_credential_preflight.CredentialPreflightTests.test_common_pairs_reject_fifo_before_read`](../../manure/tests/test_credential_preflight.py).
+
+**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+
+### shared-authority
+
+Every live authenticated manager lists/inspects/manifests/status/deletes/rotates any artifact including incomplete states; only chunk/publish/incomplete PATCH are owner-only; ready PATCH is shared.
+
+**Source:** `manure/CONTRACT.md` (`6.5 Incomplete-session ownership`); `manure/manure/server.py` (`def _api_info`); `manure/tests/test_server_security.py` (`def test_every_user_lists_inspects_deletes`).
+
+**Concrete target assertions:**
+- [`test("NUL/Unicode metadata, exact reservations and complete upload/publish/read/delete"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test_client_realserver.TestRealServer.test_grant_revocation_real_server`](../../manure/tests/test_client_realserver.py).
+
+**Adjudication:** Parent adjudicated 2026-11-03: original CONTRACT§6.5 and Python source agree; inverse port assertions are a BUG, not an intentional policy change.
+
+**OPEN—blocks full release acceptance:**
+- Adjudicated regression: the frozen source still has inverse owner-only incomplete read/abort assertions. Replace with positive shared incomplete info/status/manifest/list/delete/rotate and negative owner-only chunk/publish/PATCH matrix on memory and real PG plus actual target.
+
+**Planned corrected target (not counted as implemented coverage):**
+- `manure/backend/src/test/scala/manure/ArtifactsContract.scala` :: `test("shared incomplete reads and abort coexist with owner-only upload mutations"`.
+
+### origins
+
+Exact Host/port and Origin, trusted-peer XFP only; cookie/bearer ambiguity; same-origin management, separated content, no CORS and explicit low-security HTTP/path modes.
+
+**Source:** `manure/manure/server.py` (`def _parse_authority`); `manure/manure/server.py` (`def _check_origin_api_mutation`); `manure/CONTRACT.md` (`5.8 Edge trust boundary`).
+
+**Concrete target assertions:**
+- [`test("host/origin/cookie-bearer ambiguity and static module containment"`](../../manure/backend/src/test/scala/manure/HttpSuite.scala).
+- [`test("generated management mutations require exact Origin for cookie but absent allowed bearer"`](../../manure/backend/src/test/scala/manure/HttpSuite.scala).
+- [`test_browser_tls.TlsSmokeCase.test_tls_hostile_planted_none_secure_cannot_mutate`](../../manure/tests/test_browser_tls.py).
+- [`test_browser_dashboard.DashboardSiblingCase.test_b7_hostile_sibling_js_cannot_mutate_dashboard`](../../manure/tests/test_browser_dashboard.py).
+- [`test_browser_http_opt_in.HttpOptInBrowserCase.test_login_internal_handoff_external_unlock_public_and_logout`](../../manure/tests/test_browser_http_opt_in.py).
+
+**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+
+### manifest-serving
+
+Immutable ordered file/directory manifest, topology/path/resource bounds, empty directories/files, index preference/no listing, strict decoding, mounted redirects and MIME/attachment/isolation behavior.
+
+**Source:** `manure/manure/domain.py` (`def validate_manifest`); `manure/manure/server.py` (`def _decode_content_path`); `manure/manure/server.py` (`def _serve_content_path`).
+
+**Concrete target assertions:**
+- [`test("manifest canonical path and topology bounds reject every traversal form"`](../../manure/backend/src/test/scala/manure/DomainSuite.scala).
+- [`test("directory-only, zero-byte and nested manifests preserve real empty topology"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test("raw chunks/download byte ranges stream current contract and no secret in manifests"`](../../manure/backend/src/test/scala/manure/HttpSuite.scala).
+- [`test_browser_path_mode.PathBrowserCase.test_public_canonical_mount_and_relative_assets`](../../manure/tests/test_browser_path_mode.py).
+- [`test_browser_isolation.IsolationSiblingCase.test_b5_api_bytes_are_attachment_and_never_execute`](../../manure/tests/test_browser_isolation.py).
+- [`test_browser_isolation.IsolationSeparateCase.test_b6_reserved_prefixes_never_serve_user_content`](../../manure/tests/test_browser_isolation.py).
+
+**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+
+### receipts
+
+Chunk bytes+file/parent fsync precede receipt commit and ACK; aligned/tail/idempotent/conflicting receipt rules, truthful restart progress, reverse/concurrent chunk admission and pinned source validation.
+
+**Source:** `manure/manure/storage.py` (`def put_chunk`); `manure/tests/test_server_lifecycle.py` (`def test_r1_concurrent_chunks_publish`); `manure/tests/test_storage_durability.py` (`def test_r11_sigkill_chunk_receipt_resumes_truthfully`).
+
+**Concrete target assertions:**
+- [`test("chunk ACK follows file+parent fsync and durable receipt commit; retry heals corrupt bytes"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test("chunk alignment, tail, overflow and single byte ranges remain bounded"`](../../manure/backend/src/test/scala/manure/DomainSuite.scala).
+- [`test_client_realserver.TestRealServer.test_chunk_resume_real_server`](../../manure/tests/test_client_realserver.py).
+- [`test_cli_process.TestSubprocessKillResume.test_kill_manual_resume`](../../manure/tests/test_cli_process.py).
+
+**OPEN—blocks full release acceptance:**
+- Real-adapter replacement assertion still needed for reverse-order/concurrent chunk PUTs and conflicting retry serialization.
+- Real target server SIGKILL after acknowledged receipt and restart must prove durable truthful progress. Current CLI SIGKILL kills the client, not the server.
+
+### publication-import
+
+Verify→publishing commit→tree/rename/parent/root fsync→ready commit→cleanup; never serve partial/publishing; ready retry idempotent; matched offline snapshot retains all states/receipts/grants/IEEE epochs and writable fix-forward boundary.
+
+**Source:** `manure/manure/storage.py` (`def publish`); `manure/manure/storage.py` (`def reconcile`); `manure/CONTRACT.md` (`6.3 Publish ordering and crash windows`).
+
+**Concrete target assertions:**
+- [`test("each publish crash window remains unserved then restart reconciles ready or resumable"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test("hash mismatch repairs receipts before reporting and never serves a partial ready tree"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test_target_migration.TargetMigrationTests.test_actual_target_import_resume_crash_windows_original_grants_restart_and_fixforward`](../../manure/tests/test_target_migration.py).
+- [`test_offline_conversion.PostgresContracts.test_process_death_after_commit_retries_without_duplicate_rows`](../../manure/tests/test_offline_conversion.py).
+- [`test_offline_conversion.PostgresContracts.test_killed_sql_connection_rolls_back_import_transaction`](../../manure/tests/test_offline_conversion.py).
+
+**OPEN—blocks full release acceptance:**
+- Crash-window fault-injection is present, but real target process-death publication/ACK boundaries still require their own server-process SIGKILL assertion (not just source-state construction/clean target restart).
+
+### quota-session
+
+Atomic aggregate reservation and per-user/global session bounds with consistent PG lock ordering: concurrent initializations admit only fitting subset and rejected/faulted operations leave no storage/reservation debris.
+
+**Source:** `manure/manure/storage.py` (`def init_artifact`); `manure/tests/test_server_limits.py` (`def test_quota_reservation_concurrent_subset`); `manure/tests/test_storage_durability.py` (`def test_r8_quota_failure_leaves_no_storage`).
+
+**Concrete target assertions:**
+- [`test("NUL/Unicode metadata, exact reservations and complete upload/publish/read/delete"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test("failed PG commit during content resource acquisition closes the pinned file"`](../../manure/backend/src/test/scala/manure/AcquisitionFailureSuite.scala).
+
+**OPEN—blocks full release acceptance:**
+- No current real-PG simultaneous quota-fitting subset/session-cap contention and cleanup assertions identified in the frozen source. Single reservation/read/delete and resource acquisition tests do not establish aggregate concurrency.
+
+### expiry-activity
+
+Original-precision expiry cuts authorization immediately (410 authenticated API,404 anonymous/content); TTL shorten/extend/clear; only init/ACK/publish/PATCH refresh activity; sweeper handles idle uploads/orphans/grants without racing publish.
+
+**Source:** `manure/manure/server.py` (`def _expired_fail`); `manure/manure/storage.py` (`def sweep`); `manure/tests/test_server_limits.py` (`def test_r15_activity_allowlist`).
+
+**Concrete target assertions:**
+- [`test("expiry uses original float64 boundary; publishing is not idle-swept"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test_client_realserver.TestRealServer.test_ttl_updates_real_server`](../../manure/tests/test_client_realserver.py).
+- [`test_client_realserver.TestRealServer.test_pagination_filters_real_server`](../../manure/tests/test_client_realserver.py).
+- [`test_browser_dashboard.ExpiredDeleteCase.test_a2_expired_artifact_can_be_deleted_from_list`](../../manure/tests/test_browser_dashboard.py).
+
+**OPEN—blocks full release acceptance:**
+- Current replacement needs explicit successful PATCH/publish versus read/status activity allowlist checks and sweep-vs-publish/receipt lock-order assertion; expiry display tests alone do not cover idle-session durability.
+
+### grants-secrets
+
+One-time artifact/principal-bound handoff, password/token-digest-bound grants and original expiry; revoke on logout/credential replacement/rotation/visibility/delete; password once only, no raw response/log/URL leaks.
+
+**Source:** `manure/manure/server.py` (`def _content_auth_ok`); `manure/manure/storage.py` (`def revoke_credential_grants`); `manure/CONTRACT.md` (`7.5 Password/hash non-leak rule`).
+
+**Concrete target assertions:**
+- [`test("external password one-time disclosure, original grant expiry/binding and rotation"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test("single-use handoff and token-bound content grant revoke at logout and credential change"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test("grant capacity keeps newly issued grant even when its hash sorts below timestamp-tied predecessor"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+- [`test_browser_access_modes.DashboardAccessModeTests.test_path_access_transitions_controls_and_races`](../../manure/tests/test_browser_access_modes.py).
+- [`test_browser_isolation.TestCurrentErrorEnvelope.test_current_command_fixture_projection_never_replaces_received_fault_bytes`](../../manure/tests/test_browser_isolation.py).
+- [`test_browser_unlock.UnlockSeparateCase.test_b3_no_password_appears_in_listings_or_manifest`](../../manure/tests/test_browser_unlock.py).
+
+**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+
+### filesystem-lifetime
+
+Descriptor-relative no-follow operations, regular-file checks, bounded non-following cleanup, physical-root identity/alias ownership and retained claim until all file/worker leases release; linked native parity required.
+
+**Source:** `manure/manure/storage.py` (`def _resolve_parent`); `manure/tests/test_storage_durability.py` (`def test_r9_root_replacement_fails_closed_before_touching`).
+
+**Concrete target assertions:**
+- [`test("kernel claims contend across processes, inode rename aliases, and failed root close"`](../../manure/server/src/test/scala/manure/storage/FilesystemBehavior.scala).
+- [`test("kernel claims release after owning process is killed, without lockfile cleanup"`](../../manure/server/src/test/scala/manure/storage/FilesystemBehavior.scala).
+- [`test("existing opens reject symlinks, directories and FIFO without blocking"`](../../manure/server/src/test/scala/manure/storage/FilesystemBehavior.scala).
+- [`test("cleanup unlinks symlinks and never descends into their targets"`](../../manure/server/src/test/scala/manure/storage/FilesystemBehavior.scala).
+- [`test("wrong payload root cannot silently attach existing PG metadata"`](../../manure/backend/src/test/scala/manure/RuntimeSuite.scala).
+- [`test("symlink payload parent/leaf cannot redirect writes, hashes, serving or deletion"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
+
+**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+
+### range-client
+
+Finite streamed range reads with exact206/416 semantics; credentials/grants remain origin/host/mount scoped; cross-origin body replay refused; source/destination inode pinning, hash verification, secret-free resume cache and foreign staging files preserved.
+
+**Source:** `manure/manure/client.py` (`def _request`); `manure/manure/client.py` (`def _ranged_download`); `manure/manure/client.py` (`def _install_staging`).
+
+**Concrete target assertions:**
+- [`test_client_hardening.TestB1RedirectBody.test_307_unlock_body_refused`](../../manure/tests/test_client_hardening.py).
+- [`test_client_hardening.TestB4ParentOpenHook.test_swap_at_install_parent_open_boundary`](../../manure/tests/test_client_hardening.py).
+- [`test_client_hardening.TestB3NamespaceOwnership.test_backup_verify_never_unlinks_foreign`](../../manure/tests/test_client_hardening.py).
+- [`test_client_external.TestExternalTokenFreeFetch.test_path_mode_bare_origin_no_bearer_and_independent_grant_jar`](../../manure/tests/test_client_external.py).
+- [`test_cli_process.TestOwnedFetchResumeRange.test_interrupted_fetch_resumes_exact_range`](../../manure/tests/test_cli_process.py).
+- [`test_current_client.CurrentClientTests.test_full_upload_fetch_empty_dirs_hashes_ranges_and_secret_free_cache`](../../manure/tests/test_current_client.py).
+
+**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+
+### admission-shutdown
+
+Malformed/oversized/stalled requests cannot mutate or revoke before body validation; finite API/unlock/login throttle and max-connections admission; graceful close orders after active chunk/publish/stream/sweeper or retains claim on failure.
+
+**Source:** `manure/manure/server.py` (`def _check_framing`); `manure/tests/test_server_limits.py` (`def test_r5_stalled_body_preserves_state_password_grants`); `manure/tests/test_server_limits.py` (`def test_r7_close_orders_after_inflight_chunk_commit`).
+
+**Concrete target assertions:**
+- [`test("bounded body, duplicate JSON and framing fail before initialization effects"`](../../manure/backend/src/test/scala/manure/HttpSuite.scala).
+- [`test_browser_unlock.UnlockRateLimitCase.test_b3_browser_rate_limit_statuses`](../../manure/tests/test_browser_unlock.py).
+- [`test("root close refuses live pinned handles and retains claim after unlink and root rename"`](../../manure/server/src/test/scala/manure/storage/FilesystemBehavior.scala).
+
+**OPEN—blocks full release acceptance:**
+- Real target needs stalled/partial-body rejection-before-effects and max-connections503+Retry-After assertion.
+- Real target graceful close with active chunk/publish/range stream/sweeper and stuck-worker claim retention is not established by standalone POSIX lease-close tests.
+
+### catalogue-current
+
+Sole current UTF8 unsigned-byte ordering with exact stored NUL/Unicode values, ROOT lowercase literal matching, all sorts/ties/null expiry last and typed query/filter/sort/limit-bound keyset positions; no legacy wire or casefold cursor obligations.
+
+**Source:** `manure/tests/test_catalogue.py`; `manure/docs/current-api.md` (`utf8-root-lower-v1`); `manure/backend/src/main/scala/manure/Catalogue.scala`.
+
+**Concrete target assertions:**
+- [`test("metadata UTF8 NUL and IEEE754 timestamp bits roundtrip without normalization"`](../../manure/backend/src/test/scala/manure/DomainSuite.scala).
+- [`test_client_realserver.TestRealServer.test_pagination_filters_real_server`](../../manure/tests/test_client_realserver.py).
+- [`test_browser_dashboard_ux.DashboardUXTests.test_catalogue_detail_and_session_flows`](../../manure/tests/test_browser_dashboard_ux.py).
+- [`test_current_client.CurrentClientTests.test_typed_catalogue_patch_management_and_search`](../../manure/tests/test_current_client.py).
+
+**Adjudication:** Python SQLite binary/casefold, old ASC default and old cursor decoder assertions intentionally retire. Replace with current utf8-root-lower-v1 semantics; stored names/epochs remain lossless.
+
+**OPEN—blocks full release acceptance:**
+- Need real current-PG all-sort/direction/tie/null-expiry traversal and typed cursor mismatch/boundary-mutation checks, including ROOT-lowercase/NUL/Unicode vectors. UI sorting and one-key pagination do not establish this complete current policy.
+
+### cli-mcp
+
+Owned CLI/MCP remain restart-safe, credential-hermetic and stdout-clean; MCP2025-11-25 JSON-RPC lifecycle/errors/schemas plus official SDK against controlled peer AND actual target. All current client modules execute unfiltered.
+
+**Source:** `manure/manure/cli.py` (`def main`); `manure/manure/mcp.py` (`def main`); `manure/CONTRACT.md` (`10. MCP stdio`).
+
+**Concrete target assertions:**
+- [`test_mcp_protocol.TestMcpProtocol.test_full_lifecycle_ping_list_call`](../../manure/tests/test_mcp_protocol.py).
+- [`test_mcp_protocol.TestMcpProtocol.test_sdk_interop_if_available`](../../manure/tests/test_mcp_protocol.py).
+- [`test_mcp_environment.TestMcpFixtureEnvironment.test_fixtures_ignore_ambient_client_configuration`](../../manure/tests/test_mcp_environment.py).
+- [`test_client_realserver.TestRealServer.test_official_sdk_lifecycle_against_real_service`](../../manure/tests/test_client_realserver.py).
+- [`test_cli_process.TestSubprocessKillResume.test_kill_auto_resume`](../../manure/tests/test_cli_process.py).
+
+**Treatment:** mapped requirements remain mandatory in CURRENT and/or the separate real-adapter/native gates; no historical wire compatibility is introduced.
+
+### retrieval-current
+
+Authenticated ready/unexpired metadata+manifest-path corpus only; lexical/semantic/hybrid explicit, no hidden model work/fallback; ACL/filter before limit/count/evidence, actual source/generation/policy/profile/space and provenance, stale/fenced publication and profile cutover.
+
+**Source:** `manure/backend/src/main/scala/manure/Search.scala`; `manure/models/manure.baboon` (`embeddingSpace: opt[str]`).
+
+**Concrete target assertions:**
+- [`test("metadata-only management retrieval filters ready/expiry and excludes payload secrets"`](../../manure/backend/src/test/scala/manure/HttpSuite.scala).
+- [`test_current_protocol.CurrentProtocolTests.test_search_goldens_distinguish_published_space_from_lexical_head`](../../manure/tests/test_current_protocol.py).
+- [`shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/AuthorizedCandidateTest.scala`](../../shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/AuthorizedCandidateTest.scala).
+- [`shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala`](../../shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala).
+
+**OPEN—blocks full release acceptance:**
+- Manure actual-target semantic/hybrid/profile-space/not-ready/provider-outage/filter/expiry/delete delivery assertions are required; shared retrieval correctness and codec goldens alone do not prove the service adapter.
+
+The parent is implementing `test_target_search.py` with
+`TargetSearchTests.test_metadata_only_heartbeat_publication_modes_outage_and_profile_space`.
+It is recorded as planned, **not silently counted as an existing/current test**.
+When its source appears it must be explicitly promoted into the CURRENT module
+and exact case-ID list; until then the unregistered-module check fails and the
+retrieval invariant gap remains open. No optional-file append is restored.
+
+## Separately required artifact/runtime gates
+
+- **backend-jvm-pg-fs**: Unfiltered manureServer+manureStorage suite inventory and exact source/report binding, zero skips. Command: `manure/scripts/test-backend.sh`.
+- **jvm-current-full**: All CURRENT tests against the frozen JVM artifact, helper-owned runtime role and complete invariant mappings. Command: `manure/scripts/test-target.sh jvm full`.
+- **native-current-full**: The SAME CURRENT inventory against the actual source-bound native artifact, including HTTP/TLS/PG/FS/browser/import/restart. Command: `manure/scripts/test-target.sh native <absolute ELF> <matching source manifest> full`.
+- **native-filesystem-parity**: Complete linked-native filesystem behavior inventory, not JVM-only evidence.
+- **provider-nix-isolation**: One owned PG provider with service-isolated roles/databases, least-privilege helper provisioning/drop, Nix/runtime/credential/restart graph validation; not proved by an admin-only test fallback.
+- **shared-consumer-regressions**: Shared runtime/retrieval changes require full owned Chronicle/Haystack regressions per their instructions; Manure subset is not consumer evidence.
+
+## Current component verification and historical evidence
+
+The embedding-space slice used pinned Baboon0.0.198 (executable SHA checked),
+regenerated Scala/TypeScript/Python/browser outputs and repeated generation with
+identical generated-source hashes. Scala2.13 `manureContracts/compile` succeeded;
+15 current Python codec/client methods,8 browser-boundary Node cases and74
+crosslanguage vectors passed for that slice. It did not compile the service's
+new Search constructor or prove actual semantic retrieval; those are owner gates.
+
+Inventory self-check and its regression cases verify unknown root/nested Python
+and Node modules fail, missing/duplicate IDs fail, retired implementations retain
+requirements, full includes all current client families, skips/xfail/missing
+execution cannot pass, subtest traces are durable, evidence cannot be overwritten,
+and helper/provider environment separation is explicit. The local focused
+inventory/credential/current-codec diagnostic executed37 methods with0
+failures/errors/skips and correctly reported **releaseAcceptance:false**.
+A full invocation without provider/browser prerequisites exited1 with293 expected
+and0 executed tests—not a full-suite result. Open gaps remain as listed.
+
+Historical receipts are scoped history, not current acceptance: client fixture
+source `3f5bba81` had145 Python methods/16 Node cases/73 vectors; the credential
+correction `b27444a7` had153 methods with0 failures/errors/skips under env-i,
+after bounded synthetic FIFO fail-first reproduction (8 methods/33 failing
+controlled cases). Their evidence directories were
+`/tmp/manure-contract-evidence.Dc9gQ7` and
+`/tmp/manure-credential-preflight.6uqNS2`. The earlier actual-target full run
+`20261103T011209Z-jvm.btZ4In` was explicitly **INTERRUPTED**, with no authoritative
+exit status/final summary; failure markers were not converted into a completion
+claim. Those inputs differ from this register and must not be reused as full
+current release evidence.
+
+No current full JVM/native/browser/PG run is claimed by this inventory change.
+The parent supervises frozen full runs after integration and fills real invariant
+gaps. Source Python entrypoints and acknowledged state remain preserved until
+all required replacement gates and separately authorized activation work finish.
