@@ -102,26 +102,35 @@ Start with the [server README](chronicle/README.md) and
 are separate Home Manager opt-ins; neither deployment nor real-history uploads
 happen during builds/tests.
 
-### Shared Scala backend foundation
+### Unified Scala services
 
-The active JVM build and dependency lock live at repository root. Use the
-pinned shell and explicit project tasks:
+Chronicle, Haystack and Manure are independent Scala/distage/cats-effect/http4s
+applications with separate PostgreSQL databases, credentials and authorization.
+The common sbt build and pinned dependency lock live at repository root:
 
 ```bash
-nix develop .#backend --command bash scripts/backend-sbt.sh 'losslessJson/test' 'manureStorage/test'
+nix develop .#backend --command bash scripts/backend-sbt.sh 'chronicleServer/compile' 'haystackServer/compile' 'manureServer/compile'
+nix develop .#backend --command bash shared/service-runtime/scripts/test-postgres.sh
 nix build .#checks.x86_64-linux.backend-foundation
 nix build .#checks.x86_64-linux.manure-posix-acceptance .#checks.x86_64-linux.manure-direct-jni
 ```
 
-`shared/lossless-json` provides validated, lossless JSON values for future
-Baboon payload boundaries. `manure/server` provides Linux POSIX/JNI confined-filesystem
-primitives, verified on both JVM/shared-library and static-musl native runtimes,
-**not a replacement artifact server**. Publish ordering, metadata and recovery
-remain separate implementation work. Chronicle retains its documented
-build/test commands through the common build. Haystack and Manure's existing
-backends remain active until their separate ports and data migrations are ready.
-The owned services target one current Baboon contract; legacy wire compatibility
-is not a migration requirement.
+Shared modules provide one compiled Baboon runtime, bounded JDBC transactions
+and credential reads, lossless JSON, model HTTP transport, and fenced
+PostgreSQL retrieval/publication. Domain authorization, document policies and
+migration semantics stay service-owned. Chronicle retains both of its search
+contracts. Manure's `manure/server` is the confined POSIX/JNI storage library;
+the actual application is `manure/backend`, including PostgreSQL metadata,
+durable uploads, grants and recovery. Native storage targets x86-64 Linux;
+Manure's standalone CLI/MCP client package does not require that server runtime.
+
+Each service exposes one current Baboon contract; owned clients move with it,
+without historical wire adapters. Stored documents, credentials and acknowledged
+writes remain migration invariants. See [Haystack's server/configuration guide](haystack/server/README.md),
+[Manure's backend guide](manure/backend/README.md), and its
+[offline migration procedure](manure/docs/offline-conversion.md). Builds/tests
+use disposable fixtures; deployment and production-data migration are explicit
+operator actions.
 
 ### Agent content
 
@@ -443,27 +452,52 @@ Repository names, agent responses, and other free-form hook text are omitted.
 ### Home Manager server hosting (Linux)
 
 Server hosting is separate from the existing MCP clients and Chronicle collector.
-Both exports are inert until explicitly enabled and require a working user
+The exports are inert until explicitly enabled and require a working user
 systemd manager; they do not configure host trust, firewall rules or enrollment.
+`homeManagerModules.service-postgres` provides the independent
+`ponygirls.servicePostgres` cluster. Define each application's database/role and
+runtime password file separately; disabling an application neither stops the
+provider nor deletes its database. Existing clusters are not automatically
+adopted: the provider uses a new marked PostgreSQL 18 state directory.
 
 - **`homeManagerModules.agenticServicesServer`** — user-owned SearXNG,
-  Crawl4AI/Redis, optional Haystack/PostgreSQL and Manure, an nginx proxy and
+  Crawl4AI/Redis, optional native Haystack and Manure, an nginx proxy and
   static publishing. Configure `smind.hm.services.agentic`: the state directory,
   listener/URLs, TLS files, runtime credential paths and optional external setup
   dependencies. SearXNG package/settings can be supplied by the consumer.
   For example:
 
   ```nix
-  imports = [ inputs.ponygirls.homeManagerModules.agenticServicesServer ];
-  smind.hm.services.agentic = {
-    enable = true;
-    stateDirectory = "/home/alice/.local/state/agentic-services";
-    host = { hostname = "services.example.net"; address = "127.0.0.1"; };
-    tls = { certificateFile = "/run/user/1000/services/cert.pem"; keyFile = "/run/user/1000/services/key.pem"; };
-    crawl4ai.tokenFile = "/run/user/1000/secrets/crawl4ai";
-    haystack.agentTokenFile = "/run/user/1000/secrets/haystack";
-    manure.agentTokenFile = "/run/user/1000/secrets/manure";
-  };
+  { config, inputs, ... }:
+  let
+    database = name:
+      let connection = config.ponygirls.servicePostgres.connections.${name};
+      in {
+        inherit (connection) jdbcUrl readinessUnit;
+        user = connection.databaseUser;
+        passwordFile = connection.databasePasswordFile;
+        limits.maxConnections = connection.maxConnections;
+      };
+  in {
+    imports = [ inputs.ponygirls.homeManagerModules.agenticServicesServer ];
+    ponygirls.servicePostgres = {
+      enable = true;
+      stateDirectory = "/home/alice/.local/state/ponygirls-postgres-18";
+      databases = {
+        haystack = { name = "haystack"; user = "haystack"; passwordFile = "/run/user/1000/secrets/haystack-db"; };
+        manure = { name = "manure"; user = "manure"; passwordFile = "/run/user/1000/secrets/manure-db"; schemas = [ "public" "manure" ]; };
+      };
+    };
+    smind.hm.services.agentic = {
+      enable = true;
+      stateDirectory = "/home/alice/.local/state/agentic-services";
+      host = { hostname = "services.example.net"; address = "127.0.0.1"; };
+      tls = { certificateFile = "/run/user/1000/services/cert.pem"; keyFile = "/run/user/1000/services/key.pem"; };
+      crawl4ai.tokenFile = "/run/user/1000/secrets/crawl4ai";
+      haystack = { agentTokenFile = "/run/user/1000/secrets/haystack"; database = database "haystack"; };
+      manure = { agentTokenFile = "/run/user/1000/secrets/manure"; database = database "manure"; };
+    };
+  }
   ```
 
   Tokens remain runtime files, never Nix values. Existing operator credentials
@@ -474,9 +508,11 @@ systemd manager; they do not configure host trust, firewall rules or enrollment.
   Neither the proxy nor disabled browser hooks provide Crawl4AI egress isolation.
 
 - **`homeManagerModules.chronicleServer`** — user-owned Chronicle,
-  PostgreSQL/pgvector, password-hash provisioning and daily backups. Configure
-  `smind.hm.services.chronicle.settings` with the server's application settings,
-  plus `database.passwordFile`; the module supplies the local JDBC connection.
+  password-hash provisioning and daily backups, consuming an independently
+  provisioned PostgreSQL/pgvector database. Configure
+  `smind.hm.services.chronicle.settings` with application settings and
+  `database` with the connection, complete finite limits, credential path and
+  readiness unit. Migrations depend on database/setup readiness, not model services.
   `passwords.NAME` can derive `credentials/NAME.pbkdf2` from an explicit runtime
   password and nonsecret revision file. Annotation/embedding endpoints, users,
   tokens and any model/GPU services remain consumer choices. `serverDependencies`
@@ -492,8 +528,12 @@ operator credentials. Backups retain completed dumps for 14 days.
 
 ### NixOS modules
 
-- **`nixosModules.chronicle`** — the native archive/search server, local
-  PostgreSQL/pgvector setup, runtime credentials and optional reverse proxy.
+- **`nixosModules.service-postgres`** — the same typed provider policy on the
+  host's single `postgresql.service`, with isolated application roles/databases,
+  explicit schemas and logical backup/restore tooling. It does not adopt an
+  existing unmarked cluster or rotate existing role passwords.
+- **`nixosModules.chronicle`** — the native archive/search server, consuming an
+  explicit database connection, runtime credentials and optional reverse proxy.
   `homeManagerModules.chronicle` configures MCP access and the opt-in Linux
   systemd user collector; it is also included in `dev-llm`.
 
