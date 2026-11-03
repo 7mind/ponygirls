@@ -38,6 +38,21 @@ let
 
   common = { config, ... }: {
     system.stateVersion = "26.11";
+    assertions = [{
+      assertion = config.virtualisation.useNixStoreImage
+        && config.virtualisation.writableStore
+        && config.virtualisation.writableStoreUseTmpfs
+        && !config.virtualisation.mountHostNixStore
+        && !config.virtualisation.useHostCerts
+        && config.virtualisation.sharedDirectories == { }
+        && config.fileSystems."/nix/.ro-store".fsType == "erofs"
+        && builtins.elem "ro" config.fileSystems."/nix/.ro-store".options
+        && config.fileSystems."/nix/.rw-store".fsType == "tmpfs"
+        && config.fileSystems."/nix/store".overlay.lowerdir == [ "/nix/.ro-store" ]
+        && config.fileSystems."/nix/store".overlay.upperdir == "/nix/.rw-store/upper"
+        && config.fileSystems."/nix/store".overlay.workdir == "/nix/.rw-store/work";
+      message = "Manure VM requires a guest-only tmpfs overlay over its isolated read-only EROFS store image, never host store/certs/shares";
+    }];
     ponygirls.servicePostgres = {
       enable = true;
       databases.manure = { passwordFile = "/etc/manure-test/database-password"; schemas = [ "public" "manure" ]; };
@@ -187,6 +202,12 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
   name = "manure-vm";
   defaults = { lib, ... }: {
     virtualisation.useNixStoreImage = true;
+    # Same pinned stock register-nix-paths/--load-db prelude as the actual
+    # 37d unit-graph VM: plain RO bind fails creating /nix/store/.links even
+    # at initial boot. Use its canonical guest tmpfs overlay, as validated
+    # by the corrected 468 lifecycle VM; the EROFS image remains read-only.
+    virtualisation.writableStore = true;
+    virtualisation.writableStoreUseTmpfs = true;
     virtualisation.mountHostNixStore = false;
     virtualisation.useHostCerts = false;
     virtualisation.sharedDirectories = lib.mkForce { };
