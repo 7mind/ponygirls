@@ -1,0 +1,49 @@
+{
+  "policy": "Raw serial/env/config/XML/audit/file/image contents excluded. Existing artifact hashes/byte sizes only; NO image/PG reads or digests.",
+  "files": {
+    "events.jsonl": {
+      "bytes": 28405,
+      "sha256": "afc6e18ae4e82285c0291a5c8a587a1ff243ab894f84a9f06951c36eb259775f"
+    },
+    "exit.json": {
+      "bytes": 3123,
+      "sha256": "f96f2000940515f68ddedb310b82d276544ccad233ccf73e8aeb684a33d9c0bf"
+    },
+    "launch.json": {
+      "bytes": 10442,
+      "sha256": "5077139ee9c8152cecd96d40662622a8f8d0803a2244e63e3e104fae6ca27e44"
+    },
+    "owned-cleanup.json": {
+      "bytes": 2271,
+      "sha256": "22519d2d2e3d35d0b400f508129cf2cca037694d3b93e3b2d6b5f6c2b6d5ac4a"
+    },
+    "retained-lab/manure-l17645q4/audit-edge.jsonl": {
+      "bytes": 2664,
+      "sha256": "7dc59847af9d760ba1202e8fb60fa43c688174bb90119c8df6925c51348c738f"
+    },
+    "retained-lab/manure-l17645q4/audit-manifest.json": {
+      "bytes": 4809,
+      "sha256": "8519655ab3093c1c5b37d3b326e320efad5677073958d79d05f0315a4c11155f"
+    },
+    "retained-lab/manure-l17645q4/audit-strict.jsonl": {
+      "bytes": 2702,
+      "sha256": "7b11c0e0d2c291323620f29c64032c44ac3985deecb050b948dd0eac9e4a0e2b"
+    },
+    "retained-lab/manure-l17645q4/driver.json": {
+      "bytes": 379,
+      "sha256": "9357e33d856e2d9591f4f74cac5e053bb1fea19523d9c5971e51b89a2df6f000"
+    },
+    "retained-lab/manure-l17645q4/logs/result.xml": {
+      "bytes": 194431,
+      "sha256": "d109f0a44d824bea69bbd1918c1a04347ffe58aef920405c4f14e6031ea4f5c1"
+    },
+    "running.json": {
+      "bytes": 1092,
+      "sha256": "511b51f96af3b95c9f9553f38d99dc1c4ba71fc0beb96ea99940787800927359"
+    },
+    "stdout-stderr.log": {
+      "bytes": 231015,
+      "sha256": "8b46de4c22f925daa236110af723b2bd0540845ff1e054b83562830e9eae723b"
+    }
+  }
+}
