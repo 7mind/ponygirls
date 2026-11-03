@@ -7,7 +7,7 @@ import haystack.{api,domain}
 import haystack.domain.Fault
 import haystack.auth.*
 import haystack.application.ItemService
-import haystack.query.{SearchInput,SearchSort,Search}
+import haystack.query.{SearchInput,SearchSort,Search,Query,InvalidQuery,QueryDiagnostic,Span}
 import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -128,7 +128,10 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     }}}
     case r @ POST -> Root / "api" / "v1" / "complete" =>handled {authed(r) { _=>body(r).flatMap { raw=>
       val input=Wire.decode(api.QueryRequest.codecJson,raw)
-      if(input.caret<0 || input.caret>input.query.length) throw Fault("bad-envelope","invalid caret")
+      if(input.query.length>Query.MaxChars) throw new InvalidQuery(Vector(QueryDiagnostic(s"query exceeds ${Query.MaxChars} characters",Span(0,input.query.length))))
+      if(input.caret<0 || input.caret>input.query.length ||
+          input.caret>0 && input.caret<input.query.length && Character.isHighSurrogate(input.query.charAt(input.caret-1)) && Character.isLowSurrogate(input.query.charAt(input.caret)))
+        throw Fault("bad-envelope","invalid caret")
       service.complete(input.query.take(input.caret).split("\\s+").lastOption.getOrElse("")).map(values=>ok(api.CompletionResult.codecJson,api.CompletionResult(values.toList)))
     }}}
     case r @ POST -> Root / "api" / "v1" / "values" =>handled {authed(r) { _=>body(r).flatMap(raw=>service.values(Wire.decode(api.ValuesRequest.codecJson,raw).field)).map(values=>ok(api.ValuesResult.codecJson,api.ValuesResult(values.toList))) }}

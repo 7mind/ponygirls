@@ -62,6 +62,8 @@ Migration0005 compares query decimal lexemes by signs/magnitudes/digits, includi
 `1e±999999`, without numeric-cast overflow or exponent-sized allocation. No
 unsupported-query fallback downloads the corpus into the server/browser.
 
+Completion enforces the full4096-UTF16-unit query bound even for a short requested prefix; carets must be in range and cannot split a surrogate pair.
+
 Values return at most100 distinct current values; completion returns at most20
 suggestions using grammar plus bounded current metadata/IDs, never histories or
 models. Quoted insertions preserve colons, spaces, controls and non-BMP identity.

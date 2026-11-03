@@ -69,13 +69,21 @@ object Auth {
       if (uri.getScheme != "http" || !config.allowedOrigins.contains(raw) || !config.allowedHosts.exists(_.equalsIgnoreCase(uri.getHost)) || conflicts)
         throw Fault("config", "insecure origins require a dedicated allowed HTTP authority")
     }
-    def idWhitespace(c: Char): Boolean = Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '\uFEFF'
+    // Baseline ECMAScript /[^\\s:]{1,n}/ counts UTF16 units. Java's
+    // isWhitespace additionally classifies U+001C..001F as separators and Java
+    // regex quantifiers count supplementary code points; neither may alter
+    // an acknowledged author/token identity or credential mapping.
+    def idWhitespace(c:Char):Boolean =
+      c >= '\u0009' && c <= '\u000d' || c == ' ' || c == '\u00a0' || c == '\u1680' ||
+      c >= '\u2000' && c <= '\u200a' || c == '\u2028' || c == '\u2029' ||
+      c == '\u202f' || c == '\u205f' || c == '\u3000' || c == '\ufeff'
+    def validId(value:String,max:Int):Boolean=value.nonEmpty && value.length<=max && !value.exists(c=>c==':' || idWhitespace(c))
     val entries = config.users.flatMap { user =>
-      if (!user.id.matches("[^\\s:]{1,128}") || user.id.exists(idWhitespace) || !Set("human", "agent").contains(user.userType)) throw Fault("config", "invalid user")
+      if (!validId(user.id,128) || !Set("human", "agent").contains(user.userType)) throw Fault("config", "invalid user")
       if (user.tokens.isEmpty) throw Fault("config", "user has no tokens")
       unique(user.tokens.map(_.id), "duplicate token id")
       user.tokens.map { token =>
-        if (!token.id.matches("[^\\s:]{1,64}") || token.id.exists(idWhitespace)) throw Fault("config", "invalid token id")
+        if (!validId(token.id,64)) throw Fault("config", "invalid token id")
         Tokens.readDigest(token.hashFile) -> Principal(user.id, user.userType, token.id)
       }
     }

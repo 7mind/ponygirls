@@ -1,0 +1,227 @@
+{
+  "format": "old-production-static-identity-v1",
+  "baseline": "e9fda183db02898aa4b2110e47febb816b2e9ffe",
+  "sourceDigests": {
+    "auth-config": "aac6c541cd6c9cfe40684ca7014e5fb17591d38dddfeab329519011888b6bcf7",
+    "auth-tokens": "0e93d6862c834da34f273725b88983f11d2d11a7ad2f398fb8eeeacf7213c73d"
+  },
+  "provenance": "Actual baseline loadAuth/token file authentication; accepted identities acknowledged by frozen actual old ItemService and memory adapter. Synthetic tokens/files only.",
+  "fixtures": [
+    {
+      "name": "non-whitespace-1c",
+      "userId": "prior\u001cwriter",
+      "tokenId": "prior\u001cbrowser",
+      "accepted": true,
+      "userUtf16": 12,
+      "tokenUtf16": 13,
+      "key": "identity:non-whitespace-1c",
+      "requestId": "0193e8d5-6f5c-7a1b-8c2d-000000000001",
+      "revision": 1,
+      "documentCanonical": "{\"description\":\"d\",\"fields\":{},\"human-attention\":\"cleared\",\"importance\":\"low\",\"links\":[],\"status\":\"actual\",\"title\":\"synthetic historical identity\",\"type\":\"fact\"}"
+    },
+    {
+      "name": "non-whitespace-1d",
+      "userId": "prior\u001dwriter",
+      "tokenId": "prior\u001dbrowser",
+      "accepted": true,
+      "userUtf16": 12,
+      "tokenUtf16": 13,
+      "key": "identity:non-whitespace-1d",
+      "requestId": "0193e8d5-6f5c-7a1b-8c2d-000000000002",
+      "revision": 1,
+      "documentCanonical": "{\"description\":\"d\",\"fields\":{},\"human-attention\":\"cleared\",\"importance\":\"low\",\"links\":[],\"status\":\"actual\",\"title\":\"synthetic historical identity\",\"type\":\"fact\"}"
+    },
+    {
+      "name": "non-whitespace-1e",
+      "userId": "prior\u001ewriter",
+      "tokenId": "prior\u001ebrowser",
+      "accepted": true,
+      "userUtf16": 12,
+      "tokenUtf16": 13,
+      "key": "identity:non-whitespace-1e",
+      "requestId": "0193e8d5-6f5c-7a1b-8c2d-000000000003",
+      "revision": 1,
+      "documentCanonical": "{\"description\":\"d\",\"fields\":{},\"human-attention\":\"cleared\",\"importance\":\"low\",\"links\":[],\"status\":\"actual\",\"title\":\"synthetic historical identity\",\"type\":\"fact\"}"
+    },
+    {
+      "name": "non-whitespace-1f",
+      "userId": "prior\u001fwriter",
+      "tokenId": "prior\u001fbrowser",
+      "accepted": true,
+      "userUtf16": 12,
+      "tokenUtf16": 13,
+      "key": "identity:non-whitespace-1f",
+      "requestId": "0193e8d5-6f5c-7a1b-8c2d-000000000004",
+      "revision": 1,
+      "documentCanonical": "{\"description\":\"d\",\"fields\":{},\"human-attention\":\"cleared\",\"importance\":\"low\",\"links\":[],\"status\":\"actual\",\"title\":\"synthetic historical identity\",\"type\":\"fact\"}"
+    },
+    {
+      "name": "non-whitespace-85",
+      "userId": "priorwriter",
+      "tokenId": "priorbrowser",
+      "accepted": true,
+      "userUtf16": 12,
+      "tokenUtf16": 13,
+      "key": "identity:non-whitespace-85",
+      "requestId": "0193e8d5-6f5c-7a1b-8c2d-000000000005",
+      "revision": 1,
+      "documentCanonical": "{\"description\":\"d\",\"fields\":{},\"human-attention\":\"cleared\",\"importance\":\"low\",\"links\":[],\"status\":\"actual\",\"title\":\"synthetic historical identity\",\"type\":\"fact\"}"
+    },
+    {
+      "name": "non-whitespace-200b",
+      "userId": "prior​writer",
+      "tokenId": "prior​browser",
+      "accepted": true,
+      "userUtf16": 12,
+      "tokenUtf16": 13,
+      "key": "identity:non-whitespace-200b",
+      "requestId": "0193e8d5-6f5c-7a1b-8c2d-000000000006",
+      "revision": 1,
+      "documentCanonical": "{\"description\":\"d\",\"fields\":{},\"human-attention\":\"cleared\",\"importance\":\"low\",\"links\":[],\"status\":\"actual\",\"title\":\"synthetic historical identity\",\"type\":\"fact\"}"
+    },
+    {
+      "name": "astral-user-limit",
+      "userId": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "tokenId": "browser",
+      "accepted": true,
+      "userUtf16": 128,
+      "tokenUtf16": 7,
+      "key": "identity:astral-user-limit",
+      "requestId": "0193e8d5-6f5c-7a1b-8c2d-000000000007",
+      "revision": 1,
+      "documentCanonical": "{\"description\":\"d\",\"fields\":{},\"human-attention\":\"cleared\",\"importance\":\"low\",\"links\":[],\"status\":\"actual\",\"title\":\"synthetic historical identity\",\"type\":\"fact\"}"
+    },
+    {
+      "name": "astral-token-limit",
+      "userId": "writer",
+      "tokenId": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "accepted": true,
+      "userUtf16": 6,
+      "tokenUtf16": 64,
+      "key": "identity:astral-token-limit",
+      "requestId": "0193e8d5-6f5c-7a1b-8c2d-000000000008",
+      "revision": 1,
+      "documentCanonical": "{\"description\":\"d\",\"fields\":{},\"human-attention\":\"cleared\",\"importance\":\"low\",\"links\":[],\"status\":\"actual\",\"title\":\"synthetic historical identity\",\"type\":\"fact\"}"
+    },
+    {
+      "name": "astral-user-over-limit",
+      "userId": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 130,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "astral-token-over-limit",
+      "userId": "writer",
+      "tokenId": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "accepted": false,
+      "userUtf16": 6,
+      "tokenUtf16": 66
+    },
+    {
+      "name": "whitespace-9",
+      "userId": "prior\twriter",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-b",
+      "userId": "prior\u000bwriter",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-c",
+      "userId": "prior\fwriter",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-20",
+      "userId": "prior writer",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-a0",
+      "userId": "prior writer",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-1680",
+      "userId": "prior writer",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-2000",
+      "userId": "prior writer",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-2028",
+      "userId": "prior writer",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-2029",
+      "userId": "prior writer",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-202f",
+      "userId": "prior writer",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-205f",
+      "userId": "prior writer",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-3000",
+      "userId": "prior　writer",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    },
+    {
+      "name": "whitespace-feff",
+      "userId": "prior﻿writer",
+      "tokenId": "browser",
+      "accepted": false,
+      "userUtf16": 12,
+      "tokenUtf16": 7
+    }
+  ]
+}
