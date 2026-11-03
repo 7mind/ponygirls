@@ -1381,3 +1381,19 @@ before unblinding.
   global operating manual and skills in the prompt, MCP tools, a longer
   session that began with a baseline test run. Field replay (J13 option 2)
   is the remaining direct test.
+
+---
+
+## J20 — 2026-11-03 — Brief and handover
+
+### User input (verbatim)
+
+> Ok, let's write down a brief on what we did - the problem, the hypotehsis,
+> the validation - and what should we do next. Extend this brief with a
+> handover message for the next agent
+
+Written as [brief.md](brief.md): problem, thesis and hypotheses, validation
+table with verdicts, instrument lessons, prioritised next steps (human-side
+dialogue prototype; field replay before commit `c1bb530a`; build the
+independent channels into the workflow; low-risk policy changes), and a
+handover section for the next agent.
