@@ -20,8 +20,13 @@ gate.run[A](work: IO[A]): IO[A]
 Service config/Nix must supply the complete capacity/deadline policy. Credentials
 are read only from an explicit absolute file on each connection; no environment,
 plaintext config field or credential-bearing JDBC URL fallback. Files are bounded
-strict UTF8 with one optional trailing newline. Operator-owned directories and
-permissions remain part of the deployment boundary.
+strict UTF8 with one optional trailing newline. Operator-managed symlink references
+(e.g. agenix) are resolved with `toRealPath` per read, the resolved leaf must be a
+regular file before opening, and the final open is NOFOLLOW. The configured path,
+all containing/resolved directories, replacement policy and permissions are trusted
+operator inputs. Operators must not race a special-file replacement; this boundary
+is not an adversarial payload-path confinement API. Ordinary FIFOs are rejected
+before opening. Systemd LoadCredential copies are also supported.
 
 This is bounded DriverManager-per-transaction, **not** a connection pool. JDBC is
 on `IO.blocking`; connections/statements are not shared between requests. Admission
@@ -42,7 +47,10 @@ Domains need idempotency/replay identity for uncertain commit outcomes.
 
 `JdbcFailure(code, sqlState)` sanitizes JDBC errors (no cause/SQL/URL/credential or
 server detail). `RuntimeFailure(code)` reports admission/lifecycle/migration errors.
-Application exceptions pass through for service-specific safe handling.
+Application exceptions pass through for service-specific safe handling. Rollback/
+close failures are retained only as sanitized suppressed `JdbcFailure` values with
+codes `database-rollback-failed` / `database-close-failed` (no raw cause). A failure
+during commit is an uncertain outcome, not proof of rollback or a retry invitation.
 
 Migrations are append-only, namespace-scoped, ordered positive versions. The
 per-database ledger `ponygirls_runtime_migrations` records name and SHA256 of exact
@@ -51,3 +59,12 @@ applied prefixes must match exactly, including names. Unknown/modified/deleted
 migrations fail closed. SQL and ledger inserts commit together; failure rolls back
 both. Migration SQL is trusted service/library-owned input, never user SQL.
 No application tables or domain auth policy belong here.
+
+## distage / pinned Cats IO
+
+`CatsIOInjector.apply(): izumi.distage.model.Injector[IO]` is the shared distage
+entrypoint (`CatsIOInjector().produceGet[Graph](module).use(...)`). It preserves
+Chronicle's pinned Scala2.13 Cats / Scala3 Izumi erased-ABI workaround unchanged.
+Use ordinary typed/`@Id` graph bindings and Lifecycle-managed resources; the helper
+does not scan plugins or install service bindings. ChronicleInjector delegates
+here, so apps must not copy their own QuasiIO/QuasiAsync adapter implementation.
