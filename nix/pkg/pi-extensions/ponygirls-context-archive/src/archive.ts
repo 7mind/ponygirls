@@ -18,6 +18,11 @@ export interface ArchivePolicy {
   maxTargets: number;
 }
 
+export interface ArchiveContext {
+  tokens: number | null;
+  protectedTargets: ReadonlySet<string>;
+}
+
 export const DEFAULT_POLICY: Readonly<ArchivePolicy> = {
   highWatermark: 0.7, lowWatermark: 0.5, keepRecentTurns: 6, keepRecentTokens: 16000,
   minPayloadChars: 4096, minBatchTokens: 4096, maxTargets: 16,
@@ -181,12 +186,15 @@ export function restoreRequest(branch: SessionEntry[], messages: AgentMessage[])
   });
 }
 
-export function planArchive(branch: SessionEntry[], projection: ProjectedSessionEntry[], contextWindow: number, policy: Readonly<ArchivePolicy>): { entries: SessionBoundaryDraft[]; reason: string } {
+export function planArchive(branch: SessionEntry[], projection: ProjectedSessionEntry[], contextWindow: number, policy: Readonly<ArchivePolicy>, context: ArchiveContext): { entries: SessionBoundaryDraft[]; reason: string } {
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) throw new Error("Context archive requires a positive model context window");
+  if (context.tokens !== null && (!Number.isFinite(context.tokens) || context.tokens < 0)) throw new Error("Context archive requires non-negative context usage or null");
   const archives = archivesOnBranch(branch);
-  const estimate = projection.reduce((total, p) => total + p.messages.reduce((n, m) => n + estimateTokens(m), 0), 0);
+  const estimate = context.tokens === null
+    ? projection.reduce((total, p) => total + p.messages.reduce((n, m) => n + estimateTokens(m), 0), 0)
+    : context.tokens;
   if (estimate < contextWindow * policy.highWatermark) return { entries: [], reason: "below estimated high watermark" };
-  const excluded = new Set(archives.map((a) => a.source.id));
+  const excluded = new Set([...context.protectedTargets, ...archives.map((a) => a.source.id)]);
   const labels = new Map<string, string | undefined>();
   for (const entry of branch) {
     if (entry.type === "context_edit") excluded.add(entry.targetId);

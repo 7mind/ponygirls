@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Type } from "typebox";
-import { defineTool, getAgentDir, type BoundaryState, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
+import { defineTool, estimateTokens, getAgentDir, type BoundaryState, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { ARCHIVE_TYPE, DEFAULT_POLICY, MAX_LIST_ITEMS, MAX_READ_CHARS, RECALL_TOOL, planArchive, recallArchive, restoreArchive, restoreRequest } from "./src/archive.ts";
 import { FilePreferenceStore, type PreferenceStore } from "./src/preferences.ts";
@@ -93,13 +93,19 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
       if (!enabled) {
         additions = restoreArchive(branch, event.context.contextEntries).filter((e) => e.type !== "context_edit" || !competing.has(e.targetId));
       } else {
-        if (ctx.model === undefined || !Number.isFinite(ctx.model.contextWindow) || ctx.model.contextWindow <= 0) {
+        const usage = ctx.getContextUsage();
+        const contextWindow = usage === undefined ? ctx.model === undefined ? 0 : ctx.model.contextWindow : usage.contextWindow;
+        if (!Number.isFinite(contextWindow) || contextWindow <= 0) {
           lastReason = "model context capacity unknown; no archival";
           return;
         }
         if (!pi.getActiveTools().includes(RECALL_TOOL)) { lastReason = "recall tool inactive; no archival"; return; }
-        const projection = event.context.contextEntries.filter((e) => !competing.has(e.sourceEntry.id));
-        const planned = planArchive(branch, projection, ctx.model.contextWindow, DEFAULT_POLICY);
+        // Pi invalidates usage after persisted edits/compaction, but not earlier handlers' pending drafts.
+        const invalidatesUsage = event.entries.some((e) => e.type === "context_edit" || e.type === "compaction");
+        const addedTokens = event.entries.reduce((n, e) => e.type === "custom_message"
+          ? n + estimateTokens({ role: "custom", customType: e.customType, content: e.content, display: e.display, timestamp: 0 }) : n, 0);
+        const contextTokens = usage === undefined || usage.tokens === null || invalidatesUsage ? null : usage.tokens + addedTokens;
+        const planned = planArchive(branch, event.context.contextEntries, contextWindow, DEFAULT_POLICY, { tokens: contextTokens, protectedTargets: competing });
         additions = planned.entries;
         lastReason = planned.reason;
       }
@@ -120,15 +126,20 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
         const enabled = refresh(ctx, action === "on" || action === "off");
         const catalog = recallArchive(ctx.sessionManager.getBranch(), { action: "list", offset: 0, limit: 1 });
         if (!("total" in catalog)) throw new Error("Archive catalog invariant violated");
+        const usage = ctx.getContextUsage();
+        const contextWindow = usage === undefined ? ctx.model === undefined ? 0 : ctx.model.contextWindow : usage.contextWindow;
+        const pressure = Number.isFinite(contextWindow) && contextWindow > 0
+          ? `Pi context usage: ${usage === undefined || usage.tokens === null ? "unknown" : usage.tokens} / ${contextWindow} tokens; archive trigger ${Math.ceil(contextWindow * DEFAULT_POLICY.highWatermark)} (${DEFAULT_POLICY.highWatermark * 100}%).\n`
+          : "Model context capacity unknown; no archival.\n";
         ctx.ui.notify(`Context archive: ${mode.kind === "fault" ? "ERROR" : enabled ? "ON" : "OFF"} (persistent; default OFF)\n` +
-          `${catalog.total} archived entries on this branch. ${lastReason}.\n` +
+          `${catalog.total} archived entries on this branch. Last boundary: ${lastReason}.\n` + pressure +
           (enabled ? "Automatic selection begins at a completed-turn boundary; no summarizer calls.\n" : "No new archival. Retained originals reach future requests; native restoration waits for the next completed boundary. Independent Pi compaction is not undone.\n") +
           `Preference: ${preferences.path}`, "info");
       } catch (error) { warn(ctx, String(error)); }
     },
   });
-  pi.on("session_start", (_event, ctx) => { refresh(ctx, true); });
-  pi.on("session_tree", (_event, ctx) => { refresh(ctx, true); });
+  pi.on("session_start", (_event, ctx) => { lastReason = "no boundary evaluated"; refresh(ctx, true); });
+  pi.on("session_tree", (_event, ctx) => { lastReason = "no boundary evaluated"; refresh(ctx, true); });
   pi.on("context", (event, ctx) => {
     try {
       const enabled = refresh(ctx, false);
