@@ -1,0 +1,43 @@
+{
+  "allCurrentCaseTimestampsBoundedByThisRun": true,
+  "currentRunFinishedAt": "2026-11-03T15:29:13.966439+00:00",
+  "currentRunStartedAt": "2026-11-03T15:23:49.016012+00:00",
+  "exact7NamesOrderMatchPreparedManifest": true,
+  "gitFileSHA256": {
+    "flake.lock": "b3b80a9275f7f57320cb1d048f86612932011a27ab4c32e930f0e73afeab48ec",
+    "flake.nix": "c57f09af7fa09ffbe72c1cb4e1ea8718c73e7def20c82937011a79609dd09c5f",
+    "nix/hm/agentic-services-server-options.nix": "e86d6b273cb1f334a2623ee1048d44def2ef5fbc07c5973a1804a022b7ae3a39",
+    "nix/hm/agentic-services-server.nix": "041dc284e49100f03acf182d55e50a578819194ca66ba42f456dbbe03090c652",
+    "nix/hm/chronicle-server.nix": "c9f3d2b6a432df16cd67fa0882e6b68fd8be4adf5e4d6f02f2166ec769672e73",
+    "nix/hm/service-postgres.nix": "0544b4e5e35658ba13ffa9671fbc9be2d69dcc2e3e73d4db83a53892401448be",
+    "nix/postgres/provider.py": "93deaccaaa5d453fd97d17ffcf050be31560ed04eeb292aab8658ec536c0b5db",
+    "nix/tests/hm-service-unit-graph-harness-test.py": "dd7273ba945b3a5c7b68452d05e92eb3ba1b8c9c7c9bdf746dfd09dd48670b20",
+    "nix/tests/hm-service-unit-graph-harness.nix": "40f679773dcd4a4e21c017d7a3ff11f7b0a47f5938cdfe66c41ca5ce00d5d9d4",
+    "nix/tests/hm-service-unit-graph-vm.nix": "4d766551ffc9709dd5099d26fb122582170327465495781919c0148c2a594df2",
+    "nix/tests/hm-service-unit-graph-vm.py": "8dfadb0f7ea300ec1326e6aadc1f0272c27ef62c7b6ca2646e6a93d4c2ec7a6e",
+    "nix/tests/service-unit-graph-adapter.py": "142998a81ce022c85b8b289dab8142864c4659e7fcc0c866ed3196530a5ad00d",
+    "nix/tests/service-unit-graph-controller.py": "2ad451a6c6e8aa9f551a1d0a819df0db374d3937b9d18d820d1704a8bca1418b",
+    "nix/tests/service-unit-graph-restart-evidence.py": "809922f098a7fcbb03b4b0f5df73309a2c4ba0b63a926eb6d4faaf5179ae5d88",
+    "nix/tests/service-unit-graph-snapshot.py": "7634550068d7d34837a11496da752de2aaea1acdce36d8c39c4ca4064bcc3681"
+  },
+  "homeManagerIntegration": "Real pinned HM NixOS integration through existing pkgs.home-manager.src; no new input or pin.",
+  "observedAt": "2026-11-03T15:33:09.653513+00:00",
+  "old26bProof": "Retained separately at its original archive SHA6cc438...; never relabeled current658.",
+  "prerequisiteDriver": {
+    "driverDrv": "/nix/store/8j9fmv8r55bv55bpr4rlcsc78pfx88hy-nixos-test-driver-hm-shared-provider-actual-user-manager-lifecycle.drv",
+    "driverOutput": "/nix/store/nx5s2px5g4j3jlmraw3a2k49w2ak2614-nixos-test-driver-hm-shared-provider-actual-user-manager-lifecycle",
+    "exitStatus": 0,
+    "finishedAt": "2026-11-03T15:21:14.750000+00:00",
+    "hashes": {
+      "/nix/store/8j9fmv8r55bv55bpr4rlcsc78pfx88hy-nixos-test-driver-hm-shared-provider-actual-user-manager-lifecycle.drv": "a911b773b90ed2e3c05f2f0675ac6979176e25e3b623fae9772078a03c7c2aa7",
+      "/nix/store/nx5s2px5g4j3jlmraw3a2k49w2ak2614-nixos-test-driver-hm-shared-provider-actual-user-manager-lifecycle/bin/.nixos-test-driver-wrapped": "cb5f63728f763cf642c0fab551f9100dea5618b69bd10d47e493f2be6debe665",
+      "/nix/store/nx5s2px5g4j3jlmraw3a2k49w2ak2614-nixos-test-driver-hm-shared-provider-actual-user-manager-lifecycle/bin/nixos-test-driver": "955d01a42e0fdbe9aeb04bf9c0c05a9c618fce22434170c384da988e7a9c7731",
+      "/nix/store/nx5s2px5g4j3jlmraw3a2k49w2ak2614-nixos-test-driver-hm-shared-provider-actual-user-manager-lifecycle/test-script": "63a69f2e249f80a7aa751d4cbcfefd784cebadb59fb552b5e8d7a1ed713a1120"
+    },
+    "scope": "build-only, no runtime acceptance",
+    "startedAt": "2026-11-03T15:21:03.444304+00:00"
+  },
+  "runtimeManifestAllEntriesVerifiedAgainstFrozenGit": true,
+  "runtimeOutput": "/nix/store/h2jl1pw0dwnm6j8a9ypz07xzyb2ffj0v-vm-test-run-hm-shared-provider-actual-user-manager-lifecycle",
+  "sourceRevision": "65879bdd6174f747ba17f2b7678c3c7c9f7536c5"
+}

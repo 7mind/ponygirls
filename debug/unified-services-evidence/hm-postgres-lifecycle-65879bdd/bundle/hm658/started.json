@@ -1,0 +1,7 @@
+{
+  "revision": "65879bdd6174f747ba17f2b7678c3c7c9f7536c5",
+  "startedAt": "2026-11-03T15:23:49.016012+00:00",
+  "scope": "actual owned VM HM USER-manager/PG lifecycle; not native app semantics",
+  "credentials": "local Nix daemon identity only, no external sessions",
+  "expectedOutput": "/nix/store/h2jl1pw0dwnm6j8a9ypz07xzyb2ffj0v-vm-test-run-hm-shared-provider-actual-user-manager-lifecycle"
+}

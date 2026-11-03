@@ -1,0 +1,775 @@
+{
+  "cases": [
+    {
+      "name": "HM-boot-three-consumers-one-user-provider",
+      "observedAt": "2026-11-03T15:25:44.579072+00:00",
+      "units": {
+        "chronicle.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "5ff42c54f2c240ecb044d1bb1f7c0127",
+            "MainPID": 1253,
+            "activeInvocationProbeSuccesses": 2,
+            "probeSuccessCount": 2,
+            "startCount": 1
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "5ff42c54f2c240ecb044d1bb1f7c0127",
+            "MainPID": 1253,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 1,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "5ff42c54f2c240ecb044d1bb1f7c0127",
+            "MainPID": 1253,
+            "activeInvocationProbeSuccesses": 2,
+            "probeSuccessCount": 2,
+            "startCount": 1
+          }
+        },
+        "ivm-haystack.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "8f0632454d3c4220866ad3052a917bee",
+            "MainPID": 1239,
+            "activeInvocationProbeSuccesses": 2,
+            "probeSuccessCount": 2,
+            "startCount": 1
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "8f0632454d3c4220866ad3052a917bee",
+            "MainPID": 1239,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 1,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "8f0632454d3c4220866ad3052a917bee",
+            "MainPID": 1239,
+            "activeInvocationProbeSuccesses": 2,
+            "probeSuccessCount": 2,
+            "startCount": 1
+          }
+        },
+        "ivm-manure.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "ba3aa594b2c64884980357e70424788a",
+            "MainPID": 1262,
+            "activeInvocationProbeSuccesses": 2,
+            "probeSuccessCount": 2,
+            "startCount": 1
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "ba3aa594b2c64884980357e70424788a",
+            "MainPID": 1262,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 1,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "ba3aa594b2c64884980357e70424788a",
+            "MainPID": 1262,
+            "activeInvocationProbeSuccesses": 2,
+            "probeSuccessCount": 2,
+            "startCount": 1
+          }
+        },
+        "ponygirls-postgres.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "7771441789284a309333a74b06345aff",
+            "MainPID": 1041,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 1
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "7771441789284a309333a74b06345aff",
+            "MainPID": 1041,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "7771441789284a309333a74b06345aff",
+            "MainPID": 1041,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "HM-own-app-restart-isolates-provider-others",
+      "observedAt": "2026-11-03T15:25:54.783764+00:00",
+      "units": {
+        "chronicle.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "5ff42c54f2c240ecb044d1bb1f7c0127",
+            "MainPID": 1253,
+            "activeInvocationProbeSuccesses": 3,
+            "probeSuccessCount": 3,
+            "startCount": 1
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "5ff42c54f2c240ecb044d1bb1f7c0127",
+            "MainPID": 1253,
+            "activeInvocationProbeSuccesses": 2,
+            "probeSuccessCount": 2,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "5ff42c54f2c240ecb044d1bb1f7c0127",
+            "MainPID": 1253,
+            "activeInvocationProbeSuccesses": 3,
+            "probeSuccessCount": 3,
+            "startCount": 1
+          }
+        },
+        "ivm-haystack.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "ba6d5b9c6312407b9a33274a5175182b",
+            "MainPID": 1394,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 3,
+            "startCount": 2
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "8f0632454d3c4220866ad3052a917bee",
+            "MainPID": 1239,
+            "activeInvocationProbeSuccesses": 2,
+            "probeSuccessCount": 2,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "ba6d5b9c6312407b9a33274a5175182b",
+            "MainPID": 1394,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 3,
+            "startCount": 2
+          }
+        },
+        "ivm-manure.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "ba3aa594b2c64884980357e70424788a",
+            "MainPID": 1262,
+            "activeInvocationProbeSuccesses": 3,
+            "probeSuccessCount": 3,
+            "startCount": 1
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "ba3aa594b2c64884980357e70424788a",
+            "MainPID": 1262,
+            "activeInvocationProbeSuccesses": 2,
+            "probeSuccessCount": 2,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "ba3aa594b2c64884980357e70424788a",
+            "MainPID": 1262,
+            "activeInvocationProbeSuccesses": 3,
+            "probeSuccessCount": 3,
+            "startCount": 1
+          }
+        },
+        "ponygirls-postgres.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "7771441789284a309333a74b06345aff",
+            "MainPID": 1041,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 1
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "7771441789284a309333a74b06345aff",
+            "MainPID": 1041,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "7771441789284a309333a74b06345aff",
+            "MainPID": 1041,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "HM-explicit-provider-restart-recovers-active-chain",
+      "observedAt": "2026-11-03T15:26:05.402980+00:00",
+      "units": {
+        "chronicle.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "4ebdd18bbdac4fdeb8e8d5dfc35eba3e",
+            "MainPID": 1565,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 4,
+            "startCount": 2
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "5ff42c54f2c240ecb044d1bb1f7c0127",
+            "MainPID": 1253,
+            "activeInvocationProbeSuccesses": 3,
+            "probeSuccessCount": 3,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "4ebdd18bbdac4fdeb8e8d5dfc35eba3e",
+            "MainPID": 1565,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 4,
+            "startCount": 2
+          }
+        },
+        "ivm-haystack.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "bc45de5e8f73464ea4a10ed8e105094e",
+            "MainPID": 1559,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 4,
+            "startCount": 3
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "ba6d5b9c6312407b9a33274a5175182b",
+            "MainPID": 1394,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 3,
+            "startCount": 2
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "bc45de5e8f73464ea4a10ed8e105094e",
+            "MainPID": 1559,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 4,
+            "startCount": 3
+          }
+        },
+        "ivm-manure.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "fd52b9c1b0084ba0a15e92509980fd9f",
+            "MainPID": 1556,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 4,
+            "startCount": 2
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "ba3aa594b2c64884980357e70424788a",
+            "MainPID": 1262,
+            "activeInvocationProbeSuccesses": 3,
+            "probeSuccessCount": 3,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "fd52b9c1b0084ba0a15e92509980fd9f",
+            "MainPID": 1556,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 4,
+            "startCount": 2
+          }
+        },
+        "ponygirls-postgres.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "2dce1e8b4ee94d1da6e1cc3acfa24c9b",
+            "MainPID": 1465,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 2
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "7771441789284a309333a74b06345aff",
+            "MainPID": 1041,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 1
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "2dce1e8b4ee94d1da6e1cc3acfa24c9b",
+            "MainPID": 1465,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "HM-provider-crash-autorestart-fresh-role-reconnect",
+      "observedAt": "2026-11-03T15:26:33.441532+00:00",
+      "units": {
+        "chronicle.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "a90eaee8a51c42a684b73a56e07cafa2",
+            "MainPID": 1771,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 5,
+            "startCount": 3
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "4ebdd18bbdac4fdeb8e8d5dfc35eba3e",
+            "MainPID": 1565,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 4,
+            "startCount": 2
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "a90eaee8a51c42a684b73a56e07cafa2",
+            "MainPID": 1771,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 5,
+            "startCount": 3
+          }
+        },
+        "ivm-haystack.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "9c98e3b3c1514ff4a432231ae3e9e0fb",
+            "MainPID": 1776,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 5,
+            "startCount": 4
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "bc45de5e8f73464ea4a10ed8e105094e",
+            "MainPID": 1559,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 4,
+            "startCount": 3
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "9c98e3b3c1514ff4a432231ae3e9e0fb",
+            "MainPID": 1776,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 5,
+            "startCount": 4
+          }
+        },
+        "ivm-manure.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "b1d7a5b2fd7748be8dd3b44eb680d101",
+            "MainPID": 1769,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 5,
+            "startCount": 3
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "fd52b9c1b0084ba0a15e92509980fd9f",
+            "MainPID": 1556,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 4,
+            "startCount": 2
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "b1d7a5b2fd7748be8dd3b44eb680d101",
+            "MainPID": 1769,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 5,
+            "startCount": 3
+          }
+        },
+        "ponygirls-postgres.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "5e4df48cb5214b62ad45d10d5347881a",
+            "MainPID": 1667,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 3
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "2dce1e8b4ee94d1da6e1cc3acfa24c9b",
+            "MainPID": 1465,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 2
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "5e4df48cb5214b62ad45d10d5347881a",
+            "MainPID": 1667,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "HM-stopped-consumer-stays-stopped",
+      "observedAt": "2026-11-03T15:27:09.114693+00:00",
+      "units": {
+        "chronicle.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "c7a00d1529ba4b45afa44b2ca0f7c897",
+            "MainPID": 1965,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 6,
+            "startCount": 4
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "a90eaee8a51c42a684b73a56e07cafa2",
+            "MainPID": 1771,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 5,
+            "startCount": 3
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "c7a00d1529ba4b45afa44b2ca0f7c897",
+            "MainPID": 1965,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 6,
+            "startCount": 4
+          }
+        },
+        "ivm-haystack.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "9cd417d50b4348d48b350b2bc55595d7",
+            "MainPID": 1960,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 6,
+            "startCount": 5
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "9c98e3b3c1514ff4a432231ae3e9e0fb",
+            "MainPID": 1776,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 5,
+            "startCount": 4
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "9cd417d50b4348d48b350b2bc55595d7",
+            "MainPID": 1960,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 6,
+            "startCount": 5
+          }
+        },
+        "ivm-manure.service": {
+          "after": {
+            "ActiveState": "inactive",
+            "InvocationID": "b1d7a5b2fd7748be8dd3b44eb680d101",
+            "MainPID": 0,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 5,
+            "startCount": 3
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "b1d7a5b2fd7748be8dd3b44eb680d101",
+            "MainPID": 1769,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 5,
+            "startCount": 3
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "5766fa6f0c5143209a83eae093f94a92",
+            "MainPID": 2017,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 5,
+            "startCount": 4
+          }
+        },
+        "ponygirls-postgres.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "3eb63ff378264f87a4e64ff30b9fd1aa",
+            "MainPID": 1869,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 4
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "5e4df48cb5214b62ad45d10d5347881a",
+            "MainPID": 1667,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 3
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "3eb63ff378264f87a4e64ff30b9fd1aa",
+            "MainPID": 1869,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 4
+          }
+        }
+      }
+    },
+    {
+      "name": "HM-intentional-manual-stop-start-selected-recovery",
+      "observedAt": "2026-11-03T15:27:34.579682+00:00",
+      "units": {
+        "chronicle.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "e8a72ed6fd064bfc894f9004fa4fe76e",
+            "MainPID": 2124,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 7,
+            "startCount": 5
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "c7a00d1529ba4b45afa44b2ca0f7c897",
+            "MainPID": 1965,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 6,
+            "startCount": 4
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "e8a72ed6fd064bfc894f9004fa4fe76e",
+            "MainPID": 2124,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 7,
+            "startCount": 5
+          }
+        },
+        "ivm-haystack.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "5b237e3c99ec4acbbe000f141be73522",
+            "MainPID": 2125,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 7,
+            "startCount": 6
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "9cd417d50b4348d48b350b2bc55595d7",
+            "MainPID": 1960,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 6,
+            "startCount": 5
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "5b237e3c99ec4acbbe000f141be73522",
+            "MainPID": 2125,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 7,
+            "startCount": 6
+          }
+        },
+        "ivm-manure.service": {
+          "after": {
+            "ActiveState": "inactive",
+            "InvocationID": "5766fa6f0c5143209a83eae093f94a92",
+            "MainPID": 0,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 5,
+            "startCount": 4
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "5766fa6f0c5143209a83eae093f94a92",
+            "MainPID": 2017,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 5,
+            "startCount": 4
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "c7e69fa46bb741dd8ee38deb39e4fad5",
+            "MainPID": 2202,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 5,
+            "startCount": 5
+          }
+        },
+        "ponygirls-postgres.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "65361b76d90d4055b6e952ed62f48963",
+            "MainPID": 2053,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 5
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "3eb63ff378264f87a4e64ff30b9fd1aa",
+            "MainPID": 1869,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 4
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "65361b76d90d4055b6e952ed62f48963",
+            "MainPID": 2053,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 5
+          }
+        }
+      }
+    },
+    {
+      "name": "HM-actual-disabled-module-stays-disabled",
+      "observedAt": "2026-11-03T15:28:05.076474+00:00",
+      "units": {
+        "chronicle.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "6e080727b1ab48219ac25a6533e3f798",
+            "MainPID": 2587,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 8,
+            "startCount": 6
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "e8a72ed6fd064bfc894f9004fa4fe76e",
+            "MainPID": 2124,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 7,
+            "startCount": 5
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "6e080727b1ab48219ac25a6533e3f798",
+            "MainPID": 2587,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 8,
+            "startCount": 6
+          }
+        },
+        "ivm-haystack.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "8bb2c315b6fa455a97c2d0f24247572f",
+            "MainPID": 2589,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 8,
+            "startCount": 7
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "5b237e3c99ec4acbbe000f141be73522",
+            "MainPID": 2125,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 7,
+            "startCount": 6
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "8bb2c315b6fa455a97c2d0f24247572f",
+            "MainPID": 2589,
+            "activeInvocationProbeSuccesses": 1,
+            "probeSuccessCount": 8,
+            "startCount": 7
+          }
+        },
+        "ivm-manure.service": {
+          "after": {
+            "ActiveState": "inactive",
+            "InvocationID": "",
+            "MainPID": 0,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 5,
+            "startCount": 5
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "c7e69fa46bb741dd8ee38deb39e4fad5",
+            "MainPID": 2202,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 5,
+            "startCount": 5
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "4ea240d6ea5a49739a2ec6cad4fab75b",
+            "MainPID": 2812,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 5,
+            "startCount": 6
+          }
+        },
+        "ponygirls-postgres.service": {
+          "after": {
+            "ActiveState": "active",
+            "InvocationID": "c7c04c9ee6294c79b8c6cd140b47b205",
+            "MainPID": 2503,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 6
+          },
+          "before": {
+            "ActiveState": "active",
+            "InvocationID": "65361b76d90d4055b6e952ed62f48963",
+            "MainPID": 2053,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 5
+          },
+          "restored": {
+            "ActiveState": "active",
+            "InvocationID": "c7c04c9ee6294c79b8c6cd140b47b205",
+            "MainPID": 2503,
+            "activeInvocationProbeSuccesses": 0,
+            "probeSuccessCount": 0,
+            "startCount": 6
+          }
+        }
+      }
+    }
+  ],
+  "scope": "Derived metadata only, no SQL or configuration; exact before/after/restored edges and fresh journal cursor remain in byte-exact receipt"
+}
