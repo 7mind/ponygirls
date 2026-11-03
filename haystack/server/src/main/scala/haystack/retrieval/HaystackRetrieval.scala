@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import haystack.domain.*
 import ponygirls.losslessjson.LosslessJson
 import ponygirls.retrieval.*
-import ponygirls.retrieval.postgres.{PostgresRetrieval,WorkClaim}
+import ponygirls.retrieval.postgres.{PostgresRetrieval,IndexingWorker,RetrievalTransactions}
 import ponygirls.runtime.JdbcDatabase
 import java.sql.Connection
 import java.time.Instant
@@ -66,25 +66,8 @@ final class HaystackRetrieval(val database:JdbcDatabase,val policy:ProjectionPol
   }yield page.copy(hits=visible)
   def run:IO[Nothing]=embedding match{
     case None=>IO.never
-    case Some(client)=>
-      def execute(claim:WorkClaim):IO[Unit]={
-        val batches=claim.chunks.grouped(batchSize).toList.zipWithIndex
-        batches.traverse_ { (group,index)=>
-          val first=index*batchSize
-          for{
-            _<-database.transaction(c=>store.renew(c,claim,120))
-            accepted<-database.transaction(c=>store.accepted(c,claim,first,group.size))
-            _<-accepted match{
-              case Some(_)=>IO.unit
-              case None=>client.documents(group.map(_.text)).flatMap(v=>database.transaction(c=>store.accept(c,claim,first,v)))
-            }
-          }yield()
-        } *> database.transaction(c=>store.publish(c,claim)).void
-      }
-      def step:IO[Unit]=database.transaction(c=>store.claim(c,120)).flatMap{
-        case None=>IO.sleep(500.millis)
-        case Some(claim)=>execute(claim).handleErrorWith(_=>database.transaction(c=>store.fail(c,claim)).handleErrorWith(_=>IO.unit))
-      }
-      step.foreverM
+    case Some(client)=>new IndexingWorker(store,new RetrievalTransactions{
+      def transaction[A](run:Connection=>A):IO[A]=database.transaction(run)
+    },client,batchSize,120,500.millis).run
   }
 }

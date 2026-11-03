@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeDouble, decodeString}
+import io.circe.Decoder.{decodeDouble, decodeOption, decodeString}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 
@@ -9,7 +9,13 @@ package haystack.api {
     pointer: String,
     text: String,
     score: Double,
-    generation: String
+    generation: String,
+    profile: Option[String],
+    embeddingSpace: Option[String],
+    policy: String,
+    field: String,
+    start: Option[Int],
+    `end`: Option[Int]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = RetrievedSource.baboonDomainVersion
     override def baboonDomainIdentifier: String = RetrievedSource.baboonDomainIdentifier
@@ -44,7 +50,13 @@ package haystack.api {
         "pointer" -> Json.fromString(value.pointer),
         "text" -> Json.fromString(value.text),
         "score" -> Json.fromDouble(value.score).get,
-        "generation" -> Json.fromString(value.generation)
+        "generation" -> Json.fromString(value.generation),
+        "profile" -> value.profile.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "embeddingSpace" -> value.embeddingSpace.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "policy" -> Json.fromString(value.policy),
+        "field" -> Json.fromString(value.field),
+        "start" -> value.start.map(v => Json.fromInt(v)).getOrElse(Json.Null),
+        "end" -> value.`end`.map(v => Json.fromInt(v)).getOrElse(Json.Null)
       )
     }
     
@@ -61,7 +73,13 @@ package haystack.api {
             text <- getField(jsonObject, "text").flatMap(v => decodeString(v.hcursor))
             score <- getField(jsonObject, "score").flatMap(v => decodeDouble(v.hcursor))
             generation <- getField(jsonObject, "generation").flatMap(v => decodeString(v.hcursor))
-          } yield RetrievedSource(key,revision,pointer,text,score,generation)
+            profile <- getField(jsonObject, "profile").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            embeddingSpace <- getField(jsonObject, "embeddingSpace").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            policy <- getField(jsonObject, "policy").flatMap(v => decodeString(v.hcursor))
+            field <- getField(jsonObject, "field").flatMap(v => decodeString(v.hcursor))
+            start <- getField(jsonObject, "start").flatMap(v => decodeOption(BaboonJsonCodec.decodeInt)(v.hcursor))
+            `end` <- getField(jsonObject, "end").flatMap(v => decodeOption(BaboonJsonCodec.decodeInt)(v.hcursor))
+          } yield RetrievedSource(key,revision,pointer,text,score,generation,profile,embeddingSpace,policy,field,start,`end`)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to RetrievedSource: object expected"))
       }
     }

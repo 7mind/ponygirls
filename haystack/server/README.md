@@ -80,3 +80,25 @@ runner log, source/artifact SHA256 binding and machine receipt are in a fresh
 `$HAYSTACK_REPORT_DIR`, or the printed disposable report directory. Existing
 nonempty reports are never overwritten. This is the HTTP/MCP/WS process leg,
 not a substitute for Scala dual-PG, browser, model-provider or downstream gates.
+
+### Least-privilege fixture provisioning
+
+`HAYSTACK_TEST_PROVISION_COMMAND=/absolute/executable` selects a separate owned
+admin helper. The fixture runs it **without a shell** as `[command, databaseName]`
+with no stdin. Name is generated `haystack_current_<16 hex>`. Within10seconds,
+exit0 and stdout UTF8 JSON exactly `{ "jdbcUrl": "jdbc:postgresql://127.0.0.1:PORT/NAME", "user": "runtime-role", "passwordFile": "/absolute/file" }` are required.
+Output is capped16KiB; invalid JSON/shape/nonloopback URL/wrong database/credential
+URL/nonabsolute or empty password file/nonzero/timeout fails without fallback.
+The helper's stdout/stderr are never copied into logs (they may contain sensitive
+paths); its executable SHA256 is included in the receipt. Runtime config gets
+**only** that returned descriptor, never the fixture admin credentials. Do not
+grant the runtime role CREATEDB, superuser or access to another service database.
+
+The owned runner exposes `HAYSTACK_TEST_JDBC`, `HAYSTACK_TEST_DB_USER`,
+`HAYSTACK_TEST_DB_PASSWORD_FILE` for its fixture admin connection,
+`HAYSTACK_FIXTURE_WORK_DIR` and `HAYSTACK_OWNED_PGDATA` for an admin helper scoped
+to that newly created cluster. A helper may provision extension/schema ownership
+and exact role/database HBA rules there. `POSTGRES_HOME` optionally prefixes PATH.
+If no helper is configured, direct fixture-admin creation additionally requires
+`HAYSTACK_FIXTURE_ADMIN_AUTHORIZED=1`; only the owned runner sets that marker.
+A configured helper failure never enters the direct-admin lane.

@@ -50,3 +50,19 @@ BEGIN
   RETURN result * signs[1];
 END;
 $$;
+
+-- Canonical qualified-ID ordering for bounded ID completion, on raw components.
+-- Bytes are UTF8; every non-RFC3986-unreserved byte is escaped exactly once.
+CREATE FUNCTION haystack_encode_component(component text)
+RETURNS text LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+DECLARE bytes bytea := convert_to(component,'UTF8'); result text := ''; n integer; b integer;
+BEGIN
+  FOR n IN 0..length(bytes)-1 LOOP
+    b := get_byte(bytes,n);
+    IF b BETWEEN 48 AND 57 OR b BETWEEN 65 AND 90 OR b BETWEEN 97 AND 122 OR b IN (45,46,95,126) THEN
+      result := result || chr(b);
+    ELSE result := result || '%' || upper(lpad(to_hex(b),2,'0')); END IF;
+  END LOOP;
+  RETURN result;
+END;
+$$;

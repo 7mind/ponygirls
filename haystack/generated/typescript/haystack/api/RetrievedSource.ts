@@ -8,14 +8,26 @@ export class RetrievedSource implements BaboonGeneratedLatest {
     private readonly _text: string;
     private readonly _score: number;
     private readonly _generation: string;
+    private readonly _profile: string | undefined;
+    private readonly _embeddingSpace: string | undefined;
+    private readonly _policy: string;
+    private readonly _field: string;
+    private readonly _start: number | undefined;
+    private readonly _end: number | undefined;
 
-    constructor(key: string, revision: number, pointer: string, text: string, score: number, generation: string) {
+    constructor(key: string, revision: number, pointer: string, text: string, score: number, generation: string, profile: string | undefined, embeddingSpace: string | undefined, policy: string, field: string, start: number | undefined, end: number | undefined) {
         this._key = key
         this._revision = revision
         this._pointer = pointer
         this._text = text
         this._score = score
         this._generation = generation
+        this._profile = profile
+        this._embeddingSpace = embeddingSpace
+        this._policy = policy
+        this._field = field
+        this._start = start
+        this._end = end
     }
 
     public get key(): string {
@@ -36,6 +48,24 @@ export class RetrievedSource implements BaboonGeneratedLatest {
     public get generation(): string {
         return this._generation;
     }
+    public get profile(): string | undefined {
+        return this._profile;
+    }
+    public get embeddingSpace(): string | undefined {
+        return this._embeddingSpace;
+    }
+    public get policy(): string {
+        return this._policy;
+    }
+    public get field(): string {
+        return this._field;
+    }
+    public get start(): number | undefined {
+        return this._start;
+    }
+    public get end(): number | undefined {
+        return this._end;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -44,29 +74,47 @@ export class RetrievedSource implements BaboonGeneratedLatest {
             pointer: this._pointer,
             text: this._text,
             score: this._score,
-            generation: this._generation
+            generation: this._generation,
+            profile: this._profile !== undefined ? this._profile : undefined,
+            embeddingSpace: this._embeddingSpace !== undefined ? this._embeddingSpace : undefined,
+            policy: this._policy,
+            field: this._field,
+            start: this._start !== undefined ? this._start : undefined,
+            end: this._end !== undefined ? this._end : undefined
         };
     }
 
-    public with(overrides: {key?: string; revision?: number; pointer?: string; text?: string; score?: number; generation?: string}): RetrievedSource {
+    public with(overrides: {key?: string; revision?: number; pointer?: string; text?: string; score?: number; generation?: string; profile?: string | undefined; embeddingSpace?: string | undefined; policy?: string; field?: string; start?: number | undefined; end?: number | undefined}): RetrievedSource {
         return new RetrievedSource(
             'key' in overrides ? overrides.key! : this._key,
             'revision' in overrides ? overrides.revision! : this._revision,
             'pointer' in overrides ? overrides.pointer! : this._pointer,
             'text' in overrides ? overrides.text! : this._text,
             'score' in overrides ? overrides.score! : this._score,
-            'generation' in overrides ? overrides.generation! : this._generation
+            'generation' in overrides ? overrides.generation! : this._generation,
+            'profile' in overrides ? overrides.profile! : this._profile,
+            'embeddingSpace' in overrides ? overrides.embeddingSpace! : this._embeddingSpace,
+            'policy' in overrides ? overrides.policy! : this._policy,
+            'field' in overrides ? overrides.field! : this._field,
+            'start' in overrides ? overrides.start! : this._start,
+            'end' in overrides ? overrides.end! : this._end
         );
     }
 
-    public static fromPlain(obj: {key: string; revision: number; pointer: string; text: string; score: number; generation: string}): RetrievedSource {
+    public static fromPlain(obj: {key: string; revision: number; pointer: string; text: string; score: number; generation: string; profile: string | undefined; embeddingSpace: string | undefined; policy: string; field: string; start: number | undefined; end: number | undefined}): RetrievedSource {
         return new RetrievedSource(
             obj.key,
             obj.revision,
             obj.pointer,
             obj.text,
             obj.score,
-            obj.generation
+            obj.generation,
+            obj.profile,
+            obj.embeddingSpace,
+            obj.policy,
+            obj.field,
+            obj.start,
+            obj.end
         );
     }
 
@@ -112,6 +160,12 @@ export class RetrievedSource_JsonCodec {
             "text": value.text,
             "score": value.score,
             "generation": value.generation,
+            "profile": value.profile === undefined ? null : value.profile,
+            "embeddingSpace": value.embeddingSpace === undefined ? null : value.embeddingSpace,
+            "policy": value.policy,
+            "field": value.field,
+            "start": value.start === undefined ? null : value.start,
+            "end": value.end === undefined ? null : value.end,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): RetrievedSource {
@@ -127,6 +181,12 @@ export class RetrievedSource_JsonCodec {
             obj["text"] as string,
             obj["score"] as number,
             obj["generation"] as string,
+            obj["profile"] === undefined || obj["profile"] === null ? undefined : obj["profile"] === undefined || obj["profile"] === null ? undefined : obj["profile"] as string,
+            obj["embeddingSpace"] === undefined || obj["embeddingSpace"] === null ? undefined : obj["embeddingSpace"] === undefined || obj["embeddingSpace"] === null ? undefined : obj["embeddingSpace"] as string,
+            obj["policy"] as string,
+            obj["field"] as string,
+            obj["start"] === undefined || obj["start"] === null ? undefined : obj["start"] === undefined || obj["start"] === null ? undefined : obj["start"] as number,
+            obj["end"] === undefined || obj["end"] === null ? undefined : obj["end"] === undefined || obj["end"] === null ? undefined : obj["end"] as number,
         )
     }
 

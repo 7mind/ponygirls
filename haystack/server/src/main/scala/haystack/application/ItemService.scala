@@ -25,15 +25,6 @@ final class ItemService(repo: ItemRepository, changed: (String,Long) => IO[Unit]
     _ <- if (result.replayed) IO.unit else changed(key,result.revision).handleErrorWith(_ => IO.unit)
   } yield result
   def search(input: SearchInput): IO[SearchResult] = repo.search(input)
-  def complete(fragment: String): IO[Vector[String]] = repo.allCurrent().map(Search.complete(_,fragment))
-  def values(field: String): IO[Vector[String]] = repo.allCurrent().flatMap { items =>
-    val values = field match {
-      case "type" => items.map(_.document.docType)
-      case "status" => items.map(_.document.status)
-      case "importance" => items.map(_.document.importance)
-      case "tags" => items.flatMap(_.document.tags)
-      case _ => throw Fault("not-found","unknown value set")
-    }
-    IO.pure(values.distinct.sorted.take(100))
-  }
+  def complete(fragment: String): IO[Vector[String]] = repo.complete(fragment)
+  def values(field: String):IO[Vector[String]]=repo.observedValues(field)
 }

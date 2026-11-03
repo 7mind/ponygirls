@@ -110,7 +110,10 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
         if(!getAuth().authenticate(a.token).contains(a.principal)) throw Fault("unauthorized","session revoked")
         val sources=page.hits.map { hit=>
           val revision=hit.version.takeWhile(_!='/').toInt
-          api.RetrievedSource(hit.id,revision,hit.chunk.provenance.pointer.getOrElse(""),hit.chunk.text,hit.score,hit.generation)
+          val publishedPolicy=hit.version.dropWhile(_!='/').drop(1)
+          if(!publishedPolicy.matches("[0-9a-f]{64}")) throw Fault("unavailable","invalid published projection identity")
+          if(mode!=ponygirls.retrieval.RetrievalMode.Lexical && (!hit.profile.contains(retrieval.store.profile.get.id) || !hit.embeddingSpace.contains(retrieval.store.profile.get.space.id) || publishedPolicy!=retrieval.policy.id)) throw Fault("unavailable","incompatible published profile")
+          api.RetrievedSource(hit.id,revision,hit.chunk.provenance.pointer.getOrElse(""),hit.chunk.text,hit.score,hit.generation,hit.profile,hit.embeddingSpace,publishedPolicy,hit.chunk.provenance.field,hit.chunk.provenance.start,hit.chunk.provenance.end)
         }
         ok(api.RetrieveResult.codecJson,api.RetrieveResult(sources,input.mode,page.countScope.toString,page.total,page.rankingLimit))
       }

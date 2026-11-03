@@ -70,7 +70,8 @@ private[storage] object PostgresSearch {
     case "modified-at"=>("i.modified_at","::timestamptz")
     case "revision"=>("i.revision","::bigint")
   }
-  def search(connection:Connection,input:SearchInput):SearchResult={
+  final case class Plan(sql:String,params:Vector[Any],fingerprint:String)
+  def compile(input:SearchInput):Plan={
     Search.validateSort(input.sort)
     if(input.limit<1||input.limit>100)throw new InvalidQuery(Vector(QueryDiagnostic("limit must be 1–100",Span(0,0))))
     val ast=Query.applyArchiveDefault(Parser.parseQuery(input.query));val fp=Search.fingerprint(input)
@@ -94,11 +95,15 @@ private[storage] object PostgresSearch {
     val limit=ctx.bind(input.limit+1)
     val sql=s"""SELECT i.project_id,i.item_id,i.revision,i.document->>'title' AS title,i.document->>'type' AS doc_type,i.document->>'status' AS status,i.document->>'importance' AS importance,i.document->>'human-attention' AS attention,COALESCE(i.document->'tags','[]'::jsonb)::text AS tags,i.modified_at,i.modified_by
       FROM items i LEFT JOIN item_search s USING(project_id,item_id) WHERE ${filters.result().map(s=>s"($s)").mkString(" AND ")} ORDER BY $order LIMIT $limit"""
-    val rows=Sql.rows(connection,sql,ctx.values.result()) { r=>
+    Plan(sql,ctx.values.result(),fp)
+  }
+  def search(connection:Connection,input:SearchInput):SearchResult={
+    val plan=compile(input)
+    val rows=Sql.rows(connection,plan.sql,plan.params) { r=>
       val tags=io.circe.parser.parse(r.getString("tags")).flatMap(_.as[Vector[String]]).fold(_=>throw Fault("unavailable","invalid stored tags"),identity)
       SearchSummary(r.getString("project_id"),r.getString("item_id"),r.getLong("revision"),r.getString("title"),r.getString("doc_type"),r.getString("status"),r.getString("importance"),r.getString("attention"),tags,r.getTimestamp("modified_at").toInstant,r.getString("modified_by"))
     }
     val page=rows.take(input.limit)
-    SearchResult(page,if(rows.size>input.limit)Some(Search.encodeCursor(fp,Search.searchPosition(page.last,input.sort)))else None)
+    SearchResult(page,if(rows.size>input.limit)Some(Search.encodeCursor(plan.fingerprint,Search.searchPosition(page.last,input.sort)))else None)
   }
 }
