@@ -1653,9 +1653,8 @@
           "testId": "test_artifact_source_manifest.ArtifactSourceManifestTests.test_target_ancestor_cannot_change_selected_compiled_inputs"
         }
       ],
-      "openGaps": [
-        "Parent audit identified absolute-path target/.git filtering. Owned copied-source regression must first reproduce, then pass with repository-relative selection; previously correct ordinary/Nix-store ELF identities must not be invalidated globally."
-      ]
+      "openGaps": [],
+      "implementedAssertions": "Repository-relative target/.git exclusion fixes ancestor-sensitive selection. Independent owned copied-fixture expected hashes/paths now match under ordinary/target/.git ancestors; nested build/git metadata and generator itself remain excluded. Actual ordinary-checkout before/after manifest bytes are identical. No previous correct Nix-store/native ELF identity is invalidated."
     }
   ],
   "externalReleaseGates": [

@@ -1,4 +1,4 @@
-"""Behavioral/Active Effectual-Group regression: location-independent identity.
+"""Behavioral/Active Effectual-GoodCommunication regression: location-independent identity.
 
 Only copied owned source fixtures and a real bounded manifest CLI, no builds,
 credentials, service/model configuration or network. Expected inputs are an
