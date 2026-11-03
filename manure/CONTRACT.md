@@ -1,3 +1,19 @@
+> **2026-11-03 unified-port amendment (implementation/acceptance in progress):**
+> The sole coordinated application API is Baboon `manure.api` 1.0.0 in
+> [`docs/current-api.md`](docs/current-api.md). The Scala/distage/cats-effect/http4s
+> backend at `backend/`, PostgreSQL byte-exact metadata, tested descriptor-relative
+> POSIX payload store at `server/`, and explicit offline conversion in
+> [`docs/offline-conversion.md`](docs/offline-conversion.md) supersede the Python/
+> SQLite production-runtime freeze, old REST wire schemas/routes/cursors and
+> no-search implementation restrictions below. Current generated owned clients
+> replace the old wire API together; no historical codec/API promise is made.
+> All stored-data/credential/authorization/durability/hosting/browser-security
+> invariants below remain normative unless an explicit current document replaces
+> only their transport representation. Search is management-authenticated,
+> ready/unexpired metadata+manifest paths ONLY; no implicit binary embedding.
+> This amendment is NOT a live activation/migration/rotation authorization or
+> a claim that required target/native/browser/recovery acceptance has passed.
+
 # manure — file & directory hosting (v0.2.0, amended)
 
 Original implementation freeze, with the explicit §0.1 amendment below.
