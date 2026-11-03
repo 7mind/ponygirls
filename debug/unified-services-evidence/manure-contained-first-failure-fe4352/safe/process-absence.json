@@ -1,0 +1,22 @@
+{
+  "historical": {
+    "observedAt": "2026-11-03T13:35:09.693504+00:00",
+    "ownedAbsence": "verified-by-subreaper-and-pidfds",
+    "ownedLive": [],
+    "kernelDirectChildren": [],
+    "cleanupReason": "runtime-exit",
+    "runtimeExit": 1,
+    "cleanupException": false,
+    "scope": "owned subtree at completion, NOT whole host; absence fact is distinct from runtime failure",
+    "normalizedCleanupStatus": 0,
+    "normalizedCleanupStatusMeaning": "verified absence/successful owned cleanup, NOT a separate cleanup-process exit code"
+  },
+  "freshRecordedIdentityObservation": {
+    "observedAt": "2026-11-03T13:45:04.813309+00:00",
+    "recordedIdentityCount": 6,
+    "sameRecordedIdentitiesPresent": 0,
+    "recordedIdentitiesAbsent": 6,
+    "scope": "previously recorded identities including supervisor only; not fresh unknown-subtree/whole-host absence proof; no signals"
+  },
+  "privateLabRetention": "Full original raw lab and failed evidence preserved unchanged; await explicit parent retention decision"
+}
