@@ -18,6 +18,7 @@
 { pkgs, nixpkgs, manureModule, manureHmModule, yoloHmModule, toolsHmModule }:
 let
   lib = nixpkgs.lib;
+  fixturePostgresStartupCpuWeight = 1000;
   # Test-only bearer ("A"*43) + its digest. Fake, generated at eval;
   # never a real secret.
   testToken = lib.concatStrings (lib.genList (_: "A") 43);
@@ -38,6 +39,9 @@ let
 
   common = { config, ... }: {
     system.stateVersion = "26.11";
+    # Test-only boot allocation within the unchanged one-vCPU budget; keep the
+    # real initdb deadline and normal-runtime CPU weight, not a provider policy.
+    systemd.services.postgresql.serviceConfig.StartupCPUWeight = fixturePostgresStartupCpuWeight;
     assertions = [{
       assertion = config.virtualisation.useNixStoreImage
         && config.virtualisation.writableStore
