@@ -84,14 +84,14 @@ object Origin {
   def canonical(value: String): URI = {
     val uri = try new URI(value) catch { case _: Exception => throw Fault("config", "invalid origin") }
     val scheme = uri.getScheme
-    if (!Set("http", "https").contains(scheme) || uri.getHost == null || uri.getRawUserInfo != null || uri.getRawQuery != null || uri.getRawFragment != null || Option(uri.getRawPath).exists(_.nonEmpty) || uri.getHost != uri.getHost.toLowerCase(Locale.ROOT) || uri.getPort == (if (scheme == "https") 443 else 80))
+    if (!Set("http", "https").contains(scheme) || uri.getPort > 65535 || uri.getHost == null || uri.getRawUserInfo != null || uri.getRawQuery != null || uri.getRawFragment != null || Option(uri.getRawPath).exists(_.nonEmpty) || uri.getHost != uri.getHost.toLowerCase(Locale.ROOT) || uri.getPort == (if (scheme == "https") 443 else 80))
       throw Fault("config", "invalid canonical origin")
     uri
   }
   def requestAuthority(host: String): URI = {
     if (host.isEmpty || host.exists(c => c.isWhitespace || "/@?#\\".contains(c))) throw Fault("forbidden", "disallowed host")
     val uri = try new URI("http://" + host) catch { case _: Exception => throw Fault("forbidden", "disallowed host") }
-    if (uri.getHost == null || uri.getRawUserInfo != null) throw Fault("forbidden", "disallowed host")
+    if (uri.getHost == null || uri.getPort > 65535 || uri.getRawUserInfo != null) throw Fault("forbidden", "disallowed host")
     uri
   }
 }

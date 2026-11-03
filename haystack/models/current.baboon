@@ -31,3 +31,6 @@ enum RetrievalMode { Lexical Semantic Hybrid }
 root data RetrieveRequest { query: str mode: RetrievalMode project: opt[str] includeArchived: bit offset: i32 limit: i32 }
 data RetrievedSource { key: str revision: i32 pointer: str text: str score: f64 generation: str }
 root data RetrieveResult { sources: lst[RetrievedSource] mode: RetrievalMode countScope: str total: i64 rankingLimit: opt[i32] }
+// Process-local current-contract invalidations and application heartbeat.
+// f64 here is only an ephemeral finite clock echo, never document JSON.
+root data LiveFrame { kind: str key: opt[str] revision: opt[i32] nonce: opt[str] clientTs: opt[f64] serverTs: opt[f64] }

@@ -23,7 +23,8 @@ private[storage] object Mutation {
       else if (current.exists(_.revision != operation.expectedRevision)) Left(Fault("conflict", "revision conflict", current.map(_.revision)))
       else if (current.exists(_.revision >= Int.MaxValue)) Left(Fault("conflict", "revision limit reached", current.map(_.revision)))
       else {
-        val metadata = current.fold(ItemMetadata(now, principal.userId, now, principal.userId))(s => s.metadata.copy(modifiedAt = now, modifiedBy = principal.userId))
+        val timestamp=now.truncatedTo(java.time.temporal.ChronoUnit.MICROS)
+        val metadata = current.fold(ItemMetadata(timestamp, principal.userId, timestamp, principal.userId))(s => s.metadata.copy(modifiedAt = timestamp, modifiedBy = principal.userId))
         Right(StoredItem(operation.key, current.fold(1L)(_.revision + 1), document, operation.documentCanonical, metadata))
       }
     }

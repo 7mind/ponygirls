@@ -28,6 +28,7 @@ final class Mcp(service:ItemService) {
     val cursor=request.hcursor;val id=cursor.downField("id").focus.getOrElse(Json.Null)
     val validId=id.isNull||id.isString||id.isNumber
     if(!request.isObject || cursor.get[String]("jsonrpc").toOption!=Some("2.0") || !validId) IO.pure(Some(error(Json.Null,-32600,"Invalid Request")))
+    else if(cursor.downField("id").focus.isEmpty && cursor.get[String]("method").toOption!=Some("notifications/initialized")) IO.pure(None)
     else cursor.get[String]("method").toOption match {
       case None=>IO.pure(Some(error(id,-32600,"Invalid Request")))
       case Some("notifications/initialized") if cursor.downField("id").focus.isEmpty=>IO.pure(None)
@@ -51,22 +52,24 @@ final class Mcp(service:ItemService) {
   private def content(text:String,structured:Json):Json=obj("content"->Json.arr(obj("type"->str("text"),"text"->str(text))),"structuredContent"->structured)
   private def toolFailure(error:Throwable):Json={
     val code=error match {case f:Fault=>f.code;case _:InvalidQuery=>"invalid-query";case _:InvalidCursor=>"invalid-cursor";case _=>"unavailable"}
-    obj("isError"->bool(true),"content"->Json.arr(obj("type"->str("text"),"text"->str("error "+code+": "+code.replace('-',' ')))))
+    obj("isError"->bool(true),"structuredContent"->obj("code"->str(code),"message"->str(code.replace('-',' '))),"content"->Json.arr(obj("type"->str("text"),"text"->str("error "+code+": "+code.replace('-',' ')))))
   }
   private def call(principal:Principal,name:String,args:Json):IO[Json]=IO.defer {
     if(!args.isObject) throw Fault("bad-envelope","tool arguments must be object")
     val c=args.hcursor
     def text(key:String):String=c.get[String](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)
     def optionalText(key:String):Option[String]=c.get[Option[String]](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)
-    def number(key:String):Long=c.get[Long](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)
-    def optionalNumber(key:String):Option[Long]=c.get[Option[Long]](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)
+    def number(key:String):Long={if(!c.downField(key).focus.exists(_.isNumber))throw Fault("bad-envelope","invalid tool arguments");c.get[Long](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)}
+    def optionalNumber(key:String):Option[Long]={if(c.downField(key).focus.exists(j=> !j.isNull && !j.isNumber))throw Fault("bad-envelope","invalid tool arguments");c.get[Option[Long]](key).fold(_=>throw Fault("bad-envelope","invalid tool arguments"),identity)}
     name match {
       case "get"=>service.get(text("key"),optionalNumber("revision")).map { item=>
         content(s"${item.key.qualified} revision ${item.revision}\nmodified ${item.metadata.modifiedAt} by ${item.metadata.modifiedBy}\ndocument_json:\n${item.documentCanonical}",obj("key"->str(item.key.qualified),"revision"->Json.fromLong(item.revision),"document_json"->str(item.documentCanonical),"metadata"->Wire.encode(haystack.api.Metadata.codecJson,Wire.metadata(item.metadata))))
       }
       case "put"=>
         val key=text("key")
-        service.put(key,text("document_json"),number("expected_revision"),text("request_id"),principal).map { receipt=>
+        val expected=number("expected_revision")
+        if(expected<0 || expected>Int.MaxValue) throw Fault("bad-envelope","invalid expected_revision")
+        service.put(key,text("document_json"),expected,text("request_id"),principal).map { receipt=>
           content(s"put $key revision ${receipt.revision}"+(if(receipt.replayed) " (replayed)" else ""),obj("key"->str(key),"revision"->Json.fromLong(receipt.revision),"metadata"->Wire.encode(haystack.api.Metadata.codecJson,Wire.metadata(receipt.metadata)),"replayed"->bool(receipt.replayed)))
         }
       case "search"=>
