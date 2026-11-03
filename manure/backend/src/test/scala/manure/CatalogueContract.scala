@@ -218,5 +218,49 @@ abstract class CatalogueContract(postgres: Boolean) extends FunSuite:
     assertEquals(UnicodeCaseFold.Version,"16.0.0")
   }
 
+  test("current casefold-equivalent queries share the same typed cursor and next page") { run { f =>
+    val names=Vector("Cat-one","CAT-two","cat-three","Straße-one","STRASSE-two","straße-three",
+      "Σ-one","ς-two","σ-three","ΟΣ-one","οσ-two","ος-three")
+    val values=names.zipWithIndex.map((name,i) => fixture(f).head.copy(id=f"${i+1}%032x",name=name,state=UploadState.Uploading))
+    for
+      _ <- f.metadata.transaction(tx => values.foreach(tx.put))
+      _ <- Vector("cat" -> "CAT","Straße" -> "strasse","σ" -> "ς","ΟΣ" -> "ος").traverse_ { (left,right) =>
+        val q=query().copy(query=left,limit=1)
+        for
+          first <- catalogue(f).list(f.identity,q)
+          token=first._2.get
+          _ <- IO {
+            val current=parser.parse(Exact.string(Base64.getUrlDecoder.decode(token))).toOption.get
+            assertEquals(current.hcursor.get[String]("policy").toOption,Some("utf8-casefold-16.0.0-v1"))
+          }
+          originalNext <- catalogue(f).list(f.other,q.copy(cursor=Some(token)))
+          equivalentNext <- catalogue(f).list(f.other,q.copy(query=right,cursor=Some(token)))
+          _ <- IO { assertEquals(equivalentNext,originalNext); assertEquals(equivalentNext._1.size,1) }
+          equivalentFirst <- catalogue(f).list(f.other,q.copy(query=right))
+          _ <- IO(assertEquals(equivalentFirst,first))
+          _ <- Vector(q.copy(query=right+" "),q.copy(limit=2),q.copy(direction=wire.SortDirection.Desc),q.copy(sort=wire.CatalogueSort.State)).traverse_ { changed =>
+            catalogue(f).list(f.other,changed.copy(cursor=Some(token))).attempt.map { result =>
+              assertEquals(result.left.toOption.collect { case e: DomainError => e.code },Some("bad-envelope"))
+            }
+          }
+        yield ()
+      }
+    yield ()
+  }}
+  test("literal queries beyond 1024 UTF16 units remain accepted and results stay bounded") { run { f => for
+    _ <- seed(f)
+    _ <- Vector("x"*1025,"x"*4096,"𐐀"*2048,"ﬃ"*4096).traverse_ { text =>
+      val q=query().copy(query=text,limit=1)
+      catalogue(f).list(f.other,q).map { (page,next) => assertEquals(page,Vector.empty); assertEquals(next,None) }
+    }
+  yield () }}
+  test("unpaired UTF16 query surrogates still reject before metadata lookup") { run { f =>
+    Vector("\ud800","\udc00","x\ud800y").traverse_ { text =>
+      catalogue(f).list(f.other,query().copy(query=text)).attempt.map { result =>
+        assertEquals(result.left.toOption.collect { case e: DomainError => e.code },Some("bad-envelope"))
+      }
+    }
+  }}
+
 final class MemoryCatalogueSuite extends CatalogueContract(false)
 final class PostgresCatalogueSuite extends CatalogueContract(true)

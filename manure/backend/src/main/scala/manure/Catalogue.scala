@@ -46,7 +46,7 @@ object CataloguePolicy:
       val value = if primary == 0 then Exact.compare(a.id,b.id) else primary
       if q.direction == wire.SortDirection.Asc then value else -value
   private def fingerprint(q: wire.CatalogueQuery): String =
-    SecretCodec.sha256(wire.CatalogueQuery.codecJson.encode(BaboonCodecContext.Default,q.copy(cursor=None)).noSpaces)
+    SecretCodec.sha256(wire.CatalogueQuery.codecJson.encode(BaboonCodecContext.Default,q.copy(query=Exact.matching(q.query),cursor=None)).noSpaces)
   private def json(value: Value): Json = value match
     case Value.Never => Json.Null
     case Value.Text(v) => Json.fromString(v)
@@ -75,7 +75,7 @@ object CataloguePolicy:
       Position(typed,id)
     catch case _: IllegalArgumentException | _: java.nio.charset.CharacterCodingException => throw DomainError("bad-envelope")
   def prepare(q: wire.CatalogueQuery,limits: Limits,now: Double): Selection =
-    Require(q.limit > 0 && q.limit <= limits.maxListLimit && q.limit < Int.MaxValue && q.query.length <= 1024, "bad-envelope")
+    Require(q.limit > 0 && q.limit <= limits.maxListLimit && q.limit < Int.MaxValue, "bad-envelope")
     try Exact.utf8(q.query) catch case _: java.nio.charset.CharacterCodingException => throw DomainError("bad-envelope")
     Selection(q,q.cursor.map(decode(_,q)),now)
   def select(values: Iterable[Artifact],selection: Selection): Vector[Artifact] =
