@@ -16,6 +16,7 @@ trait Metadata:
 trait MetadataTxn:
   def artifact(id: String): Option[Artifact]
   def artifacts(after: Option[String], limit: Int): Vector[Artifact]
+  def catalogue(selection: CataloguePolicy.Selection): Vector[Artifact]
   def put(artifact: Artifact): Unit
   def delete(id: String): Unit
   def reservation: Long
@@ -80,6 +81,62 @@ private[manure] object Jdbc:
     case Some(v) => v
     case None => null
 
+/** SQL structure comes only from the generated sort enum and fixed clauses.
+  * User strings, cursor positions, timestamp and LIMIT are always bound values.
+  */
+private[manure] object CatalogueSql:
+  def page(s: CataloguePolicy.Selection): (String,Vector[Jdbc.Param]) =
+    import CataloguePolicy.Value
+    val q = s.query
+    val column = q.sort match
+      case api.CatalogueSort.Name => "a.name"
+      case api.CatalogueSort.CreatedAt => "a.created_at_s_value"
+      case api.CatalogueSort.ExpiresAt => "a.expires_at_s_value"
+      case api.CatalogueSort.TotalBytes => "COALESCE(a.total_bytes,0)"
+      case api.CatalogueSort.FileCount => "COALESCE(a.file_count,0)"
+      case api.CatalogueSort.Visibility => "a.visibility"
+      case api.CatalogueSort.State => "a.state"
+      case api.CatalogueSort.Kind => "a.kind"
+      case api.CatalogueSort.CreatedByUser => "a.created_by_user"
+    val direction = if q.direction == api.SortDirection.Asc then "ASC" else "DESC"
+    val operator = if q.direction == api.SortDirection.Asc then ">" else "<"
+    var clauses = Vector.empty[String]
+    var params = Vector.empty[Jdbc.Param]
+    if !q.includeExpired then
+      clauses :+= "(a.expires_at_s_value IS NULL OR a.expires_at_s_value>?)"
+      params :+= s.now
+    q.visibility.foreach { v => clauses :+= "a.visibility=?"; params :+= Exact.utf8(v.toString.toLowerCase(java.util.Locale.ROOT)) }
+    q.state.foreach { v => clauses :+= "a.state=?"; params :+= Exact.utf8(v.toString.toLowerCase(java.util.Locale.ROOT)) }
+    if q.query.nonEmpty then
+      clauses :+= "(position(?::bytea in a.name_match)>0 OR position(?::bytea in a.id)>0)"
+      params ++= Vector(Exact.utf8(s.matching),Exact.utf8(s.matching))
+    s.boundary.foreach { b =>
+      b.value match
+        case Value.Never =>
+          Require(q.sort == api.CatalogueSort.ExpiresAt,"bad-envelope")
+          clauses :+= s"($column IS NULL AND a.id $operator ?)"
+          params :+= Exact.utf8(b.id)
+        case value =>
+          val bound: Jdbc.Param = value match
+            case Value.Text(v) => Exact.utf8(v)
+            case Value.Time(v) => v
+            case Value.Count(v) => v
+            case Value.Never => throw DomainError("bad-envelope")
+          val comparison = s"($column $operator ? OR ($column=? AND a.id $operator ?))"
+          clauses :+= (if q.sort == api.CatalogueSort.ExpiresAt then s"($column IS NULL OR $comparison)" else comparison)
+          params ++= Vector(bound,bound,Exact.utf8(b.id))
+    }
+    val where = if clauses.isEmpty then "" else clauses.mkString(" WHERE "," AND ","")
+    // Materialize only IDs and one sort key before hydration. Even an owner
+    // sort without a width-limiting btree never loads all manifests into the
+    // application or into PostgreSQL's top-N sort tuples.
+    val sql = s"""WITH page AS MATERIALIZED (
+      SELECT a.id,$column AS sort_value FROM manure.artifacts a$where
+      ORDER BY $column $direction NULLS LAST,a.id $direction LIMIT ?
+    ) SELECT a.* FROM page JOIN manure.artifacts a ON a.id=page.id
+      ORDER BY page.sort_value $direction NULLS LAST,page.id $direction"""
+    (sql,params :+ s.fetch)
+
 private[manure] final class PostgresTxn(c: Connection,projection: SearchProjection) extends MetadataTxn:
   import Jdbc.*
   private def readArtifact(r: ResultSet): Artifact = Artifact(
@@ -94,6 +151,9 @@ private[manure] final class PostgresTxn(c: Connection,projection: SearchProjecti
     after match
       case None => rows(c,"SELECT * FROM manure.artifacts ORDER BY id LIMIT ?",limit)(readArtifact)
       case Some(id) => rows(c,"SELECT * FROM manure.artifacts WHERE id>? ORDER BY id LIMIT ?",Exact.utf8(id),limit)(readArtifact)
+  def catalogue(selection: CataloguePolicy.Selection): Vector[Artifact] =
+    val (sql,params) = CatalogueSql.page(selection)
+    rows(c,sql,params*)(readArtifact)
   def put(a: Artifact): Unit =
     exec(c,"""INSERT INTO manure.artifacts
     (id,name,kind,visibility,created_by_user,created_by_token,created_at,created_at_s,expires_at,expires_at_s,state,total_bytes,file_count,reserved_bytes,ext_pwd_hash,last_activity_at,manifest_json,created_at_s_value,expires_at_s_value,last_activity_at_value)
@@ -105,6 +165,7 @@ private[manure] final class PostgresTxn(c: Connection,projection: SearchProjecti
     last_activity_at=excluded.last_activity_at,manifest_json=excluded.manifest_json,
     created_at_s_value=excluded.created_at_s_value,expires_at_s_value=excluded.expires_at_s_value,last_activity_at_value=excluded.last_activity_at_value""",
     Exact.utf8(a.id),Exact.utf8(a.name),Exact.utf8(a.kind.wire),Exact.utf8(a.visibility.wire),Exact.utf8(a.createdByUser),Exact.utf8(a.createdByToken),Exact.utf8(a.createdAt),Exact.timestamp(a.createdAtSeconds),bytes(a.expiresAt),bits(a.expiresAtSeconds),Exact.utf8(a.state.wire),a.totalBytes,a.fileCount,a.reservedBytes,bytes(a.externalPasswordHash),Exact.timestamp(a.lastActivityAt),Exact.utf8(a.manifestJson),a.createdAtSeconds,double(a.expiresAtSeconds),a.lastActivityAt)
+    CatalogueProjection.backfill(c,a)
     projection.put(c,a)
   def delete(id: String): Unit =
     projection.remove(c,id); revokeArtifact(id); clearReceipts(id); exec(c,"DELETE FROM manure.artifacts WHERE id=?",Exact.utf8(id))

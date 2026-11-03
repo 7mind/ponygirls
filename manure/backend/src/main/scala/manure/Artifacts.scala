@@ -63,6 +63,9 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
   def snapshot(identity: Identity, after: Option[String], limit: Int): IO[Vector[Artifact]] = metadata.transaction { tx =>
     Require(auth.live(identity), "unauthorized"); tx.artifacts(after,limit)
   }
+  def catalogue(identity: Identity, selection: CataloguePolicy.Selection): IO[Vector[Artifact]] = metadata.transaction { tx =>
+    Require(auth.live(identity), "unauthorized"); tx.catalogue(selection)
+  }
   def patch(identity: Identity,id: String, patch: ArtifactPatch): IO[Initialized] = serialized {
     metadata.transaction { tx =>
       Require(auth.live(identity), "unauthorized")
