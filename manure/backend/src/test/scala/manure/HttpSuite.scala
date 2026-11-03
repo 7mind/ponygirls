@@ -19,8 +19,8 @@ final class HttpSuite extends FunSuite:
     token.foreach(v => r = r.putHeaders(Header.Raw(CIString("Authorization"),"Bearer " + v)))
     origin.foreach(v => r = r.putHeaders(Header.Raw(CIString("Origin"),v)))
     r
-  private def app(f: BackendFixture): Http =
-    val config = f.config.copy(apiOrigin=ApiOrigin.parse("http://127.0.0.1:47329"),port=47329)
+  private def app(f: BackendFixture,adjust: Config => Config = c => c): Http =
+    val config = adjust(f.config.copy(apiOrigin=ApiOrigin.parse("http://127.0.0.1:47329"),port=47329))
     val engine = new PostgresRetrieval("manure",None)
     val projection = new SearchProjection(config,engine)
     val search = new Search(f.database.get,f.lease,config,f.auth,f.clock,engine,projection,None)
@@ -107,6 +107,64 @@ final class HttpSuite extends FunSuite:
       _ <- IO { assertEquals(data,"user css"); assertEquals(response.status.code,200); assert(response.headers.headers.exists(x => x.name == CIString("Content-Security-Policy") && x.value.contains("frame-ancestors 'none'"))); assert(response.headers.headers.exists(x => x.name == CIString("Cache-Control") && x.value == "no-store")) }
       api <- h.app.run(request(Method.POST,s"/view/${a.artifact.id}/api/current",Some(f.token)))
       _ <- IO(assertEquals(api.status.code,404))
+    yield ()
+  }}
+  test("content form redirects have exactly zero framed body bytes and preserve cookie and location effects") { run { (f,h) =>
+    def form(id: String,action: String,value: String,cookie: Option[String] = None): Request[IO] =
+      val r=request(Method.POST,s"/view/$id/__manure/$action",None,Some("http://127.0.0.1:47329")).withEntity(value)
+        .putHeaders(Header.Raw(CIString("Content-Type"),"application/x-www-form-urlencoded"))
+      cookie.fold(r)(v => r.putHeaders(Header.Raw(CIString("Cookie"),v)))
+    def emptyRedirect(response: org.http4s.Response[IO]): IO[String] = response.body.compile.to(Array).map { bytes =>
+      assertEquals(response.status.code,303)
+      assertEquals(response.headers.headers.filter(_.name==CIString("Content-Length")).map(_.value),List("0"))
+      assertEquals(bytes.toVector,Vector.empty)
+      assert(response.headers.headers.exists(x => x.name==CIString("Location") && x.value.startsWith("/view/")))
+      response.headers.headers.find(_.name==CIString("Set-Cookie")).get.value.split(";",2)(0)
+    }
+    for
+      external <- f.artifacts.init(f.identity,InitUpload("external forms",ArtifactKind.Directory,Visibility.External,Vector.empty,None))
+      _ <- f.artifacts.finish(f.identity,external.artifact.id)
+      unlocked <- h.app.run(form(external.artifact.id,"unlock","password="+external.externalPassword.get))
+      cookie <- emptyRedirect(unlocked)
+      _ <- IO(assert(cookie.startsWith("mgrant-dev-"+external.artifact.id+"=")))
+      loggedOut <- h.app.run(form(external.artifact.id,"logout","",Some(cookie)))
+      _ <- emptyRedirect(loggedOut)
+      _ <- IO(assert(loggedOut.headers.headers.exists(x => x.name==CIString("Set-Cookie") && x.value.contains("Max-Age=0"))))
+      internal <- f.artifacts.init(f.identity,InitUpload("internal forms",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None))
+      _ <- f.artifacts.finish(f.identity,internal.artifact.id)
+      handoff <- f.artifacts.createGrant(f.identity,internal.artifact.id)
+      redeemed <- h.app.run(form(internal.artifact.id,"grant","grant="+handoff))
+      _ <- emptyRedirect(redeemed)
+    yield ()
+  }}
+  test("locked external landing alone prompts; unknown assets and revoked file grants are never a 200 password form") { run { (f,h) =>
+    val bytes=Exact.utf8("private artifact bytes")
+    for
+      initialized <- f.artifacts.init(f.identity,InitUpload("locked",ArtifactKind.File,Visibility.External,Vector(ManifestEntry("e.txt",false,bytes.length,SecretCodec.sha256(bytes))),None))
+      id=initialized.artifact.id
+      _ <- f.artifacts.putChunk(f.identity,id,"e.txt",0,bytes,SecretCodec.sha256(bytes))
+      _ <- f.artifacts.finish(f.identity,id)
+      landing <- h.app.run(request(Method.GET,s"/view/$id/"))
+      landingText <- landing.as[String]
+      _ <- IO { assertEquals(landing.status.code,200);assert(landingText.contains("password")) }
+      missing <- h.app.run(request(Method.GET,s"/view/$id/nope.js"))
+      missingText <- missing.as[String]
+      _ <- IO { assertEquals(missing.status.code,404);assert(!missingText.contains("<html")) }
+      builtin=app(f,_.copy(unlockShellDir=None))
+      _ <- Vector("unlock.js","styles.css","nope.js").traverse_ { name =>
+        builtin.app.run(request(Method.GET,s"/view/$id/$name")).flatMap { response => response.as[String].map { body =>
+          assertEquals(response.status.code,404);assert(!body.contains("<html"))
+        }}
+      }
+      grant <- f.artifacts.unlock(id,initialized.externalPassword.get)
+      cookie="mgrant-dev-"+id+"="+grant._1
+      accepted <- h.app.run(request(Method.GET,s"/view/$id/e.txt").putHeaders(Header.Raw(CIString("Cookie"),cookie)))
+      acceptedBytes <- accepted.body.compile.to(Array)
+      _ <- IO { assertEquals(accepted.status.code,200);assertEquals(acceptedBytes.toVector,bytes.toVector) }
+      _ <- f.artifacts.rotate(f.other,id)
+      revoked <- h.app.run(request(Method.GET,s"/view/$id/e.txt").putHeaders(Header.Raw(CIString("Cookie"),cookie)))
+      revokedText <- revoked.as[String]
+      _ <- IO { assertEquals(revoked.status.code,404);assert(!revokedText.contains("<html"));assert(!revokedText.contains("private artifact bytes")) }
     yield ()
   }}
   test("metadata-only management retrieval filters ready/expiry and excludes payload secrets") { run { (f,h) =>

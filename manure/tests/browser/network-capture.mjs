@@ -1,5 +1,8 @@
 // Test-only CDP network evidence capture.
 export function captureNetwork(cdp, ctx) {
+  // CDP IDs are session-local and reused by redirects. These benign identities
+  // join exact requests/responses without exposing envelope IDs or postData.
+  const sessionId = ctx.networkCaptureSessions = (ctx.networkCaptureSessions || 0) + 1;
   const redact = (headers) => {
     const safe = {};
     for (const [k, v] of Object.entries(headers || {})) {
@@ -66,6 +69,7 @@ export function captureNetwork(cdp, ctx) {
       // CDP flags identify redirect/cache hops without ExtraInfo. Queues
       // preserve protocol order even when extras precede the main events.
       const re = hop.hasExtraInfo === false ? undefined : s.requestExtras[rq++];
+      entry.hasRequestExtraInfo = !!re;
       if (re) {
         const cookies = re.associatedCookies || [];
         // Only empty blockedReasons means dispatched, not merely associated.
@@ -97,6 +101,8 @@ export function captureNetwork(cdp, ctx) {
       Object.assign(hop.responseEntry, {
         url: main?.url || req.url || "",
         status: main?.status || extra?.statusCode || 0,
+        sessionId: entry.sessionId, requestId: entry.requestId, redirectHop: entry.redirectHop,
+        phase: entry.phase, method: entry.method, origin: entry.origin,
         ...(entry.command ? {command: entry.command} : {}),
         setCookieNames: setCookieNames(main?.headers),
       });
@@ -118,7 +124,9 @@ export function captureNetwork(cdp, ctx) {
       previous.hasExtraInfo = ev.redirectHasExtraInfo;
     }
     const request = ev.request || {};
-    const entry = {url: request.url || "", method: request.method || ""};
+    const entry = {url: request.url || "", method: request.method || "",
+      sessionId, requestId: ev.requestId, redirectHop: s.hops.length,
+      phase: ctx.networkPhase || null};
     s.hops.push({request, entry});
     ctx.requests.push(entry);
     reconcile(s);

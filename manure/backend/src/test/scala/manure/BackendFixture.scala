@@ -14,8 +14,10 @@ import io.circe.Json
 
 final class TestClock(var now: Double) extends DomainClock
 final class TestFaults extends Faults:
+  @volatile var observe: String => Unit = _ => ()
   var armed = Set.empty[String]
   def apply(window: String): Unit =
+    observe(window)
     if armed(window) then
       armed -= window
       throw DomainError("unavailable")

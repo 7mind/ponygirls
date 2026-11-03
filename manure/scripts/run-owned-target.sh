@@ -13,7 +13,7 @@ trap 'rm -rf "$base"' EXIT
 # This is a public provider/toolchain descriptor, NEVER a service credential file.
 # Validate before sourcing; no ignored process-substitution failure or shell eval.
 python3 - "$provider_env" > "$base/provider.env" <<'PY'
-import json,re,shlex,sys
+import json,shlex,sys
 with open(sys.argv[1]) as source: value=json.load(source)
 allowed={'PG_BIN','PG_CONFIGURATION','PG_HBA','PG_POLICY','PG_PROVIDER'}
 if not isinstance(value,dict) or set(value)!=allowed or any(not isinstance(v,str) or not v.startswith('/') or '\0' in v or '\n' in v for v in value.values()):
@@ -21,6 +21,21 @@ if not isinstance(value,dict) or set(value)!=allowed or any(not isinstance(v,str
 for key in sorted(value):print('export '+key+'='+shlex.quote(value[key]))
 PY
 source "$base/provider.env"
+# Optional EXPLICIT public tools descriptor; absence never guesses browser/SDK
+# locations. Full test-target preflight requires all browser and SDK prerequisites.
+if [[ -n ${MANURE_ACCEPTANCE_TOOLS_JSON:-} ]]; then
+ [[ $MANURE_ACCEPTANCE_TOOLS_JSON = /* && -f $MANURE_ACCEPTANCE_TOOLS_JSON ]] || exit 2
+ python3 - "$MANURE_ACCEPTANCE_TOOLS_JSON" > "$base/tools.env" <<'PY'
+import json,shlex,sys
+with open(sys.argv[1]) as source: value=json.load(source)
+allowed={'MANURE_PLAYWRIGHT_CORE_PATH','MANURE_CHROMIUM_BIN','MANURE_MCP_SDK_PATH','MANURE_OPENSSL_BIN','FONTCONFIG_FILE'}
+if not isinstance(value,dict) or set(value)!=allowed or any(not isinstance(v,str) or not v.startswith('/') or '\\0' in v or '\\n' in v for v in value.values()):
+    raise SystemExit('invalid explicit public tools descriptor')
+for key in sorted(value):print('export '+key+'='+shlex.quote(value[key]))
+PY
+ source "$base/tools.env"
+ sha256sum "$MANURE_ACCEPTANCE_TOOLS_JSON"
+fi
 printf '#!/usr/bin/env bash\nexec python3 %q "$@"\n' "$provision_source" > "$base/provision"
 chmod 700 "$base/provision"
 export MANURE_TEST_PROVISION_COMMAND="$base/provision" PONYGIRLS_TEST_PROVISION_SERVICE=manure

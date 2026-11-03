@@ -420,9 +420,9 @@ class DashboardFlows:
 
     def test_b7_hostile_sibling_js_cannot_mutate_dashboard(self):
         """Uploaded sibling JS runs with the victim's cookies in the jar:
-        its dashboard reads must fail closed and its state-changing
-        POSTs must reach the server (simple requests, no preflight) yet
-        leave state unchanged under exact-Origin enforcement."""
+        its JSON operations must fail preflight and stay unreadable. Simple
+        form POSTs dispatch; authenticated wrong-Origin forms must return403.
+        Every response is joined to its exact request/phase, not a shared URL."""
         token = self.fix.identity.token
         bearer = {"Authorization": f"Bearer {token}"}
         victim = bf.upload_fixture(
@@ -431,10 +431,10 @@ class DashboardFlows:
         vid = victim["artifact_id"]
         # R1: hostile JS uses OTHERWISE-VALID login credentials (stolen
         # victim token, not random) and TARGETS the victim artifact via a
-        # SIMPLE same-site POST (grants, urlencoded, no preflight) so the
-        # browser actually dispatches with Origin+Cookie and the server must
-        # return 403 (not 401/preflight-only/CSP). DELETE would preflight and
-        # never dispatch, so it is covered only by the HTTP complements below.
+        # JSON CreateGrant/List require preflight in the CURRENT protocol;
+        # they are NOT dispatched simple-form Origin proofs. Login/logout
+        # forms still dispatch. Raw HTTP complements send otherwise-valid
+        # typed mutations and cookie forms without CORS/SameSite shielding.
         hostile_html = (
             "<!DOCTYPE html><html><head><meta charset=utf-8><title>HOSTILE</title></head>"
             "<body><h1>hostile</h1><script>"
@@ -477,19 +477,51 @@ class DashboardFlows:
             urllib.parse.urlsplit(hurl))
         SESSION_NAMES = ("__Host-manure", "manure-dev")
 
-        def _reqs(out, suffix):
+        def _reqs(out, suffix, phase):
             return [q for q in bf.requests_log(out)
-                    if q["url"].endswith(suffix)]
+                    if q["url"].endswith(suffix) and q.get("phase") == phase]
 
-        def _resps(out, suffix):
-            return [r for r in bf.responses_log(out)
-                    if r["url"].endswith(suffix)]
+        def _key(entry):
+            return tuple(entry.get(k) for k in ("sessionId", "requestId", "redirectHop"))
+
+        def _responses_for(out, requests):
+            self.assertTrue(requests, "no requests to correlate")
+            indexed = {_key(q): q for q in requests}
+            self.assertEqual(len(indexed), len(requests), "duplicate CDP request/hop identity")
+            self.assertTrue(all(None not in key for key in indexed), "missing CDP identity")
+            responses = [r for r in bf.responses_log(out) if _key(r) in indexed]
+            self.assertEqual({_key(r) for r in responses}, set(indexed),
+                             "missing exact request-correlated response")
+            self.assertEqual(len(responses), len(indexed), "duplicate response/hop identity")
+            for response in responses:
+                request = indexed[_key(response)]
+                for field in ("url", "phase", "method", "origin"):
+                    self.assertEqual(response[field], request[field], field)
+            return responses
+
+        def _assert_preflight_denied(out, phase):
+            current = _reqs(out, "/api/current", phase)
+            preflights = [q for q in current
+                          if q["method"] == "OPTIONS" and q["origin"] == hostile_origin]
+            self.assertTrue(preflights, "no hostile current-API preflight observed")
+            responses = _responses_for(out, preflights)
+            self.assertTrue(all(r["status"] == 404 for r in responses), responses)
+            authenticated_posts = [q for q in current if q["method"] == "POST"
+                                   and q.get("hasRequestExtraInfo")
+                                   and set(q["cookieNames"]) & set(SESSION_NAMES)]
+            self.assertFalse(authenticated_posts, "authenticated JSON POST dispatched despite denied preflight")
+            # Do NOT hide an unexpected attack200 because its Origin/command
+            # metadata is absent. The phase was snapshotted at request start.
+            attack_responses = [r for r in bf.responses_log(out)
+                                if r.get("phase") == phase and r["url"].endswith("/api/current")]
+            self.assertFalse(any(200 <= r["status"] < 300 for r in attack_responses), attack_responses)
 
         # -- CLEAN run: hostile JS with OTHERWISE-VALID credentials in a
         # clean context must get wrong-Origin 403 and create NO session.
         # No cookie is dispatched (clean jar), so SameSite cannot suppress:
         # this holds in BOTH sibling and separate modes without planting.
         out_clean = bf.run_steps([
+            {"op": "networkPhase", "phase": "hostile-clean"},
             {"op": "goto", "url": hurl},
             {"op": "waitForEval",
              "fn": "() => document.title.indexOf('ATK:') === 0"},
@@ -515,7 +547,8 @@ class DashboardFlows:
         self.assertEqual(atk_clean["cookie"], "", atk_clean)
         self.assertEqual(atk_clean["storage"], "0,0", atk_clean)
         bf.assert_no_secrets_in_request_urls(self, out_clean, [token])
-        clean_login_reqs = _reqs(out_clean, "/api/current/login")
+        _assert_preflight_denied(out_clean, "hostile-clean")
+        clean_login_reqs = _reqs(out_clean, "/api/current/login", "hostile-clean")
         self.assertTrue(clean_login_reqs, "no browser login POST dispatched")
         # Complete headers (redacted) + wrong Origin, no cookie in clean jar.
         login_req = [q for q in clean_login_reqs
@@ -525,8 +558,8 @@ class DashboardFlows:
         self.assertEqual(login_req[0]["headers"].get("Origin"), hostile_origin)
         self.assertIn("application/x-www-form-urlencoded",
                         login_req[0]["headers"].get("Content-Type", ""))
-        clean_login_resps = _resps(out_clean, "/api/current/login")
-        self.assertTrue(any(r["status"] == 403 for r in clean_login_resps),
+        clean_login_resps = _responses_for(out_clean, login_req)
+        self.assertTrue(all(r["status"] == 403 for r in clean_login_resps),
                         clean_login_resps)
         # No session creation: no session cookie for the API origin and no
         # session Set-Cookie on the 403.
@@ -544,11 +577,14 @@ class DashboardFlows:
         # proves they are not preflight-only (Origin+Cookie present) and the
         # response log proves the server's 403 (not 401/CSP/never-dispatched).
         out = bf.run_steps([
+            {"op": "networkPhase", "phase": "setup"},
             {"op": "goto", "url": self.api + "/"},
             {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "networkPhase", "phase": "victim-login"},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "shown"},
+            {"op": "networkPhase", "phase": "hostile-auth"},
             {"op": "goto", "url": hurl},
             {"op": "waitForEval",
              "fn": "() => document.title.indexOf('ATK:') === 0"},
@@ -573,33 +609,45 @@ class DashboardFlows:
         bf.assert_no_secrets_in_request_urls(self, out, [token])
         # The simple POSTs were actually dispatched (request log proves
         # they are not preflight-only passes) ...
+        # Keep legitimate same-URL200s as explicit controls, never as attack
+        # evidence. Late response events retain their request's original phase.
+        baseline = _reqs(out, "/api/current", "victim-login")
+        for command in ("Login", "Whoami", "ListArtifacts"):
+            controls = [q for q in baseline if q.get("command") == command]
+            responses = _responses_for(out, controls)
+            self.assertTrue(any(r["status"] == 200 for r in responses), command)
         posts = [q for q in bf.requests_log(out)
-                 if q["method"] == "POST" and "/api/current/" in q["url"]]
+                 if q.get("phase") == "hostile-auth" and q["origin"] == hostile_origin
+                 and q["method"] == "POST" and "/api/current/" in q["url"]]
         self.assertTrue(any(q["url"].endswith("/api/current/logout") for q in posts),
                         posts)
         # Typed application/json operations cannot be simple cross-origin
         # browser requests. Verify preflight rejection, not an invented 403
         # dispatch proof. Targeted authenticated CreateGrant/Delete 403 checks
         # below still execute over HTTP with the observed live cookie.
-        preflights=[q for q in _reqs(out,"/api/current") if q["method"]=="OPTIONS" and q["origin"]==hostile_origin]
-        self.assertTrue(preflights,"no browser current-API preflight observed")
-        self.assertFalse(any(200<=r["status"]<300 for r in _resps(out,"/api/current")),bf.responses_log(out))
-        logout_req = [q for q in _reqs(out, "/api/current/logout")
+        _assert_preflight_denied(out, "hostile-auth")
+        logout_req = [q for q in _reqs(out, "/api/current/logout", "hostile-auth")
                       if q["method"] == "POST" and q["origin"] == hostile_origin]
         self.assertTrue(logout_req, posts)
-        logout_resps = _resps(out, "/api/current/logout")
+        logout_resps = _responses_for(out, logout_req)
         if self.suffix_mode == "sibling":
             self.assertEqual(logout_req[0]["cookieNames"], ["manure-dev"],
                              logout_req[0])
-            self.assertTrue(any(r["status"] == 403 for r in logout_resps),
+            self.assertTrue(all(r["status"] == 403 for r in logout_resps),
                             logout_resps)
         else:
             # Separate HTTP: Strict withheld cross-site (SameSite). The CDP
             # helper correctly reports [] (blocked, not sent) and the server
             # answers 401 (unauthenticated), which is NOT an Origin proof.
             self.assertEqual(logout_req[0]["cookieNames"], [], logout_req[0])
-            self.assertTrue(any(r["status"] == 401 for r in logout_resps),
+            self.assertTrue(all(r["status"] == 401 for r in logout_resps),
                             logout_resps)
+        authenticated_login = [q for q in _reqs(out, "/api/current/login", "hostile-auth")
+                               if q["method"] == "POST" and q["origin"] == hostile_origin]
+        self.assertTrue(authenticated_login, "valid hostile login form was not dispatched")
+        for request in authenticated_login + logout_req:
+            self.assertIn("application/x-www-form-urlencoded", request["headers"].get("Content-Type", ""))
+        self.assertTrue(all(r["status"] == 403 for r in _responses_for(out, authenticated_login)))
         # ... yet the victim session survives: replay the observed
         # session cookie (harness privilege, not page JS) and prove it
         # still works, while the same requests with a wrong Origin fail.
@@ -623,6 +671,18 @@ class DashboardFlows:
         # (urllib has no SameSite/preflight/CSP, so separate 403 is direct).
         bad_grants = jar.current((self.api), bf.cp.Command_CreateGrant(vid), headers=evil)
         self.assertEqual(bad_grants.status, 403, bad_grants.body[:300])
+        # Otherwise-valid current form routes with a REAL cookie must be403
+        # in BOTH modes: urllib deliberately has no SameSite/preflight shield.
+        cookie_origin = {"Origin": hostile_origin}
+        bad_form_logout = jar.request("POST", self.api + "/api/current/logout", body="",
+            content_type="application/x-www-form-urlencoded", headers=cookie_origin)
+        self.assertEqual(bad_form_logout.status, 403, bad_form_logout.body[:300])
+        self.assertIsNone(bad_form_logout.header("Set-Cookie"))
+        bad_form_login = jar.request("POST", self.api + "/api/current/login",
+            body=urllib.parse.urlencode({"token": token}),
+            content_type="application/x-www-form-urlencoded", headers=cookie_origin)
+        self.assertEqual(bad_form_login.status, 403, bad_form_login.body[:300])
+        self.assertIsNone(bad_form_login.header("Set-Cookie"))
         still2 = jar.current((self.api), bf.cp.Command_Whoami())
         self.assertEqual(still2.status, 200, still2.body[:300])
         # Valid login with wrong Origin is 403 with NO session (HTTP).

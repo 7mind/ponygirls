@@ -373,7 +373,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
           case "/__manure/grant" => wire.ContentCommand.RedeemGrant(fields.getOrElse("grant",""))
           case _ => wire.ContentCommand.Logout()
         contentCommand(req,ctx,id,command,new UUID(0L,0L)).map { response =>
-          response.withStatus(Status.SeeOther).withBodyStream(Stream.empty).putHeaders(raw("Location",ctx.mount + "/"))
+          response.withStatus(Status.SeeOther).withBodyStream(Stream.empty)
+            .putHeaders(raw("Content-Length","0"),raw("Location",ctx.mount + "/"))
         }.handleErrorWith {
           case e: DomainError if path == "/__manure/unlock" && Set("password-invalid","rate-limited")(e.code) =>
             unlockPage(ctx,if e.code == "password-invalid" then Status.Unauthorized else Status.TooManyRequests)
@@ -396,8 +397,12 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         else serveFile(req,ctx,id,target,false,None)
       }.handleErrorWith {
         case d: DomainError if d.code == "password-required" =>
-          if Set("/styles.css","/unlock.js")(path) then asset(config.unlockShellDir,path.drop(1),ctx,false)
-          else unlockPage(ctx)
+          // Only the external entry point is a password page. Preserve the
+          // locked-path contract: trusted shell siblings or 404 JSON, never
+          // turn an unknown file or revoked file grant into a 200 HTML body.
+          if file.isEmpty then unlockPage(ctx)
+          else if !trailing && Set("styles.css","unlock.js","index.html")(file) then asset(config.unlockShellDir,file,ctx,false)
+          else IO.raiseError(DomainError("not-found"))
         case error => IO.raiseError(error)
       }
     else IO.raiseError(DomainError("not-found"))

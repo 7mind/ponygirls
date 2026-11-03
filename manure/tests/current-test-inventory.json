@@ -968,9 +968,15 @@
         {
           "path": "manure/tests/test_browser_http_opt_in.py",
           "testId": "test_browser_http_opt_in.HttpOptInBrowserCase.test_login_internal_handoff_external_unlock_public_and_logout"
+        },
+        {
+          "path": "manure/tests/test_browser_dashboard.py",
+          "testId": "test_browser_dashboard.DashboardSeparateCase.test_b7_hostile_sibling_js_cannot_mutate_dashboard"
         }
       ],
-      "openGaps": []
+      "openGaps": [
+        "UNRESOLVED B7 actual-full failure: frozen141 JVM full20261103T105033Z-jvm.Tni3eR failed both sibling/separate hostile-sibling cases. URL-only capture aggregation can mix legitimate200 controls with rejected403 attempts; fixture phase+request-ID+Origin correlation correction is separately owned and not yet accepted here. Retain valid200 controls,403 security/state assertions and all case IDs; require corrected-source focused proof and fresh full rerun, never waive/filter failures."
+      ]
     },
     {
       "id": "manifest-serving",
@@ -1099,6 +1105,10 @@
         {
           "path": "manure/tests/test_target_durability.py",
           "testId": "test_target_durability.TargetDurabilityTests.test_server_sigkill_after_rename_before_ready_commit_recovers"
+        },
+        {
+          "path": "manure/tests/test_target_migration.py",
+          "testId": "test_target_migration.TargetMigrationTests.test_first_adoption_rejects_replaced_payload_root_without_blessing"
         }
       ],
       "openGaps": []
@@ -1197,11 +1207,37 @@
         {
           "path": "manure/tests/test_target_durability.py",
           "testId": "test_target_durability.TargetDurabilityTests.test_shutdown_waits_active_sweep_callback_then_restart_removes_orphan_tree"
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala",
+          "marker": "test(\"real PG sweep revalidates stale idle page after durable receipt commit and actual advisory wait\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala",
+          "marker": "test(\"real PG sweep revalidates stale idle page across P2-to-P5 process gate without a long SQL transaction\""
         }
       ],
-      "openGaps": [
-        "P2 activity fix and success-only user publish/startup-preservation behavior now implemented; parent reported corrected Memory/PG unit run green. Keep OPEN pending observed source-bound allowlist/failed-publish execution and real sweep SQL callback/lock proof. The new6f6369b0 active-sweep target assertion is registered, not yet claimed passing."
-      ]
+      "openGaps": [],
+      "coverageClosure": {
+        "observedAt": "2026-11-03T11:05:32Z",
+        "scope": "Specific missing assertion/execution clause closed; every external full runtime/native/provider/consumer gate remains mandatory.",
+        "reason": "Success-only publish/PATCH/ACK activity allowlist and stale-page/fresh-row sweep lock-order assertions executed on real PG. Active-sweep target callback/claim retention also executed. Both actual SQL advisory wait and no-SQL-transaction P2/P5 process-gate window are distinguished.",
+        "evidence": [
+          {
+            "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-port/manure/backend/target/validation-runs/20261103T105429Z.402iMz",
+            "source": "af93a8d7b67b26585a0be039d96ccc0ab5730015",
+            "summarySha256": "f8e3d61551a998b29a824631c266b23fb846d20dd0af7996c119697894f6ed26",
+            "result": "121 backend cases/11 suites + 29 filesystem cases; zero failures/errors/skips; source hashes of ArtifactsContract/PostgresAdmissionSuite/RuntimeSuite match this register source."
+          },
+          {
+            "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-port/manure/backend/target/target-runs/20261103T103937Z-jvm.ieH49n",
+            "source": "cf46b0d169c21245a8e475377c114bb9035dccfc",
+            "artifactSha256": "5947e45dc61bfd0d362ffee8c607f28551156e45c62d8b4d4d00b244ea54a1e6",
+            "summarySha256": "c4f9993f3ab9b6b4f573e8501595cdba02fd6560de9d3711463d37551dfcabd1",
+            "result": "Focused actual JVM/least-privilege helper PG: all 8 TargetDurability + 2 TargetMigration cases passed; 98.451s, zero failures/errors/skips; test source hashes match. releaseAcceptance:false, not whole CURRENT acceptance."
+          }
+        ]
+      }
     },
     {
       "id": "grants-secrets",
@@ -1285,6 +1321,14 @@
         {
           "path": "manure/backend/src/test/scala/manure/ArtifactsContract.scala",
           "marker": "test(\"symlink payload parent/leaf cannot redirect writes, hashes, serving or deletion\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/RuntimeSuite.scala",
+          "marker": "test(\"already-bound empty metadata reopens after last-row deletion and recovers its orphan staging\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/RuntimeSuite.scala",
+          "marker": "test(\"nonempty payload root with no import/metadata fails closed, no orphan sweep adoption\""
         }
       ],
       "openGaps": []
@@ -1389,9 +1433,27 @@
           "testId": "test_target_durability.TargetDurabilityTests.test_shutdown_retains_claim_until_stalled_jdbc_worker_hits_its_configured_deadline"
         }
       ],
-      "openGaps": [
-        "6f6369b0 now implements actual active-publish, active-sweep and stalled-JDBC shutdown/physical-claim assertions with owned PG waits and unchanged production defaults. OPEN until source-bound actual execution proves all new methods green; no runtime/native pass is implied by registration."
-      ]
+      "openGaps": [],
+      "coverageClosure": {
+        "observedAt": "2026-11-03T11:05:32Z",
+        "scope": "Specific missing assertion/execution clause closed; every external full runtime/native/provider/consumer gate remains mandatory.",
+        "reason": "Actual active publish/sweep/stalled-JDBC shutdown and retained physical-root claim assertions executed with owned PG and real target; all 8 durability + 2 converter/target methods passed. Specific assertion/execution gap closed, not whole artifact acceptance.",
+        "evidence": [
+          {
+            "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-port/manure/backend/target/target-runs/20261103T103937Z-jvm.ieH49n",
+            "source": "cf46b0d169c21245a8e475377c114bb9035dccfc",
+            "artifactSha256": "5947e45dc61bfd0d362ffee8c607f28551156e45c62d8b4d4d00b244ea54a1e6",
+            "summarySha256": "c4f9993f3ab9b6b4f573e8501595cdba02fd6560de9d3711463d37551dfcabd1",
+            "result": "Focused actual JVM/least-privilege helper PG: all 8 TargetDurability + 2 TargetMigration cases passed; 98.451s, zero failures/errors/skips; test source hashes match. releaseAcceptance:false, not whole CURRENT acceptance."
+          },
+          {
+            "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-port/manure/backend/target/validation-runs/20261103T105429Z.402iMz",
+            "source": "af93a8d7b67b26585a0be039d96ccc0ab5730015",
+            "summarySha256": "f8e3d61551a998b29a824631c266b23fb846d20dd0af7996c119697894f6ed26",
+            "result": "121 backend cases/11 suites + 29 filesystem cases; zero failures/errors/skips; source hashes of ArtifactsContract/PostgresAdmissionSuite/RuntimeSuite match this register source."
+          }
+        ]
+      }
     },
     {
       "id": "catalogue-current",
@@ -1495,10 +1557,29 @@
           "marker": "test(\"unpaired UTF16 query surrogates still reject before metadata lookup\""
         }
       ],
-      "openGaps": [
-        "Full Unicode16 fold, effective-folded query fingerprint and removal of the unapproved1024 cap are now implemented with independent dual assertions; actual-source executable scalar probe is registered in6f6369b0. Catalogue remains OPEN until compiled corrected full assertions and source-bound actual-native all-scalar proof are observed; no closure from source presence."
-      ],
-      "adjudication": "Review correction: the earlier claim that ROOT-lowercase replacement was an intentional approved change is withdrawn. ROOT is a functional regression against original CONTRACT7.1. The dual27-case and PG6-case matrices prove sorting/SQL/quota/locks, not permission to change casefold or reject valid long queries."
+      "openGaps": [],
+      "adjudication": "Review correction retained: ROOT lowercase and the extra1024 UTF16 cap were regressions against CONTRACT7.1, not an approved policy change. Full Unicode16 casefold and effective-equivalent current cursor matching are restored; no historical cursor decoder is retained. Concrete compiled/native-scalar evidence closes that coverage clause only.",
+      "coverageClosure": {
+        "observedAt": "2026-11-03T11:05:32Z",
+        "scope": "Specific missing assertion/execution clause closed; every external full runtime/native/provider/consumer gate remains mandatory.",
+        "reason": "Full Unicode16 mapping, effective-casefold current cursor scope, valid long queries and malformed UTF16 rejection executed in dual Memory/real-PG tests; actual source-bound native all-scalar probe now directly observed. Stored bytes/UTF8 unsigned ordering and forward v3 DDL checksum unchanged.",
+        "evidence": [
+          {
+            "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-port/manure/backend/target/validation-runs/20261103T105429Z.402iMz",
+            "source": "af93a8d7b67b26585a0be039d96ccc0ab5730015",
+            "summarySha256": "f8e3d61551a998b29a824631c266b23fb846d20dd0af7996c119697894f6ed26",
+            "result": "121 backend cases/11 suites + 29 filesystem cases; zero failures/errors/skips; source hashes of ArtifactsContract/PostgresAdmissionSuite/RuntimeSuite match this register source."
+          },
+          {
+            "artifact": "/nix/store/8sj7d0crw5ca59k2mgxa81xy4l1kw7hk-manure-native-artifact-0.1.0/libexec/manure-server",
+            "artifactSha256": "41094c42db753275fa716ae6c864634ce82519941dc8d433cb569c9c33eedafd",
+            "compiledInputsSha256": "7f110ed24d2bc3918fb32d6da88be065796dd869f4a56d2095b8b65f8b950e86",
+            "compiledInputsMatch": "Exact byte-for-byte CMP of immutable share/manure/compiled-inputs.sha256 against current artifact-source.py output (103 entries).",
+            "command": "<artifact> check-casefold",
+            "result": "Fresh bounded actual ELF exit0, empty owned cwd unchanged, no service configuration/credentials/DB/model initialization; Unicode16.0.0, 1112064 scalars, SHA256 5f578437c5eaa594f59de533d294d0a0cfa0070ea0b41308000f745e96cd9136. Scalar gate only, NOT full native acceptance."
+          }
+        ]
+      }
     },
     {
       "id": "cli-mcp",
@@ -1588,6 +1669,14 @@
         "exitStatus": 0,
         "releaseAcceptance": false,
         "scopeWarning": "Exact source hash matched receipt test-inputs. Controlled-provider correctness only; full current/native/provider acceptance and live-provider relevance quality are not implied."
+      },
+      "coverageEvidence": {
+        "observedAt": "2026-11-03T11:05:32Z",
+        "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-port/manure/backend/target/target-runs/20261103T101950Z-jvm.MRR5I7",
+        "source": "b73ddac55db4a3651984431cd8d4f12c8d81afe7",
+        "summarySha256": "dfc3352328319370f50a337b6abce22c21e8d2fafe056747d026de53df705b36",
+        "testSourceSha256": "d26cbf2d93ae3284fb51ed7eab750aebba7f1ef01c3415bb2cdbca91b7d71049",
+        "result": "Focused real target semantic adapter method passed66.105s, zero failures/errors/skips; all3-mode negative filters/provenance and real minTTL60s crossing5s controlled-query expiry asserted; releaseAcceptance:false, no live-provider quality or complete-suite acceptance."
       }
     },
     {
@@ -1655,6 +1744,100 @@
       ],
       "openGaps": [],
       "implementedAssertions": "Repository-relative target/.git exclusion fixes ancestor-sensitive selection. Independent owned copied-fixture expected hashes/paths now match under ordinary/target/.git ancestors; nested build/git metadata and generator itself remain excluded. Actual ordinary-checkout before/after manifest bytes are identical. No previous correct Nix-store/native ELF identity is invalidated."
+    },
+    {
+      "id": "current-full-validation",
+      "invariant": "All CURRENT cases and mandatory Node/TypeScript gates must complete successfully against each frozen source-bound JVM/native artifact. Scoped proofs cannot replace or hide actual full-run failures; unknown browser/client causes remain unresolved until adjudicated and re-executed without weakened assertions.",
+      "sourceRefs": [
+        {
+          "path": "manure/scripts/target-suite.py",
+          "marker": "def release_acceptance"
+        },
+        {
+          "path": "manure/scripts/target-suite.py",
+          "marker": "def gate_exit_status"
+        }
+      ],
+      "targetRefs": [
+        {
+          "path": "manure/tests/test_browser_dashboard.py",
+          "testId": "test_browser_dashboard.DashboardSeparateCase.test_b7_hostile_sibling_js_cannot_mutate_dashboard"
+        },
+        {
+          "path": "manure/tests/test_browser_dashboard.py",
+          "testId": "test_browser_dashboard.DashboardSiblingCase.test_b7_hostile_sibling_js_cannot_mutate_dashboard"
+        },
+        {
+          "path": "manure/tests/test_browser_dashboard_ux.py",
+          "testId": "test_browser_dashboard_ux.DashboardUXTests.test_catalogue_detail_and_session_flows"
+        },
+        {
+          "path": "manure/tests/test_browser_path_mode.py",
+          "testId": "test_browser_path_mode.PathTlsBrowserCase.test_secure_internal_handoff_external_unlock_and_cookie_binding"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockBuiltinSiblingCase.test_b3_logout_clears_grant_cookie"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockBuiltinSiblingCase.test_b3_rotation_kills_old_password_and_grants"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockBuiltinSiblingCase.test_b3_unlock_assets_served_locked_else_404"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockRateLimitCase.test_b3_logout_clears_grant_cookie"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockRateLimitCase.test_b3_rotation_kills_old_password_and_grants"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockRateLimitCase.test_b3_unlock_assets_served_locked_else_404"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockSeparateCase.test_b3_logout_clears_grant_cookie"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockSeparateCase.test_b3_rotation_kills_old_password_and_grants"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockSeparateCase.test_b3_unlock_assets_served_locked_else_404"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockSiblingCase.test_b3_logout_clears_grant_cookie"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockSiblingCase.test_b3_rotation_kills_old_password_and_grants"
+        },
+        {
+          "path": "manure/tests/test_browser_unlock.py",
+          "testId": "test_browser_unlock.UnlockSiblingCase.test_b3_unlock_assets_served_locked_else_404"
+        },
+        {
+          "path": "manure/tests/test_client_realserver.py",
+          "testId": "test_client_realserver.TestRealServer.test_grant_revocation_real_server"
+        }
+      ],
+      "openGaps": [
+        "UNRESOLVED complete frozen141 JVM run observed2026-11-03T11:05:32Z: all334 declared Python IDs executed,8 failures+9 errors,0 skips; currentTestSuccess:false/releaseAcceptance:false. Besides B7x2, dashboard UX, path TLS, unlock asset/logout/rotation variants and client grant revocation fail/error. Do not infer root causes or drop assertions from focused successes. All17 Node cases and74 TypeScript vectors passed only for those frozen inputs; full JVM rerun on corrected source and complete native334/17/74 plus other external gates remain required."
+      ],
+      "observedEvidence": {
+        "observedAt": "2026-11-03T11:05:32Z",
+        "report": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/manure/backend/target/target-runs/20261103T105033Z-jvm.Tni3eR",
+        "source": "141d6eb4e88a12b063b0da4b13f4f773fe5b8559",
+        "artifactSha256": "cc113b0a0b976e2df9cd0f4de0bc73da0b30383f9cce09e8e3517212991f6e0f",
+        "result": "Completed full334 Python,8 failures9 errors0 skips; Node8+9 passed, TS74 passed; overall FAILED. Immutable old receipt retains historical three-gap list; this register supersedes only those coverage statuses, never edits the receipt."
+      }
     }
   ],
   "externalReleaseGates": [
@@ -1690,7 +1873,16 @@
       "id": "native-unicode-casefold",
       "requirement": "Parent-owned pure actual-native all1,112,064-scalar framed-SHA probe must match pinned CPython3.14.8 Unicode16, without config/credential/DB/files/model acquisition. No current native proof is implied by the JVM scalar test or historical SQLite oracle.",
       "targetTestId": "test_target_durability.TargetDurabilityTests.test_all_scalar_casefold_probe_runs_in_actual_source_bound_executable",
-      "command": "<source-bound native ELF> check-casefold"
+      "command": "<source-bound native ELF> check-casefold",
+      "observedEvidence": {
+        "observedAt": "2026-11-03T11:05:32Z",
+        "artifact": "/nix/store/8sj7d0crw5ca59k2mgxa81xy4l1kw7hk-manure-native-artifact-0.1.0/libexec/manure-server",
+        "artifactSha256": "41094c42db753275fa716ae6c864634ce82519941dc8d433cb569c9c33eedafd",
+        "compiledInputsSha256": "7f110ed24d2bc3918fb32d6da88be065796dd869f4a56d2095b8b65f8b950e86",
+        "compiledInputsMatch": "Exact byte-for-byte CMP of immutable share/manure/compiled-inputs.sha256 against current artifact-source.py output (103 entries).",
+        "command": "<artifact> check-casefold",
+        "result": "Fresh bounded actual ELF exit0, empty owned cwd unchanged, no service configuration/credentials/DB/model initialization; Unicode16.0.0, 1112064 scalars, SHA256 5f578437c5eaa594f59de533d294d0a0cfa0070ea0b41308000f745e96cd9136. Scalar gate only, NOT full native acceptance."
+      }
     }
   ],
   "plannedCurrentModules": [],
