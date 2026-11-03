@@ -51,10 +51,31 @@ assert selected protocol "generated/typescript/chronicle/api/index.ts" "regular"
 assert selected protocol "web/package-lock.json" "regular";
 assert selected protocol "server/src/test/fixtures/client.json" "regular";
 assert !(selected protocol "build.sbt" "regular");
-assert builtins.pathExists "${server}/build.sbt";
-assert builtins.pathExists "${server}/chronicle/server/src/main/resources/META-INF/native-image/chronicle";
-assert builtins.pathExists "${tests}/chronicle/scripts/test-fast.sh";
-assert builtins.pathExists "${tests}/chronicle/scripts/fast-suites.txt";
-assert !(builtins.pathExists "${tests}/scripts/fast-suites.txt");
-assert builtins.pathExists "${protocol}/scripts/codec-fixtures.mjs";
-pkgs.runCommand "backend-source-layout-test" { } "touch $out"
+pkgs.runCommand "backend-source-layout-test" {
+  serverSource = server;
+  testSource = tests;
+  protocolSource = protocol;
+  haystackSource = sources.haystackServer;
+  manureSource = sources.manureServer;
+} ''
+  # Real source existence belongs to the builder. Pure no-build evaluation must
+  # not dereference lazily realized filtered-store paths via builtins.pathExists.
+  test -f "$serverSource/build.sbt"
+  test -d "$serverSource/chronicle/server/src/main/resources/META-INF/native-image/chronicle"
+  test -f "$testSource/chronicle/scripts/test-fast.sh"
+  test -f "$testSource/chronicle/scripts/fast-suites.txt"
+  test ! -e "$testSource/scripts/fast-suites.txt"
+  test -f "$protocolSource/scripts/codec-fixtures.mjs"
+  for source in "$serverSource" "$haystackSource" "$manureSource"; do
+    for shared in baboon-runtime service-runtime model-http retrieval-core retrieval-postgres; do
+      test -d "$source/shared/$shared/src/main"
+    done
+    test ! -e "$source/haystack/web"
+    test ! -e "$source/manure/web"
+    test ! -e "$source/chronicle/web"
+  done
+  test -d "$haystackSource/haystack/migrations"
+  test -f "$manureSource/manure/migration/schema.sql"
+  test -f "$manureSource/manure/server/native-image/PosixLinkFeature.java"
+  touch "$out"
+''

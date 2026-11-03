@@ -1,0 +1,9 @@
+{
+  "scope": "PUBLIC DERIVATIVE counts/errors only; not raw prerequisite snapshot",
+  "originalSha256": "ffcb9f4db0473590ea1aae389d338e668b69ccc9bd889498cf1907acbbd9f414",
+  "originalBytes": 4221,
+  "requiredGroupCount": 5,
+  "discardedAmbientVariableCount": 178,
+  "errorCount": 0,
+  "errors": []
+}

@@ -6,6 +6,7 @@
   ...
 }:
 let
+  proxyFailure = (import ../lib/haystack-proxy.nix { }).unavailableJson;
   cfg = config.smind.hm.services.agentic;
   host = cfg.host;
   endpoints = {
@@ -23,7 +24,6 @@ let
   hasPublishToken = cfg.static.enable && cfg.static.publishTokenFile != null;
   crawl4ai = cfg.crawl4ai.package;
   pg = pkgs.postgresql_18;
-  pgSocket = "${state}/postgres-socket";
   json = pkgs.formats.json { };
   haystackAuth = json.generate "agentic-services-haystack-auth.json" {
     inherit (cfg.haystack) activityProjectId;
@@ -32,6 +32,7 @@ let
         (user: {
           id = user.id;
           type = user.type;
+          displayName = user.id;
           tokens = [
             {
               id = "default";
@@ -66,10 +67,26 @@ let
       max = 600;
     };
   };
+  haystackConfig = json.generate "agentic-services-haystack.json" {
+    listenHost = cfg.haystack.listenAddress;
+    listenPort = cfg.haystack.port;
+    authReloadMs = 1000;
+    webRoot = "${cfg.haystack.package}/share/haystack/web";
+    auth = haystackAuth.value;
+    database = builtins.removeAttrs cfg.haystack.database [ "readinessUnit" ];
+    retrieval = cfg.haystack.retrieval;
+  };
   manureConfig = json.generate "agentic-services-manure.json" {
+    database = builtins.removeAttrs cfg.manure.database [ "readinessUnit" ];
+    native_mode = "linked";
+    posix_library = null;
+    dashboard_dir = "${cfg.manure.package}/share/manure/web/dashboard";
+    unlock_shell_dir = "${cfg.manure.package}/share/manure/web/unlock";
     listen_address = cfg.manure.listenAddress;
     port = cfg.manure.port;
-    data_dir = "${state}/manure";
+    data_dir = cfg.manure.dataDirectory;
+    migration_receipt_dir = cfg.manure.migrationReceiptDirectory;
+    embedding = cfg.manure.embedding;
     api_origin = endpoints.urls.manure;
     allow_insecure_http = cfg.manure.allowInsecureHttp;
     allowed_api_origins = cfg.manure.legacyOrigins;
@@ -105,8 +122,9 @@ let
     umask 077
     ${pkgs.coreutils}/bin/mkdir -p ${shellState}/{credentials,nginx,crawl4ai/{home,cache,outputs}}
     ${lib.optionalString cfg.static.enable "${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg cfg.static.root}"}
+    ${lib.optionalString stores.manure.enable "${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg cfg.manure.dataDirectory}"}
     ${lib.optionalString stores.haystack.enable ''
-      ${pkgs.coreutils}/bin/mkdir -p ${shellState}/{postgres-socket,backups}
+      ${pkgs.coreutils}/bin/mkdir -p ${shellState}/{backups}
     ''}
     # nginx recreates its request-body/proxy temp dirs on start; drop any left
     # non-user-owned (e.g. by a root `nginx -t`, which chowns absolute *_temp_path
@@ -153,27 +171,6 @@ let
     export GUNICORN_BIND=${cfg.crawl4ai.listenAddress}:${toString cfg.crawl4ai.port}
     export CRAWL4AI_HOOKS_ENABLED=false CRAWL4AI_EXECUTE_JS_ENABLED=false
     exec ${crawl4ai}/bin/crawl4ai-server
-  '';
-  pgStart = pkgs.writeShellScript "agentic-services-postgres" ''
-    set -euo pipefail
-    umask 077
-    if [ ! -e ${shellState}/postgres/PG_VERSION ]; then
-      ${pg}/bin/initdb -D ${shellState}/postgres --auth-local=peer --auth-host=reject --encoding=UTF8 --locale=C.UTF-8
-    fi
-    test "$(<${shellState}/postgres/PG_VERSION)" = 18
-    exec ${pg}/bin/postgres -D ${shellState}/postgres -k ${lib.escapeShellArg pgSocket} -c listen_addresses= -c unix_socket_permissions=0700
-  '';
-  pgSetup = pkgs.writeShellScript "agentic-services-haystack-database" ''
-    set -euo pipefail
-    ready=0
-    for _ in {1..60}; do
-      if ${pg}/bin/pg_isready -h ${lib.escapeShellArg pgSocket}; then ready=1; break; fi
-      ${pkgs.coreutils}/bin/sleep 1
-    done
-    test "$ready" = 1
-    if [ "$(${pg}/bin/psql -h ${lib.escapeShellArg pgSocket} -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'haystack'")" != 1 ]; then
-      ${pg}/bin/createdb -h ${lib.escapeShellArg pgSocket} haystack
-    fi
   '';
   searxSettings = (pkgs.formats.yaml { }).generate "agentic-services-searx-settings.yml" (
     lib.recursiveUpdate ({ use_default_settings = true; } // cfg.searxng.settings) {
@@ -236,11 +233,14 @@ let
     location / { proxy_pass http://${cfg.crawl4ai.listenAddress}:${toString cfg.crawl4ai.port}; ${proxyHeaders} proxy_read_timeout 1800s; }
   '';
   haystackLocations = ''
-    root ${cfg.haystack.package}/lib/node_modules/haystack/web/dist;
+    # Raw nginx upstream errors include the query-bearing request line. App
+    # telemetry is sanitized; proxy access logging is already disabled globally.
+    error_log /dev/null;
+    root ${cfg.haystack.package}/share/haystack/web;
     location / { try_files $uri $uri/ =404; add_header Cache-Control no-cache; add_header Referrer-Policy no-referrer always; add_header X-Content-Type-Options nosniff always; }
     location /api/ { proxy_pass http://${cfg.haystack.listenAddress}:${toString cfg.haystack.port}; ${proxyHeaders} client_max_body_size 2m; proxy_intercept_errors on; error_page 502 504 =503 @unavailable; }
     location /mcp { proxy_pass http://${cfg.haystack.listenAddress}:${toString cfg.haystack.port}; ${proxyHeaders} proxy_read_timeout 300s; proxy_intercept_errors on; error_page 502 504 =503 @unavailable; }
-    location @unavailable { default_type application/json; add_header Cache-Control no-store always; return 503 '{"error":{"code":"unavailable","message":"service unavailable"}}'; }
+    location @unavailable { default_type application/json; add_header Cache-Control no-store always; return 503 '${proxyFailure}'; }
   '';
   manureLocations = ''
     # Suppress native request-line errors, which can contain capability URLs.
@@ -316,13 +316,14 @@ let
   setupDeps = [ "${cfg.unitPrefix}-services-setup.service" ];
 in
 {
-  imports = [ (import ./agentic-services-server-options.nix { inherit inputs; }) ];
+  imports = [
+    ./service-postgres.nix (import ./agentic-services-server-options.nix { inherit inputs; }) ];
   config = lib.mkIf cfg.enable {
     assertions = import ./agentic-services-server-assertions.nix { inherit cfg lib pkgs; };
     # Retain the actual renderer records for no-build configuration checks.
     lib.ponygirls.agenticServices = {
       proxyConfig = nginxConfig;
-      inherit manureConfig haystackAuth searxSettings;
+      inherit manureConfig haystackAuth haystackConfig searxSettings;
     };
     fonts.fontconfig.enable = true;
     home.packages = [ pkgs.dejavu_fonts ];
@@ -364,56 +365,19 @@ in
         };
     }
     // lib.optionalAttrs stores.haystack.enable {
-      "${cfg.unitPrefix}-postgres" =
-        (unit "Agentic services private PostgreSQL 18" setupDeps pgStart)
-        // {
-          Service = {
-            ExecStart = pgStart;
-            Restart = "on-failure";
-            RestartSec = 5;
-            UMask = "0077";
-            NoNewPrivileges = true;
-            KillSignal = "SIGINT";
-            TimeoutStopSec = 120;
-          };
-        };
-      "${cfg.unitPrefix}-haystack-database" = {
-        Unit = {
-          Description = "Ensure private Haystack database";
-          After = [ "${cfg.unitPrefix}-postgres.service" ];
-          Requires = [ "${cfg.unitPrefix}-postgres.service" ];
-        };
-        Service = {
-          Type = "oneshot";
-          ExecStart = pgSetup;
-          RemainAfterExit = true;
-        };
+      "${cfg.unitPrefix}-haystack-migrate" = {
+        Unit = { Description = "Haystack database-scoped migrations"; After = setupDeps ++ lib.optional (cfg.haystack.database.readinessUnit != null) cfg.haystack.database.readinessUnit; Requires = lib.optional (cfg.haystack.database.readinessUnit != null) cfg.haystack.database.readinessUnit; Wants = setupDeps; };
+        Service = { Type = "oneshot"; ExecStart = "${cfg.haystack.package}/bin/haystack-server migrate ${haystackConfig}"; RemainAfterExit = true; UMask = "0077"; TimeoutStartSec = 180; };
+        Install.WantedBy = [ "default.target" ];
       };
       "${cfg.unitPrefix}-haystack" =
-        (unit "Agentic services private Haystack" [
-          "${cfg.unitPrefix}-haystack-database.service"
-        ] "${cfg.haystack.package}/bin/haystack-server")
-        // {
-          Service = {
-            ExecStart = "${cfg.haystack.package}/bin/haystack-server";
-            Restart = "on-failure";
-            RestartSec = 5;
-            UMask = "0077";
-            NoNewPrivileges = true;
-            Environment = [
-              "HAYSTACK_AUTH_JSON=${haystackAuth}"
-              "HAYSTACK_DATABASE_URL=postgresql://${config.home.username}@/haystack?host=${pgSocket}"
-              "HAYSTACK_LISTEN=${cfg.haystack.listenAddress}"
-              "HAYSTACK_PORT=${toString cfg.haystack.port}"
-              "HAYSTACK_POOL_MAX=8"
-            ];
-          };
-        };
+        (unit "Agentic services native Haystack" (setupDeps ++ [ "${cfg.unitPrefix}-haystack-migrate.service" ])
+          "${cfg.haystack.package}/bin/haystack-server serve ${haystackConfig}") // { Unit = { Description = "Agentic services native Haystack"; After = setupDeps ++ [ "${cfg.unitPrefix}-haystack-migrate.service" ]; Wants = setupDeps; Requires = [ "${cfg.unitPrefix}-haystack-migrate.service" ]; }; };
       "${cfg.unitPrefix}-haystack-backup" = {
         Unit = {
           Description = "Back up private Haystack";
-          After = [ "${cfg.unitPrefix}-haystack-database.service" ];
-          Requires = [ "${cfg.unitPrefix}-haystack-database.service" ];
+          After = lib.optional (cfg.haystack.database.readinessUnit != null) cfg.haystack.database.readinessUnit;
+          Requires = lib.optional (cfg.haystack.database.readinessUnit != null) cfg.haystack.database.readinessUnit;
         };
         Service = {
           Type = "oneshot";
@@ -421,7 +385,9 @@ in
           ExecStart = pkgs.writeShellScript "agentic-services-haystack-backup" ''
             set -euo pipefail
             file=${shellState}/backups/haystack-$(${pkgs.coreutils}/bin/date -u +%Y%m%dT%H%M%SZ).dump
-            ${pg}/bin/pg_dump -h ${lib.escapeShellArg pgSocket} -Fc haystack > "$file.partial"
+            export PGPASSWORD="$(<${lib.escapeShellArg cfg.haystack.database.passwordFile})"
+            export PGCONNECT_TIMEOUT=5
+            ${pg}/bin/pg_dump --no-password -d ${lib.escapeShellArg (lib.removePrefix "jdbc:" cfg.haystack.database.jdbcUrl)} -U ${lib.escapeShellArg cfg.haystack.database.user} -Fc > "$file.partial"
             ${pkgs.coreutils}/bin/mv "$file.partial" "$file"
             ${pkgs.findutils}/bin/find ${shellState}/backups -name 'haystack-*.dump' -mtime +14 -delete
           '';
@@ -429,9 +395,19 @@ in
       };
     }
     // lib.optionalAttrs stores.manure.enable {
+      "${cfg.unitPrefix}-manure-migrate" = {
+        Unit = { Description = "Manure database bootstrap under physical-root claims"; After = setupDeps ++ lib.optional (cfg.manure.database.readinessUnit != null) cfg.manure.database.readinessUnit; Requires = lib.optional (cfg.manure.database.readinessUnit != null) cfg.manure.database.readinessUnit; Wants = setupDeps; };
+        Service = { Type = "oneshot"; ExecStart = "${cfg.manure.package}/bin/manure-server migrate ${manureConfig}"; RemainAfterExit = true; UMask = "0077"; TimeoutStartSec = 180; };
+        Install.WantedBy = [ "default.target" ];
+      };
       "${cfg.unitPrefix}-manure" =
-        unit "Agentic services private Manure (low-security path hosting)" setupDeps
+        let base = unit "Agentic services native Manure (low-security path hosting)" (setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ])
           "${cfg.manure.package}/bin/manure-server --config ${manureConfig}";
+        in base // {
+          Unit = { Description = "Agentic services native Manure (low-security path hosting)"; After = setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ]; Requires = [ "${cfg.unitPrefix}-manure-migrate.service" ]; Wants = setupDeps; };
+          # Preserve every base serve field; migration must still reject 143.
+          Service = base.Service // { SuccessExitStatus = [ 143 ]; };
+        };
     };
     systemd.user.timers = lib.optionalAttrs stores.haystack.enable {
       "${cfg.unitPrefix}-haystack-backup" = {

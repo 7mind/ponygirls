@@ -1,7 +1,7 @@
 {
   "sbt_runs": [
     {
-      "args": ["update", "contracts/compile", "Test/compile", "show scalaInstance", "show scalaCompilerBridgeBinaryJar", "chronicleServer/assembly"]
+      "args": ["update", "contracts/compile", "haystackContracts/compile", "manureContracts/compile", "contractCoassembly", "serviceRuntime/Test/compile", "modelHttp/Test/compile", "retrievalCore/Test/compile", "retrievalPostgres/Test/compile", "haystackServer/Test/compile", "manureServer/Test/compile", "chronicleServer/Test/compile", "show scalaInstance", "show scalaCompilerBridgeBinaryJar", "chronicleServer/assembly", "haystackServer/assembly", "manureServer/assembly"]
     }
   ],
   "fetch_artifacts": [

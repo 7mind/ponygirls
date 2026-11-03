@@ -1,0 +1,37 @@
+✔ actual public catalog modelRevision and declared max metadata pass V3 pre-Start guards; high is rejected (2.384797ms)
+✔ missing, mismatched or mistyped actual agent metadata fails before Start (1.011982ms)
+✔ new expected agent bindings are required with exact types before Start (0.478659ms)
+✔ recorded native baseline catalog preserves all eleven exact comparison limits (7.343173ms)
+✔ explicit versioned catalogs use the recorded baseline rather than invented limit metadata (0.88397ms)
+✔ uniform prompt carries no evaluator fields, keeps existing policy and exact pin navigation (0.405261ms)
+✔ unchanged generic evaluationTrace unwraps real MessageContext result (0.552716ms)
+✔ versioned final answer accepts exact null archive pin without rewriting raw response (5.189088ms)
+✔ versioned final answer retains every original indexed-answer schema guard (4.219722ms)
+✔ required V3 probe policy, exact task projection and schedule admission precede browser launch (8.681423ms)
+✔ run metadata binds actual API/protocol/variant and exact schedule without exposing evaluation identity in prompt (0.426558ms)
+✔ probe shared V3 helpers retain exact 9/10 catalogs, conditional prompt, and null generation response (1.170018ms)
+✔ uniform ordered facts schema and explicit mode, no case oracle (2.229567ms)
+✔ related and wrong mode/project are comparison violations without fallback (0.189026ms)
+✔ terminal page drains to received high water, multipart complete and contiguous (0.869882ms)
+✔ recorded generated ToolResult joins by callId without a tool field (0.3456ms)
+✔ recorded call pairing rejects orphans, mismatched IDs and duplicate parts (0.940899ms)
+✔ search expansion follows evidence gaps rather than hypothetical counterclaims (0.191459ms)
+✔ uniform abstention reports insufficient found evidence, not global absence (0.215187ms)
+✔ offline CLI repairs recorded schema while preserving native failure and original bytes (75.087569ms)
+✔ offline CLI rejects output within originals before creating it (50.728565ms)
+✔ text trace retains actual model-visible presentation separately from canonical data (2.004293ms)
+✔ default and explicit JSON preserve legacy normalized result shape (0.295557ms)
+✔ text errors retain canonical failure and actual shown text (0.277889ms)
+✔ displayed error code/message must be complete, unique and bound to canonical failure (2.082295ms)
+✔ text without canonical data, with wrong result kind, or without policy header fails closed (0.721779ms)
+✔ text projection rejects invalid envelopes, scalar text, and unchanged result-byte cap violations (5.565253ms)
+✔ Scala renderer/projection fixture binds normalized trace to the actual shown text (0.587833ms)
+✔ JSON requests cannot quietly accept text-only results or an unsupported selected format (0.264915ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 199.697848

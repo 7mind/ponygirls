@@ -1,0 +1,44 @@
+{
+  "observedAt": "2026-11-03T16:41:15.569564+00:00",
+  "cleanupJob": "bgt-c7c235b4ddadf80e",
+  "exitStatus": 0,
+  "codeSha256": "556e77e589dc46c0da5be49ea45d3ee3d8b4a460d7a7da37f6afc9066f61d38f",
+  "sealedManifestSha256": "9e562ae1c109adfffa9058e2618e52f340efda6c07e371de02d5b0a673e05a78",
+  "allFreshPerRootGuardsExecutedBeforeDeletion": true,
+  "archiveEntrySetsIncludeOnlyExactTenReviewedSocketMetadataNodes": true,
+  "gnuTarCompareLogsEmpty": 4,
+  "roots": [
+    {
+      "root": "/tmp/mv.3tnn98u5",
+      "freshAbsenceVerified": true,
+      "archiveDirectory": "original-fe4352",
+      "archiveSha256VerifiedByCleanupJob": "3e7f2ecb565afde02716af7918d2b0512adaa23e9c295a02ef1c1469ab8a8684",
+      "archiveStillPresentBytes": 1265881974
+    },
+    {
+      "root": "/tmp/mv.yb1xinoj",
+      "freshAbsenceVerified": true,
+      "archiveDirectory": "diagnostic-abd8",
+      "archiveSha256VerifiedByCleanupJob": "633045a99a061ac29ba21f6632e9110a76363de7734666be097231f879d61a58",
+      "archiveStillPresentBytes": 2530823216
+    },
+    {
+      "root": "/tmp/mv.i31ewl2j",
+      "freshAbsenceVerified": true,
+      "archiveDirectory": "original-full-a104-third-failure",
+      "archiveSha256VerifiedByCleanupJob": "52c9ca79d1253350dc5df9e4b2eeb7c2562ed275b0897af54cf45a39e3071fd9",
+      "archiveStillPresentBytes": 2568773657
+    },
+    {
+      "root": "/tmp/mv.ttpy6kde",
+      "freshAbsenceVerified": true,
+      "archiveDirectory": "successful-6587-outer",
+      "archiveSha256VerifiedByCleanupJob": "4231be18f340ae0c1a05a8c90e9f0decb9263dc1530b483b726beaeaebe9002a",
+      "archiveStillPresentBytes": 477
+    }
+  ],
+  "originalFailedOutcomesRewritten": false,
+  "archivePayloadInterpreted": false,
+  "worktreesOrCodegraphCachesRemoved": false,
+  "chronicleCnsRootRetained": true
+}

@@ -1,0 +1,51 @@
+
+> @chronicle/acceptance@0.1.0 test
+> node --import tsx --test workflow.test.ts
+
+Synthetic failure artifacts retained: /tmp/cf7b.4tdzmx_7/chronicle-workflow-Gb5sTD
+chronicle.DomainError: config
+	at chronicle.DomainError$.apply(Core.scala:15)
+	at chronicle.Config$.$anonfun$1(Core.scala:145)
+	at scala.util.Either.fold(Either.scala:232)
+	at chronicle.Config$.load(Core.scala:145)
+	at chronicle.Main$.run$$anonfun$4(Main.scala:26)
+	at blocking @ chronicle.Main$.run(Main.scala:26)
+	at flatMap @ chronicle.Main$.run(Main.scala:26)
+	at as @ chronicle.Main$.run(Main.scala:38)
+	at main$ @ chronicle.Main$.main(Main.scala:12)
+	at main$ @ chronicle.Main$.main(Main.scala:12)
+	at main$ @ chronicle.Main$.main(Main.scala:12)
+
+✖ collector → durable archive → annotation/pgvector → generated WS and official MCP; live group ACLs and restart (2519.073744ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3288.711576
+
+✖ failing tests:
+
+test at workflow.test.ts:1:6116
+✖ collector → durable archive → annotation/pgvector → generated WS and official MCP; live group ACLs and restart (2519.073744ms)
+  Error: server exited 1: chronicle.DomainError: config
+  	at chronicle.DomainError$.apply(Core.scala:15)
+  	at chronicle.Config$.$anonfun$1(Core.scala:145)
+  	at scala.util.Either.fold(Either.scala:232)
+  	at chronicle.Config$.load(Core.scala:145)
+  	at chronicle.Main$.run$$anonfun$4(Main.scala:26)
+  	at blocking @ chronicle.Main$.run(Main.scala:26)
+  	at flatMap @ chronicle.Main$.run(Main.scala:26)
+  	at as @ chronicle.Main$.run(Main.scala:38)
+  	at main$ @ chronicle.Main$.main(Main.scala:12)
+  	at main$ @ chronicle.Main$.main(Main.scala:12)
+  	at main$ @ chronicle.Main$.main(Main.scala:12)
+  
+      at <anonymous> (/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/tests/workflow.test.ts:193:43)
+      at eventually (/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/tests/workflow.test.ts:61:18)
+      at async start (/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/tests/workflow.test.ts:192:5)
+      at async TestContext.<anonymous> (/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/tests/workflow.test.ts:197:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)

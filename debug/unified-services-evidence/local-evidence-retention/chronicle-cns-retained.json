@@ -1,0 +1,22 @@
+{
+  "scope": "Explicit retention, not archive or deletion proof",
+  "root": "/tmp/cns.x8nktpy8",
+  "workerObservationAt": "2026-11-03T16:32:03.667820Z",
+  "parentReadCompleteProposal": true,
+  "rootCreationIdentityMatched": {"uid": 1001, "mode": "0700", "device": 64769, "inode": 1178378},
+  "markerSha256": "702d723d0b06c912d097b6a5dd138dc8b9afbc56cef8a7da6df368f9fc2bee8c",
+  "markerCurrentMode": "0664",
+  "markerCreationModeUnknown": true,
+  "originalRuntimeExit": 1,
+  "originalOwnedClosureAt": "2026-11-03T15:41:38.746132Z",
+  "currentOldIdentityChecks": 22,
+  "wholeHostOrExclusiveUseProof": false,
+  "sourcePreservedInPlace": true,
+  "rawOpaqueArchiveCreated": false,
+  "sourceRemoved": false,
+  "reason": "VM-specific archive validator requires its own 0600 marker contract, not this cns marker. No mode rewriting, bypass, ROOTS expansion or new validator was authorized. The original owner-only root and task worktree remain; safe red evidence is separately committed.",
+  "proposalSha256": "a5d83a4315094810608627286575c69257e57d6e698ea5d175ae3ebd0ad0b243",
+  "inspectionSha256": "f802b8a295dc695ce61970c01497c2069859b68998a1228f3ac9ea46052f28b2",
+  "proposalHistoricalV2ApprovalFieldsNotRelabeled": true,
+  "q11IntegrationAuthority": false
+}

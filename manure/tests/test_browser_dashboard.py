@@ -161,18 +161,13 @@ class DashboardFlows:
 
     def test_b1_login_requires_exact_origin_http(self):
         jar = bf.TestHttp()
-        res = jar.request("POST", self.api + "/api/v1/login",
-                          body={"token": self.fix.identity.token})
+        res = jar.current((self.api), bf.cp.Command_Login(({"token": self.fix.identity.token})["token"]))
         self.assertEqual(res.status, 403, res.body[:300])
         self.assertEqual(jar.cookies_for(self.api), {})
-        bad = jar.request("POST", self.api + "/api/v1/login",
-                          body={"token": self.fix.identity.token},
-                          headers={"Origin": "https://evil.example"})
+        bad = jar.current((self.api), bf.cp.Command_Login(({"token": self.fix.identity.token})["token"]), headers={"Origin": "https://evil.example"})
         self.assertEqual(bad.status, 403, bad.body[:300])
         self.assertEqual(jar.cookies_for(self.api), {})
-        wrong = jar.request("POST", self.api + "/api/v1/login",
-                            body={"token": bf.canonical_secret()},
-                            headers={"Origin": self.api})
+        wrong = jar.current((self.api), bf.cp.Command_Login(({"token": bf.canonical_secret()})["token"]), headers={"Origin": self.api})
         self.assertEqual(wrong.status, 401, wrong.body[:300])
         self.assertEqual(jar.cookies_for(self.api), {})
 
@@ -215,9 +210,7 @@ class DashboardFlows:
         self.assertIsNone(res.header("Access-Control-Allow-Origin"))
 
     def test_b1_api_dynamic_responses_carry_security_headers(self):
-        res = self.http.request(
-            "GET", self.api + "/api/v1/whoami",
-            headers={"Authorization": f"Bearer {self.fix.identity.token}"})
+        res = self.http.current((self.api), bf.cp.Command_Whoami(), headers={"Authorization": f"Bearer {self.fix.identity.token}"})
         self.assertEqual(res.status, 200, res.body[:300])
         self.assertEqual(res.header("Cache-Control"), "no-store")
         self.assertEqual(res.header("Origin-Agent-Cluster"), "?1")
@@ -234,28 +227,19 @@ class DashboardFlows:
         aid = created["artifact_id"]
         # Plant a genuine session cookie, then attack cross-origin.
         jar = bf.TestHttp()
-        login = jar.request("POST", self.api + "/api/v1/login",
-                            body={"token": self.fix.identity.token},
-                            headers={"Origin": self.api})
+        login = jar.current((self.api), bf.cp.Command_Login(({"token": self.fix.identity.token})["token"]), headers={"Origin": self.api})
         self.assertEqual(login.status, 200, login.body[:300])
         self.assertTrue(jar.cookies_for(self.api), "login set no cookie")
         evil = {"Origin": "https://evil.example"}
-        delete = jar.request("DELETE",
-                             f"{self.api}/api/v1/artifacts/{aid}",
-                             headers=evil)
+        delete = jar.current((self.api), bf.cp.Command_DeleteArtifact(aid), headers=evil)
         self.assertEqual(delete.status, 403, delete.body[:300])
-        no_origin = jar.request("DELETE",
-                                f"{self.api}/api/v1/artifacts/{aid}")
+        no_origin = jar.current((self.api), bf.cp.Command_DeleteArtifact(aid))
         self.assertEqual(no_origin.status, 403, no_origin.body[:300])
         # State unchanged: the artifact is still readable.
         fresh = bf.TestHttp()
-        info = fresh.request(
-            "GET", f"{self.api}/api/v1/artifacts/{aid}",
-            headers={"Authorization": f"Bearer {self.fix.identity.token}"})
+        info = fresh.current((self.api), bf.cp.Command_GetArtifact(aid), headers={"Authorization": f"Bearer {self.fix.identity.token}"})
         self.assertEqual(info.status, 200, info.body[:300])
-        cleanup = fresh.request(
-            "DELETE", f"{self.api}/api/v1/artifacts/{aid}",
-            headers={"Authorization": f"Bearer {self.fix.identity.token}"})
+        cleanup = fresh.current((self.api), bf.cp.Command_DeleteArtifact(aid), headers={"Authorization": f"Bearer {self.fix.identity.token}"})
         self.assertEqual(cleanup.status, 200, cleanup.body[:300])
 
     # -- D1 --------------------------------------------------------------
@@ -308,9 +292,7 @@ class DashboardFlows:
         dialogs = [r for r in out if r.get("op") == "dialogs"][0]["dialogs"]
         self.assertTrue(any("Delete artifact" in d["message"] for d in dialogs), dialogs)
         # Server state: the artifact is gone.
-        info = self.http.request(
-            "GET", f"{self.api}/api/v1/artifacts/{aid}",
-            headers={"Authorization": f"Bearer {self.fix.identity.token}"})
+        info = self.http.current((self.api), bf.cp.Command_GetArtifact(aid), headers={"Authorization": f"Bearer {self.fix.identity.token}"})
         self.assertEqual(info.status, 404, info.body[:300])
 
     def test_d1_rotate_reveals_once_and_clears_on_dismiss(self):
@@ -408,8 +390,9 @@ class DashboardFlows:
              "contains": "shown"},
             # Vanish between list and click: delete via same-origin
             # fetch, then open details that can no longer load.
-            {"op": "eval", "fn": "(id) => fetch(`/api/v1/artifacts/${id}`,"
-                                 " {method:'DELETE', credentials:'same-origin'})"
+            {"op": "eval", "fn": "(id) => fetch('/api/current',"
+                                 " {method:'POST', credentials:'same-origin',headers:{'Content-Type':'application/json'},"
+                                 " body:JSON.stringify({requestId:crypto.randomUUID(),apiVersion:'1.0.0',command:{DeleteArtifact:{artifactId:id}}})})"
                                  ".then((r) => { if (!r.ok) throw new Error('delete:'+r.status);"
                                  " document.querySelector("
                                  "`button[data-action=details][data-artifact-id=\"${id}\"]`).click();"
@@ -437,9 +420,9 @@ class DashboardFlows:
 
     def test_b7_hostile_sibling_js_cannot_mutate_dashboard(self):
         """Uploaded sibling JS runs with the victim's cookies in the jar:
-        its dashboard reads must fail closed and its state-changing
-        POSTs must reach the server (simple requests, no preflight) yet
-        leave state unchanged under exact-Origin enforcement."""
+        its JSON operations must fail preflight and stay unreadable. Simple
+        form POSTs dispatch; authenticated wrong-Origin forms must return403.
+        Every response is joined to its exact request/phase, not a shared URL."""
         token = self.fix.identity.token
         bearer = {"Authorization": f"Bearer {token}"}
         victim = bf.upload_fixture(
@@ -448,10 +431,10 @@ class DashboardFlows:
         vid = victim["artifact_id"]
         # R1: hostile JS uses OTHERWISE-VALID login credentials (stolen
         # victim token, not random) and TARGETS the victim artifact via a
-        # SIMPLE same-site POST (grants, urlencoded, no preflight) so the
-        # browser actually dispatches with Origin+Cookie and the server must
-        # return 403 (not 401/preflight-only/CSP). DELETE would preflight and
-        # never dispatch, so it is covered only by the HTTP complements below.
+        # JSON CreateGrant/List require preflight in the CURRENT protocol;
+        # they are NOT dispatched simple-form Origin proofs. Login/logout
+        # forms still dispatch. Raw HTTP complements send otherwise-valid
+        # typed mutations and cookie forms without CORS/SameSite shielding.
         hostile_html = (
             "<!DOCTYPE html><html><head><meta charset=utf-8><title>HOSTILE</title></head>"
             "<body><h1>hostile</h1><script>"
@@ -464,17 +447,18 @@ class DashboardFlows:
             "async function run() {"
             "  const base = '" + self.api + "';"
             "  const vid = '" + vid + "';"
-            "  await attempt('read', base + '/api/v1/artifacts',"
-            "    {credentials:'include'});"
-            "  await attempt('grants', base + '/api/v1/artifacts/' + vid + '/grants',"
+            "  const envelope = command => JSON.stringify({requestId:crypto.randomUUID(),apiVersion:'1.0.0',command});"
+            "  await attempt('read', base + '/api/current',"
+            "    {method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},"
+            "     body:envelope({ListArtifacts:{query:{query:'',includeExpired:false,visibility:null,state:null,sort:'CreatedAt',direction:'Desc',limit:50,cursor:null}}})});"
+            "  await attempt('grants', base + '/api/current',"
+            "    {method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},"
+            "     body:envelope({CreateGrant:{artifactId:vid}})});"
+            "  await attempt('logout', base + '/api/current/logout',"
             "    {method:'POST', credentials:'include',"
             "     headers:{'Content-Type':'application/x-www-form-urlencoded'},"
             "     body:'x=1'});"
-            "  await attempt('logout', base + '/api/v1/logout',"
-            "    {method:'POST', credentials:'include',"
-            "     headers:{'Content-Type':'application/x-www-form-urlencoded'},"
-            "     body:'x=1'});"
-            "  await attempt('login', base + '/api/v1/login',"
+            "  await attempt('login', base + '/api/current/login',"
             "    {method:'POST', credentials:'include',"
             "     headers:{'Content-Type':'application/x-www-form-urlencoded'},"
             "     body:'token=" + token + "'});"
@@ -492,21 +476,52 @@ class DashboardFlows:
         hostile_origin = "{0.scheme}://{0.netloc}".format(
             urllib.parse.urlsplit(hurl))
         SESSION_NAMES = ("__Host-manure", "manure-dev")
-        grants_suffix = f"/api/v1/artifacts/{vid}/grants"
 
-        def _reqs(out, suffix):
+        def _reqs(out, suffix, phase):
             return [q for q in bf.requests_log(out)
-                    if q["url"].endswith(suffix)]
+                    if q["url"].endswith(suffix) and q.get("phase") == phase]
 
-        def _resps(out, suffix):
-            return [r for r in bf.responses_log(out)
-                    if r["url"].endswith(suffix)]
+        def _key(entry):
+            return tuple(entry.get(k) for k in ("sessionId", "requestId", "redirectHop"))
+
+        def _responses_for(out, requests):
+            self.assertTrue(requests, "no requests to correlate")
+            indexed = {_key(q): q for q in requests}
+            self.assertEqual(len(indexed), len(requests), "duplicate CDP request/hop identity")
+            self.assertTrue(all(None not in key for key in indexed), "missing CDP identity")
+            responses = [r for r in bf.responses_log(out) if _key(r) in indexed]
+            self.assertEqual({_key(r) for r in responses}, set(indexed),
+                             "missing exact request-correlated response")
+            self.assertEqual(len(responses), len(indexed), "duplicate response/hop identity")
+            for response in responses:
+                request = indexed[_key(response)]
+                for field in ("url", "phase", "method", "origin"):
+                    self.assertEqual(response[field], request[field], field)
+            return responses
+
+        def _assert_preflight_denied(out, phase):
+            current = _reqs(out, "/api/current", phase)
+            preflights = [q for q in current
+                          if q["method"] == "OPTIONS" and q["origin"] == hostile_origin]
+            self.assertTrue(preflights, "no hostile current-API preflight observed")
+            responses = _responses_for(out, preflights)
+            self.assertTrue(all(r["status"] == 404 for r in responses), responses)
+            authenticated_posts = [q for q in current if q["method"] == "POST"
+                                   and q.get("hasRequestExtraInfo")
+                                   and set(q["cookieNames"]) & set(SESSION_NAMES)]
+            self.assertFalse(authenticated_posts, "authenticated JSON POST dispatched despite denied preflight")
+            # Do NOT hide an unexpected attack200 because its Origin/command
+            # metadata is absent. The phase was snapshotted at request start.
+            attack_responses = [r for r in bf.responses_log(out)
+                                if r.get("phase") == phase and r["url"].endswith("/api/current")]
+            self.assertFalse(any(200 <= r["status"] < 300 for r in attack_responses), attack_responses)
 
         # -- CLEAN run: hostile JS with OTHERWISE-VALID credentials in a
         # clean context must get wrong-Origin 403 and create NO session.
         # No cookie is dispatched (clean jar), so SameSite cannot suppress:
         # this holds in BOTH sibling and separate modes without planting.
         out_clean = bf.run_steps([
+            {"op": "networkPhase", "phase": "hostile-clean"},
             {"op": "goto", "url": hurl},
             {"op": "waitForEval",
              "fn": "() => document.title.indexOf('ATK:') === 0"},
@@ -532,7 +547,8 @@ class DashboardFlows:
         self.assertEqual(atk_clean["cookie"], "", atk_clean)
         self.assertEqual(atk_clean["storage"], "0,0", atk_clean)
         bf.assert_no_secrets_in_request_urls(self, out_clean, [token])
-        clean_login_reqs = _reqs(out_clean, "/api/v1/login")
+        _assert_preflight_denied(out_clean, "hostile-clean")
+        clean_login_reqs = _reqs(out_clean, "/api/current/login", "hostile-clean")
         self.assertTrue(clean_login_reqs, "no browser login POST dispatched")
         # Complete headers (redacted) + wrong Origin, no cookie in clean jar.
         login_req = [q for q in clean_login_reqs
@@ -542,8 +558,8 @@ class DashboardFlows:
         self.assertEqual(login_req[0]["headers"].get("Origin"), hostile_origin)
         self.assertIn("application/x-www-form-urlencoded",
                         login_req[0]["headers"].get("Content-Type", ""))
-        clean_login_resps = _resps(out_clean, "/api/v1/login")
-        self.assertTrue(any(r["status"] == 403 for r in clean_login_resps),
+        clean_login_resps = _responses_for(out_clean, login_req)
+        self.assertTrue(all(r["status"] == 403 for r in clean_login_resps),
                         clean_login_resps)
         # No session creation: no session cookie for the API origin and no
         # session Set-Cookie on the 403.
@@ -561,11 +577,14 @@ class DashboardFlows:
         # proves they are not preflight-only (Origin+Cookie present) and the
         # response log proves the server's 403 (not 401/CSP/never-dispatched).
         out = bf.run_steps([
+            {"op": "networkPhase", "phase": "setup"},
             {"op": "goto", "url": self.api + "/"},
             {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "networkPhase", "phase": "victim-login"},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "shown"},
+            {"op": "networkPhase", "phase": "hostile-auth"},
             {"op": "goto", "url": hurl},
             {"op": "waitForEval",
              "fn": "() => document.title.indexOf('ATK:') === 0"},
@@ -590,46 +609,45 @@ class DashboardFlows:
         bf.assert_no_secrets_in_request_urls(self, out, [token])
         # The simple POSTs were actually dispatched (request log proves
         # they are not preflight-only passes) ...
+        # Keep legitimate same-URL200s as explicit controls, never as attack
+        # evidence. Late response events retain their request's original phase.
+        baseline = _reqs(out, "/api/current", "victim-login")
+        for command in ("Login", "Whoami", "ListArtifacts"):
+            controls = [q for q in baseline if q.get("command") == command]
+            responses = _responses_for(out, controls)
+            self.assertTrue(any(r["status"] == 200 for r in responses), command)
         posts = [q for q in bf.requests_log(out)
-                 if q["method"] == "POST" and "/api/v1/" in q["url"]]
-        self.assertTrue(any(q["url"].endswith("/api/v1/logout") for q in posts),
+                 if q.get("phase") == "hostile-auth" and q["origin"] == hostile_origin
+                 and q["method"] == "POST" and "/api/current/" in q["url"]]
+        self.assertTrue(any(q["url"].endswith("/api/current/logout") for q in posts),
                         posts)
-        self.assertTrue(any(q["url"].endswith("/grants") and vid in q["url"]
-                            for q in posts), posts)
-        # Mutation dispatch with VALID victim cookie, wrong Origin, server 403.
-        # Sibling (same-site) dispatches Strict directly; separate
-        # (cross-site) withholds Strict over HTTP (401, correctly reported as
-        # [] via blockedReasons, never masqueraded as 403). The separate 403
-        # proof lives in the TLS planting test (None/Secure, real TLS) and in
-        # the HTTP complements below (urllib has no SameSite); see R1.
-        grants_reqs = [q for q in _reqs(out, "/grants") if vid in q["url"]]
-        self.assertTrue(grants_reqs, "no browser grants POST to victim")
-        grants_req = [q for q in grants_reqs if q["origin"] == hostile_origin]
-        self.assertTrue(grants_req, grants_reqs)
-        grants_resps = [r for r in _resps(out, "/grants") if vid in r["url"]]
-        logout_req = [q for q in _reqs(out, "/api/v1/logout")
+        # Typed application/json operations cannot be simple cross-origin
+        # browser requests. Verify preflight rejection, not an invented 403
+        # dispatch proof. Targeted authenticated CreateGrant/Delete 403 checks
+        # below still execute over HTTP with the observed live cookie.
+        _assert_preflight_denied(out, "hostile-auth")
+        logout_req = [q for q in _reqs(out, "/api/current/logout", "hostile-auth")
                       if q["method"] == "POST" and q["origin"] == hostile_origin]
         self.assertTrue(logout_req, posts)
-        logout_resps = _resps(out, "/api/v1/logout")
+        logout_resps = _responses_for(out, logout_req)
         if self.suffix_mode == "sibling":
-            self.assertEqual(grants_req[0]["cookieNames"], ["manure-dev"],
-                             grants_req[0])
-            self.assertTrue(any(r["status"] == 403 for r in grants_resps),
-                            grants_resps)
             self.assertEqual(logout_req[0]["cookieNames"], ["manure-dev"],
                              logout_req[0])
-            self.assertTrue(any(r["status"] == 403 for r in logout_resps),
+            self.assertTrue(all(r["status"] == 403 for r in logout_resps),
                             logout_resps)
         else:
             # Separate HTTP: Strict withheld cross-site (SameSite). The CDP
             # helper correctly reports [] (blocked, not sent) and the server
             # answers 401 (unauthenticated), which is NOT an Origin proof.
-            self.assertEqual(grants_req[0]["cookieNames"], [], grants_req[0])
-            self.assertTrue(any(r["status"] == 401 for r in grants_resps),
-                            grants_resps)
             self.assertEqual(logout_req[0]["cookieNames"], [], logout_req[0])
-            self.assertTrue(any(r["status"] == 401 for r in logout_resps),
+            self.assertTrue(all(r["status"] == 401 for r in logout_resps),
                             logout_resps)
+        authenticated_login = [q for q in _reqs(out, "/api/current/login", "hostile-auth")
+                               if q["method"] == "POST" and q["origin"] == hostile_origin]
+        self.assertTrue(authenticated_login, "valid hostile login form was not dispatched")
+        for request in authenticated_login + logout_req:
+            self.assertIn("application/x-www-form-urlencoded", request["headers"].get("Content-Type", ""))
+        self.assertTrue(all(r["status"] == 403 for r in _responses_for(out, authenticated_login)))
         # ... yet the victim session survives: replay the observed
         # session cookie (harness privilege, not page JS) and prove it
         # still works, while the same requests with a wrong Origin fail.
@@ -640,41 +658,46 @@ class DashboardFlows:
         self.assertEqual(len(session), 1, cookies)
         jar = bf.TestHttp()
         jar.set_cookie(self.api, session[0]["name"], session[0]["value"])
-        who = jar.request("GET", self.api + "/api/v1/whoami")
+        who = jar.current((self.api), bf.cp.Command_Whoami())
         self.assertEqual(who.status, 200, who.body[:300])
         evil = {"Origin": "https://evil.example"}
-        bad_logout = jar.request("POST", self.api + "/api/v1/logout",
-                                 headers=evil)
+        bad_logout = jar.current((self.api), bf.cp.Command_Logout(), headers=evil)
         self.assertEqual(bad_logout.status, 403, bad_logout.body[:300])
-        still = jar.request("GET", self.api + "/api/v1/whoami")
+        still = jar.current((self.api), bf.cp.Command_Whoami())
         self.assertEqual(still.status, 200, still.body[:300])
-        bad_delete = jar.request("DELETE",
-                                 f"{self.api}/api/v1/artifacts/{vid}",
-                                 headers=evil)
+        bad_delete = jar.current((self.api), bf.cp.Command_DeleteArtifact(vid), headers=evil)
         self.assertEqual(bad_delete.status, 403, bad_delete.body[:300])
         # HTTP complements for the browser grants/login proofs above
         # (urllib has no SameSite/preflight/CSP, so separate 403 is direct).
-        bad_grants = jar.request(
-            "POST", f"{self.api}/api/v1/artifacts/{vid}/grants",
-            body="x=1", content_type="application/x-www-form-urlencoded",
-            headers=evil)
+        bad_grants = jar.current((self.api), bf.cp.Command_CreateGrant(vid), headers=evil)
         self.assertEqual(bad_grants.status, 403, bad_grants.body[:300])
-        still2 = jar.request("GET", self.api + "/api/v1/whoami")
+        # Otherwise-valid current form routes with a REAL cookie must be403
+        # in BOTH modes: urllib deliberately has no SameSite/preflight shield.
+        cookie_origin = {"Origin": hostile_origin}
+        bad_form_logout = jar.request("POST", self.api + "/api/current/logout", body="",
+            content_type="application/x-www-form-urlencoded", headers=cookie_origin)
+        self.assertEqual(bad_form_logout.status, 403, bad_form_logout.body[:300])
+        self.assertIsNone(bad_form_logout.header("Set-Cookie"))
+        bad_form_login = jar.request("POST", self.api + "/api/current/login",
+            body=urllib.parse.urlencode({"token": token}),
+            content_type="application/x-www-form-urlencoded", headers=cookie_origin)
+        self.assertEqual(bad_form_login.status, 403, bad_form_login.body[:300])
+        self.assertIsNone(bad_form_login.header("Set-Cookie"))
+        still2 = jar.current((self.api), bf.cp.Command_Whoami())
         self.assertEqual(still2.status, 200, still2.body[:300])
         # Valid login with wrong Origin is 403 with NO session (HTTP).
         clean_jar = bf.TestHttp()
         bad_login = clean_jar.request(
-            "POST", self.api + "/api/v1/login",
+            "POST", self.api + "/api/current/login",
             body=urllib.parse.urlencode({"token": token}),
             content_type="application/x-www-form-urlencoded",
             headers=evil)
         self.assertEqual(bad_login.status, 403, bad_login.body[:300])
         self.assertEqual(clean_jar.cookies_for(self.api), {})
         # Meaningful TARGETED state unchanged: victim info + exact bytes.
-        intact = self.http.request(
-            "GET", f"{self.api}/api/v1/artifacts/{vid}", headers=bearer)
+        intact = self.http.current((self.api), bf.cp.Command_GetArtifact(vid), headers=bearer)
         self.assertEqual(intact.status, 200, intact.body[:300])
-        api_content = (f"{self.api}/api/v1/artifacts/{vid}/files/"
+        api_content = (f"{self.api}/api/current/artifacts/{vid}/files/"
                        + urllib.parse.quote("note.txt", safe="") + "/content")
         blob = self.http.request("GET", api_content, headers=bearer)
         self.assertEqual(blob.status, 200, blob.body[:300])
@@ -736,9 +759,7 @@ class ExpiredDeleteCase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.clock = [time.time()]
-        cls.fix = bf.start_server(suffix_mode="sibling",
-                                  now_fn=lambda: cls.clock[0])
+        cls.fix = bf.start_server(suffix_mode="sibling")
         cls.http = cls.fix.http
         cls.api = cls.fix.api_base
 
@@ -754,9 +775,8 @@ class ExpiredDeleteCase(unittest.TestCase):
             visibility="internal", files={"note.txt": b"a2exp"},
             expires_in_s=60)
         aid = created["artifact_id"]
-        self.clock[0] += 120
-        info = self.http.request("GET", f"{self.api}/api/v1/artifacts/{aid}",
-                                 headers=bearer)
+        bf.wait_for_expiry(self.fix,aid)
+        info = self.http.current((self.api), bf.cp.Command_GetArtifact(aid), headers=bearer)
         self.assertEqual(info.status, 410, info.body[:300])
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
@@ -779,8 +799,7 @@ class ExpiredDeleteCase(unittest.TestCase):
         dialogs = [r for r in out if r.get("op") == "dialogs"][0]["dialogs"]
         self.assertTrue(any("Delete artifact" in d["message"] for d in dialogs),
                         dialogs)
-        gone = self.http.request("GET", f"{self.api}/api/v1/artifacts/{aid}",
-                                 headers=bearer)
+        gone = self.http.current((self.api), bf.cp.Command_GetArtifact(aid), headers=bearer)
         self.assertEqual(gone.status, 404, gone.body[:300])
 
 

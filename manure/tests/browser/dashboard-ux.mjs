@@ -29,14 +29,16 @@ const check = async (name, run) => {
       window.fetch = (url, options) => {
         const state = window.__ux;
         const value = String(url);
-        if (state.failSession && value.endsWith("/whoami")) return Promise.reject(new Error("test-offline"));
-        if (state.failLogout && value.endsWith("/logout")) return Promise.reject(new Error("test-offline"));
-        const listPage = value.includes("/artifacts?") && value.includes("cursor=");
-        if (listPage && state.failList) { state.failList = false; return Promise.resolve(new Response('{"error":{"code":"unavailable"}}', { status: 503, headers: { "Content-Type": "application/json" } })); }
-        const response = original(url, options);
-        if (state.holdInfoId && value.endsWith("/artifacts/" + state.holdInfoId)) { state.holdInfoId = null; return response.then((res) => new Promise((resolve) => { state.releaseInfo = () => resolve(res); })); }
-        if (listPage && state.holdList) { state.holdList = false; return response.then((res) => new Promise((resolve) => { state.releaseList = () => resolve(res); })); }
-        if (value.endsWith("/external-password:rotate") && state.holdRotate) { state.holdRotate = false; return response.then((res) => new Promise((resolve) => { state.releaseRotate = () => resolve(res); })); }
+        let envelope;try { envelope=JSON.parse(options?.body || "null"); } catch (_) { envelope=null; }
+        const command=new URL(value,location.href).pathname==="/api/current" ? envelope?.command : null;
+        if (state.failSession && command?.Whoami) return Promise.reject(new Error("test-offline"));
+        if (state.failLogout && command?.Logout) return Promise.reject(new Error("test-offline"));
+        const listPage=command?.ListArtifacts?.query.cursor != null;
+        if (listPage && state.failList) { state.failList=false; return Promise.resolve(new Response(JSON.stringify({requestId:envelope.requestId,result:{Error:{failure:{code:"Unavailable",message:"controlled fixture",retryAfterSeconds:1}}}}),{status:503,headers:{"Content-Type":"application/json"}})); }
+        const response=original(url,options);
+        if (state.holdInfoId && command?.GetArtifact?.artifactId===state.holdInfoId) { state.holdInfoId=null;return response.then(res=>new Promise(resolve=>{state.releaseInfo=()=>resolve(res);})); }
+        if (listPage && state.holdList) { state.holdList=false;return response.then(res=>new Promise(resolve=>{state.releaseList=()=>resolve(res);})); }
+        if (command?.RotateExternalPassword && state.holdRotate) { state.holdRotate=false;return response.then(res=>new Promise(resolve=>{state.releaseRotate=()=>resolve(res);})); }
         return response;
       };
     });
@@ -83,7 +85,29 @@ await check("sortable table, global search, URL reload and responsive themes", a
   await recordSearch(page);
   assert.equal(await page.locator("#next-button, #prev-button").count(), 0);
   assert.equal(await page.locator("thead [data-sort]").count(), 9);
-  assert.equal((await titles(page))[0], "ux-record-64");
+  // Creation time is stored in whole seconds; sequential fixture names are
+  // NOT the tie breaker. Read authoritative metadata through the current typed
+  // API and independently apply CreatedAt DESC, raw-byte artifact-ID DESC.
+  const metadata = await page.evaluate(async (ids) => {
+    const api = await import("/current-protocol.js");
+    return Promise.all(ids.map(async (id) => {
+      const item = await api.request(window.fetch.bind(window), api.artifact(id));
+      return { id: item.artifact_id, name: item.name, createdAt: item.created_at };
+    }));
+  }, input.records);
+  const createdDescending = (items) => [...items].sort((a, b) =>
+    Date.parse(b.createdAt) - Date.parse(a.createdAt) || Buffer.compare(Buffer.from(b.id, "utf8"), Buffer.from(a.id, "utf8")));
+  assert(metadata.every((item) => Number.isFinite(Date.parse(item.createdAt))));
+  assert.deepEqual(createdDescending([
+    { id: "0".repeat(32), name: "uploaded-last", createdAt: "2026-01-01T00:00:00Z" },
+    { id: "f".repeat(32), name: "uploaded-first", createdAt: "2026-01-01T00:00:00Z" },
+  ]).map((item) => item.name), ["uploaded-first", "uploaded-last"], "timestamp ties use raw ID bytes, not upload/name sequence");
+  const ordered = createdDescending(metadata);
+  assert.deepEqual(await titles(page), ordered.slice(0, 25).map((item) => item.name), "default global created-at and raw-ID ordering");
+  if (input.artifacts) await fs.writeFile(path.join(input.artifacts, "catalogue-sort-observation.json"), JSON.stringify({
+    order: "CreatedAt DESC, UTF8-ID DESC", source: metadata, expectedPage: ordered.slice(0, 25),
+    oldSequenceGoldenWouldMatch: ordered[0].name === "ux-record-64",
+  }, null, 2));
   await page.locator('[data-sort="name"]').focus();
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelector("#artifact-list strong")?.textContent === "ux-record-00");
@@ -95,7 +119,7 @@ await check("sortable table, global search, URL reload and responsive themes", a
   await page.emulateMedia({ colorScheme: "dark" });
   if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-dark.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "390px viewport must not have document overflow");
   if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-mobile.png"), fullPage: true });
 });
 
@@ -203,7 +227,7 @@ await check("expired artifacts remain deletable from the catalogue", async (page
   page.once("dialog", (dialog) => dialog.accept());
   await page.locator('[data-action=delete]').click();
   await count(page, 0);
-  assert.equal((await page.request.get(input.base + "/api/v1/artifacts/" + input.expiredId)).status(), 404);
+  assert.equal((await page.request.post(input.base+"/api/current",{data:{requestId:crypto.randomUUID(),apiVersion:"1.0.0",command:{GetArtifact:{artifactId:input.expiredId}}}})).status(),404);
 });
 
 await check("password reveals clear on dismiss, navigation and confirmed logout", async (page, context) => {

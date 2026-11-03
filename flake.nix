@@ -320,8 +320,12 @@
           crawl4ai-mcp = pkgs.callPackage ./nix/pkg/crawl4ai/mcp.nix { };
           tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
           tui-tmux = pkgs.callPackage ./nix/pkg/tui-tmux/default.nix { };
-          haystack = pkgs.callPackage ./nix/pkg/haystack/package.nix { };
-          manure = pkgs.callPackage ./nix/pkg/manure/package.nix { };
+          haystack = self.lib.mkHaystackPackage { inherit pkgs; };
+          service-test-fixture-tools = pkgs.callPackage ./nix/pkg/services/test-fixture-tools.nix { };
+          haystack-proxy-fixture = import ./nix/tests/haystack-proxy-fixture.nix { inherit pkgs nixpkgs; haystackModule = self.nixosModules.haystack; haystackPackage = self.packages.${system}.haystack; };
+          service-postgres-tools = pkgs.callPackage ./nix/pkg/services/postgres-tools.nix { };
+          manure-clients = self.lib.mkManureClientPackage { inherit pkgs; };
+          manure = self.lib.mkManurePackage { inherit pkgs; };
           chronicle-collector = pkgs.callPackage ./nix/pkg/chronicle/collector.nix { };
           chronicle-web = pkgs.callPackage ./nix/pkg/chronicle/web.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
@@ -369,9 +373,13 @@
             inherit pkgs;
             manurePackage = self.packages.${system}.manure;
           };
+          manure-config = import ./nix/tests/manure-config.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
+          manure-backend = import ./nix/tests/manure-backend.nix { inherit pkgs; squishLib = inputs.squish.lib; };
           manure-unittests = import ./nix/tests/manure-unittests.nix {
             inherit pkgs;
-            manurePackage = self.packages.${system}.manure;
+            backendCheck = self.checks.${system}.manure-backend;
+            installedClientCheck = self.checks.${system}.manure-client;
+            nativeCheck = self.checks.${system}.manure-native;
           };
           haystack-nixos-eval =
             let
@@ -383,6 +391,7 @@
                     {
                       system.stateVersion = "26.11";
                       smind.services.haystack.enable = true;
+                      smind.services.haystack.database = { jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/haystack"; passwordFile = "/run/secrets/haystack-database"; readinessUnit = "ponygirls-database-haystack.service"; };
                     }
                     extra)
                 ];
@@ -427,12 +436,14 @@
                       self.nixosModules.haystack
                       ({ lib, ... }: {
                         options.services.postgresql = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+                        options.systemd.tmpfiles.rules = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ ]; };
                         options.systemd.services = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                         options.services.nginx = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                         options.networking.firewall = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                       })
                       ({ lib, ... }: lib.recursiveUpdate
-                        { smind.services.haystack.enable = true; }
+                        { smind.services.haystack.enable = true;
+                      smind.services.haystack.database = { jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/haystack"; passwordFile = "/run/secrets/haystack-database"; readinessUnit = "ponygirls-database-haystack.service"; }; }
                         extra)
                     ];
                   };
@@ -471,10 +482,11 @@
             # Digest credentials load via LoadCredential, never store material.
             assert builtins.elem "haystack-hash-w-agent-default:/run/secrets/agent-sha"
               full.systemd.services.haystack.serviceConfig.LoadCredential;
-            assert (builtins.elemAt full.services.postgresql.ensureUsers 0).name == "haystack";
+            assert !full.services.postgresql.enable;
+            assert builtins.elem "database-password:/run/secrets/haystack-database" full.systemd.services.haystack.serviceConfig.LoadCredential;
             # Setup waits for the database to exist (fresh clusters race without this).
-            assert builtins.elem "postgresql-setup.service" full.systemd.services.haystack-setup.after;
-            assert builtins.elem "postgresql-setup.service" full.systemd.services.haystack-setup.requires;
+            assert builtins.elem "ponygirls-database-haystack.service" full.systemd.services.haystack-setup.after;
+            assert builtins.elem "ponygirls-database-haystack.service" full.systemd.services.haystack-setup.requires;
             # Server-only host: we enable no proxy and open no firewall ports.
             assert !serverOnly.services.nginx.enable;
             assert serverOnly.networking.firewall.allowedTCPPorts == [ ];
@@ -485,7 +497,7 @@
             assert externalEdge.systemd.services.haystack.description != "";
             # Full host: proxy on, firewall still closed unless asked.
             assert full.services.nginx.virtualHosts ? "memory.example.net";
-            assert full.services.nginx.virtualHosts."memory.example.net".root == "${full.smind.services.haystack.package}/lib/node_modules/haystack/web/dist";
+            assert full.services.nginx.virtualHosts."memory.example.net".root == "${full.smind.services.haystack.package}/share/haystack/web";
             assert full.services.nginx.virtualHosts."memory.example.net".locations."/".proxyPass == null;
             assert full.services.nginx.virtualHosts."memory.example.net".locations."/api/".proxyWebsockets;
             assert full.services.nginx.virtualHosts."memory.example.net".locations."/mcp".proxyWebsockets;
@@ -961,6 +973,39 @@
             python3 ${./nix/tests/chronicle-validation-policy.py} ${./chronicle/scripts/validation-report.py} ${./nix/pkg/chronicle/validation-evidence.py}
             touch "$out"
           '';
+          manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
+          haystack-proxy = import ./nix/tests/haystack-proxy.nix { inherit pkgs inputs; haystackPackage = self.packages.${system}.haystack; };
+          hm-service-unit-graph-harness = import ./nix/tests/hm-service-unit-graph-harness.nix { inherit pkgs; };
+          hm-service-unit-graph-vm = import ./nix/tests/hm-service-unit-graph-vm.nix {
+            inherit pkgs;
+            chronicleHmModule=self.homeManagerModules.chronicleServer;
+            agenticHmModule=self.homeManagerModules.agenticServicesServer;
+            sourceRevision=self.rev or "";
+          };
+          service-unit-graph-harness = import ./nix/tests/service-unit-graph-harness.nix { inherit pkgs; };
+          service-unit-graph-vm = import ./nix/tests/service-unit-graph-vm.nix {
+            inherit pkgs nixpkgs;
+            chronicleModule=self.nixosModules.chronicle;
+            haystackModule=self.nixosModules.haystack;
+            manureModule=self.nixosModules.manure;
+            sourceRevision=self.rev or "";
+          };
+          service-fixture-browser-home = import ./nix/tests/fixture-browser-home.nix { inherit pkgs; fixtureTools=self.packages.${system}.service-test-fixture-tools; };
+          service-fixture-tool-closure = import ./nix/tests/fixture-tool-closure.nix { inherit pkgs; fixtureTools=self.packages.${system}.service-test-fixture-tools; };
+          haystack-browser = import ./nix/tests/haystack-browser.nix {
+            inherit pkgs;
+            haystackPackage = self.packages.${system}.haystack;
+            proxyFixture = self.packages.${system}.haystack-proxy-fixture;
+            fixtureTools = self.packages.${system}.service-test-fixture-tools;
+            sourceRevision = self.rev or "";
+          };
+          haystack-native = import ./nix/tests/haystack-native.nix { inherit pkgs; haystackPackage = self.packages.${system}.haystack; };
+          chronicle-operations-example = import ./nix/tests/chronicle-operations-example.nix { inherit pkgs nixpkgs inputs; ponygirls = self; };
+          readme-hm-server = import ./nix/tests/readme-hm-server.nix { inherit pkgs inputs; ponygirls = self; };
+          shared-services-modules = import ./nix/tests/shared-services-modules.nix { inherit pkgs nixpkgs inputs; };
+          shared-postgres-modules = import ./nix/tests/shared-postgres-modules.nix { inherit pkgs nixpkgs; };
+          provider-credential-transports = import ./nix/tests/provider-credential-transports.nix { inherit pkgs; };
+          shared-postgres = import ./nix/tests/shared-postgres.nix { inherit pkgs; };
           chronicle-modules = import ./nix/tests/chronicle-modules.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
           chronicle-hm-server = import ./nix/tests/chronicle-hm-server.nix { inherit pkgs; chronicleModule = self.homeManagerModules.chronicleServer; };
           agentic-services-hm-eval = import ./nix/tests/agentic-services-hm-eval.nix { inherit pkgs inputs; agenticServicesModule = self.homeManagerModules.agenticServicesServer; };
@@ -1005,10 +1050,7 @@
             touch $out
           '';
           podman-module = podmanModuleCheck;
-          manure-browser = import ./nix/tests/manure-browser.nix {
-            inherit pkgs;
-            manurePackage = self.packages.${system}.manure;
-          };
+          manure-browser = import ./nix/tests/manure-browser.nix { nativeCheck = self.checks.${system}.manure-native; };
           manure-vm = import ./nix/tests/manure-vm.nix {
             inherit pkgs nixpkgs;
             manureModule = self.nixosModules.manure;
@@ -1087,10 +1129,15 @@
         homeManagerModules.agenticServicesServer = import ./nix/hm/agentic-services-server.nix { inherit inputs; };
         homeManagerModules.haystack = import ./nix/hm/haystack.nix;
         homeManagerModules.manure = import ./nix/hm/manure.nix;
+        homeManagerModules.service-postgres = import ./nix/hm/service-postgres.nix;
+        nixosModules.service-postgres = import ./nix/nixos/service-postgres.nix;
+        lib.mkHaystackPackage = { pkgs }: pkgs.callPackage ./nix/pkg/haystack/package.nix { squishLib = inputs.squish.lib; };
+        lib.mkManureClientPackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/client.nix { };
+        lib.mkManurePackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/package.nix { squishLib = inputs.squish.lib; };
         lib.mkChroniclePackage = { pkgs }: pkgs.callPackage ./nix/pkg/chronicle/server.nix { squishLib = inputs.squish.lib; };
         nixosModules.chronicle = import ./nix/nixos/chronicle.nix { mkChroniclePackage = self.lib.mkChroniclePackage; };
-        nixosModules.haystack = import ./nix/nixos/haystack.nix;
-        nixosModules.manure = import ./nix/nixos/manure.nix;
+        nixosModules.haystack = import ./nix/nixos/haystack.nix { mkHaystackPackage = self.lib.mkHaystackPackage; };
+        nixosModules.manure = import ./nix/nixos/manure.nix { mkManurePackage = self.lib.mkManurePackage; };
         nixosModules.podman = import ./nix/nixos/podman.nix;
         nixosModules.crawl4ai = import ./nix/nixos/crawl4ai.nix;
         nixosModules.crawl4ai-isolation = import ./nix/nixos/crawl4ai-isolation.nix;

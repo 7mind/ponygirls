@@ -1,0 +1,16 @@
+{
+  "actualNixOSAllFourPhasesPassed": true,
+  "actualNixOSCleanupVerifiedVisibleNamespace": true,
+  "actualNixOSExitStatus": 0,
+  "actualNixOSMandatoryCases": 9,
+  "actualNixOSNotExecuted": [],
+  "actualNixOSPassed": 9,
+  "actualNixOSSourceRevision": "468a3cbbd803d7c81962b3b04bb6f5802bfde88e",
+  "diagnostic1596AndC829AreExpectedBootstrapFailuresNotRuntimeAcceptance": true,
+  "historical37dOriginalStatusesPreserved": true,
+  "hmIsPreparationOnlyHere": true,
+  "noDeploymentActivationLiveDatabaseOperationsOrNewVmJobs": true,
+  "observedAt": "2026-11-03T13:02:42.303366+00:00",
+  "privacy": "Explicit metadata allowlists; raw logs/config/secret bytes/raw ACL xattrs/HOME/runtime PG files/user environment snapshots omitted.",
+  "scope": "actual exported NixOS modules, systemd graph, LoadCredential and PostgreSQL role SQL reconnection; explicitly synthetic application CLI adapters; NOT native HTTP/model/protocol acceptance"
+}

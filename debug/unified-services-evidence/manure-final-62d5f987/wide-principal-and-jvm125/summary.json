@@ -1,0 +1,16 @@
+{
+  "backend": {
+    "suites": 12,
+    "tests": 125,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "server": {
+    "suites": 1,
+    "tests": 29,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}

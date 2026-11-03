@@ -1,0 +1,1 @@
+nix flake check --no-build --no-write-lock-file git+file:///home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-unified-services\?rev=a1047f456f561b8c100a2fa8bde6b2f89f4ac6e5 

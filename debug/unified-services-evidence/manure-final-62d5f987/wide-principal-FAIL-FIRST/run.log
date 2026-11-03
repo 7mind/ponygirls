@@ -1,0 +1,80 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/nix/store/v3b2cypq1ix4553s8mw745d8g9m2rgc9-sbt-launch-1.13.1.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by com.sun.jna.Native in an unnamed module (file:/home/pavel/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.13.0/jna-5.19.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[0m[[0m[0minfo[0m] [0m[0mwelcome to sbt 1.13.0 (GraalVM Community Java 25.0.4.1.1)[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project wt-ponygirls-manure-offline-build from plugins.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mloading project definition from /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-offline/project[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project root from build.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mresolving key references (12050 settings) ...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-offline/)[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 1 Scala source to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-offline/manure/backend/target/scala-3.9.0/test-classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/home/pavel/.cache/coursier/v1/https/repo.maven.apache.org/maven2/org/scala-lang/scala-library/3.9.0/scala-library-3.9.0.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WIDE_AUDIENCE_SYNTHETIC_ID bytes=4096 sha256=4d467114dfc517618571a6d8739e3f98afb0ebf0a165065636640ba3670cd498
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by manure.storage.PosixNative in an unnamed module (file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-offline/manure/server/target/scala-3.9.0/classes/)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+WIDE_AUDIENCE_PUBLICATION success persistedState=ready
+WIDE_AUDIENCE_CURRENT_CONFIG accepted authenticated-normal-manager
+WIDE_AUDIENCE_PUBLICATION sqlstate=54000 persistedState=publishing
+WIDE_AUDIENCE_PUBLICATION success persistedState=ready
+WIDE_AUDIENCE_EXPECTED_SUCCESS publication=sqlstate=54000 restartBackfill=StartupFailure
+Test run [36mmanure.WideAudienceAuditSuite[0m started
+[91m==> X [0m[91mmanure.WideAudienceAuditSuite[0m.[91maccepted 4096-byte manager ID preserves publication, lexical authorization, raw creators and startup ACL backfill[0m [90m2.461s[0m munit.ComparisonFailException: manure/backend/src/test/scala/manure/WideAudienceAuditSuite.scala:154
+153:        println("WIDE_AUDIENCE_EXPECTED_SUCCESS publication="+status(p)+" restartBackfill="+status(r))
+[7m154:        assertEquals(p.map(_ => ()),Right(()))[0m
+155:        assertEquals(r.map(_ => ()),Right(()))
+values are not the same
+[1m=> Obtained[0m
+Left(
+  value = JdbcFailure(
+    code = "database-unavailable",
+    sqlState = Some(
+      value = "54000"
+    )
+  )
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Right([0m
+[91m-  value = ()[0m
+[92m+Left([0m
+[92m+  value = JdbcFailure([0m
+[92m+    code = "database-unavailable",[0m
+[92m+    sqlState = Some([0m
+[92m+      value = "54000"[0m
+[92m+    )[0m
+[92m+  )[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m12[0m[90m)[0m
+[1m    at [0m[1mmanure.WideAudienceAuditSuite.$init$$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mWideAudienceAuditSuite.scala[0m:[1m154[0m[1m)[0m
+[1m    at [0m[1mmanure.WideAudienceAuditSuite.$init$$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$adapted$1[0m[1m([0m[1mWideAudienceAuditSuite.scala[0m:[1m156[0m[1m)[0m
+[1m    at [0m[1mapply @ manure.WideAudienceAuditSuite.$init$$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mWideAudienceAuditSuite.scala[0m:[1m156[0m[1m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m30[0m[90m)[0m
+[90m    at [0m[90m*> @ manure.BackendFixture$.runtimeRole[0m[90m([0m[90mBackendFixture.scala[0m:[90m58[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m30[0m[90m)[0m
+[90m    at [0m[90m*> @ manure.BackendFixture$.runtimeRole[0m[90m([0m[90mBackendFixture.scala[0m:[90m58[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m30[0m[90m)[0m
+[90m    at [0m[90m*> @ manure.BackendFixture$.runtimeRole[0m[90m([0m[90mBackendFixture.scala[0m:[90m58[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m30[0m[90m)[0m
+[90m    at [0m[90m*> @ manure.BackendFixture$.runtimeRole[0m[90m([0m[90mBackendFixture.scala[0m:[90m58[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m30[0m[90m)[0m
+[90m    at [0m[90m*> @ manure.BackendFixture$.runtimeRole[0m[90m([0m[90mBackendFixture.scala[0m:[90m58[0m[90m)[0m
+[32mmanure.WideAudienceAuditSuite[0m: finished [90m2.501s[0m
+Test run [36mmanure.WideAudienceAuditSuite[0m finished: [91m1 failed[0m, 0 ignored, 1 total [90m2.513s[0m
+[0m[[0m[31merror[0m] [0m[0mFailed: Total 1, Failed 1, Errors 0, Passed 0[0m
+[0m[[0m[31merror[0m] [0m[0mFailed tests:[0m
+[0m[[0m[31merror[0m] [0m[0m	manure.WideAudienceAuditSuite[0m
+[0m[[0m[31merror[0m] [0m[0m(manureServer / Test / [31mtestOnly[0m) sbt.TestsFailedException: Tests unsuccessful[0m
+[0m[[0m[31merror[0m] [0m[0mTotal time: 10 s, completed Nov 3, 2026, 11:57:27 AM[0m
+[0J

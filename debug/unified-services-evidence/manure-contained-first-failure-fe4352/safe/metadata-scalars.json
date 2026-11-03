@@ -1,0 +1,88 @@
+{
+  "observedAt": "2026-11-03T13:43:35.798910+00:00",
+  "filesystem": {
+    "type": "direct ext4; no partition",
+    "blockBytes": 4096,
+    "filesystemBytes": 1073741824,
+    "superblockFreeBytes": 1020416000,
+    "freeInodes": 65524,
+    "inodeBytes": 256,
+    "fsState": 1,
+    "checksumsVerified": false
+  },
+  "directories": [
+    {
+      "path": "/var/lib/ponygirls-postgres-18",
+      "exists": true,
+      "uid": 71,
+      "gid": 71,
+      "mode": "0700",
+      "size": 4096
+    },
+    {
+      "path": "/var/lib/ponygirls-postgres-18/data",
+      "exists": true,
+      "uid": 71,
+      "gid": 71,
+      "mode": "0700",
+      "size": 4096
+    },
+    {
+      "path": "/var/lib/ponygirls-postgres-18/socket",
+      "exists": true,
+      "uid": 71,
+      "gid": 71,
+      "mode": "0700",
+      "size": 4096
+    },
+    {
+      "path": "/var/lib/ponygirls-postgres-18/backups",
+      "exists": true,
+      "uid": 71,
+      "gid": 71,
+      "mode": "0700",
+      "size": 4096
+    }
+  ],
+  "rootEntryNames": [
+    "backups",
+    "data",
+    "socket"
+  ],
+  "rootMarkerAnyOtherNamePresent": false,
+  "PG_VERSION": {
+    "path": "/var/lib/ponygirls-postgres-18/data/PG_VERSION",
+    "exists": true,
+    "uid": 71,
+    "gid": 71,
+    "mode": "0600",
+    "size": 3,
+    "contentsRead": false
+  },
+  "dataEntryNames": [
+    "PG_VERSION",
+    "base",
+    "global",
+    "pg_commit_ts",
+    "pg_dynshmem",
+    "pg_hba.conf",
+    "pg_ident.conf",
+    "pg_logical",
+    "pg_multixact",
+    "pg_notify",
+    "pg_replslot",
+    "pg_serial",
+    "pg_snapshots",
+    "pg_stat",
+    "pg_stat_tmp",
+    "pg_subtrans",
+    "pg_tblspc",
+    "pg_twophase",
+    "pg_wal",
+    "pg_xact",
+    "postgresql.auto.conf",
+    "postgresql.conf",
+    "postmaster.pid"
+  ],
+  "interpretation": "Final snapshot has initialized partial PG structure with no root marker. Not first-attempt chronology/cause, not a live-server or actual version assertion. No obvious final persistent-rootFS mode/full-space issue; does not establish historical modes, tmpfs/RAM/OOM/free space. First cause remains unknown."
+}

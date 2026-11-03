@@ -13,7 +13,7 @@ const respExtra = id => ({requestId: id, statusCode: 403,
 const response = id => ({requestId: id, response: {url: 'http://dashboard/api/grants',
   status: 403, headers: {}}});
 function run(events) {
-  const cdp = new EventEmitter(), ctx = {requests: [], responses: []};
+  const cdp = new EventEmitter(), ctx = {requests: [], responses: [], networkPhase: 'hostile-auth'};
   captureNetwork(cdp, ctx);
   for (const [name, event] of events) cdp.emit(`Network.${name}`, event);
   return ctx;
@@ -36,22 +36,38 @@ for (const early of [false, true]) {
       assert.equal(ctx.responses.length, 1);
       assert.equal(ctx.responses[0].url, 'http://dashboard/api/grants');
       assert.equal(ctx.responses[0].status, 403);
+      for (const key of ['sessionId','requestId','redirectHop','phase','method','origin']) {
+        assert.equal(ctx.responses[0][key],ctx.requests[0][key]);
+      }
+      assert.equal(ctx.responses[0].phase,'hostile-auth');
+      assert.equal(ctx.requests[0].hasRequestExtraInfo,true);
       assert.deepEqual(ctx.responses[0].setCookieNames, ['session']);
       assert.ok(!JSON.stringify(ctx).includes('SECRET'));
     });
   }
 }
 test('request IDs belong to a CDP session, not the whole browser', () => {
-  const ctx = {requests: [], responses: []};
+  const ctx = {requests: [], responses: [], networkPhase: 'victim-login'};
   const a = new EventEmitter(), b = new EventEmitter();
   captureNetwork(a, ctx); captureNetwork(b, ctx);
-  a.emit('Network.requestWillBeSent', request('1', 'http://a'));
+  const url='http://dashboard/api/current';
+  a.emit('Network.requestWillBeSent', request('1',url));
+  a.emit('Network.responseReceived', {requestId:'1',hasExtraInfo:false,response:{url,status:200,headers:{}}});
+  ctx.networkPhase='hostile-auth';
   b.emit('Network.requestWillBeSentExtraInfo', reqExtra('1'));
-  b.emit('Network.responseReceivedExtraInfo', respExtra('1'));
-  b.emit('Network.requestWillBeSent', request('1', 'http://b'));
+  b.emit('Network.responseReceivedExtraInfo', {...respExtra('1'),statusCode:404});
+  const attack=request('1',url);attack.request.method='OPTIONS';
+  b.emit('Network.requestWillBeSent', attack);
   assert.equal(ctx.requests[0].origin, null);
   assert.equal(ctx.requests[1].origin, 'http://hostile');
-  assert.equal(ctx.responses[0].url, 'http://b');
+  assert.deepEqual(ctx.responses.map(r=>[r.url,r.status,r.phase]),
+    [[url,200,'victim-login'],[url,404,'hostile-auth']]);
+  assert.notEqual(ctx.requests[0].sessionId,ctx.requests[1].sessionId);
+  for (const response of ctx.responses) {
+    const matches=ctx.requests.filter(q=>['sessionId','requestId','redirectHop'].every(k=>q[k]===response[k]));
+    assert.equal(matches.length,1);assert.equal(matches[0].phase,response.phase);
+  }
+  assert.deepEqual(ctx.responses.filter(r=>r.phase==='hostile-auth'&&r.origin==='http://hostile'&&r.method==='OPTIONS').map(r=>r.status),[404]);
 });
 for (const extraFirst of [false, true]) {
   test(`redirect ID reuse preserves hops; next extras early=${extraFirst}`, () => {
@@ -77,6 +93,11 @@ for (const extraFirst of [false, true]) {
       [['http://first', 'http://first-origin'], ['http://second', 'http://hostile']]);
     assert.deepEqual(ctx.responses.map(r => [r.url, r.status]),
       [['http://first', 302], ['http://second', 403]]);
+    assert.deepEqual(ctx.responses.map(r=>r.redirectHop),[0,1]);
+    assert.deepEqual(ctx.requests.map(r=>r.redirectHop),[0,1]);
+    for (const response of ctx.responses) {
+      assert.equal(ctx.requests.filter(q=>['sessionId','requestId','redirectHop'].every(k=>q[k]===response[k])).length,1);
+    }
   });
 }
 test('redirect without ExtraInfo does not consume next hop extras', () => {
@@ -91,4 +112,13 @@ test('redirect without ExtraInfo does not consume next hop extras', () => {
   assert.deepEqual(ctx.requests.map(r => r.origin), [null, 'http://hostile']);
   assert.deepEqual(ctx.responses.map(r => [r.url, r.status]),
     [['http://cached', 302], ['http://dashboard/api/grants', 403]]);
+});
+test('current command label is captured without token, password or grant fields', () => {
+  const event=request('current','http://dashboard/api/current');
+  event.request.postData=JSON.stringify({requestId:'id',command:{Login:{token:'SECRET-CANARY'}}});
+  const ctx=run([['requestWillBeSent',event],['responseReceivedExtraInfo',respExtra('current')]]);
+  assert.equal(ctx.requests[0].command,'Login');
+  assert.equal(ctx.responses[0].command,'Login');
+  assert.ok(!JSON.stringify(ctx).includes('SECRET'));
+  assert.ok(!JSON.stringify(ctx).includes('postData'));
 });

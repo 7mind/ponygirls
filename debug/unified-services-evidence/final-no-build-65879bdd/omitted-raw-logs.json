@@ -1,0 +1,25 @@
+{
+  "scope": "All raw evaluation logs local-only; no content-policy bypass or transformation",
+  "logs": {
+    "ponygirls": {
+      "omitted": true,
+      "sha256": "94fbba638bba79ce98614beb96ae6e904bbf2f51ad8ec3961b70c114089437cb",
+      "bytes": 21041,
+      "lines": 269
+    },
+    "nix-config": {
+      "omitted": true,
+      "sha256": "e90e48d3df855e78860848673aef13c834cf8d83fbc633ebd75b5cc720904105",
+      "bytes": 5688,
+      "lines": 85
+    },
+    "paddock": {
+      "omitted": true,
+      "sha256": "ce379682c7791aa703747cf72aa9aec31f78cd15fe52ae205b2ebb1e1d455f4f",
+      "bytes": 12312,
+      "lines": 168
+    }
+  },
+  "taskLockfilesStillMatchCommittedContent": true,
+  "beforeAfterLockSnapshotsNotClaimed": true
+}

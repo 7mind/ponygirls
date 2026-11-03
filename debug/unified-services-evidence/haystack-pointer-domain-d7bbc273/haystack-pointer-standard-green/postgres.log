@@ -1,0 +1,7 @@
+[00000] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit
+[00000] LOG:  listening on IPv4 address "127.0.0.1", port 58283
+[00000] LOG:  listening on Unix socket "/tmp/hptr.yny5best/.s.PGSQL.58283"
+[00000] LOG:  database system was shut down at 2026-11-03 12:14:37 UTC
+[00000] LOG:  database system is ready to accept connections
+[00000] LOG:  received immediate shutdown request
+[00000] LOG:  database system is shut down

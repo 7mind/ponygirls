@@ -1,0 +1,48 @@
+{
+  "observedAt": "2026-11-03T10:13:32.662038+00:00",
+  "source": "7bab3c1a5d20e518b8f500a32b46628ee98fbfc6",
+  "elfSha256": "04dd2eaeb172c3f426b209b96901abad2ddf353644493c19c94bf5e69b3cdde1",
+  "plannedStages": 16,
+  "browserPrograms": 20,
+  "completedAudits": {
+    "web-node": {
+      "tests": 147,
+      "pass": 147,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "logSha256": "51819362d42a34de7301cfe987ca322347e77382e863dbc3237fab9fa5af9ae9"
+    },
+    "collector-node": {
+      "tests": 125,
+      "pass": 125,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "logSha256": "4a2b66115c42bbbed542c01b22e4055b7f9e147146db4c01753058cc2843bf71"
+    },
+    "preserved-full-backend-test-reports": {
+      "tests": 960,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suites": 112,
+      "reuse": "preserved parent full run"
+    },
+    "protocol-scala-test-reports": {
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suites": 3,
+      "reuse": "fresh exact codec suites"
+    }
+  },
+  "limitations": [
+    "No running/future stage counted as passed",
+    "Native workflow/recovery are descriptive controlled coverage, not a universal native admission matrix",
+    "No existing source/fixtures changed; no live provider gate authorized"
+  ]
+}

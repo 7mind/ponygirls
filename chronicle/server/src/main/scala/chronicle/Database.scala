@@ -1,16 +1,14 @@
 package chronicle
-import java.sql.{Connection, DriverManager, PreparedStatement, ResultSet}
+import java.sql.{Connection, PreparedStatement, ResultSet}
 import scala.util.Using
 import java.util.UUID
 import chronicle.api.*
 import io.circe.Json
 
-final class Database(config: Config,val profiles: IndexProfileCatalog) {
-  Class.forName("org.postgresql.Driver")
-  def transaction[A](f: Connection => A): A = Using.resource(DriverManager.getConnection(config.jdbcUrl, config.databaseUser, Config.credential(config.databasePasswordFile))) { c =>
-    c.setAutoCommit(false)
-    try { val a = f(c); c.commit(); a } catch { case e: Throwable => c.rollback(); throw e }
-  }
+final class Database private (config: Config,val profiles: IndexProfileCatalog,runtime: ponygirls.runtime.BlockingJdbcDatabase) extends AutoCloseable {
+  def this(config: Config, profiles: IndexProfileCatalog) = this(config,profiles,new ponygirls.runtime.BlockingJdbcDatabase(config.jdbcConfig))
+  def transaction[A](f: Connection => A): A = runtime.transaction(f)
+  def close(): Unit = runtime.close()
   private def migrate(c: Connection,name: String): Unit = {
     val stream=getClass.getResourceAsStream(s"/$name")
     Check(stream!=null,"config","missing migration resource")
@@ -43,6 +41,11 @@ final class Database(config: Config,val profiles: IndexProfileCatalog) {
       migrate(c,"017_head_literal_candidates.sql")
     }
   }
+}
+object Database {
+  /** Explicit runtime injection for trusted JDBC probes; ownership transfers to Database. */
+  def withRuntime(config: Config, profiles: IndexProfileCatalog, runtime: ponygirls.runtime.BlockingJdbcDatabase): Database =
+    new Database(config,profiles,runtime)
 }
 object Sql {
   type Param = String | Int | Long | Boolean | UUID

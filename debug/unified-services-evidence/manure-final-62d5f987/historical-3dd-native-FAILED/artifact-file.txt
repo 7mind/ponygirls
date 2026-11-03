@@ -1,0 +1,1 @@
+/nix/store/qvl6k45slx711g938nyy1v7x7pi1g8yd-manure-native-artifact-0.1.0/libexec/manure-server: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, stripped

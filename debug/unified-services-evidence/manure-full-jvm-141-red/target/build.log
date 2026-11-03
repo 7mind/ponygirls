@@ -1,0 +1,50 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/nix/store/v3b2cypq1ix4553s8mw745d8g9m2rgc9-sbt-launch-1.13.1.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by com.sun.jna.Native in an unnamed module (file:/home/pavel/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.13.0/jna-5.19.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[0m[[0m[0minfo[0m] [0m[0mwelcome to sbt 1.13.0 (GraalVM Community Java 25.0.4.1.1)[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project wt-ponygirls-manure-full-validation-build from plugins.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mloading project definition from /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/project[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project root from build.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mresolving key references (12050 settings) ...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/)[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 11 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/shared/baboon-runtime/target/scala-2.13/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 2 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/shared/retrieval-core/target/scala-3.9.0/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 7 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/shared/service-runtime/target/scala-3.9.0/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 1 Scala source and 2 Java sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/manure/server/target/scala-3.9.0/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 1 Scala source to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/shared/model-http/target/scala-3.9.0/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 2 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/shared/retrieval-postgres/target/scala-3.9.0/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 39 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/manure/generated/.build/target/scala-2.13/classes ...[0m
+[0m[[0m[33mwarn[0m] [0m[0mAn existential type that came from a Scala-2 classfile for [33mclass[0m [32mIO[0m[0m
+[0m[[0m[33mwarn[0m] [0m[0mcannot be mapped accurately to a Scala-3 equivalent.[0m
+[0m[[0m[33mwarn[0m] [0m[0moriginal type    : cats.effect.IOFiber[?$1] @uncheckedVariance forSome ?$1[0m
+[0m[[0m[33mwarn[0m] [0m[0mreduces to       : cats.effect.IOFiber[?$1] @uncheckedVariance[0m
+[0m[[0m[33mwarn[0m] [0m[0mtype used instead: cats.effect.IOFiber[Any] @uncheckedVariance[0m
+[0m[[0m[33mwarn[0m] [0m[0mThis choice can cause follow-on type errors or hide type errors.[0m
+[0m[[0m[33mwarn[0m] [0m[0mProceed at own risk.[0m
+[0m[[0m[33mwarn[0m] [0m[0m[33m  |[0m[0m
+[0m[[0m[33mwarn[0m] [0m[0m[33m  |[0m longer explanation available when compiling with `-explain`[0m
+[0m[[0m[33mwarn[0m] [0m[0mone warning found[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 15 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/manure/backend/target/scala-3.9.0/classes ...[0m
+[0m[[0m[33mwarn[0m] [0m[0mthere was 1 deprecation warning; re-run with -deprecation for details[0m
+[0m[[0m[33mwarn[0m] [0m[0mone warning found[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mVerified 148 Baboon runtime classes from one owner: /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/shared/baboon-runtime/target/scala-2.13/classes[0m
+[0m[[0m[0minfo[0m] [0m[0m4 file(s) merged using strategy 'First' (Run the task at debug level to see the details)[0m
+[0m[[0m[0minfo[0m] [0m[0m3083 file(s) merged using strategy 'Discard' (Run the task at debug level to see the details)[0m
+[0m[[0m[0minfo[0m] [0m[0mBuilt: /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/manure/backend/target/manure-server.jar[0m
+[0m[[0m[0minfo[0m] [0m[0mJar hash: 4427ea3d13d080241e547e050d7cbd4350e86bc7[0m
+[0m[[0m[32msuccess[0m] [0m[0mTotal time: 21 s, completed Nov 3, 2026, 10:51:02 AM[0m
+[0J

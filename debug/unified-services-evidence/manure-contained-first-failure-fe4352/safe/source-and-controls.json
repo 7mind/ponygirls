@@ -1,0 +1,29 @@
+{
+  "runtimeSha256": "1b9c73a83813725168ead5e2f30e163cab8c7db77956afe3f8851c65ed18ed82",
+  "auditorSha256": "153fae3597fd74a51f892c5b475da060ef67442463bfdd646d8b88b158c192a2",
+  "driverWrapperSha256": "9cea52d955968cde81963738d456c5f03a03b468bafafc4c8c7526962e3a647f",
+  "originalConfigSha256": "6b68c34fd4db6473d22b04f14f1a0e9b49aa189848b1cb2c3ee7e3ec0da54fa2",
+  "edgeStartSha256": "9f9d62bc6843e7ba822d87b39e448b57806a883281e11cac24d890bc669d5e4e",
+  "strictStartSha256": "eb8569b69dd165659319122a84a8c8a836897352bf982ed6c065037f2ea00aa3",
+  "fullBaseScriptSha256": "87e6276ee297247ef0a7c5b8891624e3aa2ea4ede28ca098cedfc4adcd18c6c2",
+  "supervisorSha256": "d4b8825efae7b8e0b4964a2c13fb82707d9cfa0139c8546bc1864200a1731a77",
+  "preparedSealSha256": "485a69bc3411530785822cfb5a939f35b617286aa720ca74e80e56636cf7565d",
+  "kernelControlTests": {
+    "cases": 4,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "scope": "benign owned Python only, not VM/app tests",
+    "casesDescription": [
+      "exit7 preserved",
+      "orphan identified/adopted/cleaned",
+      "TERM-ignore then INT once per identity",
+      "foreign sibling not discovered or signalled"
+    ]
+  },
+  "independentSupervisorReview": {
+    "agentId": "d470d331-3dfa-42a7-98a4-a3abb47729b1",
+    "outcome": "no blocking issue found",
+    "scope": "read-only source/pins; not VM correctness"
+  }
+}

@@ -21,6 +21,7 @@ import { topics } from './fixtures.ts';
 interface AuditedModelPayload { model: unknown; response_format: unknown; input: unknown }
 
 const context = BaboonCodecContext.Default;
+const fixtureDatabasePassword = 'chronicle-test-password';
 const startupMs = 90_000;
 const indexingMs = 300_000;
 const rpcMs = 120_000;
@@ -28,7 +29,7 @@ const shutdownMs = 40_000;
 const longDocumentRepetitions = 35;
 const pause = (ms: number) => new Promise<void>(done => setTimeout(done, ms));
 function run(command: string, args: string[], input: string | undefined): string {
-  const result = spawnSync(command, args, { input, encoding: 'utf8', timeout: startupMs });
+  const result = spawnSync(command, args, { input, encoding: 'utf8', timeout: startupMs, env: { ...process.env, PGPASSWORD: fixtureDatabasePassword } });
   assert.equal(result.status, 0, `${command}: ${result.stderr}`); return result.stdout;
 }
 async function freePort(): Promise<number> {
@@ -96,14 +97,15 @@ test('Chronicle ingestion → real annotation/embedding → PostgreSQL → seman
       else { console.error(`CUDA synthetic failure artifacts: ${directory}`); console.error(log); }
     }
   });
-  run(join(pg, 'initdb'), ['-D', data, '-A', 'trust', '-U', 'chronicle_cuda', '--no-locale', '--encoding=UTF8'], undefined);
+  await writeFile(join(directory, 'db-password'), fixtureDatabasePassword, { mode: 0o600 });
+  run(join(pg, 'initdb'), ['-D', data, '-A', 'scram-sha-256', '--pwfile', join(directory, 'db-password'), '-U', 'chronicle_cuda', '--no-locale', '--encoding=UTF8'], undefined);
   run(join(pg, 'pg_ctl'), ['-D', data, '-l', join(directory, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${dbPort} -k ${directory}`, '-w', 'start'], undefined); databaseStarted = true;
   run(join(pg, 'psql'), ['-h', '127.0.0.1', '-p', String(dbPort), '-U', 'chronicle_cuda', '-d', 'postgres', '-c', 'CREATE EXTENSION vector'], undefined);
   const password = 'synthetic CUDA acceptance password';
   const hash = run(cmd[0], [...cmd.slice(1), 'password-hash'], password + '\n').trim();
   assert.match(hash, /^pbkdf2-sha256\$/);
   await writeFile(join(directory, 'password'), hash, { mode: 0o600 });
-  await writeFile(join(directory, 'db-password'), '', { mode: 0o600 });
+  await writeFile(join(directory, 'db-password'), fixtureDatabasePassword, { mode: 0o600 });
   const calls = { annotation: 0, documents: 0, queries: 0 };
   const auditFailures: string[] = [];
   const credentials = {
@@ -143,6 +145,7 @@ test('Chronicle ingestion → real annotation/embedding → PostgreSQL → seman
   const config = {
     listenHost: '127.0.0.1', listenPort: httpPort, allowedOrigin: base, secureCookies: false,
     jdbcUrl: `jdbc:postgresql://127.0.0.1:${dbPort}/postgres`, databaseUser: 'chronicle_cuda', databasePasswordFile: join(directory, 'db-password'),
+    databaseLimits: { maxConnections: 8, maxQueued: 32, queueTimeoutMs: 5000, connectTimeoutMs: 5000, statementTimeoutMs: 30000, lockTimeoutMs: 35000, idleTransactionTimeoutMs: 60000, socketTimeoutMs: 35000 },
     users: [{ id: 'cuda', login: 'cuda', passwordHashFile: join(directory, 'password'), enabled: true }],
     maxBodyBytes: 8_388_608, maxFiles: 16, maxFileBytes: 4_194_304, maxMessages: 10_000, sessionTtlSeconds: 3600,
     annotation: { ...models.annotation, endpoint: relayBase + '/chat/completions', timeoutSeconds: 120, maxResponseBytes: 65_536 },

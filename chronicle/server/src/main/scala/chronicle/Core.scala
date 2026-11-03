@@ -7,6 +7,8 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Path}
 import java.security.{MessageDigest, SecureRandom}
 import java.util.{UUID, Base64}
+import ponygirls.runtime.{BoundedSecretFile, JdbcConfig, JdbcLimits}
+import scala.concurrent.duration.*
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
@@ -42,10 +44,12 @@ final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int
   }
 }
 object IndexingCapacity { val defaults = IndexingCapacity(4,8,16) }
-final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity) {
+final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits) {
+  def jdbcConfig: JdbcConfig = JdbcConfig(jdbcUrl,databaseUser,Path.of(databasePasswordFile),databaseLimits)
   def profile: String = IndexProfileCatalog.current(this).preferred.profile
   def validate(): Unit = {
     indexing.validate()
+    try jdbcConfig.validate() catch { case _: IllegalArgumentException => throw DomainError("config","invalid database configuration") }
     Check(users.map(_.id).distinct.size == users.size && users.map(_.login).distinct.size == users.size, "config", "duplicate users")
     Check(staticTokens.map(_.id).distinct.size==staticTokens.size,"config","duplicate static token IDs")
     Check(staticTokens.groupBy(_.userId).values.forall(_.size<=TokenPolicy.maximumPerOwner),"config","static token owner limit")
@@ -107,6 +111,16 @@ object Config {
       batch <- integer("embeddingBatchSize")
     } yield IndexingCapacity(annotation,embedding,batch)
   }
+  given Decoder[JdbcLimits] = Decoder.instance { cursor => for {
+    connections <- cursor.get[Int]("maxConnections")
+    queued <- cursor.get[Int]("maxQueued")
+    queue <- cursor.get[Long]("queueTimeoutMs")
+    connect <- cursor.get[Long]("connectTimeoutMs")
+    statement <- cursor.get[Long]("statementTimeoutMs")
+    lock <- cursor.get[Long]("lockTimeoutMs")
+    idle <- cursor.get[Long]("idleTransactionTimeoutMs")
+    socket <- cursor.get[Long]("socketTimeoutMs")
+  } yield JdbcLimits(connections,queued,queue.millis,connect.millis,statement.millis,lock.millis,idle.millis,socket.millis) }
   given Decoder[Config] = Decoder.instance { cursor => for {
     listenHost <- cursor.get[String]("listenHost")
     listenPort <- cursor.get[Int]("listenPort")
@@ -115,6 +129,7 @@ object Config {
     jdbcUrl <- cursor.get[String]("jdbcUrl")
     databaseUser <- cursor.get[String]("databaseUser")
     databasePasswordFile <- cursor.get[String]("databasePasswordFile")
+    databaseLimits <- cursor.get[JdbcLimits]("databaseLimits")
     users <- cursor.get[List[UserConfig]]("users")
     staticTokens <- if(cursor.downField("staticTokens").focus.isEmpty) Right(Nil) else cursor.get[List[StaticTokenConfig]]("staticTokens")
     maxBodyBytes <- cursor.get[Int]("maxBodyBytes")
@@ -126,9 +141,9 @@ object Config {
     embedding <- cursor.get[EmbeddingConfig]("embedding")
     allowInsecureHttp <- if(cursor.downField("allowInsecureHttp").focus.isEmpty) Right(false) else cursor.get[Boolean]("allowInsecureHttp")
     indexing <- if(cursor.downField("indexing").focus.isEmpty) Right(IndexingCapacity.defaults) else cursor.get[IndexingCapacity]("indexing")
-  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing) }
+  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits) }
   def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(_ => throw DomainError("config", "invalid configuration"), identity); c.validate(); c }
-  def credential(path: String): String = Files.readString(Path.of(path)).stripTrailing()
+  def credential(path: String): String = BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
 }
 object Password {
   val iterations = 600000

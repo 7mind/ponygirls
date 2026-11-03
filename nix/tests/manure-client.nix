@@ -27,7 +27,9 @@ let
   driver = pkgs.writeText "manure-client-check.py" ''
     import base64, hashlib, json, os, secrets, socket, subprocess, sys
     import tempfile, time, urllib.request
+    from pathlib import Path
 
+    passed = []
     pkg = sys.argv[1]
     site = sys.argv[2]
     sys.path.insert(0, site)
@@ -59,6 +61,10 @@ let
     with open(digest_file, "w") as fh:
         fh.write(digest + "\n")
     config = {
+        "database": json.loads(os.environ["PONYGIRLS_TEST_DATABASE_MANURE"]),
+        "native_mode":"linked", "posix_library":None, "embedding":None,
+        "dashboard_dir":os.path.join(pkg,"share/manure/web/dashboard"),
+        "unlock_shell_dir":os.path.join(pkg,"share/manure/web/unlock"),
         "port": port,
         "data_dir": data,
         "api_origin": "http://127.0.0.1:%d" % port,
@@ -70,21 +76,41 @@ let
     cfg_path = os.path.join(work, "config.json")
     with open(cfg_path, "w") as fh:
         json.dump(config, fh)
+    server_log = open(os.path.join(work,"server.log"),"wb")
     server = subprocess.Popen(
         [os.path.join(pkg, "bin", "manure-server"), "--config", cfg_path],
-        cwd=work, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cwd=work, stdout=server_log, stderr=server_log)
     try:
         base = "http://127.0.0.1:%d" % port
         for _ in range(200):
             try:
-                with urllib.request.urlopen(base + "/api/v1/health",
-                                            timeout=2) as r:
-                    if r.status == 200:
-                        break
+                from manure.client import ManureClient
+                ManureClient(base).version()
+                break
             except Exception:
+                if server.poll() is not None: raise SystemExit("native server exited before readiness (sanitized log): " + open(server_log.name).read())
                 time.sleep(0.05)
         else:
             raise SystemExit("server never became healthy")
+
+        passed.append("native-current-version-readiness-on-isolated-role")
+        # Immutable package assets, not repository-cwd fallback. Both shells
+        # are exercised through the installed native server/current client.
+        with urllib.request.urlopen(base + "/", timeout=5) as dashboard:
+            assert dashboard.status == 200 and b"<html" in dashboard.read().lower()
+        passed.append("installed-dashboard-assets-no-repository-fallback")
+        from manure.client import ManureClient
+        management = ManureClient(base, token_file=token_file)
+        empty = management.init_upload("installed-shell-probe", "dir", "external", [])
+        aid = empty["artifact_id"]
+        assert empty.get("external_password")
+        management.publish(aid)
+        unlock = urllib.request.Request(base + "/__manure/password", headers={"Host": aid + ".artifacts.localhost:" + str(port)})
+        with urllib.request.urlopen(unlock, timeout=5) as shell:
+            assert shell.status == 200 and b"unlock-form" in shell.read()
+        passed.append("installed-external-unlock-assets-current-init-publish")
+        management.delete(aid)
+        print("manure-client: installed dashboard + unlock assets through native server OK")
 
         child_env = {
             "PATH": "/usr/bin:/bin",
@@ -112,6 +138,7 @@ let
             out, err = mcp.communicate(blob, timeout=60)
         except subprocess.TimeoutExpired:
             mcp.kill()
+            mcp.wait(timeout=5)
             raise SystemExit("manure-mcp exchange timed out")
         assert mcp.returncode == 0, (mcp.returncode, err.decode()[-2000:])
         lines = [ln for ln in out.decode().split("\n") if ln.strip()]
@@ -126,8 +153,10 @@ let
                      "get_manifest", "upload_artifact", "fetch_artifact",
                      "delete_artifact", "rotate_external_password"):
             assert want in names, names
+        passed.append("manual-mcp-initialize-and-tool-surface-stdout-purity")
         text = by_id[3]["result"]["content"][0]["text"]
         assert json.loads(text)["user_id"] == "check", text
+        passed.append("manual-mcp-current-native-whoami-roundtrip")
         print("manure-client: manual MCP exchange OK (8 tools, whoami)")
 
         # Phase 2 — official SDK interop.
@@ -147,6 +176,7 @@ let
 
         sdk_names = asyncio.run(sdk_exchange())
         assert "whoami" in sdk_names and len(sdk_names) == 8, sdk_names
+        passed.append("official-python-sdk-stdio-initialize-list-tools")
         print("manure-client: SDK interop OK")
 
         # Phase 3 — CLI cache precedence + resume + round-trip.
@@ -222,6 +252,7 @@ let
         run_cli(["fetch", aid, dest, "--json"], {})
         assert open(os.path.join(dest, "big.bin"), "rb").read() == \
             open(big, "rb").read()
+        passed.append("cli-flag-cache-precedence-kill-auto-resume-32mib-fetch")
         # Env default applies when no flag is given.
         rec2 = interrupt_upload(
             ["upload", big, "--access", "internal", "--json"],
@@ -232,16 +263,29 @@ let
         run_cli(["upload", big, "--access", "internal",
                  "--resume", aid2, "--json"],
                 {"MANURE_CACHE_DIR": env_cache})
+        passed.append("cli-env-cache-default-and-explicit-resume")
         print("manure-client: CLI cache precedence + resume + round-trip OK")
     finally:
         server.terminate()
         server.wait(timeout=10)
+        server_log.close()
+    artifact = Path(pkg, "bin/manure-server").resolve(strict=True)
+    assets = Path(pkg, "share/manure/web")
+    assert len(passed) == 8 and len(passed) == len(set(passed))
+    receipt = {"tests":passed,"cases":len(passed),"failures":0,"errors":0,"skips":0,
+      "package":pkg,"artifact":str(artifact),"artifactSHA256":hashlib.sha256(artifact.read_bytes()).hexdigest(),
+      "driverSHA256":hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+      "clients":{name:hashlib.sha256(Path(site,"manure",name+".py").read_bytes()).hexdigest() for name in ("client","current_protocol","cli","mcp")},
+      "assets":{str(path.relative_to(assets)):hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(assets.rglob("*")) if path.is_file()},
+      "scope":"Installed current-protocol portable clients and immutable UI assets on actual native server/owned non-superuser shared-provider role. Not full browser/domain/migration acceptance."}
+    Path(os.environ["MANURE_CLIENT_RECEIPT"]).write_text(json.dumps(receipt,indent=2)+"\n")
   '';
 in
 pkgs.runCommand "manure-client-test"
-{
+({
   nativeBuildInputs = [ pkgs.coreutils python jq ];
-} ''
-  ${python}/bin/python "${driver}" "${manurePackage}" "${manurePackage}/${python.sitePackages}"
-  touch $out
+} // (import ./owned-postgres-environment.nix { inherit pkgs; })) ''
+  mkdir "$out"
+  export MANURE_CLIENT_RECEIPT="$out/receipt.json"
+  ${python}/bin/python ${./with-owned-postgres.py} ${python}/bin/python "${driver}" "${manurePackage}" "${manurePackage}/lib/python"
 ''

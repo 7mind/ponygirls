@@ -26,7 +26,7 @@ class ArchiveSearchTest extends munit.FunSuite {
   }
   private def database(run: Fixture => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.current(config)); db.initialize()
+    val config=Fixtures.config(); val db=Fixtures.database(config,IndexProfileCatalog.current(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members CASCADE")
       Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile)
@@ -218,7 +218,7 @@ class ArchiveSearchTest extends munit.FunSuite {
     val separator=if(f.config.jdbcUrl.contains("?")) "&" else "?"
     val options=java.net.URLEncoder.encode("-c statement_timeout=150",UTF_8)
     val config=f.config.copy(jdbcUrl=f.config.jdbcUrl+separator+"options="+options)
-    val db=new Database(config,IndexProfileCatalog.current(config))
+    val db=Fixtures.database(config,IndexProfileCatalog.current(config))
     val index=new PostgresArchiveIndex(db,new PostgresArchive(db,config),config)
     val locked=new CompletableFuture[Boolean]; val release=new CompletableFuture[Boolean]
     val lock=CompletableFuture.runAsync(() => f.db.transaction { c => Sql.exec(c,"LOCK TABLE ch_messages IN ACCESS EXCLUSIVE MODE"); locked.complete(true); release.get(15,TimeUnit.SECONDS); () })

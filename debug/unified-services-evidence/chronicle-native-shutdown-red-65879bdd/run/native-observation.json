@@ -1,0 +1,51 @@
+{
+  "scope": "native ready->SIGTERM actual status ONLY; no new durability/inflight-finalizer claim",
+  "hypothesisReproduced": true,
+  "actualWait": {
+    "returncode": 143,
+    "normalCode": 143,
+    "signal": null,
+    "ownedIdentity": {
+      "pid": 1009627,
+      "startTicks": 118133547,
+      "parentPID": 1009197,
+      "executable": "/nix/store/mvw89ddwd6pzx00wd6kmsxh5p8p10clq-chronicle-native-development-artifact-0.1.0/libexec/chronicle-server"
+    },
+    "pidfdSignal": "SIGTERM",
+    "waitSeconds": 0.2641185028478503,
+    "noForcedKill": true,
+    "freshProductionMarkerAndOwnedListenerVerified": true,
+    "applicationHTTPRequestsMade": 0,
+    "noForeignListenerProbes": true
+  },
+  "pinnedSystemdClassification": {
+    "systemdVersion": "262",
+    "unitPolicySHA256": "950a28c3870e18f83a214fec6a20dc0a2785a0676bf4121d372d1cdcefd04a37",
+    "exitCleanMode": "EXIT_CLEAN_DAEMON",
+    "emptySuccessStatusSet": true,
+    "actualCLDCode": 1,
+    "actualStatus": 143,
+    "isCleanExit": false,
+    "boundaryControls": {
+      "exited0": true,
+      "exited1": false,
+      "exited143": false,
+      "killedTERM": true,
+      "killedKILL": false
+    },
+    "noHostManagerOrUnitActivation": true
+  },
+  "desiredModuleStopContract": "FAILED",
+  "resourceFinalizationProvedByExitStatus": false,
+  "previousWorkflowEvidenceNotRerun": true,
+  "controlledModelObservation": {
+    "requests": 0,
+    "counts": {
+      "annotation": 0,
+      "embedding": 0,
+      "rejected": 0
+    }
+  },
+  "nativeProcessFinalReturncode": 143,
+  "controlledFixtureFinalReturncode": 0
+}

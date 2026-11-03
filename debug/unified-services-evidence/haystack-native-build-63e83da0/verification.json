@@ -1,0 +1,11 @@
+{
+  "builtSourceCommit": "63e83da0809a2105a4cccd37f92660350ebb4c43",
+  "verificationTree": "f74080ef16eab7b192affeff8156fa40c0d119df",
+  "compiledInputCount": 105,
+  "compiledInputManifestSha256": "8df08d58b045a90d9f400ad345b633c7cc312eb3b8095ae3b3e29dc79ca12efc",
+  "elfSha256": "d001828b20d7dd3efaef5d822a1ceeae843e1c46aec9b16699aa9242b7bd553f",
+  "compiledInputsMatch": true,
+  "noInterpreter": true,
+  "noNeededLibraries": true,
+  "scope": "Build/link/source binding only; native behavioral acceptance remains separate."
+}

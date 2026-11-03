@@ -1,0 +1,2 @@
+[repositories]
+maven-offline: file:///nix/store/nbir0l4pyslr5x1b85nafpgyi14zwywi-coursier-cache/https/repo.maven.apache.org/maven2/

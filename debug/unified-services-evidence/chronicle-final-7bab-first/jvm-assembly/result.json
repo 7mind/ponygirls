@@ -1,0 +1,13 @@
+{
+  "stage": "jvm-assembly",
+  "command": [
+    "bash",
+    "scripts/backend-sbt.sh",
+    "chronicleServer/assembly"
+  ],
+  "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation",
+  "startedAt": "2026-11-03T10:20:17.426301+00:00",
+  "finishedAt": "2026-11-03T10:20:29.204558+00:00",
+  "commandExitStatus": 0,
+  "status": "passed"
+}

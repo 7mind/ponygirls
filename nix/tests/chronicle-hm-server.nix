@@ -22,7 +22,7 @@ let
       serverDependencies = [ "embedding.service" ];
       restartTriggers = [ "/fixture/revision" ];
       passwords.alice = { passwordFile = "/fixture/password"; revisionFile = "/fixture/revision"; };
-      database = { passwordFile = "/fixture/database-password"; port = 25433; restartTriggers = [ "/fixture/db-revision" ]; };
+      database = { passwordFile = "/fixture/database-password"; port = 25433; readinessUnit = "ponygirls-database-chronicle.service"; restartTriggers = [ "/fixture/db-revision" ]; };
       settings = {
         listenHost = "127.0.0.1";
         listenPort = 47330;
@@ -43,8 +43,6 @@ let
   badName = evaluate (lib.recursiveUpdate fixture { smind.hm.services.chronicle.passwords."../escape" = { passwordFile = "/fixture/password"; revisionFile = "/fixture/revision"; }; });
   scripts = {
     setup = services.custom-archive-setup.Service.ExecStart;
-    postgres = services.custom-archive-postgres.Service.ExecStart;
-    database = services.custom-archive-database.Service.ExecStart;
     backup = services.custom-archive-backup.Service.ExecStart;
   };
 in
@@ -64,9 +62,14 @@ assert rendered.value.databasePasswordFile == "/fixture/database-password";
 assert rendered.value.users == fixture.smind.hm.services.chronicle.settings.users;
 assert services.custom-archive-setup.Unit.Wants == [ "external-secrets.service" ];
 assert !(services.custom-archive-setup.Unit ? Requires);
-assert services.custom-archive.Unit.Requires == [ "custom-archive-database.service" "embedding.service" ];
-assert services.custom-archive.Unit.PartOf == [ "custom-archive-postgres.service" ];
-assert services.custom-archive-postgres.Service.KillSignal == "SIGINT";
+assert services.custom-archive.Unit.Requires == [ "custom-archive-migrate.service" "embedding.service" ];
+assert services.custom-archive-migrate.Unit.Requires == [ "ponygirls-database-chronicle.service" ];
+assert rendered.value.databaseLimits == { maxConnections = 8; maxQueued = 32; queueTimeoutMs = 5000; connectTimeoutMs = 5000; statementTimeoutMs = 30000; lockTimeoutMs = 35000; idleTransactionTimeoutMs = 60000; socketTimeoutMs = 35000; };
+assert !(services.custom-archive.Unit ? PartOf);
+assert !(services ? custom-archive-postgres);
+assert !(services ? custom-archive-database);
+assert !cfg.ponygirls.servicePostgres.enable;
+assert services.custom-archive-backup.Unit.Requires == [ "ponygirls-database-chronicle.service" ];
 assert cfg.systemd.user.timers.custom-archive-backup.Timer.Persistent;
 assert builtins.elem "/fixture/revision" services.custom-archive.Unit.X-Restart-Triggers;
 assert builtins.elem cfg.xdg.configFile."systemd/user/embedding.service".source services.custom-archive.Unit.X-Restart-Triggers;
@@ -90,30 +93,12 @@ pkgs.runCommand "chronicle-hm-server" {
   printf 'revision-2\n' > "$TMPDIR/fixture/revision"
   bash setup
   test "$(cat "$TMPDIR/fixture/chronicle/credentials/alice.pbkdf2")" != "$first"
-  bash postgres > postgres.log 2>&1 &
-  postgres_pid=$!
-  trap 'kill -INT "$postgres_pid" 2>/dev/null || true; wait "$postgres_pid" || true' EXIT
-  bash database
-  socket="$TMPDIR/fixture/chronicle/postgres-socket"
-  test "$(psql -X -h "$socket" -p 25433 -d chronicle -tAc "SELECT extname FROM pg_extension WHERE extname = 'vector'")" = vector
-  psql -X -h "$socket" -p 25433 -d chronicle -v ON_ERROR_STOP=1 -c 'CREATE TABLE retained (value int); INSERT INTO retained VALUES (42);'
-  bash database
-  test "$(psql -X -h "$socket" -p 25433 -d chronicle -tAc 'SELECT value FROM retained')" = 42
-  bash backup
-  dump=$(find "$TMPDIR/fixture/chronicle/backups" -name '*.dump')
-  pg_restore --list "$dump" > dump-list
-  grep -q retained dump-list
-  kill -INT "$postgres_pid"
-  wait "$postgres_pid"
-  trap - EXIT
-  bash postgres > restart.log 2>&1 &
-  postgres_pid=$!
-  trap 'kill -INT "$postgres_pid" 2>/dev/null || true; wait "$postgres_pid" || true' EXIT
-  bash database
-  test "$(psql -X -h "$socket" -p 25433 -d chronicle -tAc 'SELECT value FROM retained')" = 42
-  kill -INT "$postgres_pid"
-  wait "$postgres_pid"
-  trap - EXIT
-  echo 'PASS: inertness, runtime credential paths, restart graph, setup, PostgreSQL/pgvector, persistence and backup'
+  # Cluster runtime/dumps/restores are exercised by shared-postgres. Here
+  # verify the actual consumer emits only explicit TCP/credential backup wiring.
+  grep -q -- '-h 127.0.0.1' backup
+  grep -q -- '--no-password' backup
+  grep -q 'PGPASSWORD' backup
+  ! grep -q 'initdb' backup
+  echo 'PASS: consumer inertness, explicit database readiness graph, no hidden cluster, runtime credential preservation, TCP backup wiring'
   touch "$out"
 ''

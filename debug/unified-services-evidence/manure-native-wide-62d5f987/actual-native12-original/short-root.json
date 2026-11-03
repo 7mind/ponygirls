@@ -1,0 +1,9 @@
+{
+  "path": "/tmp/mnw-up_nid5o",
+  "uid": 1001,
+  "mode": "0700",
+  "device": 64769,
+  "inode": 888301,
+  "markerSha256": "dcb46314a93da53e2be60dda7c19b70f9aa0b86f8e2b9251098629eb14cd3f3b",
+  "reason": "parent-reproduced PG18.6 Unix-socket107-byte limit; no application change"
+}

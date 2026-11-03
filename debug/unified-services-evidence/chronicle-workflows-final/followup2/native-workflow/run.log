@@ -1,0 +1,46 @@
+
+> @chronicle/acceptance@0.1.0 test
+> node --import tsx --test workflow.test.ts
+
+Synthetic failure artifacts retained: /tmp/cf7fix.s1ep8iut/chronicle-workflow-aUGBeo
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+SLF4J: Failed to load class "org.slf4j.impl.StaticMDCBinder".
+SLF4J: Defaulting to no-operation MDCAdapter implementation.
+SLF4J: See http://www.slf4j.org/codes.html#no_static_mdc_binder for further details.
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/nix/store/mvw89ddwd6pzx00wd6kmsxh5p8p10clq-chronicle-native-development-artifact-0.1.0/libexec/chronicle-server)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+I 2026-11-03T10:39:43.941 (Main.scala:44)  chronicle.Main$.serve [215:io-compute-107] chronicle listening address=server=/127.0.0.1:33171
+
+✖ collector → durable archive → annotation/pgvector → generated WS and official MCP; live group ACLs and restart (11156.982494ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12530.792235
+
+✖ failing tests:
+
+test at workflow.test.ts:1:6229
+✖ collector → durable archive → annotation/pgvector → generated WS and official MCP; live group ACLs and restart (11156.982494ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  10 !== 8
+  
+      at TestContext.<anonymous> (/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-workflow-fixture/chronicle/tests/workflow.test.ts:231:53)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 10,
+    expected: 8,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

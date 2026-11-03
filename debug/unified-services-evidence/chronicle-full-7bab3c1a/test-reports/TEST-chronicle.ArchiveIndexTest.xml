@@ -1,0 +1,46 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<testsuite hostname="computeinstance-e00cd1eayd00hs9qas" name="chronicle.ArchiveIndexTest" tests="18" errors="0" failures="0" skipped="0" time="14.567" timestamp="2026-11-03T09:41:30">
+          <properties>
+      <property name="java.specification.version" value="25"/><property name="sun.jnu.encoding" value="UTF-8"/><property name="java.class.path" value="/nix/store/v3b2cypq1ix4553s8mw745d8g9m2rgc9-sbt-launch-1.13.1.jar"/><property name="java.vm.vendor" value="GraalVM Community"/><property name="sun.arch.data.model" value="64"/><property name="sbt.supershell" value="false"/><property name="jline.shutdownhook" value="false"/><property name="java.vendor.url" value="https://www.graalvm.org/"/><property name="user.timezone" value="Etc/UTC"/><property name="java.vm.specification.version" value="25"/><property name="sbt.override.build.repos" value="true"/><property name="os.name" value="Linux"/><property name="sbt.repository.config" value="/nix/store/27g4imc0xbw1mwdk5spc4ilv9nbpv58m-chronicle-sbt-repositories"/><property name="sun.java.launcher" value="SUN_STANDARD"/><property name="sun.boot.library.path" value="/nix/store/6pfiwq699rwsdl6scfvjqdzzg5hsmx43-graalvm-ce-25.4.4.1.1/lib"/><property name="sun.java.command" value="/nix/store/v3b2cypq1ix4553s8mw745d8g9m2rgc9-sbt-launch-1.13.1.jar project chronicleServer Test / validationInventory test"/><property name="jdk.debug" value="release"/><property name="sun.cpu.endian" value="little"/><property name="user.home" value="/home/pavel"/><property name="user.language" value="en"/><property name="java.specification.vendor" value="Oracle Corporation"/><property name="sbt.ipcsocket.tmpdir" value="/run/user/1001/.sbtea728646/ipcsocket"/><property name="swoval.tmpdir" value="/run/user/1001/.sbtea728646/swoval"/><property name="java.version.date" value="2026-08-18"/><property name="java.home" value="/nix/store/6pfiwq699rwsdl6scfvjqdzzg5hsmx43-graalvm-ce-25.4.4.1.1"/><property name="file.separator" value="/"/><property name="java.vm.compressedOopsMode" value="Zero based"/><property name="line.separator" value="
+"/><property name="java.vm.specification.vendor" value="Oracle Corporation"/><property name="java.specification.name" value="Java Platform API Specification"/><property name="sbt.ci" value="true"/><property name="jline.esc.timeout" value="0"/><property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/><property name="java.runtime.version" value="25.0.4.1.1+1-jvmci-25.4-b23"/><property name="user.name" value="pavel"/><property name="stdout.encoding" value="UTF-8"/><property name="path.separator" value=":"/><property name="os.version" value="6.11.0-1016-nvidia"/><property name="jna.nosys" value="true"/><property name="java.runtime.name" value="OpenJDK Runtime Environment"/><property name="log4j.ignoreTCL" value="true"/><property name="file.encoding" value="UTF-8"/><property name="jnidispatch.path" value="/home/pavel/.cache/JNA/temp/jna12725099846856024334.tmp"/><property name="java.vm.name" value="OpenJDK 64-Bit Server VM"/><property name="jna.platform.library.path" value="/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib64:/lib64:/usr/lib:/lib:/usr/local/cuda/targets/x86_64-linux/lib:/usr/lib/x86_64-linux-gnu/libfakeroot"/><property name="java.vendor.version" value="GraalVM CE 25.4.4.1.1+1.1"/><property name="jna.loaded" value="true"/><property name="java.vendor.url.bug" value="https://github.com/oracle/graal/issues"/><property name="java.io.tmpdir" value="/tmp"/><property name="java.version" value="25.0.4.1.1"/><property name="user.dir" value="/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation"/><property name="os.arch" value="amd64"/><property name="java.vm.specification.name" value="Java Virtual Machine Specification"/><property name="native.encoding" value="UTF-8"/><property name="java.library.path" value="/nix/store/w8r5qi0wrca9ia83z3q0dvhp15xx3jsn-cups-2.4.19-lib/lib:/nix/store/3jf4p2dcb16lvj1q6jc595qwn6gf8ppk-cairo-1.18.4/lib:/nix/store/ddqbzpn77xmi900rj1a7wy8b5lbwm4ay-glib-2.88.3/lib:/nix/store/r6azrvmzvvmcx9k74crac9kpqirnr9qf-gtk+3-3.24.52/lib:/usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib"/><property name="java.vm.info" value="mixed mode, sharing"/><property name="stderr.encoding" value="UTF-8"/><property name="java.vendor" value="GraalVM Community"/><property name="java.vm.version" value="25.0.4.1.1+1-jvmci-25.4-b23"/><property name="stdin.encoding" value="UTF-8"/><property name="sun.io.unicode.encoding" value="UnicodeLittle"/><property name="java.class.version" value="69.0"/>
+    </properties>
+          <testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: all raw HEAD rows browse by actual message time without publication/profile availability" time="0.287">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: exact literals preserve phrase/message boundaries, long words, wildcard characters and Unicode overlap" time="0.355">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: full Boolean metadata predicates and user filters never broaden live ACL" time="0.382">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: agent predicates partition visible HEADs by identity, including absent and null subagent IDs" time="0.447">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: recorded yolo profiles match exact authorized root claims without relabeling archives" time="0.548">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: every global header sort pages with stable UUID ties and nulls last" time="1.667">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication regression: admitted unbounded Title keys page in transport-sized envelopes in both directions" time="0.34">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication regression: admitted unbounded Project keys page in transport-sized envelopes in both directions" time="0.335">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication regression: admitted unbounded Branch keys page in transport-sized envelopes in both directions" time="0.326">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication regression: admitted unbounded Producer keys page in transport-sized envelopes in both directions" time="0.331">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication regression: admitted unbounded Model keys page in transport-sized envelopes in both directions" time="0.323">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: referenced archive keys retain their original revision and reject drift, missing anchors and foreign rows" time="0.321">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: referenced cursor resolution rechecks live group visibility" time="0.267">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication regression: oversized numeric cursor positions are rejected before SQL execution" time="0.24">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: raw browsing and Hybrid literal membership remain unbounded beyond ANN1000" time="0.569">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: stale published ANN and current literal provenance stay separate and immutable" time="0.319">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="BG GoodCommunication specified: required metadata-only subtrees restrict candidate SQL before limit under exact scan control; mixed Boolean syntax does not" time="5.958">
+                      
+                    </testcase><testcase classname="chronicle.ArchiveIndexTest" name="Perf GoodCommunication: empty metadata projection does not touch100MiB raw snapshot or message payloads" time="1.552">
+                      
+                    </testcase>
+          <system-out><![CDATA[]]></system-out>
+          <system-err><![CDATA[]]></system-err>
+        </testsuite>

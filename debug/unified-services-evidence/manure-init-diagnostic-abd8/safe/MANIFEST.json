@@ -1,0 +1,46 @@
+{
+  "createdAt": "2026-11-03T14:16:14.058860+00:00",
+  "label": "DIAGNOSTIC-ONLY-abd8-run96-FIRST-STRICT-TIMEOUT-FAILURE",
+  "sourceCommit": "abd8ec3acbaab82df3c8af9ccac2c7816b5d3619",
+  "runId": "20261103T140402Z.6f40e875",
+  "runtimeResult": "FAIL1",
+  "selectedAccelerator": "UNKNOWN",
+  "acceptanceAuthorized": false,
+  "originalFirstEdgeCauseProven": false,
+  "noNewRunnerOrJobOrGuestOrSignalOrCleanup": true,
+  "rawPrivateIncluded": false,
+  "files": {
+    "README.md": {
+      "bytes": 4181,
+      "sha256": "bb8b7f4546d81fe3c9f4141a5f934929e41013f86ce8c4e9a34dceeb0771ecf7"
+    },
+    "collection-provenance.json": {
+      "bytes": 673,
+      "sha256": "499a8ef053ebfdde5d1d29f7da3ca630f77f4d91ef066f736d84bd8b8496a190"
+    },
+    "process-absence.json": {
+      "bytes": 819,
+      "sha256": "8063bcdd2e0527b241d7a66d582a83507998716f615e034c4de3c6282d896be6"
+    },
+    "raw-artifacts-digests-only.json": {
+      "bytes": 1818,
+      "sha256": "e56967d5276f42f8247a8e989f6d06be1487302b6af26554054e1bb7a21eacf6"
+    },
+    "runtime-scope.json": {
+      "bytes": 2382,
+      "sha256": "0b9d03c1b19ba5f068ef4bd27c9e0af5ff8cb451ccdfb41657fe9a07227ab72c"
+    },
+    "safe-diagnostic-records.json": {
+      "bytes": 2380,
+      "sha256": "f9ad88a10265b17e160130ecd527ac58a60eacf064bfc1df9b3452c260dfe54f"
+    },
+    "source-and-controls.json": {
+      "bytes": 1501,
+      "sha256": "88d94e13798e8e1991bcdeb920c31815c999db2909fc38735bc01ee91064329e"
+    },
+    "xml-scope.json": {
+      "bytes": 485,
+      "sha256": "74a87f070ee9fb071a5124fa3918d9dcd4c620cf256e64dede9db22d2996a737"
+    }
+  }
+}

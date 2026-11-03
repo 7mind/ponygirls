@@ -1,0 +1,29 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/nix/store/v3b2cypq1ix4553s8mw745d8g9m2rgc9-sbt-launch-1.13.1.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[info] [launcher] getting org.scala-sbt sbt 1.13.0  (this may take some time)...
+[info] [launcher] getting Scala 2.12.21 (for sbt)...
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by com.sun.jna.Native in an unnamed module (file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-pointer-domain/debug/haystack-pointer-standard-green2/home/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.13.0/jna-5.19.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[0m[[0m[0minfo[0m] [0m[0mwelcome to sbt 1.13.0 (GraalVM Community Java 25.0.4.1.1)[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project wt-ponygirls-haystack-pointer-domain-build from plugins.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mloading project definition from /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-pointer-domain/project[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project root from build.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mresolving key references (12050 settings) ...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-pointer-domain/)[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 1 Scala source to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-pointer-domain/haystack/server/target/scala-3.9.0/test-classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/nix/store/nbir0l4pyslr5x1b85nafpgyi14zwywi-coursier-cache/https/repo.maven.apache.org/maven2/org/scala-lang/scala-library/3.9.0/scala-library-3.9.0.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+Test run [36mhaystack.storage.PointerDomainTest[0m started
+[32mhaystack.storage.PointerDomainTest[0m: finished [90m1.287s[0m
+Test run [36mhaystack.storage.PointerDomainTest[0m finished: 0 failed, 0 ignored, 4 total [90m1.295s[0m
+[0m[[0m[0minfo[0m] [0m[0mPassed: Total 4, Failed 0, Errors 0, Passed 4[0m
+[0m[[0m[32msuccess[0m] [0m[0mTotal time: 9 s, completed Nov 3, 2026, 12:16:41 PM[0m
+[0J

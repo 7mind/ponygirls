@@ -1,0 +1,83 @@
+{
+  "observedAt": "2026-11-03T16:33:05.323832+00:00",
+  "version": "v2-hardlink-graph-only",
+  "v1Preserved": {
+    "directory": "revisions/v1",
+    "byteExactFiles": 9,
+    "preservationReceiptSha256": "2750a0eac572baf4d0448456186f28ab3c7730670826ca37e67589a9570c7451",
+    "originalOpaqueSuccessUsedVersion": "v1, parent-reported completed0; NOT relabeled/rerun as v2"
+  },
+  "helperSha256": "556e77e589dc46c0da5be49ea45d3ee3d8b4a460d7a7da37f6afc9066f61d38f",
+  "onlyChangedCodeSymbol": "archive_check",
+  "outsideArchiveCheckBytesIdentical": true,
+  "otherToolsAndSpecsByteIdentical": {
+    "future-preserve-success.py": "7ebbc0d64c96818fce4fb06eef133a5802a3526a17eda591d91cf49a0dccfe95",
+    "future-preserve-socket-metadata.py": "456c38d1590fe94201622a8fccdb3a4c8fea24e055aff3965ec945b78da4596e",
+    "fixed-eligibility.json": "663830b10e3b411ae476fc5af205fde23af0258856cdcc5f9300e82275454182",
+    "socket-metadata-proposal.json": "e59ff36f51993651df627fbd0bea49b0a3cf93f54c391ba8bac5508feb7b3149",
+    "assessment.json": "43ff1154917fb933f3722c0c6bf0da472f2095f08d40d8c9f5153be99faad0d3",
+    "eligibility-observation.json": "7ddb55ff52ebbfbcc5d35e564efb77c177817571bf7609749f2b9182048ecba0"
+  },
+  "hardlinkPolicy": "Resolve every hardlink to actual REGULAR payload using iterative visiting/path cache. Direct/chained/forward allowed; self/cycle/dangling/dir/symlink rejected. Existing180s/50000 caps and all other guards unchanged. Successful edge visits O(V+E), no recursion/O(n^2) repeated chains.",
+  "testCommand": [
+    "/nix/store/r6vdzip0gz5zj2pjdbmqckfsb4q7nz4m-python3-3.14.8-env/bin/python3.14",
+    "-I",
+    "-B",
+    "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-vm-audit-current/debug/manure-four-root-cleanup-PREP-20261103/tests/v2-hardlink-graph/test-v2-helpers.py"
+  ],
+  "testSourceSha256": "b1a4694338feae14fc0c393b3a7b66f2eced116ef9ee5befa58e1fdede32f6d9",
+  "testLogSha256": "c59968e073a601b5bc8f611fd417054c03ce771e47f29f34e8b8ba67eb3ef480",
+  "testResultSha256": "b3a98357be290f597722fdffbb498b9f5447bd9df903c38b274b5e2fbc42f35d",
+  "result": {
+    "scope": "tiny owned FS/tar helper validation only; no actual roots/archives/entrypoints/jobs",
+    "testsRun": 19,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "successful": true,
+    "failfast": true,
+    "allSyntheticFixturesRetained": true,
+    "revision": "v2-hardlink-resolution",
+    "originalD8RedUnmodified": true,
+    "originalTenCaseCopyWithNewSHAAndOwnBASE": true,
+    "frozenHelperSHA256": "556e77e589dc46c0da5be49ea45d3ee3d8b4a460d7a7da37f6afc9066f61d38f",
+    "cases": [
+      "test_tree_symlink_never_traverses_outside",
+      "test_member_name_refuses_escape_absolute_and_nul",
+      "test_archive_valid_nested_regular_and_symlink",
+      "test_archive_unsafe_path_refused",
+      "test_archive_duplicate_normalized_name_refused",
+      "test_socket_requires_exact_explicit_combination_not_blanket",
+      "test_remove_children_preserves_marker_and_outside_bytes",
+      "test_changed_or_new_first_entry_refuses_before_mutation",
+      "test_private_metadata_hardlink_guard",
+      "test_hardlink_only_cycle_without_file_payload_must_be_refused",
+      "test_hardlink_direct_regular_payload_is_valid",
+      "test_hardlink_chained_regular_payload_is_valid",
+      "test_hardlink_forward_regular_payload_is_valid",
+      "test_hardlink_self_reference_is_rejected_as_graph_cycle",
+      "test_hardlink_pair_cycle_is_rejected_as_graph_cycle",
+      "test_hardlink_dangling_target_is_rejected",
+      "test_hardlink_directory_target_is_rejected",
+      "test_hardlink_symlink_target_is_rejected_even_if_symlink_points_to_data",
+      "test_long_forward_chain_and_converging_aliases_resolve_within_existing_bound"
+    ]
+  },
+  "longGraph": {
+    "forwardChainNodes": 12000,
+    "convergingAliases": 12000,
+    "archiveEntriesIncludingRootMarkerPayload": 24003,
+    "maximumUnchanged": 50000
+  },
+  "counterexample": "Own copied original D8 cyclic a->b->a expected refusal now green; additional regex asserts cycle cause, valid graph positives ensure correct helper/import. Original D8 red untouched.",
+  "originalD8RedDigests": {
+    "test-frozen-helpers.py": "b2b62e4823fbb513e3449a47d32ab4f031da87e6e7d2cb54d77309430cf5d0ed",
+    "counterexample.json": "c7bc727c0a47ae3dc9818485eba7b97921edf525fe501fc9fbfdd63da3fa5e74",
+    "test-result.json": "b67da908d777d5390289bd964d09362c5ac0b0f4e01b9dcbe71ddd923677f62b",
+    "tests.log": "0fb4deb71e2fb7d9607c5e3c01a9dac65392d13afe95f47974618f89074f1a8c"
+  },
+  "scope": "Own UID1001 synthetic files/tars/symlink/socket and removal-helper fixtures ONLY; no actual roots/archives, main/view_guard/receipts/GNUtar/signal/PG/credentials; no globals/importhooks/security guards patched. Foreground test, no worker/background job.",
+  "additionalDefectsObserved": false,
+  "realActionsAuthorized": false,
+  "reviewRequired": "Parent and D8 review before any real cleanup; no change in root/path authority."
+}

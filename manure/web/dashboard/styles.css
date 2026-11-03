@@ -137,7 +137,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 .topbar strong { font-weight: 500; color: var(--ink); }
 .breadcrumb-separator { color: var(--line-strong); padding: 0 10px; }
 .service-label { font-size: 10px; }
-.path-mode-indicator { display: inline-block; margin-left: 8px; font-size: 16px; line-height: 1; vertical-align: middle; cursor: help; }
+.path-mode-indicator { display: inline-block; flex: none; width: 20px; height: 20px; margin-left: 8px; font-size: 16px; line-height: 20px; text-align: center; vertical-align: middle; cursor: help; }
 .workspace-content { width: 100%; max-width: 1800px; padding: 25px 24px 18px; margin: 0 auto; flex: 1; min-width: 0; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
 .page-heading > div { min-width: 0; }
@@ -276,7 +276,8 @@ th[aria-sort=ascending] .sort-indicator, th[aria-sort=descending] .sort-indicato
   .identity-copy small { display: none; }
   #logout-button { width: auto; margin: 0 0 0 auto; text-align: center; flex: none; }
   .topbar { min-height: 39px; padding: 0 12px; }
-  .service-label { display: none; }
+  .service-label { display: inline-flex; align-items: center; font-size: 0; }
+  .service-label .path-mode-indicator { margin-left: 0; font-size: 16px; }
   .workspace-content { padding: 19px 12px 14px; }
   .workspace-footer { padding: 13px 12px 16px; }
   .page-heading { gap: 12px; margin-bottom: 17px; }

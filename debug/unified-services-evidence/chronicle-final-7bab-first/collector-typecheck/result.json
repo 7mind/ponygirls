@@ -1,0 +1,13 @@
+{
+  "stage": "collector-typecheck",
+  "command": [
+    "npm",
+    "run",
+    "typecheck"
+  ],
+  "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/collector",
+  "startedAt": "2026-11-03T10:10:44.243999+00:00",
+  "finishedAt": "2026-11-03T10:10:44.654019+00:00",
+  "commandExitStatus": 0,
+  "status": "passed"
+}

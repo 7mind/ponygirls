@@ -1,0 +1,143 @@
+{
+  "derivation": "ONLY seq/at/kind copied; raw env/commands/args are not included",
+  "rawSHA256": "64dbe15ee4dd58be19fdb2e0418426684deb68bd250601f1edc92ceda4e8a67f",
+  "kindCounts": {
+    "owned-identity": 21,
+    "runtime-start": 1,
+    "heartbeat": 1,
+    "owned-reaped": 2,
+    "owned-cleanup-observation": 1
+  },
+  "events": [
+    {
+      "seq": 1,
+      "at": "2026-11-03T15:41:35.258411+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 2,
+      "at": "2026-11-03T15:41:35.261027+00:00",
+      "kind": "runtime-start"
+    },
+    {
+      "seq": 3,
+      "at": "2026-11-03T15:41:35.309521+00:00",
+      "kind": "heartbeat"
+    },
+    {
+      "seq": 4,
+      "at": "2026-11-03T15:41:35.455776+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 5,
+      "at": "2026-11-03T15:41:35.458429+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 6,
+      "at": "2026-11-03T15:41:35.603050+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 7,
+      "at": "2026-11-03T15:41:35.606117+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 8,
+      "at": "2026-11-03T15:41:36.037236+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 9,
+      "at": "2026-11-03T15:41:36.039305+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 10,
+      "at": "2026-11-03T15:41:36.040354+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 11,
+      "at": "2026-11-03T15:41:36.041875+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 12,
+      "at": "2026-11-03T15:41:36.043306+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 13,
+      "at": "2026-11-03T15:41:36.044719+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 14,
+      "at": "2026-11-03T15:41:36.045904+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 15,
+      "at": "2026-11-03T15:41:36.047243+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 16,
+      "at": "2026-11-03T15:41:36.048450+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 17,
+      "at": "2026-11-03T15:41:36.049750+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 18,
+      "at": "2026-11-03T15:41:36.336783+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 19,
+      "at": "2026-11-03T15:41:36.484412+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 20,
+      "at": "2026-11-03T15:41:36.486765+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 21,
+      "at": "2026-11-03T15:41:36.778640+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 22,
+      "at": "2026-11-03T15:41:37.790796+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 23,
+      "at": "2026-11-03T15:41:38.234223+00:00",
+      "kind": "owned-reaped"
+    },
+    {
+      "seq": 24,
+      "at": "2026-11-03T15:41:38.381180+00:00",
+      "kind": "owned-identity"
+    },
+    {
+      "seq": 25,
+      "at": "2026-11-03T15:41:38.383355+00:00",
+      "kind": "owned-reaped"
+    },
+    {
+      "seq": 26,
+      "at": "2026-11-03T15:41:38.744281+00:00",
+      "kind": "owned-cleanup-observation"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "scope": "typed explicit HM fixture context and controlled selected-chain contract; NOT user-manager/PG/native runtime acceptance",
+  "cases": [
+    "test_any_unselected_database_migration_or_app_activation_is_rejected",
+    "test_constructor_dependencies_and_selection_have_no_defaults",
+    "test_exact_seven_case_inventory_survives_refactor",
+    "test_instances_keep_independent_receipt_and_baseline_state",
+    "test_selected_two_chains_recover_and_unselected_whole_chain_stays_inactive"
+  ],
+  "tests": 5,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "sourceSHA256": {
+    "hm-service-unit-graph-harness-test.py": "72bad5083afc2d4e78ec5f69a08719ae1960c755d5db19dbc2a417d1abd869dd",
+    "hm-service-unit-graph-vm.py": "8dfadb0f7ea300ec1326e6aadc1f0272c27ef62c7b6ca2646e6a93d4c2ec7a6e"
+  }
+}

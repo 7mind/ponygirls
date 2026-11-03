@@ -1,0 +1,40 @@
+{
+  "currentSuccess": {
+    "runId": "20261103T150756Z.fb152b3a",
+    "rawArtifacts": "Retained privately in original run directory, not copied into safe bundle",
+    "innerDisposableLab": "Absent: immutable runtime reported removal and fresh presence check agrees",
+    "outerRoot": "STILL RETAINED: no deletion or outer-root absence claim",
+    "outerRootMetadata": {
+      "observedAt": "2026-11-03T15:25:06.957822+00:00",
+      "uid": 1001,
+      "mode": "0o700",
+      "device": 64769,
+      "inode": 915426,
+      "markerRegular": true,
+      "markerUID": 1001,
+      "markerMode": "0o600",
+      "markerDevice": 64769,
+      "markerInode": 915430,
+      "markerContentsRead": false
+    },
+    "exactPrivateLocators": "Original exit.json.rootRetained and printed-manifest.lab; private paths not republished."
+  },
+  "priorReds": [
+    {
+      "source": "fe4352",
+      "runId": "20261103T133136Z.7ccdae79",
+      "scope": "original edge bootstrap failure"
+    },
+    {
+      "source": "abd8",
+      "runId": "20261103T140402Z.6f40e875",
+      "scope": "DIAGNOSTIC strict initdb60 timeout"
+    },
+    {
+      "source": "a104",
+      "runId": "20261103T142649Z.65b86b3f",
+      "scope": "original M3 stopped-unit143 failed state"
+    }
+  ],
+  "retentionPolicy": "All original raw labs, artifacts, seals, prior safe bundles and separately parent-preserved opaque archives unchanged/retained pending explicit parent decision. No old raw re-read/rewritten for this collection; no new byte-exact recertification claimed. No cleanup performed."
+}

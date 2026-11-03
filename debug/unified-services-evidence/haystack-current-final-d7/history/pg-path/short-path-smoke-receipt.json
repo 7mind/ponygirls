@@ -1,0 +1,8 @@
+{
+  "observedAt": "2026-11-03T12:59:50.279224+00:00",
+  "scope": "unmodified actual provider short-path startup/provision/stop only; zero target/test cases",
+  "exitStatus": 0,
+  "shortPrivateRootMode": "0o700",
+  "ownedProviderTempRemoved": true,
+  "outerShortRootRemoved": true
+}

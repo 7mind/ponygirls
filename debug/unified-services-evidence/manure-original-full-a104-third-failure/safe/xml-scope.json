@@ -1,0 +1,26 @@
+{
+  "parsed": true,
+  "root": {
+    "tests": "1",
+    "failures": "1",
+    "errors": "0",
+    "time": "0.0"
+  },
+  "suites": [
+    {
+      "name": "NixOS integration test",
+      "tests": "1",
+      "failures": "1",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0"
+    }
+  ],
+  "testcaseNames": [
+    "main"
+  ],
+  "failureMessages": [
+    "test case failed"
+  ],
+  "scope": "One main failure, zero errors/skips; no invented per-application XML counts. Earlier returned host calls are separately scoped."
+}

@@ -1,0 +1,435 @@
+{
+  "artifacts": [
+    {
+      "bundleName": "nixos468/lifecycle-receipt.json",
+      "bytes": 299508,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "60fdca55a189cf718abbf38afda3a521a84e66b74a73b662a9793dc016658081",
+      "source": "debug/unit-graph-nixos-468a3cbb/report/lifecycle-receipt.json"
+    },
+    {
+      "bundleName": "nixos468/terminal.json",
+      "bytes": 860,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "6ee56e71d74294ada1678227af5e3137d565ae31b62fc87d985b63f8cd20d3fc",
+      "source": "debug/unit-graph-nixos-468a3cbb/report/terminal.json"
+    },
+    {
+      "bundleName": "history37d/lifecycle-derived.json",
+      "bytes": 240826,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted-original; allowlisted derivative",
+      "sha256": "e8a3403b7e6ef16abe704d4ca39f46b9c9d44a1a02e171dc6cdbb02a29a414cb",
+      "source": "debug/unit-graph-acl-37d22f90/report/lifecycle-receipt.json"
+    },
+    {
+      "bundleName": "history37d/terminal.json",
+      "bytes": 861,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "08d4218d4d62f89545a6c0796d9f7e86f78fd1767378d47417439874fdeee6ce",
+      "source": "debug/unit-graph-acl-37d22f90/report/terminal.json"
+    },
+    {
+      "bytes": 731799,
+      "derivativeCounts": {
+        "UNIT_GRAPH_CREDENTIAL_CONTRACT": 18,
+        "UNIT_GRAPH_SAFE_DIAGNOSTIC": 54
+      },
+      "lines": 2255,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw build/journal MESSAGE lines copied. Only validated preexisting safe diagnostics and named credential-contract metadata retained.",
+      "retention": "omitted-byte-exact-original; metadata derivatives only",
+      "sha256": "640a2f888a5c0c0b05039f55090f8ab7091daaed2997b3e34fa873287eb05635",
+      "source": "debug/unit-graph-nixos-468a3cbb/report/build.log"
+    },
+    {
+      "bytes": 239,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "7f3f83a65b2af897ee29d155c7c3ca4464db391ad0230c8c89da87cdbbf6473f",
+      "source": "debug/unit-graph-nixos-468a3cbb/run.sh"
+    },
+    {
+      "bytes": 5013,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "c994de2b50d9eb91d395a202332021a23d238e9ae03b570fb8efee5235324227",
+      "source": "debug/unit-graph-nixos-468a3cbb/supervise.py"
+    },
+    {
+      "bytes": 312,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "5964e63cfbd9c44c5f542633593da92816086701d6f214019f9de3985e990e57",
+      "source": "debug/unit-graph-nixos-468a3cbb/report/preflight.log"
+    },
+    {
+      "bytes": 411,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "ff17b598e429fa390553bf300ed0d00bdec4bb74718d5fdc719282bb48f96fd0",
+      "source": "debug/unit-graph-nixos-468a3cbb/report/started.json"
+    },
+    {
+      "bytes": 214,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "55a95ec32b0d54683b8a3b6130954e8bd3918cc5744fcdefca7601e0a83b775c",
+      "source": "debug/unit-graph-nixos-468a3cbb/report/client.json"
+    },
+    {
+      "bytes": 874494,
+      "derivativeCounts": {
+        "UNIT_GRAPH_CREDENTIAL_CONTRACT": 15,
+        "UNIT_GRAPH_SAFE_DIAGNOSTIC": 45
+      },
+      "lines": 2022,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw build/journal MESSAGE lines copied. Only validated preexisting safe diagnostics and named credential-contract metadata retained.",
+      "retention": "omitted-byte-exact-original; metadata derivatives only",
+      "sha256": "c5a1c3921bde2f3657559571340d57a149d2f0871c79118834f65c57eaecd8a6",
+      "source": "debug/unit-graph-acl-37d22f90/report/build.log"
+    },
+    {
+      "bytes": 237,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "ea719d30cb5c77a9dd41489a82d552ee78ba30f5985ea7bf87ffe82caec31501",
+      "source": "debug/unit-graph-acl-37d22f90/run.sh"
+    },
+    {
+      "bytes": 5011,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "accc066b5207d65ebb11438fa73bcffdca723f3ad61d63a39635eb45df23792f",
+      "source": "debug/unit-graph-acl-37d22f90/supervise.py"
+    },
+    {
+      "bytes": 312,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "5964e63cfbd9c44c5f542633593da92816086701d6f214019f9de3985e990e57",
+      "source": "debug/unit-graph-acl-37d22f90/report/preflight.log"
+    },
+    {
+      "bytes": 411,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "bd6f000039f916001da81c5ac9e480cdf16b3c8f9d59a65db170f0c3adb91283",
+      "source": "debug/unit-graph-acl-37d22f90/report/started.json"
+    },
+    {
+      "bytes": 214,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "5298d704f760a68755cda0d2d27136a030b70b263845654483f7d453bbd826a6",
+      "source": "debug/unit-graph-acl-37d22f90/report/client.json"
+    },
+    {
+      "bundleName": "bootstrap1596/lifecycle-derived.json",
+      "bytes": 3988,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted-original; allowlisted derivative",
+      "sha256": "7cf8ae7bf777c519bd6a072cb73c97df2b882a51b7ed1cb457d44c97bf9a4766",
+      "source": "debug/unit-graph-diagnostic-15964000/report/lifecycle-receipt.json"
+    },
+    {
+      "bundleName": "bootstrap1596/terminal.json",
+      "bytes": 861,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "eef029f2882ad9ffb53981bc2d5f0c0231a20f8c8b3fc15230d1015323ae339e",
+      "source": "debug/unit-graph-diagnostic-15964000/report/terminal.json"
+    },
+    {
+      "bytes": 186974,
+      "derivativeCounts": {
+        "UNIT_GRAPH_SAFE_DIAGNOSTIC": 9
+      },
+      "lines": 1143,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw build/journal MESSAGE lines copied. Only validated preexisting safe diagnostics and named credential-contract metadata retained.",
+      "retention": "omitted-byte-exact-original; metadata derivatives only",
+      "sha256": "9e993ebc0340ef265a27196f371bafe259669989490d2f7f467cc7ba226e536a",
+      "source": "debug/unit-graph-diagnostic-15964000/report/build.log"
+    },
+    {
+      "bytes": 244,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "0b0c4f180cf94cf37720089521c3b70399090a71e308d1d25a84e25ca9cbe2c5",
+      "source": "debug/unit-graph-diagnostic-15964000/run.sh"
+    },
+    {
+      "bytes": 5018,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "b7be4140e9e6345615b740324165f52de9da1c30821ae4094f5cf90f0baa4eca",
+      "source": "debug/unit-graph-diagnostic-15964000/supervise.py"
+    },
+    {
+      "bytes": 312,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "5964e63cfbd9c44c5f542633593da92816086701d6f214019f9de3985e990e57",
+      "source": "debug/unit-graph-diagnostic-15964000/report/preflight.log"
+    },
+    {
+      "bytes": 411,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "c632e1275f9ea22f079c651555612c949f4d0eedb7e6a8262dbbbf243616a441",
+      "source": "debug/unit-graph-diagnostic-15964000/report/started.json"
+    },
+    {
+      "bytes": 214,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "1db03c7692a81b5e24155b50ac12bc873023d9d0af948eb4b12ce0847251514f",
+      "source": "debug/unit-graph-diagnostic-15964000/report/client.json"
+    },
+    {
+      "bundleName": "bootstrapc829/lifecycle-derived.json",
+      "bytes": 3988,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted-original; allowlisted derivative",
+      "sha256": "1157534d3dddbe64407668068be9e762bda5db948fa4119ab60914fa28b145da",
+      "source": "debug/unit-graph-diagnostic-c82998fd/report/lifecycle-receipt.json"
+    },
+    {
+      "bundleName": "bootstrapc829/terminal.json",
+      "bytes": 861,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "9cb08a9a4bf61ea53f7fa8fa03961e85847483dd7f0158ff72afad7fe7da89e7",
+      "source": "debug/unit-graph-diagnostic-c82998fd/report/terminal.json"
+    },
+    {
+      "bytes": 191899,
+      "derivativeCounts": {
+        "UNIT_GRAPH_SAFE_DIAGNOSTIC": 9
+      },
+      "lines": 1146,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw build/journal MESSAGE lines copied. Only validated preexisting safe diagnostics and named credential-contract metadata retained.",
+      "retention": "omitted-byte-exact-original; metadata derivatives only",
+      "sha256": "b045c1949b2a7785f93cdf9fb38a4f514735a5306922f06d81d3ec3bf70536a8",
+      "source": "debug/unit-graph-diagnostic-c82998fd/report/build.log"
+    },
+    {
+      "bytes": 244,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "8d3a4e1b0841ea0d7b8d801dce489ab8a8d14e70e0ad93f0ce3f0b066936c013",
+      "source": "debug/unit-graph-diagnostic-c82998fd/run.sh"
+    },
+    {
+      "bytes": 5018,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "1a4e2d1c2596dec3babfbe0672acaf96e654f678d5b4694866c7d8f4bf6ca3e3",
+      "source": "debug/unit-graph-diagnostic-c82998fd/supervise.py"
+    },
+    {
+      "bytes": 312,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "5964e63cfbd9c44c5f542633593da92816086701d6f214019f9de3985e990e57",
+      "source": "debug/unit-graph-diagnostic-c82998fd/report/preflight.log"
+    },
+    {
+      "bytes": 411,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "ce0afec8880ad9eafbfc3122131e7272b9375300296845ae2327c5203445bada",
+      "source": "debug/unit-graph-diagnostic-c82998fd/report/started.json"
+    },
+    {
+      "bytes": 214,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted; provenance hash only",
+      "sha256": "a630d57db969b582ce385da915aa997be431df52440dd80dc6dcb4bb08075f08",
+      "source": "debug/unit-graph-diagnostic-c82998fd/report/client.json"
+    },
+    {
+      "bytes": 299508,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "identical to byte-exact nixos468 receipt",
+      "sha256": "60fdca55a189cf718abbf38afda3a521a84e66b74a73b662a9793dc016658081",
+      "source": "/nix/store/viimi517bdzb10lckpdg6wj57cs21vzz-vm-test-run-shared-provider-actual-module-unit-lifecycle/lifecycle-receipt.json"
+    },
+    {
+      "bundleName": "nixos468/source-inputs.sha256",
+      "bytes": 1590,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "e58a37a145f60351c4dad5c8346f39114f85a8db335dd1daacca0c031d74ab07",
+      "source": "/nix/store/viimi517bdzb10lckpdg6wj57cs21vzz-vm-test-run-shared-provider-actual-module-unit-lifecycle/source-inputs.sha256"
+    },
+    {
+      "bundleName": "nixos468/result.json",
+      "bytes": 242,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "695f2949813c418aff5d963ec3f5a4b594ba6bcf5a0d5b8fe7c1dfb04bc11f7b",
+      "source": "debug/unit-graph-nixos-468a3cbb/report/result.json"
+    },
+    {
+      "bundleName": "guards/provider74.json",
+      "bytes": 3617,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "31f7f8df8c38cc2b9c26f1883a293cd521ec0abbd11233fcd9918a70360dc0cc",
+      "source": "/nix/store/rlwk6fpf8vb9qz0biv21dgnxf7rkwbmw-shared-postgresql-18-provider-rehearsal/receipt.json"
+    },
+    {
+      "bundleName": "guards/credential-boundaries14.json",
+      "bytes": 591,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "154bba9364cc4471e9fa0742c3f17df8ab605b4af4ea6e084a0120e3f4d1b49c",
+      "source": "/nix/store/rlwk6fpf8vb9qz0biv21dgnxf7rkwbmw-shared-postgresql-18-provider-rehearsal/credential-boundaries.json"
+    },
+    {
+      "bundleName": "guards/hyphen-admin2.json",
+      "bytes": 272,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "06bf1db79bd527e4298dc5ad9bcb29e5a7b2cd5bb4723f0165de55a7390849d7",
+      "source": "/nix/store/rlwk6fpf8vb9qz0biv21dgnxf7rkwbmw-shared-postgresql-18-provider-rehearsal/hyphen-admin.json"
+    },
+    {
+      "bundleName": "guards/transport74.json",
+      "bytes": 3373,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "9614d650d2ab17cc5c167bc5c46218f2d16dd70c9d9f1596fa8a3e5e0337553c",
+      "source": "/nix/store/rs2wpc9icf0vn48x77bqlmm3lxgjys55-provider-strict-private-and-systemd-ACL-contract/receipt.json"
+    },
+    {
+      "bundleName": "guards/historical-transport73.json",
+      "bytes": 3318,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "e650181e6adcadee064fba75a5e860800171fb44c07379336ac4e675fc52bc01",
+      "source": "/nix/store/m43x5msmivbz6wxjg25qnvn8l5rz5wkf-provider-strict-private-and-systemd-ACL-contract/receipt.json"
+    },
+    {
+      "bundleName": "guards/harness15.json",
+      "bytes": 1899,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "b6e77b4b3c0508709f5c0089710ab577fe13eb499dae134f814e9bd8dcf42d8a",
+      "source": "/nix/store/178s6lb0mlnidpxhcva5h0cjqyx1pks6-actual-unit-graph-harness-controlled-regressions/receipt.json"
+    },
+    {
+      "bundleName": "hm-preparation/typed-contracts5.json",
+      "bytes": 803,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "857217f7072a8f700afaf3e9ed6fb71cecb8c2731956524904209fedfb52f7f3",
+      "source": "/nix/store/jp4cq2shj8m0hhd5jwp6v6aiwkhhdx3q-hm-unit-graph-explicit-context-contract/receipt.json"
+    },
+    {
+      "bundleName": "hm-preparation/mypy.txt",
+      "bytes": 42,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "byte-exact",
+      "sha256": "5d4b6d285b77932e3d08212c3b4974d0a803f98ec60408ac6ccf6a063fa6c19e",
+      "source": "/nix/store/jp4cq2shj8m0hhd5jwp6v6aiwkhhdx3q-hm-unit-graph-explicit-context-contract/types.log"
+    },
+    {
+      "bytes": 1022,
+      "lines": 10,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw traceback/source literals/log values included.",
+      "retention": "omitted-byte-exact-original; hash/count only",
+      "sha256": "1761e63b65e7cdc5b80d118a60a0d0ed4b94e359df0ecc46e7b24bde62d32938",
+      "source": "/tmp/unified-nix-long-key-fail-first.log"
+    },
+    {
+      "bytes": 99,
+      "lines": 1,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw traceback/source literals/log values included.",
+      "retention": "omitted-byte-exact-original; hash/count only",
+      "sha256": "53ef246007f50f970928d43e41233b777d228b8e50642bcb4926a2fece941eb4",
+      "source": "/tmp/unified-nix-long-key-eval-positive.log"
+    },
+    {
+      "bytes": 4187,
+      "lines": 10,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw traceback/source literals/log values included.",
+      "retention": "omitted-byte-exact-original; hash/count only",
+      "sha256": "af48cf4333955a6f3afac94bab6a830fe65e6bb119b9dd574353cde3a8abf56d",
+      "source": "/tmp/unified-nix-long-key-provider-full.log"
+    },
+    {
+      "bytes": 4187,
+      "lines": 10,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw traceback/source literals/log values included.",
+      "retention": "omitted-byte-exact-original; hash/count only",
+      "sha256": "d41a79915d4d90202fa9d456656c601e4ee44b51a8bcd99821586e7ff3f8dc5f",
+      "source": "/tmp/unified-nix-strict-transport-guards.log"
+    },
+    {
+      "bytes": 4046,
+      "lines": 43,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw traceback/source literals/log values included.",
+      "retention": "omitted-byte-exact-original; hash/count only",
+      "sha256": "43e062ada2190ec74a06de3885760db6607150b87b5de7c16cc3c46f592ac23e",
+      "source": "/tmp/unified-nix-matrix-metric-selected-fail-first.log"
+    },
+    {
+      "bytes": 10900,
+      "lines": 115,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw traceback/source literals/log values included.",
+      "retention": "omitted-byte-exact-original; hash/count only",
+      "sha256": "f73cc192686f08cad66304446a44d9bcdb5196268a3c2903b22a7c19e26e1f2e",
+      "source": "/tmp/unified-nix-unit-graph-harness-qualified-fail-first.log"
+    },
+    {
+      "bytes": 3846,
+      "lines": 24,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw traceback/source literals/log values included.",
+      "retention": "omitted-byte-exact-original; hash/count only",
+      "sha256": "ccaf04ab13d7f4d7641ec9905fada6f4895e63046d66b9318aae6cc243a3a827",
+      "source": "/tmp/unified-nix-matrix-followup15-sandbox.log"
+    },
+    {
+      "bytes": 1653,
+      "lines": 14,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw traceback/source literals/log values included.",
+      "retention": "omitted-byte-exact-original; hash/count only",
+      "sha256": "624f357864583a428b874567d2561e04a10d3747073f02ad9ea346077a09a173",
+      "source": "/tmp/unified-nix-hm-named-types-sandbox.log"
+    },
+    {
+      "bytes": 134,
+      "lines": 2,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "privacy": "No raw traceback/source literals/log values included.",
+      "retention": "omitted-byte-exact-original; hash/count only",
+      "sha256": "58d8d633baf666e44084e3ac95f4197959572b6639f318169dee90b97f8299d4",
+      "source": "/tmp/unified-nix-hm-context-distinct-proof.log"
+    },
+    {
+      "bytes": 50558,
+      "observedAt": "2026-11-03T13:02:42.303366+00:00",
+      "retention": "omitted-source; pinned public implementation provenance hash only",
+      "sha256": "b193a860d42799ce89f4ff989466deae86d21d060f7badb0f7f2ff4f0d429b57",
+      "source": "/nix/store/hgvj3r5rf0hxx242vx92z8p6a0bzr3zf-source/src/core/exec-credential.c"
+    }
+  ],
+  "observedAt": "2026-11-03T13:02:42.303366+00:00",
+  "rawLogRetentionPolicy": "Original files remain unchanged at sources. No rewritten logs represented as raw. Included diagnostics are explicitly metadata derivatives; raw log originals are omitted with exact SHA256/byte/line counts."
+}

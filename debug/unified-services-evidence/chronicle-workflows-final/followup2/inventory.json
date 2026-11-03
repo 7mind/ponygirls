@@ -1,0 +1,10 @@
+{
+  "expectedStages": [
+    "native-workflow",
+    "jvm-workflow"
+  ],
+  "testsPerStage": 1,
+  "testSource": "chronicle/tests/workflow.test.ts",
+  "testSourceSha256": "5f10b50fa3b0c9fa544f5c1614e0195d327d13bcf1225cf11ff464c4b5e075dd",
+  "coverage": "unchanged complete collector/archive/HTTPS annotation/vector/WS/MCP/live ACLs/restart/live-dashboard workflow; no broader native admission matrix claim"
+}

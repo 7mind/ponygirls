@@ -1,0 +1,13 @@
+{
+  "sourceCommit": "a1047f456f561b8c100a2fa8bde6b2f89f4ac6e5",
+  "workerOriginalCommit": "decdf32dec89dd7b2c383e076138bbc781569509",
+  "fixtureSha256": "df6accd5bededdf9c5660da40e0a9f196c3ff9cbe88eebbdd0c939ef3ace7a4f",
+  "providerUnchangedSha256": "93deaccaaa5d453fd97d17ffcf050be31560ed04eeb292aab8658ec536c0b5db",
+  "proofSha256": "c919a11fa4d9a8d835ac798a1b58cdeecf8511c36d535cbe26948f55e6f9e50b",
+  "pinnedSystemdResourceControlDocumentationSha256": "d57641df40e45811403de91e55059b6a8f7506c6812a85cbe9c6ba22900587d8",
+  "parentReadActualUnitsAndBothFullStarts": true,
+  "resourcesUnchangedMeansQemuCpuCountMemoryAndContainmentNotCpuShare": true,
+  "productionProviderOrBudgetChanged": false,
+  "cpuStarvationCausallyProven": false,
+  "freshOriginalFullGateRequired": true
+}

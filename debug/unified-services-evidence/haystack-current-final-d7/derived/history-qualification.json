@@ -1,0 +1,59 @@
+{
+  "firstParentRun": {
+    "assemblyExitStatus": 0,
+    "artifactSHA256": "be806162bbd6062d618c0e0b240351edbcc741fe3028bef78a13ce81f7b0af45",
+    "failure": "Unnecessary first UI PG owner startup failed because long TMPDIR made Unix-domain socket exceed107bytes; actual same-helper bounded diagnostic captured PG18.6 FATAL",
+    "UITypecheckBuildCasesExecutedBeforeFailure": 0,
+    "applicationCasesExecuted": 0,
+    "originalOuterExitStatus": 1
+  },
+  "pgReproduction": {
+    "actualPinnedComponentFailureCaptured": true,
+    "captureOnlyDiagnosticHelperCopy": "hashed omission; no production/helper patch",
+    "short0700TmpUnmodifiedProviderSmokeExit": 0,
+    "applicationCases": 0
+  },
+  "secondPreparation": "unlaunched; preserved hashes; third adds readonly cleanup inspection",
+  "JVMFinal": {
+    "sourceTypecheckAndBuildRetainedAndPassed": true,
+    "freshAssemblyExecutedInThisRun": false,
+    "assemblyReusedFromSuccessfulFirstRun": true,
+    "underlyingGateExits": [
+      0,
+      0
+    ],
+    "originalOuterExitStatus": 1,
+    "reason": "cleanup whole-UID protected-process PermissionError false positive; no app or gate failure"
+  },
+  "nativeWideSetup": {
+    "originalRunnerNotLaunched": true,
+    "minimalUnchangedFixtureImportWithoutExistingGeneratedTSHookExit": 1,
+    "error": "ERR_MODULE_NOT_FOUND Ack.js (setup only, no PG/network/application cases)",
+    "sameMinimalImportWithExistingHookExit": 0,
+    "noAppFix": true
+  },
+  "nativeWideFinal": {
+    "actualCases": 4,
+    "testExit": 0,
+    "originalOuterExitStatus": 1,
+    "reason": "same five protected preexisting identities; scoped cleanup observer correction only"
+  },
+  "cleanup": {
+    "originalOuter1AndCleanupFalsePreserved": true,
+    "additionalReadonlyAdjudicationExit": 0,
+    "clockQualifiedInferenceOnly": true,
+    "noContemporaneousBaselineInvented": true,
+    "historicalNetRealtimeStepLimitationRetained": true,
+    "pureDecisionCases": 10,
+    "parentAcceptedQualification": true,
+    "parentDeletionExitStatus": 0,
+    "originalReportsUnchanged": true,
+    "deletedExactTwoRoots": [
+      "/tmp/hsj3.SuwjHR",
+      "/tmp/hsnw.12mFYf"
+    ],
+    "bothAbsentAtBundleObservation": true,
+    "noWholeUIDOrUnconditionalHistoricalProofClaim": true
+  },
+  "rerunPolicy": "No application gates rerun for setup/cleanup-only orchestration defects; compose original exact-input gate receipts + qualified adjudication + new explicit parent deletion receipt. Never relabel original runner as0."
+}

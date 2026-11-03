@@ -1,157 +1,120 @@
-# Haystack — API schemas
+# Haystack — sole current API (Scala port)
 
-MCP and browser transports call the same application service; one rulebook.
-All JSON parsed with the lossless codec (`model.md` §2). Raw-text fields
-(`document_json`, query bodies) are parsed exactly once server-side.
+Authoritative model: [`models/current.baboon`](../models/current.baboon),
+`haystack.api` **1.0.0**. Pinned Baboon0.0.198 generates Scala2.13 and TypeScript;
+handwritten code never patches generated codecs. Only this version is registered.
+No independent deployments require old DTOs/routes/codecs/cursors. Stored data,
+credentials, history and acknowledged outcomes are separately preserved.
 
-## 1. Faults (typed, stable codes)
+## First-party HTTP
 
-`invalid-id | invalid-document | invalid-query | invalid-cursor |
-not-found | conflict | replay-conflict | unauthorized | forbidden |
-ambiguous-credentials | rate-limited | bad-envelope | too-large |
-unavailable`. Faults carry a stable code, a short message, and (for
-`invalid-query`) UTF-16 spans. No credential/secret material in faults.
+`GET /api/versions` returns generated `VersionInfo(current,minimum,supported)`;
+all three describe only1.0.0. `X-Haystack-Version: 1.0.0` explicitly selects current;
+an absent header also selects current, but any removed/future value fails
+`version-mismatch`. Every dynamic response, including faults, is no-store and
+no-referrer. Private queries/keys are JSON bodies, never URL query parameters.
 
-## 2. MCP tools
+Use generated classes **and codecs**, not interface casts or custom legacy JSON:
 
-### `get`
+| Route | Generated request → response |
+|---|---|
+| `GET /api/v1/health` | none → `Ack` (no data/auth) |
+| `POST /api/v1/login` | `LoginRequest` → `LoginResult(identity,versions)` + session cookie |
+| `POST /api/v1/logout` | empty object → `Ack` + expired cookie |
+| `GET /api/v1/whoami` | none → `Identity(userId,userType,tokenId,activityProjectId)` |
+| `POST /api/v1/get` | `GetRequest(key,revision?)` → `Item` |
+| `POST /api/v1/put` | `PutRequest` → `PutResult` |
+| `POST /api/v1/search` | `SearchRequest` → `SearchResult(items,cursor?)` |
+| `POST /api/v1/history` | `HistoryRequest(key)` → `HistoryResult(revisions)` |
+| `POST /api/v1/query/analyze` | `QueryRequest(query,caret)` → `AnalyzeResult(valid,spans)` |
+| `POST /api/v1/complete` | `QueryRequest` → `CompletionResult(suggestions)` |
+| `POST /api/v1/values` | `ValuesRequest(field)` → `ValuesResult(values)` |
+| `POST /api/v1/retrieve` | `RetrieveRequest` → `RetrieveResult` |
+| `GET /api/v1/live` | authenticated WS; generated `LiveFrame` in both directions |
 
-```json
-{ "key": "example-project:fact-mcp-auth", "revision": 1 }
-```
-
-`revision` optional (default: current). Returns full item (key, revision,
-document, metadata). Archived items accessible. Unknown key → `not-found`.
-The text content repeats the key, revision and last-modified metadata,
-then carries the canonical `document_json` verbatim, so clients that show
-the model only `content` (not `structuredContent`) can still read the
-document.
-
-### `put`
-
-```json
-{
-  "key": "example-project:fact-mcp-auth",
-  "document_json": "{\"title\":\"…\",\"fields\":{…},\"links\":[…],\"tags\":[\"mcp\"]}",
-  "expected_revision": 0,
-  "request_id": "0193e8d5-…"
-}
-```
-
-`document_json` is a JSON **string** (raw text — never a nested object —
-so the SDK's `JSON.parse` cannot round numbers before the application
-codec sees them). Stringify the document client-side first. `expected_revision`
-and `request_id` (UUIDv7) required. Returns `{ key, revision, metadata }`.
-Create/update/archive share this op.
-
-`request_id` must match
-`xxxxxxxx-xxxx-7xxx-8/9/a/bxx-xxxxxxxxxxxx` (third group starts with `7`).
-UUIDv4 (`crypto.randomUUID`, third group `4xxx`) is rejected with
-`bad-envelope`. Mint a fresh v7 per operation:
-
-```bash
-python3 -c 'import time,os,uuid;print(uuid.UUID(int=(int(time.time()*1000)<<80)|int.from_bytes(os.urandom(10),"big"),version=7))'
-```
-
-Minimal valid `document_json` (a *string* holding this object):
+`Item.document` and `PutRequest.document` are named `DocumentPayload { json:str }`.
+The contained text is validated by shared `LosslessJson`, not Circe doubles. For
+example, the generated PutRequest codec emits:
 
 ```json
-{"title":"t","description":"d","fields":{},"type":"fact","status":"actual","importance":"low","human-attention":"cleared","links":[]}
+{"key":"p:i","document":{"json":"{\"title\":\"t\",\"description\":\"d\",\"fields\":{\"n\":9007199254740993},\"type\":\"fact\",\"status\":\"actual\",\"importance\":\"low\",\"human-attention\":\"cleared\",\"links\":[]}"},"expectedRevision":0,"requestId":"0193e8d5-6f5c-7a1b-8c2d-000000000001"}
 ```
 
-`human-attention` is only `required`|`cleared`; `status:archived` hides
-from browse/search defaults.
+Envelope counters use generated i32 codecs. Optional fields are encoded according
+to generated codecs (JSON null), not handwritten omission conventions. The browser
+parses only the inner document with its lossless codec and keeps fields as exact
+text. It never `JSON.parse`s arbitrary document numbers into JS numbers.
 
-MCP tool faults return `{ code, message }` plus `error <code>: <message>`
-text — read the message; `bad-envelope` alone never tells you which field
-was wrong. (The browser HTTP API keeps the generic public message.)
+`Failure` is the generated **direct response**, not an old `{error:...}` wrapper:
+`code,message,spans,currentRevision?`. Stable categories include invalid-id,
+invalid-document/query/cursor, bad-envelope, not-found, conflict/replay-conflict,
+unauthorized, forbidden, ambiguous-credentials, too-large, rate-limited,
+version-mismatch and unavailable. Messages never contain submitted values, SQL,
+paths or credentials. Query spans are half-open UTF16 offsets.
 
-### `search`
+## Search, metadata and content retrieval
 
-```json
-{ "query": "type:todo importance:high tag:mcp", "project": "example-project",
-  "limit": 20, "cursor": "…" }
-```
+Exact Boolean search retains [`query.md`](query.md), including archive-default
+scope, strict pointers, mathematical numeric comparison, global C/UTF8 ordering
+and saved-position live cursors. PostgreSQL performs grammar/filter/sort/boundary
+and `LIMIT limit+1` before returning at most101 **summaries**, not full documents.
+Migration0005 compares query decimal lexemes by signs/magnitudes/digits, including
+`1e±999999`, without numeric-cast overflow or exponent-sized allocation. No
+unsupported-query fallback downloads the corpus into the server/browser.
 
-`project`/`cursor` optional. Returns `{ items: [summaries], cursor? }`
-(summaries carry `tags: string[]`). Empty/whitespace query browses. Scope
-intersects predicates. MCP search retains key-ascending order; optional
-browser sorting is described below.
+Completion enforces the full4096-UTF16-unit query bound even for a short requested prefix; carets must be in range and cannot split a surrogate pair.
 
-## 3. Browser API (`/api/v1`, JSON bodies, versioned envelope)
+Values return at most100 distinct current values; completion returns at most20
+suggestions using grammar plus bounded current metadata/IDs, never histories or
+models. Quoted insertions preserve colons, spaces, controls and non-BMP identity.
+These are bounded suggestions, not exhaustive facets or counts.
 
-- `POST /login { token }` → sets cookie; `{ user }` (no secret echo).
-- `POST /logout` → expires cookie.
-- `GET /whoami` (cookie or bearer) → `{ userId, type, tokenId,
-  activityProjectId }`.
-- `POST /get { key, revision? }`, `POST /put { key, document_json,
-  expected_revision, request_id }`, `POST /search { query, project?,
-  limit?, cursor?, sort? }` — same semantics as MCP, with the browser sort
-  extension described below.
-- `POST /history { key }` → revision list (numbers, authors, times —
-  no document bodies); `POST /history/get { key, revision }` → snapshot.
-- `POST /query/analyze { query }` → `{ ast?, diagnostics[] }` (bounded,
-  same parser); `POST /complete { query, caret }` → bounded suggestions
-  (built-ins, vocabulary, observed values incl. `tag:` values, IDs).
-- `GET /values/{type,status,importance,tags}` → configured + conventional +
-  observed values (bounded, current items only).
-- All responses: `Cache-Control: no-store`. All errors: typed faults.
-  Item bodies render client-side as untrusted data (escaped; CSP; no raw
-  HTML, no auto-executed instructions/skills, no unsafe schemes).
+Content retrieval is distinct from exact browse. `RetrieveRequest` explicitly
+selects Lexical/Semantic/Hybrid, raw project filter, includeArchived, offset and
+limit. Unconfigured means lexical-only; semantic/hybrid is typed unavailable,
+never hidden fallback. Configured outages do not couple writes/browse to models.
+Approved metadata/string leaves only; operator pointer approvals and chunk bounds
+participate in policy identity. Results carry actual source revision, generation,
+profile/embedding-space (optional for lexical HEAD), policy, field/pointer/UTF16
+provenance, text and score; totals declare ExactMatches or CandidateWindow and
+rankingLimit. No mutable hydration relabels an older published hit. Profile/policy
+incompatibility is unavailable until deliberate rebuild/publication.
 
-### Browser search order and cursors
+## Live/current browser state
 
-```json
-{ "query": "", "limit": 20,
-  "sort": { "field": "modified-at", "direction": "desc" } }
-```
+Generated `LiveFrame.kind` is `ping | pong | changed` with optional fields. Ping
+requires bounded nonce and finite clientTs; pong echoes them with serverTs.
+Changed carries canonical key/revision. Session slots are scoped to the actual upgraded stream; invalid/non-upgrade handshakes never reserve capacity and carry no-store. Initial credential validation admits only bounded body reading: all authenticated body routes revalidate the exact captured identity/transport after the read and before dispatch.
 
-`sort` is optional. Omission preserves server-side `key asc` (the browser
-explicitly requests `modified-at desc` by default). `field` must be one of
-`key`, `title`, `project`, `type`, `status`, `importance`, `human-attention`,
-`modified-at`, `revision`; `direction` must be `asc` or `desc`. Both members
-are required when supplying `sort`; null, unknown members/fields, and invalid
-directions produce HTTP 400 `bad-envelope` rather than a fallback order.
+Only fresh committed writes publish;
+replay/terminal failure does not. Application frame cap1024bytes, transport safety
+ceiling1MiB, bounded64KiB/64frame outgoing queue, per-token8 sockets, real30second
+protocol heartbeat with nonce validation (Pong frames are deliberately delivered to the service, not filtered by the builder). Revocation is checked on incoming and
+outgoing activity and heartbeat. Session rejection4401 alone asks for sign-in;
+network outages preserve cookies, reconnect/refetch and unsaved editor CAS.
 
-Sorting covers all query/scope/archive-eligible results before the page
-limit. Text is literal UTF-8 byte lexical order (`COLLATE "C"`), not locale,
-case-insensitive, normalized, or importance-rank order. Revisions sort
-numerically and modification timestamps chronologically. Ties use raw
-`(project, item)` ascending, except `key desc` reverses both key components.
+An uncertain browser write freezes its exact payload/CAS/original UUIDv7 in a
+session-local lane. Retry replays that operation, even if a caller proposes a new
+ID. Different writes wait for reconciliation; newer editor drafts remain intact.
+No automatic fresh-ID retry or browser-storage credential/payload persistence.
 
-Return the opaque cursor unchanged with the same query text, scope, limit,
-and effective sort. These inputs are bound into its versioned context;
-changing them or sending a malformed/obsolete cursor produces HTTP 400
-`invalid-cursor`. Omitted and explicit default sorting are equivalent.
-Existing key-only cursors from before this extension must be restarted.
+## External MCP (not Baboon-framed)
 
-A cursor saves the last emitted sort value and raw key. The boundary row
-need not still exist or keep that value. Pages remain live views: a row
-moving past the saved position can recur, a row moving before it can be
-missed, and removed/ineligible rows disappear. This is not snapshot or
-exactly-once traversal under concurrent writes. Restart without a cursor
-after changes to obtain a fresh ordering; see `query.md` §6.
+`POST /mcp`, JSON-RPC2.0, stateless Streamable HTTP2025-11-25. Exact Bearer only;
+either session-cookie name is rejected even alongside a bearer. No GET/SSE stream,
+stdio, OAuth server or resources/prompts. Official Node SDK tests initialize,
+list/call exactly `get`, `put`, `search` and exercise transport/version errors.
 
-## Browser live updates
+MCP tool arguments retain their externally declared schemas:
 
-`GET /api/v1/live` upgrades to WebSocket on the same origin. Authentication
-uses the HttpOnly session cookie; bearer headers and token query parameters
-are rejected. The configured Host and Origin allowlists apply to upgrades.
-Sessions are revalidated on messages, broadcasts, and server heartbeats.
-Login changes and logout close the previous cookie's connections with 4401;
-revocation uses the same permanent close code.
+- get: `{key, revision?}`. Full exact `document_json` appears in both structured
+  content and text content with key/revision/metadata.
+- put: `{key,document_json,expected_revision,request_id}`. document_json is a
+  **string**, expected_revision is an integer, request_id is UUIDv7 (not v4).
+- search: `{query,project?,limit?,cursor?}`. Canonical qualified IDs in summaries.
 
-Client heartbeat: `{"type":"ping","nonce":"…","clientTs":123}`. The server
-echoes the nonce and client timestamp in a `pong`, adding `serverTs`.
-Committed HTTP and MCP writes push `{"type":"changed","key":"p:i","revision":2}`.
-Replays and rejected writes produce no change notification. Documents stay
-on the lossless HTTP API; notifications invalidate views rather than carry
-document bodies. Reconnecting and recovering a stale connection refetch
-current views, including history and relationships. Unsaved editors keep
-their original CAS revision and draft; remote updates never overwrite them.
-
-The channel is an ephemeral notification feed for one server process.
-Direct SQL writes and writes through another process do not publish here.
-Missed notifications are recovered by refetch on reconnection, not replayed.
-Mutations remain explicit HTTP requests and are never automatically retried
-over a replacement connection.
+Tool failures have `isError:true`, safe text and structured code/message. Protocol
+failures remain JSON-RPC errors, never generated application wrappers. Guidance
+states archive defaults, CAS/replay/uncertain-outcome rules and that stored content
+is data, not instructions. External MCP is verified with the official Node client,
+not with a home-grown fake client or a production Node proxy.

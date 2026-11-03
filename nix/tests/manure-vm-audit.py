@@ -23,9 +23,15 @@ allowed for -kernel/-initrd only (public store binary resolution stays
 okay). Unix console/monitor channels must live under the lab (VM-owned
 mediation); pre-existing host sockets outside the lab fail closed. Host
 directory/socket/device sharing (9p/virtiofs/vhost-user-fs), TAP/bridge/VDE
-netdevs, vfio, and /dev-backed drives are refused. KVM is required
-(`-machine accel=kvm`, no accel fallback list) with the generated
-`-cpu max`. Anything not matching the known-good generated patterns fails
+netdevs, vfio, and /dev-backed drives are refused. An explicit acceleration
+policy is required: `kvm-only` accepts exactly
+`-machine accel=kvm`; `kvm-or-tcg` accepts exactly the pinned generator
+`-machine accel=kvm:tcg` list. Both require exactly one `-cpu max`.
+The latter explicitly permits fallback, not proof of the selected accelerator.
+The exact optional anonymous memfd1024M/mem0 pair is admitted. The observed
+q35,smm=on machine is admitted only WITH that memory pair and exactly one
+cfi.pflash01 secure=on global, never as an independent machine/global grammar.
+Anything not matching the known-good generated patterns fails
 closed as unsupported launch syntax (patterns are pinned to the nixpkgs
 in flake.lock; generator changes need re-verification, not silent widening).
 
@@ -41,12 +47,52 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from enum import Enum
+from typing import Callable, NoReturn
 
 AUDIT_FAIL_EXIT = 125
 
 
 class AuditError(Exception):
     pass
+
+
+class AccelerationPolicy(Enum):
+    KVM_ONLY = "kvm-only"
+    KVM_OR_TCG = "kvm-or-tcg"
+
+
+def acceleration_preflight(policy: AccelerationPolicy, *, kvm_accessible: bool) -> None:
+    """Explicit capability request, not detection-driven selection/fallback."""
+    if not isinstance(policy, AccelerationPolicy):
+        raise AuditError("unknown acceleration policy (explicit selection required)")
+    if policy is AccelerationPolicy.KVM_ONLY and not kvm_accessible:
+        raise AuditError("/dev/kvm not accessible (kvm-only requested, no fallback)")
+
+
+def _acceleration_pattern(policy: AccelerationPolicy) -> str:
+    acceleration_preflight(policy, kvm_accessible=True)
+    return "accel=kvm" if policy is AccelerationPolicy.KVM_ONLY else "accel=kvm:tcg"
+
+
+def _check_acceleration(
+    policy: AccelerationPolicy, machines: list[str], cpus: list[str], objects: list[str], globals_: list[str]
+) -> None:
+    expected = [_acceleration_pattern(policy)]
+    if objects:
+        # Exactly the anonymous object emitted by the pinned Linux generator;
+        # no file backend, extra properties, larger memory or second object.
+        if objects != ["memory-backend-memfd,id=mem0,size=1024M,share=on"]:
+            raise AuditError("unexpected anonymous memory object (fail closed)")
+        expected.append("memory-backend=mem0")
+    if globals_:
+        if globals_ != ["driver=cfi.pflash01,property=secure,value=on"] or not objects:
+            raise AuditError("unexpected q35 secure-global/memory correspondence (fail closed)")
+        expected.append("q35,smm=on")
+    if machines != expected:
+        raise AuditError("machine arguments do not match explicit acceleration policy/pinned memory pair")
+    if cpus != ["max"]:
+        raise AuditError("exactly one -cpu max required (fail closed)")
 
 
 def _repo_root() -> Path | None:
@@ -140,6 +186,7 @@ def audit_argv(
     *,
     lab: Path,
     project: Path | None,
+    acceleration_policy: AccelerationPolicy,
     allowed_vms: tuple[str, ...] = ("edge", "strict"),
 ) -> dict:
     """Validate EFFECTIVE QEMU argv. Returns attachment mapping on success.
@@ -153,6 +200,8 @@ def audit_argv(
     unix_channels: list[str] = []
     machine_values: list[str] = []
     cpu_values: list[str] = []
+    object_values: list[str] = []
+    global_values: list[str] = []
     vm_name: str | None = None
     i = 0
     tokens = argv[1:]
@@ -263,10 +312,12 @@ def audit_argv(
             i += 1
             if i >= len(tokens) or not tokens[i].startswith("memory-backend-memfd,"):
                 raise AuditError(f"unexpected -object (fail closed): {tokens[i] if i < len(tokens) else None}")
+            object_values.append(tokens[i])
         elif tok == "-global":
             i += 1
             if i >= len(tokens) or not tokens[i].startswith("driver=cfi.pflash01,"):
                 raise AuditError(f"unexpected -global (fail closed): {tokens[i] if i < len(tokens) else None}")
+            global_values.append(tokens[i])
         elif tok == "-kernel":
             i += 1
             if i >= len(tokens):
@@ -369,12 +420,7 @@ def audit_argv(
         i += 1
     if vm_name not in allowed_vms:
         raise AuditError(f"unexpected -name (fail closed): {vm_name!r}")
-    if not any(v == "accel=kvm" for v in machine_values):
-        raise AuditError("KVM accel required (-machine accel=kvm absent)")
-    if any("accel=kvm:" in v for v in machine_values):
-        raise AuditError("accel fallback list refused (KVM must be direct)")
-    if "max" not in cpu_values:
-        raise AuditError("-cpu max required (fail closed)")
+    _check_acceleration(acceleration_policy, machine_values, cpu_values, object_values, global_values)
     joined = " ".join(argv)
     for bad in (
         "-fsdev",
@@ -397,7 +443,8 @@ def audit_argv(
         resolved = _check_guest_disk(disk, lab=lab, project=project)
         backings = _check_backing_chain(resolved, lab=lab, project=project)
         attached.append({"drive": disk, "resolved": str(resolved), "backing": backings})
-    return {"vm": vm_name, "drives": attached, "unix_channels": sorted(set(unix_channels))}
+    return {"vm": vm_name, "drives": attached, "unix_channels": sorted(set(unix_channels)),
+            "acceleration_policy": acceleration_policy.value, "machine_arguments": machine_values, "cpu_arguments": cpu_values, "global_arguments": global_values}
 
 
 QEMU_BIN_RE = r"/bin/(qemu-system-x86_64|qemu-kvm)(?![A-Za-z0-9_.-])"
@@ -443,11 +490,11 @@ def _make_qcow2(
         raise RuntimeError(f"qemu-img create failed: {proc.stderr[-500:]}")
 
 
-def _base_argv(*, lab: Path, vm: str = "edge") -> list[str]:
+def _base_argv(*, lab: Path, acceleration_policy: AccelerationPolicy, vm: str = "edge") -> list[str]:
     return [
         "/bin/false-qemu",
         "-machine",
-        "accel=kvm",
+        _acceleration_pattern(acceleration_policy),
         "-cpu",
         "max",
         "-name",
@@ -465,7 +512,7 @@ def _base_argv(*, lab: Path, vm: str = "edge") -> list[str]:
     ]
 
 
-def selftest() -> int:
+def _selftest_policy(acceleration_policy: AccelerationPolicy) -> int:
     """Negative/positive fixtures against the ACTUAL validator (no guest,
     no QEMU launch; needs python3 + qemu-img on PATH). Returns exit code."""
     import shutil
@@ -475,16 +522,23 @@ def selftest() -> int:
 
     def expect_reject(label: str, argv: list[str], *, lab: Path, project: Path | None) -> None:
         try:
-            audit_argv(argv, lab=lab, project=project)
+            audit_argv(argv, lab=lab, project=project, acceleration_policy=acceleration_policy)
         except AuditError as exc:
-            print(f"selftest {label}: correctly rejected ({exc})", flush=True)
+            rc = _audit_exec("/no-real-qemu-selftest", argv, str(lab),
+                             acceleration_policy=acceleration_policy,
+                             project=project, exec_entry=_selftest_no_exec)
+            if rc != AUDIT_FAIL_EXIT or list(lab.glob("audit-*.jsonl")):
+                failures.append(label + "-pre-exec")
+                print(f"selftest {label}: FAIL — pre-exec path did not refuse cleanly", flush=True)
+                return
+            print(f"selftest {label}: correctly rejected pre-exec ({exc})", flush=True)
             return
         failures.append(label)
         print(f"selftest {label}: FAIL — accepted but must refuse", flush=True)
 
     def expect_accept(label: str, argv: list[str], *, lab: Path, project: Path | None) -> dict:
         try:
-            result = audit_argv(argv, lab=lab, project=project)
+            result = audit_argv(argv, lab=lab, project=project, acceleration_policy=acceleration_policy)
         except AuditError as exc:
             failures.append(label)
             print(f"selftest {label}: FAIL — refused but must accept ({exc})", flush=True)
@@ -506,15 +560,77 @@ def selftest() -> int:
         # Positive: lab-contained regular disk, no backing.
         good = lab / "good.qcow2"
         _make_qcow2(good)
-        argv = _base_argv(lab=lab) + ["-drive", f"file={good},if=none"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={good},if=none"]
         result = expect_accept("lab-disk-no-backing", argv, lab=lab, project=None)
         assert result["drives"][0]["backing"] == [], result
+        # Explicit acceleration authority is orthogonal to attachments. Only
+        # the exact pinned anonymous memfd/aux-machine pair is admitted.
+        pair = ["-object", "memory-backend-memfd,id=mem0,size=1024M,share=on",
+                "-machine", "memory-backend=mem0"]
+        expect_accept("pinned-anonymous-memory-pair", argv + pair, lab=lab, project=None)
+        # Actual built edge/strict scripts authorize ONLY this complete
+        # q35/global pair WITH the exact anonymous memfd/mem0 correspondence.
+        q35 = ["-machine", "q35,smm=on"]
+        secure = ["-global", "driver=cfi.pflash01,property=secure,value=on"]
+        expect_accept("observed-q35-complete-pair", argv + pair + q35 + secure, lab=lab, project=None)
+        # The previous temporary full-pair refusal is explicitly superseded by
+        # the source-bound grant; retain its label as the unapproved half-pair.
+        expect_reject("unapproved-q35-with-exact-memory-pair", argv + pair + q35, lab=lab, project=None)
+        for label,extra in [
+            ("q35-global-without-machine", pair + secure),
+            ("q35-without-memory-pair", q35 + secure),
+            ("q35-duplicate-machine", pair + q35 + q35 + secure),
+            ("q35-duplicate-global", pair + q35 + secure + secure),
+            ("q35-unknown-machine-property", pair + ["-machine", "q35,smm=on,usb=off"] + secure),
+            ("q35-smm-disabled", pair + ["-machine", "q35,smm=off"] + secure),
+            ("q35-global-secure-disabled", pair + q35 + ["-global", "driver=cfi.pflash01,property=secure,value=off"]),
+            ("q35-global-unknown-property", pair + q35 + ["-global", "driver=cfi.pflash01,property=other,value=on"]),
+            ("q35-global-extra-property", pair + q35 + ["-global", "driver=cfi.pflash01,property=secure,value=on,extra=on"]),
+            ("q35-unapproved-bios", pair + q35 + secure + ["-bios", "/nix/store/not-approved"]),
+            ("q35-unapproved-pflash", pair + q35 + secure + ["-pflash", str(good)]),
+            ("q35-unapproved-blockdev", pair + q35 + secure + ["-blockdev", "driver=file,filename=" + str(good)]),
+        ]:
+            expect_reject(label, argv + extra, lab=lab, project=None)
+        other = (AccelerationPolicy.KVM_OR_TCG if acceleration_policy is AccelerationPolicy.KVM_ONLY
+                 else AccelerationPolicy.KVM_ONLY)
+        wrong_policy = _base_argv(lab=lab, acceleration_policy=other) + ["-drive", f"file={good},if=none"]
+        expect_reject("other-acceleration-policy", wrong_policy, lab=lab, project=None)
+        for label, extra in [
+            ("duplicate-cpu", ["-cpu", "max"]),
+            ("cpu-without-value", ["-cpu"]),
+            ("extra-acceleration-machine", ["-machine", _acceleration_pattern(acceleration_policy)]),
+            ("unknown-machine", ["-machine", "pc"]),
+            ("aux-without-object", ["-machine", "memory-backend=mem0"]),
+            ("object-without-aux", pair[:2]),
+            ("duplicate-anonymous-object", pair + pair[:2]),
+            ("duplicate-aux-machine", pair + pair[2:]),
+            ("unapproved-accelerator-flag", ["-accel", "tcg"]),
+        ]:
+            expect_reject(label, argv + extra, lab=lab, project=None)
+        for value in ["accel=tcg", "accel=tcg:kvm", "accel=kvm:tcg:hvf", "accel=kvm,accel=tcg", ""]:
+            changed = list(argv); changed[changed.index("-machine") + 1] = value
+            expect_reject("unapproved-machine-" + repr(value), changed, lab=lab, project=None)
+        missing_cpu = list(argv)
+        cpu_index = missing_cpu.index("-cpu")
+        del missing_cpu[cpu_index:cpu_index + 2]
+        expect_reject("missing-cpu", missing_cpu, lab=lab, project=None)
+        for value in ["host", "max,+vmx", "", "max,max"]:
+            changed = list(argv); changed[changed.index("-cpu") + 1] = value
+            expect_reject("unapproved-cpu-" + repr(value), changed, lab=lab, project=None)
+        for value in ["memory-backend-memfd,id=other,size=1024M,share=on",
+                      "memory-backend-memfd,id=mem0,size=2048M,share=on",
+                      "memory-backend-memfd,id=mem0,size=1024M,share=on,seal=off",
+                      "memory-backend-file,id=mem0,size=1024M,mem-path=/tmp/host"]:
+            expect_reject("unapproved-memory-object-" + value, argv + ["-object", value, "-machine", "memory-backend=mem0"], lab=lab, project=None)
+        for flag,value in [("-m", "2048"), ("-smp", "2")]:
+            changed = list(argv); changed[changed.index(flag) + 1] = value
+            expect_reject("resource-bound-" + flag, changed, lab=lab, project=None)
         # Positive: lab-contained backing chain.
         base = lab / "base.qcow2"
         _make_qcow2(base)
         overlay = lab / "overlay.qcow2"
         _make_qcow2(overlay, backing=base)
-        argv = _base_argv(lab=lab) + ["-drive", f"file={overlay},if=none"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={overlay},if=none"]
         result = expect_accept("lab-backing-chain", argv, lab=lab, project=None)
         assert result["drives"][0]["backing"] == [str(base)], result
         # Negative: outside-resolving symlink drive (no guest launch).
@@ -526,14 +642,14 @@ def selftest() -> int:
         except OSError as exc:
             print(f"selftest symlink fixture unavailable: {exc}", flush=True)
             return 1
-        argv = _base_argv(lab=lab) + ["-drive", f"file={link},if=none"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={link},if=none"]
         expect_reject("outside-symlink-drive", argv, lab=lab, project=None)
         # Negative: outside backing chain (real qemu-img files, no guest).
         out_base = outside / "out-base.qcow2"
         _make_qcow2(out_base)
         out_overlay = lab / "out-overlay.qcow2"
         _make_qcow2(out_overlay, backing=out_base)
-        argv = _base_argv(lab=lab) + ["-drive", f"file={out_overlay},if=none"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={out_overlay},if=none"]
         expect_reject("outside-backing-chain", argv, lab=lab, project=None)
         # Positive: store-symlink -kernel accepted (boot input resolves
         # store-contained; guest-disk symlink strictness does not apply).
@@ -547,13 +663,13 @@ def selftest() -> int:
             except OSError as exc:
                 print(f"selftest kernel-symlink fixture unavailable: {exc}", flush=True)
                 return 1
-            argv = _base_argv(lab=lab) + [
+            argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + [
                 "-drive", f"file={good},if=none",
                 "-kernel", str(klink),
                 "-initrd", str(_store_samples[0]),
             ]
             try:
-                audit_argv(argv, lab=lab, project=None)
+                audit_argv(argv, lab=lab, project=None, acceleration_policy=acceleration_policy)
             except AuditError as exc:
                 failures.append("kernel-symlink-store")
                 print(f"selftest kernel-symlink-store: FAIL — refused ({exc})", flush=True)
@@ -566,44 +682,44 @@ def selftest() -> int:
             # An ELF binary is not qcow2: declare raw backing format so the
             # chain resolves and the AUDIT (not image creation) refuses it.
             _make_qcow2(store_backed, backing=store_candidates[0], backing_fmt="raw")
-            argv = _base_argv(lab=lab) + ["-drive", f"file={store_backed},if=none"]
+            argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={store_backed},if=none"]
             expect_reject("store-backing-no-exception", argv, lab=lab, project=None)
         else:
             print("selftest store-backing-no-exception: skipped (no store bash sample)", flush=True)
         # Negative: forbidden sharing/net.
-        argv = _base_argv(lab=lab) + ["-drive", f"file={good},if=none", "-netdev", "tap,id=t0"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={good},if=none", "-netdev", "tap,id=t0"]
         expect_reject("tap-netdev", argv, lab=lab, project=None)
-        argv = _base_argv(lab=lab) + ["-drive", f"file={good},if=none", "-device", "virtio-9p-pci,fsdev=f0"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={good},if=none", "-device", "virtio-9p-pci,fsdev=f0"]
         expect_reject("virtio-9p", argv, lab=lab, project=None)
-        argv = _base_argv(lab=lab) + ["-drive", f"file=/dev/sda,if=none"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file=/dev/sda,if=none"]
         expect_reject("dev-backed-drive", argv, lab=lab, project=None)
         # Negative: missing KVM / wrong CPU / unknown VM / stray flag.
-        argv = [a for a in _base_argv(lab=lab) if a != "accel=kvm"] + ["-drive", f"file={good},if=none"]
+        argv = (_base_argv(lab=lab, acceleration_policy=acceleration_policy)[:1] + _base_argv(lab=lab, acceleration_policy=acceleration_policy)[3:]) + ["-drive", f"file={good},if=none"]
         expect_reject("missing-kvm", argv, lab=lab, project=None)
-        argv = _base_argv(lab=lab, vm="intruder") + ["-drive", f"file={good},if=none"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy, vm="intruder") + ["-drive", f"file={good},if=none"]
         expect_reject("unknown-vm", argv, lab=lab, project=None)
-        argv = _base_argv(lab=lab) + ["-drive", f"file={good},if=none", "-display", "none"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={good},if=none", "-display", "none"]
         expect_reject("unsupported-flag", argv, lab=lab, project=None)
         # Positive: bare `unix:` qmp channel under lab (generated form).
-        argv = _base_argv(lab=lab) + [
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + [
             "-drive", f"file={good},if=none",
             "-qmp", f"unix:{lab}/qmp,server=on,wait=off",
         ]
         result = expect_accept("qmp-bare-unix-lab", argv, lab=lab, project=None)
         assert result["unix_channels"] == [f"{lab}/qmp"], result
         # Positive: -serial stdio (driver console pipes, no host file).
-        argv = _base_argv(lab=lab) + ["-drive", f"file={good},if=none", "-serial", "stdio"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={good},if=none", "-serial", "stdio"]
         expect_accept("serial-stdio", argv, lab=lab, project=None)
         # Negative: -serial to a host file / TCP.
-        argv = _base_argv(lab=lab) + ["-drive", f"file={good},if=none", "-serial", "file:/tmp/serial.log"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={good},if=none", "-serial", "file:/tmp/serial.log"]
         expect_reject("serial-file", argv, lab=lab, project=None)
         # Negative: qmp outside lab / non-Unix.
-        argv = _base_argv(lab=lab) + ["-drive", f"file={good},if=none", "-qmp", f"unix:{outside}/qmp,server=on"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={good},if=none", "-qmp", f"unix:{outside}/qmp,server=on"]
         expect_reject("qmp-outside-lab", argv, lab=lab, project=None)
-        argv = _base_argv(lab=lab) + ["-drive", f"file={good},if=none", "-qmp", "tcp:127.0.0.1:4444,server=on"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={good},if=none", "-qmp", "tcp:127.0.0.1:4444,server=on"]
         expect_reject("qmp-tcp", argv, lab=lab, project=None)
         # Positive: virtconsole on a lab-socket chardev (driver serial).
-        argv = _base_argv(lab=lab) + [
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + [
             "-drive", f"file={good},if=none",
             "-chardev", f"socket,id=shell,path={lab}/shell,server=on,wait=off",
             "-device", "virtconsole,chardev=shell",
@@ -611,31 +727,31 @@ def selftest() -> int:
         result = expect_accept("virtconsole-lab-socket", argv, lab=lab, project=None)
         assert result["unix_channels"] == [f"{lab}/shell"], result
         # Negative: virtconsole on unknown/outside chardev.
-        argv = _base_argv(lab=lab) + [
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + [
             "-drive", f"file={good},if=none",
             "-device", "virtconsole,chardev=ghost",
         ]
         expect_reject("virtconsole-unknown-chardev", argv, lab=lab, project=None)
-        argv = _base_argv(lab=lab) + [
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + [
             "-drive", f"file={good},if=none",
             "-chardev", "socket,id=s,path=/tmp/outside-sock,server=on",
             "-device", "virtconsole,chardev=s",
         ]
         expect_reject("virtconsole-outside-socket", argv, lab=lab, project=None)
         # Negative: drive without file=.
-        argv = _base_argv(lab=lab) + ["-drive", "if=none"]
+        argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", "if=none"]
         expect_reject("drive-without-file", argv, lab=lab, project=None)
         # Exec-path refusal (actual _audit_exec entry, no exec: outside drive
         # must exit 125 AND write no audit log). The drive file really exists
         # so refusal is FOR the outside-lab rule (not missing-file).
         _make_qcow2(outside / "nope.qcow2")
-        bad_argv = (
-            ["qemu", "-machine", "accel=kvm", "-cpu", "max", "-name", "edge",
-             "-m", "1024", "-smp", "1", "-device", "virtio-blk-pci,drive=d0",
-             "-net", "nic,netdev=user.0,model=virtio", "-netdev", "user,id=user.0,restrict=on",
-             "-drive", f"file={outside}/nope.qcow2,if=none"]
-        )
-        rc = _audit_exec("/bin/false", bad_argv, str(lab))
+        bad_argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={outside}/nope.qcow2,if=none"]
+        # This fixture's declared project=None must stay true even when all
+        # owned temp directories live inside the real checkout. A narrow manual
+        # dummy models that authority; never exec anything even on a regression.
+        rc = _audit_exec("/bin/false", bad_argv, str(lab),
+                         acceleration_policy=acceleration_policy,
+                         project=None, exec_entry=_selftest_no_exec)
         if rc != AUDIT_FAIL_EXIT:
             failures.append("exec-refuses-outside")
             print("selftest exec-refuses-outside: FAIL — exit was not 125", flush=True)
@@ -645,7 +761,7 @@ def selftest() -> int:
         else:
             print("selftest exec-refuses-outside: correctly refused pre-exec", flush=True)
         # Exec-path lab handling: unresolvable lab fails closed (no exec).
-        rc = _audit_exec("/bin/false", _base_argv(lab=lab), str(lab / "does-not-exist"))
+        rc = _audit_exec("/bin/false", _base_argv(lab=lab, acceleration_policy=acceleration_policy), str(lab / "does-not-exist"), acceleration_policy=acceleration_policy, project=None, exec_entry=_selftest_no_exec)
         if rc != AUDIT_FAIL_EXIT:
             failures.append("exec-refuses-bad-lab")
             print("selftest exec-refuses-bad-lab: FAIL", flush=True)
@@ -653,11 +769,11 @@ def selftest() -> int:
             print("selftest exec-refuses-bad-lab: correctly refused", flush=True)
         # Positive: project-contained drive accepted only when that project
         # root is explicitly given (spec-literal lab-or-project roots).
-        projroot = Path(tempfile.mkdtemp(prefix="vm-audit-selftest-proj-"))
+        projroot = Path(tempfile.mkdtemp(prefix="vm-audit-selftest-proj-", dir=tmp_parent))
         try:
             projdisk = projroot / "proj.qcow2"
             _make_qcow2(projdisk)
-            argv = _base_argv(lab=lab) + ["-drive", f"file={projdisk},if=none"]
+            argv = _base_argv(lab=lab, acceleration_policy=acceleration_policy) + ["-drive", f"file={projdisk},if=none"]
             expect_accept("project-drive-with-project", argv, lab=lab, project=projroot)
             expect_reject("project-drive-without-project", argv, lab=lab, project=None)
         finally:
@@ -706,12 +822,30 @@ def selftest() -> int:
     return 0
 
 
-def _audit_exec(real_qemu: str, argv: list[str], lab_text: str) -> int:
+def _selftest_no_exec(_executable: str, _argv: list[str]) -> NoReturn:
+    raise AssertionError("selftest attempted executable entry (no guest permitted)")
+
+
+def selftest() -> int:
+    for policy in AccelerationPolicy:
+        print(f"selftest acceleration-policy={policy.value}", flush=True)
+        if _selftest_policy(policy) != 0:
+            return 1
+    return 0
+
+
+def _audit_exec(
+    real_qemu: str, argv: list[str], lab_text: str, *,
+    acceleration_policy: AccelerationPolicy, project: Path | None,
+    exec_entry: Callable[[str, list[str]], NoReturn],
+) -> int:
     """Pre-exec audit used by the wrapper: validate, log, then exec.
 
     The lab arrives as an explicit baked literal (no TMPDIR guessing and
     no name-pattern heuristics: both failed in prelim against driver-set
-    TMPDIR values outside our control).
+    TMPDIR values outside our control). Authority and executable entry are
+    required explicit dependencies: tests use manual dummies, while the CLI
+    always supplies trusted discovery and the real os.execv.
     """
     try:
         lab_path = Path(lab_text).resolve(strict=True)
@@ -731,9 +865,8 @@ def _audit_exec(real_qemu: str, argv: list[str], lab_text: str) -> int:
         if not lab_path.is_relative_to(yolo_resolved):
             sys.stderr.write("vm-audit: FAIL — lab outside YOLO root (fail closed)\n")
             return AUDIT_FAIL_EXIT
-    project = _repo_root()
     try:
-        mapping = audit_argv(list(argv), lab=lab_path, project=project)
+        mapping = audit_argv(list(argv), lab=lab_path, project=project, acceleration_policy=acceleration_policy)
     except AuditError as exc:
         sys.stderr.write(f"vm-audit: FAIL — {exc}\n")
         return AUDIT_FAIL_EXIT
@@ -744,7 +877,7 @@ def _audit_exec(real_qemu: str, argv: list[str], lab_text: str) -> int:
     except OSError as exc:
         sys.stderr.write(f"vm-audit: FAIL — cannot write audit log: {exc}\n")
         return AUDIT_FAIL_EXIT
-    os.execv(real_qemu, [real_qemu, *list(argv)[1:]])
+    exec_entry(real_qemu, [real_qemu, *list(argv)[1:]])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -753,6 +886,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("selftest", help="run validator fixtures (no guest)")
     ex = sub.add_parser("audit-exec", help="pre-exec audit then exec real QEMU")
     ex.add_argument("--lab", required=True)
+    ex.add_argument("--acceleration-policy", required=True, choices=[p.value for p in AccelerationPolicy])
     ex.add_argument("real_qemu")
     ex.add_argument("rest", nargs=argparse.REMAINDER)
     args = ap.parse_args(argv)
@@ -761,7 +895,11 @@ def main(argv: list[str] | None = None) -> int:
     rest = list(args.rest)
     if rest and rest[0] == "--":
         rest = rest[1:]
-    return _audit_exec(args.real_qemu, ["qemu"] + rest, args.lab)
+    # CLI authority and executable entry are always real/trusted. The internal
+    # dependency seam has no CLI override, default, alternate root or skip mode.
+    return _audit_exec(args.real_qemu, ["qemu"] + rest, args.lab,
+                       acceleration_policy=AccelerationPolicy(args.acceleration_policy),
+                       project=_repo_root(), exec_entry=os.execv)
 
 
 if __name__ == "__main__":

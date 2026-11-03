@@ -146,11 +146,9 @@ class UnlockFlows:
                          "grant cookie set on failure")
         # HTTP shapes: JSON failure is a password-invalid envelope.
         jar = bf.TestHttp()
-        bad = jar.request("POST", unlock, body={"password": wrong},
-                          content_type="application/json",
-                          headers={"Origin": origin})
+        bad = jar.current((content_url.rstrip("/")), bf.cp.ContentCommand_Unlock(({"password": wrong})["password"]), headers={"Origin": origin})
         self.assertEqual(bad.status, 401, bad.body[:300])
-        self.assertEqual(bad.json()["error"]["code"], "password-invalid")
+        self.assertEqual(bad.current_error_code(), "password-invalid")
         self.assertNotIn(password, bad.body.decode(), "real password in fault")
         # Urlencoded failure is the same class over HTTP.
         form = {"password": wrong}
@@ -176,17 +174,13 @@ class UnlockFlows:
         self.assertIn(first.status, (200, 303), first.body[:300])
         self.assertTrue(jar.cookies_for(content_url), "no grant cookie issued")
         # Rotate: a fresh password is returned exactly once.
-        rot = self.http.request(
-            "POST", f"{self.api}/api/v1/artifacts/{aid}/external-password:rotate",
-            body={}, headers=bearer)
+        rot = self.http.current((self.api), bf.cp.Command_RotateExternalPassword(aid), headers=bearer)
         self.assertEqual(rot.status, 200, rot.body[:300])
         second = rot.json()["external_password"]
         self.assertEqual(len(second), 43)
         self.assertNotEqual(second, password)
         # Old password is dead.
-        stale = bf.TestHttp().request(
-            "POST", unlock, body={"password": password},
-            content_type="application/json", headers={"Origin": origin})
+        stale = bf.TestHttp().current((content_url.rstrip("/")), bf.cp.ContentCommand_Unlock(({"password": password})["password"]), headers={"Origin": origin})
         self.assertEqual(stale.status, 401, stale.body[:300])
         # Old grant cookie is dead: the content host falls back to the
         # password form (200 with the unlock page, per contract) and the
@@ -195,12 +189,10 @@ class UnlockFlows:
         self.assertEqual(gone.status, 200, gone.body[:300])
         self.assertNotIn(b"external site", gone.body)
         self.assertIn(b"/__manure/unlock", gone.body)
-        manifest = jar.request("GET", content_url.rstrip("/") + "/__manure/manifest")
+        manifest = jar.current((content_url.rstrip("/")), bf.cp.ContentCommand_GetManifest())
         self.assertNotEqual(manifest.status, 200, manifest.body[:300])
         # New password works.
-        fresh = bf.TestHttp().request(
-            "POST", unlock, body={"password": second},
-            content_type="application/json", headers={"Origin": origin})
+        fresh = bf.TestHttp().current((content_url.rstrip("/")), bf.cp.ContentCommand_Unlock(({"password": second})["password"]), headers={"Origin": origin})
         self.assertEqual(fresh.status, 200, fresh.body[:300])
 
     def test_b3_logout_clears_grant_cookie(self):
@@ -226,7 +218,7 @@ class UnlockFlows:
         denied = jar.request("GET", content_url + "/")
         self.assertEqual(denied.status, 200, denied.body[:300])
         self.assertNotIn(b"external site", denied.body)
-        manifest = jar.request("GET", content_url.rstrip("/") + "/__manure/manifest")
+        manifest = jar.current((content_url.rstrip("/")), bf.cp.ContentCommand_GetManifest())
         self.assertNotEqual(manifest.status, 200, manifest.body[:300])
 
     def test_b3_unlock_assets_served_locked_else_404(self):
@@ -293,9 +285,7 @@ class UnlockFlows:
         grants = [c for c in cookies
                   if c["name"] in ("__Host-mgrant", "mgrant-dev")]
         self.assertEqual(len(grants), 1, cookies)
-        rot = self.http.request(
-            "POST", f"{self.api}/api/v1/artifacts/{aid}/external-password:rotate",
-            body={}, headers=bearer)
+        rot = self.http.current((self.api), bf.cp.Command_RotateExternalPassword(aid), headers=bearer)
         self.assertEqual(rot.status, 200, rot.body[:300])
         fresh = rot.json()["external_password"]
         self.assertNotEqual(fresh, password)
@@ -342,15 +332,12 @@ class UnlockFlows:
     def test_b3_no_password_appears_in_listings_or_manifest(self):
         aid, password, _ = self._external_artifact(name="ext-leak")
         bearer = {"Authorization": f"Bearer {self.fix.identity.token}"}
-        listing = self.http.request("GET", self.api + "/api/v1/artifacts?limit=50",
-                                    headers=bearer)
+        listing = self.http.current((self.api), bf.cp.Command_ListArtifacts(bf.cp.CatalogueQuery("",False,None,None,bf.cp.CatalogueSort.CreatedAt,bf.cp.SortDirection.Desc,50,None)), headers=bearer)
         self.assertEqual(listing.status, 200, listing.body[:300])
         self.assertNotIn(password, listing.body.decode())
-        info = self.http.request("GET", f"{self.api}/api/v1/artifacts/{aid}",
-                                 headers=bearer)
+        info = self.http.current((self.api), bf.cp.Command_GetArtifact(aid), headers=bearer)
         self.assertNotIn(password, info.body.decode())
-        files = self.http.request(
-            "GET", f"{self.api}/api/v1/artifacts/{aid}/files", headers=bearer)
+        files = self.http.current((self.api), bf.cp.Command_GetManifest(aid), headers=bearer)
         self.assertNotIn(password, files.body.decode())
 
 
@@ -391,10 +378,10 @@ class UnlockRateLimitCase(UnlockFlows, unittest.TestCase):
              "fn": "(pw) => (async () => {"
                     " const out = [];"
                     " for (let i = 0; i < 6; i++) {"
-                    "   const r = await fetch('/__manure/unlock',"
+                    "   const r = await fetch('/__manure/current',"
                     "     {method:'POST', credentials:'same-origin',"
                     "      headers:{'Content-Type':'application/json'},"
-                    "      body: JSON.stringify({password: pw})});"
+                    "      body: JSON.stringify({requestId:crypto.randomUUID(),apiVersion:'1.0.0',command:{Unlock:{password:pw}}})});"
                     "   out.push(r.status + ':' + (r.headers.get('retry-after') || '-'));"
                     " }"
                     " return out.join(','); })()",
@@ -419,10 +406,7 @@ class UnlockRateLimitCase(UnlockFlows, unittest.TestCase):
         last: bf.HttpResult | None = None
         wrong = bf.canonical_secret()
         for _ in range(8):
-            last = bf.TestHttp().request(
-                "POST", unlock, body={"password": wrong},
-                content_type="application/json",
-                headers={"Origin": origin})
+            last = bf.TestHttp().current((content_url.rstrip("/")), bf.cp.ContentCommand_Unlock(({"password": wrong})["password"]), headers={"Origin": origin})
             statuses.append(last.status)
         self.assertIn(429, statuses, statuses)
         assert last is not None

@@ -1,0 +1,7 @@
+# Final actual NixOS lifecycle
+
+Parent-owned runtime `bgt-43dfb39d43b27b8f`, immutable production pin `be4cb86972c820ea2ae0e2c6f886057f0604c2ec`, completed0 at2026-11-03T16:06:49.863594Z. All9 original cases/four phases/faults passed; zero errors/omissions/invalid fixtures. Parent checked exact inventory/order against original468 receipt, all names against immutable Python AST literals, every phase/error/fault flag, observation time bounds and all ten service snapshots before/after/restore.
+
+The four receipt/start/result/terminal files are exact original bytes. `parent-verification.json` is an explicit derivative. The initial admission attempt refused dynamic invocation-ID map keys before destination creation; the second admits only typed32hex-to-nonnegative-int keys under `probeSuccessByInvocation` in known service snapshots. Snapshot keys must belong to corresponding `adapterStartedInvocations`; all other field keys are checked against the earlier approved receipt. No raw receipt rewriting or broad content-hook exception occurred. Raw build log stays private with hash/size/line count only.
+
+This is real guest NixOS/systemd/PostgreSQL with synthetic application CLI adapters. It is not native HTTP/protocol/model/finalizer evidence. The driver-only build is separate. Terminal cleanup is the existing visible-namespace expected-output/known-startTicks observation, not proof of Nix daemon subreaping or whole-host absence. No host activation, production migration, pin update or push occurred.

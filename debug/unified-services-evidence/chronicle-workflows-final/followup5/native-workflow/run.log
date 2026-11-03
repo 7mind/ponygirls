@@ -1,0 +1,14 @@
+
+> @chronicle/acceptance@0.1.0 test
+> node --import tsx --test workflow.test.ts
+
+{"kind":"chronicle-workflow","command":"/nix/store/mvw89ddwd6pzx00wd6kmsxh5p8p10clq-chronicle-native-development-artifact-0.1.0/libexec/chronicle-server","sessions":3,"annotationCalls":4,"embeddingCalls":6,"officialMcpClient":"1.32.2","liveDashboard":"passed","liveDashboardRestart":"passed","serverLivenessRecovery":"passed","immutableSourceViews":"passed","modelOutage":"passed","restart":"passed","backupRestore":"passed","httpsModels":"passed"}
+✔ collector → durable archive → annotation/pgvector → generated WS and official MCP; live group ACLs and restart (131329.714629ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 132460.113026

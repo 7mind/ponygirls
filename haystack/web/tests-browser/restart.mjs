@@ -1,3 +1,4 @@
+import { prerequisites } from "./prerequisites.mjs";
 // Behavioral-Active-Blackbox-GoodCommunication: real nginx, Chromium, and backend restart.
 import assert from "node:assert/strict";
 import { spawn, execFile as execFileCallback } from "node:child_process";
@@ -8,16 +9,16 @@ import path from "node:path";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import pg from "pg";
 import { chromium } from "playwright-core";
+import { Failure } from "../../generated/typescript/haystack/api/Failure.ts";
+import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
+import { readProxyConfig, validateProxyConfig } from "./proxy-config.mjs";
+import { freePort, ownedDatabase, configFor, atomicConfig, startServer, assertPortAvailable } from "./native.mjs";
 
 const conn = process.env.HAYSTACK_TEST_PG;
 const chromiumPath = process.env.HAYSTACK_CHROMIUM;
 const nginxPath = process.env.HAYSTACK_NGINX;
-if (!conn || !chromiumPath || !nginxPath) {
-  console.log("# SKIP backend restart: set HAYSTACK_TEST_PG, HAYSTACK_CHROMIUM, HAYSTACK_NGINX");
-  process.exit(0);
-}
+await prerequisites("restart");
 const execFile = promisify(execFileCallback);
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(webRoot, "..", "..");
@@ -26,24 +27,24 @@ const token = randomBytes(32).toString("base64url");
 const hashFile = path.join(dir, "token.sha");
 await writeFile(hashFile, createHash("sha256").update(token, "ascii").digest("hex"), { mode: 0o600 });
 
-async function freePort() {
-  const socket = http.createServer();
-  await new Promise((resolve) => socket.listen(0, "127.0.0.1", resolve));
-  const port = socket.address().port;
-  await new Promise((resolve) => socket.close(resolve));
-  return port;
-}
-const backendPort = await freePort();
-const proxyPort = await freePort();
-const base = `https://127.0.0.1:${proxyPort}`;
-const authFile = path.join(dir, "auth.json");
-await writeFile(authFile, JSON.stringify({
+let host;
+if (process.env.HAYSTACK_PROXY_CONFIG_FILE !== undefined) host = await readProxyConfig(process.env.HAYSTACK_PROXY_CONFIG_FILE);
+// Outside a filtered Nix build only, evaluate the actual Git module below.
+const backendPort = host?.backendPort ?? await freePort();
+const base = host?.publicUrl ?? `https://127.0.0.1:${await freePort()}`;
+const publicUrl = new URL(base);
+const proxyPort = Number(publicUrl.port || "443");
+await assertPortAvailable(backendPort);
+await assertPortAvailable(proxyPort, publicUrl.hostname.replace(/^\[|\]$/gu, ""));
+const serverConfig = path.join(dir, "config.json");
+const auth = {
   activityProjectId: "agent-activity", cookieSecure: true,
   users: [{ id: "op", type: "human", displayName: "Operator", tokens: [{ id: "browser", hashFile }] }],
-  allowedHosts: ["127.0.0.1"], allowedOrigins: [base],
-}), { mode: 0o600 });
+  allowedHosts: [publicUrl.hostname.replace(/^\[|\]$/gu, "")], allowedOrigins: [base], insecureHttpOrigins: [], rateLimit: { windowMs: 60000, max: 600 },
+};
 
-// Use the module's location policy, with the freshly built UI as its static root.
+// No file-mode Nix/Git invocation and no fallback for malformed input.
+if (host === undefined) {
 const expr = `let
   f = builtins.getFlake ${JSON.stringify(`git+file://${repoRoot}`)};
   cfg = (f.inputs.nixpkgs.lib.nixosSystem {
@@ -52,18 +53,25 @@ const expr = `let
       system.stateVersion = "26.11";
       smind.services.haystack = {
         enable = true; port = ${backendPort}; publicUrl = ${JSON.stringify(base)};
+        database = {
+          jdbcUrl = "jdbc:postgresql://127.0.0.1:15433/haystack_browser";
+          user = "haystack_browser"; passwordFile = "/run/haystack-browser/database-password";
+          readinessUnit = null;
+        };
         users.op = { type = "human"; tokens.browser.tokenHashFile = "/run/test-token.sha"; };
       };
     } ];
   }).config.services.nginx.virtualHosts."127.0.0.1";
 in {
+  backendPort = ${backendPort}; publicUrl = ${JSON.stringify(base)};
   inherit (cfg) root;
   locations = builtins.mapAttrs (_: l: {
     inherit (l) proxyPass proxyWebsockets tryFiles extraConfig;
   }) cfg.locations;
 }`;
 const evaluated = await execFile("nix", ["eval", "--json", "--impure", "--expr", expr], { cwd: repoRoot, timeout: 60000 });
-const host = JSON.parse(evaluated.stdout);
+host = await validateProxyConfig(JSON.parse(evaluated.stdout));
+}
 const locations = Object.entries(host.locations).map(([name, location]) => `location ${name} {
   ${location.proxyPass === null ? "" : `proxy_pass ${location.proxyPass}; proxy_set_header Host $http_host;`}
   ${location.proxyWebsockets ? "proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection $connection_upgrade;" : ""}
@@ -83,38 +91,24 @@ http {
   include ${path.resolve(nginxPath, "..", "..", "conf", "mime.types")};
   map $http_upgrade $connection_upgrade { default upgrade; '' close; }
   server {
-    listen 127.0.0.1:${proxyPort} ssl;
+    listen ${publicUrl.hostname}:${proxyPort} ssl;
     ssl_certificate ${dir}/cert.pem;
     ssl_certificate_key ${dir}/key.pem;
-    ${host.root === null ? "" : `root ${path.join(webRoot, "dist")};`}
+    ${host.root === null ? "" : `root ${JSON.stringify(host.root)};`}
     ${locations}
   }
 }`);
 
-const admin = new pg.Client(conn);
-await admin.connect();
-await admin.query("DROP DATABASE IF EXISTS haystack_restart");
-await admin.query("CREATE DATABASE haystack_restart");
-await admin.end();
-const backendConn = conn.replace(/haystack_test/, "haystack_restart");
+const database = await ownedDatabase({ connectionString: conn, dir });
+await atomicConfig(serverConfig, await configFor({ database: database.runtime,
+  port: backendPort, webRoot: path.join(webRoot, "dist"), auth }));
 let backend;
 let proxy;
 let browser;
+let context;
+const diagnostic = { phase: "startup", responses: [], pageErrors: [], failedRequests: [], allowedHosts: auth.allowedHosts, allowedOrigins: auth.allowedOrigins };
 async function startBackend() {
-  const child = spawn(process.execPath, [path.join(webRoot, "..", "server", "dist", "index.js")], {
-    env: { ...process.env, HAYSTACK_AUTH_JSON: authFile, HAYSTACK_DATABASE_URL: backendConn,
-      HAYSTACK_LISTEN: "127.0.0.1", HAYSTACK_PORT: String(backendPort), HAYSTACK_STATIC_DIR: path.join(webRoot, "dist") },
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-  backend = child;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (child.exitCode !== null) throw new Error(`Backend exited during startup: ${child.exitCode}`);
-    try {
-      if ((await fetch(`http://127.0.0.1:${backendPort}/api/v1/health`, { signal: AbortSignal.timeout(1000) })).ok) return;
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("Backend startup timed out");
+  backend = await startServer(serverConfig, backendPort, path.join(dir, "server.log"));
 }
 async function stop(child) {
   if (child === undefined || child.exitCode !== null) return;
@@ -130,7 +124,26 @@ try {
   proxy = spawn(nginxPath, ["-e", path.join(dir, "nginx-error.log"), "-p", `${dir}/`, "-c", configFile], { stdio: ["ignore", "ignore", "inherit"] });
   browser = await chromium.launch({ executablePath: chromiumPath, args: ["--no-sandbox"] });
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
+  context = ctx;
   const page = await ctx.newPage();
+  page.on("response", async (response) => {
+    if (diagnostic.responses.length < 200) {
+      const entry = { path: new URL(response.url()).pathname, status: response.status(), contentType: response.headers()["content-type"] };
+      diagnostic.responses.push(entry);
+      if (entry.path === "/api/v1/login" && entry.status >= 400) try { entry.code = Failure.jsonCodec().decode(BaboonCodecContext.Default, await response.json()).code; } catch { entry.code = "not-current-json-failure"; }
+    }
+  });
+  page.on("pageerror", (error) => { if (diagnostic.pageErrors.length < 20) diagnostic.pageErrors.push(error.message); });
+  page.on("requestfailed", (request) => {
+    if (diagnostic.failedRequests.length < 20) diagnostic.failedRequests.push({ path: new URL(request.url()).pathname, error: request.failure()?.errorText });
+  });
+  page.on("request", async (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/login") {
+      const headers = await request.allHeaders();
+      diagnostic.loginTransport = { origin: headers.origin ?? null, fetchSite: headers["sec-fetch-site"] ?? null };
+    }
+  });
+  diagnostic.phase = "login";
   assert.equal((await page.goto(base)).status(), 200, "UI shell must be served by nginx");
   await page.getByLabel("Token").fill(token);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -138,6 +151,7 @@ try {
   await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
   const session = (await ctx.cookies()).find((cookie) => cookie.name === "__Host-haystack");
   assert.ok(session && session.secure && session.httpOnly);
+  diagnostic.phase = "backend-stop";
   await stop(backend);
   assert.equal(backend.exitCode, 0, "backend shutdown must be clean");
   const shell = await ctx.request.get(base);
@@ -149,12 +163,13 @@ try {
     assert.equal(response.status(), 503, `${endpoint} must report service unavailable`);
     assert.equal(response.headers()["cache-control"], "no-store");
     assert.equal(response.headers()["set-cookie"], undefined);
-    assert.equal((await response.json()).error.code, "unavailable");
+    assert.equal(Failure.jsonCodec().decode(BaboonCodecContext.Default, await response.json()).code, "unavailable");
   }
   await page.reload();
   await page.getByRole("alert").filter({ hasText: "Server unreachable" }).waitFor();
   assert.equal(await page.getByLabel("Token").count(), 0);
   assert.ok((await ctx.cookies()).find((cookie) => cookie.name === session.name).value === session.value, "outage must preserve the session token");
+  diagnostic.phase = "backend-restart";
   await startBackend();
   await page.reload();
   await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
@@ -165,9 +180,16 @@ try {
   await page.reload();
   await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
   console.log("ok - HTTPS session survives backend stop, refresh, restart, refresh; logout still expires it");
+} catch (error) {
+  // Never capture requests, response bodies, credentials or cookie values.
+  const evidence = { ...diagnostic, cookies: context ? (await context.cookies()).map(({ name, secure, httpOnly, sameSite }) => ({ name, secure, httpOnly, sameSite })) : [] };
+  console.error("HTTPS restart diagnostic:", JSON.stringify(evidence));
+  if (process.env.HAYSTACK_UI_ARTIFACTS) await writeFile(path.join(process.env.HAYSTACK_UI_ARTIFACTS, "https-restart-diagnostic.json"), JSON.stringify(evidence, null, 2) + "\n");
+  throw error;
 } finally {
   if (browser !== undefined) await browser.close();
   await stop(backend);
   await stop(proxy);
+  await database.close();
   await rm(dir, { recursive: true, force: true });
 }

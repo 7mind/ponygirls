@@ -13,7 +13,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
   private final case class Context(config: Config,db: Database,archive: PostgresArchive,auth: Auth,app: Application,owner: Identity)
   private def database(f: Context => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
+    val config=Fixtures.config(); val db=Fixtures.database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations,ch_collector_progress CASCADE")
       Sql.exec(c,"UPDATE ch_profile SET active=?,target=?,maintenance=false",config.profile,config.profile); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)
@@ -84,22 +84,26 @@ final class RetryFailedActionsTest extends munit.FunSuite {
   test("Behavioral-Blackbox GoodCommunication specified: compact Activity pages use constant SQL statements and never raw/content tables") { database { c =>
     (1 to 3).foreach(n => ingest(c,"a",s"metadata-$n"))
     val statements=new java.util.concurrent.atomic.AtomicInteger(0)
+    val setups=new java.util.concurrent.atomic.AtomicInteger(0)
     val prefix="jdbc:chronicle-counted:"+UUID.randomUUID()+":"
     val driver=new GatedDriver(prefix,sql => {
       statements.incrementAndGet()
+      if(sql==Fixtures.runtimeSetupSql) setups.incrementAndGet()
       List("ch_revisions","ch_messages","ch_chunks","ch_archive_lexical","snapshot").foreach(name => assert(!sql.contains(name),s"metadata-only SQL must not access $name"))
     },(_,_) => (),ConnectionFault.None)
     DriverManager.registerDriver(driver)
     try {
       val config=c.config.copy(jdbcUrl=prefix+c.config.jdbcUrl)
-      val activity=new PostgresActivity(new Database(config,IndexProfileCatalog.legacyOnly(config)),Clock.systemUTC())
+      val activity=new PostgresActivity(Fixtures.database(config,IndexProfileCatalog.legacyOnly(config)),Clock.systemUTC())
       List(1,100).foreach { limit =>
-        statements.set(0)
+        statements.set(0); setups.set(0)
         assertEquals(activity.jobs("a",ActivityJobsQuery(None,ActivityJobScope.All,"synthetic",ActivityJobSort.Title,SortDirection.Asc,None,limit)).jobs.size,math.min(limit,3))
-        assertEquals(statements.get(),3)
-        statements.set(0)
+        assertEquals(statements.get(),4,"three unchanged domain statements plus one bounded runtime setup")
+        assertEquals(setups.get(),1)
+        statements.set(0); setups.set(0)
         assertEquals(activity.summary(c.owner.user,ActivityQuery("",ActivityCollectorSort.CurrentTotal,SortDirection.Desc,None,limit)).collectors.size,math.min(limit,3))
-        assertEquals(statements.get(),4)
+        assertEquals(statements.get(),5,"four unchanged domain statements plus one bounded runtime setup")
+        assertEquals(setups.get(),1)
       }
     } finally DriverManager.deregisterDriver(driver)
   }}
@@ -151,7 +155,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     DriverManager.registerDriver(driver)
     try {
       val config=c.config.copy(jdbcUrl=prefix+c.config.jdbcUrl)
-      val auth=new Auth(new Database(config,IndexProfileCatalog.legacyOnly(config)),config)
+      val auth=new Auth(Fixtures.database(config,IndexProfileCatalog.legacyOnly(config)),config)
       val delayed=executor.submit(new Callable[Result] { def call(): Result = outcome(auth.mutate(c.owner,request)) })
       assert(entered.await(gateTimeoutSeconds,TimeUnit.SECONDS),"original reached pre-mutex dispatch gate")
       val second=ingest(c,"a","B"); fail(c,second.jobId)
@@ -203,7 +207,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     DriverManager.registerDriver(driver)
     try {
       val config=c.config.copy(jdbcUrl=prefix+c.config.jdbcUrl)
-      val auth=new Auth(new Database(config,IndexProfileCatalog.legacyOnly(config)),config)
+      val auth=new Auth(Fixtures.database(config,IndexProfileCatalog.legacyOnly(config)),config)
       val result=auth.mutate(c.owner,request)
       assert(wrote.get()); assertEquals(result,Result.Error(Failure("conflict","retry selection changed; preview again")))
       assertEquals(fence(c,failed.jobId),7L); assertEquals(c.archive.statuses("a",0,100).jobs.head.state,JobState.Failed)
@@ -223,7 +227,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
       DriverManager.registerDriver(driver)
       try {
         val config=c.config.copy(jdbcUrl=prefix+c.config.jdbcUrl)
-        val auth=new Auth(new Database(config,IndexProfileCatalog.legacyOnly(config)),config)
+        val auth=new Auth(Fixtures.database(config,IndexProfileCatalog.legacyOnly(config)),config)
         intercept[SQLException](auth.mutate(c.owner,request))
         assertEquals(receipts(c),0L); assertEquals(fence(c,failed.jobId),7L)
         assertEquals(c.archive.statuses("a",0,100).jobs.head.state,JobState.Failed)
@@ -247,14 +251,14 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     val database=c.db.transaction(connection => Sql.one(connection,"SELECT current_database()")(_.getString(1)).get)
     def quote(value: String): String = "\""+value.replace("\"","\"\"")+"\""
     c.db.transaction { connection =>
-      Sql.exec(connection,s"CREATE ROLE $role LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE")
+      Sql.exec(connection,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE")
       Sql.exec(connection,s"GRANT USAGE ON SCHEMA public TO $role")
       Sql.exec(connection,s"GRANT SELECT,INSERT,UPDATE ON ch_users,ch_profile,ch_sources,ch_jobs,ch_mutations,ch_owner_targets TO $role")
       Sql.exec(connection,s"GRANT SELECT ON ch_index_profiles,ch_embedding_spaces TO $role")
       Sql.exec(connection,s"REVOKE TEMP ON DATABASE ${quote(database)} FROM PUBLIC")
     }
     try {
-      val config=c.config.copy(databaseUser=role); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); val auth=new Auth(db,config)
+      val config=c.config.copy(databaseUser=role); val db=Fixtures.database(config,IndexProfileCatalog.legacyOnly(config)); val auth=new Auth(db,config)
       assert(!db.transaction(connection => Sql.one(connection,"SELECT has_database_privilege(current_user,current_database(),'TEMP')")(_.getBoolean(1)).get))
       assertEquals(auth.mutate(c.owner,request),Result.RetryFailed(result))
       assertEquals(intercept[DomainError](auth.mutate(c.owner,next)).code,"unavailable")
@@ -332,7 +336,7 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     val owner="x"*50000
     val configured=c.config.copy(users=c.config.users:+UserConfig(owner,"long-owner",c.config.users.head.passwordHashFile,true))
     configured.validate()
-    val db=new Database(configured,IndexProfileCatalog.legacyOnly(configured)); db.initialize()
+    val db=Fixtures.database(configured,IndexProfileCatalog.legacyOnly(configured)); db.initialize()
     val auth=new Auth(db,configured)
     val (_,cookie)=auth.login(LoginRequest("long-owner","synthetic")); val identity=auth.browser(cookie)
     assertEquals(identity.user.id.length,owner.length)

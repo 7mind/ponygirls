@@ -1,0 +1,25 @@
+{
+  "observedAt": "2026-11-03T15:25:06.942305+00:00",
+  "collectorSourceSha256": "925f97b2dc244310cda8ad700ed88b766a0c8ea27ac3e3c1f05615e2e01d7124",
+  "sourceHashTiming": "Private collector archived before collection, self-hashed during execution; not included in safe archive.",
+  "allowlist": [
+    "Redacted derivative exit/cleanup scalar status and source hashes",
+    "Recorded PID/starttick presence counts only",
+    "Inner/outer presence and exact owner/mode/device/inode marker metadata without marker contents",
+    "Requested CPU policy/KVM accessibility/public machine constraints, never private argv",
+    "Audit image/channel counts, actual postrun formats/no backing/set equality markers without image paths/contents",
+    "Fullsource hash/linearity/line+method progress and safe unit deactivation fields",
+    "Source/code identities, prior control/review scopes",
+    "Raw artifact byte sizes/digests only; no raw bodies"
+  ],
+  "excluded": [
+    "raw serial/env/config/privateargv",
+    "XML content or invented counts",
+    "credential/PG/user payload/image data",
+    "selected-accelerator inference",
+    "whole-host absence or outer-root deletion claims"
+  ],
+  "noGuestBuildJobServiceListenerCredentialProbeSignalDeletionRunner": true,
+  "sqlExecuted": false,
+  "oldEvidencePreserved": true
+}

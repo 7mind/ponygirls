@@ -1,0 +1,42 @@
+[
+  {
+    "stage": "native-workflow",
+    "command": [
+      "npm",
+      "test"
+    ],
+    "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-workflow-fixture/chronicle/tests",
+    "startedAt": "2026-11-03T10:39:40.065894+00:00",
+    "finishedAt": "2026-11-03T10:39:52.857383+00:00",
+    "commandExitStatus": 1,
+    "status": "failed",
+    "counts": {
+      "tests": 1,
+      "pass": 0,
+      "fail": 1,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    }
+  },
+  {
+    "stage": "jvm-workflow",
+    "command": [
+      "npm",
+      "test"
+    ],
+    "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-workflow-fixture/chronicle/tests",
+    "startedAt": "2026-11-03T10:39:52.857933+00:00",
+    "finishedAt": "2026-11-03T10:40:05.145363+00:00",
+    "commandExitStatus": 1,
+    "status": "failed",
+    "counts": {
+      "tests": 1,
+      "pass": 0,
+      "fail": 1,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    }
+  }
+]

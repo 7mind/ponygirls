@@ -24,12 +24,12 @@ final class RetryFailedJobsTest extends munit.FunSuite {
       Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required")
       assume(false,"PostgreSQL explicitly skipped: set CHRONICLE_TEST_JDBC for bulk retry verification")
     }
-    val config=Fixtures.config(); val admin=new Database(config,IndexProfileCatalog.legacyOnly(config))
+    val config=Fixtures.config(); val admin=Fixtures.database(config,IndexProfileCatalog.legacyOnly(config))
     val schema="retry_failed_test_"+UUID.randomUUID().toString.replace("-","")
     admin.transaction(c => Sql.exec(c,s"CREATE SCHEMA $schema"))
     try {
       val separator=if(config.jdbcUrl.contains("?")) "&" else "?"
-      val db=new Database(config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema),IndexProfileCatalog.legacyOnly(config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema)))
+      val db=Fixtures.database(config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema),IndexProfileCatalog.legacyOnly(config.copy(jdbcUrl=config.jdbcUrl+separator+"currentSchema="+schema)))
       db.transaction { c =>
         val ddl="""CREATE TABLE ch_users(id text PRIMARY KEY,login text UNIQUE NOT NULL,enabled boolean NOT NULL,credential text NOT NULL);
           CREATE TABLE ch_sources(id uuid PRIMARY KEY,owner text REFERENCES ch_users(id),source_key text NOT NULL,revision integer NOT NULL,published uuid,tombstone boolean NOT NULL,UNIQUE(owner,source_key));

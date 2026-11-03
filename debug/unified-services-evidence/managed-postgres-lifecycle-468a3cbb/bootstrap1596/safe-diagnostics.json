@@ -1,0 +1,105 @@
+{
+  "credentialContractBatches": [],
+  "privacy": "Decoded ACL tag/permission/UID metadata only; no raw xattrs, secret bytes/values, SQL, argv, configuration, HOME/runtime PG files or environment snapshots.",
+  "records": [
+    {
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultUnixPeerSuccess": false,
+      "major18": true,
+      "managedRootPrivate": true,
+      "mode": "0o440",
+      "monotonic": 69.416790046,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "uid": 71
+    },
+    {
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultUnixPeerSuccess": false,
+      "major18": true,
+      "managedRootPrivate": true,
+      "mode": "0o440",
+      "monotonic": 69.411748343,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "uid": 71
+    },
+    {
+      "byteCount": 46,
+      "configuredPortPositive": true,
+      "configuredSocketPresent": true,
+      "configuredUnixPeerSuccess": true,
+      "credentialDirectoryEnvPresent": true,
+      "credentialEnvPresent": true,
+      "defaultUnixPeerSuccess": false,
+      "major18": true,
+      "managedRootPrivate": true,
+      "mode": "0o440",
+      "monotonic": 69.635319775,
+      "ownerUid": 0,
+      "ownershipMarkerPresent": true,
+      "referenceMatchesLoadedCredential": true,
+      "regular": true,
+      "stage": "credential-metadata",
+      "uid": 71
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "private_secret",
+      "monotonic": 72.103879326,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "private_secret",
+      "monotonic": 72.105192901,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "provision",
+      "monotonic": 72.106184368,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "provision",
+      "monotonic": 72.109699619,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "private_secret",
+      "monotonic": 72.158544095,
+      "stage": "provider-exception-class"
+    },
+    {
+      "exceptionClass": "ProviderError",
+      "function": "provision",
+      "monotonic": 72.159401467,
+      "stage": "provider-exception-class"
+    }
+  ],
+  "sourceLogBytes": 186974,
+  "sourceLogSHA256": "9e993ebc0340ef265a27196f371bafe259669989490d2f7f467cc7ba226e536a",
+  "stages": {
+    "credential-metadata": 3,
+    "provider-exception-class": 6
+  }
+}

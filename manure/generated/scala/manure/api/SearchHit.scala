@@ -1,0 +1,85 @@
+import io.circe.Decoder.{decodeDouble, decodeList, decodeOption, decodeString}
+import io.circe.Json
+import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
+
+package manure.api {
+  final case class SearchHit(
+    artifact: Artifact,
+    sourceVersion: String,
+    generationId: String,
+    policyId: String,
+    embeddingProfile: Option[String],
+    embeddingSpace: Option[String],
+    evidence: List[SearchEvidence],
+    score: Double
+  ) extends BaboonGeneratedLatest {
+    override def baboonDomainVersion: String = SearchHit.baboonDomainVersion
+    override def baboonDomainIdentifier: String = SearchHit.baboonDomainIdentifier
+    override def baboonTypeIdentifier: String = SearchHit.baboonTypeIdentifier
+    override def baboonSameInVersions: List[String] = SearchHit.baboonSameInVersions
+    override def baboonForwardReadable: Map[String, String] = SearchHit.baboonForwardReadable
+    override def baboonMinReaderVersions: Map[String, String] = SearchHit.baboonMinReaderVersions
+  }
+  
+  object SearchHit {
+    def baboonDomainVersion: String = "1.0.0"
+    def baboonDomainIdentifier: String = "manure.api"
+    def baboonTypeIdentifier: String = "manure.api/:#SearchHit"
+    private lazy val _baboonSameInVersions: List[String] = List("1.0.0")
+    def baboonSameInVersions: List[String] = _baboonSameInVersions
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("1.0.0" -> "identical")
+    def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
+    def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+    def codecJson: BaboonJsonCodec[SearchHit] = SearchHit_JsonCodec.instance
+  }
+  
+  object SearchHit_JsonCodec extends BaboonJsonCodec.BaseGenerated[SearchHit, BaboonJsonCodec[SearchHit]] {
+    def encode(ctx: BaboonCodecContext, value: SearchHit): Json = {
+      if (this ne LazyInstance.value) {
+        return LazyInstance.value.encode(ctx, value)
+      }
+      
+      Json.obj(
+        "artifact" -> Artifact_JsonCodec.instance.encode(ctx, value.artifact),
+        "sourceVersion" -> Json.fromString(value.sourceVersion),
+        "generationId" -> Json.fromString(value.generationId),
+        "policyId" -> Json.fromString(value.policyId),
+        "embeddingProfile" -> value.embeddingProfile.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "embeddingSpace" -> value.embeddingSpace.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "evidence" -> Json.fromValues(value.evidence.map(e => SearchEvidence_JsonCodec.instance.encode(ctx, e))),
+        "score" -> Json.fromDouble(value.score).get
+      )
+    }
+    
+    def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, SearchHit] = {
+      if (this ne LazyInstance.value) {
+        return LazyInstance.value.decode(ctx, wire)
+      }
+      
+      wire.asObject match {
+        case Some(jsonObject) => for {
+            artifact <- getField(jsonObject, "artifact").flatMap(v => Artifact_JsonCodec.circeDecoder(v.hcursor))
+            sourceVersion <- getField(jsonObject, "sourceVersion").flatMap(v => decodeString(v.hcursor))
+            generationId <- getField(jsonObject, "generationId").flatMap(v => decodeString(v.hcursor))
+            policyId <- getField(jsonObject, "policyId").flatMap(v => decodeString(v.hcursor))
+            embeddingProfile <- getField(jsonObject, "embeddingProfile").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            embeddingSpace <- getField(jsonObject, "embeddingSpace").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            evidence <- getField(jsonObject, "evidence").flatMap(v => decodeList(SearchEvidence_JsonCodec.circeDecoder)(v.hcursor))
+            score <- getField(jsonObject, "score").flatMap(v => decodeDouble(v.hcursor))
+          } yield SearchHit(artifact,sourceVersion,generationId,policyId,embeddingProfile,embeddingSpace,evidence,score)
+        case _ => Left(new IllegalArgumentException("Cannot decode $wire to SearchHit: object expected"))
+      }
+    }
+  
+    def baboonDomainVersion: String = SearchHit.baboonDomainVersion
+    
+    def baboonDomainIdentifier: String = SearchHit.baboonDomainIdentifier
+    
+    def baboonTypeIdentifier: String = SearchHit.baboonTypeIdentifier
+  
+    private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[SearchHit]] = Lazy(SearchHit_JsonCodec)
+    override protected def LazyInstance: Lazy[BaboonJsonCodec[SearchHit]] = cachedLazyInstance
+    override def instance: BaboonJsonCodec[SearchHit] = LazyInstance.value
+  }
+}

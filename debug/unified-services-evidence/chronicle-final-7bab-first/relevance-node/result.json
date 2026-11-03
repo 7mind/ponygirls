@@ -1,0 +1,21 @@
+{
+  "stage": "relevance-node",
+  "command": [
+    "bash",
+    "-c",
+    "node --test chronicle/eval/relevance/tests/*.test.mjs"
+  ],
+  "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation",
+  "startedAt": "2026-11-03T10:19:54.187001+00:00",
+  "finishedAt": "2026-11-03T10:19:54.513800+00:00",
+  "commandExitStatus": 0,
+  "status": "passed",
+  "counts": {
+    "tests": 29,
+    "pass": 29,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  }
+}

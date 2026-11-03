@@ -1,0 +1,90 @@
+{
+  "observedAt": "2026-11-03T15:46:56.960073+00:00",
+  "scope": "read-only external owned repro observations paired with local Nix policy correction; not live host systemd or full finalizer proof",
+  "actualWait": {
+    "returncode": 143,
+    "normalCode": 143,
+    "signal": null,
+    "ownedIdentity": {
+      "pid": 1009627,
+      "startTicks": 118133547,
+      "parentPID": 1009197,
+      "executable": "/nix/store/mvw89ddwd6pzx00wd6kmsxh5p8p10clq-chronicle-native-development-artifact-0.1.0/libexec/chronicle-server"
+    },
+    "pidfdSignal": "SIGTERM",
+    "waitSeconds": 0.2641185028478503,
+    "noForcedKill": true,
+    "freshProductionMarkerAndOwnedListenerVerified": true,
+    "applicationHTTPRequestsMade": 0,
+    "noForeignListenerProbes": true
+  },
+  "pinnedSystemdClassification": {
+    "systemdVersion": "262",
+    "unitPolicySHA256": "950a28c3870e18f83a214fec6a20dc0a2785a0676bf4121d372d1cdcefd04a37",
+    "exitCleanMode": "EXIT_CLEAN_DAEMON",
+    "emptySuccessStatusSet": true,
+    "actualCLDCode": 1,
+    "actualStatus": 143,
+    "isCleanExit": false,
+    "boundaryControls": {
+      "exited0": true,
+      "exited1": false,
+      "exited143": false,
+      "killedTERM": true,
+      "killedKILL": false
+    },
+    "noHostManagerOrUnitActivation": true
+  },
+  "desiredOriginalModuleContract": "FAILED",
+  "nativeReturncode": 143,
+  "resourceFinalizationProvedByExitStatus": false,
+  "controlledModelObservation": {
+    "requests": 0,
+    "counts": {
+      "annotation": 0,
+      "embedding": 0,
+      "rejected": 0
+    }
+  },
+  "binding": {
+    "sourceRevision": "65879bdd6174f747ba17f2b7678c3c7c9f7536c5",
+    "elfSHA256": "04dd2eaeb172c3f426b209b96901abad2ddf353644493c19c94bf5e69b3cdde1",
+    "compiledInputs": 231,
+    "compiledInputManifestSHA256": "c5b7a3b6334332160d86dd86c32ffbffab6d9ae283e213e12e56c78590bf58eb",
+    "creationIdentityCapturedBeforeLeafLaunch": true
+  },
+  "originalTerminalState": "REPRODUCED_MODULE_STOP_CONTRACT_FAILURE",
+  "originalCleanup": {
+    "at": "2026-11-03T15:41:38.746132+00:00",
+    "runtimeExit": 1,
+    "ownedAbsence": "verified-by-subreaper-and-pidfds",
+    "ownedLive": [],
+    "kernelDirectChildren": []
+  },
+  "originalArtifacts": [
+    {
+      "path": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-port/debug/chronicle-native-shutdown-repro-run-final/native-observation.json",
+      "sha256": "ada5f127af55f0d5b00a15bf92469aeb070e24afc79265f11f7ab1481c9b909d",
+      "bytes": 1571,
+      "retention": "original external owned evidence read-only, not copied or modified"
+    },
+    {
+      "path": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-port/debug/chronicle-native-shutdown-repro-run-final/terminal.json",
+      "sha256": "69e5b86ebf535cd34327e0bdd63eb52ffd0b226dafc0e219e27090f606a70d61",
+      "bytes": 573,
+      "retention": "original external owned evidence read-only, not copied or modified"
+    },
+    {
+      "path": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-port/debug/chronicle-native-shutdown-repro-run-final/owned-cleanup.json",
+      "sha256": "fb8d36bfb4666d61d7b22af42a3f9cc05c0982c29ec1b8d2df42d5551887775f",
+      "bytes": 5726,
+      "retention": "original external owned evidence read-only, not copied or modified"
+    },
+    {
+      "path": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-haystack-port/debug/chronicle-native-shutdown-repro-run-final/prepare-binding.json",
+      "sha256": "d7bb4780ab13896c4b3ab0faeff5b4816cb7ee6b18b36949da0fe89b34f16c2c",
+      "bytes": 995,
+      "retention": "original external owned evidence read-only, not copied or modified"
+    }
+  ]
+}

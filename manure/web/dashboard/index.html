@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>manure — artifact workspace</title>
 <link rel="stylesheet" href="./styles.css">
-<script src="./app.js" defer></script>
+<script type="module" src="./app.js"></script>
 </head>
 <body>
 <section id="session-section" class="auth-screen" role="main" aria-label="Dashboard session">
@@ -24,7 +24,7 @@
 <p class="eyebrow">MANURE / ARTIFACT WORKSPACE</p>
 <h1 id="login-heading">Log in</h1>
 <p>A quiet place for your files, directories, and published artifacts.</p>
-<form id="login-form" method="post" action="/api/v1/login">
+<form id="login-form" method="post" action="/api/current/login">
 <label for="token-input">API token</label>
 <input type="password" id="token-input" name="token"
 required spellcheck="false" autocapitalize="off" autocomplete="current-password"

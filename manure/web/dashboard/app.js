@@ -1,10 +1,13 @@
 /* Manure dashboard: same-origin management only; uploaded bytes never render here.
  * Credentials and one-time passwords stay transient. No HTML injection or browser storage.
  */
+import * as current from "./current-protocol.js";
+import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./current/manure/api/index.js";
+
 "use strict";
 
 (function (document, window, fetch) {
-  var API = "/api/v1";
+  var API = "/api/current";
   var ID_RE = /^[0-9a-f]{32}$/;
   var PAGE_LIMIT = 25;
   var SORTS = ["name", "kind", "visibility", "state", "total_bytes", "file_count", "created_at", "expires_at", "created_by_user"];
@@ -37,29 +40,18 @@
   function errorLabel(error) {
     return error && /^[a-z0-9-]+$/.test(error.message) ? error.message : "network-error";
   }
-  function errorCodeOf(res, body) {
-    var code = body && body.error && body.error.code;
-    return typeof code === "string" && /^[a-z0-9-]+$/.test(code) ? code : "http-" + res.status;
-  }
-  function apiFetch(path, options) {
+  function apiFetch(descriptor) {
     var epoch = sessionEpoch;
-    var opts = Object.assign({}, options, { credentials: "same-origin" });
-    opts.headers = Object.assign({ Accept: "application/json" }, options.headers);
-    return fetch(API + path, opts).then(function (res) {
-      if (res.status === 401 && path !== "/login") {
+    return current.request(fetch, descriptor).catch(function (error) {
+      if (error.status === 401 && !(descriptor[0].constructor.name === "Command_Login")) {
         if (epoch === sessionEpoch) { showLoggedOut(); }
         throw new Error("unauthorized");
       }
-      return res;
-    });
-  }
-  function jsonResponse(res) {
-    return res.json().catch(function () { throw new Error("bad-response"); }).then(function (body) {
-      if (!res.ok) { throw new Error(errorCodeOf(res, body)); }
-      return body;
+      throw error;
     });
   }
   function bytes(value) {
+    if (typeof value === "bigint") { value = Number(value); }
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) { return "—"; }
     var units = ["B", "KiB", "MiB", "GiB", "TiB"];
     var index = 0;
@@ -84,6 +76,21 @@
       if (!subdomain && !pathMode) { return null; }
       return url.href;
     } catch (_error) { return null; }
+  }
+
+  function checkHostingMode() {
+    var notice = $("path-mode-warning");
+    // The static dashboard is also used in subdomain mode. Read the existing
+    // public typed capability, never infer origin isolation from artifact URLs
+    // or require a login before disclosing the low-security hosting warning.
+    current.request(fetch, [new Command_GetCapabilities(), Result_CapabilityInfo,
+      function (result) { return result.capabilities.contentMode; }]).then(function (mode) {
+      notice.hidden = mode !== ContentMode.Path;
+    }).catch(function () {
+      notice.hidden = false;
+      notice.title = "Content-origin isolation could not be determined. Verify hosting configuration before opening untrusted content.";
+      notice.setAttribute("aria-label", notice.title);
+    });
   }
 
   function readRoute() {
@@ -201,7 +208,7 @@
     $("session-retry-button").disabled = true;
     $("session-retry-button").hidden = true;
     setText("session-status", "Checking dashboard session…");
-    return apiFetch("/whoami", { method: "GET" }).then(jsonResponse).then(function (body) {
+    return apiFetch(current.whoami()).then(function (body) {
       if (epoch !== sessionEpoch) { return false; }
       if (typeof body.user_id !== "string" || !body.user_id) { throw new Error("bad-response"); }
       authenticated = true;
@@ -231,9 +238,9 @@
     $("login-error").hidden = true;
     var button = $("login-form").querySelector("button[type=submit]");
     button.disabled = true;
-    var request = apiFetch("/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: token }) });
+    var request = apiFetch(current.login(token));
     token = "";
-    request.then(jsonResponse).then(function () {
+    request.then(function () {
       if (epoch === sessionEpoch) { return checkSession(); }
     }).catch(function (error) {
       if (epoch !== sessionEpoch) { return; }
@@ -246,24 +253,13 @@
     hideRotateOutput();
     var epoch = sessionEpoch;
     $("logout-button").disabled = true;
-    apiFetch("/logout", { method: "POST" }).then(jsonResponse).then(function () {
+    apiFetch(current.logout()).then(function () {
       if (epoch === sessionEpoch) { showLoggedOut(); }
     }).catch(function (error) {
       if (epoch === sessionEpoch) { failVisible("Sign out could not be confirmed (" + errorLabel(error) + "). Retry to confirm sign out."); }
     }).finally(function () { $("logout-button").disabled = false; });
   }
 
-  function listQuery(cursor, value) {
-    var params = new URLSearchParams();
-    params.set("limit", String(PAGE_LIMIT));
-    params.set("sort_by", value.sort); params.set("direction", value.direction);
-    if (cursor !== null) { params.set("cursor", cursor); }
-    if (value.q) { params.set("q", value.q); }
-    if (value.visibility) { params.set("visibility", value.visibility); }
-    if (value.itemState) { params.set("state", value.itemState); }
-    if (value.includeExpired) { params.set("include_expired", "true"); }
-    return "/artifacts?" + params.toString();
-  }
   function rowAction(label, action, item, handler) {
     var button = element("button", label, action === "delete" ? "danger" : null);
     button.type = "button"; button.dataset.action = action; button.dataset.artifactId = item.artifact_id;
@@ -343,7 +339,7 @@
     if (reset) { summaries = []; nextCursor = null; loadedKey = JSON.stringify(value); $("results-panel").scrollTop = 0; }
     setText("list-status", reset ? "Loading artifacts…" : "Loading more artifacts…");
     renderList();
-    apiFetch(listQuery(cursor, value), { method: "GET" }).then(jsonResponse).then(function (body) {
+    apiFetch(current.catalogue(cursor, value, PAGE_LIMIT)).then(function (body) {
       if (epoch !== sessionEpoch || generation !== listGeneration) { return; }
       if (!Array.isArray(body.artifacts) || (body.next_cursor !== null && body.next_cursor !== undefined && typeof body.next_cursor !== "string")) { throw new Error("bad-response"); }
       var next = body.next_cursor || null;
@@ -428,7 +424,7 @@
     setText("files-status", "Waiting for artifact metadata…");
     setText("detail-status", "Loading artifact details…");
     setText("list-status", "Loading artifact details…");
-    apiFetch("/artifacts/" + id, { method: "GET" }).then(jsonResponse).then(function (info) {
+    apiFetch(current.artifact(id)).then(function (info) {
       if (epoch !== sessionEpoch || generation !== detailGeneration) { return; }
       renderDetail(info, id);
       setText("access-status", accessMutations.has(id) ? "An access or password update is still in progress. Wait for its status to be refreshed." : "");
@@ -455,7 +451,7 @@
     $("file-list").textContent = "";
     $("files-retry-button").hidden = true;
     setText("files-status", "Loading file manifest…");
-    apiFetch("/artifacts/" + id + "/files", { method: "GET" }).then(jsonResponse).then(function (body) {
+    apiFetch(current.manifest(id)).then(function (body) {
       if (epoch !== sessionEpoch || generation !== detailGeneration || id !== currentDetailId) { return; }
       if (!Array.isArray(body.files)) { throw new Error("bad-response"); }
       var fragment = document.createDocumentFragment();
@@ -486,14 +482,14 @@
     if (!ID_RE.test(id) || accessMutations.has(id)) { return; }
     var epoch = sessionEpoch;
     var generation = ++openGeneration;
-    var infoRequest = knownInfo === null ? apiFetch("/artifacts/" + id, { method: "GET" }).then(jsonResponse) : Promise.resolve(knownInfo);
+    var infoRequest = knownInfo === null ? apiFetch(current.artifact(id)) : Promise.resolve(knownInfo);
     setText("detail-status", "Opening content…");
     infoRequest.then(function (info) {
       if (epoch !== sessionEpoch || generation !== openGeneration) { return; }
       var url = contentUrl(info);
       if (url === null) { throw new Error("content-unavailable"); }
       if (info.visibility !== "internal") { window.location.assign(url); return; }
-      return apiFetch("/artifacts/" + id + "/grants", { method: "POST" }).then(jsonResponse).then(function (body) {
+      return apiFetch(current.grant(id)).then(function (body) {
         if (epoch === sessionEpoch && generation === openGeneration) { postGrantHandoff(url, body.grant); }
       });
     }).catch(function (error) {
@@ -519,7 +515,7 @@
     document.querySelectorAll('button[data-action="delete"][data-artifact-id="' + id + '"]').forEach(function (button) { button.disabled = true; });
     if (currentDetailId === id) { updateDetailActions(); setText("detail-status", "Deleting artifact…"); }
     setText("list-status", "Deleting artifact…");
-    apiFetch("/artifacts/" + id, { method: "DELETE" }).then(jsonResponse).then(function () {
+    apiFetch(current.remove(id)).then(function () {
       if (epoch !== sessionEpoch) { return; }
       if (currentDetailId === id) {
         detailGeneration++; openGeneration++; hideRotateOutput();
@@ -590,7 +586,7 @@
     if (epoch !== mutation.epoch) { message = "A previous access request finished. If an external password was not shown, rotate to issue another."; }
     $("access-refresh-button").hidden = true;
     setText("access-status", message + " Refreshing current metadata…");
-    return apiFetch("/artifacts/" + id, { method: "GET" }).then(jsonResponse).then(function (info) {
+    return apiFetch(current.artifact(id)).then(function (info) {
       if (epoch !== sessionEpoch || generation !== detailGeneration || readRoute().id !== id) { return; }
       renderDetail(info, id); loadFiles();
       setText("access-status", message); setText("detail-status", message);
@@ -616,7 +612,7 @@
         ["internal", "external", "public"].indexOf(visibility) === -1 || visibility === info.visibility) { return; }
     if (visibility === "public" && !window.confirm("Make artifact " + id + " public? No Manure authentication will be required for anyone who can reach its content URL. Existing content grants will be revoked.")) { return; }
     var mutation = beginAccessMutation(id, "Saving access mode… If you leave before a generated password appears, rotate it to issue another.");
-    apiFetch("/artifacts/" + id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ visibility: visibility }) }).then(jsonResponse).then(function (body) {
+    apiFetch(current.access(id, visibility)).then(function (body) {
       var password = takeExternalPassword(body, visibility === "external");
       if (body.artifact_id !== id || body.visibility !== visibility || body.state !== "ready") { throw new Error("bad-response"); }
       var sameView = isMutationView(id, mutation);
@@ -640,7 +636,7 @@
         accessMutations.has(currentDetailId) || deleting.has(currentDetailId)) { return; }
     var id = currentDetailId;
     var mutation = beginAccessMutation(id, "Rotating external password…");
-    apiFetch("/artifacts/" + id + "/external-password:rotate", { method: "POST" }).then(jsonResponse).then(function (body) {
+    apiFetch(current.rotate(id)).then(function (body) {
       var password = takeExternalPassword(body, true);
       var showPassword = canReveal(id, mutation);
       if (showPassword) { revealPassword(password); }
@@ -673,7 +669,7 @@
   $("session-retry-button").addEventListener("click", checkSession);
   $("list-form").addEventListener("submit", function (event) {
     event.preventDefault();
-    navigateList(Object.assign({}, state, { q: $("filter-text").value.trim(), visibility: $("filter-visibility").value,
+    navigateList(Object.assign({}, state, { q: $("filter-text").value, visibility: $("filter-visibility").value,
       itemState: $("filter-state").value, includeExpired: $("include-expired").checked }));
   });
   ["filter-visibility", "filter-state", "include-expired"].forEach(function (id) {
@@ -709,5 +705,6 @@
   $("files-retry-button").addEventListener("click", loadFiles);
   $("detail-back-button").addEventListener("click", function () { invalidateNavigation(); window.location.hash = routeHash(null); });
   window.addEventListener("hashchange", handleRoute);
+  checkHostingMode();
   checkSession();
 })(document, window, window.fetch.bind(window));

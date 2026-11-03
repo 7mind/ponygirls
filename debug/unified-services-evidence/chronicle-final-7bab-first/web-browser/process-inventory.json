@@ -1,0 +1,162 @@
+[
+  {
+    "pid": 3085554,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/ui-controls.mjs",
+    "startedAt": "2026-11-03T10:19:24.690Z",
+    "finishedAt": "2026-11-03T10:19:34.904Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3044015,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/run.mjs",
+    "startedAt": "2026-11-03T10:11:17.856Z",
+    "finishedAt": "2026-11-03T10:12:17.602Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3074146,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/rebuild-occlusion.mjs",
+    "startedAt": "2026-11-03T10:18:22.185Z",
+    "finishedAt": "2026-11-03T10:18:26.720Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3051075,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/ux.mjs",
+    "startedAt": "2026-11-03T10:12:17.700Z",
+    "finishedAt": "2026-11-03T10:13:36.355Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3084993,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/transcript.mjs",
+    "startedAt": "2026-11-03T10:19:19.036Z",
+    "finishedAt": "2026-11-03T10:19:24.495Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3065895,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/history-find.mjs",
+    "startedAt": "2026-11-03T10:16:25.603Z",
+    "finishedAt": "2026-11-03T10:16:56.999Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3065422,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/usage-presentation.mjs",
+    "startedAt": "2026-11-03T10:16:22.625Z",
+    "finishedAt": "2026-11-03T10:16:25.410Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3055439,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/refresh-regression.mjs",
+    "startedAt": "2026-11-03T10:13:36.544Z",
+    "finishedAt": "2026-11-03T10:14:01.378Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3080496,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/search-serp.mjs",
+    "startedAt": "2026-11-03T10:18:26.930Z",
+    "finishedAt": "2026-11-03T10:19:18.830Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3042947,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/persistent-login.mjs",
+    "startedAt": "2026-11-03T10:11:03.808Z",
+    "finishedAt": "2026-11-03T10:11:17.765Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3061691,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/filter-table-ux.mjs",
+    "startedAt": "2026-11-03T10:15:16.471Z",
+    "finishedAt": "2026-11-03T10:15:26.791Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3065893,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/source-filters.mjs",
+    "startedAt": "2026-11-03T10:16:57.091Z",
+    "finishedAt": "2026-11-03T10:16:59.740Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3060877,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/tool-catalog.mjs",
+    "startedAt": "2026-11-03T10:15:09.494Z",
+    "finishedAt": "2026-11-03T10:15:16.266Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3063302,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/popup-regression.mjs",
+    "startedAt": "2026-11-03T10:15:37.389Z",
+    "finishedAt": "2026-11-03T10:16:19.415Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3057994,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/goal50.mjs",
+    "startedAt": "2026-11-03T10:14:20.033Z",
+    "finishedAt": "2026-11-03T10:15:09.296Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3063300,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/prior-error-regression.mjs",
+    "startedAt": "2026-11-03T10:16:19.498Z",
+    "finishedAt": "2026-11-03T10:16:22.423Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3056636,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/theme-retry.mjs",
+    "startedAt": "2026-11-03T10:14:01.567Z",
+    "finishedAt": "2026-11-03T10:14:19.809Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3062518,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/live-archive.mjs",
+    "startedAt": "2026-11-03T10:15:26.996Z",
+    "finishedAt": "2026-11-03T10:15:37.200Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3074147,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/rebuild.mjs",
+    "startedAt": "2026-11-03T10:16:59.934Z",
+    "finishedAt": "2026-11-03T10:18:22.093Z",
+    "exitStatus": 0
+  },
+  {
+    "pid": 3086557,
+    "stage": "web-browser",
+    "program": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/web/tests-browser/tab-layout.mjs",
+    "startedAt": "2026-11-03T10:19:35.111Z",
+    "finishedAt": "2026-11-03T10:19:51.033Z",
+    "exitStatus": 0
+  }
+]

@@ -253,6 +253,76 @@ final class FilesystemBehavior(bridge: PosixNative, childCommand: Vector[String]
     }
   }
 
+  test("raw first-adoption inventory binds directories and hashes without UTF8 name loss") {
+    fixture { temp =>
+      Files.createDirectory(temp.resolve("資料"))
+      Files.writeString(temp.resolve("資料/file"),"payload")
+      val fd = bridge.openRoot(temp.toString.getBytes(UTF_8))
+      try
+        val file = bridge.createFile(fd, Array('x'.toByte,0xff.toByte))
+        try bridge.write(file,0L,bytes("raw")) finally bridge.close(file)
+      finally bridge.close(fd)
+      Using.resource(ConfinedDirectory.open(temp,bridge)) { directory =>
+        val entries=directory.inventory(4,3,10)
+        assertEquals(entries.size,4)
+        assertEquals(entries.head,RawInventoryEntry("",true,0L,""))
+        assertEquals(entries.find(_.pathHex=="78ff").map(_.size),Some(3L))
+        assertEquals(entries.find(_.pathHex=="78ff").map(_.sha256),Some(java.security.MessageDigest.getInstance("SHA-256").digest(bytes("raw")).map(b => f"${b & 255}%02x").mkString))
+        intercept[IOException](directory.inventory(3,3,10))
+        intercept[IOException](directory.inventory(4,3,9))
+        intercept[IOException](directory.inventory(4,2,10))
+        Files.createSymbolicLink(temp.resolve("link"),temp.resolve("資料/file"))
+        intercept[IOException](directory.inventory(5,3,10))
+      }
+    }
+  }
+
+  test("metadata and worker lease retains physical claim without an open file") {
+    fixture { temp =>
+      val root = Files.createDirectory(temp.resolve("root"))
+      val directory = ConfinedDirectory.open(root, bridge)
+      val lease = directory.lease()
+      try
+        lease.validate()
+        assertEquals(lease.run(17), 17)
+        intercept[OpenRootLeases](directory.close())
+        intercept[RootAlreadyClaimed](ConfinedDirectory.open(root, bridge))
+        Files.move(root, temp.resolve("renamed"))
+        intercept[RootAlreadyClaimed](ConfinedDirectory.open(temp.resolve("renamed"), bridge))
+        var touched = false
+        intercept[IOException](lease.run { touched = true })
+        assert(!touched, "root validation must precede DB effects")
+      finally
+        lease.close()
+        lease.close()
+        directory.close()
+      intercept[java.nio.channels.ClosedChannelException](lease.run(1))
+      Using.resource(ConfinedDirectory.open(temp.resolve("renamed"), bridge))(_.forceRootDirectory())
+    }
+  }
+
+  test("strict bounded publication topology and raw orphan cleanup") {
+    fixture { temp =>
+      Files.createDirectories(temp.resolve("tree/資料"))
+      Files.writeString(temp.resolve("tree/資料/file"), "payload")
+      Using.resource(ConfinedDirectory.open(temp, bridge)) { directory =>
+        val entries = directory.tree(name("tree"), 2, 2)
+        assertEquals(entries.map(e => (e.name.value,e.directory)).toSet, Set(("資料",true),("資料/file",false)))
+        intercept[IOException](directory.tree(name("tree"), 1, 2))
+        Files.createSymbolicLink(temp.resolve("tree/link"), temp.resolve("tree/資料/file"))
+        intercept[IOException](directory.tree(name("tree"), 3, 3))
+        val fd = bridge.openRoot(temp.resolve("tree").toString.getBytes(UTF_8))
+        try
+          val file = bridge.createFile(fd, Array('x'.toByte, 0xff.toByte))
+          bridge.close(file)
+        finally bridge.close(fd)
+        assertEquals(directory.cleanupChildren(name("tree"), Set("資料"), 10, 10), 2)
+        assertEquals(Files.readString(temp.resolve("tree/資料/file")), "payload")
+        assertEquals(directory.cleanupChildren(name("tree"), Set.empty, 10, 10), 1)
+      }
+    }
+  }
+
   test("close is idempotent; closed directory and file reject IO") {
     fixture { temp =>
       val directory = ConfinedDirectory.open(temp, bridge)

@@ -6,8 +6,8 @@
   "scripts": {
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
-    "test": "node --test tests/*.test.ts && node tests-browser/browse-markup.mjs",
-    "test:browser": "node tests-browser/run.mjs && node tests-browser/restart.mjs && node tests-browser/quick-preview.mjs"
+    "test": "node --import ../scripts/register-generated.mjs --test tests/*.test.ts tests/*.test.mjs && node tests-browser/browse-markup.mjs",
+    "test:browser": "node tests-browser/prerequisites.mjs && node --import ../scripts/register-generated.mjs tests-browser/run.mjs && node --import ../scripts/register-generated.mjs tests-browser/restart.mjs && node --import ../scripts/register-generated.mjs tests-browser/quick-preview.mjs"
   },
   "dependencies": {
     "highlight.js": "11.11.1",

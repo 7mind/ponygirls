@@ -1,0 +1,54 @@
+{
+  "status": "failed",
+  "baseSource": "7bab3c1a5d20e518b8f500a32b46628ee98fbfc6",
+  "fixtureSha256": "af873ed40c391967e44cea0a6e2a03d5eb376b162f7b484b84f831972b4ff6e2",
+  "elfSha256": "04dd2eaeb172c3f426b209b96901abad2ddf353644493c19c94bf5e69b3cdde1",
+  "jarSha256": "bd611b6631065e4c2538c9429e6b29248415cb29b01fbb7d934457f0449c4fd4",
+  "passedStages": 0,
+  "expectedStages": 2,
+  "reusedPassedStages": 14,
+  "inputsUnchangedAfter": true,
+  "finishedAt": "2026-11-03T11:09:56.180771+00:00",
+  "results": [
+    {
+      "stage": "native-workflow",
+      "command": [
+        "npm",
+        "test"
+      ],
+      "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-workflow-fixture/chronicle/tests",
+      "startedAt": "2026-11-03T11:06:47.410127+00:00",
+      "finishedAt": "2026-11-03T11:08:22.062380+00:00",
+      "commandExitStatus": 1,
+      "status": "failed",
+      "counts": {
+        "tests": 1,
+        "pass": 0,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "stage": "jvm-workflow",
+      "command": [
+        "npm",
+        "test"
+      ],
+      "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-workflow-fixture/chronicle/tests",
+      "startedAt": "2026-11-03T11:08:22.062942+00:00",
+      "finishedAt": "2026-11-03T11:09:55.908320+00:00",
+      "commandExitStatus": 1,
+      "status": "failed",
+      "counts": {
+        "tests": 1,
+        "pass": 0,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    }
+  ]
+}

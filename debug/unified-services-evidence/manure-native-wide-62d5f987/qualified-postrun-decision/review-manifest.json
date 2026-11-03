@@ -1,0 +1,25 @@
+{
+  "observedAt": "2026-11-03T13:35:09.436423+00:00",
+  "scope": "READONLY proof produced; proposed cleanup NEVERexecuted; parent approval ONLY",
+  "proof": "/nix/store/ph769kjc6w8k139nwlggnazj74dlk6c1-readonly-observation.json",
+  "proofSha256": "7dd09b1571b2becf3032a351a79c74c57f6aaf00f947b2af8d80254609cd02f1",
+  "observer": "/nix/store/9hzjvdn8zi4wivhgfr8d9vy7kdx21nkj-observe.py",
+  "observerSha256": "d5e8ecc0565376703b79424c2fb0df3d81a96fc8bbc7768d801560d2a79b3fbb",
+  "proposedCleanup": "/nix/store/2lvksp9m1vmnqg0kg0sqc0cd5z59hjfg-parent-approved-cleanup.py",
+  "proposedCleanupSha256": "1696a292978921c87722591408576dd0efe2e83b9f8ae3750965bed5f148c73b",
+  "requiredExplicitParentArgs": [
+    "--parent-approve-one-exact-empty-root",
+    "--ack-current-clock-not-historical-or-access-proof"
+  ],
+  "actualBody12PassProvider0": true,
+  "originalRunner1CleanupFalsePreserved": true,
+  "readonlyReadableSameUidCount": 321,
+  "dynamicClockQualifiedProtectedCount": 5,
+  "readableRootMatches": 0,
+  "inspectionErrors": 0,
+  "pidfiles": 0,
+  "notUnconditionalHistoricalClockOrLaterAccessProof": true,
+  "futureRuns": "before-root immutablePID identities +owned child/subreaper supervision; no wholeUIDblindscan",
+  "coordination": "813 outside agent visibility/grant, requested parent relay; no foreignWT access/writes",
+  "mutationsPerformed": "ONLY own ignoreddebug/Nixstore evidence scripts; no root marker/data/process changes"
+}

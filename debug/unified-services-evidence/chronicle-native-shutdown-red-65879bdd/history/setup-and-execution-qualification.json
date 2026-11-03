@@ -1,0 +1,35 @@
+{
+  "initialPlainNodeTypeScriptSyntaxCheck": {
+    "result": "setup-only failure parsing import type without required existing TSX loader",
+    "source": "frozen preparation-receipt.json nativeNodeCheckOnTSNotValidWithoutTSX field",
+    "workerToolObservationAt": "2026-11-03T15:27:29Z",
+    "reportedExitStatus": 1,
+    "originalRawLogFileRetained": false,
+    "rawLogNotReconstructedOrInvented": true,
+    "nativePGModelOrServerStarted": false
+  },
+  "subsequentExistingTSXImportOnly": {
+    "exitStatus": 0,
+    "nativePGModelOrServerStarted": false,
+    "logsAreLiteralCopies": "preparation/helper-import-only.*"
+  },
+  "prepareOnlyPreflight": {
+    "exitStatus": 0,
+    "launchPerformed": false,
+    "notARuntimeResult": true
+  },
+  "purePinnedClassifierBoundaryCheck": {
+    "exitStatus": 0,
+    "notAnObservedChronicleExitAtPreparationTime": true
+  },
+  "actualParentRuntime": {
+    "parentReportedJobId": "bgt-6cbd82507fcf2d0f",
+    "actualNormalCode": 143,
+    "signal": null,
+    "nativeRuntimeProbeResult": 1,
+    "moduleContractResult": "FAILED",
+    "ownedClosureSeparatelyVerified": true,
+    "notRelabelledGreen": true
+  },
+  "sourceFieldPreserved": "initial plain syntax check rejected import type; existing required TSX loader import-only passed; not an app failure"
+}

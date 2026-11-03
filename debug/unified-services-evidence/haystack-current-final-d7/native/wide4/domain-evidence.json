@@ -1,0 +1,17 @@
+{
+  "wideKeyUTF16Units": 4096,
+  "wideKeyGzipBytes": 3132,
+  "wideKeySHA256": "0fd69678f52eda0095219288957648b83c2a503844a4c4bf06c0f9f94dacfbee",
+  "pointerUTF16Units": 4106,
+  "pointerSHA256": "b1cad6b669eca59c812d36148c0ec5886df214ce3af37352b2688c76795e6e87",
+  "textUTF16Units": 37,
+  "textCodePoints": 35,
+  "canonicalDocumentSHA256": "a0183ddd30e7e05a6243d0ddbd598baaf9ae750729b4eb145c2518bc21ac30df",
+  "projection": {
+    "approvedFieldPrefixes": [
+      "/public"
+    ],
+    "maxChunkBytes": 8192,
+    "embedding": null
+  }
+}

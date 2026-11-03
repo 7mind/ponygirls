@@ -1,0 +1,8 @@
+[00000] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit
+[00000] LOG:  listening on IPv4 address "127.0.0.1", port 59873
+[00000] LOG:  listening on Unix socket "/tmp/hptr.uw5he4fy/.s.PGSQL.59873"
+[00000] LOG:  database system was shut down at 2026-11-03 12:12:26 UTC
+[00000] LOG:  database system is ready to accept connections
+[54000] ERROR:  index row size 5744 exceeds btree version 4 maximum 2704 for index "pony_retrieval_head_chunks_namespace_source_id_chunk_id_key"
+[00000] LOG:  received immediate shutdown request
+[00000] LOG:  database system is shut down

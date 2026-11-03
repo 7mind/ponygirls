@@ -1,0 +1,59 @@
+{
+  "scope": "NixOS/HM serve-only Manure status policy; pure module and controlled fixture checks, NOT fresh full VM acceptance",
+  "observedAt": "2026-11-03T14:56:03.933512+00:00",
+  "baselineCommit": "decdf32dec89dd7b2c383e076138bbc781569509",
+  "realModuleFailFirstExitStatus": 1,
+  "realModuleFailFirstSHA256": "6d5f19a126ce0de53fea83ae1f0c4fd04f2dce947608a1e95d9f7d5f07869edf",
+  "realModuleFailFirstBytes": 1034,
+  "newFocusedModuleAssertions": 9,
+  "allModuleAssertionStatements": 30,
+  "nixBuildFocusedModuleAndControlledChecksExitStatus": 0,
+  "foregroundExecutedControls": {
+    "nixosHarness": {
+      "tests": 15,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    },
+    "hmHarness": {
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    }
+  },
+  "invariants": {
+    "cpuStartupWeightUnchanged": true,
+    "fullVMTestScriptSHA256": "87e6276ee297247ef0a7c5b8891624e3aa2ea4ede28ca098cedfc4adcd18c6c2",
+    "fullVMTestScriptUnchanged": true,
+    "hmChangedCanonicalUnits": [
+      "ivm-manure"
+    ],
+    "hmMigrateUnchanged": true,
+    "hmOnlySuccessStatusChanges": true,
+    "hmStatuses": [
+      143
+    ],
+    "manureArtifact": "/nix/store/vy90bri36mygbj211vklcgzpilq8ff9a-manure-native-artifact-0.1.0",
+    "manureArtifactUnchanged": true,
+    "nixosChangedServiceConfigFields": [
+      "SuccessExitStatus"
+    ],
+    "nixosChangedUnitTexts": [
+      "manure.service"
+    ],
+    "nixosCommandsDepsHardeningPreserved": true,
+    "nixosEntireServeUnitOtherwiseIdentical": true,
+    "nixosMigrateUnchanged": true,
+    "nixosStatuses": [
+      143
+    ]
+  },
+  "filesSHA256": {
+    "nix/nixos/manure.nix": "37c9c8c9e45f99c73854576c8f6bbd4d3f62e309b775df48c3db9f7e788a7e8c",
+    "nix/hm/agentic-services-server.nix": "041dc284e49100f03acf182d55e50a578819194ca66ba42f456dbbe03090c652",
+    "nix/tests/shared-services-modules.nix": "ccbfd540ad04e637f6558574edcbad4e9b3c46febef16210f3d2f7e6d651ab6f"
+  },
+  "noProductionAppCodeArtifactOrInputChange": true,
+  "noGuestLongBuildOrDeploymentByThisCheck": true
+}

@@ -86,7 +86,7 @@ class ArchiveProjectionTest extends munit.FunSuite {
     val directory=Files.createTempDirectory("chronicle-index-rollback")
     try {
       val broken=config.copy(users=config.users.map(_.copy(passwordHashFile=directory.resolve("absent").toString)))
-      intercept[java.nio.file.NoSuchFileException](new Database(broken,db.profiles).initialize())
+      intercept[ponygirls.runtime.RuntimeFailure](new Database(broken,db.profiles).initialize())
       assertEquals(indexIdentity,legacy,"credential failure must leave the original index bytes and identity unchanged")
       db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_schema_migrations WHERE version=17")(_.getInt(1)),Some(0)))
       db.initialize()
@@ -266,10 +266,10 @@ class ArchiveProjectionTest extends munit.FunSuite {
     val jdbc=config.jdbcUrl.substring(0,config.jdbcUrl.lastIndexOf('/')+1)+database
     Using.resource(DriverManager.getConnection(config.jdbcUrl,config.databaseUser,Config.credential(config.databasePasswordFile))) { admin =>
       Using.resource(admin.createStatement()) { statement =>
-        statement.execute(s"CREATE ROLE $role LOGIN NOSUPERUSER")
+        statement.execute(s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}' NOSUPERUSER")
         try {
           statement.execute(s"CREATE DATABASE $database OWNER $role")
-          try Using.resource(DriverManager.getConnection(jdbc,role,"")) { connection =>
+          try Using.resource(DriverManager.getConnection(jdbc,role,Fixtures.databasePassword)) { connection =>
             Using.resource(connection.createStatement()) { setup =>
               setup.execute("CREATE TABLE ch_users(id text PRIMARY KEY); CREATE TABLE ch_sources(id uuid PRIMARY KEY,revision integer NOT NULL); CREATE TABLE ch_revisions(session_id uuid,revision integer,PRIMARY KEY(session_id,revision)); CREATE TABLE ch_generations(id uuid PRIMARY KEY); CREATE TABLE ch_chunks(generation uuid,value jsonb); CREATE TABLE ch_schema_migrations(version integer PRIMARY KEY)")
               List("/006_archive_projection.sql","/017_head_literal_candidates.sql").foreach { file =>

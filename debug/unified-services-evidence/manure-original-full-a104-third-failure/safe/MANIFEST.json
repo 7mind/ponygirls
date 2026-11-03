@@ -1,0 +1,45 @@
+{
+  "createdAt": "2026-11-03T14:44:06.016132+00:00",
+  "label": "THIRD-FAILURE-ORIGINALFULL-a104-M3-ORDERLY-STOP143",
+  "sourceCommit": "a1047f456f561b8c100a2fa8bde6b2f89f4ac6e5",
+  "runId": "20261103T142649Z.65b86b3f",
+  "runtimeResult": "FAIL1",
+  "selectedAccelerator": "UNKNOWN",
+  "wholeValidationAccepted": false,
+  "privateRawIncluded": false,
+  "noNewRunnerOrJobOrGuestOrSignalOrCleanup": true,
+  "files": {
+    "README.md": {
+      "bytes": 4395,
+      "sha256": "1cc8200d22cd2bafc98ddcef119c2b7ff003397876238be10da59b834426e562"
+    },
+    "collection-provenance.json": {
+      "bytes": 1021,
+      "sha256": "0853e7b70111c7ee5431e2d27b8b9b9af7bdf4af3439d5cb6eff13aef77cba92"
+    },
+    "process-absence.json": {
+      "bytes": 818,
+      "sha256": "56c9518adfcc2ec3e9c8242f71cccf9813a0a8751d921ed53d9263d6344485ae"
+    },
+    "progress-and-failure.json": {
+      "bytes": 4434,
+      "sha256": "fed52336953e2b0447705241e5ed833dfc1d7b431c07b15511d4b43914496a77"
+    },
+    "raw-artifact-digests-only.json": {
+      "bytes": 1808,
+      "sha256": "8f7717f3f49b26e955965f3799f51ddc1b650e60e9adcc7f8e3dd7587b4dcf17"
+    },
+    "runtime-scope.json": {
+      "bytes": 1812,
+      "sha256": "049856fb456ed3381d0091d1e74ff99287f934dce54ce367ce509a6279979515"
+    },
+    "source-and-controls.json": {
+      "bytes": 1705,
+      "sha256": "f9d41cdc61a72c3160d02d4bfb802cb9b8b2aed683af0735a86f9fe9fda01890"
+    },
+    "xml-scope.json": {
+      "bytes": 519,
+      "sha256": "a21557cd9c05ce97ada8dea674bcc972215b38875445162839130da46035094b"
+    }
+  }
+}

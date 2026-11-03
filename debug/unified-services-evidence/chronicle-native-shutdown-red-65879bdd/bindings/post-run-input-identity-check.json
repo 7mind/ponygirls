@@ -1,0 +1,12 @@
+{
+  "observedAt": "2026-11-03T15:49:57.150194+00:00",
+  "method": "READONLY byte/hash comparisons only; no helper/main/PG/model/native/classifier execution",
+  "originalPreparedLocalFilesMatchApproval": true,
+  "externalPinnedDependenciesMatch": true,
+  "mutableExistingTSXEntriesReverified": 4490,
+  "actualNativeELFSHA256": "04dd2eaeb172c3f426b209b96901abad2ddf353644493c19c94bf5e69b3cdde1",
+  "actualCompiledInputs": 231,
+  "actualNativeRuntimeSourceEntriesMatch": true,
+  "privateRootSensitiveContentRead": false,
+  "postfixUnitSourceEvaluated": false
+}

@@ -1,15 +1,17 @@
 # Haystack NixOS server module (Step 8): static identities, hash
 # credentials, local PostgreSQL with peer auth, migrations/hardening,
 # tuning, TLS proxy, backups, and per-account client mappings.
+{ mkHaystackPackage }:
 { config, lib, pkgs, ... }:
 let
+  proxyFailure = (import ../lib/haystack-proxy.nix { }).unavailableJson;
   cfg = config.smind.services.haystack;
 
   # Credential names are fixed derivations of user/token ids (no secrets in
   # the store; systemd loads the digest files listed here).
   credName = userId: tokenId: "haystack-hash-${userId}-${tokenId}";
 
-  authJson = pkgs.writeText "haystack-auth.json" (builtins.toJSON {
+  authSettings = {
     activityProjectId = cfg.activityProjectId;
     users = lib.mapAttrsToList
       (userId: user: {
@@ -26,13 +28,32 @@ let
     allowedHosts = lib.unique ([ "127.0.0.1" "localhost" ] ++ lib.optional (cfg.publicUrl != null) cfg.publicUrlHost);
     allowedOrigins = lib.optional (cfg.publicUrl != null) cfg.publicUrl;
     rateLimit = { windowMs = 60000; max = 600; };
+  };
+  credentials = lib.flatten (lib.mapAttrsToList (userId: user: lib.mapAttrsToList
+    (tokenId: token: "${credName userId tokenId}:${token.tokenHashFile}") user.tokens) cfg.users)
+    ++ [ "database-password:${cfg.database.passwordFile}" ]
+    ++ lib.optional (cfg.retrieval.embedding != null) "embedding-key:${cfg.retrieval.embedding.credentialFile}";
+  serverConfig = pkgs.writeText "haystack-server.json" (builtins.toJSON {
+    listenHost = cfg.listenAddress;
+    listenPort = cfg.port;
+    webRoot = "${cfg.package}/share/haystack/web";
+    authReloadMs = 1000;
+    auth = authSettings // { insecureHttpOrigins = [ ]; };
+    database = {
+      inherit (cfg.database) jdbcUrl user limits;
+      passwordFile = "$CREDENTIALS_DIRECTORY/database-password";
+    };
+    retrieval = cfg.retrieval // { embedding = if cfg.retrieval.embedding == null then null else cfg.retrieval.embedding // { credentialFile = "$CREDENTIALS_DIRECTORY/embedding-key"; }; };
   });
-
-  dbUrl = "postgresql://${cfg.database.user}@/${cfg.database.name}?host=${cfg.database.socketDir}";
+  readiness = lib.optional (cfg.database.readinessUnit != null) cfg.database.readinessUnit;
   backendLocation = {
     proxyPass = "http://${cfg.listenAddress}:${toString cfg.port}";
     proxyWebsockets = true;
     extraConfig = ''
+      # Native error/access logs can expose request-line credentials or query
+      # values. The Scala service emits allowlisted structured request telemetry.
+      error_log /dev/null;
+      access_log off;
       proxy_cache off;
       proxy_buffering off;
       client_max_body_size 2m;
@@ -42,11 +63,12 @@ let
   };
 in
 {
+  imports = [ ./service-postgres.nix ];
   options.smind.services.haystack = {
     enable = lib.mkEnableOption "Haystack structured agent-memory service";
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.callPackage ../pkg/haystack/package.nix { };
+      default = mkHaystackPackage { inherit pkgs; };
       description = "Haystack server package (bundles the web UI).";
     };
     listenAddress = lib.mkOption {
@@ -88,7 +110,7 @@ in
           tokens = lib.mkOption {
             type = lib.types.attrsOf (lib.types.submodule {
               options.tokenHashFile = lib.mkOption {
-                type = lib.types.path;
+                type = lib.types.str;
                 description = "Runtime file with the token's SHA-256 hex digest (secret-manager path, never store material).";
               };
             });
@@ -105,44 +127,26 @@ in
         options = {
           userId = lib.mkOption { type = lib.types.str; description = "Agent user ID for this Unix account."; };
           tokenId = lib.mkOption { type = lib.types.str; description = "Token ID for this Unix account."; };
-          tokenFile = lib.mkOption { type = lib.types.path; description = "Runtime file with the raw bearer token."; };
+          tokenFile = lib.mkOption { type = lib.types.str; description = "Runtime file with the raw bearer token."; };
         };
       });
       default = { };
       description = "Unix-account → agent-credential mapping (not a second user registry).";
     };
-    database = {
-      manageLocal = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
-        description = "Manage the local PostgreSQL database/role via the NixOS postgresql service.";
-      };
-      name = lib.mkOption { type = lib.types.str; default = "haystack"; description = "Database name."; };
-      user = lib.mkOption { type = lib.types.str; default = "haystack"; description = "Database role (service peer-authenticates as this user)."; };
-      socketDir = lib.mkOption { type = lib.types.str; default = "/run/postgresql"; description = "Unix socket directory."; };
-      poolMax = lib.mkOption { type = lib.types.ints.positive; default = 8; description = "Bounded service connection pool."; };
-    };
-    tuning = lib.mkOption {
-      type = lib.types.attrsOf lib.types.str;
-      default = {
-        seq_page_cost = "1.0";
-        random_page_cost = "1.1";
-        work_mem = "16MB";
-        statement_timeout = "30000";
-        lock_timeout = "5000";
-        idle_in_transaction_session_timeout = "60000";
-        jit = "off";
-      };
-      description = ''
-        Role/database-scoped PostgreSQL settings (ALTER ROLE ... IN DATABASE),
-        applied by the setup service. Never touches unrelated databases;
-        cluster-wide settings (shared_buffers et al.) are out of scope here
-        and need an explicit operator-approved cluster profile.
-      '';
+    database = import ../lib/service-database-options.nix { inherit lib; name = "haystack"; };
+    retrieval = {
+      policy = lib.mkOption { type = lib.types.str; default = "operator-approved-metadata-v1"; };
+      includeMetadata = lib.mkOption { type = lib.types.bool; default = true; };
+      approvedFieldPrefixes = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ ]; };
+      maxChunkBytes = lib.mkOption { type = lib.types.ints.positive; default = 8192; };
+      embedding = import ../lib/embedding-options.nix { inherit lib; };
+      maxConcurrent = lib.mkOption { type = lib.types.ints.positive; default = 2; };
+      maxQueued = lib.mkOption { type = lib.types.ints.unsigned; default = 8; };
+      batchSize = lib.mkOption { type = lib.types.ints.positive; default = 4; };
     };
     backup = {
       enable = lib.mkOption { type = lib.types.bool; default = true; description = "Automated pg_dump backups with retention."; };
-      directory = lib.mkOption { type = lib.types.str; default = "/var/backups/haystack"; description = "Backup directory."; };
+      directory = lib.mkOption { type = lib.types.str; default = "/var/lib/haystack-backups"; description = "Backup directory."; };
       schedule = lib.mkOption { type = lib.types.str; default = "daily"; description = "systemd OnCalendar schedule."; };
       retentionDays = lib.mkOption { type = lib.types.ints.positive; default = 14; description = "Retain backups this long."; };
     };
@@ -178,6 +182,8 @@ in
     }
     (lib.mkIf cfg.enable {
       assertions = [
+        { assertion = lib.all (p: lib.hasPrefix "/" p && !(lib.hasPrefix "/nix/store/" p)) ([ cfg.database.passwordFile ] ++ lib.concatMap (u: map (t: t.tokenHashFile) (builtins.attrValues u.tokens)) (builtins.attrValues cfg.users) ++ lib.optional (cfg.retrieval.embedding != null) cfg.retrieval.embedding.credentialFile); message = "smind.services.haystack: credentials must be absolute runtime paths, never source/store files."; }
+
         {
           assertion = cfg.listenAddress == "127.0.0.1" || cfg.listenAddress == "::1" || cfg.allowPublicListen;
           message = "smind.services.haystack: non-loopback listenAddress requires allowPublicListen.";
@@ -213,87 +219,61 @@ in
         }
       ];
 
-      services.postgresql = lib.mkIf cfg.database.manageLocal {
-        enable = true;
-        ensureDatabases = [ cfg.database.name ];
-        ensureUsers = [{ name = cfg.database.user; ensureDBOwnership = true; }];
-        authentication = lib.mkAfter "local ${cfg.database.name} ${cfg.database.user} peer";
-      };
-
-      systemd.services.haystack-setup = lib.mkIf cfg.database.manageLocal {
-        description = "Haystack database setup (tuning, readiness)";
+      systemd.services.haystack-setup = {
+        description = "Haystack database-scoped authoritative migrations";
         wantedBy = [ "multi-user.target" ];
         before = [ "haystack.service" ];
-        after = [ "postgresql.service" "postgresql-setup.service" ];
-        requires = [ "postgresql.service" "postgresql-setup.service" ];
-        path = [ config.services.postgresql.package ];
-        script =
-          let
-            alters = lib.concatStringsSep "\n" (lib.mapAttrsToList
-              (k: v: "psql -h ${cfg.database.socketDir} -U postgres -d ${cfg.database.name} -c \"ALTER ROLE \\\"${cfg.database.user}\\\" IN DATABASE \\\"${cfg.database.name}\\\" SET ${k} = '${v}';\"")
-              cfg.tuning);
-          in
-          ''
-            set -euo pipefail
-            for i in $(seq 1 30); do
-              pg_isready -h ${cfg.database.socketDir} && break
-              sleep 1
-            done
-            ${alters}
-          '';
+        after = readiness;
+        requires = readiness;
         serviceConfig = {
           Type = "oneshot";
-          User = "postgres";
+          User = "haystack";
+          DynamicUser = true;
           RemainAfterExit = true;
+          ExecStart = "${cfg.package}/bin/haystack-server migrate ${serverConfig}";
+          LoadCredential = credentials;
         };
       };
-
       systemd.services.haystack = {
-        description = "Haystack structured agent-memory service";
+        description = "Haystack native Scala structured memory";
         wantedBy = [ "multi-user.target" ];
         after = [ "network.target" "haystack-setup.service" ];
         requires = [ "haystack-setup.service" ];
-        environment = {
-          HAYSTACK_AUTH_JSON = "${authJson}";
-          HAYSTACK_DATABASE_URL = dbUrl;
-          HAYSTACK_LISTEN = cfg.listenAddress;
-          HAYSTACK_PORT = toString cfg.port;
-          HAYSTACK_POOL_MAX = toString cfg.database.poolMax;
-        };
         serviceConfig = {
-          ExecStart = "${cfg.package}/bin/haystack-server";
-          User = cfg.database.user;
+          ExecStart = "${cfg.package}/bin/haystack-server serve ${serverConfig}";
+          User = "haystack";
           DynamicUser = true;
           Restart = "on-failure";
+          TimeoutStopSec = 60;
+          UMask = "0077";
           NoNewPrivileges = true;
           ProtectSystem = "strict";
           ProtectHome = true;
           PrivateTmp = true;
           CapabilityBoundingSet = "";
-        } // {
-          LoadCredential = lib.flatten (lib.mapAttrsToList
-            (userId: user: lib.mapAttrsToList
-              (tokenId: token: "${credName userId tokenId}:${token.tokenHashFile}")
-              user.tokens)
-            cfg.users);
+          LoadCredential = credentials;
         };
       };
 
       systemd.services.haystack-backup = lib.mkIf cfg.backup.enable {
         description = "Haystack database backup (pg_dump, retention)";
-        path = [ config.services.postgresql.package ];
+        path = [ pkgs.postgresql_18 ];
         script = ''
           set -euo pipefail
           mkdir -p ${lib.escapeShellArg cfg.backup.directory}
           out=${lib.escapeShellArg cfg.backup.directory}/haystack-$(date -u +%Y%m%dT%H%M%SZ).dump
-          pg_dump -h ${cfg.database.socketDir} -U ${cfg.database.user} -Fc -f "$out" ${cfg.database.name}
+          export PGPASSWORD="$(<"$CREDENTIALS_DIRECTORY/database-password")" PGCONNECT_TIMEOUT=5
+          pg_dump --no-password -d ${lib.escapeShellArg (lib.removePrefix "jdbc:" cfg.database.jdbcUrl)} -U ${lib.escapeShellArg cfg.database.user} -Fc -f "$out"
           chmod 600 "$out"
           find ${lib.escapeShellArg cfg.backup.directory} -name 'haystack-*.dump' -mtime +${toString cfg.backup.retentionDays} -delete
         '';
         serviceConfig = {
           Type = "oneshot";
-          User = cfg.database.user;
+          User = "haystack";
           DynamicUser = true;
+          LoadCredential = [ "database-password:${cfg.database.passwordFile}" ];
+          UMask = "0077";
+          StateDirectory = "haystack-backups";
         };
         startAt = cfg.backup.schedule;
       };
@@ -304,7 +284,7 @@ in
         virtualHosts.${cfg.publicUrlHost} = {
           forceSSL = cfg.proxy.acmeHost != null;
           useACMEHost = cfg.proxy.acmeHost;
-          root = "${cfg.package}/lib/node_modules/haystack/web/dist";
+          root = "${cfg.package}/share/haystack/web";
           locations."/" = {
             tryFiles = "$uri $uri/ =404";
             extraConfig = ''
@@ -319,7 +299,7 @@ in
             default_type application/json;
             add_header Cache-Control "no-store" always;
             add_header Referrer-Policy "no-referrer" always;
-            return 503 '{"error":{"code":"unavailable","message":"service unavailable"}}';
+            return 503 '${proxyFailure}';
           '';
         };
       };

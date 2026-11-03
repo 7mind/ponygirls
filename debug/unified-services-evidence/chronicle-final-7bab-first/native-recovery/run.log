@@ -1,0 +1,9 @@
+✔ native annotation budgets survive claims/restart and owner retry retains checkpoint history (18609.026528ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19502.867911

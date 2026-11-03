@@ -1,0 +1,16 @@
+{
+  "scope": "Parent collection attempts, separate from successful guest/runtime gate",
+  "firstAttempt": {
+    "exitStatus": 1,
+    "exception": "ValueError: ALLOWLIST.txt is not in the subpath of bundle",
+    "cause": "Incorrect parent assumption of a bundle/ archive-member prefix",
+    "noDestinationCreatedBeforeFailure": true,
+    "originalArchiveUnmodified": true
+  },
+  "secondAttempt": {
+    "exitStatus": 0,
+    "actualArchiveRootContract": "Exact sixteen reviewed relative allowlist members, no links/traversal",
+    "allMemberHashesVerified": true,
+    "currentReceiptTerminalResultStartedByteEqualityVerified": true
+  }
+}

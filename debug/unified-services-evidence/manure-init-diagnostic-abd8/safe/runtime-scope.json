@@ -1,0 +1,67 @@
+{
+  "observedAt": "2026-11-03T14:15:26.125491+00:00",
+  "runId": "20261103T140402Z.6f40e875",
+  "sourceCommit": "abd8ec3acbaab82df3c8af9ccac2c7816b5d3619",
+  "diagnosticOnly": true,
+  "acceptanceAuthorized": false,
+  "runtimeExit": 1,
+  "supervisorExit": 1,
+  "passed": false,
+  "operatorSignals": [],
+  "requestedAcceleration": "kvm-or-tcg",
+  "hostKvmAccessibleAtRuntimePreflight": false,
+  "selectedAcceleration": "UNKNOWN; no direct selected-accelerator trace",
+  "guestBootObserved": [
+    "edge",
+    "strict"
+  ],
+  "effectiveGlobalTimeout": 900,
+  "fullBaseOverride": null,
+  "preExecAudits": [
+    {
+      "vm": "edge",
+      "recordCount": 1,
+      "attachedImages": 2,
+      "labUnixChannels": 3,
+      "requestedPolicy": "kvm-or-tcg",
+      "machineArguments": [
+        "accel=kvm:tcg",
+        "memory-backend=mem0",
+        "q35,smm=on"
+      ],
+      "cpuArguments": [
+        "max"
+      ],
+      "globalArguments": [
+        "driver=cfi.pflash01,property=secure,value=on"
+      ]
+    },
+    {
+      "vm": "strict",
+      "recordCount": 1,
+      "attachedImages": 2,
+      "labUnixChannels": 3,
+      "requestedPolicy": "kvm-or-tcg",
+      "machineArguments": [
+        "accel=kvm:tcg",
+        "memory-backend=mem0",
+        "q35,smm=on"
+      ],
+      "cpuArguments": [
+        "max"
+      ],
+      "globalArguments": [
+        "driver=cfi.pflash01,property=secure,value=on"
+      ]
+    }
+  ],
+  "finalFourImageCrosscheckExecuted": false,
+  "finalContainedSuccessPrinted": false,
+  "appScope": "Full base stopped at strict manure-unit startup wait before app assertions; no app-case count. Edge diagnostic success is not provider/VM acceptance.",
+  "pipeline": {
+    "diagnostic": "fixture-only order499 exact original provider.initialize/config before unchanged500 suffix; successful diagnostic adds initialization, so DIAGNOSTIC ONLY",
+    "orderingQualification": "Parent reports earlier ordering hypothesis falsified by actual store bodies (single ExecStartPre). No new ordering diagnosis inferred here.",
+    "firstFailureAttribution": "New strict TimeoutExpired is reproduced; original first edge exception remains unresolved.",
+    "nextProposal": "TEST-ONLY CPUWeight is under separate read-only consideration; not authorized/prepared/run here. SMP1/memory1024/timeout60/full-script/autostart unchanged. CPU2 remains rejected, no scope broadening."
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "stage": "native-recovery",
+  "command": [
+    "node",
+    "--import",
+    "tsx",
+    "--test",
+    "indexing-recovery.test.ts"
+  ],
+  "cwd": "/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-chronicle-full-validation/chronicle/tests",
+  "startedAt": "2026-11-03T10:19:54.514725+00:00",
+  "finishedAt": "2026-11-03T10:20:14.114385+00:00",
+  "commandExitStatus": 0,
+  "status": "passed",
+  "counts": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  }
+}

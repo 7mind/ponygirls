@@ -111,36 +111,23 @@ class HandoffFlows:
         content_url = bf.content_url_for(self.fix, aid)
         grant_url = content_url.rstrip("/") + "/__manure/grant"
         bearer = {"Authorization": f"Bearer {self.fix.identity.token}"}
-        first = self.http.request(
-            "POST", f"{self.api}/api/v1/artifacts/{aid}/grants", body={},
-            headers=bearer)
+        first = self.http.current((self.api), bf.cp.Command_CreateGrant(aid), headers=bearer)
         self.assertEqual(first.status, 200, first.body[:300])
         grant = first.json()["grant"]
         user = bf.TestHttp()
-        ok = user.request(
-            "POST", grant_url, body={"grant": grant},
-            content_type="application/json",
-            headers={"Origin": self.api})
+        ok = user.current((content_url.rstrip("/")), bf.cp.ContentCommand_RedeemGrant(({"grant": grant})["grant"]), headers={"Origin": self.api})
         self.assertIn(ok.status, (200, 303), ok.body[:300])
         # Single-use: the same grant is now dead.
         again = bf.TestHttp()
-        reuse = again.request(
-            "POST", grant_url, body={"grant": grant},
-            content_type="application/json",
-            headers={"Origin": self.api})
+        reuse = again.current((content_url.rstrip("/")), bf.cp.ContentCommand_RedeemGrant(({"grant": grant})["grant"]), headers={"Origin": self.api})
         self.assertIn(reuse.status, (401, 403), reuse.body[:300])
-        self.assertIn(reuse.json()["error"]["code"],
+        self.assertIn(reuse.current_error_code(),
                       ("grant-invalid", "grant-expired"),
                       reuse.body[:300])
         # Wrong-origin grant POSTs are rejected even with a fresh grant.
-        second = self.http.request(
-            "POST", f"{self.api}/api/v1/artifacts/{aid}/grants", body={},
-            headers=bearer)
+        second = self.http.current((self.api), bf.cp.Command_CreateGrant(aid), headers=bearer)
         cross = bf.TestHttp()
-        cross_res = cross.request(
-            "POST", grant_url, body={"grant": second.json()["grant"]},
-            content_type="application/json",
-            headers={"Origin": "https://evil.example"})
+        cross_res = cross.current((content_url.rstrip("/")), bf.cp.ContentCommand_RedeemGrant(({"grant": second.json()["grant"]})["grant"]), headers={"Origin": "https://evil.example"})
         self.assertEqual(cross_res.status, 403, cross_res.body[:300])
 
 

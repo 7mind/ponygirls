@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec python3 -B /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-manure-full-validation/debug/manure-full-frozen-fixture/provision-owned-database.py "$@"

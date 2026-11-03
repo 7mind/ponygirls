@@ -1,15 +1,8 @@
-"""Shared fixtures for manure real-browser tests (UI/security agent owned).
+"""Real target-executable/owned PostgreSQL/filesystem browser fixtures.
 
-Stdlib only. Drives the REAL manure server (``manure.server``,
-server-agent owned) with a real SQLite/FS ``data_dir`` and the REAL
-Chromium via the installed ``playwright-core`` JS driver executed as a
-Node subprocess running ``manure/tests/browser/steps.mjs``.
-
-No fake servers, no header-only substitutes: every test here talks to
-the server fixture over HTTP and to pages rendered in Chromium.
-When the server implementation (or the Node/Chromium toolchain) is not
-available the tests ``SkipTest`` with an explicit reason instead of
-passing vacuously.
+No Python server/storage imports. Startup fails without explicit disposable
+provider/CREATEDB opt-in and launcher; browser prerequisites remain independently
+reported by the existing driver resolver. All fixture seeding uses current API.
 """
 
 from __future__ import annotations
@@ -18,6 +11,9 @@ import base64
 import hashlib
 import json
 import os
+import re
+import time
+from uuid import UUID, uuid4
 import secrets
 import shutil
 import subprocess
@@ -31,10 +27,11 @@ from dataclasses import dataclass, field
 
 REPO_MANURE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_MANURE_DIR not in sys.path:
-    # Test-only bootstrap so `import manure.server` resolves against the
-    # worktree checkout (project dir holding the `manure/` package)
-    # without installing the package.
+    # Resolve only the current Python client/codec, never a Python backend.
     sys.path.insert(0, REPO_MANURE_DIR)
+
+from manure import current_protocol as cp
+from target_server import TargetServer
 
 BROWSER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser")
 STEPS_MJS = os.path.join(BROWSER_DIR, "steps.mjs")
@@ -162,7 +159,17 @@ class HttpResult:
         self.body = body  # bytes
 
     def json(self):
+        # Typed command helpers may expose an in-process fixture projection,
+        # but body MUST remain the actual received bytes for leak assertions.
+        if hasattr(self, "current_local"):
+            return self.current_local
         return json.loads(self.body.decode("utf-8"))
+
+    def current_error_code(self):
+        envelope = cp.decode(cp.ServerEnvelope, cp.loads(self.body))
+        if not isinstance(envelope.result, cp.Result_Error):
+            raise AssertionError("expected generated current failure envelope")
+        return re.sub(r"(?<!^)(?=[A-Z])", "-", envelope.result.failure.code.value).lower()
 
     def header(self, name, default=None):
         return self.headers.get(name, default)
@@ -211,7 +218,7 @@ class TestHttp:
         if jar:
             req_headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in sorted(jar.items()))
         req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
-        handlers: list = [
+        handlers: list = [urllib.request.ProxyHandler({}),
             _NoRedirectHandler() if not follow_redirects
             else urllib.request.HTTPRedirectHandler()]
         if url.lower().startswith("https:") and self._ssl_context is not None:
@@ -226,6 +233,37 @@ class TestHttp:
             result = HttpResult(exc.code, exc.headers, raw)
         self._store_cookies(url, result.headers)
         return result
+
+    def current(self, base, command, *, headers=None):
+        request_id=uuid4()
+        content=isinstance(command,cp.ContentCommand)
+        envelope=(cp.ContentEnvelope if content else cp.ClientEnvelope)(request_id,cp.API_VERSION,command)
+        headers=dict(headers or {})
+        if content and not any(k.lower()=="origin" for k in headers):
+            parsed=urllib.parse.urlsplit(base)
+            headers["Origin"]=parsed.scheme+"://"+parsed.netloc
+        response=self.request("POST",base+("/__manure/current" if content else "/api/current"),body=cp.dumps(envelope),
+            content_type="application/json",headers=headers)
+        parsed=cp.decode(cp.ServerEnvelope,cp.loads(response.body))
+        if parsed.requestId not in (request_id,UUID(int=0)):
+            raise AssertionError("current response correlation mismatch")
+        result=parsed.result
+        if isinstance(result,cp.Result_Error):
+            code=re.sub(r"(?<!^)(?=[A-Z])","-",result.failure.code.value).lower()
+            local={"error":{"code":code,"message":code}}
+        elif isinstance(result,cp.Result_Identity):local=cp.local(result.principal)
+        elif isinstance(result,cp.Result_Catalogue):local=cp.local(result.page)
+        elif isinstance(result,cp.Result_ArtifactInfo):local=cp.local(result.artifact)
+        elif isinstance(result,cp.Result_ArtifactManifest):local=cp.local(result.manifest)
+        elif isinstance(result,cp.Result_UploadProgress):local=cp.local(result.status)
+        elif isinstance(result,cp.Result_ArtifactPatched):
+            local=cp.local(result.artifact)
+            if result.externalPassword is not None:local["external_password"]=result.externalPassword
+        elif isinstance(result,cp.Result_Ok):local={"ok":True}
+        else:local=cp.local(result)
+        response.current_result=result
+        response.current_local=local
+        return response
 
     def _store_cookies(self, url: str, headers) -> None:
         host = self._host(url).lower()
@@ -249,7 +287,7 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 # --------------------------------------------------------------------------
-# server fixture (real manure.server, real SQLite/FS data_dir)
+# server fixture (actual replacement executable, owned PostgreSQL + FS root)
 # --------------------------------------------------------------------------
 
 @dataclass
@@ -262,9 +300,7 @@ class TestIdentity:
 
 @dataclass
 class ServerFixture:
-    """Values below the ASSUMED_* marks mirror CONTRACT.md text but the
-    exact ServerConfig kwarg spellings are unconfirmed until the server
-    implementation lands (governor sync pending)."""
+    """Owned target process plus its public origins and test credentials."""
 
     tmp: tempfile.TemporaryDirectory = None  # type: ignore[assignment]
     server: object = None
@@ -276,9 +312,6 @@ class ServerFixture:
     dashboard_dir: str = DASHBOARD_DIR
     unlock_shell_dir: str | None = UNLOCK_DIR
 
-    # ASSUMED_SERVER_FIELDS: ServerConfig kwarg names below follow the
-    # contract sections 3.1/11 field names; confirm against the landed
-    # server module during governor sync.
     config_overrides: dict = field(default_factory=dict)
     def close(self):
         try:
@@ -320,13 +353,10 @@ def start_server(*, suffix_mode: str = "sibling", unlock_shell: str | None = "de
       shell), None (built-in fallback -> unlock_shell_dir=null), or an
       explicit directory path.
     """
-    try:
-        from manure.domain import TokenRef, UserConfig
-        from manure.server import ServerConfig, create_server
-    except ImportError as exc:
-        raise unittest.SkipTest(
-            f"manure.server not importable (server implementation not synced): {exc}")
+    if now_fn is not None:
+        raise ValueError("target fixtures use real TTL waits, not a production clock hook")
 
+    _install_test_dns()
     tmp = tempfile.TemporaryDirectory(prefix="manure-browser-")
     identity = _make_identity(tmp.name)
     data_dir = os.path.join(tmp.name, "data")
@@ -354,13 +384,8 @@ def start_server(*, suffix_mode: str = "sibling", unlock_shell: str | None = "de
     # Port 0 requests an ephemeral port; effective_api_origin reports the
     # bound one (contract section 11, confirmed by the landed server).
     api_origin = f"http://{api_host}:0"
-    users = (UserConfig(
-        id=identity.user_id,
-        type="human",
-        tokens=(TokenRef(id=identity.token_id,
-                         hash_file=identity.hash_file),),
-        display_name="browser test human",
-    ),)
+    users = [{"id":identity.user_id,"type":"human","tokens":[
+        {"id":identity.token_id,"hashFile":identity.hash_file}],"displayName":"browser test human"}]
     kwargs = dict(
         data_dir=data_dir,
         api_origin=api_origin,
@@ -374,14 +399,10 @@ def start_server(*, suffix_mode: str = "sibling", unlock_shell: str | None = "de
     )
     kwargs.update(config_overrides or {})
     try:
-        config = ServerConfig(**kwargs)
-    except TypeError as exc:
+        server = TargetServer(kwargs,tmp.name)
+    except BaseException:
         tmp.cleanup()
-        raise unittest.SkipTest(
-            f"ServerConfig signature differs from contract assumption: {exc}")
-    # Private test clock (server-owned create_server(config, _now=fn)).
-    server = create_server(config, _now=now_fn) if now_fn is not None \
-        else create_server(config)
+        raise
     fix = ServerFixture(
         tmp=tmp, server=server, identity=identity,
         api_origin=api_origin, suffix=suffix,
@@ -408,53 +429,27 @@ def upload_fixture(fix: ServerFixture, *, name: str, kind: str, visibility: str,
     response dict merged with artifact_id/content_url/password."""
     http = fix.http
     auth = {"Authorization": f"Bearer {fix.identity.token}"} if bearer else {}
-    manifest = []
+    entries = [cp.ManifestEntry_File(path,len(files[path]),hashlib.sha256(files[path]).hexdigest()) for path in sorted(files)]
+    entries += [cp.ManifestEntry_Directory(path) for path in sorted(empty_dirs or [])]
+    command = cp.Command_InitUpload(name,cp.ArtifactKind.File if kind=="file" else cp.ArtifactKind.Directory,
+        cp.Visibility(visibility.capitalize()),expires_in_s,entries)
+    res = http.current(fix.api_base,command,headers=auth)
+    assert res.status == 200, f"current init failed: {res.status}"
+    init = res.json();artifact_id=init["artifact_id"];chunk_bytes=init["chunk_bytes"]
     for path in sorted(files):
-        digest = hashlib.sha256(files[path]).hexdigest()
-        manifest.append({"path": path, "kind": "file",
-                         "size": len(files[path]), "sha256": digest})
-    for d in sorted(empty_dirs or []):
-        manifest.append({"path": d, "kind": "dir"})
-    # ASSUMED_INIT_ENVELOPE: contract names the response fields but the
-    # request field spellings (name/kind/visibility/files) are assumed.
-    init_body = {"name": name, "kind": kind, "visibility": visibility,
-                 "files": manifest}
-    if expires_in_s is not None:
-        init_body["expires_in_s"] = expires_in_s
-    res = http.request("POST", fix.api_base + "/api/v1/artifacts:init",
-                       body=init_body, headers=auth)
-    assert res.status == 200, f"init failed: {res.status} {res.body[:500]!r}"
-    init = res.json()
-    artifact_id = init["artifact_id"]
-    chunk_bytes = init.get("chunk_bytes") or 1048576
-    for path in sorted(files):
-        blob = files[path]
-        digest = hashlib.sha256(blob).hexdigest()
-        offset = 0
-        step = int(chunk_bytes)
-        while offset < len(blob):
-            chunk = blob[offset:offset + step]
-            q = urllib.parse.urlencode(
-                {"path": path, "offset": offset})
-            put = http.request(
-                "PUT",
-                f"{fix.api_base}/api/v1/artifacts/{artifact_id}/chunks?{q}",
-                body=chunk, content_type="application/octet-stream",
-                headers={**auth,
-                         "X-Chunk-Sha256": hashlib.sha256(chunk).hexdigest()})
-            assert put.status == 200, \
-                f"chunk PUT failed: {put.status} {put.body[:500]!r}"
-            offset += len(chunk)
-        assert digest == hashlib.sha256(blob).hexdigest()
-    pub = http.request("POST",
-                       f"{fix.api_base}/api/v1/artifacts/{artifact_id}/publish",
-                       body={}, headers=auth)
-    assert pub.status == 200, f"publish failed: {pub.status} {pub.body[:500]!r}"
-    out = dict(init)
-    out["artifact_id"] = artifact_id
-    if "content_url" not in out and hasattr(fix.server, "content_url"):
-        out["content_url"] = fix.server.content_url(artifact_id)
-    return out
+        blob=files[path]
+        for offset in range(0,len(blob),chunk_bytes):
+            chunk=blob[offset:offset+chunk_bytes]
+            query=urllib.parse.urlencode({"path":path,"offset":offset})
+            put=http.request("PUT",f"{fix.api_base}/api/current/artifacts/{artifact_id}/chunks?{query}",
+                body=chunk,content_type="application/octet-stream",
+                headers={**auth,"X-Chunk-Sha256":hashlib.sha256(chunk).hexdigest()})
+            assert put.status == 200, f"current chunk failed: {put.status}"
+            receipt=cp.decode(cp.ChunkReceipt,cp.loads(put.body))
+            assert receipt.path==path and receipt.offset==offset and receipt.length==len(chunk)
+    pub=http.current(fix.api_base,cp.Command_FinishUpload(artifact_id),headers=auth)
+    assert pub.status == 200, f"current finish failed: {pub.status}"
+    return init
 
 
 def requests_log(out) -> list:
@@ -510,7 +505,9 @@ def _install_test_dns() -> None:
     real_getaddrinfo = _socket.getaddrinfo
 
     def _fake(host, port, *args, **kwargs):
-        if host == TLS_API_HOST or host.endswith("." + TLS_CONTENT_SUFFIX):
+        if (host == TLS_API_HOST or host.endswith("." + TLS_CONTENT_SUFFIX)
+                or host == SIBLING_API_HOST or host.endswith("." + SIBLING_SUFFIX)
+                or host.endswith("." + SEPARATE_SUFFIX)):
             host = "127.0.0.1"
         return real_getaddrinfo(host, port, *args, **kwargs)
 
@@ -721,11 +718,8 @@ def start_https_server(*, config_overrides=None, now_fn=None) -> HttpsFixture:
     """Backend on 127.0.0.2:<ephemeral> behind a TLS edge on
     127.0.0.1:<same port>; api https://manure-api.test:<port> with a
     separate-domain content suffix. loopback_dev=False throughout."""
-    try:
-        from manure.domain import TokenRef, UserConfig
-        from manure.server import ServerConfig, create_server
-    except ImportError as exc:
-        raise unittest.SkipTest(f"manure.server not importable: {exc}")
+    if now_fn is not None:
+        raise ValueError("target fixtures use real TTL waits, not a production clock hook")
     openssl = find_openssl()
     _install_test_dns()
     tmp = tempfile.TemporaryDirectory(prefix="manure-tls-")
@@ -739,11 +733,8 @@ def start_https_server(*, config_overrides=None, now_fn=None) -> HttpsFixture:
     cert, key = make_test_cert(
         tmp.name, openssl,
         [TLS_API_HOST, f"*.{TLS_CONTENT_SUFFIX}"])
-    users = (UserConfig(
-        id=identity.user_id, type="human",
-        tokens=(TokenRef(id=identity.token_id, hash_file=identity.hash_file),),
-        display_name="tls smoke human",
-    ),)
+    users = [{"id":identity.user_id,"type":"human","tokens":[
+        {"id":identity.token_id,"hashFile":identity.hash_file}],"displayName":"tls smoke human"}]
     kwargs = dict(
         data_dir=data_dir,
         api_origin=f"https://{TLS_API_HOST}:0",
@@ -756,9 +747,11 @@ def start_https_server(*, config_overrides=None, now_fn=None) -> HttpsFixture:
         users=users,
     )
     kwargs.update(config_overrides or {})
-    config = ServerConfig(**kwargs)
-    server = create_server(config, _now=now_fn) if now_fn is not None \
-        else create_server(config)
+    try:
+        server = TargetServer(kwargs,tmp.name)
+    except BaseException:
+        tmp.cleanup()
+        raise
     try:
         proxy = TlsEdgeProxy(server.bound_port, "127.0.0.2", cert, key)
     except Exception:
@@ -773,7 +766,33 @@ def start_https_server(*, config_overrides=None, now_fn=None) -> HttpsFixture:
 def content_url_for(fix: ServerFixture, artifact_id: str) -> str:
     if hasattr(fix.server, "content_url"):
         return fix.server.content_url(artifact_id)
-    info = fix.http.request(
-        "GET", f"{fix.api_base}/api/v1/artifacts/{artifact_id}",
-        headers={"Authorization": f"Bearer {fix.identity.token}"})
+    info = fix.http.current(fix.api_base,cp.Command_GetArtifact(artifact_id),
+        headers={"Authorization":f"Bearer {fix.identity.token}"})
     return info.json()["content_url"]
+
+
+def wait_for_expiry(fix, artifact_id, *, timeout_s=75):
+    """Real authorization-immediate TTL check; no backend clock override."""
+    deadline=time.monotonic()+timeout_s
+    while time.monotonic()<deadline:
+        result=fix.http.current(fix.api_base,cp.Command_GetArtifact(artifact_id),
+            headers={"Authorization":f"Bearer {fix.identity.token}"})
+        if result.status==410:return
+        if result.status!=200:raise AssertionError(f"unexpected expiry probe status: {result.status}")
+        time.sleep(0.2)
+    raise AssertionError("real TTL did not expire before fixture deadline")
+
+
+def init_command(body):
+    """Typed fixture builder, never an obsolete HTTP decoder."""
+    return cp.Command_InitUpload(body["name"],cp.ArtifactKind.File if body["kind"]=="file" else cp.ArtifactKind.Directory,
+        cp.Visibility(body["visibility"].capitalize()),body.get("expires_in_s"),[
+        cp.ManifestEntry_File(e["path"],e["size"],e["sha256"]) if e["kind"]=="file" else cp.ManifestEntry_Directory(e["path"])
+        for e in body["files"]])
+
+
+def patch_command(artifact_id,body):
+    expiry=(cp.ExpiryChange_Keep() if "expires_in_s" not in body else
+        cp.ExpiryChange_Clear() if body["expires_in_s"] is None else cp.ExpiryChange_Set(body["expires_in_s"]))
+    return cp.Command_PatchArtifact(artifact_id,cp.ArtifactPatch(body.get("name"),
+        cp.Visibility(body["visibility"].capitalize()) if "visibility" in body else None,expiry))

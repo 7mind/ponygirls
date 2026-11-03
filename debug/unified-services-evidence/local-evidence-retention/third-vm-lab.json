@@ -1,0 +1,15 @@
+{
+  "scope": "Private opaque raw third-failure preservation only; not cleanup/publication/application acceptance",
+  "job": "bgt-22e6156ab521af6b",
+  "exitStatus": 0,
+  "archiveSha256RecordedByCompletedJob": "52c9ca79d1253350dc5df9e4b2eeb7c2562ed275b0897af54cf45a39e3071fd9",
+  "archiveDigestIndependentlyRehashedByParent": false,
+  "archiveBytes": 2568773657,
+  "exactSourceRoot": "/tmp/mv.i31ewl2j",
+  "sourceBoundaryMetadataBeforeAfterEqual": true,
+  "gnuTarCompareCompletedSuccessfully": true,
+  "recordedOriginalIdentitiesAbsentOrTerminal": true,
+  "sourceRemoved": false,
+  "privateContentsInterpreted": false,
+  "rawArchivePublished": false
+}

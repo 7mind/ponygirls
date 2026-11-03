@@ -1,0 +1,9 @@
+{
+  "derivation": "names copied from actual4-leaf junit.xml; not an edited current-suite inventory",
+  "cases": [
+    "ordinary public-prefix short-key commit/read/lexical control",
+    "4096 ASCII key commits and reads exact canonical/current/historical document",
+    "wide lexical RFC6901/UTF16 provenance and approval/project/auth negatives",
+    "same-id replay preserves acknowledged identity/document and single history revision"
+  ]
+}

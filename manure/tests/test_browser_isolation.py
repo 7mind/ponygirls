@@ -9,6 +9,8 @@ origin); reserved __manure/api prefixes must never serve user content.
 from __future__ import annotations
 
 import hashlib
+import email.message
+from uuid import UUID
 import os
 import sys
 import unittest
@@ -53,17 +55,12 @@ class IsolationFlows:
     def _grant_cookie_jar(self, aid):
         """Fetch a one-time grant and redeem it; returns a jar holding the
         grant cookie for the artifact's content host."""
-        grant_res = self.http.request(
-            "POST", f"{self.api}/api/v1/artifacts/{aid}/grants",
-            body={}, headers=self.bearer)
+        grant_res = self.http.current((self.api), bf.cp.Command_CreateGrant(aid), headers=self.bearer)
         self.assertEqual(grant_res.status, 200, grant_res.body[:300])
         content_url = bf.content_url_for(self.fix, aid)
         jar = bf.TestHttp()
         origin = self.api
-        redeem = jar.request(
-            "POST", content_url.rstrip("/") + "/__manure/grant",
-            body={"grant": grant_res.json()["grant"]},
-            content_type="application/json", headers={"Origin": origin})
+        redeem = jar.current((content_url.rstrip("/")), bf.cp.ContentCommand_RedeemGrant(({"grant": grant_res.json()["grant"]})["grant"]), headers={"Origin": origin})
         self.assertEqual(redeem.status, 200, redeem.body[:300])
         return jar, content_url
 
@@ -141,15 +138,15 @@ class IsolationFlows:
     def test_b4_management_paths_absent_from_content_origin(self):
         aid, url = self._internal_dir("iso-mgmt", B_HTML)
         jar, _ = self._grant_cookie_jar(aid)
-        for path in ("/api/v1/health", "/api/v1/artifacts",
+        for path in ("/api/current/health", "/api/current/artifacts",
                      "/__manure/nope", "/api/"):
             res = jar.request("GET", url.rstrip("/") + path)
             self.assertEqual(res.status, 404, (path, res.status, res.body[:200]))
-            self.assertEqual(res.json()["error"]["code"], "not-found",
+            self.assertEqual(res.current_error_code(), "not-found",
                              (path, res.body[:200]))
         # Same over a real browser navigation (status observed by the step).
         out = bf.run_steps([
-            {"op": "goto", "url": url.rstrip("/") + "/api/v1/health"},
+            {"op": "goto", "url": url.rstrip("/") + "/api/current/health"},
         ])
         self.assertEqual(out[0]["status"], 404, out)
 
@@ -227,7 +224,7 @@ class IsolationFlows:
             self.fix, name="attach-probe", kind="file",
             visibility="internal", files={"evil.html": EVIL_HTML})
         aid = created["artifact_id"]
-        api_content = (f"{self.api}/api/v1/artifacts/{aid}/files/"
+        api_content = (f"{self.api}/api/current/artifacts/{aid}/files/"
                        + urllib.parse.quote("evil.html", safe="") + "/content")
         res = self.http.request("GET", api_content, headers=self.bearer)
         self.assertEqual(res.status, 200, res.body[:300])
@@ -279,14 +276,11 @@ class IsolationFlows:
     def test_b6_reserved_prefixes_never_serve_user_content(self):
         for bad_path in ("__manure/x.txt", "api/y.txt",
                          "__manure", "api"):
-            res = self.http.request(
-                "POST", self.api + "/api/v1/artifacts:init",
-                body={"name": "reserved", "kind": "file", "visibility": "internal",
+            res = self.http.current((self.api), bf.init_command({"name": "reserved", "kind": "file", "visibility": "internal",
                       "files": [{"path": bad_path, "kind": "file",
-                                 "size": 1, "sha256": hashlib.sha256(b"x").hexdigest()}]},
-                headers=self.bearer)
+                                 "size": 1, "sha256": hashlib.sha256(b"x").hexdigest()}]}), headers=self.bearer)
             self.assertEqual(res.status, 400, (bad_path, res.status, res.body[:200]))
-            self.assertEqual(res.json()["error"]["code"], "invalid-path",
+            self.assertEqual(res.current_error_code(), "invalid-path",
                              (bad_path, res.body[:200]))
         # Control endpoints keep their meaning on content hosts: the
         # password helper is 404 for internal artifacts.
@@ -302,6 +296,36 @@ class IsolationSiblingCase(IsolationFlows, unittest.TestCase):
 
 class IsolationSeparateCase(IsolationFlows, unittest.TestCase):
     suffix_mode = "separate"
+
+
+class TestCurrentErrorEnvelope(unittest.TestCase):
+    def test_raw_current_fault_keeps_status_and_checks_generated_code(self):
+        body=bf.cp.dumps(bf.cp.ServerEnvelope(UUID(int=0),bf.cp.Result_Error(bf.cp.Failure(bf.cp.ErrorCode.TlsRequired,'tls-required',None))))
+        result=bf.HttpResult(403,email.message.Message(),body)
+        self.assertEqual(result.status,403)
+        self.assertEqual(result.current_error_code(),'tls-required')
+        self.assertEqual(result.body,body)
+
+    def test_legacy_or_success_bodies_cannot_satisfy_current_error_assertion(self):
+        for body in [b'{"error":{"code":"not-found"}}',bf.cp.dumps(bf.cp.ServerEnvelope(UUID(int=0),bf.cp.Result_Ok()))]:
+            with self.subTest(body=body),self.assertRaises((bf.cp.ProtocolError,AssertionError)):
+                bf.HttpResult(404,email.message.Message(),body).current_error_code()
+
+    def test_current_command_fixture_projection_never_replaces_received_fault_bytes(self):
+        canary='SYNTHETIC-FAULT-LEAK-CANARY'
+        class Transport(bf.TestHttp):
+            def request(self,method,url,*,body=None,**kwargs):
+                request=bf.cp.decode(bf.cp.ClientEnvelope,bf.cp.loads(body))
+                self.received=bf.cp.dumps(bf.cp.ServerEnvelope(request.requestId,bf.cp.Result_Error(bf.cp.Failure(bf.cp.ErrorCode.NotFound,canary,None))))
+                return bf.HttpResult(404,email.message.Message(),self.received)
+        peer=Transport()
+        response=peer.current('http://127.0.0.1:9',bf.cp.Command_GetArtifact('a'*32))
+        self.assertEqual(response.json()['error']['code'],'not-found')
+        self.assertEqual(response.current_error_code(),'not-found')
+        self.assertEqual(response.body,peer.received)
+        # Negative security assertions must be able to see a server leak, not
+        # pass because a test helper replaced it with sanitized fixture JSON.
+        self.assertIn(canary.encode(),response.body)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,41 @@
+{
+  "kind": "actual-native-DOM-ARIA-search-contract",
+  "old": {
+    "textbox": 0,
+    "lexicalRadio": 0,
+    "searchHit": 0
+  },
+  "current": {
+    "role": "combobox",
+    "name": "Search conversations",
+    "aria": "- combobox \"Search conversations\"",
+    "expression": "synthetic mode:lexical",
+    "archiveRows": 3,
+    "piRows": 1,
+    "piSelectedBy": "data-session-id from actual current generated session identity",
+    "openedSourceConversation": true,
+    "originalUnicodeVisible": true,
+    "sourceHeading": 0,
+    "sourceDialog": 1,
+    "publishedAction": 1,
+    "initialProvenance": "Owner alice\nViewing source r1\nHEAD r1 / index r1\nArchive-only view · no annotations\nQuiescent snapshot · may resume\nRedacted before upload\nInfo",
+    "indexedProvenance": "Owner alice\nViewing source r1\nHEAD r1 / index r1\nQuiescent snapshot · may resume\nRedacted before upload\nInfo",
+    "publishedPassageHighlight": true,
+    "archiveOnlyLabelCount": 1
+  },
+  "wireOperations": [
+    {
+      "Archive": {
+        "query": {
+          "expression": "synthetic mode:lexical",
+          "sort": "LastTimestamp",
+          "direction": "Desc",
+          "cursor": null,
+          "limit": 50,
+          "preferRelevance": true
+        }
+      }
+    }
+  ],
+  "modelRequests": 0
+}

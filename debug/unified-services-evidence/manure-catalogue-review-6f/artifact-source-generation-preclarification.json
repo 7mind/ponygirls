@@ -1,0 +1,13 @@
+{
+  "commit": "6f6369b082df84f9f5ce261d2f7bfc3a368b1771",
+  "generatedAt": "2026-11-03T10:37:03.520538+00:00",
+  "manifest": "artifact-source-relative-v1.sha256",
+  "manifestSha256": "47254639baf0cb31a8e412ad64fcdf4c2ca1ff22fd0eadaeb395e50183675e97",
+  "entryCount": 103,
+  "method": "Independent reproduction of archived artifact-source.py path selection, applying excluded target/.git components relative to archived root. Unchanged archived script excludes absolute ancestors too, so under target/ it emits only4 top-level files. No production script modified.",
+  "unchangedScriptSha256": "86be710e5536b97188dfa52bc5add7762d0f2ec9be06f114319dbebd0607a2d8",
+  "unchangedScriptOutput": "artifact-source-raw-ancestor-target-v1.sha256",
+  "unchangedScriptOutputCount": 4,
+  "requestedArtifact107IdentityComparison": "Pending parent clarification/manifest; no107-entry identity claimed.",
+  "doesNotAttestNativeOrPackagedJvmArtifact": true
+}

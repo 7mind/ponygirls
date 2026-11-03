@@ -1,0 +1,22 @@
+{
+  "fixtureCodeCommit": "bf197726768664c143401489f125b448c16794ab",
+  "applicationSource": "141d6eb4e88a12b063b0da4b13f4f773fe5b8559",
+  "files": {
+    "with-owned-postgres.py": {
+      "source": "bf197726768664c143401489f125b448c16794ab:nix/tests/with-owned-postgres.py",
+      "sha256": "3b3113185fa153682c951079bb839d1fa429a04e362daf5bada522848bde4c62"
+    },
+    "provision-owned-database.py": {
+      "source": "bf197726768664c143401489f125b448c16794ab:nix/tests/provision-owned-database.py",
+      "sha256": "7b344e945bf064a6a96c361777fd4eaf25a81d1df11a2b339520b38035cdd4ce"
+    },
+    "provider.py": {
+      "source": "bf197726768664c143401489f125b448c16794ab:nix/postgres/provider.py",
+      "sha256": "22c7f6e767a8f3d06c89669f2c3c884b2ab03353de8fd6449974d0464f2ac1c3"
+    },
+    "provider-env.json": {
+      "source": "explicit public descriptor; PG_PROVIDER replaced with hash-frozen source, no credentials",
+      "sha256": "a38a5afe5ee9dbecf559a4da8add538c0b4931507e889197e368e08f2b9d7af1"
+    }
+  }
+}

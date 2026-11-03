@@ -1,0 +1,11 @@
+{
+  "scheme" : 3,
+  "locks" : {
+    "haystack.api" : [
+      {
+        "version" : "1.0.0",
+        "sigId" : "57731e534d4ba48badfedaf4a5ed5d4b85b3a86aacffcb74adcbc6f2ba80ccfe"
+      }
+    ]
+  }
+}

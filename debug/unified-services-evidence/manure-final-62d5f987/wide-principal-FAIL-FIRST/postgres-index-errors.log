@@ -1,0 +1,4 @@
+2026-11-03 11:57:26.894 UTC [3633922] ERROR:  index row size 5536 exceeds btree version 4 maximum 2704 for index "pony_retrieval_audience_pkey"
+2026-11-03 11:57:26.894 UTC [3633922] HINT:  Values larger than 1/3 of a buffer page cannot be indexed.
+2026-11-03 11:57:27.389 UTC [3634098] ERROR:  index row size 5536 exceeds btree version 4 maximum 2704 for index "pony_retrieval_audience_pkey"
+2026-11-03 11:57:27.389 UTC [3634098] HINT:  Values larger than 1/3 of a buffer page cannot be indexed.

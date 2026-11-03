@@ -85,7 +85,10 @@ a { color: var(--accent); text-underline-offset: 3px; }
 input, textarea, select { width: 100%; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 0; padding: 7px 9px; min-width: 0; font-size: 14px; }
 input::placeholder { color: var(--muted); }
 textarea { resize: vertical; line-height: 1.65; }
-input[type=radio] { width: auto; accent-color: var(--accent); }
+/* Native radio appearance forces a 50% computed radius in current Chromium.
+   Keep native semantics/keyboard behavior while drawing the square control. */
+input[type=radio] { appearance: none; width: 14px; height: 14px; flex: none; border-radius: 0; padding: 2px; background-clip: content-box; }
+input[type=radio]:checked { background-color: var(--accent); }
 label { font-size: 12px; color: var(--ink); display: flex; flex-direction: column; gap: 5px; }
 h1, h2, h3, h4, p { margin-top: 0; }
 h1 { font: 600 clamp(22px, 2vw, 27px)/1.25 ui-sans-serif, sans-serif; letter-spacing: -.4px; margin-bottom: 6px; }

@@ -1,0 +1,25 @@
+{
+  "rawLogsLocalOnly": true,
+  "logs": {
+    "ponygirls": {
+      "omitted": true,
+      "sha256": "ca47cfd5902988df3115ceda0b3c8429e4e519e6dd5a5447073789f9a1961fc2",
+      "bytes": 21041,
+      "lines": 269
+    },
+    "nix-config": {
+      "omitted": true,
+      "sha256": "a7ca89a9239b3272f4d1b70ebb27a1d51538d3b6fae82375d42e93a9d4de98ee",
+      "bytes": 5688,
+      "lines": 85
+    },
+    "paddock": {
+      "omitted": true,
+      "sha256": "f6d96684de7a20d75284ded87b8bc0ce658cd2bbcc04c9dc4c6063ce6e8a8027",
+      "bytes": 12312,
+      "lines": 168
+    }
+  },
+  "taskLockfilesStillCommitted": true,
+  "beforeAfterLockSnapshotsNotClaimed": true
+}

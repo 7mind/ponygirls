@@ -17,6 +17,7 @@ import * as A from '../generated/typescript/chronicle/api/index.js';
 import { BaboonCodecContext } from '../generated/typescript/BaboonSharedRuntime.js';
 
 const context = BaboonCodecContext.Default;
+const fixtureDatabasePassword = 'chronicle-test-password';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const deadlineMs = 90_000;
 const shutdownGraceMs = 40_000;
@@ -31,7 +32,7 @@ function command(): string[] {
   return value as string[];
 }
 function run(executable: string, args: string[], input: string | undefined): string {
-  const result = spawnSync(executable, args, { input, encoding: 'utf8', timeout: deadlineMs });
+  const result = spawnSync(executable, args, { input, encoding: 'utf8', timeout: deadlineMs, env: { ...process.env, PGPASSWORD: fixtureDatabasePassword } });
   assert.equal(result.status, 0, `${executable} failed: ${result.stderr}`);
   return result.stdout;
 }
@@ -119,7 +120,10 @@ async function modelFixture(key: Buffer, certificate: Buffer): Promise<ModelFixt
         assert.ok(Array.isArray(payload.messages));
         const source = record(JSON.parse(String(record(payload.messages[1]).content)));
         assert.ok(Array.isArray(source.fragments) && source.fragments.length > 0);
-        const content = JSON.stringify({ chunks: [{ first: 0, last: source.fragments.length - 1, summary: 'Synthetic source-backed annotation', tags: ['synthetic', 'verification'] }] });
+        const content = JSON.stringify({ parts: [{
+          kind: 'Problem', start: { fragmentIndex: 0, scalarOffset: 0 }, end: { fragmentIndex: source.fragments.length, scalarOffset: 0 },
+          continuePrevious: source.previous !== null, summary: 'Synthetic source-backed annotation', tags: ['synthetic', 'verification'],
+        }] });
         response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }] }));
       } else if (request.url === '/v1/embeddings') {
         counts.embedding++; assert.ok(Array.isArray(payload.input));
@@ -163,7 +167,8 @@ test('collector → durable archive → annotation/pgvector → generated WS and
     else { console.error(`Synthetic failure artifacts retained: ${directory}`); console.error(serverLog); }
     assert.ok(graceful, 'server shutdown required SIGKILL');
   });
-  run(join(pg, 'initdb'), ['-D', db, '-A', 'trust', '-U', 'chronicle_test', '--no-locale', '--encoding=UTF8'], undefined);
+  await writeFile(join(directory, 'db-password'), fixtureDatabasePassword, { mode: 0o600 });
+  run(join(pg, 'initdb'), ['-D', db, '-A', 'scram-sha-256', '--pwfile', join(directory, 'db-password'), '-U', 'chronicle_test', '--no-locale', '--encoding=UTF8'], undefined);
   run(join(pg, 'pg_ctl'), ['-D', db, '-l', join(directory, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${dbPort} -k ${directory}`, '-w', 'start'], undefined); databaseStarted = true;
   run(join(pg, 'createdb'), ['-h', '127.0.0.1', '-p', String(dbPort), '-U', 'chronicle_test', 'chronicle_test'], undefined);
   run(join(pg, 'psql'), ['-h', '127.0.0.1', '-p', String(dbPort), '-U', 'chronicle_test', '-d', 'chronicle_test', '-c', 'CREATE EXTENSION vector'], undefined);
@@ -171,15 +176,16 @@ test('collector → durable archive → annotation/pgvector → generated WS and
   const passwordHash = run(cmd[0], [...cmd.slice(1), 'password-hash'], password + '\n').trim();
   assert.match(passwordHash, /^pbkdf2-sha256\$/);
   await writeFile(join(directory, 'password'), passwordHash, { mode: 0o600 });
-  await writeFile(join(directory, 'db-password'), '', { mode: 0o600 });
+  await writeFile(join(directory, 'db-password'), fixtureDatabasePassword, { mode: 0o600 });
   await writeFile(join(directory, 'model-key'), '', { mode: 0o600 });
   const endpointConfig = { model: 'synthetic-model', revision: 'synthetic-v1', credentialFile: join(directory, 'model-key'), timeoutSeconds: 5, maxResponseBytes: 1_048_576 };
   const config = {
     listenHost: '127.0.0.1', listenPort: httpPort, allowedOrigin: base, secureCookies: false,
     jdbcUrl: `jdbc:postgresql://127.0.0.1:${dbPort}/chronicle_test`, databaseUser: 'chronicle_test', databasePasswordFile: join(directory, 'db-password'),
+    databaseLimits: { maxConnections: 8, maxQueued: 32, queueTimeoutMs: 5000, connectTimeoutMs: 5000, statementTimeoutMs: 30000, lockTimeoutMs: 35000, idleTransactionTimeoutMs: 60000, socketTimeoutMs: 35000 },
     users: ['alice', 'bob', 'carol'].map(id => ({ id, login: id, passwordHashFile: join(directory, 'password'), enabled: true })),
     maxBodyBytes: 8_388_608, maxFiles: 16, maxFileBytes: 4_194_304, maxMessages: 10_000, sessionTtlSeconds: 3600,
-    annotation: { ...endpointConfig, endpoint: model.endpoint + '/chat/completions' },
+    annotation: { ...endpointConfig, endpoint: model.endpoint + '/chat/completions', requestPolicy: 'strict-json-schema' },
     embedding: { ...endpointConfig, endpoint: model.endpoint + '/embeddings', dimensions: 3, queryPrefix: 'query: ', documentPrefix: 'document: ', sendDimensions: false },
   };
   const configFile = join(directory, 'server.json'); await writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
@@ -222,7 +228,11 @@ test('collector → durable archive → annotation/pgvector → generated WS and
   assert.equal(status.total, 3); assert.ok(model.counts.annotation > 0 && model.counts.embedding > 0);
   const mcpClient = new Client({ name: 'chronicle-acceptance', version: '1.0.0' });
   await mcpClient.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } })); mcp.push(mcpClient);
-  const tools = await mcpClient.listTools(); assert.equal(tools.tools.length, 8);
+  const tools = await mcpClient.listTools();
+  assert.deepEqual(tools.tools.map(tool => tool.name).sort(), [
+    'get_chunks', 'get_messages', 'get_session', 'ingest_status', 'list_facets',
+    'read_message_context', 'related_sessions', 'search_sessions', 'search_tags', 'whoami',
+  ]);
   const lexical = await mcpClient.callTool({ name: 'search_sessions', arguments: { query: 'synthetic', mode: 'lexical', limit: 100, offset: 0 } });
   assert.notEqual(lexical.isError, true); assert.ok(Array.isArray(lexical.content));
   const firstContent = record(lexical.content[0]); assert.equal(firstContent.type, 'text');
@@ -332,11 +342,12 @@ test('collector → durable archive → annotation/pgvector → generated WS and
   await page.getByRole('heading', { name: 'Save your token now.', exact: true }).waitFor();
   await page.getByRole('button', { name: 'I have saved it · dismiss', exact: true }).click();
   await page.getByRole('button', { name: 'archive', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Search conversations' }).fill('synthetic'); await page.getByRole('radio', { name: 'Lexical', exact: true }).check();
+  await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('synthetic mode:lexical');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
-  await page.locator('.search-hit').filter({ hasText: /\bPi\b/ }).click();
-  await page.getByRole('heading', { name: 'Source conversation', exact: true }).waitFor();
+  await page.locator(`.archive-row[data-session-id="${piSession.id}"] .table-title`).click();
+  await page.getByRole('dialog', { name: 'Source conversation', exact: true }).waitFor();
   await page.locator('.original-message pre').filter({ hasText: '你好 🦄' }).first().waitFor();
+  await page.getByRole('button', { name: 'View published annotations', exact: true }).click();
   await page.locator('.passage-list .passage').first().click(); await page.locator('.original-message mark').first().waitFor();
   const artifacts = join(root, 'tests', 'artifacts'); await mkdir(artifacts, { recursive: true });
   const runtime = cmd.includes('-jar') ? 'jvm' : 'native';
@@ -374,7 +385,7 @@ test('collector → durable archive → annotation/pgvector → generated WS and
   }), value => ['protocol-error', 'unauthorized', 'update-required', 'stopped'].includes(value.state ?? '') || (value.state === 'live' && value.socket !== previousSocket));
   assert.equal(resumedConnection.state, 'live', `server liveness expiry must trigger bounded replacement without manual retry: ${JSON.stringify(resumedConnection)}`);
   await page.locator('.identity').getByText('alice', { exact: true }).waitFor({ state: 'attached' });
-  assert.equal(await page.getByRole('textbox', { name: 'Search conversations' }).inputValue(), 'synthetic');
+  assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), 'synthetic mode:lexical');
   assert.equal(await page.getByRole('button', { name: 'Try again manually', exact: true }).count(), 0);
   model.control.available = false;
   const piFile = join(fixtures, 'pi', 'session.jsonl');
@@ -407,15 +418,15 @@ test('collector → durable archive → annotation/pgvector → generated WS and
   const retained = await alice.rpc.call(new A.Operation_GetMessages(piSession.id, 0, 100, pinned), randomUUID()); assert.ok(retained instanceof A.Result_Messages);
   assert.ok(retained.result.messages.some(message => message.text.includes('你好 🦄')));
   assert.ok(await bob.rpc.call(new A.Operation_GetSession(piSession.id, pinned), randomUUID()) instanceof A.Result_Error);
-  await page.getByText('Head r2 / index r2', { exact: true }).waitFor();
+  await page.getByText('HEAD r2 / index r2', { exact: true }).waitFor();
   await page.locator('.original-message pre').filter({ hasText: '你好 🦄' }).first().waitFor();
   await page.getByRole('button', { name: 'View latest archived revision', exact: true }).click();
   await page.getByText('Viewing source r2', { exact: true }).waitFor();
-  await page.getByText('Unindexed archive view · no annotations', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Request raw records', exact: true }).click();
-  await page.locator('.raw-source details').first().waitFor();
-  await page.locator('.raw-source details summary').first().click();
-  assert.ok(!(await page.locator('.raw-source pre').first().innerText()).includes('你好 🦄'));
+  await page.getByText('Archive-only view · no annotations', { exact: true }).waitFor();
+  const latestRaw = await alice.rpc.call(new A.Operation_GetRaw(piSession.id, latestView.revision), randomUUID());
+  assert.ok(latestRaw instanceof A.Result_Raw); assert.equal(latestRaw.result.revision, 2);
+  assert.ok(latestRaw.result.files.length > 0);
+  assert.ok(latestRaw.result.files.every(file => !file.content.includes('你好 🦄')));
   assert.deepEqual(browserErrors, []);
   assert.equal((await fetch(base + '/api/ingest', { method: 'POST', headers: { Cookie: alice.cookie, Origin: base, 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
   assert.equal((await fetch(base + '/api/login', { method: 'POST', headers: { Origin: 'https://untrusted.example', 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
@@ -427,8 +438,10 @@ test('collector → durable archive → annotation/pgvector → generated WS and
   await start();
   const restored = await login('alice'); assert.ok(await restored.rpc.call(new A.Operation_GetSession(sessionId, undefined), randomUUID()) instanceof A.Result_Session);
   await page.getByText('Viewing source r2', { exact: true }).waitFor();
+  await page.getByText('Archive-only view · no annotations', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'View published annotations', exact: true }).click();
   await page.locator('.passage-list .passage').first().waitFor();
-  assert.equal(await page.getByRole('textbox', { name: 'Search conversations' }).inputValue(), 'synthetic');
+  assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), 'synthetic mode:lexical');
   const dumpFile = join(directory, 'synthetic-backup.sql');
   const dump = run(join(pg, 'pg_dump'), ['-h', '127.0.0.1', '-p', String(dbPort), '-U', 'chronicle_test', '-d', 'chronicle_test', '--no-owner'], undefined);
   await writeFile(dumpFile, dump); assert.ok((await readFile(dumpFile, 'utf8')).includes('ch_sources'));

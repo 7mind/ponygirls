@@ -4,10 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/index.js",
-    "test": "tsc -p tsconfig.tests.json && node --test dist-test/tests/*.test.js"
+    "build": "bash ../../scripts/backend-sbt.sh haystackServer/assembly",
+    "build:characterization": "tsc -p ../characterization/node/tsconfig.json",
+    "typecheck": "bash ../../scripts/backend-sbt.sh haystackServer/compile",
+    "start": "bash run.sh",
+    "test": "bash ../scripts/test-postgres-scala.sh && bash ../scripts/test-current.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

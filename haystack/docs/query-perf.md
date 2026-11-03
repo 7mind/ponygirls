@@ -1,3 +1,7 @@
+> Historical TypeScript measurements below are not Scala/native performance
+> evidence. The current bound SQL adapter is separately exercised by dense
+> real-PG EXPLAIN/summary-limit tests; no unmeasured latency claim is inferred.
+
 # Haystack — query performance notes (measured, Step 4)
 
 No latency promises: these are single-machine observations (disposable PG

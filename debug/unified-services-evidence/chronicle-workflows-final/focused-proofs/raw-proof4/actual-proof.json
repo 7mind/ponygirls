@@ -1,0 +1,17 @@
+{
+  "afterRestart": {
+    "archiveOnly": 1,
+    "passages": 0,
+    "publishedAction": 1,
+    "explicitPublishedRevealsPassage": true
+  },
+  "kind": "current-r2-DOM-and-explicit-generated-raw-read",
+  "rawButton": 0,
+  "rawPanel": 0,
+  "currentArchiveOnly": true,
+  "revision": 2,
+  "files": 1,
+  "allRawFilesExcludeOldUnicode": true,
+  "authorization": "same fresh browser cookie/principal via generated WS codecs",
+  "modelRequests": 0
+}

@@ -22,6 +22,29 @@ object RelativeName:
 final class RootReplaced extends IOException("storage root identity changed")
 final class RootAlreadyClaimed extends IOException("physical storage root already claimed in this network namespace")
 final class OpenFileHandles extends IOException("close refused: storage file handles remain open")
+final class OpenRootLeases extends IOException("close refused: storage operation leases remain open")
+
+/** A service/worker lifetime reservation. Validate immediately before metadata effects;
+  * acquiring a lease alone is not permission to use a subsequently replaced root.
+  */
+final class RootLease private[storage] (
+  validated: (() => Any) => Any,
+  released: () => Unit
+) extends AutoCloseable:
+  private var closed = false
+  def run[A](body: => A): A = synchronized {
+    if closed then throw new ClosedChannelException
+    validated(() => body).asInstanceOf[A]
+  }
+  def validate(): Unit = run(())
+  override def close(): Unit = synchronized {
+    if !closed then
+      closed = true
+      released()
+  }
+
+final case class TreeEntry(name: RelativeName, directory: Boolean)
+final case class RawInventoryEntry(pathHex: String, directory: Boolean, size: Long, sha256: String)
 
 enum ExistingFileAccess:
   case ReadOnly, ReadWrite
@@ -46,6 +69,97 @@ final class ConfinedDirectory private (
   import PosixErrors.call
   private var closed = false
   private var files = 0
+  private var leases = 0
+
+  /** Root ownership spans all DB transactions, file work and workers, not merely
+    * open payload handles. Close refusal retains both the root and physical claim.
+    */
+  def lease(): RootLease = synchronized {
+    checked()
+    leases += 1
+    new RootLease(
+      body => synchronized { checked(); body() },
+      () => synchronized { leases -= 1 }
+    )
+  }
+
+  /** Strict, bounded no-follow topology inventory for publication. Invalid UTF-8,
+    * symlinks and special inodes fail closed; cleanup still uses the raw-name API.
+    * Enumeration is not a snapshot against hostile same-UID inode manipulation.
+    */
+  def tree(name: RelativeName, maxEntries: Int, maxDepth: Int): Vector[TreeEntry] = synchronized {
+    require(maxEntries > 0 && maxDepth > 0, "positive topology bounds required")
+    checked()
+    val found = scala.collection.mutable.ArrayBuffer.empty[TreeEntry]
+    withComponents(name.components) { start =>
+      def visit(fd: Int, prefix: String, depth: Int): Unit =
+        if depth > maxDepth then throw new IOException("topology bound exceeded")
+        val entries = call(bridge.entries(fd, maxEntries - found.size + 1))
+        if entries.length > maxEntries - found.size then throw new IOException("topology bound exceeded")
+        entries.foreach { raw =>
+          val decoder = StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+          val leaf = try decoder.decode(java.nio.ByteBuffer.wrap(raw)).toString
+            catch case _: java.nio.charset.CharacterCodingException => throw new IOException("invalid payload name")
+          val relative = RelativeName.parse(if prefix.isEmpty then leaf else prefix + "/" + leaf)
+          val kind = call(bridge.kind(fd, raw))
+          if kind != PosixNative.DIRECTORY && kind != PosixNative.REGULAR then
+            throw new IOException("invalid payload topology")
+          if found.size >= maxEntries then throw new IOException("topology bound exceeded")
+          found += TreeEntry(relative, kind == PosixNative.DIRECTORY)
+          if kind == PosixNative.DIRECTORY then
+            withFd(call(bridge.openDirectory(fd, raw)))(child => visit(child, relative.value, depth + 1))
+        }
+      visit(start, "", 1)
+    }
+    found.toVector
+  }
+
+  /** Raw-name, descriptor-only first-adoption verification. Includes root and
+    * every directory/file in unsigned-byte lexical DFS order; invalid UTF-8
+    * names remain reversible hex. Symlinks/special entries refuse. The declared
+    * aggregate byte/entry/depth budgets are inclusive and never truncate.
+    */
+  def inventory(maxEntries: Int, maxDepth: Int, maxBytes: Long): Vector[RawInventoryEntry] = synchronized {
+    require(maxEntries > 0 && maxDepth > 0 && maxBytes >= 0, "invalid inventory bounds")
+    checked()
+    val found = scala.collection.mutable.ArrayBuffer(RawInventoryEntry("",true,0L,""))
+    var remainingBytes = maxBytes
+    def hex(value: Array[Byte]): String = value.map(b => f"${b & 0xff}%02x").mkString
+    def visit(fd: Int, prefix: Array[Byte], depth: Int): Unit =
+      val entries = call(bridge.entries(fd,maxEntries-found.size+1))
+      if entries.length > maxEntries-found.size then throw new IOException("inventory bound exceeded")
+      val sorted = entries.toVector.sortWith((a,b) => java.util.Arrays.compareUnsigned(a,b) < 0)
+      sorted.foreach { leaf =>
+        if depth >= maxDepth || found.size >= maxEntries then throw new IOException("inventory bound exceeded")
+        val path = if prefix.isEmpty then leaf else prefix ++ Array('/'.toByte) ++ leaf
+        call(bridge.kind(fd,leaf)) match
+          case PosixNative.DIRECTORY =>
+            found += RawInventoryEntry(hex(path),true,0L,"")
+            withFd(call(bridge.openDirectory(fd,leaf)))(child => visit(child,path,depth+1))
+          case PosixNative.REGULAR =>
+            val entry = withFd(call(bridge.openFile(fd,leaf,false))) { file =>
+              val size = call(bridge.size(file))
+              if size < 0 || size > remainingBytes then throw new IOException("inventory byte bound exceeded")
+              remainingBytes -= size
+              val hash = MessageDigest.getInstance("SHA-256")
+              var offset = 0L
+              while offset < size do
+                val bytes = call(bridge.read(file,offset,math.min(1048576L,size-offset).toInt))
+                if bytes.isEmpty then throw new IOException("inventory file changed")
+                hash.update(bytes); offset += bytes.length
+              if call(bridge.size(file)) != size then throw new IOException("inventory file changed")
+              RawInventoryEntry(hex(path),false,size,hex(hash.digest()))
+            }
+            found += entry
+          case _ => throw new IOException("invalid inventory topology")
+      }
+    visit(root,Array.emptyByteArray,1)
+    checked()
+    found.toVector
+  }
+
+  def physicalIdentity: Vector[Long] = synchronized { checked(); identity }
 
   def forceRootDirectory(): Unit = synchronized {
     checked()
@@ -112,6 +226,34 @@ final class ConfinedDirectory private (
   def removeTree(name: RelativeName, maxEntries: Int, maxDepth: Int): Unit = synchronized {
     require(maxEntries > 0 && maxDepth > 0, "positive cleanup bounds required")
     checked()
+    withParent(name)((parent, leaf) => removeEntry(parent, leaf, maxEntries, maxDepth))
+  }
+
+  /** Exclusive-owner orphan cleanup. Retained names compare exact raw UTF-8
+    * bytes; invalid UTF-8 names can be removed without decode/re-encode. Callers
+    * must revalidate metadata under their process/DB exclusion before invoking.
+    * Enumeration and each removed tree are independently bounded; overflow is
+    * an explicit failure, never a claim that the pass completed.
+    */
+  def cleanupChildren(name: RelativeName, keep: Set[String], maxEntries: Int, maxDepth: Int): Int = synchronized {
+    require(maxEntries > 0 && maxDepth > 0, "positive cleanup bounds required")
+    checked()
+    val retained = keep.toVector.map(PosixErrors.utf8)
+    withComponents(name.components) { parent =>
+      val entries = call(bridge.entries(parent, maxEntries + 1))
+      if entries.length > maxEntries then throw new IOException("cleanup bound exceeded")
+      var removed = 0
+      entries.foreach { leaf =>
+        if !retained.exists(java.util.Arrays.equals(_, leaf)) then
+          removeEntry(parent, leaf, maxEntries, maxDepth)
+          removed += 1
+      }
+      if removed > 0 then call(bridge.sync(parent))
+      removed
+    }
+  }
+
+  private def removeEntry(parent: Int, leaf: Array[Byte], maxEntries: Int, maxDepth: Int): Unit =
     // Reserve the root, then reserve every enumerated child before descending. The
     // combined raw-name arrays, not just each individual batch, stay within the budget.
     var remaining = maxEntries - 1
@@ -134,7 +276,7 @@ final class ConfinedDirectory private (
             PosixErrors.suppress(error)(call(bridge.close(child)))
             throw error
       else call(bridge.unlink(parent, leaf, false))
-    withParent(name) { (parent, leaf) =>
+    {
       try
         visit(parent, leaf, 1)
         while stack.nonEmpty do
@@ -154,7 +296,6 @@ final class ConfinedDirectory private (
           stack.reverseIterator.foreach(frame => PosixErrors.suppress(error)(call(bridge.close(frame.fd))))
           throw error
     }
-  }
 
   private def checked(): Unit =
     if closed then throw new ClosedChannelException
@@ -202,6 +343,7 @@ final class ConfinedDirectory private (
   override def close(): Unit = synchronized {
     if !closed then
       if files != 0 then throw new OpenFileHandles
+      if leases != 0 then throw new OpenRootLeases
       closed = true
       var failure: Throwable = null
       try call(bridge.close(root))

@@ -1,4 +1,4 @@
-"""manure client: shared REST + upload/fetch logic (contract v0.2, client-owned).
+"""Manure current-contract client with durable upload/fetch algorithms.
 
 Stdlib only, Python >=3.12. Explicit constructor dependencies,
 no module-level mutable state.
@@ -16,6 +16,9 @@ import time
 import urllib.parse
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
+
+from manure import current_protocol as cp
 
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 ARTIFACT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -34,6 +37,12 @@ MAX_CHUNK_BYTES = 4194304
 # chunk or 4 MiB JSON body; 8 MiB + slack aborts hostile oversized replies
 # before any write.
 MAX_TRANSPORT_BYTES = 8 * 1024 * 1024 + 1024
+# Reference-file representation ceilings, not a new URL grammar/normalization.
+# Token: canonical 43 ASCII bytes and one optional LF. URL: the existing 64 KiB
+# HTTP request-line ceiling (CONTRACT §7.7 / stdlib HTTP server), deliberately
+# looser than the current service's 16 KiB total request-header admission.
+MAX_TOKEN_FILE_BYTES = 44
+MAX_URL_FILE_BYTES = 65536
 
 RESERVED_TOP = ("__manure", "api")
 
@@ -143,17 +152,54 @@ def _validate_token_format(value: str) -> None:
         raise ManureError("bad-envelope", "malformed credential")
 
 
+def _read_regular_reference(path: str | os.PathLike, limit: int, *, kind: str) -> bytes:
+    """Read a trusted configured reference, never a pipe/device or unbounded file.
+
+    Resolve managed (e.g. agenix) symlinks deliberately, then no-follow the
+    resolved leaf. Nonblocking open + descriptor type/identity checks close the
+    stat/open FIFO race. Unbuffered reads consume at most limit+1 actual bytes,
+    including if a regular file grows after fstat. No source values/paths leak.
+    """
+    def oversized() -> ManureError:
+        return InvalidUrl("oversized url file") if kind == "url" else ManureError("unauthorized", "oversized credential file")
+
+    try:
+        resolved = Path(path).resolve(strict=True)
+        before = os.stat(resolved, follow_symlinks=False)
+        if not stat.S_ISREG(before.st_mode):
+            raise OSError("nonregular reference")
+        fd = os.open(resolved, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+        try:
+            opened = os.fstat(fd)
+            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                raise OSError("reference changed")
+            if opened.st_size > limit:
+                raise oversized()
+            remaining = limit + 1
+            parts = []
+            while remaining:
+                block = os.read(fd, remaining)
+                if not block:
+                    break
+                parts.append(block)
+                remaining -= len(block)
+            raw = b"".join(parts)
+            if len(raw) > limit:
+                raise oversized()
+            return raw
+        finally:
+            os.close(fd)
+    except OSError:
+        raise MissingCredentials("unreadable " + kind + " file") from None
+
+
 def read_token_file(path: str | os.PathLike) -> str:
     """Haystack exact-byte rule: 43 chars + at most one final LF.
 
     Rejects: empty, NUL, CR, non-ASCII printable, multiline, noncanonical.
     IO failures are normalized to missing-credentials (sanitized).
     """
-    try:
-        with open(path, "rb") as f:
-            raw = f.read()
-    except OSError:
-        raise MissingCredentials("unreadable credential file")
+    raw = _read_regular_reference(path, MAX_TOKEN_FILE_BYTES, kind="credential")
     if len(raw) == 0:
         raise ManureError("unauthorized", "empty credential file")
     if b"\x00" in raw:
@@ -179,11 +225,7 @@ def read_token_file(path: str | os.PathLike) -> str:
 
 
 def read_url_file(path: str | os.PathLike) -> str | None:
-    try:
-        with open(path, "rb") as f:
-            raw = f.read()
-    except OSError:
-        raise MissingCredentials("unreadable url file")
+    raw = _read_regular_reference(path, MAX_URL_FILE_BYTES, kind="url")
     try:
         text = raw.decode("utf-8")
     except Exception:
@@ -205,30 +247,31 @@ def _exact_credential(direct: str | None) -> str | None:
     return direct
 
 
-def resolve_secret_pair(direct: str | None, file_path: str | None, *, kind: str = "token") -> str | None:
-    """Resolve one MANURE_* direct/file pair.
+def check_secret_pair_ambiguity(direct: str | None, file_path: str | None, *, kind: str = "token") -> None:
+    """Pure source-presence preflight: no validation, file I/O or network.
 
-    Token/password direct values are exact (canonical, no stripping per
-    governor A1); token/password files use the exact-byte file rule (43 chars
-    plus at most one final LF); url values/files use the §9 strip rule.
-    Both present -> AmbiguousCredentials (no network by construction).
+    A configured nonempty reference is a source even if missing, unreadable,
+    empty, or a FIFO. Ambiguity therefore wins over malformed direct values
+    and file contents. Secret direct values are exact; URL emptiness retains
+    its existing strip rule. Reference whitespace is used only for presence.
     """
-    if kind in ("token", "password"):
-        d = _exact_credential(direct)
-    else:
-        d = strip_secret_value(direct)
-    f_raw: str | None = None
-    if file_path is not None and str(file_path).strip() != "":
-        fp = str(file_path)
-        if kind in ("token", "password"):
-            f_raw = read_token_file(fp)
-        else:
-            f_raw = read_url_file(fp)
-        if f_raw is not None and f_raw == "":
-            f_raw = None
-    if d is not None and f_raw is not None:
+    direct_present = (direct is not None and direct != "") if kind in ("token", "password") else strip_secret_value(direct) is not None
+    reference_present = file_path is not None and str(file_path).strip() != ""
+    if direct_present and reference_present:
         raise AmbiguousCredentials(f"both {kind} direct and file credentials set")
-    return d if d is not None else f_raw
+
+
+def resolve_secret_pair(direct: str | None, file_path: str | None, *, kind: str = "token") -> str | None:
+    """Resolve one pair, rejecting source ambiguity before validation or I/O.
+
+    Token/password codecs and URL whitespace rules are unchanged. Callers with
+    multiple pairs preflight every pair before resolving any credential file.
+    """
+    check_secret_pair_ambiguity(direct, file_path, kind=kind)
+    value = _exact_credential(direct) if kind in ("token", "password") else strip_secret_value(direct)
+    if file_path is not None and str(file_path).strip() != "":
+        return read_token_file(str(file_path)) if kind in ("token", "password") else read_url_file(str(file_path))
+    return value
 
 
 def is_loopback_host(host: str) -> bool:
@@ -1166,22 +1209,26 @@ def _lower_headers(hdrs: dict[str, str]) -> dict[str, str]:
     return {k.lower(): v for k, v in (hdrs or {}).items()}
 
 
+def _current_failure(failure: cp.Failure, status: int,
+                     headers: dict[str, str]) -> ManureError:
+    code = re.sub(r"(?<!^)(?=[A-Z])", "-", failure.code.value).lower()
+    retry = _lower_headers(headers).get("retry-after")
+    if retry is None and failure.retryAfterSeconds is not None:
+        retry = str(failure.retryAfterSeconds)
+    # Only the enumerated code is safe to expose. An untrusted server/proxy
+    # message can reflect credentials, bodies, headers or payload fragments.
+    return ManureError(code, code, http_status=status, retry_after=retry)
+
+
 def _error_from_body(status: int, hdrs: dict[str, str], body: bytes) -> ManureError:
-    code = "unknown"
-    msg = f"http {status}"
     try:
-        obj = json.loads(body.decode("utf-8") or "{}")
-        err = obj.get("error", obj)
-        if isinstance(err, dict):
-            code = str(err.get("code", code))
-            msg = str(err.get("message", msg))
-    except Exception:
-        try:
-            msg = body[:200].decode("utf-8", "replace")
-        except Exception:
-            pass
-    retry = _lower_headers(hdrs).get("retry-after")
-    return ManureError(code, msg, http_status=status, retry_after=retry)
+        envelope = cp.decode(cp.ServerEnvelope, cp.loads(body))
+        if isinstance(envelope.result, cp.Result_Error):
+            return _current_failure(envelope.result.failure, status, hdrs)
+    except cp.ProtocolError:
+        pass
+    return ManureError("unavailable", "request failed", http_status=status,
+                       retry_after=_lower_headers(hdrs).get("retry-after"))
 
 
 # ----------------------------------------------------------------- client
@@ -1193,6 +1240,7 @@ class ManureClient:
                  cache_dir: str | os.PathLike | None = None,
                  transport: HttpTransport | None = None,
                  allow_insecure_http: bool = False):
+        check_secret_pair_ambiguity(token, token_file, kind="token")
         if type(allow_insecure_http) is not bool:
             raise ManureError("bad-envelope", "allow_insecure_http: boolean required")
         self.allow_insecure_http = allow_insecure_http
@@ -1211,21 +1259,7 @@ class ManureClient:
             raise InvalidUrl(f"bad api base: {base}")
         self.api_base: str = base
         self.api_origin: str = origin_of(base)
-        # ambiguity without network; direct values exact (governor A1).
-        if token is None or token == "":
-            tok_direct = None
-        elif not isinstance(token, str):
-            raise ManureError("bad-envelope", "malformed credential")
-        else:
-            _validate_token_format(token)
-            tok_direct = token
-        tfile = str(token_file) if token_file is not None and str(token_file).strip() != "" else None
-        if tok_direct is not None and tfile is not None:
-            raise AmbiguousCredentials("token and token_file both set")
-        if tfile is not None:
-            resolved = read_token_file(tfile)
-        else:
-            resolved = tok_direct
+        resolved = resolve_secret_pair(token, token_file, kind="token")
         self._token: str | None = resolved
         if cache_dir is None:
             self.cache_dir = Path.home() / ".cache" / "manure"
@@ -1344,35 +1378,47 @@ class ManureClient:
             return (status, resp_hdrs, resp_body)
         return (status, resp_hdrs, resp_body)
 
-    def _api_request(self, method: str, path: str,
-                     query: dict[str, str] | None = None,
-                     body_json: Any | None = None,
-                     body_bytes: bytes | None = None,
-                     content_type: str | None = None,
-                     extra_headers: dict[str, str] | None = None) -> Any:
-        url = self.api_base + path
-        if query:
-            url += "?" + urllib.parse.urlencode(query)
-        headers: dict[str, str] = {"Accept": "application/json"}
-        body: bytes | None = None
-        if body_json is not None:
-            body = json.dumps(body_json).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        elif body_bytes is not None:
-            body = body_bytes
-            if content_type:
-                headers["Content-Type"] = content_type
-        if extra_headers:
-            headers.update(extra_headers)
-        status, resp_hdrs, resp_body = self._request(method, url, headers, body, send_auth=True)
-        if 200 <= status < 300:
-            if not resp_body:
-                return {}
-            try:
-                return json.loads(resp_body.decode("utf-8"))
-            except Exception:
-                raise ManureError("bad-envelope", "non-JSON success body", http_status=status)
-        raise _error_from_body(status, resp_hdrs, resp_body)
+    def _current(self, command: cp.Command, expected):
+        request_id = uuid4()
+        try:
+            body = cp.dumps(cp.ClientEnvelope(request_id, cp.API_VERSION, command))
+        except cp.ProtocolError:
+            raise ManureError("bad-envelope", "invalid current command") from None
+        status, headers, payload = self._request(
+            "POST", self.api_base + "/api/current",
+            {"Accept": "application/json", "Content-Type": "application/json"},
+            body, send_auth=True, send_grant=False)
+        if not 200 <= status < 300:
+            raise _error_from_body(status, headers, payload)
+        try:
+            result = cp.response(payload, request_id, expected)
+        except cp.ProtocolError:
+            raise ManureError("bad-envelope", "invalid current response", http_status=status) from None
+        if isinstance(result, cp.Result_Error):
+            raise _current_failure(result.failure, status, headers)
+        return result
+
+    def _content_current(self, content_base: str, command: cp.ContentCommand,
+                         expected, *, send_grant: bool = True):
+        request_id = uuid4()
+        try:
+            body = cp.dumps(cp.ContentEnvelope(request_id, cp.API_VERSION, command))
+        except cp.ProtocolError:
+            raise ManureError("bad-envelope", "invalid current command") from None
+        origin = self.api_origin if isinstance(command, cp.ContentCommand_RedeemGrant) else origin_of(content_base)
+        status, headers, payload = self._request(
+            "POST", content_base + "/__manure/current",
+            {"Accept": "application/json", "Content-Type": "application/json"},
+            body, send_auth=False, send_grant=send_grant, origin=origin)
+        if not 200 <= status < 300:
+            raise _error_from_body(status, headers, payload)
+        try:
+            result = cp.response(payload, request_id, expected)
+        except cp.ProtocolError:
+            raise ManureError("bad-envelope", "invalid current response", http_status=status) from None
+        if isinstance(result, cp.Result_Error):
+            raise _current_failure(result.failure, status, headers)
+        return result, headers
 
     # ------------------------------------------------- low-level API
     def _require_token(self) -> str:
@@ -1380,134 +1426,127 @@ class ManureClient:
             raise MissingCredentials("missing api token")
         return self._token
 
+    def version(self) -> dict[str, Any]:
+        return cp.local(self._current(cp.Command_Version(), cp.Result_Version).versions)
+
+    def capabilities(self) -> dict[str, Any]:
+        return cp.local(self._current(cp.Command_GetCapabilities(), cp.Result_CapabilityInfo).capabilities)
+
     def whoami(self) -> dict[str, Any]:
         self._require_token()
-        return self._api_request("GET", "/api/v1/whoami")
+        return cp.local(self._current(cp.Command_Whoami(), cp.Result_Identity).principal)
+
+    @staticmethod
+    def _enum(kind, value, code="bad-envelope"):
+        try:
+            name = {"file": "File", "dir": "Directory"}.get(value, value[:1].upper() + value[1:])
+            return kind(name)
+        except (ValueError, TypeError, AttributeError):
+            raise ManureError(code, "invalid option") from None
 
     def list_artifacts(self, limit: int | None = None, cursor: str | None = None,
-                       include_expired: bool = False,
-                       visibility: str | None = None, state: str | None = None) -> dict[str, Any]:
+                       include_expired: bool = False, visibility: str | None = None,
+                       state: str | None = None, *, query: str = "",
+                       sort_by: str = "created_at", direction: str = "desc") -> dict[str, Any]:
         self._require_token()
-        q: dict[str, str] = {}
-        if limit is not None:
-            q["limit"] = str(limit)
-        if cursor:
-            q["cursor"] = cursor
-        if include_expired:
-            q["include_expired"] = "true"
-        if visibility:
-            q["visibility"] = visibility
-        if state:
-            q["state"] = state
-        return self._api_request("GET", "/api/v1/artifacts", query=q or None)
+        try:
+            sort = cp.CatalogueSort("".join(p[:1].upper() + p[1:] for p in sort_by.split("_")))
+        except (ValueError, AttributeError):
+            raise ManureError("bad-envelope", "invalid sort") from None
+        q = cp.CatalogueQuery(query, include_expired,
+            self._enum(cp.Visibility, visibility) if visibility is not None else None,
+            self._enum(cp.ArtifactState, state) if state is not None else None,
+            sort, self._enum(cp.SortDirection, direction), 50 if limit is None else limit, cursor or None)
+        return cp.local(self._current(cp.Command_ListArtifacts(q), cp.Result_Catalogue).page)
 
     def get_artifact(self, artifact_id: str) -> dict[str, Any]:
-        self._require_token()
-        self._check_id(artifact_id)
-        return self._api_request("GET", f"/api/v1/artifacts/{artifact_id}")
+        self._require_token(); self._check_id(artifact_id)
+        return cp.local(self._current(cp.Command_GetArtifact(artifact_id), cp.Result_ArtifactInfo).artifact)
 
     def get_manifest(self, artifact_id: str) -> dict[str, Any]:
         self._check_id(artifact_id)
-        # public anon allowed: send bearer only if we have one
-        if self._token is None:
-            # anon request: no auth header
-            url = self.api_base + f"/api/v1/artifacts/{artifact_id}/files"
-            status, hdrs, body = self._request("GET", url, {"Accept": "application/json"}, None,
-                                               send_auth=False)
-            if 200 <= status < 300:
-                return json.loads(body.decode("utf-8"))
-            raise _error_from_body(status, hdrs, body)
-        return self._api_request("GET", f"/api/v1/artifacts/{artifact_id}/files")
+        return cp.local(self._current(cp.Command_GetManifest(artifact_id), cp.Result_ArtifactManifest).manifest)
 
     def get_upload_status(self, artifact_id: str) -> dict[str, Any]:
-        self._require_token()
-        self._check_id(artifact_id)
-        return self._api_request("GET", f"/api/v1/artifacts/{artifact_id}/upload-status")
+        self._require_token(); self._check_id(artifact_id)
+        return cp.local(self._current(cp.Command_GetUploadStatus(artifact_id), cp.Result_UploadProgress).status)
 
     def init_upload(self, name: str, kind: str, visibility: str,
                     entries: list[dict[str, Any]], expires_in_s: int | None = None) -> dict[str, Any]:
         self._require_token()
-        if kind not in ("file", "dir"):
-            raise InvalidManifest("bad kind")
-        if visibility not in ("internal", "external", "public"):
-            raise ManureError("invalid-visibility", "bad visibility")
-        _validate_name(name)
-        validate_manifest(entries, kind)
-        body: dict[str, Any] = {"name": name, "kind": kind, "visibility": visibility, "files": entries}
-        if expires_in_s is not None:
-            body["expires_in_s"] = expires_in_s
-        return self._api_request("POST", "/api/v1/artifacts:init", body_json=body)
+        _validate_name(name); validate_manifest(entries, kind)
+        exp = parse_expires_in(expires_in_s)
+        files = [cp.ManifestEntry_Directory(e["path"]) if e["kind"] == "dir" else
+                 cp.ManifestEntry_File(e["path"], e["size"], e["sha256"]) for e in entries]
+        command = cp.Command_InitUpload(name, self._enum(cp.ArtifactKind, kind),
+            self._enum(cp.Visibility, visibility, "invalid-visibility"), exp, files)
+        return cp.local(self._current(command, cp.Result_UploadInitialized))
 
     def put_chunk(self, artifact_id: str, path: str, offset: int, data: bytes) -> dict[str, Any]:
-        self._require_token()
-        self._check_id(artifact_id)
+        self._require_token(); self._check_id(artifact_id); validate_manifest_path(path)
         if not isinstance(data, (bytes, bytearray)) or len(data) == 0 or len(data) > MAX_CHUNK_BYTES:
             raise ManureError("bad-envelope", "bad chunk length")
-        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        if type(offset) is not int or not 0 <= offset < 2**63:
             raise ManureError("invalid-range", "bad offset")
         sha = hashlib.sha256(bytes(data)).hexdigest()
         q = {"path": path, "offset": str(offset)}
-        url = self.api_base + f"/api/v1/artifacts/{artifact_id}/chunks?" + urllib.parse.urlencode(q)
-        headers = {"Content-Type": "application/octet-stream", "Accept": "application/json",
-                   "X-Chunk-Sha256": sha}
-        status, resp_hdrs, resp_body = self._request("PUT", url, headers, data, send_auth=True)
-        if 200 <= status < 300:
-            try:
-                return json.loads(resp_body.decode("utf-8"))
-            except Exception:
-                raise ManureError("bad-envelope", "non-JSON chunk ack", http_status=status)
-        raise _error_from_body(status, resp_hdrs, resp_body)
+        url = self.api_base + f"/api/current/artifacts/{artifact_id}/chunks?" + urllib.parse.urlencode(q)
+        status, headers, payload = self._request("PUT", url,
+            {"Content-Type": "application/octet-stream", "Accept": "application/json", "X-Chunk-Sha256": sha},
+            data, send_auth=True, send_grant=False)
+        if not 200 <= status < 300: raise _error_from_body(status, headers, payload)
+        try:
+            receipt = cp.decode(cp.ChunkReceipt, cp.loads(payload))
+            if receipt.path != path or receipt.offset != offset or receipt.length != len(data):
+                raise cp.ProtocolError()
+            return cp.local(receipt)
+        except cp.ProtocolError:
+            raise ManureError("bad-envelope", "invalid chunk receipt", http_status=status) from None
 
     def publish(self, artifact_id: str) -> dict[str, Any]:
-        self._require_token()
-        self._check_id(artifact_id)
-        return self._api_request("POST", f"/api/v1/artifacts/{artifact_id}/publish", body_json={})
+        self._require_token(); self._check_id(artifact_id)
+        return cp.local(self._current(cp.Command_FinishUpload(artifact_id), cp.Result_UploadFinished))
 
     def delete(self, artifact_id: str) -> dict[str, Any]:
-        self._require_token()
-        self._check_id(artifact_id)
-        return self._api_request("DELETE", f"/api/v1/artifacts/{artifact_id}")
+        self._require_token(); self._check_id(artifact_id)
+        self._current(cp.Command_DeleteArtifact(artifact_id), cp.Result_Ok)
+        return {"ok": True}
 
     def rotate_password(self, artifact_id: str) -> dict[str, Any]:
-        self._require_token()
-        self._check_id(artifact_id)
-        return self._api_request("POST", f"/api/v1/artifacts/{artifact_id}/external-password:rotate",
-                                 body_json={})
+        self._require_token(); self._check_id(artifact_id)
+        return cp.local(self._current(cp.Command_RotateExternalPassword(artifact_id), cp.Result_PasswordRotated))
 
     def patch_artifact(self, artifact_id: str, name: str | None = None,
-                       visibility: str | None = None,
-                       expires_in_s: Any = PATCH_OMIT) -> dict[str, Any]:
-        """PATCH helper distinguishing omitted TTL from explicit null (clear).
-
-        expires_in_s=PATCH_OMIT omits the key; None sends explicit null to
-        clear; int/str is validated before network. name/visibility None omits.
-        """
-        self._require_token()
-        self._check_id(artifact_id)
-        body: dict[str, Any] = {}
-        if name is not None:
-            _validate_name(name)
-            body["name"] = name
-        if visibility is not None:
-            if visibility not in ("internal", "external", "public"):
-                raise ManureError("invalid-visibility", "bad visibility")
-            body["visibility"] = visibility
-        if expires_in_s is not PATCH_OMIT:
-            if expires_in_s is None:
-                body["expires_in_s"] = None
-            else:
-                body["expires_in_s"] = parse_expires_in(expires_in_s)
-        return self._api_request("PATCH", f"/api/v1/artifacts/{artifact_id}", body_json=body)
+                       visibility: str | None = None, expires_in_s: Any = PATCH_OMIT) -> dict[str, Any]:
+        self._require_token(); self._check_id(artifact_id)
+        if name is not None: _validate_name(name)
+        expiry = cp.ExpiryChange_Keep() if expires_in_s is PATCH_OMIT else (
+            cp.ExpiryChange_Clear() if expires_in_s is None else cp.ExpiryChange_Set(parse_expires_in(expires_in_s)))
+        patch = cp.ArtifactPatch(name,
+            self._enum(cp.Visibility, visibility, "invalid-visibility") if visibility is not None else None,
+            expiry)
+        result = self._current(cp.Command_PatchArtifact(artifact_id, patch), cp.Result_ArtifactPatched)
+        artifact = cp.local(result.artifact)
+        if result.externalPassword is not None: artifact["external_password"] = result.externalPassword
+        return artifact
 
     def create_grant(self, artifact_id: str) -> dict[str, Any]:
+        self._require_token(); self._check_id(artifact_id)
+        return cp.local(self._current(cp.Command_CreateGrant(artifact_id), cp.Result_GrantCreated))
+
+    def search(self, query: str, mode: str = "lexical", *, limit: int = 50,
+               cursor: str | None = None, visibility: str | None = None,
+               kind: str | None = None, created_by_user: str | None = None) -> dict[str, Any]:
         self._require_token()
-        self._check_id(artifact_id)
-        return self._api_request("POST", f"/api/v1/artifacts/{artifact_id}/grants", body_json={})
+        filters = cp.SearchFilter(self._enum(cp.Visibility, visibility) if visibility else None,
+            self._enum(cp.ArtifactKind, kind) if kind else None, created_by_user)
+        q = cp.SearchQuery(query, self._enum(cp.SearchMode, mode), filters, limit, cursor)
+        return cp.local(self._current(cp.Command_Search(q), cp.Result_SearchResults).page)
 
     @staticmethod
     def _check_id(artifact_id: str) -> None:
-        if not isinstance(artifact_id, str) or not ARTIFACT_ID_RE.match(artifact_id):
-            raise ManureError("bad-envelope", f"bad artifact id: {artifact_id}")
+        if not isinstance(artifact_id, str) or not ARTIFACT_ID_RE.fullmatch(artifact_id):
+            raise ManureError("bad-envelope", "bad artifact id")
 
     # ------------------------------------------------- cache
     def _uploads_dir(self) -> Path:
@@ -2126,7 +2165,7 @@ class ManureClient:
         if _existing_final_matches(final, size, sha):
             return
         enc = "/".join(urllib.parse.quote(seg, safe="") for seg in rel.split("/"))
-        url = self.api_base + f"/api/v1/artifacts/{artifact_id}/files/{enc}/content"
+        url = self.api_base + f"/api/current/artifacts/{artifact_id}/files/{enc}/content"
         self._ranged_download(url, final, size, sha, grant_host=None, is_content=False,
                               artifact_id=artifact_id, rel=rel, staging_dir=staging_dir)
 
@@ -2142,20 +2181,8 @@ class ManureClient:
                 raise MissingCredentials("empty external password")
             _validate_token_format(password)
             pw = password
-            unlock_url = content_base + "/__manure/unlock"
-            body = json.dumps({"password": pw}).encode()
-            try:
-                status, hdrs, resp = self._request("POST", unlock_url,
-                                                   {"Content-Type": "application/json",
-                                                    "Accept": "application/json"},
-                                                   body, send_auth=False, send_grant=False,
-                                                   origin=content_origin)
-            except ManureError:
-                raise
-            except Exception:
-                raise ManureError("unavailable", "network error")
-            if status != 200:
-                raise _error_from_body(status, hdrs, resp)
+            _, hdrs = self._content_current(content_base, cp.ContentCommand_Unlock(pw),
+                                             cp.Result_Ok, send_grant=False)
             sc = _lower_headers(hdrs).get("set-cookie")
             if sc:
                 for line in sc.split("\n"):
@@ -2164,26 +2191,13 @@ class ManureClient:
                         break
                 else:
                     self._store_grant(scope, sc)
-        man_url = content_base + "/__manure/manifest"
-        try:
-            status, hdrs, body = self._request("GET", man_url, {"Accept": "application/json"}, None,
-                                               send_auth=False, send_grant=True, origin=None)
-        except ManureError:
-            raise
-        except Exception:
-            raise ManureError("unavailable", "network error")
-        if status != 200:
-            raise _error_from_body(status, hdrs, body)
-        if len(body) > MAX_TRANSPORT_BYTES:
-            raise ManureError("too-large", "manifest too large")
-        try:
-            manifest = json.loads(body.decode("utf-8"))
-        except Exception:
-            raise ManureError("bad-envelope", "non-JSON manifest", http_status=status)
+        result, _ = self._content_current(content_base, cp.ContentCommand_GetManifest(),
+                                          cp.Result_ArtifactManifest)
+        manifest = cp.local(result.manifest)
         artifact_id = str(manifest.get("artifact_id") or first_label)
         if not ARTIFACT_ID_RE.match(artifact_id):
             raise ManureError("bad-envelope", "bad artifact id in manifest")
-        if scope != host and artifact_id != first_label:
+        if artifact_id != first_label:
             raise ManureError("bad-envelope", "artifact id does not match content URL")
         files = manifest.get("files", [])
         validate_fetch_manifest(files)

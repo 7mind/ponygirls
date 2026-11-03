@@ -1,0 +1,304 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/nix/store/v3b2cypq1ix4553s8mw745d8g9m2rgc9-sbt-launch-1.13.1.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by com.sun.jna.Native in an unnamed module (file:/home/pavel/.sbt/boot/scala-2.12.21/org.scala-sbt/sbt/1.13.0/jna-5.19.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[0m[[0m[0minfo[0m] [0m[0mwelcome to sbt 1.13.0 (GraalVM Community Java 25.0.4.1.1)[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project wt-ponygirls-retrieval-shared-build from plugins.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mloading project definition from /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/project[0m
+[0m[[0m[0minfo[0m] [0m[0mloading settings for project root from build.sbt...[0m
+[0m[[0m[0minfo[0m] [0m[0mresolving key references (12050 settings) ...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining retrievalCore / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by retrievalCore / Compile / bspBuildTargetSourcesItem, retrievalCore / Compile / sourceDirectories, retrievalCore / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining retrievalPostgres / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by retrievalPostgres / Compile / bspBuildTargetSourcesItem, retrievalPostgres / Compile / sourceDirectories, retrievalPostgres / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining modelHttp / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by modelHttp / Compile / bspBuildTargetSourcesItem, modelHttp / Compile / sourceDirectories, modelHttp / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining baboonRuntime / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by baboonRuntime / Compile / bspBuildTargetSourcesItem, baboonRuntime / Compile / sourceDirectories, baboonRuntime / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining serviceRuntime / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by serviceRuntime / Compile / bspBuildTargetSourcesItem, serviceRuntime / Compile / sourceDirectories, serviceRuntime / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureContracts / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureContracts / Compile / bspBuildTargetSourcesItem, manureContracts / Compile / sourceDirectories, manureContracts / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureStorage / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureStorage / Compile / bspBuildTargetSourcesItem, manureStorage / Compile / sourceDirectories, manureStorage / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureServer / Compile / unmanagedSourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureServer / Compile / bspBuildTargetSourcesItem, manureServer / Compile / sourceDirectories, manureServer / Compile / unmanagedSources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureServer / Compile / unmanagedResourceDirectories[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureServer / Compile / resourceDirectories, manureServer / Compile / unmanagedResources / fileInputs[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureServer / Test / sources[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureServer / Test / compile / compileOptions, manureServer / Test / doc, manureServer / Test / packageSrc / mappings[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureServer / Test / parallelExecution[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureServer / Test / test / testExecution, manureServer / Test / testOnly / testExecution, manureServer / Test / testQuick / testExecution[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mDefining manureServer / Test / javaOptions[0m
+[0m[[0m[0minfo[0m] [0m[0mThe new value will be used by manureServer / Test / bspBuildTargetJvmEnvironmentItem, manureServer / Test / bspBuildTargetRun and 6 others.[0m
+[0m[[0m[0minfo[0m] [0m[0m	Run `last` for details.[0m
+[0m[[0m[0minfo[0m] [0m[0mReapplying settings...[0m
+[0m[[0m[0minfo[0m] [0m[0mset current project to backend-foundation (in build file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/)[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 2 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/shared/retrieval-core/target/scala-3.9.0/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 11 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/shared/baboon-runtime/target/scala-2.13/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 1 Scala source and 2 Java sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/manure/server/target/scala-3.9.0/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 7 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/shared/service-runtime/target/scala-3.9.0/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 39 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/manure/generated/.build/target/scala-2.13/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 1 Scala source to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/shared/model-http/target/scala-3.9.0/classes ...[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 2 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/shared/retrieval-postgres/target/scala-3.9.0/classes ...[0m
+[0m[[0m[33mwarn[0m] [0m[0mAn existential type that came from a Scala-2 classfile for [33mclass[0m [32mIO[0m[0m
+[0m[[0m[33mwarn[0m] [0m[0mcannot be mapped accurately to a Scala-3 equivalent.[0m
+[0m[[0m[33mwarn[0m] [0m[0moriginal type    : cats.effect.IOFiber[?$1] @uncheckedVariance forSome ?$1[0m
+[0m[[0m[33mwarn[0m] [0m[0mreduces to       : cats.effect.IOFiber[?$1] @uncheckedVariance[0m
+[0m[[0m[33mwarn[0m] [0m[0mtype used instead: cats.effect.IOFiber[Any] @uncheckedVariance[0m
+[0m[[0m[33mwarn[0m] [0m[0mThis choice can cause follow-on type errors or hide type errors.[0m
+[0m[[0m[33mwarn[0m] [0m[0mProceed at own risk.[0m
+[0m[[0m[33mwarn[0m] [0m[0m[33m  |[0m[0m
+[0m[[0m[33mwarn[0m] [0m[0m[33m  |[0m longer explanation available when compiling with `-explain`[0m
+[0m[[0m[33mwarn[0m] [0m[0mone warning found[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 14 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/manure/backend/target/scala-3.9.0/classes ...[0m
+[0m[[0m[33mwarn[0m] [0m[0mthere was 1 deprecation warning; re-run with -deprecation for details[0m
+[0m[[0m[33mwarn[0m] [0m[0mone warning found[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+[0m[[0m[0minfo[0m] [0m[0mcompiling 4 Scala sources to /home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/manure/backend/target/scala-3.9.0/test-classes ...[0m
+[0m[[0m[33mwarn[0m] [0m[0mthere was 1 deprecation warning; re-run with -deprecation for details[0m
+[0m[[0m[33mwarn[0m] [0m[0mone warning found[0m
+[0m[[0m[0minfo[0m] [0m[0mdone compiling[0m
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by scala.runtime.LazyVals$ (file:/home/pavel/.cache/coursier/v1/https/repo.maven.apache.org/maven2/org/scala-lang/scala-library/3.9.0/scala-library-3.9.0.jar)
+WARNING: Please consider reporting this to the maintainers of class scala.runtime.LazyVals$
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by manure.storage.PosixNative in an unnamed module (file:/home/pavel/work/flakes/ponygirls/.worktrees/wt-ponygirls-retrieval-shared/manure/server/target/scala-3.9.0/classes/)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+{"probe":"CASEFOLD","pg":false,"q":"strasse","legacy":["STRASSE","Straße"],"current":["STRASSE"]}
+{"probe":"CASEFOLD","pg":false,"q":"σ","legacy":["ΟΣ","ος","οσ"],"current":["οσ"]}
+{"probe":"CASEFOLD","pg":false,"q":"%_","legacy":["literal%_"],"current":["literal%_"]}
+{"probe":"CASEFOLD","pg":false,"q":"\u0000needle","legacy":["edge\u0000needle"],"current":["edge\u0000needle"]}
+{"probe":"CASEFOLD","pg":false,"q":"𐀀","legacy":["𐀀"],"current":["𐀀"]}
+REVIEW_EQUIVALENT_CURSOR pg=false legacyAccepted=true currentError=Some(DomainError)
+REVIEW_QUERY_LENGTH pg=false length=1025 legacyAccepted=true currentAccepted=false
+REVIEW_ORDER_FILTER pg=false sortTraversals=18 filterTraversals=4 expectedLegacyIds=true
+REVIEW_CURSOR_NEGATIVES pg=false changedOptions=4 invalidTypes=4 expectedBadEnvelope=8
+Test run [36mmanure.IndependentMemoryCatalogueSuite[0m started
+[91m==> X [0m[91mmanure.IndependentMemoryCatalogueSuite[0m.[91mactual acknowledged legacy full-casefold names vs current adapter (independent oracle)[0m [90m0.466s[0m munit.ComparisonFailException: shared/retrieval-postgres/target/review-manure-160/probes/IndependentCatalogueSuite.scala:40
+39:    }
+[7m40:    _<-IO(observed.foreach((actual,expected)=>assertEquals(actual,expected)))[0m
+41:  }yield()}}
+values are not the same
+[1m=> Obtained[0m
+Vector(
+  "STRASSE"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ Vector(
+[91m-  "STRASSE",[0m
+[91m-  "Straße"[0m
+[92m+  "STRASSE"[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m12[0m[90m)[0m
+[1m    at [0m[1mmanure.IndependentCatalogueContract.$init$$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mIndependentCatalogueSuite.scala[0m:[1m40[0m[1m)[0m
+[90m    at [0m[90mapply @ manure.IndependentCatalogueContract.$init$$$anonfun$1$$anonfun$1$$anonfun$2[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m40[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[90m    at [0m[90mmap @ manure.Catalogue.list$$anonfun$2[0m[90m([0m[90mCatalogue.scala[0m:[90m96[0m[90m)[0m
+[90m    at [0m[90mapply @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mmap @ manure.IndependentCatalogueContract.$init$$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m34[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[90m    at [0m[90mmap @ manure.Catalogue.list$$anonfun$2[0m[90m([0m[90mCatalogue.scala[0m:[90m96[0m[90m)[0m
+[90m    at [0m[90mapply @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mmap @ manure.IndependentCatalogueContract.$init$$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m34[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[90m    at [0m[90mmap @ manure.Catalogue.list$$anonfun$2[0m[90m([0m[90mCatalogue.scala[0m:[90m96[0m[90m)[0m
+[90m    at [0m[90mapply @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[91m==> X [0m[91mmanure.IndependentMemoryCatalogueSuite[0m.[91mcase-equivalent ASCII query retains current-version cursor meaning; no old cursor supplied[0m [90m0.028s[0m munit.ComparisonFailException: shared/retrieval-postgres/target/review-manure-160/probes/IndependentCatalogueSuite.scala:48
+47:      println(s"REVIEW_EQUIVALENT_CURSOR pg=$postgres legacyAccepted=true currentError=${second.left.toOption.map(_.getClass.getSimpleName)}")
+[7m48:      assertEquals(second.toOption.map(_._1.map(_.name)),Some(expected))[0m
+49:    }
+values are not the same
+[1m=> Obtained[0m
+None
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Some([0m
+[91m-  value = Vector([0m
+[91m-    "Cat-three"[0m
+[91m-  )[0m
+[91m-)[0m
+[92m+None[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m12[0m[90m)[0m
+[1m    at [0m[1mmanure.IndependentCatalogueContract.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mIndependentCatalogueSuite.scala[0m:[1m48[0m[1m)[0m
+[1m    at [0m[1mmanure.IndependentCatalogueContract.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$adapted$1[0m[1m([0m[1mIndependentCatalogueSuite.scala[0m:[1m49[0m[1m)[0m
+[90m    at [0m[90mapply @ manure.IndependentCatalogueContract.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m49[0m[90m)[0m
+[90m    at [0m[90mapply @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.IndependentCatalogueContract.$init$$$anonfun$2$$anonfun$1$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m44[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[90m    at [0m[90mmap @ manure.Catalogue.list$$anonfun$2[0m[90m([0m[90mCatalogue.scala[0m:[90m96[0m[90m)[0m
+[90m    at [0m[90mapply @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.IndependentCatalogueContract.$init$$$anonfun$2$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m43[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[90m    at [0m[90m*> @ manure.Artifacts.reconcile[0m[90m([0m[90mArtifacts.scala[0m:[90m208[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[91m==> X [0m[91mmanure.IndependentMemoryCatalogueSuite[0m.[91mlegacy accepted 1025-character literal query is functionally admitted, not new policy cap[0m [90m0.023s[0m munit.ComparisonFailException: shared/retrieval-postgres/target/review-manure-160/probes/IndependentCatalogueSuite.scala:53
+52:    result<-cat(f).list(f.identity,query("x"*1025,limit=50)).attempt
+[7m53:    _<-IO{println(s"REVIEW_QUERY_LENGTH pg=$postgres length=1025 legacyAccepted=true currentAccepted=${result.isRight}");assertEquals(result.toOption.map(_._1.map(_.name)),Some(Vector.empty[String]))}[0m
+54:  }yield()}}
+values are not the same
+[1m=> Obtained[0m
+None
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Some([0m
+[91m-  value = Nil[0m
+[91m-)[0m
+[92m+None[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m12[0m[90m)[0m
+[1m    at [0m[1mmanure.IndependentCatalogueContract.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mIndependentCatalogueSuite.scala[0m:[1m53[0m[1m)[0m
+[1m    at [0m[1mmanure.IndependentCatalogueContract.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$adapted$1[0m[1m([0m[1mIndependentCatalogueSuite.scala[0m:[1m53[0m[1m)[0m
+[90m    at [0m[90mapply @ manure.IndependentCatalogueContract.$init$$$anonfun$3$$anonfun$1$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m53[0m[90m)[0m
+[90m    at [0m[90mapply @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.IndependentCatalogueContract.$init$$$anonfun$3$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m52[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[90m    at [0m[90m*> @ manure.Artifacts.reconcile[0m[90m([0m[90mArtifacts.scala[0m:[90m208[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[32mmanure.IndependentMemoryCatalogueSuite[0m: finished [90m0.659s[0m
+Test run [36mmanure.IndependentMemoryCatalogueSuite[0m finished: [91m3 failed[0m, 0 ignored, 5 total [90m0.67s[0m
+{"probe":"CASEFOLD","pg":true,"q":"strasse","legacy":["STRASSE","Straße"],"current":["STRASSE"]}
+{"probe":"CASEFOLD","pg":true,"q":"σ","legacy":["ΟΣ","ος","οσ"],"current":["οσ"]}
+{"probe":"CASEFOLD","pg":true,"q":"%_","legacy":["literal%_"],"current":["literal%_"]}
+{"probe":"CASEFOLD","pg":true,"q":"\u0000needle","legacy":["edge\u0000needle"],"current":["edge\u0000needle"]}
+{"probe":"CASEFOLD","pg":true,"q":"𐀀","legacy":["𐀀"],"current":["𐀀"]}
+REVIEW_EQUIVALENT_CURSOR pg=true legacyAccepted=true currentError=Some(DomainError)
+REVIEW_QUERY_LENGTH pg=true length=1025 legacyAccepted=true currentAccepted=false
+REVIEW_ORDER_FILTER pg=true sortTraversals=18 filterTraversals=4 expectedLegacyIds=true
+REVIEW_CURSOR_NEGATIVES pg=true changedOptions=4 invalidTypes=4 expectedBadEnvelope=8
+Test run [36mmanure.IndependentPostgresCatalogueSuite[0m started
+[91m==> X [0m[91mmanure.IndependentPostgresCatalogueSuite[0m.[91mactual acknowledged legacy full-casefold names vs current adapter (independent oracle)[0m [90m0.573s[0m munit.ComparisonFailException: shared/retrieval-postgres/target/review-manure-160/probes/IndependentCatalogueSuite.scala:40
+39:    }
+[7m40:    _<-IO(observed.foreach((actual,expected)=>assertEquals(actual,expected)))[0m
+41:  }yield()}}
+values are not the same
+[1m=> Obtained[0m
+Vector(
+  "STRASSE"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ Vector(
+[91m-  "STRASSE",[0m
+[91m-  "Straße"[0m
+[92m+  "STRASSE"[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m12[0m[90m)[0m
+[1m    at [0m[1mmanure.IndependentCatalogueContract.$init$$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mIndependentCatalogueSuite.scala[0m:[1m40[0m[1m)[0m
+[90m    at [0m[90mapply @ manure.IndependentCatalogueContract.$init$$$anonfun$1$$anonfun$1$$anonfun$2[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m40[0m[90m)[0m
+[90m    at [0m[90mflatMap @ ponygirls.runtime.Admission.<init>[0m[90m([0m[90mAdmission.scala[0m:[90m36[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[90m    at [0m[90muncancelable @ ponygirls.runtime.JdbcDatabase.transaction[0m[90m([0m[90mJdbcDatabase.scala[0m:[90m18[0m[90m)[0m
+[90m    at [0m[90mget @ ponygirls.runtime.Admission.run$$anonfun$2$$anonfun$3[0m[90m([0m[90mAdmission.scala[0m:[90m42[0m[90m)[0m
+[90m    at [0m[90mflatMap @ ponygirls.runtime.Admission.run$$anonfun$2$$anonfun$3[0m[90m([0m[90mAdmission.scala[0m:[90m42[0m[90m)[0m
+[91m==> X [0m[91mmanure.IndependentPostgresCatalogueSuite[0m.[91mcase-equivalent ASCII query retains current-version cursor meaning; no old cursor supplied[0m [90m0.243s[0m munit.ComparisonFailException: shared/retrieval-postgres/target/review-manure-160/probes/IndependentCatalogueSuite.scala:48
+47:      println(s"REVIEW_EQUIVALENT_CURSOR pg=$postgres legacyAccepted=true currentError=${second.left.toOption.map(_.getClass.getSimpleName)}")
+[7m48:      assertEquals(second.toOption.map(_._1.map(_.name)),Some(expected))[0m
+49:    }
+values are not the same
+[1m=> Obtained[0m
+None
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Some([0m
+[91m-  value = Vector([0m
+[91m-    "Cat-three"[0m
+[91m-  )[0m
+[91m-)[0m
+[92m+None[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m12[0m[90m)[0m
+[1m    at [0m[1mmanure.IndependentCatalogueContract.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mIndependentCatalogueSuite.scala[0m:[1m48[0m[1m)[0m
+[1m    at [0m[1mmanure.IndependentCatalogueContract.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$adapted$1[0m[1m([0m[1mIndependentCatalogueSuite.scala[0m:[1m49[0m[1m)[0m
+[90m    at [0m[90mapply @ manure.IndependentCatalogueContract.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m49[0m[90m)[0m
+[90m    at [0m[90mapply @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.IndependentCatalogueContract.$init$$$anonfun$2$$anonfun$1$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m44[0m[90m)[0m
+[90m    at [0m[90mflatMap @ ponygirls.runtime.Admission.<init>[0m[90m([0m[90mAdmission.scala[0m:[90m36[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[90m    at [0m[90muncancelable @ ponygirls.runtime.JdbcDatabase.transaction[0m[90m([0m[90mJdbcDatabase.scala[0m:[90m18[0m[90m)[0m
+[90m    at [0m[90mget @ ponygirls.runtime.Admission.run$$anonfun$2$$anonfun$3[0m[90m([0m[90mAdmission.scala[0m:[90m42[0m[90m)[0m
+[90m    at [0m[90mflatMap @ ponygirls.runtime.Admission.run$$anonfun$2$$anonfun$3[0m[90m([0m[90mAdmission.scala[0m:[90m42[0m[90m)[0m
+[91m==> X [0m[91mmanure.IndependentPostgresCatalogueSuite[0m.[91mlegacy accepted 1025-character literal query is functionally admitted, not new policy cap[0m [90m0.206s[0m munit.ComparisonFailException: shared/retrieval-postgres/target/review-manure-160/probes/IndependentCatalogueSuite.scala:53
+52:    result<-cat(f).list(f.identity,query("x"*1025,limit=50)).attempt
+[7m53:    _<-IO{println(s"REVIEW_QUERY_LENGTH pg=$postgres length=1025 legacyAccepted=true currentAccepted=${result.isRight}");assertEquals(result.toOption.map(_._1.map(_.name)),Some(Vector.empty[String]))}[0m
+54:  }yield()}}
+values are not the same
+[1m=> Obtained[0m
+None
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Some([0m
+[91m-  value = Nil[0m
+[91m-)[0m
+[92m+None[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m12[0m[90m)[0m
+[1m    at [0m[1mmanure.IndependentCatalogueContract.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mIndependentCatalogueSuite.scala[0m:[1m53[0m[1m)[0m
+[1m    at [0m[1mmanure.IndependentCatalogueContract.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$adapted$1[0m[1m([0m[1mIndependentCatalogueSuite.scala[0m:[1m53[0m[1m)[0m
+[90m    at [0m[90mapply @ manure.IndependentCatalogueContract.$init$$$anonfun$3$$anonfun$1$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m53[0m[90m)[0m
+[90m    at [0m[90mapply @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.Catalogue.list[0m[90m([0m[90mCatalogue.scala[0m:[90m95[0m[90m)[0m
+[90m    at [0m[90mflatMap @ manure.IndependentCatalogueContract.$init$$$anonfun$3$$anonfun$1[0m[90m([0m[90mIndependentCatalogueSuite.scala[0m:[90m52[0m[90m)[0m
+[90m    at [0m[90mflatMap @ ponygirls.runtime.Admission.<init>[0m[90m([0m[90mAdmission.scala[0m:[90m36[0m[90m)[0m
+[90m    at [0m[90mblocking @ manure.BackendFixture$.temporary[0m[90m([0m[90mBackendFixture.scala[0m:[90m28[0m[90m)[0m
+[90m    at [0m[90muncancelable @ ponygirls.runtime.JdbcDatabase.transaction[0m[90m([0m[90mJdbcDatabase.scala[0m:[90m18[0m[90m)[0m
+[90m    at [0m[90mget @ ponygirls.runtime.Admission.run$$anonfun$2$$anonfun$3[0m[90m([0m[90mAdmission.scala[0m:[90m42[0m[90m)[0m
+[90m    at [0m[90mflatMap @ ponygirls.runtime.Admission.run$$anonfun$2$$anonfun$3[0m[90m([0m[90mAdmission.scala[0m:[90m42[0m[90m)[0m
+[32mmanure.IndependentPostgresCatalogueSuite[0m: finished [90m2.628s[0m
+Test run [36mmanure.IndependentPostgresCatalogueSuite[0m finished: [91m3 failed[0m, 0 ignored, 5 total [90m2.628s[0m
+REVIEW_SQL_BOUND actualHydratedRows=2 cteLimitRows=Some(2) unrelatedInvalidUtf8NotRead=true
+REVIEW_HTTP_ADMISSION heldResponse200=true second503=true rejectBodyUntouched=true afterPartialFinalize200=true
+Test run [36mmanure.IndependentCatalogueBoundarySuite[0m started
+[32mmanure.IndependentCatalogueBoundarySuite[0m: finished [90m1.027s[0m
+Test run [36mmanure.IndependentCatalogueBoundarySuite[0m finished: 0 failed, 0 ignored, 2 total [90m1.027s[0m
+REVIEW_160_CONVERTER_POSITIVE sourceBytes=good before=(false,false) after=(true,true)
+REVIEW_160_PREMARK replace=false converterRefused=Some(true) domainRefused=true flags=(false,false)
+REVIEW_160_FIRST_ADOPTION replace=false startupAccepted=false servedExpectedHash=None flags=(false,true)
+REVIEW_160_PREMARK replace=true converterRefused=Some(true) domainRefused=true flags=(false,false)
+REVIEW_160_FIRST_ADOPTION replace=true startupAccepted=false servedExpectedHash=None flags=(false,true)
+Test run [36mmanure.ConverterAdoptionSuite[0m started
+[32mmanure.ConverterAdoptionSuite[0m: finished [90m4.646s[0m
+Test run [36mmanure.ConverterAdoptionSuite[0m finished: 0 failed, 0 ignored, 5 total [90m4.646s[0m
+[0m[[0m[31merror[0m] [0m[0mFailed: Total 17, Failed 6, Errors 0, Passed 11[0m
+[0m[[0m[31merror[0m] [0m[0mFailed tests:[0m
+[0m[[0m[31merror[0m] [0m[0m	manure.IndependentMemoryCatalogueSuite[0m
+[0m[[0m[31merror[0m] [0m[0m	manure.IndependentPostgresCatalogueSuite[0m
+[0m[[0m[31merror[0m] [0m[0m(manureServer / Test / [31mtestOnly[0m) sbt.TestsFailedException: Tests unsuccessful[0m
+[0m[[0m[31merror[0m] [0m[0mTotal time: 36 s, completed Nov 3, 2026, 10:23:35 AM[0m
+[0J

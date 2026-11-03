@@ -1,0 +1,1 @@
+Complete applicable no-build checks, x86_64-linux only; aarch64-linux and Darwin omitted. Local immutable overrides only; no lock write, push or activation. Raw logs local-only.

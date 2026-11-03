@@ -1,143 +1,109 @@
 #!/usr/bin/env bash
-# Haystack quick UI test (no deployment): disposable PostgreSQL + server +
-# seeded demo data in a temp dir, cleaned up on Ctrl-C. The per-port login
-# token persists under the repository's ignored debug directory.
-#
-# Usage: ./quick-ui.sh [port] [bind]
-#   ./quick-ui.sh                # local only (127.0.0.1)
-#   ./quick-ui.sh 47328 0.0.0.0  # reachable from other LAN hosts (no TLS!)
-# Then open the printed URL and paste the printed token.
-# Requires: node, npm, and PostgreSQL tools (initdb/pg_ctl/psql) — via PATH
-#   or `nix shell nixpkgs#nodejs nixpkgs#postgresql`.
+# Disposable PostgreSQL + the selected Scala/native executable + built UI.
+# HAYSTACK_SERVER_COMMAND='java -jar /absolute/haystack-server.jar' ./quick-ui.sh [port] [bind]
+# No TypeScript/Node server fallback. Node is only a build/fixture client tool.
 set -euo pipefail
-
 HAYSTACK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${1:-47328}"
-# Bind address: 127.0.0.1 for local testing, 0.0.0.0 to reach the UI from
-# another host on the LAN. Anyone with the URL + printed token gets full
-# read/write access — this is a throwaway test server, no TLS, no firewall.
 BIND="${2:-127.0.0.1}"
+[[ "$PORT" =~ ^[0-9]+$ && "$PORT" -ge 1 && "$PORT" -le 65435 ]] || { echo 'quick-ui: invalid port' >&2; exit 2; }
+: "${HAYSTACK_SERVER_COMMAND:?select the Scala/native executable (a shell command accepting serve CONFIG.json)}"
 PGPORT="$((PORT + 100))"
-
-need() { command -v "$1" >/dev/null 2>&1 || { echo "quick-ui: missing $1" >&2; return 1; }; }
-if ! (need node && need npm && need initdb && need pg_ctl && need psql); then
-  if command -v nix >/dev/null 2>&1; then
-    echo "quick-ui: entering nix shell for nodejs+postgresql (one time)…" >&2
-    REPO="$(dirname -- "$HAYSTACK_DIR")"
-    if [[ -f "$REPO/flake.nix" ]]; then
-      exec nix shell --inputs-from "$REPO" nixpkgs#nodejs nixpkgs#postgresql -c "$0" "$@"
-    fi
-    exec nix shell nixpkgs#nodejs nixpkgs#postgresql -c "$0" "$@"
-  fi
-  echo "quick-ui: need node, npm, initdb, pg_ctl, psql on PATH" >&2
-  exit 2
-fi
-
+need() { command -v "$1" >/dev/null 2>&1 || { echo "quick-ui: missing $1 (use the pinned chronicle development shell)" >&2; return 1; }; }
+for tool in node npm initdb pg_ctl psql curl; do need "$tool"; done
+# A selected port must belong to this disposable preview, never an existing app.
+node --input-type=module - "$PORT" "$BIND" <<'JS'
+import { createServer } from 'node:net';
+const socket = createServer();
+socket.once('error', () => { console.error('quick-ui: selected port is unavailable; refusing to contact an existing listener'); process.exitCode = 2; });
+socket.listen(Number(process.argv[2]), process.argv[3], () => socket.close());
+JS
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/haystack-ui.XXXXXX")"
 SRVPID=""
 cleanup() {
-  if [[ -n "${SRVPID:-}" ]]; then kill "$SRVPID" 2>/dev/null || true; fi
-  if [[ -n "${WORK:-}" && -d "$WORK/pg" ]]; then pg_ctl -D "$WORK/pg" stop >/dev/null 2>&1 || true; fi
-  if [[ -n "${WORK:-}" ]]; then rm -rf "$WORK"; fi
+  if [[ -n "${SRVPID:-}" ]]; then kill "$SRVPID" 2>/dev/null || true; wait "$SRVPID" 2>/dev/null || true; fi
+  if [[ -d "$WORK/pg" ]]; then pg_ctl -D "$WORK/pg" -m fast stop >/dev/null 2>&1 || true; fi
+  rm -rf -- "$WORK"
 }
 trap cleanup EXIT
-
+trap 'exit 143' TERM
+trap 'exit 130' INT
 cd "$HAYSTACK_DIR"
-# Rebuild when outputs are missing OR any source is newer (a stale dist is
-# worse than a slow start: the old stub would boot without migrating).
-if [[ ! -f server/dist/index.js || ! -f web/dist/index.html ]] || \
-   [[ -n "$(find server/src web/src server/tsconfig.json web/tsconfig.json web/vite.config.ts \
-       web/index.html package.json package-lock.json server/package.json web/package.json \
-       -type f \( -newer server/dist/index.js -o -newer web/dist/index.html \) -print -quit)" ]]; then
-  echo "quick-ui: building…" >&2
-  npm ci --no-audit --no-fund >&2
-  npm run build >&2
+if [[ ! -f web/dist/index.html ]] || [[ -n "$(find web/src generated/typescript web/index.html web/vite.config.ts web/package.json package-lock.json -type f -newer web/dist/index.html -print -quit 2>/dev/null)" ]]; then
+  echo 'quick-ui: building browser…' >&2
+  [[ -d node_modules ]] || npm ci --offline --no-audit --no-fund >&2
+  npm run build -w web >&2
 fi
-
+umask 077
 export PGDATA="$WORK/pg" PGSOCK="$WORK/sock"
 mkdir -p "$PGSOCK"
 initdb -D "$PGDATA" -U postgres --auth=trust >/dev/null
-pg_ctl -D "$PGDATA" -l "$WORK/pg.log" -o "-k $PGSOCK -p $PGPORT -c listen_addresses='localhost'" start >/dev/null
-psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c "CREATE DATABASE haystack;" >/dev/null
-psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c "CREATE USER haystack;" >/dev/null
-psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c "GRANT ALL ON DATABASE haystack TO haystack;" >/dev/null
-psql -h "$PGSOCK" -p "$PGPORT" -U postgres -d haystack -c "GRANT CREATE ON SCHEMA public TO haystack;" >/dev/null
-
-# LAN IP early: other-host origins must be allowlisted in auth.json.
-LANIP_EARLY="$((ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I 2>/dev/null | awk '{print $1}' || hostname --ip-address 2>/dev/null | awk '{print $1}' || true) | head -1)"
-EXTRA_ORIGIN=""
-EXTRA_HOST=""
-if [[ "$BIND" != "127.0.0.1" && -n "$LANIP_EARLY" ]]; then
-  EXTRA_ORIGIN=",\"http://$LANIP_EARLY:$PORT\""
-  EXTRA_HOST=",\"$LANIP_EARLY\""
-fi
+pg_ctl -D "$PGDATA" -l "$WORK/pg.log" -o "-k $PGSOCK -p $PGPORT -c listen_addresses='127.0.0.1'" start >/dev/null
+psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE ROLE haystack_preview LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;' >/dev/null
+psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE DATABASE haystack OWNER haystack_preview;' >/dev/null
+# Extension installation is an explicit owned-cluster administrator operation;
+# the selected application runtime remains NOSUPERUSER/NOCREATEDB.
+psql -h "$PGSOCK" -p "$PGPORT" -U postgres -d haystack -c 'CREATE EXTENSION IF NOT EXISTS vector;' >/dev/null
 TOKEN_FILE="$HAYSTACK_DIR/../debug/haystack-ui/$PORT/token.txt"
-umask 077
 mkdir -p -- "$(dirname -- "$TOKEN_FILE")"
 TOKEN="$(node --input-type=module - "$TOKEN_FILE" <<'JS'
-import { writeFile } from 'node:fs/promises';
-import { generateToken, readTokenFile } from './server/dist/auth/tokens.js';
-const path = process.argv[2];
-try {
-  await writeFile(path, generateToken() + '\n', { flag: 'wx', mode: 0o600 });
-} catch (error) {
-  if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') throw error;
-}
-process.stdout.write(await readTokenFile(path));
+import { writeFile, readFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+const file = process.argv[2];
+try { await writeFile(file, randomBytes(32).toString('base64url') + '\n', { flag: 'wx', mode: 0o600 }); }
+catch (error) { if (error.code !== 'EEXIST') throw error; }
+const token = (await readFile(file, 'utf8')).replace(/\n$/, '');
+if (!/^[A-Za-z0-9_-]{43}$/.test(token) || Buffer.from(token, 'base64url').toString('base64url') !== token) throw new Error('Invalid saved preview token');
+process.stdout.write(token);
 JS
 )"
 chmod 600 -- "$TOKEN_FILE"
-printf '%s\n' "$TOKEN" > "$WORK/token.txt"
-DIGEST="$(printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1)"
-printf '%s\n' "$DIGEST" > "$WORK/token.sha"
-cat > "$WORK/auth.json" <<EOF
-{"activityProjectId":"demo",
- "users":[{"id":"op","type":"human","displayName":"Op","tokens":[{"id":"browser","hashFile":"$WORK/token.sha"}]}],
- "cookieSecure":false,"allowedHosts":["127.0.0.1","localhost","$BIND"$EXTRA_HOST],"allowedOrigins":["http://127.0.0.1:$PORT","http://$BIND:$PORT"$EXTRA_ORIGIN]}
-EOF
-
-HAYSTACK_AUTH_JSON="$WORK/auth.json" \
-HAYSTACK_DATABASE_URL="postgresql://haystack@127.0.0.1:$PGPORT/haystack" \
-HAYSTACK_LISTEN="$BIND" HAYSTACK_PORT="$PORT" HAYSTACK_POOL_MAX=4 \
-node server/dist/index.js >"$WORK/server.log" 2>&1 &
+printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1 > "$WORK/token.sha"
+printf 'unused-preview-password\n' > "$WORK/database-password"
+LANIP="$( (ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I 2>/dev/null | awk '{print $1}' || true) | head -1)"
+node --input-type=module - "$WORK" "$PORT" "$BIND" "$PGPORT" "$HAYSTACK_DIR/web/dist" "$LANIP" <<'JS'
+import { writeFile } from 'node:fs/promises';
+const [dir, port, bind, pgport, webRoot, lan] = process.argv.slice(2);
+const hosts = [...new Set(['127.0.0.1', 'localhost', bind, ...(bind !== '127.0.0.1' && lan ? [lan] : [])])];
+const origins = hosts.map(h => `http://${h}:${port}`);
+const config = {
+  listenHost: bind, listenPort: Number(port), webRoot, authReloadMs: 1000,
+  auth: { activityProjectId: 'demo', users: [{id:'op',type:'human',displayName:'Op',tokens:[{id:'browser',hashFile:`${dir}/token.sha`}]}],
+    cookieSecure: true, allowedHosts: hosts, allowedOrigins: origins, insecureHttpOrigins: origins,
+    rateLimit: {windowMs:60000,max:600} },
+  database: {jdbcUrl:`jdbc:postgresql://127.0.0.1:${pgport}/haystack`,user:'haystack_preview',passwordFile:`${dir}/database-password`,
+    limits:{maxConnections:4,maxQueued:32,queueTimeoutMs:5000,connectTimeoutMs:5000,statementTimeoutMs:30000,lockTimeoutMs:5000,idleTransactionTimeoutMs:30000,socketTimeoutMs:40000}},
+  retrieval: {policy:'operator-approved-metadata-v1',includeMetadata:true,approvedFieldPrefixes:[],maxChunkBytes:8192,embedding:null,maxConcurrent:2,maxQueued:8,batchSize:4},
+};
+await writeFile(`${dir}/config.json`, JSON.stringify(config), {mode:0o600});
+JS
+bash -c "exec ${HAYSTACK_SERVER_COMMAND} \"\$@\"" haystack-server serve "$WORK/config.json" > "$WORK/server.log" 2>&1 &
 SRVPID=$!
 READY=0
-for _ in $(seq 1 50); do
-  if curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1; then READY=1; break; fi
+for _ in $(seq 1 300); do
+  if grep -qx "haystack: ready" "$WORK/server.log" && curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1; then READY=1; break; fi
+  if ! kill -0 "$SRVPID" 2>/dev/null; then break; fi
   sleep 0.2
 done
-if [[ "$READY" != 1 ]]; then
-  echo "quick-ui: server never became ready; log:" >&2
-  tail -20 "$WORK/server.log" >&2
-  exit 1
-fi
-
-# Demo data so every view has something to show.
-api() { curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$2" "http://127.0.0.1:$PORT$1"; }
-put() { # key document-json request-suffix (fails loudly: no silent empty UI)
-  local out
-  out=$(api /api/v1/put "{\"key\":\"$1\",\"document_json\":$(node -e 'console.log(JSON.stringify(process.argv[1]))' "$2"),\"expected_revision\":0,\"request_id\":\"0193e8d5-6f5c-7a1b-8c2d-000000000$3\"}")
-  echo "$out" | grep -q '"revision":' || { echo "quick-ui: seed put failed for $1: $out" >&2; exit 1; }
-}
-DOC='{"title":"Hello haystack","description":"First memory. Try editing me, then check history.","fields":{"n":9007199254740993},"type":"fact","status":"actual","importance":"high","human-attention":"cleared","links":[]}'
-put "demo:hello" "$DOC" 501
-DOC2='{"title":"Needs a human","description":"Attention inbox preset finds this.","fields":{},"type":"todo","status":"actual","importance":"high","human-attention":"required","links":[["related-to","demo:hello"]]}'
-put "demo:todo" "$DOC2" 502
-DOC3='{"title":"Buried one","description":"Hidden unless you ask for archived.","fields":{},"type":"fact","status":"archived","importance":"low","human-attention":"cleared","links":[]}'
-put "demo:old" "$DOC3" 503
-
-# Portable LAN IP (hostname -I is GNU-only); never fatal (|| true) so a
-# missing toolbox cannot kill the script under pipefail + set -e.
-LANIP="$( (ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I 2>/dev/null | awk '{print $1}' || hostname --ip-address 2>/dev/null | awk '{print $1}' || true) | head -1)"
+if [[ "$READY" != 1 ]]; then echo 'quick-ui: server never became ready:' >&2; cat "$WORK/server.log" >&2; exit 1; fi
+# Seed exclusively through current generated codecs and authenticated public API.
+TOKEN="$TOKEN" node --import ./scripts/register-generated.mjs --input-type=module - "$PORT" <<'JS'
+import { publicClient } from './web/tests-browser/native.mjs';
+const client = publicClient(`http://127.0.0.1:${process.argv[2]}`, process.env.TOKEN);
+const doc = (over) => JSON.stringify({title:'Hello haystack',description:'Try editing me, then check history.',fields:{},type:'fact',status:'actual',importance:'high','human-attention':'cleared',links:[],tags:[],...over});
+const rows = [
+  ['demo:hello',doc({}).replace('"fields":{}','"fields":{"n":9007199254740993}')],
+  ['demo:todo',doc({title:'Needs a human',type:'todo','human-attention':'required',links:[['related-to','demo:hello']]})],
+  ['demo:old',doc({title:'Buried one',status:'archived',importance:'low'})],
+];
+for (let i=0;i<rows.length;i++) await client.put({key:rows[i][0],documentJson:rows[i][1],expectedRevision:0,requestId:`0193e8d5-6f5c-7a1b-8c2d-${String(501+i).padStart(12,'0')}`});
+JS
 echo
 echo "  UI (this host):  http://127.0.0.1:$PORT/#/browse"
-if [[ "$BIND" != "127.0.0.1" && -n "$LANIP" ]]; then
-  echo "  UI (other hosts): http://$LANIP:$PORT/#/browse"
-fi
+if [[ "$BIND" != "127.0.0.1" && -n "$LANIP" ]]; then echo "  UI (other hosts): http://$LANIP:$PORT/#/browse"; fi
 echo "  Token:   $TOKEN"
 echo "  Saved:   $TOKEN_FILE (retained across launches)"
-echo "  WARNING: no TLS; anyone on the network with the URL + token has full access. Throwaway testing only."
-echo "  Try:     search 'hello' · attention inbox · show-archived · edit demo:hello twice in two tabs (conflict)"
-echo "  Stop:    Ctrl-C (server, postgres, and demo data are removed; login token is retained)"
+echo '  WARNING: no TLS; URL + token grants full access. Throwaway testing only.'
+echo '  Stop: Ctrl-C (server, database and demo data removed; token retained)'
 echo
 wait "$SRVPID"

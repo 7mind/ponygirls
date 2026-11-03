@@ -13,6 +13,7 @@ import * as A from '../generated/typescript/chronicle/api/index.js';
 import { BaboonCodecContext } from '../generated/typescript/BaboonSharedRuntime.js';
 
 const context = BaboonCodecContext.Default;
+const fixtureDatabasePassword = 'chronicle-test-password';
 const guardMs = 90_000;
 const shutdownGraceMs = 40_000;
 const pause = (ms: number) => new Promise<void>(done => setTimeout(done, ms));
@@ -21,7 +22,7 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 function run(executable: string, args: string[], input: string | undefined): string {
-  const result = spawnSync(executable, args, { input, encoding: 'utf8', timeout: guardMs });
+  const result = spawnSync(executable, args, { input, encoding: 'utf8', timeout: guardMs, env: { ...process.env, PGPASSWORD: fixtureDatabasePassword } });
   assert.equal(result.status, 0, `${executable} failed: ${result.stderr}`);
   return result.stdout;
 }
@@ -149,17 +150,19 @@ test('native annotation budgets survive claims/restart and owner retry retains c
   });
   await new Promise<void>(done => model.listen(0, '127.0.0.1', done));
   const address = model.address(); assert.ok(address !== null && typeof address !== 'string');
-  run(join(pg, 'initdb'), ['-D', db, '-A', 'trust', '-U', 'chronicle_test', '--no-locale', '--encoding=UTF8'], undefined);
+  await writeFile(join(directory, 'db-password'), fixtureDatabasePassword, { mode: 0o600 });
+  run(join(pg, 'initdb'), ['-D', db, '-A', 'scram-sha-256', '--pwfile', join(directory, 'db-password'), '-U', 'chronicle_test', '--no-locale', '--encoding=UTF8'], undefined);
   run(join(pg, 'pg_ctl'), ['-D', db, '-l', join(directory, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${dbPort} -k ${directory}`, '-w', 'start'], undefined); databaseStarted = true;
   run(join(pg, 'createdb'), ['-h', '127.0.0.1', '-p', String(dbPort), '-U', 'chronicle_test', 'chronicle_test'], undefined);
   const sql = (query: string): string => run(join(pg, 'psql'), ['-X', '-v', 'ON_ERROR_STOP=1', '-h', '127.0.0.1', '-p', String(dbPort), '-U', 'chronicle_test', '-d', 'chronicle_test', '-At', '-c', query], undefined).trim();
   const password = randomBytes(32).toString('base64url'); const token = randomBytes(32).toString('base64url');
   const hash = run(command[0], [...command.slice(1), 'password-hash'], password + '\n').trim(); assert.match(hash, /^pbkdf2-sha256\$/);
-  for (const [name, value] of [['password', hash], ['db-password', ''], ['model-key', ''], ['token', token]]) await writeFile(join(directory, name), value, { mode: 0o600 });
+  for (const [name, value] of [['password', hash], ['db-password', fixtureDatabasePassword], ['model-key', ''], ['token', token]]) await writeFile(join(directory, name), value, { mode: 0o600 });
   const endpoint = { model: 'controlled-native-fixture', revision: 'v1', credentialFile: join(directory, 'model-key'), timeoutSeconds: 900, maxResponseBytes: 1_048_576 };
   const config = {
     listenHost: '127.0.0.1', listenPort: Number(new URL(base).port), allowedOrigin: base, secureCookies: false, allowInsecureHttp: false,
     jdbcUrl: `jdbc:postgresql://127.0.0.1:${dbPort}/chronicle_test`, databaseUser: 'chronicle_test', databasePasswordFile: join(directory, 'db-password'),
+    databaseLimits: { maxConnections: 8, maxQueued: 32, queueTimeoutMs: 5000, connectTimeoutMs: 5000, statementTimeoutMs: 30000, lockTimeoutMs: 35000, idleTransactionTimeoutMs: 60000, socketTimeoutMs: 35000 },
     users: [{ id: 'owner', login: 'owner', passwordHashFile: join(directory, 'password'), enabled: true }],
     staticTokens: [{ id: randomUUID(), userId: 'owner', name: 'synthetic-ingest', scopes: ['Ingest'], tokenFile: join(directory, 'token') }],
     maxBodyBytes: 8_388_608, maxFiles: 4, maxFileBytes: 4_194_304, maxMessages: 1000, sessionTtlSeconds: 3600,
