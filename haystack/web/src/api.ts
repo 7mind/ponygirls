@@ -19,6 +19,7 @@ export interface ApiFault {
   code: string;
   message: string;
   spans?: Array<{ message: string; start: number; end: number }>;
+  currentRevision?: number;
 }
 
 export class ApiError extends Error {
@@ -35,48 +36,50 @@ export class ApiError extends Error {
 }
 
 import { stringify } from "lossless-json";
-import { parseRaw as parse } from "../../server/src/domain/json.ts";
+import { parseRaw as parse } from "./lossless-json.ts";
+import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
+import {
+  Ack, AnalyzeResult, CompletionResult, DocumentPayload, Failure, GetRequest,
+  HistoryRequest, HistoryResult, Identity, Item as WireItem, LoginRequest, LoginResult,
+  PutRequest, PutResult, QueryRequest, SearchRequest, SearchResult, SearchSort as WireSearchSort,
+  ValuesRequest, ValuesResult,
+} from "../../generated/typescript/haystack/api/index.ts";
 
+const context = BaboonCodecContext.Default;
+const version = WireItem.BaboonDomainVersion;
+interface Codec<T> {
+  encode(context: BaboonCodecContext, value: T): unknown;
+  decode(context: BaboonCodecContext, json: unknown): T;
+}
 async function request(path: string, init: RequestInit): Promise<Response> {
   let res: Response;
-  try {
-    res = await fetch(path, init);
-  } catch {
-    throw new NetworkError();
-  }
+  try { res = await fetch(path, init); } catch { throw new NetworkError(); }
   if (res.status === 401) throw new AuthError();
   if (res.status === 502 || res.status === 503 || res.status === 504) throw new NetworkError();
   return res;
 }
-
-async function call<T>(path: string, body?: unknown): Promise<T> {
+async function call<T>(path: string, codec: Codec<T>, body?: unknown, method = "POST"): Promise<T> {
   const res = await request(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    method, headers: { "Content-Type": "application/json", "X-Haystack-Version": version },
+    body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
   });
-  let parsed: unknown = null;
-  try {
-    parsed = await res.json();
-  } catch {
-    throw new ApiError(res.status, { code: "unavailable", message: "bad response" });
-  }
+  let parsed: unknown;
+  try { parsed = await res.json(); }
+  catch { throw new ApiError(res.status, { code: "unavailable", message: "bad response" }); }
   if (!res.ok) {
-    const fault = (parsed as { error?: ApiFault }).error ?? { code: "unavailable", message: "request failed" };
-    throw new ApiError(res.status, fault);
+    try {
+      const fault = Failure.jsonCodec().decode(context, parsed);
+      if (typeof fault.code !== "string" || typeof fault.message !== "string" || !Array.isArray(fault.spans)) throw new Error("failure");
+      throw new ApiError(res.status, fault);
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(res.status, { code: "unavailable", message: "bad response" });
+    }
   }
-  return parsed as T;
+  try { return codec.decode(context, parsed); }
+  catch { throw new ApiError(res.status, { code: "unavailable", message: "bad response" }); }
 }
-
-async function get<T>(path: string): Promise<T> {
-  const res = await request(path, { method: "GET" });
-  const parsed = (await res.json()) as T;
-  if (!res.ok) {
-    const fault = (parsed as unknown as { error?: ApiFault }).error ?? { code: "unavailable", message: "request failed" };
-    throw new ApiError(res.status, fault);
-  }
-  return parsed;
-}
+function encode<T>(codec: Codec<T>, value: T): unknown { return codec.encode(context, value); }
 
 export interface Principal {
   userId: string;
@@ -147,32 +150,23 @@ export interface RevisionMeta {
 /** Parse a served item with the shared exact JSON codec: it arrives as lossless
  *  canonical text and big integers must survive the browser too. fieldsJson
  *  stays canonical text end to end (displayed and re-sent verbatim). */
-function toItemFromText(text: string): Item {
-  let raw: { key: string; revision: number; document: unknown; metadata: ItemMetadata };
+function toItem(raw: WireItem): Item {
+  let doc: Record<string, unknown>;
   try {
-    raw = parse(text) as unknown as typeof raw;
-  } catch {
-    throw new ApiError(200, { code: "unavailable", message: "bad response" });
-  }
-  const doc = raw.document as Record<string, unknown>;
+    doc = parse(raw.document.json) as Record<string, unknown>;
+    if (typeof raw.key !== "string" || !Number.isSafeInteger(raw.revision) || raw.revision < 1 ||
+        typeof doc !== "object" || doc === null || Array.isArray(doc)) throw new Error("item");
+  } catch { throw new ApiError(200, { code: "unavailable", message: "bad response" }); }
   return {
-    key: raw.key,
-    // Envelope numbers are LosslessNumber instances: counters fit safely.
-    revision: Number(raw.revision),
+    key: raw.key, revision: raw.revision,
     document: {
-      title: String(doc["title"] ?? ""),
-      description: String(doc["description"] ?? ""),
-      fieldsJson: stringify(doc["fields"] ?? {}) ?? "{}",
-      type: String(doc["type"] ?? ""),
-      status: String(doc["status"] ?? ""),
-      importance: String(doc["importance"] ?? ""),
+      title: String(doc["title"] ?? ""), description: String(doc["description"] ?? ""),
+      fieldsJson: stringify(doc["fields"] ?? {}) ?? "{}", type: String(doc["type"] ?? ""),
+      status: String(doc["status"] ?? ""), importance: String(doc["importance"] ?? ""),
       humanAttention: doc["human-attention"] === "required" ? "required" : "cleared",
-      links: Array.isArray(doc["links"]) ? (doc["links"] as Array<[string, string]>) : [],
-      tags: Array.isArray(doc["tags"])
-        ? (doc["tags"] as unknown[]).filter((t): t is string => typeof t === "string")
-        : [],
-    },
-    metadata: raw.metadata,
+      links: Array.isArray(doc["links"]) ? doc["links"] as Array<[string, string]> : [],
+      tags: Array.isArray(doc["tags"]) ? doc["tags"].filter((t): t is string => typeof t === "string") : [],
+    }, metadata: raw.metadata,
   };
 }
 
@@ -232,46 +226,33 @@ export function uuidv7(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-/** POST returning raw text (for lossless document bodies). */
-async function callText(path: string, body?: unknown): Promise<string> {
-  const res = await request(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    let fault: ApiFault = { code: "unavailable", message: "request failed" };
-    try {
-      fault = (JSON.parse(text) as { error?: ApiFault }).error ?? fault;
-    } catch {
-      // keep default
-    }
-    throw new ApiError(res.status, fault);
-  }
-  return text;
-}
-
 export const api = {
-  login: (token: string) => call<{ user: { id: string; type: string } }>("/api/v1/login", { token }),
-  logout: () => call<{ ok: boolean }>("/api/v1/logout", {}),
-  whoami: () => get<Principal>("/api/v1/whoami"),
-  get: async (key: string, revision?: number) => toItemFromText(await callText("/api/v1/get", { key, revision })),
+  login: (token: string) => call("/api/v1/login", LoginResult.jsonCodec(), encode(LoginRequest.jsonCodec(), new LoginRequest(token))),
+  logout: () => call("/api/v1/logout", Ack.jsonCodec()),
+  whoami: async (): Promise<Principal> => {
+    const identity = await call("/api/v1/whoami", Identity.jsonCodec(), undefined, "GET");
+    return { userId: identity.userId, type: identity.userType as Principal["type"], tokenId: identity.tokenId, activityProjectId: identity.activityProjectId };
+  },
+  get: async (key: string, revision?: number) => toItem(await call("/api/v1/get", WireItem.jsonCodec(),
+    encode(GetRequest.jsonCodec(), new GetRequest(key, revision)))),
   put: (key: string, documentJson: string, expectedRevision: number, requestId: string) =>
-    call<{ key: string; revision: number; metadata: ItemMetadata; replayed: boolean }>("/api/v1/put", {
-      key,
-      document_json: documentJson,
-      expected_revision: expectedRevision,
-      request_id: requestId,
-    }),
-  search: (query: string, opts?: { project?: string; limit?: number; cursor?: string; sort?: SearchSort }) =>
-    call<{ items: Summary[]; cursor?: string }>("/api/v1/search", { query, ...opts }),
-  history: (key: string) => call<{ revisions: RevisionMeta[] }>("/api/v1/history", { key }),
-  historyGet: async (key: string, revision: number) =>
-    toItemFromText(await callText("/api/v1/history/get", { key, revision })),
-  analyze: (query: string) =>
-    call<{ diagnostics: Array<{ message: string; start: number; end: number }> }>("/api/v1/query/analyze", { query }),
-  complete: (query: string, caret?: number) =>
-    call<{ suggestions: string[] }>("/api/v1/complete", { query, caret }),
-  values: (field: string) => get<{ values: string[] }>(`/api/v1/values/${field}`),
+    call("/api/v1/put", PutResult.jsonCodec(), encode(PutRequest.jsonCodec(), new PutRequest(key, new DocumentPayload(documentJson), expectedRevision, requestId))),
+  search: async (query: string, opts?: { project?: string; limit?: number; cursor?: string; sort?: SearchSort }) => {
+    const sort = opts?.sort ?? { field: "key", direction: "asc" };
+    const result = await call("/api/v1/search", SearchResult.jsonCodec(), encode(SearchRequest.jsonCodec(),
+      new SearchRequest(query, opts?.project, opts?.limit ?? 20, opts?.cursor, new WireSearchSort(sort.field, sort.direction))));
+    return { items: result.items.map((item): Summary => ({ project: item.project, item: item.item, revision: item.revision,
+      title: item.title, type: item.docType, status: item.status, importance: item.importance, humanAttention: item.humanAttention,
+      tags: item.tags, modifiedAt: item.modifiedAt, modifiedBy: item.modifiedBy })), cursor: result.cursor };
+  },
+  history: (key: string) => call("/api/v1/history", HistoryResult.jsonCodec(), encode(HistoryRequest.jsonCodec(), new HistoryRequest(key))),
+  historyGet: async (key: string, revision: number) => toItem(await call("/api/v1/get", WireItem.jsonCodec(),
+    encode(GetRequest.jsonCodec(), new GetRequest(key, revision)))),
+  analyze: async (query: string) => {
+    const result = await call("/api/v1/query/analyze", AnalyzeResult.jsonCodec(), encode(QueryRequest.jsonCodec(), new QueryRequest(query, query.length)));
+    return { valid: result.valid, diagnostics: result.spans };
+  },
+  complete: (query: string, caret = query.length) => call("/api/v1/complete", CompletionResult.jsonCodec(),
+    encode(QueryRequest.jsonCodec(), new QueryRequest(query, caret))),
+  values: (field: string) => call("/api/v1/values", ValuesResult.jsonCodec(), encode(ValuesRequest.jsonCodec(), new ValuesRequest(field))),
 };
