@@ -1,0 +1,101 @@
+model manure.api
+version "1.0.0"
+
+enum ArtifactKind { File Directory }
+enum Visibility { Internal External Public }
+enum ArtifactState { Uploading Publishing Ready }
+enum PrincipalType { Human Agent }
+enum ContentMode { Subdomain Path }
+enum SortDirection { Asc Desc }
+enum CatalogueSort { Name CreatedAt ExpiresAt TotalBytes FileCount Visibility State Kind CreatedByUser }
+enum SearchMode { Lexical Semantic Hybrid }
+enum SearchCountScope { ExactMatches CandidateWindow }
+enum EvidenceField { Name ManifestPath }
+
+data Principal { userId: str tokenId: str principalType: PrincipalType }
+data VersionInfo { current: str supported: lst[str] }
+data Capabilities { contentMode: ContentMode searchModes: lst[SearchMode] metadataOnlySearch: bit chunkBytes: i32 maxListLimit: i32 maxRequestBodyBytes: i64 maxFileBytes: i64 maxArtifactBytes: i64 maxFilesPerArtifact: i32 maxTtlSeconds: i32 cataloguePolicy: str }
+
+adt ManifestEntry {
+  data File { path: str size: i64 sha256: str }
+  data Directory { path: str }
+}
+
+data Artifact { artifactId: str name: str kind: ArtifactKind visibility: Visibility state: ArtifactState createdByUser: str createdAt: str expiresAt: opt[str] totalBytes: i64 fileCount: i32 contentUrl: str }
+data Manifest { artifactId: str state: ArtifactState files: lst[ManifestEntry] }
+data ByteRange { start: i64 endExclusive: i64 }
+data FileProgress { path: str size: i64 receivedBytes: i64 receivedRanges: lst[ByteRange] }
+data UploadStatus { artifactId: str state: ArtifactState chunkBytes: i32 files: lst[FileProgress] }
+root data ChunkReceipt { path: str offset: i64 length: i32 receivedBytes: i64 }
+
+adt ExpiryChange {
+  data Keep {}
+  data Clear {}
+  data Set { seconds: i32 }
+}
+
+data ArtifactPatch { name: opt[str] visibility: opt[Visibility] expiry: ExpiryChange }
+data CatalogueQuery { query: str includeExpired: bit visibility: opt[Visibility] state: opt[ArtifactState] sort: CatalogueSort direction: SortDirection limit: i32 cursor: opt[str] }
+data CataloguePage { artifacts: lst[Artifact] nextCursor: opt[str] }
+data SearchFilter { visibility: opt[Visibility] kind: opt[ArtifactKind] createdByUser: opt[str] }
+data SearchQuery { query: str mode: SearchMode filter: SearchFilter limit: i32 cursor: opt[str] }
+data SearchEvidence { field: EvidenceField path: opt[str] text: str score: f64 }
+data SearchHit { artifact: Artifact sourceVersion: str generationId: str policyId: str embeddingProfile: opt[str] evidence: lst[SearchEvidence] score: f64 }
+data SearchPage { hits: lst[SearchHit] total: i64 countScope: SearchCountScope rankingLimit: opt[i32] nextCursor: opt[str] }
+
+enum ErrorCode {
+  BadEnvelope InvalidPath InvalidManifest InvalidRange InvalidTtl InvalidVisibility
+  BadHost AmbiguousCredentials Unauthorized PasswordRequired PasswordInvalid GrantRequired
+  GrantInvalid GrantExpired SessionNotOwned Forbidden TlsRequired NotFound DashboardDisabled
+  ChunkConflict StateConflict HashMismatch IncompleteUpload Expired TooLarge QuotaExceeded
+  SessionLimit RateLimited Unavailable UnsupportedVersion SearchUnavailable SearchNotReady
+}
+data Failure { code: ErrorCode message: str retryAfterSeconds: opt[i32] }
+
+root adt Command {
+  data Version {}
+  data GetCapabilities {}
+  data Login { token: str }
+  data Logout {}
+  data Whoami {}
+  data ListArtifacts { query: CatalogueQuery }
+  data InitUpload { name: str kind: ArtifactKind visibility: Visibility expiresInSeconds: opt[i32] files: lst[ManifestEntry] }
+  data GetArtifact { artifactId: str }
+  data PatchArtifact { artifactId: str patch: ArtifactPatch }
+  data DeleteArtifact { artifactId: str }
+  data RotateExternalPassword { artifactId: str }
+  data GetManifest { artifactId: str }
+  data GetUploadStatus { artifactId: str }
+  data FinishUpload { artifactId: str }
+  data CreateGrant { artifactId: str }
+  data Search { query: SearchQuery }
+}
+
+root adt Result {
+  data Version { versions: VersionInfo }
+  data CapabilityInfo { capabilities: Capabilities }
+  data Identity { principal: Principal }
+  data Ok {}
+  data Catalogue { page: CataloguePage }
+  data UploadInitialized { artifactId: str chunkBytes: i32 contentUrl: str externalPassword: opt[str] }
+  data ArtifactInfo { artifact: Artifact }
+  data ArtifactPatched { artifact: Artifact externalPassword: opt[str] }
+  data PasswordRotated { externalPassword: str }
+  data ArtifactManifest { manifest: Manifest }
+  data UploadProgress { status: UploadStatus }
+  data UploadFinished { artifactId: str state: ArtifactState contentUrl: str }
+  data GrantCreated { grant: str expiresInSeconds: i32 }
+  data SearchResults { page: SearchPage }
+  data Error { failure: Failure }
+}
+
+root data ClientEnvelope { requestId: uid apiVersion: str command: Command }
+root data ServerEnvelope { requestId: uid result: Result }
+
+root adt ContentCommand {
+  data Unlock { password: str }
+  data RedeemGrant { grant: str }
+  data Logout {}
+  data GetManifest {}
+}
+root data ContentEnvelope { requestId: uid apiVersion: str command: ContentCommand }

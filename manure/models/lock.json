@@ -1,0 +1,11 @@
+{
+  "scheme" : 3,
+  "locks" : {
+    "manure.api" : [
+      {
+        "version" : "1.0.0",
+        "sigId" : "f34fe938835692aa62023eb012c36161b8e2a6f8e1683dbf296dc9617d238025"
+      }
+    ]
+  }
+}

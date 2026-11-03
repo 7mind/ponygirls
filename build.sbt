@@ -105,6 +105,7 @@ lazy val retrievalCore = project.in(file("shared/retrieval-core")).settings(scal
 lazy val retrievalPostgres = project.in(file("shared/retrieval-postgres")).dependsOn(serviceRuntime, retrievalCore, modelHttp).settings(serviceSettings).settings(name := "retrieval-postgres")
 lazy val haystackServer = project.in(file("haystack/server")).dependsOn(haystackContracts, serviceRuntime, losslessJson, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
   name := "haystack-server",
+  Compile / unmanagedResourceDirectories += baseDirectory.value.getParentFile / "migrations",
   Compile / mainClass := Some("haystack.Main"),
   assembly / mainClass := Some("haystack.Main"),
   assembly / assemblyJarName := "haystack-server.jar",
