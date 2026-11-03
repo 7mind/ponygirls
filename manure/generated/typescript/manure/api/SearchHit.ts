@@ -9,15 +9,17 @@ export class SearchHit implements BaboonGeneratedLatest {
     private readonly _generationId: string;
     private readonly _policyId: string;
     private readonly _embeddingProfile: string | undefined;
+    private readonly _embeddingSpace: string | undefined;
     private readonly _evidence: Array<SearchEvidence>;
     private readonly _score: number;
 
-    constructor(artifact: Artifact, sourceVersion: string, generationId: string, policyId: string, embeddingProfile: string | undefined, evidence: Array<SearchEvidence>, score: number) {
+    constructor(artifact: Artifact, sourceVersion: string, generationId: string, policyId: string, embeddingProfile: string | undefined, embeddingSpace: string | undefined, evidence: Array<SearchEvidence>, score: number) {
         this._artifact = artifact
         this._sourceVersion = sourceVersion
         this._generationId = generationId
         this._policyId = policyId
         this._embeddingProfile = embeddingProfile
+        this._embeddingSpace = embeddingSpace
         this._evidence = evidence
         this._score = score
     }
@@ -37,6 +39,9 @@ export class SearchHit implements BaboonGeneratedLatest {
     public get embeddingProfile(): string | undefined {
         return this._embeddingProfile;
     }
+    public get embeddingSpace(): string | undefined {
+        return this._embeddingSpace;
+    }
     public get evidence(): Array<SearchEvidence> {
         return this._evidence;
     }
@@ -51,30 +56,33 @@ export class SearchHit implements BaboonGeneratedLatest {
             generationId: this._generationId,
             policyId: this._policyId,
             embeddingProfile: this._embeddingProfile !== undefined ? this._embeddingProfile : undefined,
+            embeddingSpace: this._embeddingSpace !== undefined ? this._embeddingSpace : undefined,
             evidence: this._evidence,
             score: this._score
         };
     }
 
-    public with(overrides: {artifact?: Artifact; sourceVersion?: string; generationId?: string; policyId?: string; embeddingProfile?: string | undefined; evidence?: Array<SearchEvidence>; score?: number}): SearchHit {
+    public with(overrides: {artifact?: Artifact; sourceVersion?: string; generationId?: string; policyId?: string; embeddingProfile?: string | undefined; embeddingSpace?: string | undefined; evidence?: Array<SearchEvidence>; score?: number}): SearchHit {
         return new SearchHit(
             'artifact' in overrides ? overrides.artifact! : this._artifact,
             'sourceVersion' in overrides ? overrides.sourceVersion! : this._sourceVersion,
             'generationId' in overrides ? overrides.generationId! : this._generationId,
             'policyId' in overrides ? overrides.policyId! : this._policyId,
             'embeddingProfile' in overrides ? overrides.embeddingProfile! : this._embeddingProfile,
+            'embeddingSpace' in overrides ? overrides.embeddingSpace! : this._embeddingSpace,
             'evidence' in overrides ? overrides.evidence! : this._evidence,
             'score' in overrides ? overrides.score! : this._score
         );
     }
 
-    public static fromPlain(obj: {artifact: Artifact; sourceVersion: string; generationId: string; policyId: string; embeddingProfile: string | undefined; evidence: Array<SearchEvidence>; score: number}): SearchHit {
+    public static fromPlain(obj: {artifact: Artifact; sourceVersion: string; generationId: string; policyId: string; embeddingProfile: string | undefined; embeddingSpace: string | undefined; evidence: Array<SearchEvidence>; score: number}): SearchHit {
         return new SearchHit(
             obj.artifact,
             obj.sourceVersion,
             obj.generationId,
             obj.policyId,
             obj.embeddingProfile,
+            obj.embeddingSpace,
             obj.evidence,
             obj.score
         );
@@ -121,6 +129,7 @@ export class SearchHit_JsonCodec {
             "generationId": value.generationId,
             "policyId": value.policyId,
             "embeddingProfile": value.embeddingProfile === undefined ? null : value.embeddingProfile,
+            "embeddingSpace": value.embeddingSpace === undefined ? null : value.embeddingSpace,
             "evidence": Array.from(value.evidence).map(item => SearchEvidence_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "score": value.score,
         }
@@ -137,6 +146,7 @@ export class SearchHit_JsonCodec {
             obj["generationId"] as string,
             obj["policyId"] as string,
             obj["embeddingProfile"] === undefined || obj["embeddingProfile"] === null ? undefined : obj["embeddingProfile"] === undefined || obj["embeddingProfile"] === null ? undefined : obj["embeddingProfile"] as string,
+            obj["embeddingSpace"] === undefined || obj["embeddingSpace"] === null ? undefined : obj["embeddingSpace"] === undefined || obj["embeddingSpace"] === null ? undefined : obj["embeddingSpace"] as string,
             (obj["evidence"] as unknown[]).map(item => SearchEvidence_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             obj["score"] as number,
         )

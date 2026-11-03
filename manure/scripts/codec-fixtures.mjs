@@ -14,3 +14,13 @@ for(const [name,codec] of [['commands',api.ClientEnvelope_JsonCodec.instance],['
   console.log(`${name}: ${fixtures.length} vectors`);total+=fixtures.length;
 }
 console.log(`TypeScript generated codec goldens: ${total} vectors passed; sole current API`);
+
+const searchVectors=JSON.parse(readFileSync(new URL('../models/fixtures/results.json',import.meta.url),'utf8'))
+  .filter(value=>value.result.SearchResults);
+const [published,head]=searchVectors.map(value=>api.ServerEnvelope_JsonCodec.instance.decode(ctx,value).result.page.hits[0]);
+assert.equal(published.embeddingProfile,'b'.repeat(64));
+assert.equal(published.embeddingSpace,'c'.repeat(64));
+assert.equal(head.embeddingProfile,undefined);assert.equal(head.embeddingSpace,undefined);
+assert.equal(searchVectors[1].result.SearchResults.page.hits[0].embeddingProfile,null);
+assert.equal(searchVectors[1].result.SearchResults.page.hits[0].embeddingSpace,null);
+console.log('Search source/generation/policy/profile/space/provenance goldens passed');

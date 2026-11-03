@@ -9,13 +9,13 @@ const ctx=BaboonCodecContext.Default;
 const id='01234567-89ab-4def-8123-456789abcdef';
 const artifactId='a'.repeat(32);
 
-test('all 73 Baboon codec vectors pass strict browser schema validation',()=>{
+test('all 74 Baboon codec vectors pass strict browser schema validation',()=>{
   let count=0;
   for(const [name,type] of [['commands','ClientEnvelope'],['results','ServerEnvelope'],['content','ContentEnvelope'],['chunks','ChunkReceipt']]){
     const raw=readFileSync(new URL(`../../models/fixtures/${name}.json`,import.meta.url),'utf8');
     const vectors=boundary.parseStrict(raw);vectors.forEach(v=>boundary.validate(type,v));count+=vectors.length;
   }
-  assert.equal(count,73);
+  assert.equal(count,74);
 });
 
 test('strict parser rejects duplicate escaped keys, nested duplicates and malformed JSON',()=>{
@@ -81,4 +81,21 @@ test('opted-in insecure HTTP context does not require secure-only crypto.randomU
     assert.match(first,/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.notEqual(first,second);
   } finally { Object.defineProperty(globalThis,'crypto',original); }
+});
+
+
+test('search goldens carry actual published space distinct from profile and lexical HEAD nulls',()=>{
+  const vectors=JSON.parse(readFileSync(new URL('../../models/fixtures/results.json',import.meta.url),'utf8'));
+  const pages=vectors.filter(v=>v.result.SearchResults).map(v=>p.ServerEnvelope_JsonCodec.instance.decode(ctx,v).result.page);
+  assert.equal(pages.length,2);
+  const [published,head]=pages;
+  assert.equal(published.hits[0].embeddingProfile,'b'.repeat(64));
+  assert.equal(published.hits[0].embeddingSpace,'c'.repeat(64));
+  assert.equal(head.hits[0].embeddingProfile,undefined);assert.equal(head.hits[0].embeddingSpace,undefined);
+  assert.equal(vectors.filter(v=>v.result.SearchResults)[1].result.SearchResults.page.hits[0].embeddingSpace,null);
+  assert.equal(published.countScope,p.SearchCountScope.CandidateWindow);
+  assert.equal(head.countScope,p.SearchCountScope.ExactMatches);
+  const missing=structuredClone(vectors.find(v=>v.result.SearchResults));
+  delete missing.result.SearchResults.page.hits[0].embeddingSpace;
+  assert.throws(()=>boundary.validate('ServerEnvelope',missing),/bad-response/);
 });

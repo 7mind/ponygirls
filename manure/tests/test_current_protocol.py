@@ -74,6 +74,28 @@ class CurrentProtocolTests(unittest.TestCase):
         self.assertEqual(p.encode(p.ManifestEntry_Directory('empty')),{'Directory':{'path':'empty'}})
         with self.assertRaises(p.ProtocolError): p.decode(p.ManifestEntry,{'Directory':{'path':'empty','size':'0'}})
 
+    def test_search_goldens_distinguish_published_space_from_lexical_head(self):
+        vectors=json.loads((FIXTURES/'results.json').read_text())
+        pages=[p.decode(p.ServerEnvelope,v).result.page for v in vectors if 'SearchResults' in v['result']]
+        self.assertEqual(len(pages),2)
+        published,head=pages
+        semantic=published.hits[0];lexical=head.hits[0]
+        self.assertEqual(semantic.embeddingProfile,'b'*64)
+        self.assertEqual(semantic.embeddingSpace,'c'*64)
+        self.assertNotEqual(semantic.embeddingProfile,semantic.embeddingSpace)
+        self.assertEqual(published.countScope,p.SearchCountScope.CandidateWindow)
+        self.assertEqual(published.rankingLimit,1000)
+        self.assertIsNone(lexical.embeddingProfile);self.assertIsNone(lexical.embeddingSpace)
+        self.assertEqual(head.countScope,p.SearchCountScope.ExactMatches)
+        self.assertIsNone(head.rankingLimit)
+        for hit in [semantic,lexical]:
+            self.assertTrue(hit.sourceVersion);self.assertTrue(hit.generationId)
+            self.assertEqual(hit.policyId,'manure-metadata-paths-v1')
+            self.assertEqual([e.field for e in hit.evidence],[p.EvidenceField.Name,p.EvidenceField.ManifestPath])
+        wire=next(v for v in vectors if 'SearchResults' in v['result'])
+        del wire['result']['SearchResults']['page']['hits'][0]['embeddingSpace']
+        with self.assertRaises(p.ProtocolError):p.decode(p.ServerEnvelope,wire)
+
     def test_current_version_has_no_retained_chain(self):
         self.assertEqual(p.API_VERSION,'1.0.0')
         self.assertEqual([f.name for f in FIXTURES.parent.glob('*.baboon')],['manure.baboon'])

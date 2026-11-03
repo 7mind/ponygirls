@@ -138,7 +138,7 @@ before every candidate limit/count/evidence selection, reauthorize at delivery.
 Corpus is approved artifact metadata + manifest paths only (Name/ManifestPath
 provenance); no credentials, hashes, passwords, grant values or binary contents.
 Ordinary writes/catalogue/serving do not call a model. Published hits carry
-sourceVersion/generationId/policyId/optional embeddingProfile and evidence.
+sourceVersion/generationId/policyId/optional embeddingProfile/optional embeddingSpace and evidence.
 ExactMatches versus CandidateWindow + rankingLimit are explicit. Scores are
 ranking values, not confidence. Rebuild/profile changes cannot mix vector spaces
 or replace good publication with an unlabelled partial generation.
@@ -245,3 +245,16 @@ CLI password flag/env combinations obey the same source-first rule. CLI returns
 exit2 without file/network effects. Existing one-source canonical file codecs
 and no-secret-diagnostics rules are unchanged. Focused fail-first evidence and
 the fresh153-method zero-skip regression receipt are in behavior-inventory.md.
+
+
+### Search embedding-space identity (sole current1.0.0)
+
+`SearchHit.embeddingSpace: opt[str]` follows `embeddingProfile`. Published semantic
+hits carry the actual immutable embedding-space ID and profile ID independently;
+never reconstruct space from endpoint URL, dimensions or profile text. Lexical
+HEAD hits carry null for both profile and space while retaining their actual
+source version, HEAD generation, policy and field/path evidence. The current
+schema is replaced in place as authorized; no historical version/codec retained.
+Goldens now contain74 vectors including distinct explicit published space/profile
+identities and a lexical HEAD hit with both null. Server constructors must pass
+`hit.embeddingSpace` after `hit.profile`, not duplicate the profile value.
