@@ -43,19 +43,24 @@ final case class JdbcConfig(jdbcUrl: String, user: String, passwordFile: Path, l
   * a regular resolved leaf and open that leaf NOFOLLOW. Operators must not race replacement
   * with a special file; this is not adversarial payload-path confinement.
   */
-object CredentialFile {
-  def read(path: Path): String = {
+object BoundedSecretFile {
+  def read(path: Path, maxBytes: Int): String = {
+    require(maxBytes > 0 && maxBytes <= 1024 * 1024, "invalid secret file bound")
     try {
       if (!path.isAbsolute) throw RuntimeFailure("credential-file")
       val resolved = path.toRealPath()
       if (!Files.isRegularFile(resolved, LinkOption.NOFOLLOW_LINKS)) throw RuntimeFailure("credential-file")
-      val bytes = Using.resource(Files.newInputStream(resolved, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))(_.readNBytes(16385))
-      if (bytes.isEmpty || bytes.length > 16384) throw RuntimeFailure("credential-file")
-      val decoded = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+      val bytes = Using.resource(Files.newInputStream(resolved, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))(_.readNBytes(maxBytes + 1))
+      if (bytes.length > maxBytes) throw RuntimeFailure("credential-file")
+      StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
         .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString
-      val value = decoded.stripSuffix("\n").stripSuffix("\r")
-      if (value.isEmpty || value.exists(c => c == '\n' || c == '\r' || c == 0)) throw RuntimeFailure("credential-file")
-      value
     } catch { case scala.util.control.NonFatal(_) => throw RuntimeFailure("credential-file") }
+  }
+}
+object CredentialFile {
+  def read(path: Path): String = {
+    val value = BoundedSecretFile.read(path, 16384).stripSuffix("\n").stripSuffix("\r")
+    if (value.isEmpty || value.exists(c => c == '\n' || c == '\r' || c == 0)) throw RuntimeFailure("credential-file")
+    value
   }
 }
