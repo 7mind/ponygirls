@@ -1,6 +1,7 @@
 package haystack.storage
 
 import cats.effect.IO
+import cats.syntax.all.*
 import haystack.domain.*
 import ponygirls.runtime.JdbcDatabase
 import java.sql.{Connection, PreparedStatement, ResultSet, Timestamp}
@@ -9,16 +10,19 @@ import io.circe.Json
 import io.circe.parser.parse
 
 private[storage] object Sql {
+  final case class TextArray(values:Vector[String])
   def prepared[A](c: Connection, sql: String, values: Seq[Any] = Seq.empty)(f: PreparedStatement => A): A = {
     val p = c.prepareStatement(sql)
+    var arrays=Vector.empty[java.sql.Array]
     try { values.zipWithIndex.foreach { case (value, i) => value match {
       case s: String => p.setString(i + 1, s)
+      case TextArray(values)=>val array=c.createArrayOf("text",values.toArray[AnyRef]);arrays=arrays:+array;p.setArray(i+1,array)
       case n: Long => p.setLong(i + 1, n)
       case n: Int => p.setInt(i + 1, n)
       case t: Instant => p.setTimestamp(i + 1, Timestamp.from(t))
       case null => p.setObject(i + 1, null)
       case other => p.setObject(i + 1, other)
-    }}; f(p) } finally p.close()
+    }}; f(p) } finally {arrays.foreach(_.free());p.close()}
   }
   def update(c: Connection, sql: String, values: Any*): Int = prepared(c, sql, values)(_.executeUpdate())
   def rows[A](c: Connection, sql: String, values: Seq[Any] = Seq.empty)(f: ResultSet => A): Vector[A] = prepared(c, sql, values) { p =>
@@ -51,7 +55,39 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
       RevisionMeta(r.getLong(1),r.getTimestamp(2).toInstant,r.getString(3),r.getString(4))
     }
   }
+  override def search(input:haystack.query.SearchInput):IO[haystack.query.SearchResult]=database.transaction(c=>PostgresSearch.search(c,input))
+  private def values(c:Connection,field:String):Vector[String]={
+    val sql=field match{
+      case "type"|"status"|"importance"=>s"SELECT DISTINCT (document->>'$field') COLLATE \"C\" AS value FROM items ORDER BY value LIMIT 100"
+      case "tags"=>"SELECT DISTINCT tag COLLATE \"C\" AS value FROM items CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(document->'tags','[]'::jsonb)) AS tag ORDER BY value LIMIT 100"
+      case _=>throw Fault("not-found","unknown value set")
+    }
+    rows(c,sql)(_.getString(1))
+  }
+  override def observedValues(field:String):IO[Vector[String]]=database.transaction(c=>values(c,field))
+  override def complete(fragment:String):IO[Vector[String]]=database.transaction { c=>
+    val colon=fragment.indexOf(':')
+    val field=if(colon>=0)fragment.take(colon).toLowerCase(java.util.Locale.ROOT)else ""
+    val observed=if(Set("type","status","importance","tag","tags").contains(field))values(c,if(field=="tag")"tags" else field)else Vector.empty
+    val ids=if(fragment.length<2)Vector.empty else rows(c,"SELECT project_id,item_id FROM items WHERE strpos(project_id||':'||item_id,?)>0 ORDER BY (haystack_encode_component(project_id)||':'||haystack_encode_component(item_id)) COLLATE \"C\" LIMIT 20",Seq(fragment))(r=>QualifiedId.encodeKey(ItemKey(r.getString(1),r.getString(2))))
+    haystack.query.Search.completeChoices(fragment,observed,ids)
+  }
   def allCurrent(): IO[Vector[StoredItem]] = database.transaction(c => rows(c, s"SELECT $columns FROM items")(stored))
+
+  def initializeProjection():IO[Unit]=projection.fold(IO.unit) { shared=>
+    def batch(after:Option[ItemKey]):IO[Vector[ItemKey]]=database.transaction { c=>
+      val where=after.fold("")(_=>"WHERE (project_id COLLATE \"C\",item_id COLLATE \"C\") > (?::text COLLATE \"C\",?::text COLLATE \"C\")")
+      val params=after.fold(Seq.empty[Any])(key=>Seq(key.project,key.item))
+      rows(c,s"SELECT project_id,item_id FROM items $where ORDER BY project_id COLLATE \"C\",item_id COLLATE \"C\" LIMIT 128",params)(r=>ItemKey(r.getString(1),r.getString(2)))
+    }
+    def loop(after:Option[ItemKey]):IO[Unit]=batch(after).flatMap { keys=>
+      keys.toList.traverse_ { key=>database.transaction { c=>
+        lock(c,"haystack/item/",Vector(key.project,key.item))
+        readCurrent(c,key).foreach { item=>writeSearchProjection(c,item);shared.put(c,item) }
+      }} *> (if(keys.isEmpty)IO.unit else loop(keys.lastOption))
+    }
+    database.transaction(c=>shared.store.initialize(c)) *> loop(None)
+  }
 
   def commit(op: AcceptedOperation, principal: Principal, now: Instant): IO[CommitSuccess] = database.transaction { c =>
     // Fixed global order: replay identity first, item identity second. Both
@@ -86,8 +122,11 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
       val dest=QualifiedId.decodeKey(target)
       update(c,"INSERT INTO item_links(source_project_id,source_item_id,position,link_type,target_project_id,target_item_id) VALUES(?,?,?,?,?,?)",k.project,k.item,position,kind,dest.project,dest.item)
     }
-    // Authoritative queries currently evaluate the complete exact set. This
-    // projection is rebuilt transactionally and never used as a lossy oracle.
+    writeSearchProjection(c,item)
+    projection.foreach(_.put(c,item))
+  }
+  private def writeSearchProjection(c:Connection,item:StoredItem):Unit={
+    val k=item.key
     val segments = haystack.query.Text.corpusSegments(item.document)
     val words = segments.flatMap(haystack.query.Text.words).distinct
     prepared(c,"INSERT INTO item_search(project_id,item_id,words,segments) VALUES(?,?,?,?) ON CONFLICT(project_id,item_id) DO UPDATE SET words=EXCLUDED.words,segments=EXCLUDED.segments") { p =>
@@ -95,7 +134,6 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
       val a=c.createArrayOf("text",words.toArray[AnyRef]); val b=c.createArrayOf("text",segments.toArray[AnyRef])
       try { p.setArray(3,a); p.setArray(4,b); p.executeUpdate(); () } finally { a.free(); b.free() }
     }
-    projection.foreach(_.put(c,item))
   }
   private def encodeOutcome(result: Either[Fault,CommitSuccess]): String = result.fold(
     e => Json.obj("kind"->Json.fromString(e.code),"message"->Json.fromString(e.message),"currentRevision"->e.currentRevision.fold(Json.Null)(Json.fromLong)),

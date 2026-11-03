@@ -68,3 +68,24 @@ Chronicle's pinned Scala2.13 Cats / Scala3 Izumi erased-ABI workaround unchanged
 Use ordinary typed/`@Id` graph bindings and Lifecycle-managed resources; the helper
 does not scan plugins or install service bindings. ChronicleInjector delegates
 here, so apps must not copy their own QuasiIO/QuasiAsync adapter implementation.
+
+## Synchronous domain adoption
+
+`new BlockingJdbcDatabase(config)` is a bounded, owned `AutoCloseable` synchronous
+facade for existing synchronous JDBC APIs. Call only on blocking threads; close
+rejects new calls and drains admitted work without any cats runtime or unsafe IO
+bridge. It and async `JdbcDatabase` delegate to the **same** physical transaction
+engine. The blocking gate uses finite fair semaphore admission; queued interruption
+frees the reservation and restores the interrupt flag. Running callbacks are not
+claimed interruptible/cancelable or rolled back merely because callers disconnect.
+`BlockingJdbcDatabase.withConnectionFactory(config, JdbcConnectionFactory)` is an
+explicit trusted real-driver probe seam; ordinary production construction always
+uses DriverManager and the same strict config and connection properties.
+
+`JdbcFailure` is now a sanitized `SQLException` subtype so synchronous SQLState
+matching remains valid, with the existing `(code, sqlState: Option[String])` API.
+There is no raw driver diagnostic or cause. Safe secondary failure semantics are
+unchanged. `BoundedSecretFile.read(path,maxBytes)` is the common strict UTF8 raw
+reader, allowing empty optional auth; DB `CredentialFile` still requires nonempty.
+It resolves trusted operator references, verifies regular type before opening and
+bounds **actual bytes read** (`readNBytes(maxBytes+1)`), never size-then-readString.

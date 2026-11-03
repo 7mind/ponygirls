@@ -6,7 +6,8 @@ import pg from 'pg';
 import os from 'node:os';
 import path from 'node:path';
 import {mkdtemp,readFile,writeFile,rename} from 'node:fs/promises';
-import {spawn} from 'node:child_process';
+import {spawn,execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {once} from 'node:events';
 import {randomBytes,createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
@@ -31,11 +32,29 @@ export async function fixture(overrides={},configure=async()=>{}){
   const config=JSON.parse(await readFile(path.join(root,'haystack/docs/scala-config.example.json'),'utf8'));
   Object.assign(config,{listenPort:port,webRoot:null,authReloadMs:100});
   const databaseName='haystack_current_'+randomBytes(8).toString('hex');
-  const databaseUrl=new URL(process.env.HAYSTACK_TEST_JDBC.replace(/^jdbc:/,''));
-  const admin=new pg.Client({host:databaseUrl.hostname,port:Number(databaseUrl.port),database:databaseUrl.pathname.slice(1),user:process.env.HAYSTACK_TEST_DB_USER,password:(await readFile(process.env.HAYSTACK_TEST_DB_PASSWORD_FILE,'utf8')).trimEnd()});
-  await admin.connect();try{await admin.query('CREATE DATABASE "'+databaseName+'"');}finally{await admin.end();}
-  const jdbc=process.env.HAYSTACK_TEST_JDBC.replace(/\/[^/]+$/,'/'+databaseName);
-  Object.assign(config.database,{jdbcUrl:jdbc,user:process.env.HAYSTACK_TEST_DB_USER,passwordFile:process.env.HAYSTACK_TEST_DB_PASSWORD_FILE});
+  let database;
+  if(process.env.HAYSTACK_TEST_PROVISION_COMMAND){
+    const command=process.env.HAYSTACK_TEST_PROVISION_COMMAND;
+    assert.ok(path.isAbsolute(command),'provision helper must be an absolute executable path');
+    let output;
+    try{output=await promisify(execFile)(command,[databaseName],{encoding:'buffer',timeout:10000,killSignal:'SIGKILL',maxBuffer:16384});}catch{throw new Error('owned fixture provisioning failed; no runtime-identity fallback');}
+    let provisioned;try{provisioned=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(output.stdout));}catch{throw new Error('invalid owned fixture provisioning response');}
+    assert.ok(provisioned&&typeof provisioned==='object'&&!Array.isArray(provisioned),'invalid fixture database descriptor');
+    assert.deepEqual(Object.keys(provisioned).sort(),['jdbcUrl','passwordFile','user']);
+    for(const key of ['jdbcUrl','passwordFile','user'])assert.ok(typeof provisioned[key]==='string'&&provisioned[key].length>0);
+    assert.ok(provisioned.jdbcUrl.startsWith('jdbc:postgresql://'));
+    const target=new URL(provisioned.jdbcUrl.slice(5));assert.ok(['127.0.0.1','localhost','[::1]'].includes(target.hostname));
+    assert.equal(target.pathname,'/'+databaseName);assert.equal(target.username,'');assert.equal(target.password,'');assert.equal(target.search,'');assert.equal(target.hash,'');
+    assert.ok(path.isAbsolute(provisioned.passwordFile));assert.ok((await readFile(provisioned.passwordFile)).length>0);
+    database=provisioned;
+  }else{
+    assert.equal(process.env.HAYSTACK_FIXTURE_ADMIN_AUTHORIZED,'1','direct CREATE DATABASE needs explicit owned fixture-admin authorization');
+    const databaseUrl=new URL(process.env.HAYSTACK_TEST_JDBC.replace(/^jdbc:/,''));
+    const admin=new pg.Client({host:databaseUrl.hostname,port:Number(databaseUrl.port),database:databaseUrl.pathname.slice(1),user:process.env.HAYSTACK_TEST_DB_USER,password:(await readFile(process.env.HAYSTACK_TEST_DB_PASSWORD_FILE,'utf8')).trimEnd()});
+    await admin.connect();try{await admin.query('CREATE DATABASE "'+databaseName+'"');}finally{await admin.end();}
+    database={jdbcUrl:process.env.HAYSTACK_TEST_JDBC.replace(/\/[^/]+$/,'/'+databaseName),user:process.env.HAYSTACK_TEST_DB_USER,passwordFile:process.env.HAYSTACK_TEST_DB_PASSWORD_FILE};
+  }
+  Object.assign(config.database,database);
   Object.assign(config.auth,{cookieSecure:false,allowedHosts:['127.0.0.1','localhost','haystack.test'],allowedOrigins:[base,'http://allowed.test'],insecureHttpOrigins:[],rateLimit:{windowMs:60000,max:10000},users:[
     {id:'alice',type:'human',displayName:'Alice',tokens:[{id:'browser',hashFile:path.join(dir,'alice.sha')}]},
     {id:'bot',type:'agent',displayName:'Bot',tokens:[{id:'default',hashFile:path.join(dir,'bot.sha')}]},

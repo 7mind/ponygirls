@@ -137,23 +137,30 @@ object Search {
     "created-at", "modified-at", "archived:", "tag:", "tags:", "link:", "linked-to:", "linked-from:", "exists", "field", "AND", "OR", "NOT")
   def analyze(query: String): Vector[QueryDiagnostic] = try { Parser.parseQuery(query); Vector.empty } catch { case e: InvalidQuery => e.diagnostics }
   def complete(items: Vector[StoredItem], fragment: String, limit: Int = 20): Vector[String] = {
-    val low = fragment.toLowerCase(java.util.Locale.ROOT)
-    val out = Vector.newBuilder[String]
-    Builtins.filter(_.toLowerCase(java.util.Locale.ROOT).startsWith(low)).foreach(out += _)
-    val colon = fragment.indexOf(':')
-    if (colon >= 0) {
-      val field = low.take(colon)
-      val values = items.flatMap { s => field match {
-        case "type" => Vector(s.document.docType)
-        case "status" => Vector(s.document.status)
-        case "importance" => Vector(s.document.importance)
-        case "tag" | "tags" => s.document.tags.filter(_.toLowerCase(java.util.Locale.ROOT).startsWith(low.substring(colon + 1)))
-        case _ => Vector.empty
-      }}.distinct.sortWith(compareSearchText(_, _) < 0)
-      values.foreach(v => out += (fragment.take(colon) + ":" + (if ((field == "tag" || field == "tags") && !v.matches("[A-Za-z0-9._~\\-]+")) quote(v) else v)))
-    }
-    if (fragment.length >= 2) items.sortWith((a, b) => compareSearchText(a.key.qualified, b.key.qualified) < 0)
-      .filter(s => s"${s.project}:${s.item}".contains(fragment)).foreach(s => out += ("id:" + quote(s.key.qualified)))
-    out.result().distinct.take(math.max(0, limit))
+    val colon=fragment.indexOf(':')
+    val field=if(colon>=0)fragment.take(colon).toLowerCase(java.util.Locale.ROOT)else ""
+    val values=items.flatMap { s=>field match{
+      case "type"=>Vector(s.document.docType)
+      case "status"=>Vector(s.document.status)
+      case "importance"=>Vector(s.document.importance)
+      case "tag"|"tags"=>s.document.tags
+      case _=>Vector.empty
+    }}
+    val ids=if(fragment.length<2)Vector.empty else items.filter(s=>s"${s.project}:${s.item}".contains(fragment)).map(_.key.qualified)
+    completeChoices(fragment,values,ids,limit)
+  }
+  /** Formatting is shared by pure reference and bounded PostgreSQL metadata
+    * acquisition. Never synthesize documents merely to offer a suggestion. */
+  def completeChoices(fragment:String,observedValues:Vector[String],qualifiedIds:Vector[String],limit:Int=20):Vector[String]={
+    val low=fragment.toLowerCase(java.util.Locale.ROOT)
+    val colon=fragment.indexOf(':')
+    val field=if(colon>=0)low.take(colon)else ""
+    val builtins=Builtins.filter(_.toLowerCase(java.util.Locale.ROOT).startsWith(low))
+    val values=observedValues.filter(v=>field!="tag" && field!="tags" || v.toLowerCase(java.util.Locale.ROOT).startsWith(low.drop(colon+1)))
+      .distinct.sortWith(compareSearchText(_,_)<0).map { value=>
+        fragment.take(colon)+":"+(if(!value.matches("[A-Za-z0-9._~\\-]+"))quote(value)else value)
+      }
+    val ids=qualifiedIds.distinct.sortWith(compareSearchText(_,_)<0).map(id=>"id:"+quote(id))
+    (builtins++values++ids).distinct.take(math.max(0,limit))
   }
 }
