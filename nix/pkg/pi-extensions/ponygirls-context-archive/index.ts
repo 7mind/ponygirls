@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { parseToggleCommand, sessionEnabledData, TOGGLE_ARGUMENTS } from "@ponygirls/pi-settings";
 import { Type } from "typebox";
 import { defineTool, estimateTokens, getAgentDir, type BoundaryState, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
@@ -130,22 +131,21 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
 
   pi.registerCommand("context-archive", {
     description: "Context archival: on|off|inherit and thresholds HIGH LOW|inherit for this session; default on|off or default thresholds HIGH LOW; status",
-    getArgumentCompletions: (prefix) => ["on", "off", "inherit", "default on", "default off", "thresholds 70 50", "thresholds inherit", "default thresholds 70 50", "status"].filter((a) => a.startsWith(prefix)).map((a) => ({ value: a, label: a })),
+    getArgumentCompletions: (prefix) => [...TOGGLE_ARGUMENTS.slice(0, -1), "thresholds 70 50", "thresholds inherit", "default thresholds 70 50", "status"].filter((a) => a.startsWith(prefix)).map((a) => ({ value: a, label: a })),
     handler: async (args, ctx) => {
       const words = args.trim().toLowerCase().split(/\s+/);
       const action = words[0];
-      const sessionAction = words.length === 1 && ["on", "off", "inherit"].includes(action);
-      const defaultAction = words.length === 2 && action === "default" && ["on", "off"].includes(words[1]);
+      const toggle = parseToggleCommand(args);
       const thresholdAction = words.length === 3 && action === "thresholds";
       const inheritThresholdAction = words.length === 2 && action === "thresholds" && words[1] === "inherit";
       const defaultThresholdAction = words.length === 4 && action === "default" && words[1] === "thresholds";
-      const statusAction = words.length === 1 && ["", "status"].includes(action);
-      if (!sessionAction && !defaultAction && !thresholdAction && !inheritThresholdAction && !defaultThresholdAction && !statusAction) {
+      const statusAction = toggle !== null && toggle.kind === "status";
+      if (toggle === null && !thresholdAction && !inheritThresholdAction && !defaultThresholdAction) {
         ctx.ui.notify("Usage: /context-archive [on|off|inherit|default on|default off|thresholds HIGH LOW|thresholds inherit|default thresholds HIGH LOW|status]", "warning"); return;
       }
       try {
-        if (sessionAction) pi.appendEntry(SESSION_SETTING_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), enabled: action === "inherit" ? null : action === "on" });
-        if (defaultAction) preferences.write({ ...preferences.read(), enabled: words[1] === "on" });
+        if (toggle !== null && toggle.kind === "session") pi.appendEntry(SESSION_SETTING_TYPE, sessionEnabledData(ctx.sessionManager.getSessionId(), toggle.enabled));
+        if (toggle !== null && toggle.kind === "default") preferences.write({ ...preferences.read(), enabled: toggle.enabled });
         if (thresholdAction || defaultThresholdAction) {
           const values = words.slice(defaultThresholdAction ? 2 : 1);
           if (!values.every((word) => /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(word))) throw new Error("Thresholds must be numeric percentages: 0 <= LOW < HIGH <= 100");

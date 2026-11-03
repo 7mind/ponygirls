@@ -1,6 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { readJsonPreferences, writeJsonPreferences } from "@ponygirls/pi-settings";
 import { DEFAULT_POLICY } from "./archive.ts";
 
 export interface ArchiveThresholds {
@@ -43,35 +41,18 @@ export class FilePreferenceStore implements PreferenceStore {
   constructor(path: string) { this.path = path; }
 
   read(): ArchiveDefaults {
-    let text: string;
-    try {
-      text = readFileSync(this.path, "utf8");
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") return { ...DEFAULT_PREFERENCES };
-      throw error;
-    }
-    try {
-      const value: unknown = JSON.parse(text);
+    return readJsonPreferences(this.path, () => ({ ...DEFAULT_PREFERENCES }), (value) => {
       if (typeof value !== "object" || value === null || Array.isArray(value) || !("version" in value)) throw new Error("Missing defaults version");
       if (value.version === 1 && "enabled" in value && typeof value.enabled === "boolean") {
         return { ...DEFAULT_PREFERENCES, enabled: value.enabled };
       }
       if (value.version !== 2) throw new Error("Expected defaults version 1 or 2");
       return validatePreferences(value);
-    } catch (error) {
-      throw new Error(`Invalid context archive defaults in ${this.path}: ${String(error)}`);
-    }
+    }, "context archive defaults");
   }
 
   write(defaults: ArchiveDefaults): void {
     const validated = validatePreferences(defaults);
-    mkdirSync(dirname(this.path), { recursive: true });
-    const temporary = `${this.path}.${randomUUID()}.tmp`;
-    try {
-      writeFileSync(temporary, `${JSON.stringify({ version: 2, ...validated })}\n`, { mode: 0o600, flag: "wx" });
-      renameSync(temporary, this.path);
-    } finally {
-      rmSync(temporary, { force: true });
-    }
+    writeJsonPreferences(this.path, { version: 2, ...validated });
   }
 }
