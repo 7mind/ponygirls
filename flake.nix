@@ -960,6 +960,8 @@
             python3 ${./nix/tests/chronicle-validation-policy.py} ${./chronicle/scripts/validation-report.py} ${./nix/pkg/chronicle/validation-evidence.py}
             touch "$out"
           '';
+          shared-postgres-modules = import ./nix/tests/shared-postgres-modules.nix { inherit pkgs nixpkgs; };
+          shared-postgres = import ./nix/tests/shared-postgres.nix { inherit pkgs; };
           chronicle-modules = import ./nix/tests/chronicle-modules.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
           chronicle-hm-server = import ./nix/tests/chronicle-hm-server.nix { inherit pkgs; chronicleModule = self.homeManagerModules.chronicleServer; };
           agentic-services-hm-eval = import ./nix/tests/agentic-services-hm-eval.nix { inherit pkgs inputs; agenticServicesModule = self.homeManagerModules.agenticServicesServer; };
@@ -1086,6 +1088,8 @@
         homeManagerModules.agenticServicesServer = import ./nix/hm/agentic-services-server.nix { inherit inputs; };
         homeManagerModules.haystack = import ./nix/hm/haystack.nix;
         homeManagerModules.manure = import ./nix/hm/manure.nix;
+        homeManagerModules.service-postgres = import ./nix/hm/service-postgres.nix;
+        nixosModules.service-postgres = import ./nix/nixos/service-postgres.nix;
         lib.mkChroniclePackage = { pkgs }: pkgs.callPackage ./nix/pkg/chronicle/server.nix { squishLib = inputs.squish.lib; };
         nixosModules.chronicle = import ./nix/nixos/chronicle.nix { mkChroniclePackage = self.lib.mkChroniclePackage; };
         nixosModules.haystack = import ./nix/nixos/haystack.nix;
