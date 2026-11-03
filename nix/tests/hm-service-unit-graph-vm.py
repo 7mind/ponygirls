@@ -6,20 +6,56 @@ import shlex
 import shutil
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Callable, Literal, NotRequired, Protocol, TypedDict, cast
 
-Case = dict[str, Any]
-State = dict[str, dict[str, Any]]
+class UnitSnapshot(TypedDict):
+    ActiveState: str
+    MainPID: int
+    ExecMainStartTimestampMonotonic: int
+    InvocationID: str
+    startCount: int
+    adapterStartedInvocations: list[str]
+    probeSuccessByInvocation: dict[str, int]
+
+State = dict[str, UnitSnapshot]
+
+class JournalReference(TypedDict):
+    cursor: str
+    bootId: str
+
+class RestartEvent(JournalReference):
+    unit: str
+    messageId: str
+
+class RestartEvidence(TypedDict):
+    count: int
+    events: list[RestartEvent]
+
+class AutomaticRestartEvidence(RestartEvidence):
+    reference: JournalReference
+
+class Case(TypedDict):
+    name: str
+    status: Literal['running', 'pass', 'fail', 'invalid-fixture', 'not-executed']
+    faultEntered: NotRequired[bool]
+    before: NotRequired[State]
+    automaticRestartEvidence: NotRequired[AutomaticRestartEvidence]
+
+CaseBody = Callable[[Case], None]
+Plan = tuple[str, CaseBody]
+Plans = tuple[Plan, ...]
+Observe = Callable[[], State]
+StableField = Literal['MainPID', 'ExecMainStartTimestampMonotonic', 'InvocationID', 'startCount']
 
 class Guest(Protocol):
     def succeed(self, command: str) -> str: ...
     def wait_for_unit(self, unit: str, *, timeout: int) -> None: ...
 
 class Controller(Protocol):
-    def run_case(self, name: str, body: Callable[..., Any], precondition: Callable[..., Any],
-                 observe: Callable[..., Any], restore: Callable[..., Any], persist: Callable[..., Any]) -> Case: ...
-    def run_matrix(self, plans: tuple[Any, ...], bootstrap: Callable[..., Any], execute: Callable[..., Any],
-                   *, records: list[Case], persist: Callable[..., Any]) -> None: ...
+    def run_case(self, name: str, body: CaseBody, precondition: Observe,
+                 observe: Observe, restore: Observe, persist: Callable[[Case], None]) -> Case: ...
+    def run_matrix(self, plans: Plans, bootstrap: Callable[[], None], execute: Callable[[Plan], Case],
+                   *, records: list[Case], persist: Callable[[], None]) -> list[Case]: ...
 
 @dataclass(frozen=True)
 class Source:
@@ -35,7 +71,7 @@ class HmLifecycle:
     PREFIX = 'runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus '
 
     def __init__(self, home: Guest, controller: Controller, source: Source,
-                 out: pathlib.Path, start_all: Callable[[], None]):
+                 out: pathlib.Path, start_all: Callable[[], None]) -> None:
         self.home = home
         self.controller = controller
         self.source = source
@@ -53,7 +89,8 @@ class HmLifecycle:
         return self.user('systemctl --user ' + command)
 
     def snapshot(self) -> State:
-        return json.loads(self.user('/etc/unit-graph-user/snapshot ' + ' '.join(self.UNITS)))
+        # Owned snapshot helper is the JSON transport boundary for this schema.
+        return cast(State, json.loads(self.user('/etc/unit-graph-user/snapshot ' + ' '.join(self.UNITS))))
 
     def wait(self, predicate: Callable[[State], bool], description: str, seconds: int) -> State:
         deadline = time.monotonic() + seconds
@@ -88,8 +125,9 @@ class HmLifecycle:
 
     @staticmethod
     def stable(before: State, after: State, units: tuple[str, ...]) -> None:
+        fields: tuple[StableField, ...] = ('MainPID', 'ExecMainStartTimestampMonotonic', 'InvocationID', 'startCount')
         for unit in units:
-            for field in ('MainPID', 'ExecMainStartTimestampMonotonic', 'InvocationID', 'startCount'):
+            for field in fields:
                 assert before[unit][field] == after[unit][field], (unit, field)
 
     def save(self) -> None:
@@ -114,7 +152,7 @@ class HmLifecycle:
         self.ctl('start ' + ' '.join(self.APPS))
         return self.ready_all()
 
-    def case(self, name: str, body: Callable[[Case], None]) -> Case:
+    def case(self, name: str, body: CaseBody) -> Case:
         def update(item: Case) -> None:
             for index, prior in enumerate(self.results):
                 if prior['name'] == name:
@@ -154,15 +192,16 @@ class HmLifecycle:
         assert after[self.PROVIDER]['MainPID'] != item['before'][self.PROVIDER]['MainPID']
 
     def crash(self, item: Case) -> None:
-        reference = json.loads(self.user('/etc/unit-graph-user/restart-evidence capture --scope user'))
+        # Owned restart helper's two JSON transports have fixed, named schemas.
+        reference = cast(JournalReference, json.loads(self.user('/etc/unit-graph-user/restart-evidence capture --scope user')))
         self.ctl('kill --kill-whom=main --signal=KILL ' + self.PROVIDER)
         self.wait(lambda s: s[self.PROVIDER]['ActiveState'] == 'active' and s[self.PROVIDER]['MainPID'] not in (0, item['before'][self.PROVIDER]['MainPID']),
                   'HM provider did not auto-restart', 60)
         self.ready_all()
         self.probes_all()
         after = self.snapshot()
-        evidence = json.loads(self.user('/etc/unit-graph-user/restart-evidence after --scope user --unit ' + self.PROVIDER
-                              + ' --cursor ' + shlex.quote(reference['cursor']) + ' --boot ' + shlex.quote(reference['bootId'])))
+        evidence = cast(RestartEvidence, json.loads(self.user('/etc/unit-graph-user/restart-evidence after --scope user --unit ' + self.PROVIDER
+                              + ' --cursor ' + shlex.quote(reference['cursor']) + ' --boot ' + shlex.quote(reference['bootId']))))
         item['automaticRestartEvidence'] = {'reference': reference, **evidence}
         assert evidence['count'] > 0
         assert after[self.PROVIDER]['InvocationID'] != item['before'][self.PROVIDER]['InvocationID']
@@ -198,7 +237,7 @@ class HmLifecycle:
         self.probes(self.APPS[:2])
         assert after['ivm-manure.service']['ActiveState'] == 'inactive' and after['ivm-manure-migrate.service']['ActiveState'] == 'inactive'
 
-    def plans(self) -> tuple[tuple[str, Callable[[Case], None]], ...]:
+    def plans(self) -> Plans:
         return (
             ('HM-boot-three-consumers-one-user-provider', self.boot),
             ('HM-own-app-restart-isolates-provider-others', self.own_restart),

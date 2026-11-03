@@ -6,7 +6,7 @@ pkgs.runCommand "hm-unit-graph-explicit-context-contract" {
   cp ${./hm-service-unit-graph-vm.py} source/hm-service-unit-graph-vm.py
   cp ${./hm-service-unit-graph-harness-test.py} source/hm-service-unit-graph-harness-test.py
   export HM_GRAPH_TEST_SOURCE_DIR="$PWD/source"
-  mypy --disallow-untyped-defs --check-untyped-defs source/hm-service-unit-graph-vm.py > "$out/types.log"
+  mypy --disallow-untyped-defs --check-untyped-defs --disallow-any-explicit --disallow-any-generics --warn-return-any source/hm-service-unit-graph-vm.py > "$out/types.log"
   python3 - "$out" <<'PY'
   import hashlib,importlib.util,json,pathlib,sys,unittest
   root=pathlib.Path('source');spec=importlib.util.spec_from_file_location('hm_contract',root/'hm-service-unit-graph-harness-test.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
