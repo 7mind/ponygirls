@@ -71,21 +71,25 @@ python3 nix/tests/manure-vm-audit.py selftest
 python3 nix/tests/test_manure_vm_acceleration.py
 ```
 
-Baseline: all30 old fixture labels passed. After: those same30 plus27 new policy/
-exact-memory controls pass **under each policy** (114 label executions, no skips).
+Baseline: all30 old fixture labels passed. Commit63071850 then passed those
+same30 plus27 new policy/exact-memory controls **under each policy** (114 label
+executions, no skips). That receipt remains preserved. The follow-up adds one
+explicit q35 refusal per policy:58 each/116 total, preserving all prior114.
 All argv-rejection fixtures traverse the actual pre-exec entry with a no-exec sentinel;
 manual authority dummies preserve the fixture's declared project=None when its
 owned temporary directory is itself inside the checkout. The real production
 repo-root discovery is unchanged.
 
-The nine additional focused tests cover actual runtime preflight, mandatory CLI/
+The original nine focused tests cover actual runtime preflight, mandatory CLI/
 API selection, sentinel-only executable entry and policy logging, actual owned
 Unix socket/network/vfio/share refusals, unchanged stock-driver refusal,
 environment clearing, and exact QEMU-token-only substitution. A handwritten
 subprocess sentinel deliberately returns71 **before running the synthetic driver
 control fixture**. That is not a generated-driver/guest success. Initial focused
 v1 hit the Unix pathname-length limit; the fixture now binds a relative leaf in
-its owned directory, immediately restoring cwd. v2 and final v3 pass9/9, zero skips/errors.
+its owned directory, immediately restoring cwd. v2 and original final v3 pass9/9,
+zero skips/errors. The follow-up preserves those nine and adds q35-denial and
+trusted CLI-boundary composition checks:11/11, zero skips/errors.
 
 Evidence under ignored `target/manure-vm-audit-cpu/`: original-source hashes,
 old30-label pass log, old actual validator CPU rejection on the evaluated pinned
@@ -115,7 +119,8 @@ users must now explicitly choose `kvm-only`; there is no legacy implicit mode.
 Each list is executed independently for **both** policies. Existing positives,
 negative boundaries and token-substitution controls are retained, not counted
 from source markers. Argv rejections hit the pre-exec path/sentinel; the two
-substitution refusals remain separate pre-wrapper lexical checks.
+substitution refusals remain separate pre-wrapper lexical checks. The follow-up
+adds `unapproved-q35-with-exact-memory-pair` once per policy.
 
 Original30 labels:
 
@@ -184,3 +189,36 @@ unapproved-memory-object-memory-backend-memfd,id=mem0,size=2048M,share=on
 unapproved-memory-object-memory-backend-memfd,id=other,size=1024M,share=on
 unknown-machine
 ```
+
+## Follow-up: stateless boundary dependencies and q35 remains refused
+
+The internal `_audit_exec` boundary now requires **all** authority and executable
+entry dependencies explicitly: `project` and `exec_entry`, in addition to the
+required acceleration policy. There are no defaults. The actual CLI always
+composes `project=_repo_root()` and `exec_entry=os.execv`; there is no CLI root
+selector, alternate executor, bypass, or skip. Selftests pass their declared
+project authority and a manual no-exec function directly. They do not replace
+module globals or mutate `os.execv`. The same validation/logging code runs before
+the explicitly supplied boundary; localized unit-test observation verifies the
+CLI passes real discovery/result and the real executable function.
+
+The parent relayed an evaluated (not yet built/observed) current Manure option
+set containing `-machine q35,smm=on` **as well as** memfd/mem0. This remains
+**unapproved and refused**, including when all other controlled arguments use
+the exact admitted memory pair. The controlled denial also includes the paired
+`-global driver=cfi.pflash01,property=secure,value=on`; refusal is therefore for
+the extra machine, not an unsupported global or a missing object.
+
+Pinned `qemu-vm.nix:1363–1367` emits the q35/global pair conditionally on x86 and
+`cfg.efi.OVMF.systemManagementModeRequired`. That is source-pattern context,
+**not** an observed built current Manure start script or effective argv. The
+existing generic cfi-global prefix check is not evidence of an approved complete
+q35 shape. No machine/global guard was relaxed. A future change needs the actual
+combined-source driver/start-script identity, verified options and effective
+argument shape, explicit parent authority, and unchanged attachment/firmware
+admission; a partial eval is not guest-launch approval.
+
+Follow-up evidence is separate (`followup-selftest-v1.log`,
+`followup-focused-v1.log`); original114+9 controls and old CPU fail-first files
+are unchanged. This follow-up performs no driver build, guest launch, real QEMU
+execution, systemd action, production edit, or sibling-worktree write.
