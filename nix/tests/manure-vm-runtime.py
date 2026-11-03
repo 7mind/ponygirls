@@ -22,9 +22,11 @@ Boundary design (reader-reviewed; do NOT overclaim):
   are not guest disks and keep public store resolution), Unix channels
   must live under the lab (pre-existing host sockets fail closed), host
   sharing (9p/virtiofs/vhost-user-fs), TAP/bridge/VDE, vfio and /dev-backed
-  drives are refused, KVM (`-machine accel=kvm`, no fallback list) with
-  `-cpu max` is required, and anything outside the known-good generated
-  patterns fails closed as unsupported launch syntax. A guest NEVER boots
+  drives are refused. A REQUIRED explicit CPU policy admits either exact
+  `-machine accel=kvm` (kvm-only) or the pinned `accel=kvm:tcg` list
+  (kvm-or-tcg); exactly one `-cpu max` and only the corresponding anonymous
+  memfd1024M/mem0 auxiliary machine are admitted. Anything outside the known-good
+  generated patterns fails closed as unsupported launch syntax. A guest NEVER boots
   until this boundary verifies (refusal exit 125, real QEMU never execs).
 - Post-run, the attached-drive mapping captured by the wrapper is
   cross-checked against the discovered lab images (every attached file
@@ -45,7 +47,11 @@ Mandatory containment (VM boundary):
   wrapper.
 - pinned runNixOSTest defaults (useNixStoreImage=true,
   mountHostNixStore=false, useHostCerts=false, sharedDirectories={},
-  vlans=[], interfaces={}, sshBackdoor=false, qemu.forceAccel=true).
+  vlans=[], interfaces={}, sshBackdoor=false). kvm-only corresponds to
+  qemu.forceAccel=true; the explicitly requested kvm-or-tcg policy permits
+  forceAccel=false plus requiredFeatures.kvm=false. Neither option changes
+  attachment/stock-driver admission. Actual selected acceleration needs separate
+  runtime evidence; argv expresses the requested policy only.
 
 Runtime:
 - fresh 0700 lab under canonical YOLO root; explicitly clears inherited
@@ -58,7 +64,7 @@ Runtime:
   internal/external handoff, hostile headers, Host-port preservation,
   error/access/journal canaries, R5 bounds, HM-sandbox cache/resume via
   the generated yolo adapter and installed-default shells);
-- optional second argv overrides test_script with a regular file under
+- optional extra-test-script positional argument overrides test_script with a regular file under
   the invoking cwd (resolved strict, must stay under cwd);
 - on success prints the audit manifest + attachment mapping, validates
   EXACTLY 4 regular contained images (edge/root, edge/store,
@@ -69,12 +75,14 @@ Runtime:
 
 Usage:
   nix build .#checks.x86_64-linux.manure-vm.driver --no-link --print-out-paths  # EXACT source build
-  python3 nix/tests/manure-vm-runtime.py /nix/store/...-nixos-test-driver [extra-test-script]
-Env: YOLO_VM_STATE_DIR (canonical), /dev/kvm, qemu-system-x86_64, qemu-img.
+  python3 nix/tests/manure-vm-runtime.py --acceleration-policy kvm-only /nix/store/...-nixos-test-driver [extra-test-script]
+Env: YOLO_VM_STATE_DIR (canonical), qemu-img; /dev/kvm is mandatory only
+for kvm-only. No policy default or implicit capability-driven selection.
 No host changes, no deployment/DNS.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -113,17 +121,26 @@ def _load_audit_lib():
     return mod
 
 
+def runtime_acceleration_preflight(audit, policy) -> bool:
+    accessible = os.access("/dev/kvm", os.R_OK | os.W_OK)
+    audit.acceleration_preflight(policy, kvm_accessible=accessible)
+    return accessible
+
+
 def main() -> int:
-    if len(sys.argv) not in (2, 3):
-        print(__doc__, flush=True)
-        return 2
+    parser = argparse.ArgumentParser(description="Contained Manure VM runtime; explicit acceleration policy required")
+    parser.add_argument("--acceleration-policy", required=True, choices=["kvm-only", "kvm-or-tcg"])
+    parser.add_argument("driver")
+    parser.add_argument("extra_test_script", nargs="?")
+    args = parser.parse_args()
     if shutil.which("qemu-img") is None:
         return _fail("qemu-img absent (need QEMU utilities, no fallback)")
     try:
         audit = _load_audit_lib()
     except Exception as exc:
         return _fail(f"cannot load audit module: {exc}")
-    driver = Path(sys.argv[1]).resolve(strict=True)
+    policy = audit.AccelerationPolicy(args.acceleration_policy)
+    driver = Path(args.driver).resolve(strict=True)
     wrapper = driver / "bin/nixos-test-driver"
     if not wrapper.is_file():
         return _fail(f"driver wrapper absent: {wrapper}")
@@ -154,8 +171,10 @@ def main() -> int:
         return _fail(f"cannot resolve YOLO_VM_STATE_DIR: {exc}")
     if not root.is_dir() or not os.access(root, os.W_OK):
         return _fail("YOLO_VM_STATE_DIR not a writable dir")
-    if not os.access("/dev/kvm", os.R_OK | os.W_OK):
-        return _fail("/dev/kvm not accessible (KVM required, no fallback)")
+    try:
+        kvm_accessible = runtime_acceleration_preflight(audit, policy)
+    except audit.AuditError as exc:
+        return _fail(str(exc))
     try:
         lab = Path(tempfile.mkdtemp(prefix="manure-", dir=root)).resolve(strict=True)
     except Exception as exc:
@@ -171,7 +190,9 @@ def main() -> int:
     # hash-logged generated start script with the lab-contained wrapper.
     # Textual admission is deliberately NOT performed here (insufficient);
     # the wrapper validates EFFECTIVE argv after images exist, pre-exec.
-    manifest: dict = {"lab": str(lab), "driver": str(driver), "vms": {}}
+    manifest: dict = {"lab": str(lab), "driver": str(driver), "vms": {},
+                      "acceleration_policy": policy.value, "kvm_accessible_at_preflight": kvm_accessible,
+                      "selected_accelerator": "not established by argv policy; observe actual guest run separately"}
     try:
         orig_cfg = Path(match.group(1)).resolve(strict=True)
         manifest["original_config"] = {"path": str(orig_cfg), "sha256": _sha_file(orig_cfg)}
@@ -223,7 +244,7 @@ def main() -> int:
             f'AUDIT_MOD={_AUDIT_MOD.resolve()}\n'
             f'PYTHON={python_exe}\n'
             f'AUDIT_LAB={lab}\n'
-            'exec "$PYTHON" "$AUDIT_MOD" audit-exec --lab "$AUDIT_LAB" "$REAL_QEMU" -- "$@"\n'
+            f'exec "$PYTHON" "$AUDIT_MOD" audit-exec --acceleration-policy {policy.value} --lab "$AUDIT_LAB" "$REAL_QEMU" -- "$@"\n'
         )
         try:
             wrapper_path.write_text(wrapper_text)
@@ -247,9 +268,9 @@ def main() -> int:
         print(f"manure-vm-runtime: {name}: start script audit-wired (hashes logged)", flush=True)
     manifest_path = lab / "audit-manifest.json"
     config["global_timeout"] = 900
-    if len(sys.argv) == 3:
+    if args.extra_test_script is not None:
         try:
-            test_script = Path(sys.argv[2]).resolve(strict=True)
+            test_script = Path(args.extra_test_script).resolve(strict=True)
         except Exception as exc:
             return _fail(f"cannot resolve extra test script: {exc}")
         try:
@@ -262,7 +283,7 @@ def main() -> int:
             return _fail("extra test script not a regular file")
         config["test_script"] = str(test_script)
         print(f"manure-vm-runtime: extra test script: {test_script} (under {cwd})", flush=True)
-    if len(sys.argv) == 3:
+    if args.extra_test_script is not None:
         manifest["test_script_override"] = {
             "path": str(Path(config["test_script"]).resolve(strict=True)),
             "sha256": _sha_file(Path(config["test_script"]).resolve(strict=True)),
@@ -386,6 +407,8 @@ def main() -> int:
             record = json.loads(lines[0])
         except Exception as exc:
             return _fail(f"audit log {record_file.name} unparsable: {exc}; state retained at {lab}")
+        if record.get("mapping", {}).get("acceleration_policy") != policy.value:
+            return _fail(f"audit log {record_file.name} acceleration policy mismatch; state retained at {lab}")
         for drive in record.get("mapping", {}).get("drives", []):
             attached.add(drive["resolved"])
     for image in images:
