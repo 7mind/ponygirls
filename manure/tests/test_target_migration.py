@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import socket
 import shutil
+import subprocess
 import sqlite3
 import tempfile
 import time
@@ -47,12 +48,13 @@ class TargetMigrationTests(unittest.TestCase):
             try:
                 parts=urlsplit(database.jdbc[5:]);service='fixture_'+uuid4().hex
                 servicefile=root/'pg_service.conf'
-                servicefile.write_text(f'[{service}]\nhost={parts.hostname}\nport={parts.port}\ndbname={database.name}\nuser={database.user}\npassfile={database.passfile}\n')
+                servicefile.write_text(database.migration_service(service))
                 servicefile.chmod(0o600)
                 with patch.dict(os.environ,{'PGSERVICEFILE':str(servicefile)}):
                     pg=M.Psql(service);destination=root/'destination'
                     M.prepare_destination(destination,pg,disposable=True)
                     M.import_bundle(bundle,destination,pg,identity)
+                    database.grant_import_runtime(pg)
                     M.verify_destination(bundle,destination,pg,identity)
                     M.mark_writable(destination,pg,identity)
                     # Replace AFTER a fully verified conversion/write-boundary but
@@ -84,6 +86,15 @@ class TargetMigrationTests(unittest.TestCase):
                     table=pg.run("SELECT to_regclass('manure.root_owner') IS NOT NULL")
                     self.assertTrue(table=='f' or pg.run('SELECT count(*) FROM manure.root_owner')=='0')
                     self.assertEqual(pg.run('SELECT writes_started FROM manure_offline.destination'),'t')
+                    # Restore original inode, then corrupt a file IN PLACE. Device/
+                    # inode-only checks are not full snapshot adoption verification.
+                    shutil.rmtree(destination/'data');os.rename(preserved,destination/'data')
+                    file=destination/'data'/'live'/aid/source_fixture.PATH
+                    file.write_bytes(wrong)
+                    with self.assertRaisesRegex(RuntimeError,'migration-required'):
+                        TargetServer(config,tmp,owned_database=database,close_database=False)
+                    self.assertTrue(pg.run("SELECT to_regclass('manure.root_owner') IS NULL")=='t' or pg.run('SELECT count(*) FROM manure.root_owner')=='0')
+                    file.write_bytes(source_fixture.PAYLOAD)
                     self.assertEqual(M.inventory(source),original)
                     self.assertEqual(M.verify_bundle(bundle,identity)[0],identity)
             finally:database.close()
@@ -116,18 +127,26 @@ class TargetMigrationTests(unittest.TestCase):
             try:
                 parts=urlsplit(database.jdbc[5:]);service='fixture_'+uuid4().hex
                 servicefile=root/'pg_service.conf'
-                servicefile.write_text(f'[{service}]\nhost={parts.hostname}\nport={parts.port}\ndbname={database.name}\nuser={database.user}\npassfile={database.passfile}\n')
+                servicefile.write_text(database.migration_service(service))
                 servicefile.chmod(0o600)
                 with patch.dict(os.environ,{'PGSERVICEFILE':str(servicefile)}):
                     pg=M.Psql(service)
                     destination=root/'destination';M.prepare_destination(destination,pg,disposable=True)
                     M.import_bundle(bundle,destination,pg,identity)
+                    database.grant_import_runtime(pg)
                     self.assertEqual(M.verify_destination(bundle,destination,pg,identity)[0],identity)
                     config['data_dir']=str(destination/'data');config['migration_receipt_dir']=str(destination)
                     # Before explicit boundary, serve refuses rather than mutating a
                     # supposedly immutable comparison destination during recovery.
                     with self.assertRaisesRegex(RuntimeError,'before readiness'):
                         TargetServer(config,tmp,owned_database=database,close_database=False)
+                    self.assertEqual(M.verify_destination(bundle,destination,pg,identity)[0],identity)
+                    migration_config=dict(config,database=database.config(),native_mode='shared' if os.environ.get('MANURE_POSIX_LIBRARY') else 'linked',posix_library=os.environ.get('MANURE_POSIX_LIBRARY'))
+                    migration_path=root/'migration-only.json';migration_path.write_text(json.dumps(migration_config))
+                    command=json.loads(os.environ['MANURE_TEST_SERVER_COMMAND_JSON'])
+                    checked=subprocess.run(command+['migrate',str(migration_path)],stdin=subprocess.DEVNULL,capture_output=True,timeout=90)
+                    self.assertEqual(checked.returncode,0,checked.stderr.decode()[-4096:])
+                    self.assertEqual(pg.run('SELECT count(*) FROM manure.root_owner'),'0')
                     self.assertEqual(M.verify_destination(bundle,destination,pg,identity)[0],identity)
                     M.mark_writable(destination,pg,identity)
                     self.assertIn('fix-forward',M.rollback_policy(destination,pg))

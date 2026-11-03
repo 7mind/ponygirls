@@ -62,7 +62,6 @@ final class Catalogue(artifacts: Artifacts, limits: Limits, clock: DomainClock):
       (q.includeExpired || !a.expired(clock.now)) &&
       q.visibility.forall(v => v.toString.toLowerCase(java.util.Locale.ROOT) == a.visibility.wire) &&
       q.state.forall(s => s.toString.toLowerCase(java.util.Locale.ROOT) == a.state.wire) &&
-      (a.state == UploadState.Ready || a.createdByUser == identity.userId) &&
       (q.query.isEmpty || Exact.matching(a.name).contains(Exact.matching(q.query)) || Exact.matching(a.id).contains(Exact.matching(q.query))) &&
       boundary.forall(b => compare(position(a,q),b,q) > 0)
     def scan(after: Option[String],best: Vector[Artifact]): IO[(Vector[Artifact],Option[String])] =

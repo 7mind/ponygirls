@@ -253,6 +253,30 @@ final class FilesystemBehavior(bridge: PosixNative, childCommand: Vector[String]
     }
   }
 
+  test("raw first-adoption inventory binds directories and hashes without UTF8 name loss") {
+    fixture { temp =>
+      Files.createDirectory(temp.resolve("資料"))
+      Files.writeString(temp.resolve("資料/file"),"payload")
+      val fd = bridge.openRoot(temp.toString.getBytes(UTF_8))
+      try
+        val file = bridge.createFile(fd, Array('x'.toByte,0xff.toByte))
+        try bridge.write(file,0L,bytes("raw")) finally bridge.close(file)
+      finally bridge.close(fd)
+      Using.resource(ConfinedDirectory.open(temp,bridge)) { directory =>
+        val entries=directory.inventory(4,3,10)
+        assertEquals(entries.size,4)
+        assertEquals(entries.head,RawInventoryEntry("",true,0L,""))
+        assertEquals(entries.find(_.pathHex=="78ff").map(_.size),Some(3L))
+        assertEquals(entries.find(_.pathHex=="78ff").map(_.sha256),Some(java.security.MessageDigest.getInstance("SHA-256").digest(bytes("raw")).map(b => f"${b & 255}%02x").mkString))
+        intercept[IOException](directory.inventory(3,3,10))
+        intercept[IOException](directory.inventory(4,3,9))
+        intercept[IOException](directory.inventory(4,2,10))
+        Files.createSymbolicLink(temp.resolve("link"),temp.resolve("資料/file"))
+        intercept[IOException](directory.inventory(5,3,10))
+      }
+    }
+  }
+
   test("metadata and worker lease retains physical claim without an open file") {
     fixture { temp =>
       val root = Files.createDirectory(temp.resolve("root"))

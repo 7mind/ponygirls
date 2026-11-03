@@ -41,14 +41,30 @@ sha256sum "$artifact" > "$report/artifact.sha256"
 git rev-parse HEAD > "$report/git-head"
 "$POSTGRES_HOME/bin/postgres" --version > "$report/postgres-version"
 find manure/tests manure/manure manure/web manure/models/fixtures -type f \( -name '*.py' -o -name '*.js' -o -name '*.mjs' -o -name '*.json' -o -name '*.html' -o -name '*.css' \) ! -path '*/__pycache__/*' -print0 | sort -z | xargs -0 sha256sum > "$report/test-inputs.sha256"
-base=$(mktemp -d "${TMPDIR:-/tmp}/manure-target-pg.XXXXXXXX")
-port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
-trap '"$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -m immediate -w stop >/dev/null 2>&1 || true; rm -rf "$base"' EXIT
-printf '%s\n' manure-target-disposable-password > "$base/password"; chmod 600 "$base/password"
-"$POSTGRES_HOME/bin/initdb" -D "$base/data" -U postgres -A scram-sha-256 --pwfile="$base/password" --no-locale --encoding=UTF8 > "$base/init.log"
-"$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -l "$base/server.log" -o "-h 127.0.0.1 -p $port -k $base" -w start
+base=$(mktemp -d "${TMPDIR:-/tmp}/manure-target-fixture.XXXXXXXX")
+owned_direct=0
+cleanup() {
+ if [[ $owned_direct == 1 ]]; then "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -m immediate -w stop >/dev/null 2>&1 || true; fi
+ rm -rf "$base"
+}
+trap cleanup EXIT
 export PATH="$POSTGRES_HOME/bin:$PATH"
-export MANURE_TEST_JDBC_URL="jdbc:postgresql://127.0.0.1:$port/postgres" MANURE_TEST_JDBC_USER=postgres MANURE_TEST_JDBC_PASSWORD_FILE="$base/password" MANURE_TEST_ALLOW_CREATEDB=1
+export MANURE_TEST_PG_BIN="$POSTGRES_HOME/bin"
+if [[ -n ${MANURE_TEST_PROVISION_COMMAND:-} ]]; then
+ [[ $MANURE_TEST_PROVISION_COMMAND = /* && -x $MANURE_TEST_PROVISION_COMMAND ]] || { echo 'absolute executable owned provision helper required' >&2; exit 1; }
+ : "${PONYGIRLS_OWNED_FIXTURE_ROOT:?owned provider fixture binding required}"
+ : "${PONYGIRLS_TEST_PROVISION_SERVICE:?owned service binding required}"
+ : "${PG_PROVIDER:?absolute owned provider implementation required}"
+ unset MANURE_TEST_ALLOW_CREATEDB MANURE_TEST_JDBC_URL MANURE_TEST_JDBC_USER MANURE_TEST_JDBC_PASSWORD_FILE
+else
+ [[ $scope != full ]] || { echo 'full acceptance requires least-privilege paired provision helper, not admin runtime' >&2; exit 1; }
+ owned_direct=1
+ port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
+ printf '%s\n' manure-target-disposable-password > "$base/password"; chmod 600 "$base/password"
+ "$POSTGRES_HOME/bin/initdb" -D "$base/data" -U postgres -A scram-sha-256 --pwfile="$base/password" --no-locale --encoding=UTF8 > "$base/init.log"
+ "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -l "$base/server.log" -o "-h 127.0.0.1 -p $port -k $base" -w start
+ export MANURE_TEST_JDBC_URL="jdbc:postgresql://127.0.0.1:$port/postgres" MANURE_TEST_JDBC_USER=postgres MANURE_TEST_JDBC_PASSWORD_FILE="$base/password" MANURE_TEST_ALLOW_CREATEDB=1
+fi
 export PYTHONPATH="$PWD/manure:$PWD/manure/tests${PYTHONPATH:+:$PYTHONPATH}"
 if [[ $mode == jvm ]]; then
  cc -std=c11 -Wall -Wextra -Werror -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -fPIC -shared \
@@ -61,6 +77,6 @@ timeout 1800 python3 manure/scripts/target-suite.py --scope "$scope" --report "$
 status=${PIPESTATUS[0]}
 set -e
 printf '%s\n' "$status" > "$report/exit-status"
-cp "$base/server.log" "$report/postgres-server.log"
+if [[ $owned_direct == 1 ]]; then cp "$base/server.log" "$report/postgres-server.log"; fi
 echo "Manure $mode $scope target receipt: $report"
 exit "$status"

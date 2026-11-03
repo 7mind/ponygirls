@@ -25,7 +25,7 @@ object ApiOrigin:
 final case class Network(cidr: String):
   private val parts = cidr.split("/",-1)
   Require(parts.length == 2 && parts(0).matches("[0-9a-fA-F:.]+"), "bad-envelope")
-  private val address = InetAddress.getByName(parts(0)).getAddress
+  private val address = com.comcast.ip4s.IpAddress.fromString(parts(0)).getOrElse(throw DomainError("bad-envelope")).toBytes
   private val prefix = try parts(1).toInt catch case _: NumberFormatException => throw DomainError("bad-envelope")
   Require(prefix >= 0 && prefix <= address.length*8, "bad-envelope")
   def contains(remote: String): Boolean =
@@ -50,7 +50,7 @@ final case class Config(
   limits: Limits, database: JdbcConfig, nativeMode: String, posixLibrary: Option[String],
   dashboardDir: Option[Path], unlockShellDir: Option[Path], maxConnections: Int,
   requestTimeout: FiniteDuration, sweepInterval: FiniteDuration, rateMapMaxEntries: Int,
-  rateLimitPerMinute: Int, unlockRatePerMinute: Int, loginRatePerMinutePerIp: Int, embedding: Option[EmbeddingSettings], migrationReceiptDir: Option[Path]
+  rateLimitPerMinute: Int, unlockRatePerMinute: Int, loginRatePerMinutePerIp: Int, embedding: Option[EmbeddingSettings], migrationReceiptDir: Option[Path], migrationManifestMaxBytes: Int, migrationManifestMaxEntries: Int
 ):
   def origins: Vector[ApiOrigin] = apiOrigin +: allowedApiOrigins
   def validate(): Unit =
@@ -67,6 +67,10 @@ final case class Config(
       Require(contentSuffix.length <= 253 && contentSuffix.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"), "bad-envelope")
     Require(!loopbackDev || contentSuffix.isEmpty || ApiOrigin.loopback(contentSuffix), "bad-envelope")
     Require(contentMode != "path" || !apiOrigin.host.takeWhile(_ != '.').matches("[0-9a-f]{32}"), "bad-envelope")
+    Require(users.nonEmpty && users.map(_.id).distinct.size == users.size && users.forall(u =>
+      u.id.nonEmpty && Set("human","agent")(u.userType) && u.tokens.nonEmpty &&
+      u.tokens.map(_.id).distinct.size == u.tokens.size && u.tokens.forall(t => t.id.nonEmpty && t.hashFile.toString.nonEmpty)), "bad-envelope")
+    Require(migrationManifestMaxBytes > 0 && migrationManifestMaxBytes <= 536870912 && migrationManifestMaxEntries > 0, "bad-envelope")
     database.validate(); embedding.foreach(_.validate())
     migrationReceiptDir.foreach(p => Require(p.isAbsolute && dataDir == p.resolve("data"), "bad-envelope"))
   def contentMount(id: String): String = if contentMode == "path" then "/view/" + id else ""
@@ -86,10 +90,9 @@ object Config:
     if c.downField(key).focus.contains(Json.Null) then None
     else Some(Path.of(default(c,key,"manure/web/" + (if key == "dashboard_dir" then "dashboard" else "unlock"))))
   def load(path: Path): Config =
-    val bytes = Files.readAllBytes(path)
-    Require(bytes.length <= 1048576, "bad-envelope")
-    val c = CurrentWire.parse(Exact.string(bytes)).hcursor
-    val known = Set("listen_address","port","data_dir","api_origin","content_mode","content_suffix","loopback_dev","allow_insecure_http","allowed_api_origins","trusted_proxies","users","database","native_mode","posix_library","dashboard_dir","unlock_shell_dir","storage_quota_bytes","chunk_bytes","max_file_bytes","max_artifact_bytes","max_files_per_artifact","max_request_body_bytes","max_list_limit","max_connections","request_timeout_s","max_sessions_per_user","max_sessions_global","max_grants_per_artifact","rate_map_max_entries","rate_limit_per_min","unlock_rate_per_min","login_rate_per_min_per_ip","sweep_interval_s","incomplete_session_ttl_s","grant_ttl_s","one_time_grant_ttl_s","embedding","migration_receipt_dir")
+    val source = ponygirls.runtime.BoundedSecretFile.read(path.toAbsolutePath,1048576)
+    val c = CurrentWire.parse(source).hcursor
+    val known = Set("listen_address","port","data_dir","api_origin","content_mode","content_suffix","loopback_dev","allow_insecure_http","allowed_api_origins","trusted_proxies","users","database","native_mode","posix_library","dashboard_dir","unlock_shell_dir","storage_quota_bytes","chunk_bytes","max_file_bytes","max_artifact_bytes","max_files_per_artifact","max_request_body_bytes","max_list_limit","max_connections","request_timeout_s","max_sessions_per_user","max_sessions_global","max_grants_per_artifact","rate_map_max_entries","rate_limit_per_min","unlock_rate_per_min","login_rate_per_min_per_ip","sweep_interval_s","incomplete_session_ttl_s","grant_ttl_s","one_time_grant_ttl_s","embedding","migration_receipt_dir","migration_manifest_max_bytes","migration_manifest_max_entries")
     Require(c.keys.exists(_.forall(known)), "bad-envelope")
     val users = field[Vector[Json]](c,"users").map { j =>
       val u = j.hcursor
@@ -122,5 +125,5 @@ object Config:
       default(c,"native_mode","linked"),c.get[Option[String]]("posix_library").getOrElse(throw DomainError("bad-envelope")),
       shell(c,"dashboard_dir"),shell(c,"unlock_shell_dir"),default(c,"max_connections",128),default[Long](c,"request_timeout_s",30L).seconds,
       default[Long](c,"sweep_interval_s",300L).seconds,default(c,"rate_map_max_entries",4096),default(c,"rate_limit_per_min",600),
-      default(c,"unlock_rate_per_min",10),default(c,"login_rate_per_min_per_ip",10),embedding,c.get[Option[String]]("migration_receipt_dir").getOrElse(throw DomainError("bad-envelope")).map(Path.of(_)))
+      default(c,"unlock_rate_per_min",10),default(c,"login_rate_per_min_per_ip",10),embedding,c.get[Option[String]]("migration_receipt_dir").getOrElse(throw DomainError("bad-envelope")).map(Path.of(_)),default(c,"migration_manifest_max_bytes",67108864),default(c,"migration_manifest_max_entries",1000000))
     config.validate(); config

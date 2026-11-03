@@ -30,39 +30,134 @@ def _required(name):
 
 
 class OwnedDatabase:
+    """Separate fixture administration from the actual runtime role.
+
+    Release tests use the paired, registry-guarded owned-cluster helper. The
+    direct CREATEDB branch is retained only for explicitly opted-in diagnostic
+    clusters; it is NEVER a fallback after a helper error.
+    """
     def __init__(self,directory):
+        self.created=False;self.helper=None;self.passfile=None
+        self.name='manure_browser_'+uuid4().hex
+        helper=os.environ.get('MANURE_TEST_PROVISION_COMMAND')
+        if helper:
+            path=Path(helper)
+            if not path.is_absolute() or not path.is_file() or not os.access(path,os.X_OK):
+                raise RuntimeError('explicit executable test provision helper required')
+            root=Path(_required('PONYGIRLS_OWNED_FIXTURE_ROOT'))
+            if (not root.is_absolute() or root.resolve()!=root or not root.name.startswith('ponygirls-owned-pg-')
+                    or (root/'.owned-test-only').read_bytes()!=b'ponygirls-owned-test-v1\n'):
+                raise RuntimeError('owned disposable fixture binding required')
+            self.helper=str(path);self.fixture_root=root
+            cfg=json.loads((root/'provider.json').read_bytes())
+            service=_required('PONYGIRLS_TEST_PROVISION_SERVICE')
+            if service!='manure' or cfg['stateDirectory']!=str(root/'cluster'):
+                raise RuntimeError('owned Manure provider binding required')
+            self.provider=cfg
+            try:
+                result=self._helper(self.name)
+                if not isinstance(result,dict) or set(result)!={'jdbcUrl','user','passwordFile'} or not all(isinstance(v,str) and v for v in result.values()):
+                    raise RuntimeError('invalid test provision helper result')
+                self.created=True
+                self.jdbc=result['jdbcUrl'];self.user=result['user'];self.password_file=result['passwordFile']
+                self.parsed=self._provider_url(self.jdbc)
+                expected=cfg['databases']['manure']
+                if (self.parsed.hostname!='127.0.0.1' or self.parsed.port!=cfg['port'] or self.parsed.path!='/'+self.name
+                        or self.user!=expected['user'] or self.password_file!=expected['passwordFile']
+                        or not Path(self.password_file).resolve().is_relative_to(root)):
+                    raise RuntimeError('test provision helper connection binding differs')
+                self.base=self.jdbc
+                self.psql=shutil.which('psql')
+                if not self.psql:raise RuntimeError('psql required for owned runtime-role verification')
+                self._passfile(directory)
+                self._verify_runtime_role()
+            except BaseException:
+                # No direct-admin fallback; the helper refuses drops outside its
+                # exact registry. The enclosing owned-cluster fixture also drains.
+                try:self._helper('--drop',self.name)
+                except BaseException:pass
+                self.created=False
+                if self.passfile:self.passfile.unlink(missing_ok=True)
+                raise
+            return
         if os.environ.get('MANURE_TEST_ALLOW_CREATEDB')!='1':
             raise RuntimeError('MANURE_TEST_ALLOW_CREATEDB=1 is required for disposable target databases')
         self.psql=shutil.which('psql')
         if self.psql is None:raise RuntimeError('psql required for owned target database provisioning')
-        self.base=_required('MANURE_TEST_JDBC_URL')
-        if not self.base.startswith('jdbc:postgresql://'):raise RuntimeError('invalid test JDBC provider')
-        self.parsed=urlsplit(self.base[5:])
-        if (self.parsed.scheme!='postgresql' or not self.parsed.hostname or self.parsed.username
-                or self.parsed.password or self.parsed.query or self.parsed.fragment):
-            raise RuntimeError('owned target JDBC provider must be a plain PostgreSQL URL')
+        self.base=_required('MANURE_TEST_JDBC_URL');self.parsed=self._provider_url(self.base)
         self.user=_required('MANURE_TEST_JDBC_USER')
         self.password_file=str(Path(_required('MANURE_TEST_JDBC_PASSWORD_FILE')).resolve(strict=True))
-        self.name='manure_browser_'+uuid4().hex
         self.jdbc='jdbc:'+urlunsplit((self.parsed.scheme,self.parsed.netloc,'/'+self.name,'',''))
-        raw=Path(self.password_file).read_bytes()
+        self._passfile(directory)
+        try:self._sql('CREATE DATABASE '+self.name);self.created=True
+        except BaseException:self.passfile.unlink(missing_ok=True);raise
+
+    @staticmethod
+    def _provider_url(url):
+        if not url.startswith('jdbc:postgresql://'):raise RuntimeError('invalid test JDBC provider')
+        parsed=urlsplit(url[5:])
+        if (parsed.scheme!='postgresql' or not parsed.hostname or parsed.username or parsed.password
+                or parsed.query or parsed.fragment):raise RuntimeError('owned target JDBC provider must be a plain PostgreSQL URL')
+        return parsed
+
+    def _passfile(self,directory):
+        # Fixed explicit fixture reference, bounded actual read; reject FIFO before
+        # opening. No token codec is applied to opaque database credentials.
+        path=Path(self.password_file).resolve(strict=True)
+        if not path.is_file():raise RuntimeError('invalid owned test credential file')
+        with path.open('rb') as src:raw=src.read(16385)
+        if len(raw)>16384:raise RuntimeError('invalid owned test credential file')
         if raw.endswith(b'\n'):raw=raw[:-1]
         if not raw or b'\n' in raw or b'\r' in raw or b'\x00' in raw:raise RuntimeError('invalid owned test credential file')
         def escape(value):return value.replace('\\','\\\\').replace(':','\\:')
-        password=raw.decode('utf-8')
         self.passfile=Path(directory)/('pgpass-'+self.name)
         descriptor=os.open(self.passfile,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
         with os.fdopen(descriptor,'w',encoding='utf-8') as output:
-            output.write(':'.join(escape(s) for s in [self.parsed.hostname,str(self.parsed.port or 5432),'*',self.user,password])+'\n')
-        self.created=False
+            output.write(':'.join(escape(s) for s in [self.parsed.hostname,str(self.parsed.port or 5432),'*',self.user,raw.decode('utf-8')])+'\n')
+
+    def _helper(self,*args):
+        import selectors
+        process=subprocess.Popen([self.helper,*args],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        selector=selectors.DefaultSelector();selector.register(process.stdout,selectors.EVENT_READ,'out');selector.register(process.stderr,selectors.EVENT_READ,'err')
+        buffers={'out':bytearray(),'err':bytearray()};deadline=time.monotonic()+120
         try:
-            self._sql('CREATE DATABASE '+self.name)
-            self.created=True
-        except BaseException:
-            self.passfile.unlink(missing_ok=True)
-            raise
+            while selector.get_map():
+                remaining=deadline-time.monotonic()
+                if remaining<=0:raise RuntimeError('owned test provision helper deadline exceeded')
+                for key,_ in selector.select(min(remaining,1)):
+                    data=os.read(key.fileobj.fileno(),4096)
+                    if not data:selector.unregister(key.fileobj);continue
+                    buffers[key.data].extend(data)
+                    if len(buffers[key.data])>(65536 if key.data=='out' else 8192):
+                        raise RuntimeError('owned test provision helper output bound exceeded')
+            if process.wait(timeout=max(.1,deadline-time.monotonic()))!=0:
+                raise RuntimeError('owned test provision helper failed')
+            def closed(pairs):
+                result={}
+                for key,value in pairs:
+                    if key in result:raise ValueError('duplicate helper field')
+                    result[key]=value
+                return result
+            result=json.loads(bytes(buffers['out']).decode('utf-8'),object_pairs_hook=closed)
+            if args[0]=='--drop' and result!={}:raise RuntimeError('invalid test provision cleanup result')
+            return result
+        except (ValueError,UnicodeError) as error:
+            raise RuntimeError('invalid test provision helper JSON') from None
+        finally:
+            selector.close()
+            if process.poll() is None:process.kill()
+            process.wait(timeout=10)
+            process.stdout.close();process.stderr.close()
+
+    def _verify_runtime_role(self):
+        env={k:v for k,v in os.environ.items() if not k.startswith('PG')}
+        env.update(PGPASSFILE=str(self.passfile),PGCONNECT_TIMEOUT='10')
+        query="SELECT (NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT has_database_privilege(current_user,current_database(),'CREATE') AND has_schema_privilege(current_user,'public','USAGE') AND has_schema_privilege(current_user,'public','CREATE') AND has_schema_privilege(current_user,'manure','USAGE') AND has_schema_privilege(current_user,'manure','CREATE')) FROM pg_roles WHERE rolname=current_user"
+        result=subprocess.run([self.psql,'-X','-qAt','--no-password','-h',self.parsed.hostname,'-p',str(self.parsed.port),'-U',self.user,'-d',self.name,'-v','ON_ERROR_STOP=1','-c',query],env=env,capture_output=True,timeout=15)
+        if result.returncode or result.stdout.strip()!=b't':raise RuntimeError('runtime role is not the scoped non-superuser fixture identity')
 
     def _sql(self,statement):
+        if self.helper:raise RuntimeError('runtime fixture identity cannot administer databases')
         env={k:v for k,v in os.environ.items() if not k.startswith('PG')}
         env.update(PGPASSFILE=str(self.passfile),PGCONNECT_TIMEOUT='10')
         result=subprocess.run([self.psql,'--no-psqlrc','--no-password','-h',self.parsed.hostname,
@@ -70,12 +165,31 @@ class OwnedDatabase:
             '-v','ON_ERROR_STOP=1','-c',statement],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
         if result.returncode:raise RuntimeError('owned target database provisioning/cleanup failed')
 
+    def migration_service(self,name):
+        if not self.helper:
+            return f'[{name}]\nhost={self.parsed.hostname}\nport={self.parsed.port or 5432}\ndbname={self.name}\nuser={self.user}\npassfile={self.passfile}\n'
+        registry=json.loads((self.fixture_root/'created-databases.json').read_bytes())
+        if registry.get(self.name)!='manure':raise RuntimeError('migration fixture database is not registered')
+        # Only the synthetic import tool uses the explicit owned administrator.
+        # HTTP/JDBC runtime still receives the non-superuser helper result.
+        cfg=self.provider
+        return f'[{name}]\nhost={self.fixture_root}/cluster/socket\nport={cfg["port"]}\ndbname={self.name}\nuser={cfg["adminRole"]}\n'
+
+    def grant_import_runtime(self,pg):
+        if not self.helper:return
+        user='"'+self.user.replace('"','""')+'"'
+        statements=['ALTER TABLE manure.'+name+' OWNER TO '+user for name in ('artifacts','receipts','one_time_grants','content_grants')]
+        statements+=['GRANT USAGE ON SCHEMA manure_offline TO '+user,'GRANT SELECT ON manure_offline.destination TO '+user]
+        pg.run('BEGIN;'+(';'.join(statements))+';COMMIT;')
+
     def close(self):
         try:
             if self.created:
-                self._sql('DROP DATABASE '+self.name+' WITH (FORCE)')
+                if self.helper:self._helper('--drop',self.name)
+                else:self._sql('DROP DATABASE '+self.name+' WITH (FORCE)')
                 self.created=False
-        finally:self.passfile.unlink(missing_ok=True)
+        finally:
+            if self.passfile:self.passfile.unlink(missing_ok=True)
 
     def config(self):
         return {'jdbcUrl':self.jdbc,'user':self.user,'passwordFile':self.password_file,

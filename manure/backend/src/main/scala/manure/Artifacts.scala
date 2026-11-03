@@ -57,7 +57,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
   def info(identity: Identity,id: String, includeExpired: Boolean = false): IO[Artifact] = serialized {
     metadata.transaction { tx =>
       Require(auth.live(identity), "unauthorized")
-      val a = get(tx,id); if !includeExpired then a.requireLive(clock.now); a.requireOwner(identity.userId); a
+      val a = get(tx,id); if !includeExpired then a.requireLive(clock.now); a
     }
   }
   def snapshot(identity: Identity, after: Option[String], limit: Int): IO[Vector[Artifact]] = metadata.transaction { tx =>
@@ -66,8 +66,8 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
   def patch(identity: Identity,id: String, patch: ArtifactPatch): IO[Initialized] = serialized {
     metadata.transaction { tx =>
       Require(auth.live(identity), "unauthorized")
-      val a = owned(tx,identity.userId,id)
-      Require(a.state == UploadState.Ready, "state-conflict")
+      val a = get(tx,id)
+      a.requireOwner(identity.userId)
       patch.name.foreach(UploadRules.name)
       val expiry = patch.ttl match
         case TtlPatch.Unchanged => a.expiresAtSeconds
@@ -77,7 +77,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
       val password = if visibility == Visibility.External && a.visibility != Visibility.External then Some(SecretCodec.token()) else None
       val hash = if visibility != Visibility.External then None else password.map(SecretCodec.sha256).orElse(a.externalPasswordHash)
       val updated = a.copy(name=patch.name.getOrElse(a.name),visibility=visibility,
-        expiresAt=expiry.map(Exact.displayTime),expiresAtSeconds=expiry,externalPasswordHash=hash)
+        expiresAt=expiry.map(Exact.displayTime),expiresAtSeconds=expiry,externalPasswordHash=hash,lastActivityAt=clock.now)
       if visibility != a.visibility then tx.revokeArtifact(id)
       tx.put(updated); Initialized(updated,password)
     }
@@ -85,8 +85,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
   def rotate(identity: Identity,id: String): IO[String] = serialized {
     metadata.transaction { tx =>
       Require(auth.live(identity), "unauthorized")
-      val a = owned(tx,identity.userId,id)
-      Require(a.state == UploadState.Ready, "state-conflict")
+      val a = get(tx,id)
       Require(a.visibility == Visibility.External, "invalid-visibility")
       val password = SecretCodec.token()
       tx.put(a.copy(externalPasswordHash=Some(SecretCodec.sha256(password)))); tx.revokeArtifact(id); password
@@ -95,13 +94,13 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
   def delete(identity: Identity,id: String): IO[Unit] = serialized {
     metadata.transaction { tx =>
       Require(auth.live(identity), "unauthorized")
-      val a = get(tx,id); a.requireOwner(identity.userId); tx.delete(id); a
+      val a = get(tx,id); tx.delete(id); a
     }.flatMap(a => blocking(payloads.cleanup(a)))
   }
   def status(identity: Identity,id: String): IO[UploadProgress] = serialized {
     metadata.transaction { tx =>
       Require(auth.live(identity), "unauthorized")
-      val a = owned(tx,identity.userId,id)
+      val a = live(tx,id)
       UploadProgress(id,a.state,a.manifest.filterNot(_.directory).map { e =>
         val ranges = UploadRules.ranges(tx.receipts(id,e.path),e.size)
         FileProgress(e.path,e.size,ranges.map((s,e) => e-s).sum,ranges)
@@ -172,7 +171,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
               val code = if payloads.structureComplete(current,false) then "hash-mismatch" else "incomplete-upload"
               repair(tx,current); Left(DomainError(code))
             else
-              val publishing = current.copy(state=UploadState.Publishing)
+              val publishing = current.copy(state=UploadState.Publishing,lastActivityAt=clock.now)
               tx.put(publishing); faults("publishing_commit"); Right(publishing)
           }.flatMap {
             case Left(error) => IO.raiseError(error)
