@@ -11,6 +11,13 @@ BIND="${2:-127.0.0.1}"
 PGPORT="$((PORT + 100))"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "quick-ui: missing $1 (use the pinned chronicle development shell)" >&2; return 1; }; }
 for tool in node npm initdb pg_ctl psql curl; do need "$tool"; done
+# A selected port must belong to this disposable preview, never an existing app.
+node --input-type=module - "$PORT" "$BIND" <<'JS'
+import { createServer } from 'node:net';
+const socket = createServer();
+socket.once('error', () => { console.error('quick-ui: selected port is unavailable; refusing to contact an existing listener'); process.exitCode = 2; });
+socket.listen(Number(process.argv[2]), process.argv[3], () => socket.close());
+JS
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/haystack-ui.XXXXXX")"
 SRVPID=""
 cleanup() {
@@ -74,7 +81,7 @@ bash -c "exec ${HAYSTACK_SERVER_COMMAND} \"\$@\"" haystack-server serve "$WORK/c
 SRVPID=$!
 READY=0
 for _ in $(seq 1 300); do
-  if curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1; then READY=1; break; fi
+  if grep -qx "haystack: ready" "$WORK/server.log" && curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1; then READY=1; break; fi
   if ! kill -0 "$SRVPID" 2>/dev/null; then break; fi
   sleep 0.2
 done
