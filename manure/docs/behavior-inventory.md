@@ -15,7 +15,7 @@ Node test names. No declaration means no silent omission: a new root/nested
 case ID, an import resolving outside the assigned source, or a missing concrete
 mapping causes the inventory self-check to fail.
 
-The frozen register currently declares **33 CURRENT Python modules /334 case
+The frozen register currently declares **33 CURRENT Python modules /335 case
 IDs**, **17 Node cases** across both browser-boundary/CDP suites, and the
 **74-vector generated TypeScript codec check**. These are declared inventory
 sizes, **not execution/pass counts**. All client, CLI, MCP, browser, offline and
@@ -24,7 +24,7 @@ actual-target modules are included; there is no six-core-only release gate.
 **Seven old Python-server/SQLite implementation test modules are architecture-
 retired from the CURRENT selector, not their domain/security/durability
 requirements.** Their grouped requirements map to concrete current Python,
-Scala/PG and filesystem tests below, with real unresolved full-run failures left open. Their source is
+Scala/PG and filesystem tests below, with concrete current assertions and mandatory full-artifact gates. Their source is
 retained. The public Python server entrypoint is now **retired/fail-closed** in parent
 `5f3905ec`: the console registration is removed and module `main` returns2 with
 a constant message before parsing/config/credentials/network/storage effects.
@@ -37,6 +37,8 @@ credential rotation.
 Observed/re-read **2026-11-03T11:05:32Z**. The three earlier open *coverage*
 clauses (`expiry-activity`, `admission-shutdown`, `catalogue-current`) now have
 concrete executed proofs, not merely registered source. They are closed below.
+Later17-specific failure corrections are narrowly adjudicated below; final-source
+full JVM/native acceptance is still PENDING, not inferred from component checks.
 This does **not** make the release green: the frozen141 **full JVM run has now
 completed FAILED**,334/334 Python IDs executed,8 failures and9 errors,0 skips.
 Its17 Node cases and74 TypeScript vectors completed successfully for those
@@ -60,11 +62,14 @@ none is overwritten, filtered or retroactively declared successful.
 Native scalar evidence: executable
 `/nix/store/8sj7d0crw5ca59k2mgxa81xy4l1kw7hk-manure-native-artifact-0.1.0/libexec/manure-server`,
 ELF SHA`41094c42db753275fa716ae6c864634ce82519941dc8d433cb569c9c33eedafd`.
-Its immutable `share/manure/compiled-inputs.sha256` exactly matches the current
-`artifact-source.py` output byte-for-byte (103 selected inputs), manifest
+At its recorded observation, immutable `share/manure/compiled-inputs.sha256` matched
+the then-current141 compiled source byte-for-byte (103 selected inputs), manifest
 SHA`7f110ed24d2bc3918fb32d6da88be065796dd869f4a56d2095b8b65f8b950e86`.
-This check initialized no service config, credentials, database or model. The
-complete native334/17/74 and linked-native29 filesystem gates remain separate.
+This check initialized no service config, credentials, database or model. Its
+unchanged fold source is a scoped crosslink only: final4f HTTP/caps compiled
+manifest is `3830f88e5435fc515f848dd628d1c51d5ee5ef5ff60ae7787b8170f918e67b81`,
+NOT7f110. A fresh final native artifact and complete native335/17/74 plus linked
+native29 filesystem gates remain mandatory and separate.
 
 ## CURRENT Python modules (unfiltered in `full`)
 
@@ -92,7 +97,7 @@ complete native334/17/74 and linked-native29 filesystem gates remain separate.
 | `test_credential_preflight` | 8 | controlled local/pure |
 | `test_current_client` | 6 | controlled local/pure |
 | `test_current_protocol` | 9 | controlled local/pure |
-| `test_current_target_harness` | 4 | controlled local/pure |
+| `test_current_target_harness` | 5 | controlled local/pure |
 | `test_current_test_inventory` | 14 | controlled local/pure |
 | `test_dashboard_markup` | 7 | controlled local/pure |
 | `test_mcp_environment` | 1 | target |
@@ -186,7 +191,7 @@ a pass. An interruption is not an exit status or completed full suite.
 | `test_catalogue` | Direct SQLite/old REST test architecture only; required casefold/effective-query/valid-long-query behavior is retained, not replaced by ROOT lowercase. | `catalogue-current` |
 | `test_server_http_opt_in` | Constructs the retired Python HTTP server/config; current HTTP/TLS/browser target tests replace its transport. | `origins`, `credentials`, `manifest-serving` |
 | `test_server_lifecycle` | Constructs Python server/SQLite internals; preserve lifecycle/receipt/publish/range invariants through real replacement adapters. | `manifest-serving`, `receipts`, `publication-import`, `range-client` |
-| `test_server_limits` | Constructs Python socket/thread/semaphore/storage internals; requirements remain current, with explicit unresolved lifecycle/concurrency groups. | `quota-session`, `expiry-activity`, `admission-shutdown`, `credentials`, `filesystem-lifetime` |
+| `test_server_limits` | Constructs Python socket/thread/semaphore/storage internals; requirements remain current, with concrete real-PG lifecycle/concurrency proofs and separate full-artifact gates. | `quota-session`, `expiry-activity`, `admission-shutdown`, `credentials`, `filesystem-lifetime` |
 | `test_server_path_mode` | Imports Python HTTP/config; current generated target/path/TLS browser scenarios replace transport-specific assumptions. | `origins`, `manifest-serving`, `grants-secrets`, `expiry-activity` |
 | `test_server_security` | Imports Python server/SQLite hooks; domain/security rules remain current including adjudicated shared incomplete authority. | `shared-authority`, `credentials`, `origins`, `manifest-serving`, `grants-secrets`, `filesystem-lifetime` |
 | `test_storage_durability` | Direct Python ArtifactStore/SQLite internals are not the replacement PG/FS service. Synthetic source-state construction and the explicitly registered historical supported-query oracle remain complementary only, never target-serving acceptance. | `receipts`, `publication-import`, `quota-session`, `expiry-activity`, `filesystem-lifetime`, `admission-shutdown`, `grants-secrets` |
@@ -543,30 +548,51 @@ assertions. The three earlier missing-assertion/execution clauses are closed on 
 concrete evidence above, not by waiving any full gate. Actual full browser/client
 failures below remain unresolved; focused successes never replace that evidence.
 
-### current-full-validation — UNRESOLVED
+### current-full-validation — historical defects corrected; full gates PENDING
 
-The complete frozen141 JVM receipt actually executed334 declared Python IDs and
-failed8 cases with9 additional errors,0 skips. Both B7 hostile-sibling cases,
-dashboard UX, path TLS, unlock assets/logout/rotation across variants and client
-grant revocation need correction/adjudication and fresh execution. The JSON maps
-**every failed/error ID** concretely. These are not silently relabeled retired,
-removed from counts, converted to skips, blamed on production, or erased by
-component passes.
+The immutable frozen141 JVM receipt remains **FAILED**: all334 Python IDs ran,
+8 failures+9 errors,0 skips. Node17 and TS74 passed only for those frozen inputs.
+Neither that report nor its original gap snapshots are edited or relabeled.
+The JSON retains every17 failed/error ID and adds exact correction/source/hash
+crosslinks, freshly re-read2026-11-03T11:34:21Z:
 
-**B7 remains explicitly OPEN in `origins`:** the current URL-only fixture
-aggregation can mix legitimate200 controls with rejected403 attempts. The
-separately owned correction must correlate phase, request ID and Origin while
-preserving valid200 controls,403 security assertions and unchanged-state checks.
-No source-presence or planned fix closes this failure. Other failure root causes
-are not inferred by this register update.
+- **B7x2**: `0fe93f09` phase+exactOrigin+(CDPsession/requestId/hop) correlation,
+  actual2/2 JVM PASS19.743s (`110457Z-jvm.0NXv5H`). Legitimate200 controls remain;
+  attack200 cannot be filtered away. Cookie-dispatched403 and otherwise-valid
+  rawHTTP403/state/session checks remain; Separate HTTP withheld-cookie401 is
+  explicitly NOT Origin proof. Both JSON preflight denial and no authenticated
+  cross-origin JSON POST are checked. Node17 passed.
+- **UX/pathTLSx2**: `66fef8e2` (`7874594e` worker) fixes a real client capability
+  bootstrap omission. The original secure path/cookie/glyph-size assertions are
+  unchanged. Whole-second creation and random ID ties were the existing policy
+  (historical storage.py754); the UX first-page assertion now independently
+  checks ALL25 rows by actual CreatedAt+rawID, not a nondeterministic newest-name
+  guess. Exact2 methods/all14subscenarios PASS81.686s JVM
+  (`112156Z-jvm.wDGCXe`) and78.119s actual source-bound native141
+  (`112645Z-native.JdEmgo`). The old native proof does not cover final HTTP/caps.
+- **HTTP13**: `86563664` explicitly frames empty303 form redirects with
+  Content-Length0 while preserving Location/cookie effects; only locked external
+  entrypoints prompt, trusted shell siblings serve, other denied paths return404
+  JSON. This preserves historical `_content_denied`, not relaxed authorization.
+  The WHOLE unlock module34 plus real-client grant-revocation method pass35/35
+  (`111713Z-jvm.wJHwl8`,40.543s). All existing assertions and30s teardown deadline
+  remain; the secondary teardown error disappeared after correcting the primary
+  revoked-file200. Two new HTTP regressions first failed before the fix.
 
-The frozen141 full run is now completed, not still running; Node17 and TS74
-passed for those exact inputs. No accepted full JVM or full native334/17/74
-receipt is established. Corrected-source focused checks and a complete fresh
-unfiltered rerun remain mandatory, along with all external gates. These new
-open failure clauses keep `full` strictly NONZERO even if another focused scope
-passes. Old immutable receipts retain their historical three-gap snapshot;
-they are never edited to reflect this later coverage adjudication.
+Reported Git HEAD in the working-tree JVM UI/HTTP receipts preceded commit, but
+all changed committed test/web or compiled-source SHA entries were checked against
+those immutable receipts. Exact identities and summary SHA values are in JSON.
+The current final compiled checkpoint `4f0e10c7` also centralizes the advertised
+capability/current-cursor policy after a retained1/124 fail-first; all124 backend
+cases/11suites+29POSIX pass (`113032Z.IjnVPo`).
+
+These **narrow known-defect adjudications**, approved by the owner, close the two
+historical-failure flags only. They do not manufacture a complete full result.
+Fresh final-source **full JVM335+17Node+74TS and full native335+17Node+74TS remain
+explicitly PENDING and mandatory**, as do every preserved external gate below.
+The runner may accept only its own actually completed current-mode inventory;
+global port/provider/consumer/native acceptance is never inferred from targeted
+successes. Any new failure, skip or missing prerequisite remains a hard failure.
 
 ## Separately required artifact/runtime gates
 
@@ -597,9 +623,9 @@ failures/errors/skips and correctly reported **releaseAcceptance:false**.
 At the first inventory checkpoint `599b2c6b`, a full invocation without
 provider/browser prerequisites exited1 with293 expected and0 executed tests—not
 a full-suite result. At that earlier parent import/search checkpoint the declared
-CURRENT count was312, not a completed312-test run. The current declared334 and
-failed complete334-case receipt are distinguished above; open full-failure
-clauses remain as listed.
+CURRENT count was312, not a completed312-test run. The final declared335 (one new owned launcher safety case) and
+failed historical complete334-case receipt are distinguished above. Specific
+historical failures have scoped corrections; fresh unfiltered gates remain pending.
 
 Parent receipt `20261103T094915Z-jvm.hd5INM` was read after integration:1
 focused actual-target search method,0 failures/errors/skips and exit0. This is
@@ -626,22 +652,23 @@ Separately authorized production activation is not implied.
 
 After parent `5f3905ec` integration and explicit retirement registration, a
 35-method focused retirement/client-secret/preflight/inventory diagnostic
-passed0 failures/errors/skips. The declared inventory is now31 modules/325
-methods, not a completed325-method run. Three invariant clauses remain open after the concrete `a12c3c58` search closure;
+passed0 failures/errors/skips. At that historical checkpoint the declared inventory was31 modules/325
+methods, not a completed325-method run. Three invariant clauses were then open after the concrete `a12c3c58` search closure;
 full acceptance still cannot be inferred from this component diagnostic.
 
 CURRENT oracle promotion `ca04d8b0` adds1 declared method (11 owned historical
 supported queries):32 modules/326 exact IDs. This is complementary source
 behavior evidence, not an HTTP/target/full/native acceptance substitute.
 The native scalar probe is a separately mandatory pure parent-owned gate;
-activity and active publish/sweeper/stuck-worker lifetime remain open.
+activity and active publish/sweeper/stuck-worker lifetime were then open;
+the later concrete coverage closures are recorded above.
 
 Source `6f6369b0` adds4 CURRENT actual-executable/lifecycle methods to
 `test_target_durability`: now8 methods in that module and330 exact CURRENT IDs
 in32 modules. The scalar command uses the actual source-bound executable;
 active publish/sweep/SQL-deadline cases use owned service-role triggers and
-physical dev/inode kernel claim probes. All remain unexecuted by registration:
-no native/current acceptance is claimed. Production JDBC defaults/identity are
+physical dev/inode kernel claim probes. Registration alone executed none; later scoped actual executions are recorded
+above, never a complete native/current acceptance inference. Production JDBC defaults/identity are
 not changed by the explicit owned test-fixture deadline override.
 
 ### Compiled-source manifest location identity
@@ -663,3 +690,15 @@ manifests are NOT invalidated: ordinary-path selection is unchanged and the
 generator is not a compiled input. Only archives affected by the ancestor bug
 need their previously incomplete manifest regenerated. These component checks
 are not full runtime/native acceptance; existing three blockers remain open.
+
+### Public tools descriptor control-character boundary
+
+A new CURRENT owned blackbox method in `test_current_target_harness` increases
+the final declaration to **33 modules/335 IDs** (historical141 remains334).
+Fail-first `f7d3eb13` sent actual NUL and LF tool paths through the real launcher:
+each incorrectly invoked a harmless owned wrapper, exit3. `bfdfd121` checks the
+actual characters and returns2 before fixture/helper effects. Both negatives and
+the unchanged valid-five-pin positive controller pass, as do all5 harness
+methods. No PostgreSQL/model/service was started. This portable script correction
+does not change the final compiled/native source identity. Fresh complete JVM and
+native **335/17/74**, not334, are now mandatory; no new case is omitted.
