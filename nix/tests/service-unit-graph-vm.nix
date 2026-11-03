@@ -80,8 +80,8 @@ in pkgs.testers.runNixOSTest {
     };
     # Add metadata-only observation to the ACTUAL database units. ExecStart,
     # credentials, UID, dependency graph and production generic errors stay as-is.
-    systemd.services=lib.genAttrs (map (name: "ponygirls-database-${name}") ["chronicle" "haystack" "manure"]) (_: {
-      environment.PYTHONPATH="${observer}";
+    systemd.services=lib.genAttrs (map (name: "ponygirls-database-${name}") ["chronicle" "haystack" "manure"]) (unitName: {
+      environment={ PYTHONPATH="${observer}"; PONYGIRLS_TEST_EXPECTED_CREDENTIAL_DIRECTORY="/run/credentials/${unitName}.service"; };
       serviceConfig.ExecStartPre="${pkgs.python3}/bin/python3 ${./service-unit-graph-diagnostic.py} ${config.ponygirls.servicePostgres.manifestFile}";
     });
     specialisation={
