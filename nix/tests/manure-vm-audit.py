@@ -28,7 +28,9 @@ policy is required: `kvm-only` accepts exactly
 `-machine accel=kvm`; `kvm-or-tcg` accepts exactly the pinned generator
 `-machine accel=kvm:tcg` list. Both require exactly one `-cpu max`.
 The latter explicitly permits fallback, not proof of the selected accelerator.
-Only the exact optional anonymous memfd1024M/mem0 machine pair is admitted.
+The exact optional anonymous memfd1024M/mem0 pair is admitted. The observed
+q35,smm=on machine is admitted only WITH that memory pair and exactly one
+cfi.pflash01 secure=on global, never as an independent machine/global grammar.
 Anything not matching the known-good generated patterns fails
 closed as unsupported launch syntax (patterns are pinned to the nixpkgs
 in flake.lock; generator changes need re-verification, not silent widening).
@@ -74,7 +76,7 @@ def _acceleration_pattern(policy: AccelerationPolicy) -> str:
 
 
 def _check_acceleration(
-    policy: AccelerationPolicy, machines: list[str], cpus: list[str], objects: list[str]
+    policy: AccelerationPolicy, machines: list[str], cpus: list[str], objects: list[str], globals_: list[str]
 ) -> None:
     expected = [_acceleration_pattern(policy)]
     if objects:
@@ -83,6 +85,10 @@ def _check_acceleration(
         if objects != ["memory-backend-memfd,id=mem0,size=1024M,share=on"]:
             raise AuditError("unexpected anonymous memory object (fail closed)")
         expected.append("memory-backend=mem0")
+    if globals_:
+        if globals_ != ["driver=cfi.pflash01,property=secure,value=on"] or not objects:
+            raise AuditError("unexpected q35 secure-global/memory correspondence (fail closed)")
+        expected.append("q35,smm=on")
     if machines != expected:
         raise AuditError("machine arguments do not match explicit acceleration policy/pinned memory pair")
     if cpus != ["max"]:
@@ -195,6 +201,7 @@ def audit_argv(
     machine_values: list[str] = []
     cpu_values: list[str] = []
     object_values: list[str] = []
+    global_values: list[str] = []
     vm_name: str | None = None
     i = 0
     tokens = argv[1:]
@@ -310,6 +317,7 @@ def audit_argv(
             i += 1
             if i >= len(tokens) or not tokens[i].startswith("driver=cfi.pflash01,"):
                 raise AuditError(f"unexpected -global (fail closed): {tokens[i] if i < len(tokens) else None}")
+            global_values.append(tokens[i])
         elif tok == "-kernel":
             i += 1
             if i >= len(tokens):
@@ -412,7 +420,7 @@ def audit_argv(
         i += 1
     if vm_name not in allowed_vms:
         raise AuditError(f"unexpected -name (fail closed): {vm_name!r}")
-    _check_acceleration(acceleration_policy, machine_values, cpu_values, object_values)
+    _check_acceleration(acceleration_policy, machine_values, cpu_values, object_values, global_values)
     joined = " ".join(argv)
     for bad in (
         "-fsdev",
@@ -436,7 +444,7 @@ def audit_argv(
         backings = _check_backing_chain(resolved, lab=lab, project=project)
         attached.append({"drive": disk, "resolved": str(resolved), "backing": backings})
     return {"vm": vm_name, "drives": attached, "unix_channels": sorted(set(unix_channels)),
-            "acceleration_policy": acceleration_policy.value, "machine_arguments": machine_values, "cpu_arguments": cpu_values}
+            "acceleration_policy": acceleration_policy.value, "machine_arguments": machine_values, "cpu_arguments": cpu_values, "global_arguments": global_values}
 
 
 QEMU_BIN_RE = r"/bin/(qemu-system-x86_64|qemu-kvm)(?![A-Za-z0-9_.-])"
@@ -560,12 +568,29 @@ def _selftest_policy(acceleration_policy: AccelerationPolicy) -> int:
         pair = ["-object", "memory-backend-memfd,id=mem0,size=1024M,share=on",
                 "-machine", "memory-backend=mem0"]
         expect_accept("pinned-anonymous-memory-pair", argv + pair, lab=lab, project=None)
-        # Parent reports current EVAL includes this extra pinned-generator
-        # machine. It is NOT yet approved from an observed built driver.
-        expect_reject("unapproved-q35-with-exact-memory-pair",
-                      argv + pair + ["-machine", "q35,smm=on", "-global",
-                                     "driver=cfi.pflash01,property=secure,value=on"],
-                      lab=lab, project=None)
+        # Actual built edge/strict scripts authorize ONLY this complete
+        # q35/global pair WITH the exact anonymous memfd/mem0 correspondence.
+        q35 = ["-machine", "q35,smm=on"]
+        secure = ["-global", "driver=cfi.pflash01,property=secure,value=on"]
+        expect_accept("observed-q35-complete-pair", argv + pair + q35 + secure, lab=lab, project=None)
+        # The previous temporary full-pair refusal is explicitly superseded by
+        # the source-bound grant; retain its label as the unapproved half-pair.
+        expect_reject("unapproved-q35-with-exact-memory-pair", argv + pair + q35, lab=lab, project=None)
+        for label,extra in [
+            ("q35-global-without-machine", pair + secure),
+            ("q35-without-memory-pair", q35 + secure),
+            ("q35-duplicate-machine", pair + q35 + q35 + secure),
+            ("q35-duplicate-global", pair + q35 + secure + secure),
+            ("q35-unknown-machine-property", pair + ["-machine", "q35,smm=on,usb=off"] + secure),
+            ("q35-smm-disabled", pair + ["-machine", "q35,smm=off"] + secure),
+            ("q35-global-secure-disabled", pair + q35 + ["-global", "driver=cfi.pflash01,property=secure,value=off"]),
+            ("q35-global-unknown-property", pair + q35 + ["-global", "driver=cfi.pflash01,property=other,value=on"]),
+            ("q35-global-extra-property", pair + q35 + ["-global", "driver=cfi.pflash01,property=secure,value=on,extra=on"]),
+            ("q35-unapproved-bios", pair + q35 + secure + ["-bios", "/nix/store/not-approved"]),
+            ("q35-unapproved-pflash", pair + q35 + secure + ["-pflash", str(good)]),
+            ("q35-unapproved-blockdev", pair + q35 + secure + ["-blockdev", "driver=file,filename=" + str(good)]),
+        ]:
+            expect_reject(label, argv + extra, lab=lab, project=None)
         other = (AccelerationPolicy.KVM_OR_TCG if acceleration_policy is AccelerationPolicy.KVM_ONLY
                  else AccelerationPolicy.KVM_ONLY)
         wrong_policy = _base_argv(lab=lab, acceleration_policy=other) + ["-drive", f"file={good},if=none"]

@@ -21,7 +21,7 @@ reordered fallback lists, extra acceleration/CPU flags, duplicate CPUs/machines,
 and malformed patterns fail closed. The API requires an `AccelerationPolicy`
 enum; passing a string/None is not implicit selection.
 
-The only optional extra machine argument is exactly `memory-backend=mem0`, once,
+The original optional extra machine argument is exactly `memory-backend=mem0`, once,
 paired with exactly one anonymous object
 `memory-backend-memfd,id=mem0,size=1024M,share=on`. Either half alone, extra
 objects/properties, other IDs/sizes, or file-backed objects are refused. Existing
@@ -39,6 +39,10 @@ Pinned source authority: flake.lock nixpkgs
   correspondence, and the generated memory/core values.
 - `nixos/lib/testing/run.nix`: `requiredFeatures.kvm` independently defaults true
   for Linux VM tests; its documented false value permits emulated execution.
+
+A later source-bound grant permits one additional exact q35/global pair only
+with that exact memory pair; see the final section below. It does not admit a
+general machine/global/firmware grammar.
 
 The fixture owner—not this patch—must explicitly pair
 `requiredFeatures.kvm=false` and `qemu.forceAccel=false` for the TCG-capable test.
@@ -109,9 +113,10 @@ YOLO_VM_STATE_DIR=<approved canonical private lab root> \
   /nix/store/<ACTUAL_OBSERVED_CONTAINED_DRIVER>
 ```
 
-The placeholder is not an observed driver. At patch preparation time the current
-Manure VM owner had not supplied a newly built start script/effective argv. No
-actual current-Manure-argv or TCG guest-boot acceptance is claimed. Existing KVM
+The placeholder is not an observed driver. At original patch preparation time the current
+Manure VM owner had not supplied a newly built start script/effective argv.
+The later source-bound section records actual built scripts and controlled
+expansion. No actual TCG guest-boot or full-stock-launch acceptance is claimed. Existing KVM
 users must now explicitly choose `kvm-only`; there is no legacy implicit mode.
 
 ## Complete fixture-label inventory
@@ -190,7 +195,7 @@ unapproved-memory-object-memory-backend-memfd,id=other,size=1024M,share=on
 unknown-machine
 ```
 
-## Follow-up: stateless boundary dependencies and q35 remains refused
+## fd91 follow-up: stateless dependencies; historical q35 refusal
 
 The internal `_audit_exec` boundary now requires **all** authority and executable
 entry dependencies explicitly: `project` and `exec_entry`, in addition to the
@@ -222,3 +227,86 @@ Follow-up evidence is separate (`followup-selftest-v1.log`,
 `followup-focused-v1.log`); original114+9 controls and old CPU fail-first files
 are unchanged. This follow-up performs no driver build, guest launch, real QEMU
 execution, systemd action, production edit, or sibling-worktree write.
+
+## Source-bound q35 grant after actual build-only observation
+
+The parent subsequently supplied a built **build-only, not guest-authorized**
+Manure driver. Its immutable wrapper/config/start scripts were independently
+read and checked against these exact hashes:
+
+| Input | Identity |
+|---|---|
+| Driver | `/nix/store/6mp3f8m0yl7hs54bgi7x5phk7y4pjd5q-nixos-test-driver-manure-vm` |
+| Config | `/nix/store/laf50jyx51xbvd4r06556z2dn75b3qma-driverConfiguration.json` |
+| Config SHA256 | `21bf01e4f9e53f7bfb8bd0ce45b424aeb05b026b314f9ab2864487fece70a6eb` |
+| Edge script SHA256 | `c6974e88fb181c920a07cd4a3fb632f1a8d0bce4d9eae3d0ab378b423b210c24` |
+| Strict script SHA256 | `3fa21baaac15a5cccd98b8c1f4c06ce918d5f3e8dccf3ace9ea5a709cf148e48` |
+
+Config has exactly edge/strict, no VLANs/containers/SSH backdoor. Both scripts
+contain the explicit `accel=kvm:tcg`, one `cpu max`, exact anonymous memfd/mem0,
+and the exact q35/secure-global pair. Their paths, full bytes, source pin,
+observation time and installed stock generator identity are archived under
+ignored `target/manure-vm-audit-cpu/actual-driver-q35/` (`provenance.json`).
+The installed `QemuStartCommand` source matches pinned31ec byte-for-byte.
+
+**New admitted form only:** machine sequence `[requested-acceleration,
+ memory-backend=mem0, q35,smm=on]`, exactly one object
+`memory-backend-memfd,id=mem0,size=1024M,share=on`, exactly one global
+`driver=cfi.pflash01,property=secure,value=on`. No q35 without memory/global;
+no global without q35; no duplicates, other values/properties, or independent
+cfi-global grammar. Existing no-q35 forms remain. KVM-only still refuses
+`accel=kvm:tcg`. BIOS/pflash/blockdev flags remain unsupported. No new firmware
+attachment or backend syntax is introduced.
+
+The original temporary **complete-pair rejection** is deliberately superseded
+by this explicit source-bound grant; it is not hidden as an unchanged assertion.
+Its old logs are preserved. The old `unapproved-q35-with-exact-memory-pair`
+fixture label now tests the still-forbidden **missing-global half-pair**.
+New controls cover the complete positive, inverse/missing-memory half-pairs,
+duplicate machines/globals, SMM disabled, unknown machine/global properties,
+extra global properties, and unsupported BIOS/pflash/blockdev options. Current
+selftest:71 labels per explicit policy/142 total, no skips. Focused tests preserve
+the prior cases with the stated authorization update and add the complete-pair
+sentinel-positive:12 cases, zero failures/errors/skips. No globals/executor
+monkeypatching was added; required explicit boundary dependencies remain.
+
+### Controlled expansion, not a full launch proof
+
+Before the change, both actual source launch blocks expanded to60-token argv and
+were refused for the extra machine pattern. After, **identical argv** validated
+to `_audit_exec`'s explicit manual no-exec sentinel. Four controlled real qcow/raw
+images have no backing chains, with guest disks strictly inside their labs;
+network argv is exactly user/restrict=on, and stock generator monitor/QMP/shell
+channels are lab-contained. No host sockets/network/backend were exercised.
+
+Method: only the actual script's final QEMU exec block is copied after exact
+single-token substitution to an argv-capture executable. The installed stock
+class's pure `cmd` and `build_environment` methods provide arguments; `.run` is
+never called, no subprocess binding/dummy is supplied to that class, and no
+module/global/Popen/execv is replaced. Actual kernel/initrd/kernel-params are
+read from immutable store inputs. Only allowlisted controlled environment
+values reach the capture shell. Real `qemu-img` creates small controlled images;
+**no full start-script prelude, store-image/guest-filesystem generation, stock
+driver, QEMU or guest runs**. Long controlled project socket paths are not
+actual bound/listening sockets or guest-boot proof.
+
+Evidence: `fail-first-no-global.log`/`receipt-before-no-global.json`,
+`after-controlled-root.log`/`receipt-after-controlled-root.json`. An intermediate
+`after.log` used a mismatched declared YOLO parent and correctly refused; it is
+retained as an invalid positive setup, not a product defect. Actual original
+scripts/config are not modified. No independent Git-to-derivation mapping or
+selected-accelerator claim is inferred from the parent's a440 build label.
+
+### Final parent outer-run requirements
+
+The a440 guest is **not authorized**: the parent reports its provider still
+needs the separate933/fixture corrections. After merging those, rebuild/read the
+actual combined-source driver and recheck configuration, exact script identities
+and effective final launch arguments. Use the mandatory outer runtime with
+`--acceleration-policy kvm-or-tcg`, a canonical private0700 lab root (sufficiently
+short for actual Unix sockets), cleared overrides and pinned utilities. Only the
+actual complete outer invocation can establish backing/attachment equality for
+its **generated** four images, channel/network isolation and cleanup. Keep real
+VM app/provider acceptance and actual acceleration evidence separate from this
+source/controlled-expansion pre-exec result. No wrapper bypass or native/VM
+acceptance follows from these tests.

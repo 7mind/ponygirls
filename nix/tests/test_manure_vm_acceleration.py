@@ -108,14 +108,30 @@ class AccelerationTests(unittest.TestCase):
                         self.assertEqual(audit._audit_exec('/sentinel-not-qemu', argv, str(self.lab), acceleration_policy=policy, project=None, exec_entry=self.sentinel), audit.AUDIT_FAIL_EXIT)
     def test_q35_remains_unapproved_even_with_exact_anonymous_memory_pair(self):
         pair = ['-object', 'memory-backend-memfd,id=mem0,size=1024M,share=on',
-                '-machine', 'memory-backend=mem0', '-machine', 'q35,smm=on',
-                '-global', 'driver=cfi.pflash01,property=secure,value=on']
+                '-machine', 'memory-backend=mem0', '-machine', 'q35,smm=on']
         for policy in audit.AccelerationPolicy:
             with self.subTest(policy=policy.value), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(audit._audit_exec('/sentinel-not-qemu', self.argv(policy) + pair,
                     str(self.lab), acceleration_policy=policy, project=None,
                     exec_entry=self.sentinel), audit.AUDIT_FAIL_EXIT)
                 self.assertFalse(list(self.lab.glob('audit-*.jsonl')))
+    def test_observed_q35_complete_pair_is_the_only_new_executable_shape(self):
+        pair = ['-object', 'memory-backend-memfd,id=mem0,size=1024M,share=on',
+                '-machine', 'memory-backend=mem0', '-machine', 'q35,smm=on',
+                '-global', 'driver=cfi.pflash01,property=secure,value=on']
+        for policy in audit.AccelerationPolicy:
+            calls = []
+            def reached(executable, argv):
+                calls.append((executable, argv)); raise ExecReached()
+            with self.subTest(policy=policy.value), self.assertRaises(ExecReached):
+                audit._audit_exec('/sentinel-not-qemu', self.argv(policy) + pair,
+                    str(self.lab), acceleration_policy=policy, project=None, exec_entry=reached)
+            self.assertEqual(len(calls), 1)
+            record = json.loads((self.lab/'audit-edge.jsonl').read_text().splitlines()[-1])
+            self.assertEqual(record['mapping']['machine_arguments'],
+                [audit._acceleration_pattern(policy), 'memory-backend=mem0', 'q35,smm=on'])
+            self.assertEqual(record['mapping']['global_arguments'],
+                ['driver=cfi.pflash01,property=secure,value=on'])
     def test_cli_always_composes_real_authority_and_executable_entry(self):
         expected_project = audit._repo_root()
         calls = []
