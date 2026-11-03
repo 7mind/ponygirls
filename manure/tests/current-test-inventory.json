@@ -979,7 +979,7 @@
       "correctedFailureAdjudication": {
         "observedAt": "2026-11-03T11:34:21Z",
         "status": "Known17 historical failures corrected and re-executed in scoped proofs; NOT whole final-source acceptance",
-        "finalCompiledSource": "4f0e10c7652ba69b6f2ca23e2309ebb15a824551",
+        "finalCompiledSource": "03e29e14152a97784f60b7538b05e7f2abc71bdf",
         "proofs": [
           {
             "scope": "B7 Separate/Sibling exact two methods; all baseline200 controls and403/state/session assertions retained or strengthened; exact phase/Origin/CDP-hop correlation",
@@ -994,6 +994,12 @@
           "Fresh final-source full native335+17Node+74TS with actual build-source CMP",
           "All other preserved external release gates"
         ]
+      },
+      "post335TlsAdjudication": {
+        "history": "Frozen3dd full335 JVM114306Z-jvm.GIEP8Y and native115105Z-native.NPOG9q each completed1F0E0skip with334 passing controls; Node17/TS74 passed. Both remain FAILED, not source with wide fix.",
+        "correction": "b70b836aef6a7cfc873899cc4f29243897360f98 (f9113cdf), test_browser_tls.py ONLY; existinghelper unchanged; exact phase/Origin/CDPjoins retain GetCapabilities200CONTROL, anyattack200fatal, plantedCookie/form403/blockedJSON/session/grant/state assertions and add actualplantedSession Whoami200 replay.",
+        "proof": "Sole TLS1 PASS15.453s120138Z-jvm.MSSsqe; WHOLE TLS5 PASS19.437s120215Z-jvm.StLOoR; Node17 PASS;0fail/error/skip, focusedreleaseAcceptance:false. Both test-inputSHAs cb45992318af5af4b0a89b57877340520e688b615e44ad24babf88bfb8a54e69 match committed source.",
+        "required": "Fresh final-source335/17/74 JVM AND native remain mandatory; no retrospective full-pass inference."
       }
     },
     {
@@ -1670,6 +1676,10 @@
         {
           "path": "manure/tests/test_target_search.py",
           "testId": "test_target_search.TargetSearchTests.test_metadata_only_heartbeat_publication_modes_outage_and_profile_space"
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/WideAudienceAuditSuite.scala",
+          "marker": "test(\"accepted 4096-byte manager ID preserves publication, lexical authorization, raw creators and startup ACL backfill\""
         }
       ],
       "openGaps": [],
@@ -1695,6 +1705,15 @@
         "summarySha256": "dfc3352328319370f50a337b6abce22c21e8d2fafe056747d026de53df705b36",
         "testSourceSha256": "d26cbf2d93ae3284fb51ed7eab750aebba7f1ef01c3415bb2cdbca91b7d71049",
         "result": "Focused real target semantic adapter method passed66.105s, zero failures/errors/skips; all3-mode negative filters/provenance and real minTTL60s crossing5s controlled-query expiry asserted; releaseAcceptance:false, no live-provider quality or complete-suite acceptance."
+      },
+      "widePrincipalCorrection": {
+        "failFirst": "aea6b1fd (deebe6e8): accepted4096-byte incompressible configured manager; normalpublisherMain.resources finish SQLSTATE54000/publishing; independentrestartbackfill underlying54000; observed2026-11-03T11:57:26.894Z and11:57:27.389Z.",
+        "correction": "03e29e14152a97784f60b7538b05e7f2abc71bdf: private typed namespaced exact-UTF8 SHA256 identity used by BOTH retrieval audience and query; public config/IDs/filters/rawmetadata/authority/DDL untouched.",
+        "assertion": {
+          "path": "manure/backend/src/test/scala/manure/WideAudienceAuditSuite.scala",
+          "marker": "test(\"accepted 4096-byte manager ID preserves publication, lexical authorization, raw creators and startup ACL backfill\""
+        },
+        "proof": "115922Z.oDfefV: all125 backend/12suites+29POSIX PASS0failure/error/skip; normal+wide publishers/queryprincipals, exactrawcreator/filter/snapshotbytes; legacyACLbackfill before new user writes preservesheadversion/generation/epoch/pinnedbytes, embeddingNone/no modeljobs. Actual configured-model semantic/profile/expiry+converter3 PASS82.453s120111Z-jvm.thRoUd. Not final-source full JVM/native acceptance."
       }
     },
     {
@@ -1869,7 +1888,7 @@
       "correctedFailureAdjudication": {
         "observedAt": "2026-11-03T11:34:21Z",
         "status": "Known17 historical failures corrected and re-executed in scoped proofs; NOT whole final-source acceptance",
-        "finalCompiledSource": "4f0e10c7652ba69b6f2ca23e2309ebb15a824551",
+        "finalCompiledSource": "03e29e14152a97784f60b7538b05e7f2abc71bdf",
         "proofs": [
           {
             "scope": "B7 Separate/Sibling exact two methods; all baseline200 controls and403/state/session assertions retained or strengthened; exact phase/Origin/CDP-hop correlation",
@@ -1905,6 +1924,12 @@
           "Fresh final-source full native335+17Node+74TS with actual build-source CMP",
           "All other preserved external release gates"
         ]
+      },
+      "post335TlsAdjudication": {
+        "history": "Frozen3dd full335 JVM114306Z-jvm.GIEP8Y and native115105Z-native.NPOG9q each completed1F0E0skip with334 passing controls; Node17/TS74 passed. Both remain FAILED, not source with wide fix.",
+        "correction": "b70b836aef6a7cfc873899cc4f29243897360f98 (f9113cdf), test_browser_tls.py ONLY; existinghelper unchanged; exact phase/Origin/CDPjoins retain GetCapabilities200CONTROL, anyattack200fatal, plantedCookie/form403/blockedJSON/session/grant/state assertions and add actualplantedSession Whoami200 replay.",
+        "proof": "Sole TLS1 PASS15.453s120138Z-jvm.MSSsqe; WHOLE TLS5 PASS19.437s120215Z-jvm.StLOoR; Node17 PASS;0fail/error/skip, focusedreleaseAcceptance:false. Both test-inputSHAs cb45992318af5af4b0a89b57877340520e688b615e44ad24babf88bfb8a54e69 match committed source.",
+        "required": "Fresh final-source335/17/74 JVM AND native remain mandatory; no retrospective full-pass inference."
       }
     },
     {
@@ -1978,9 +2003,11 @@
   "plannedCurrentModules": [],
   "legacySourceEntrypointsRetirementScope": "Public Python module main refuses before startup effects and Python manure-server console registration is absent; historical helpers remain unsupported importable migration/source-format seams. No production activation/state deletion is implied.",
   "finalSourceAcceptanceStatus": {
-    "source": "4f0e10c7652ba69b6f2ca23e2309ebb15a824551",
-    "status": "PENDING fresh unfiltered JVM/native335+17Node+74TS and other preserved external gates; no global release/completion claim",
-    "historical141": "FAILED334 executed,8 failures9 errors0 skips; immutable receipt unchanged",
-    "componentProof": "124 backend11suites+29POSIX,0 failures/errors/skips,20261103T113032Z.IjnVPo; caps-vs-cursor identity follows retained1/124 fail-first; scoped corrections do not replace full runs"
+    "source": "03e29e14152a97784f60b7538b05e7f2abc71bdf",
+    "compiledInputManifestSha256": "1ed47d780d8a78f14eaad4e75c3e57c841604bb04180a8aaecdaec4c58feb3a1",
+    "status": "PENDING final-source full335+17Node+74TS JVM/native plus all preserved external gates; no global completion claim",
+    "historical141": "FAILED334 executed,8F9E0skip; immutable receipt unchanged",
+    "historical3dd": "FAILED335 JVM/native each1F0E0skip with334 passing controls and17Node74TS success; no wide accepted-domain proof in those inputs",
+    "componentProof": "125backend12suites+29POSIX ALLPASS115922Z.oDfefV; actual target semantic+converter3PASS120111Z-jvm.thRoUd; sole+WHOLE TLS5 corrected-source PASS scoped only"
   }
 }

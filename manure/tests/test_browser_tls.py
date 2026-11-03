@@ -194,6 +194,9 @@ class TlsSmokeCase(unittest.TestCase):
         (urlencoded, no preflight) then carry the cookie with the wrong Origin
         and the server must answer 403 with TARGETED state unchanged. Clean
         valid-login from the hostile origin is 403 with NO session in both.
+        JSON List/CreateGrant must fail preflight, not masquerade as a simple
+        mutator403 proof. Exact phase/Origin/CDP request+hop correlation retains
+        legitimate bootstrap200 controls and rejects any attack200.
         Captures complete headers + statuses redacted; retains HTTP complements.
         """
         token = self.fix.identity.token
@@ -244,16 +247,48 @@ class TlsSmokeCase(unittest.TestCase):
             urllib.parse.urlsplit(hurl))
         SESSION = "__Host-manure"
 
-        def _reqs(out, suffix):
+        def _reqs(out, suffix, phase):
             return [q for q in bf.requests_log(out)
-                    if q["url"].endswith(suffix)]
+                    if q["url"].endswith(suffix) and q.get("phase") == phase]
 
-        def _resps(out, suffix):
-            return [r for r in bf.responses_log(out)
-                    if r["url"].endswith(suffix)]
+        def _key(entry):
+            return tuple(entry.get(k) for k in ("sessionId", "requestId", "redirectHop"))
+
+        def _responses_for(out, requests):
+            self.assertTrue(requests, "no requests to correlate")
+            indexed = {_key(q): q for q in requests}
+            self.assertEqual(len(indexed), len(requests), "duplicate CDP request/hop identity")
+            self.assertTrue(all(None not in key for key in indexed), "missing CDP identity")
+            responses = [r for r in bf.responses_log(out) if _key(r) in indexed]
+            self.assertEqual({_key(r) for r in responses}, set(indexed),
+                             "missing exact request-correlated response")
+            self.assertEqual(len(responses), len(indexed), "duplicate response/hop identity")
+            for response in responses:
+                request = indexed[_key(response)]
+                for field in ("url", "phase", "method", "origin"):
+                    self.assertEqual(response[field], request[field], field)
+            return responses
+
+        def _assert_preflight_denied(out, phase):
+            current = _reqs(out, "/api/current", phase)
+            preflights = [q for q in current
+                          if q["method"] == "OPTIONS" and q["origin"] == hostile_origin]
+            self.assertTrue(preflights, "no hostile current-API preflight observed")
+            responses = _responses_for(out, preflights)
+            self.assertTrue(all(r["status"] == 404 for r in responses), responses)
+            authenticated_posts = [q for q in current if q["method"] == "POST"
+                                   and q.get("hasRequestExtraInfo")
+                                   and set(q["cookieNames"]) & {SESSION}]
+            self.assertFalse(authenticated_posts, "authenticated JSON POST dispatched despite denied preflight")
+            # Do NOT hide an unexpected attack200 because its Origin/command
+            # metadata is absent. The phase was snapshotted at request start.
+            attack_responses = [r for r in bf.responses_log(out)
+                                if r.get("phase") == phase and r["url"].endswith("/api/current")]
+            self.assertFalse(any(200 <= r["status"] < 300 for r in attack_responses), attack_responses)
 
         # -- CLEAN: valid login from hostile origin, 403, no session.
         out_clean = self._browser([
+            {"op": "networkPhase", "phase": "hostile-clean"},
             {"op": "goto", "url": hurl},
             {"op": "waitForEval",
              "fn": "() => document.title.indexOf('ATK:') === 0"},
@@ -267,26 +302,31 @@ class TlsSmokeCase(unittest.TestCase):
         self.assertTrue(all(r.get("ok") for r in results),
                         [r for r in results if not r.get("ok")])
         atk = json.loads([r for r in out_clean if r.get("op") == "eval"][-1]["value"][4:])
-        self.assertTrue(atk["login"].startswith("BLOCKED"), atk)
+        for operation in ("read", "grants", "logout", "login"):
+            self.assertTrue(atk[operation].startswith("BLOCKED"), atk)
         self.assertEqual(atk["cookie"], "", atk)
+        self.assertEqual(atk["storage"], "0,0", atk)
         bf.assert_no_secrets_in_request_urls(self, out_clean, [token])
-        login_reqs = [q for q in _reqs(out_clean, "/api/current/login")
+        _assert_preflight_denied(out_clean, "hostile-clean")
+        login_reqs = [q for q in _reqs(out_clean, "/api/current/login", "hostile-clean")
                       if q["method"] == "POST" and q["origin"] == hostile_origin]
         self.assertTrue(login_reqs, bf.requests_log(out_clean))
         self.assertEqual(login_reqs[0]["cookieNames"], [], login_reqs[0])
-        self.assertTrue(any(r["status"] == 403 for r in _resps(out_clean, "/api/current/login")),
-                        bf.responses_log(out_clean))
+        self.assertTrue(all(r["status"] == 403 for r in _responses_for(out_clean, login_reqs)),
+                        "wrong-Origin valid login must be403, not401/404")
         clean_cookies = [r for r in out_clean if r.get("op") == "cookies"][0]["cookies"]
         self.assertFalse([c for c in clean_cookies if c["name"] == SESSION], clean_cookies)
 
         # -- STRICT withheld (document suppression, NOT proof): login then hostile
         # with runtime Strict shows [] + 401 cross-site.
         out_strict = self._browser([
+            {"op": "networkPhase", "phase": "victim-login"},
             {"op": "goto", "url": self.api + "/"},
             {"op": "fill", "selector": "#token-input", "value": token},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#whoami-text",
              "contains": self.fix.identity.user_id},
+            {"op": "networkPhase", "phase": "hostile-auth"},
             {"op": "goto", "url": hurl},
             {"op": "waitForEval",
              "fn": "() => document.title.indexOf('ATK:') === 0"},
@@ -294,13 +334,16 @@ class TlsSmokeCase(unittest.TestCase):
              "fn": "() => new Promise((res) => setTimeout(() => res(true), 1000))"},
             {"op": "eval", "fn": "() => document.title"},
         ])
-        strict_mutation=[q for q in _reqs(out_strict,"/api/current/logout") if q["method"]=="POST"]
+        strict_mutation=[q for q in _reqs(out_strict,"/api/current/logout", "hostile-auth") if q["method"]=="POST"]
         self.assertTrue(strict_mutation,"no strict logout form POST")
         self.assertEqual(strict_mutation[0]["cookieNames"],[],strict_mutation[0])
-        self.assertTrue(any(r["status"]==401 for r in _resps(out_strict,"/api/current/logout")),bf.responses_log(out_strict))
+        self.assertTrue(all(r["status"] == 401 for r in _responses_for(out_strict, strict_mutation)),
+                        "Strict withholding is a401 control, never authenticated403 proof")
+        _assert_preflight_denied(out_strict, "hostile-auth")
 
         # -- PLANTED None/Secure (TESTONLY, real TLS): forces dispatch, 403.
         out_login = self._browser([
+            {"op": "networkPhase", "phase": "victim-login"},
             {"op": "goto", "url": self.api + "/"},
             {"op": "fill", "selector": "#token-input", "value": token},
             {"op": "click", "selector": "#login-form button[type=submit]"},
@@ -313,11 +356,13 @@ class TlsSmokeCase(unittest.TestCase):
         self.assertEqual(len(sess), 1, sess)
         val = sess[0]["value"]
         out = self._browser([
+            {"op": "networkPhase", "phase": "setup"},
             {"op": "goto", "url": self.api + "/"},
             {"op": "setCookies", "cookies": [{"url": self.api + "/", "name": SESSION,
                                                     "value": val, "sameSite": "None",
                                                     "secure": True, "httpOnly": True}]},
             {"op": "cookies", "urls": [self.api + "/"]},
+            {"op": "networkPhase", "phase": "hostile-auth"},
             {"op": "goto", "url": hurl},
             {"op": "waitForEval",
              "fn": "() => document.title.indexOf('ATK:') === 0"},
@@ -334,23 +379,38 @@ class TlsSmokeCase(unittest.TestCase):
         self.assertTrue(any(c["name"] == SESSION and (c["sameSite"] or "").lower() == "none"
                             for c in planted if c["url"] == self.api + "/"), planted)
         atk = json.loads([r for r in out if r.get("op") == "eval"][-1]["value"][4:])
+        self.assertTrue(atk["read"].startswith("BLOCKED"), atk)
         self.assertTrue(atk["grants"].startswith("BLOCKED"), atk)
         self.assertTrue(atk["logout"].startswith("BLOCKED"), atk)
         self.assertTrue(atk["login"].startswith("BLOCKED"), atk)
         self.assertEqual(atk["cookie"], "", atk)
+        self.assertEqual(atk["storage"], "0,0", atk)
         bf.assert_no_secrets_in_request_urls(self, out, [token, val])
         # JSON commands now preflight. They are blocked before credential
         # dispatch; form Logout below still proves authenticated wrong-Origin
         # 403 in real Chromium with the planted None/Secure cookie.
-        preflights=[q for q in _reqs(out,"/api/current") if q["method"]=="OPTIONS" and q["origin"]==hostile_origin]
-        self.assertTrue(preflights,"no typed-API preflight observed")
-        self.assertFalse(any(200<=r["status"]<300 for r in _resps(out,"/api/current")),bf.responses_log(out))
-        logout_req = [q for q in _reqs(out, "/api/current/logout")
+        # The real public UI bootstrap shares /api/current with the attacks.
+        # Keep its successful GetCapabilities as a positive control, never as
+        # an attack response. Late response events retain request-start phase.
+        capability_requests = [q for q in _reqs(out, "/api/current", "setup")
+                               if q.get("command") == "GetCapabilities" and q["origin"] == self.api]
+        capability_responses = _responses_for(out, capability_requests)
+        self.assertTrue(all(r["status"] == 200 for r in capability_responses), capability_responses)
+        _assert_preflight_denied(out, "hostile-auth")
+        logout_req = [q for q in _reqs(out, "/api/current/logout", "hostile-auth")
                       if q["method"] == "POST" and q["origin"] == hostile_origin]
         self.assertTrue(logout_req, bf.requests_log(out))
         self.assertEqual(logout_req[0]["cookieNames"], [SESSION], logout_req[0])
-        self.assertTrue(any(r["status"] == 403 for r in _resps(out, "/api/current/logout")),
-                        bf.responses_log(out))
+        self.assertTrue(all(r["status"] == 403 for r in _responses_for(out, logout_req)),
+                        "planted-cookie wrong-Origin logout must be403")
+        planted_login = [q for q in _reqs(out, "/api/current/login", "hostile-auth")
+                         if q["method"] == "POST" and q["origin"] == hostile_origin]
+        self.assertTrue(planted_login, "valid hostile login form was not dispatched")
+        for request in planted_login + logout_req:
+            self.assertEqual(request["cookieNames"], [SESSION], request)
+            self.assertIn("application/x-www-form-urlencoded", request["headers"].get("Content-Type", ""))
+        self.assertTrue(all(r["status"] == 403 for r in _responses_for(out, planted_login)),
+                        "planted-cookie valid-token wrong-Origin login must be403")
         # TARGETED state unchanged: victim info + exact bytes, session survives.
         # self.http carries the fixture TLS (insecure) context; bearer checks
         # need no jar and do not pollute the shared fixture jar.
@@ -358,6 +418,10 @@ class TlsSmokeCase(unittest.TestCase):
         insecure = _ssl.create_default_context()
         insecure.check_hostname = False
         insecure.verify_mode = _ssl.CERT_NONE
+        planted_jar = bf.TestHttp(ssl_context=insecure)
+        planted_jar.set_cookie(self.api, SESSION, val)
+        planted_session = planted_jar.current(self.api, bf.cp.Command_Whoami())
+        self.assertEqual(planted_session.status, 200, planted_session.body[:300])
         info = self.http.current((self.api), bf.cp.Command_GetArtifact(vid), headers=bearer)
         self.assertEqual(info.status, 200, info.body[:300])
         tls_content = (f"{self.api}/api/current/artifacts/{vid}/files/"

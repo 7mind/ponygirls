@@ -702,3 +702,38 @@ the unchanged valid-five-pin positive controller pass, as do all5 harness
 methods. No PostgreSQL/model/service was started. This portable script correction
 does not change the final compiled/native source identity. Fresh complete JVM and
 native **335/17/74**, not334, are now mandatory; no new case is omitted.
+
+## Subsequent335-mode findings and final accepted-ID correction
+
+Read-only observed2026-11-03T12:04:25Z: frozen3dd full JVM
+`114306Z-jvm.GIEP8Y` and native `115105Z-native.NPOG9q` each remain **FAILED**:
+335 executed,1 failure,0 errors/skips,334 passing controls; Node17+TS74 passed.
+The sole TLS hostile-page assertion mixed the new legitimate GetCapabilities200
+bootstrap response with hostile requests. `b70b836a` corrects ONLY that fixture
+using existing phase/Origin/exactCDP joins; valid200 controls, allattack200-fatal,
+planted-cookie403/blockedJSON/state/grant checks stay, and actual planted-session
+Whoami200 replay is added. Sole TLS1 and WHOLE5 TLS methods pass,0 failures/errors/
+skips (`120138Z-jvm.MSSsqe`, `120215Z-jvm.StLOoR`); exact committed test SHA matches.
+No old full result is edited or relabeled green.
+
+Separately, actual production Main.resources accepted a4096-byte configured
+manager ID but failed normal publication and restart ACL backfill with real
+PostgreSQL SQLSTATE54000 (audience btree tuple5536>2704). Fail-first `aea6b1fd`
+(`deebe6e8`) retains expected-success regression and bounded synthetic evidence,
+not an input restriction or raw-wide-ID dump. `03e29e14` uses a private typed,
+namespaced SHA256 over exact UTF8 for BOTH internal audience and query principal.
+Public configuration/IDs/raw creators/filter values, authorization, schema,
+source versions, vectors and snapshots are unchanged. Existing startup ACL
+backfill runs atomically before exposure. All125backend/12suites+29POSIX pass
+(`115922Z.oDfefV`), including wide/normal publishers and searchers, exact creator
+filter and raw snapshot preservation, legacy ACL restart before writes, unchanged
+head version/generation/epoch/pinned bytes and no-model operation. Actual model
+semantic/profile/expiry and converter target3 regressions also pass
+(`120111Z-jvm.thRoUd`,82.453s). These are scoped proofs, not complete acceptance.
+
+Final compiled manifest is now
+`1ed47d780d8a78f14eaad4e75c3e57c841604bb04180a8aaecdaec4c58feb3a1`
+(Source03); earlier7f110/112a/3830 artifacts do NOT certify this principal fix.
+Fresh final-source complete **335Python+17Node+74TS on BOTH JVM and native**,
+and every other external gate remain required. All historical receipts retain
+their exact scopes and failures; no global port-completion claim is made.
