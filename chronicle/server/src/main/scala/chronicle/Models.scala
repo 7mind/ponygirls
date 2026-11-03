@@ -48,8 +48,8 @@ final class ModelHttp(client: Client[IO],telemetry: ModelTelemetry,admission: Mo
         usage.get.flatMap(value => telemetry.finish(ticket,outcome,value))
       }.use { _ =>
         JsonHttp.credential(credentialFile).flatMap { credential =>
-          JsonHttp.post(client,endpoint,credential,timeout.seconds,maxBytes,payload)(identity)
-        }.flatMap { json => IO.uncancelable { _ => usage.set(ProviderUsage.parse(json,context.purpose)).as(json).map(decode) } }
+          JsonHttp.postF(client,endpoint,credential,timeout.seconds,maxBytes,payload) { json => usage.set(ProviderUsage.parse(json,context.purpose)).as(json).map(decode) }
+        }
           .handleErrorWith {
             case error: RetrievalError => error.code match {
               case "model-response-bound" => IO.raiseError(ModelRejection.from(ModelRejectionReason.ResponseByteBound))

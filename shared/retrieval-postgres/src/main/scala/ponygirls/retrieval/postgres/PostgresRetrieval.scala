@@ -105,8 +105,8 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
   def claim(c: Connection,leaseSeconds: Int): Option[WorkClaim] = {
     transaction(c); RetrievalChecks(leaseSeconds>0 && leaseSeconds<=86400,"invalid","invalid retrieval lease")
     profile.flatMap { p =>
-      val source=one(c,"""SELECT s.id FROM pony_retrieval_sources s WHERE s.namespace=? AND s.target_profile=? AND s.eligible AND EXISTS(
-        SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp()))) ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",ns,p.id)(_.getString(1))
+      val source=one(c,"""SELECT s.id FROM pony_retrieval_sources s WHERE s.namespace=? AND s.target_profile=? AND s.eligible AND (s.expires_at IS NULL OR s.expires_at>?) AND EXISTS(
+        SELECT 1 FROM pony_retrieval_jobs j WHERE j.namespace=s.namespace AND j.source_id=s.id AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp()))) ORDER BY s.id FOR UPDATE OF s SKIP LOCKED LIMIT 1""",ns,p.id,EpochSeconds.fromInstant(java.time.Instant.now()).value)(_.getString(1))
       source.flatMap { id => one(c,"""UPDATE pony_retrieval_jobs SET state='Running',attempts=attempts+1,fence=fence+1,lease_until=clock_timestamp()+make_interval(secs=>?) WHERE namespace=? AND id=(
         SELECT j.id FROM pony_retrieval_jobs j JOIN pony_retrieval_sources s ON s.namespace=j.namespace AND s.id=j.source_id WHERE j.namespace=? AND j.source_id=? AND j.epoch=s.epoch AND j.profile=s.target_profile AND j.attempts<5 AND (j.state='Queued' OR (j.state='Running' AND j.lease_until<clock_timestamp())) FOR UPDATE OF j SKIP LOCKED LIMIT 1) RETURNING id,epoch,fence,run_id,profile""",leaseSeconds,ns,ns,id) { r =>
           val version=one(c,"SELECT version FROM pony_retrieval_sources WHERE namespace=? AND id=?",ns,id)(_.getString(1)).get
@@ -116,7 +116,7 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
   }
   private def current(c: Connection,claim: WorkClaim): Boolean = {
     transaction(c)
-    val source=one(c,"SELECT epoch,target_profile,eligible,version,input_digest FROM pony_retrieval_sources WHERE namespace=? AND id=? FOR UPDATE",ns,key(claim.sourceId))(r => r.getLong(1)==claim.epoch && r.getString(2)==claim.profile && r.getBoolean(3) && r.getString(4)==key(claim.version) && r.getString(5)==inputDigest(claim.chunks)).contains(true)
+    val source=one(c,"SELECT epoch,target_profile,eligible,version,input_digest FROM pony_retrieval_sources WHERE namespace=? AND id=? AND (expires_at IS NULL OR expires_at>?) FOR UPDATE",ns,key(claim.sourceId),EpochSeconds.fromInstant(java.time.Instant.now()).value)(r => r.getLong(1)==claim.epoch && r.getString(2)==claim.profile && r.getBoolean(3) && r.getString(4)==key(claim.version) && r.getString(5)==inputDigest(claim.chunks)).contains(true)
     source && one(c,"SELECT 1 FROM pony_retrieval_jobs WHERE namespace=? AND id=? AND epoch=? AND profile=? AND fence=? AND run_id=? AND state='Running' AND lease_until>clock_timestamp() FOR UPDATE",ns,claim.jobId,claim.epoch,claim.profile,claim.fence,claim.run)(_ => true).contains(true)
   }
   private def requireCurrent(c: Connection,claim: WorkClaim): Unit = RetrievalChecks(current(c,claim),"stale-claim","retrieval claim no longer current")
