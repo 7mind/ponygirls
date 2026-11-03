@@ -1,0 +1,33 @@
+model haystack.api
+version "1.0.0"
+
+data VersionInfo { current: str minimum: str supported: lst[str] }
+data Identity { userId: str userType: str tokenId: str activityProjectId: str }
+root data LoginRequest { token: str }
+root data LoginResult { identity: Identity versions: VersionInfo }
+// JSON is validated by the shared lossless parser, never a binary floating point DTO.
+data DocumentPayload { json: str }
+data Metadata { createdAt: str createdBy: str modifiedAt: str modifiedBy: str }
+root data GetRequest { key: str revision: opt[i32] }
+root data Item { key: str revision: i32 document: DocumentPayload metadata: Metadata }
+root data PutRequest { key: str document: DocumentPayload expectedRevision: i32 requestId: uid }
+root data PutResult { key: str revision: i32 metadata: Metadata replayed: bit }
+root data HistoryRequest { key: str }
+data RevisionInfo { revision: i32 modifiedAt: str modifiedBy: str tokenId: str }
+root data HistoryResult { revisions: lst[RevisionInfo] }
+data SearchSort { field: str direction: str }
+root data SearchRequest { query: str project: opt[str] limit: i32 cursor: opt[str] sort: SearchSort }
+data Summary { key: str project: str item: str revision: i32 title: str docType: str status: str importance: str humanAttention: str tags: lst[str] modifiedAt: str modifiedBy: str }
+root data SearchResult { items: lst[Summary] cursor: opt[str] }
+data Span { message: str start: i32 end: i32 }
+root data Failure { code: str message: str spans: lst[Span] currentRevision: opt[i32] }
+root data QueryRequest { query: str caret: i32 }
+root data AnalyzeResult { valid: bit spans: lst[Span] }
+root data CompletionResult { suggestions: lst[str] }
+root data ValuesRequest { field: str }
+root data ValuesResult { values: lst[str] }
+root data Ack { ok: bit }
+enum RetrievalMode { Lexical Semantic Hybrid }
+root data RetrieveRequest { query: str mode: RetrievalMode project: opt[str] includeArchived: bit limit: i32 }
+data RetrievedSource { key: str revision: i32 pointer: str text: str score: f64 generation: str }
+root data RetrieveResult { sources: lst[RetrievedSource] mode: RetrievalMode countScope: str }
