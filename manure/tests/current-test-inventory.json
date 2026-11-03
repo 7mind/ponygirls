@@ -702,10 +702,14 @@
         "target"
       ],
       "tests": [
+        "test_target_durability.TargetDurabilityTests.test_all_scalar_casefold_probe_runs_in_actual_source_bound_executable",
         "test_target_durability.TargetDurabilityTests.test_connection_admission_returns_503_while_body_worker_active",
         "test_target_durability.TargetDurabilityTests.test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume",
         "test_target_durability.TargetDurabilityTests.test_server_sigkill_after_rename_before_ready_commit_recovers",
-        "test_target_durability.TargetDurabilityTests.test_shutdown_drains_active_chunk_and_stream_and_releases_claim"
+        "test_target_durability.TargetDurabilityTests.test_shutdown_drains_active_chunk_and_stream_and_releases_claim",
+        "test_target_durability.TargetDurabilityTests.test_shutdown_retains_claim_until_stalled_jdbc_worker_hits_its_configured_deadline",
+        "test_target_durability.TargetDurabilityTests.test_shutdown_waits_active_publish_and_keeps_physical_claim_until_ready_commit",
+        "test_target_durability.TargetDurabilityTests.test_shutdown_waits_active_sweep_callback_then_restart_removes_orphan_tree"
       ]
     },
     {
@@ -1177,10 +1181,14 @@
         {
           "path": "manure/backend/src/test/scala/manure/ArtifactsContract.scala",
           "marker": "test(\"failed publish mark and startup recovery are not successful-publish activity; ready commit and idempotency are exact\""
+        },
+        {
+          "path": "manure/tests/test_target_durability.py",
+          "testId": "test_target_durability.TargetDurabilityTests.test_shutdown_waits_active_sweep_callback_then_restart_removes_orphan_tree"
         }
       ],
       "openGaps": [
-        "ffbdd5f5 now has positive/negative activity and failed-publish/startup assertions in both Memory/PG, but failed publish P2 currently refreshes activity incorrectly (parent fail-first). Parent must fix successful-user-publish-only activity and prove it green, plus real sweep-vs-publish/receipt SQL lock ordering; no closure from source presence alone."
+        "P2 activity fix and success-only user publish/startup-preservation behavior now implemented; parent reported corrected Memory/PG unit run green. Keep OPEN pending observed source-bound allowlist/failed-publish execution and real sweep SQL callback/lock proof. The new6f6369b0 active-sweep target assertion is registered, not yet claimed passing."
       ]
     },
     {
@@ -1355,10 +1363,22 @@
         {
           "path": "manure/backend/src/main/scala/manure/Main.scala",
           "marker": "MaxActiveRequests"
+        },
+        {
+          "path": "manure/tests/test_target_durability.py",
+          "testId": "test_target_durability.TargetDurabilityTests.test_shutdown_waits_active_publish_and_keeps_physical_claim_until_ready_commit"
+        },
+        {
+          "path": "manure/tests/test_target_durability.py",
+          "testId": "test_target_durability.TargetDurabilityTests.test_shutdown_waits_active_sweep_callback_then_restart_removes_orphan_tree"
+        },
+        {
+          "path": "manure/tests/test_target_durability.py",
+          "testId": "test_target_durability.TargetDurabilityTests.test_shutdown_retains_claim_until_stalled_jdbc_worker_hits_its_configured_deadline"
         }
       ],
       "openGaps": [
-        "Actual-target graceful chunk/stream shutdown and claim restart are now concrete. Active publish/sweeper shutdown and stuck-worker claim retention still require replacement assertions beyond standalone POSIX lease-close tests."
+        "6f6369b0 now implements actual active-publish, active-sweep and stalled-JDBC shutdown/physical-claim assertions with owned PG waits and unchanged production defaults. OPEN until source-bound actual execution proves all new methods green; no runtime/native pass is implied by registration."
       ]
     },
     {
@@ -1445,10 +1465,26 @@
         {
           "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
           "marker": "test(\"pinned Unicode16 full fold agrees with every scalar Python oracle and fixed string vectors\""
+        },
+        {
+          "path": "manure/tests/test_target_durability.py",
+          "testId": "test_target_durability.TargetDurabilityTests.test_all_scalar_casefold_probe_runs_in_actual_source_bound_executable"
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"current casefold-equivalent queries share the same typed cursor and next page\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"literal queries beyond 1024 UTF16 units remain accepted and results stay bounded\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"unpaired UTF16 query surrogates still reject before metadata lookup\""
         }
       ],
       "openGaps": [
-        "Catalogue group remains OPEN: full-fold table/source and independent dual expected vectors now exist in3e4bd126 with complementary owned SQLite oracleca04d8b0. Effective casefold-equivalent query cursor fingerprint and unapproved1024-character cap correction/reviewer fail-first are pending. Close only after compiled corrected assertions and source-bound actual-native all-scalar proof; JVM scalar hashing is not native acceptance."
+        "Full Unicode16 fold, effective-folded query fingerprint and removal of the unapproved1024 cap are now implemented with independent dual assertions; actual-source executable scalar probe is registered in6f6369b0. Catalogue remains OPEN until compiled corrected full assertions and source-bound actual-native all-scalar proof are observed; no closure from source presence."
       ],
       "adjudication": "Review correction: the earlier claim that ROOT-lowercase replacement was an intentional approved change is withdrawn. ROOT is a functional regression against original CONTRACT7.1. The dual27-case and PG6-case matrices prove sorting/SQL/quota/locks, not permission to change casefold or reject valid long queries."
     },
@@ -1610,7 +1646,9 @@
     },
     {
       "id": "native-unicode-casefold",
-      "requirement": "Parent-owned pure actual-native all1,112,064-scalar framed-SHA probe must match pinned CPython3.14.8 Unicode16, without config/credential/DB/files/model acquisition. No current native proof is implied by the JVM scalar test or historical SQLite oracle."
+      "requirement": "Parent-owned pure actual-native all1,112,064-scalar framed-SHA probe must match pinned CPython3.14.8 Unicode16, without config/credential/DB/files/model acquisition. No current native proof is implied by the JVM scalar test or historical SQLite oracle.",
+      "targetTestId": "test_target_durability.TargetDurabilityTests.test_all_scalar_casefold_probe_runs_in_actual_source_bound_executable",
+      "command": "<source-bound native ELF> check-casefold"
     }
   ],
   "plannedCurrentModules": [],

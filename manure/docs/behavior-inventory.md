@@ -15,7 +15,7 @@ Node test names. No declaration means no silent omission: a new root/nested
 case ID, an import resolving outside the assigned source, or a missing concrete
 mapping causes the inventory self-check to fail.
 
-The frozen register currently declares **32 CURRENT Python modules /326 case
+The frozen register currently declares **32 CURRENT Python modules /330 case
 IDs**, **17 Node cases** across both browser-boundary/CDP suites, and the
 **74-vector generated TypeScript codec check**. These are declared inventory
 sizes, **not execution/pass counts**. All client, CLI, MCP, browser, offline and
@@ -65,7 +65,7 @@ credential rotation.
 | `test_mcp_protocol` | 9 | sdk |
 | `test_offline_conversion` | 30 | offline-postgres |
 | `test_retired_server_entrypoint` | 5 | controlled local/pure |
-| `test_target_durability` | 4 | target |
+| `test_target_durability` | 8 | target |
 | `test_target_migration` | 2 | target |
 | `test_target_search` | 1 | target |
 
@@ -305,7 +305,7 @@ Original-precision expiry cuts authorization immediately (410 authenticated API,
 allowlist and failed-publish/startup cases from `ffbdd5f5` (Memory and real PG).
 
 **OPEN—blocks full release acceptance:**
-- ffbdd5f5 now has positive/negative activity and failed-publish/startup assertions in both Memory/PG, but failed publish P2 currently refreshes activity incorrectly (parent fail-first). Parent must fix successful-user-publish-only activity and prove it green, plus real sweep-vs-publish/receipt SQL lock ordering; no closure from source presence alone.
+- P2 activity fix and success-only user publish/startup-preservation behavior now implemented; parent reported corrected Memory/PG unit run green. Keep OPEN pending observed source-bound allowlist/failed-publish execution and real sweep SQL callback/lock proof. The new6f6369b0 active-sweep target assertion is registered, not yet claimed passing.
 
 ### grants-secrets
 
@@ -370,7 +370,7 @@ Malformed/oversized/stalled requests cannot mutate or revoke before body validat
 - [`MaxActiveRequests`](../../manure/backend/src/main/scala/manure/Main.scala).
 
 **OPEN—blocks full release acceptance:**
-- Actual-target graceful chunk/stream shutdown and claim restart are now concrete. Active publish/sweeper shutdown and stuck-worker claim retention still require replacement assertions beyond standalone POSIX lease-close tests.
+- 6f6369b0 now implements actual active-publish, active-sweep and stalled-JDBC shutdown/physical-claim assertions with owned PG waits and unchanged production defaults. OPEN until source-bound actual execution proves all new methods green; no runtime/native pass is implied by registration.
 
 ### catalogue-current
 
@@ -405,7 +405,7 @@ mandatory. The source table is now pinned Unicode16 full fold (`3e4bd126`);
 all-scalar JVM proof is not native proof.
 
 **OPEN—blocks full release acceptance:**
-- Catalogue group remains OPEN: full-fold table/source and independent dual expected vectors now exist in3e4bd126 with complementary owned SQLite oracleca04d8b0. Effective casefold-equivalent query cursor fingerprint and unapproved1024-character cap correction/reviewer fail-first are pending. Close only after compiled corrected assertions and source-bound actual-native all-scalar proof; JVM scalar hashing is not native acceptance.
+- Full Unicode16 fold, effective-folded query fingerprint and removal of the unapproved1024 cap are now implemented with independent dual assertions; actual-source executable scalar probe is registered in6f6369b0. Catalogue remains OPEN until compiled corrected full assertions and source-bound actual-native all-scalar proof are observed; no closure from source presence.
 
 ### cli-mcp
 
@@ -540,3 +540,11 @@ supported queries):32 modules/326 exact IDs. This is complementary source
 behavior evidence, not an HTTP/target/full/native acceptance substitute.
 The native scalar probe is a separately mandatory pure parent-owned gate;
 activity and active publish/sweeper/stuck-worker lifetime remain open.
+
+Source `6f6369b0` adds4 CURRENT actual-executable/lifecycle methods to
+`test_target_durability`: now8 methods in that module and330 exact CURRENT IDs
+in32 modules. The scalar command uses the actual source-bound executable;
+active publish/sweep/SQL-deadline cases use owned service-role triggers and
+physical dev/inode kernel claim probes. All remain unexecuted by registration:
+no native/current acceptance is claimed. Production JDBC defaults/identity are
+not changed by the explicit owned test-fixture deadline override.
