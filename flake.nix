@@ -321,6 +321,7 @@
           tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
           tui-tmux = pkgs.callPackage ./nix/pkg/tui-tmux/default.nix { };
           haystack = self.lib.mkHaystackPackage { inherit pkgs; };
+          service-postgres-tools = pkgs.callPackage ./nix/pkg/services/postgres-tools.nix { };
           manure-clients = self.lib.mkManureClientPackage { inherit pkgs; };
           manure = self.lib.mkManurePackage { inherit pkgs; };
           chronicle-collector = pkgs.callPackage ./nix/pkg/chronicle/collector.nix { };

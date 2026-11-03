@@ -30,7 +30,7 @@ in pkgs.runCommand "haystack-native-current-transport" ({
   export HAYSTACK_TEST_DB_USER=haystack
   export HAYSTACK_TEST_DB_PASSWORD_FILE=$(python3 -c 'import json,os;print(json.loads(os.environ["PONYGIRLS_TEST_DATABASE_HAYSTACK"])["passwordFile"])')
   cd haystack
-  node --import ./scripts/register-generated.mjs --test --test-concurrency=1 \
+  timeout --signal=TERM --kill-after=10s 240s node --import ./scripts/register-generated.mjs --test --test-timeout=60000 --test-concurrency=1 \
     --test-reporter=tap --test-reporter-destination="$RECEIPT_DIR/transport.tap" \
     --test-reporter=junit --test-reporter-destination="$RECEIPT_DIR/transport.xml" \
     server/tests-current/*.test.mjs
@@ -38,7 +38,7 @@ in pkgs.runCommand "haystack-native-current-transport" ({
   python3 ${./with-owned-postgres.py} ${pkgs.runtimeShell} run-transport.sh || { cat "$out/transport.tap"; exit 1; }
   python3 ${./native-receipt.py} --service haystack \
     --artifact ${native}/libexec/haystack-server --runtime-source ${sources.haystackServer} \
-    --test-source ${sources.haystackTests} --xml "$out/transport.xml" --output "$out/receipt.json"
+    --test-source ${sources.haystackTests} --inventory haystack/server/tests-current/inventory.json --xml "$out/transport.xml" --output "$out/receipt.json"
   cp headers.txt dynamic.txt "$out/"
   cp ${native}/share/haystack/compiled-inputs.sha256 "$out/"
 ''
