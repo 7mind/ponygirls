@@ -1,0 +1,178 @@
+{
+  "observedAt": "2026-11-03T11:40:17.194290+00:00",
+  "status": "passed",
+  "baseSource": "7bab3c1a5d20e518b8f500a32b46628ee98fbfc6",
+  "fixtureSha256": "b84942d08686d4dfcc03dd2ea617636a8af3b42c82a825d430c4c0a994aa8ca1",
+  "compiledInputsEquivalent": 231,
+  "nativeElfSha256": "04dd2eaeb172c3f426b209b96901abad2ddf353644493c19c94bf5e69b3cdde1",
+  "jarSha256": "bd611b6631065e4c2538c9429e6b29248415cb29b01fbb7d934457f0449c4fd4",
+  "freshWorkflowCounts": {
+    "native-workflow": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "logSha256": "81976083ea7c8338e183b0750d220c708f8065d6affa80664f1d9456404eb129",
+      "cleanup": "no owned orphans/rescue/forced kill"
+    },
+    "jvm-workflow": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "logSha256": "a85c5ae9235edc1e9fe605658b7e793513c2eb4beceb2ec23155200ae1372b3e",
+      "cleanup": "no owned orphans/rescue/forced kill"
+    }
+  },
+  "completeEndMarkers": {
+    "native-workflow": {
+      "kind": "chronicle-workflow",
+      "command": "/nix/store/mvw89ddwd6pzx00wd6kmsxh5p8p10clq-chronicle-native-development-artifact-0.1.0/libexec/chronicle-server",
+      "sessions": 3,
+      "annotationCalls": 4,
+      "embeddingCalls": 6,
+      "officialMcpClient": "1.32.2",
+      "liveDashboard": "passed",
+      "liveDashboardRestart": "passed",
+      "serverLivenessRecovery": "passed",
+      "immutableSourceViews": "passed",
+      "modelOutage": "passed",
+      "restart": "passed",
+      "backupRestore": "passed",
+      "httpsModels": "passed"
+    },
+    "jvm-workflow": {
+      "kind": "chronicle-workflow",
+      "command": "/nix/store/6pfiwq699rwsdl6scfvjqdzzg5hsmx43-graalvm-ce-25.4.4.1.1/bin/java",
+      "sessions": 3,
+      "annotationCalls": 4,
+      "embeddingCalls": 6,
+      "officialMcpClient": "1.32.2",
+      "liveDashboard": "passed",
+      "liveDashboardRestart": "passed",
+      "serverLivenessRecovery": "passed",
+      "immutableSourceViews": "passed",
+      "modelOutage": "passed",
+      "restart": "passed",
+      "backupRestore": "passed",
+      "httpsModels": "passed"
+    }
+  },
+  "actualScreenshots": {
+    "native-desktop.png": {
+      "bytes": 159386,
+      "width": 1440,
+      "height": 1185,
+      "sha256": "1aadeba671e5fa61fcb3cdcd0d7b156100ebeef1ef4b9af0ecfd0ae9b99270f1"
+    },
+    "native-mobile.png": {
+      "bytes": 68730,
+      "width": 390,
+      "height": 844,
+      "sha256": "23d2a87722c5d4c151180486a8c6eeedc8dd9d3ce891491537b436d578835b58"
+    },
+    "jvm-desktop.png": {
+      "bytes": 159409,
+      "width": 1440,
+      "height": 1185,
+      "sha256": "76cd70a37059c2b3764fe15ef39fe33fb9c7283f551283a182658916b25b3d0b"
+    },
+    "jvm-mobile.png": {
+      "bytes": 68730,
+      "width": 390,
+      "height": 844,
+      "sha256": "23d2a87722c5d4c151180486a8c6eeedc8dd9d3ce891491537b436d578835b58"
+    }
+  },
+  "combinedStageInventory": [
+    "collector-node",
+    "collector-typecheck",
+    "jvm-assembly",
+    "jvm-workflow",
+    "native-recovery",
+    "native-workflow",
+    "npm-collector",
+    "npm-tests",
+    "npm-web",
+    "protocol",
+    "relevance-node",
+    "relevance-python",
+    "web-browser",
+    "web-build",
+    "web-node",
+    "web-typecheck"
+  ],
+  "reusedPassedStageCounts": {
+    "npm-web": null,
+    "npm-collector": null,
+    "npm-tests": null,
+    "web-typecheck": null,
+    "web-node": {
+      "tests": 147,
+      "pass": 147,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "web-build": null,
+    "collector-typecheck": null,
+    "collector-node": {
+      "tests": 125,
+      "pass": 125,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "protocol": {
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "typescriptFixtureGroups": 16,
+      "scalaSuites": 3
+    },
+    "web-browser": {
+      "completedPrograms": 20,
+      "programExecutions": 20,
+      "reportedPassSignals": 311,
+      "failedPrograms": 0,
+      "skippedPrograms": 0
+    },
+    "relevance-python": {
+      "tests": 172,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "relevance-node": {
+      "tests": 29,
+      "pass": 29,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "native-recovery": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "jvm-assembly": null
+  },
+  "sourceAndArtifactsUnchangedAfter": true,
+  "limitations": [
+    "Backend112/960 was parent completed at frozen7bab and not repeated",
+    "Fourteen remaining gates completed at frozen7bab reused by unchanged input hashes",
+    "Native workflow/recovery with controlled providers, not universal native admission or live-provider semantic qualification",
+    "Raw records explicitly tested through existing generated browser-cookie WS API, not a nonexistent Raw UI"
+  ]
+}

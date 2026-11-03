@@ -1,0 +1,8 @@
+{
+  "state": "failed",
+  "stage": "finished",
+  "observedAt": "2026-11-03T10:46:05.866268+00:00",
+  "source": "7bab3c1a5d20e518b8f500a32b46628ee98fbfc6",
+  "elfSha256": "04dd2eaeb172c3f426b209b96901abad2ddf353644493c19c94bf5e69b3cdde1",
+  "completedStages": 2
+}
