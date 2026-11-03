@@ -9,6 +9,12 @@ let
     maxConnections = 64;
     adminReserve = 8;
     sharedBuffers = "128MB";
+    effectiveCacheSize = "4GB";
+    maintenanceWorkMem = "64MB";
+    trackIoTiming = false;
+    randomPageCost = 4.0;
+    effectiveIoConcurrency = 1;
+    maintenanceIoConcurrency = 10;
     databases = builtins.listToAttrs (map (name: { inherit name; value = {
       inherit name;
       user = name;

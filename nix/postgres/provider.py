@@ -123,6 +123,18 @@ SELECT 1 / CASE WHEN EXISTS (SELECT FROM pg_roles WHERE rolname='{role}' AND
 \\getenv verifier PONYGIRLS_SCRAM
 SELECT format('CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', '{role}', :'verifier')
  WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{role}')\\gexec
+-- Server ERROR text itself can contain values, even with statement logging
+-- disabled (invalid casts, constraints, parameter conversion). Suppress native
+-- SQL diagnostics for application sessions; retain sanitized app telemetry and
+-- unchanged admin/cluster diagnostics. These are privileged role defaults.
+ALTER ROLE "{role}" SET log_min_messages = 'panic';
+ALTER ROLE "{role}" SET log_min_error_statement = 'panic';
+ALTER ROLE "{role}" SET log_statement = 'none';
+ALTER ROLE "{role}" SET log_duration = 'off';
+ALTER ROLE "{role}" SET log_min_duration_statement = '-1';
+ALTER ROLE "{role}" SET log_min_duration_sample = '-1';
+ALTER ROLE "{role}" SET log_parameter_max_length = '0';
+ALTER ROLE "{role}" SET log_parameter_max_length_on_error = '0';
 ALTER ROLE "{role}" CONNECTION LIMIT {d['maxConnections']};
 SELECT 'CREATE DATABASE "{name}"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='{name}')\\gexec
 REVOKE ALL ON DATABASE "{name}" FROM PUBLIC;

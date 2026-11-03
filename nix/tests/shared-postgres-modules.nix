@@ -11,6 +11,8 @@ let
   }).config;
   base = hm { };
   disabledApp = hm { systemd.user.services.haystack.Service.ExecStart = "/example/other-package/haystack-server"; };
+  tuned = hm { ponygirls.servicePostgres = { sharedBuffers = "16GB"; effectiveCacheSize = "128GB"; maintenanceWorkMem = "1GB"; trackIoTiming = true; randomPageCost = 1.1; effectiveIoConcurrency = 200; maintenanceIoConcurrency = 100; }; };
+  tunedPolicy = import ../postgres/policy.nix { inherit lib pkgs; cfg = tuned.ponygirls.servicePostgres; };
   overBudget = hm { ponygirls.servicePostgres.maxConnections = 32; };
   system = (nixpkgs.lib.nixosSystem {
     system = pkgs.stdenv.hostPlatform.system;
@@ -32,6 +34,13 @@ assert !(hmUnits.ponygirls-postgres.Unit ? PartOf);
 assert hmUnits.ponygirls-postgres == disabledApp.systemd.user.services.ponygirls-postgres;
 assert hmUnits.ponygirls-database-chronicle == disabledApp.systemd.user.services.ponygirls-database-chronicle;
 assert base.ponygirls.servicePostgres.connections.haystack.jdbcUrl == "jdbc:postgresql://127.0.0.1:15434/haystack";
+assert tunedPolicy.settings.shared_buffers == "16GB";
+assert tunedPolicy.settings.effective_cache_size == "128GB";
+assert tunedPolicy.settings.maintenance_work_mem == "1GB";
+assert tunedPolicy.settings.track_io_timing;
+assert tunedPolicy.settings.random_page_cost == 1.1;
+assert tunedPolicy.settings.effective_io_concurrency == 200;
+assert tunedPolicy.settings.maintenance_io_concurrency == 100;
 assert system.services.postgresql.enable;
 assert system.services.postgresql.dataDir == "/var/lib/ponygirls-postgres-18/data";
 assert !(system.systemd.services ? ponygirls-postgres);

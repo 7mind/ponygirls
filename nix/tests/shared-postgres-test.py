@@ -93,6 +93,20 @@ def main():
                 check(f'{role}-no-admin-db-or-privileges',True)
                 query(role,role,'SELECT pg_sleep(2)',ok=False)
                 check(f'{role}-statement-timeout',True)
+            # SQL text AND server ERROR messages can include private values.
+            # Exercise inline and extended-query bound-parameter conversion
+            # failures for every role, then inspect real PostgreSQL logs.
+            canary = 'private-' + __import__('secrets').token_hex(24)
+            for role in config['databases']:
+                query(role,role,f"SELECT '{canary}'::integer",ok=False)
+                private_env = dict(os.environ, PGHOST='127.0.0.1', PGPORT=str(port), PGUSER=role, PGDATABASE=role, PGPASSWORD=hashes[role].decode().strip())
+                failed = run(pg+'/psql','-X','-w','-qAt','-v','ON_ERROR_STOP=1',env=private_env,
+                    input=f"SELECT $1::integer\n\\bind '{canary}'\n\\g\n",text=True)
+                assert failed.returncode != 0 and 'invalid input syntax for type integer' in failed.stderr and canary in failed.stderr
+                query(role,role,f"INSERT INTO isolation_probe VALUES (1, '{canary}')",ok=False)
+                check(role+'-sql-errors-private',canary not in (root/'postgres.log').read_text())
+                check(role+'-effective-sql-privacy',query(role,role,"SELECT current_setting('log_min_messages') || ',' || current_setting('log_min_error_statement') || ',' || current_setting('log_statement') || ',' || current_setting('log_duration') || ',' || current_setting('log_min_duration_statement') || ',' || current_setting('log_parameter_max_length_on_error')") == 'panic,panic,none,off,-1,0')
+            check('administrator-sql-diagnostics-not-downgraded',query(admin,'postgres',"SHOW log_min_messages") == 'warning')
             # Actual lock deadline, not merely a SHOW assertion.
             lockenv = dict(os.environ, PGHOST='127.0.0.1', PGPORT=str(port), PGUSER='haystack', PGDATABASE='haystack', PGPASSWORD=hashes['haystack'].decode().strip())
             locker = subprocess.Popen([pg+'/psql','-X','-w','-qAt'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=lockenv, text=True)

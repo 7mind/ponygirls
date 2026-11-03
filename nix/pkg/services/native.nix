@@ -31,7 +31,10 @@ in stdenv.mkDerivation {
         -d hosted-feature manure/server/native-image/PosixLinkFeature.java
     ''}
     native-image -J-Xmx24g --parallelism="$threads" --no-fallback -march=compatibility \
-      --enable-url-protocols=http,https ${lib.escapeShellArgs environment.tools.nativeImageFlags} \
+      --enable-url-protocols=http,https --enable-all-security-services \
+      '-H:IncludeResources=.*\.sql|org/postgresql/.*|META-INF/services/.*' \
+      --initialize-at-run-time=org.postgresql.Driver,org.postgresql.util.SharedTimer,org.postgresql.core.v3.AuthenticationPluginManager,org.postgresql.ssl.LibPQFactory \
+      ${lib.escapeShellArgs environment.tools.nativeImageFlags} \
       ${lib.optionalString (service == "manure") ''
         --enable-native-access=ALL-UNNAMED \
         -J--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.jdk=ALL-UNNAMED \
