@@ -215,6 +215,16 @@
       ]
     },
     {
+      "module": "test_catalogue_casefold_oracle",
+      "path": "manure/tests/test_catalogue_casefold_oracle.py",
+      "classification": "current",
+      "requires": [],
+      "tests": [
+        "test_catalogue_casefold_oracle.HistoricalCatalogueCasefoldOracleTests.test_owned_sqlite_uses_full_casefold_for_eleven_supported_queries"
+      ],
+      "acceptanceScope": "Complementary historical ArtifactStore/SQLite supported-query oracle only, eleven independently expected full-casefold queries; no HTTP/main. NOT replacement-target acceptance. Pinned CPython3.14 / Unicode16 assertion fails rather than skips."
+    },
+    {
       "module": "test_cli_process",
       "path": "manure/tests/test_cli_process.py",
       "classification": "current",
@@ -1159,10 +1169,18 @@
         {
           "path": "manure/backend/src/test/scala/manure/ArtifactsContract.scala",
           "marker": "test(\"any manager may rotate an incomplete external password without advancing activity\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/ArtifactsContract.scala",
+          "marker": "test(\"only successful PATCH and chunk including duplicate ACK refresh idle activity; reads and rejected mutations do not\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/ArtifactsContract.scala",
+          "marker": "test(\"failed publish mark and startup recovery are not successful-publish activity; ready commit and idempotency are exact\""
         }
       ],
       "openGaps": [
-        "Current replacement needs explicit successful PATCH/publish versus read/status activity allowlist checks and sweep-vs-publish/receipt lock-order assertion; expiry display tests alone do not cover idle-session durability."
+        "ffbdd5f5 now has positive/negative activity and failed-publish/startup assertions in both Memory/PG, but failed publish P2 currently refreshes activity incorrectly (parent fail-first). Parent must fix successful-user-publish-only activity and prove it green, plus real sweep-vs-publish/receipt SQL lock ordering; no closure from source presence alone."
       ]
     },
     {
@@ -1385,8 +1403,7 @@
         },
         {
           "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
-          "marker": "test(\"ROOT lowercase is not casefold; NUL/supplementary text and SQL wildcard characters are literal\"",
-          "coverage": "Contrary implementation characterization, not proof of the required casefold invariant; must be corrected with the implementation."
+          "marker": "test(\"normative full Unicode casefold matches independently expected historical values\""
         },
         {
           "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
@@ -1419,10 +1436,19 @@
         {
           "path": "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala",
           "marker": "test(\"trusted catalogue SQL has one keyset LIMIT and literal bytea parameters, never user SQL\""
+        },
+        {
+          "path": "manure/tests/test_catalogue_casefold_oracle.py",
+          "testId": "test_catalogue_casefold_oracle.HistoricalCatalogueCasefoldOracleTests.test_owned_sqlite_uses_full_casefold_for_eleven_supported_queries",
+          "coverage": "Complementary original supported-query oracle, NOT target/backend acceptance."
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/CatalogueContract.scala",
+          "marker": "test(\"pinned Unicode16 full fold agrees with every scalar Python oracle and fixed string vectors\""
         }
       ],
       "openGaps": [
-        "Functional regression OPEN: current ROOT-lower matching is not the required Python Unicode casefold (e.g. Straße/STRASSE and final sigma). Correct implementation/projection and independent dual+PG assertions; review effective casefold-equivalent cursor fingerprints and the unapproved1024 query-length rejection with bounded fail-first proof. Existing all-sort/SQL matrices do not close this behavior gap."
+        "Catalogue group remains OPEN: full-fold table/source and independent dual expected vectors now exist in3e4bd126 with complementary owned SQLite oracleca04d8b0. Effective casefold-equivalent query cursor fingerprint and unapproved1024-character cap correction/reviewer fail-first are pending. Close only after compiled corrected assertions and source-bound actual-native all-scalar proof; JVM scalar hashing is not native acceptance."
       ],
       "adjudication": "Review correction: the earlier claim that ROOT-lowercase replacement was an intentional approved change is withdrawn. ROOT is a functional regression against original CONTRACT7.1. The dual27-case and PG6-case matrices prove sorting/SQL/quota/locks, not permission to change casefold or reject valid long queries."
     },
@@ -1581,6 +1607,10 @@
     {
       "id": "shared-consumer-regressions",
       "requirement": "Shared runtime/retrieval changes require full owned Chronicle/Haystack regressions per their instructions; Manure subset is not consumer evidence."
+    },
+    {
+      "id": "native-unicode-casefold",
+      "requirement": "Parent-owned pure actual-native all1,112,064-scalar framed-SHA probe must match pinned CPython3.14.8 Unicode16, without config/credential/DB/files/model acquisition. No current native proof is implied by the JVM scalar test or historical SQLite oracle."
     }
   ],
   "plannedCurrentModules": [],

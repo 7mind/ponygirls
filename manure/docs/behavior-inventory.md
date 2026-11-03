@@ -15,7 +15,7 @@ Node test names. No declaration means no silent omission: a new root/nested
 case ID, an import resolving outside the assigned source, or a missing concrete
 mapping causes the inventory self-check to fail.
 
-The frozen register currently declares **31 CURRENT Python modules /325 case
+The frozen register currently declares **32 CURRENT Python modules /326 case
 IDs**, **17 Node cases** across both browser-boundary/CDP suites, and the
 **74-vector generated TypeScript codec check**. These are declared inventory
 sizes, **not execution/pass counts**. All client, CLI, MCP, browser, offline and
@@ -45,6 +45,7 @@ credential rotation.
 | `test_browser_path_mode` | 4 | target, browser |
 | `test_browser_tls` | 5 | target, browser |
 | `test_browser_unlock` | 34 | target, browser |
+| `test_catalogue_casefold_oracle` | 1 | controlled historical SQLite oracle; NOT target acceptance |
 | `test_cli_process` | 3 | target |
 | `test_cli_resume` | 14 | controlled local/pure |
 | `test_client_external` | 5 | controlled local/pure |
@@ -300,8 +301,11 @@ Original-precision expiry cuts authorization immediately (410 authenticated API,
 - [`test_browser_dashboard.ExpiredDeleteCase.test_a2_expired_artifact_can_be_deleted_from_list`](../../manure/tests/test_browser_dashboard.py).
 - [`test("any manager may rotate an incomplete external password without advancing activity"`](../../manure/backend/src/test/scala/manure/ArtifactsContract.scala).
 
+**New concrete but not-yet-green assertions:** ArtifactsContract activity
+allowlist and failed-publish/startup cases from `ffbdd5f5` (Memory and real PG).
+
 **OPEN—blocks full release acceptance:**
-- Current replacement needs explicit successful PATCH/publish versus read/status activity allowlist checks and sweep-vs-publish/receipt lock-order assertion; expiry display tests alone do not cover idle-session durability.
+- ffbdd5f5 now has positive/negative activity and failed-publish/startup assertions in both Memory/PG, but failed publish P2 currently refreshes activity incorrectly (parent fail-first). Parent must fix successful-user-publish-only activity and prove it green, plus real sweep-vs-publish/receipt SQL lock ordering; no closure from source presence alone.
 
 ### grants-secrets
 
@@ -380,7 +384,7 @@ Preserve CONTRACT7.1 Python Unicode casefold literal matching, no Unicode normal
 - [`test_browser_dashboard_ux.DashboardUXTests.test_catalogue_detail_and_session_flows`](../../manure/tests/test_browser_dashboard_ux.py).
 - [`test_current_client.CurrentClientTests.test_typed_catalogue_patch_management_and_search`](../../manure/tests/test_current_client.py).
 - [`test(s"all metadata shared; $sort/$direction byte order, ties, NULL-last keyset traversal"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
-- [`test("ROOT lowercase is not casefold; NUL/supplementary text and SQL wildcard characters are literal"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala). **Contrary matching characterization; not normative coverage.**
+- [`test("normative full Unicode casefold matches independently expected historical values"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala). **Source now corrected in3e4bd126; compiled/native closure still pending.**
 - [`test("expiry authorization and state/visibility filtering happen before keyset LIMIT"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
 - [`test("cursor binds every effective option and enforces typed count/time/text/null positions"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
 - [`test("deleting a cursor boundary does not require a boundary-row lookup"`](../../manure/backend/src/test/scala/manure/CatalogueContract.scala).
@@ -392,8 +396,16 @@ Preserve CONTRACT7.1 Python Unicode casefold literal matching, no Unicode normal
 
 **Adjudication:** Review correction: the earlier claim that ROOT-lowercase replacement was an intentional approved change is withdrawn. ROOT is a functional regression against original CONTRACT7.1. The dual27-case and PG6-case matrices prove sorting/SQL/quota/locks, not permission to change casefold or reject valid long queries.
 
+**New CURRENT complementary oracle:**
+`test_catalogue_casefold_oracle.HistoricalCatalogueCasefoldOracleTests.test_owned_sqlite_uses_full_casefold_for_eleven_supported_queries`.
+This only uses owned historical ArtifactStore/SQLite, independently expected
+supported queries and its real SQL casefold function—no HTTP/main and **not
+replacement-target acceptance**. Independent dual/PG and native tests remain
+mandatory. The source table is now pinned Unicode16 full fold (`3e4bd126`);
+all-scalar JVM proof is not native proof.
+
 **OPEN—blocks full release acceptance:**
-- Functional regression OPEN: current ROOT-lower matching is not the required Python Unicode casefold (e.g. Straße/STRASSE and final sigma). Correct implementation/projection and independent dual+PG assertions; review effective casefold-equivalent cursor fingerprints and the unapproved1024 query-length rejection with bounded fail-first proof. Existing all-sort/SQL matrices do not close this behavior gap.
+- Catalogue group remains OPEN: full-fold table/source and independent dual expected vectors now exist in3e4bd126 with complementary owned SQLite oracleca04d8b0. Effective casefold-equivalent query cursor fingerprint and unapproved1024-character cap correction/reviewer fail-first are pending. Close only after compiled corrected assertions and source-bound actual-native all-scalar proof; JVM scalar hashing is not native acceptance.
 
 ### cli-mcp
 
@@ -522,3 +534,9 @@ After parent `5f3905ec` integration and explicit retirement registration, a
 passed0 failures/errors/skips. The declared inventory is now31 modules/325
 methods, not a completed325-method run. Three invariant clauses remain open after the concrete `a12c3c58` search closure;
 full acceptance still cannot be inferred from this component diagnostic.
+
+CURRENT oracle promotion `ca04d8b0` adds1 declared method (11 owned historical
+supported queries):32 modules/326 exact IDs. This is complementary source
+behavior evidence, not an HTTP/target/full/native acceptance substitute.
+The native scalar probe is a separately mandatory pure parent-owned gate;
+activity and active publish/sweeper/stuck-worker lifetime remain open.

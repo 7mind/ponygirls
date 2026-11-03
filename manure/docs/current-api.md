@@ -120,9 +120,11 @@ and `STRASSE` match; final sigma folds with sigma. Composed/decomposed Unicode
 strings remain distinct absent casefold equivalence. Original strings/epochs
 remain lossless; unsigned UTF-8 ordering is independent of the matching fold.
 
-**OPEN FUNCTIONAL REGRESSION:** the frozen Scala ROOT-lowercase implementation,
-its ROOT-specific characterization and1024-character query rejection do not
-satisfy those requirements. The previous claim in this document that changing
+**OPEN IMPLEMENTATION/VALIDATION GAP:** `3e4bd126` now embeds pinned Unicode16
+full-fold mappings and independent dual expected vectors, replacing the
+incorrect ROOT-lowercase implementation/characterization. The1024-character
+query rejection and raw-query cursor fingerprint still require the authorized
+fix and reviewer fail-first; compiled/native all-scalar validation is pending. The previous claim in this document that changing
 Python casefold was deliberate/approved was wrong and is withdrawn. Actual
 query projection, effective-query cursor equivalence and valid long-query
 assertions need the parent/reviewer fail-first+fix; SQL keyset tests alone do
