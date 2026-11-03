@@ -214,11 +214,16 @@ class OwnedDatabase:
                 'statementTimeoutMs':30000,'lockTimeoutMs':5000,'idleTransactionTimeoutMs':30000,'socketTimeoutMs':30000}}
 
 
+def server_command():
+    command=json.loads(_required('MANURE_TEST_SERVER_COMMAND_JSON'))
+    if not isinstance(command,list) or not command or not all(isinstance(v,str) and v for v in command):
+        raise RuntimeError('MANURE_TEST_SERVER_COMMAND_JSON must be a nonempty argv array')
+    return command
+
+
 class TargetServer:
-    def __init__(self,config:dict,directory:str,*,owned_database=None,close_database=True):
-        command=json.loads(_required('MANURE_TEST_SERVER_COMMAND_JSON'))
-        if not isinstance(command,list) or not command or not all(isinstance(v,str) and v for v in command):
-            raise RuntimeError('MANURE_TEST_SERVER_COMMAND_JSON must be a nonempty argv array')
+    def __init__(self,config:dict,directory:str,*,owned_database=None,close_database=True,jdbc_limits=None):
+        command=server_command()
         self.config=dict(config);self.process=None;self.database=None;self.closed=False
         self._stdout=deque(maxlen=100);self._stderr=deque(maxlen=100)
         if owned_database is not None and not isinstance(owned_database,OwnedDatabase):
@@ -226,6 +231,11 @@ class TargetServer:
         self.database=owned_database if owned_database is not None else OwnedDatabase(directory)
         self.close_database=close_database
         self.config['database']=self.database.config()
+        if jdbc_limits is not None:
+            allowed=set(self.config['database']['limits'])
+            if not isinstance(jdbc_limits,dict) or not set(jdbc_limits)<=allowed or any(type(v) is not int or v<=0 for v in jdbc_limits.values()):
+                raise RuntimeError('invalid explicit owned JDBC limit override')
+            self.config['database']['limits'].update(jdbc_limits)
         library=os.environ.get('MANURE_POSIX_LIBRARY')
         self.config['native_mode']='shared' if library else 'linked'
         self.config['posix_library']=library

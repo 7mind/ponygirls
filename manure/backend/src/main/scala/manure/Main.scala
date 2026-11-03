@@ -17,6 +17,7 @@ import io.circe.Json
 
 object Main extends IOApp:
   def run(args: List[String]): IO[ExitCode] = args match
+    case List("check-casefold") => IO.blocking(UnicodeCaseFoldProbe.main(Array.empty[String])).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("serve",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("check-config",path) => IO.blocking(Config.load(Path.of(path))).flatMap(_ => IO.println("MANURE_CONFIG_OK")).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("migrate",path) => IO.blocking(Config.load(Path.of(path))).flatMap(config => buildResources(config,false).use(_ => IO.unit)).as(ExitCode.Success).handleErrorWith(safeFailure)

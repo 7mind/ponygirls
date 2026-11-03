@@ -10,11 +10,13 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import hashlib
 import http.client
+import errno
 import json
 import os
 from pathlib import Path
 import signal
 import socket
+import subprocess
 import tempfile
 import threading
 import time
@@ -24,7 +26,7 @@ from uuid import uuid4
 
 from manure import auth as A,current_protocol as cp
 from manure.client import ManureClient,ManureError
-from target_server import OwnedDatabase,TargetServer
+from target_server import OwnedDatabase,TargetServer,server_command
 
 
 @contextmanager
@@ -72,7 +74,121 @@ def response_head(sock):
     return int(header.split(b' ',2)[1]),fields,body
 
 
+def claim_available(root):
+    identity=os.stat(root/'data');name='\0manure-'+hashlib.sha256(f'{identity.st_dev}:{identity.st_ino}'.encode()).hexdigest()
+    probe=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+    try:
+        try:probe.bind(name);return True
+        except OSError as error:
+            if error.errno==errno.EADDRINUSE:return False
+            raise
+    finally:probe.close()
+
+
+def pause_ready(database,aid,seconds):
+    database.runtime_sql(f"""CREATE FUNCTION manure.pause_ready_fixture() RETURNS trigger LANGUAGE plpgsql AS $fixture$
+    BEGIN IF NEW.id=convert_to('{aid}','UTF8') AND OLD.state=convert_to('publishing','UTF8') AND NEW.state=convert_to('ready','UTF8')
+    THEN PERFORM pg_sleep({seconds}); END IF; RETURN NEW; END $fixture$;
+    CREATE TRIGGER pause_ready_fixture AFTER UPDATE ON manure.artifacts FOR EACH ROW EXECUTE FUNCTION manure.pause_ready_fixture();""")
+
+
+def wait_sleep(test,database):
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        if database.runtime_sql("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND usename=current_user AND wait_event='PgSleep'")=='1':return
+        time.sleep(.05)
+    test.fail('did not observe owned target worker in controlled PostgreSQL wait')
+
+
 class TargetDurabilityTests(unittest.TestCase):
+    def test_all_scalar_casefold_probe_runs_in_actual_source_bound_executable(self):
+        env={k:v for k,v in os.environ.items() if k in ('PATH','JAVA_HOME')}
+        with tempfile.TemporaryDirectory(prefix='manure-pure-casefold-cli-') as tmp:
+            result=subprocess.run(server_command()+['check-casefold'],cwd=tmp,env=env,capture_output=True,timeout=30)
+            self.assertEqual(result.returncode,0,'pure current executable casefold diagnostic failed')
+            self.assertEqual(result.stdout.decode().strip(),'UNICODE_CASEFOLD_OK 16.0.0 1112064 5f578437c5eaa594f59de533d294d0a0cfa0070ea0b41308000f745e96cd9136')
+            self.assertEqual(list(Path(tmp).iterdir()),[])
+
+    def test_shutdown_waits_active_publish_and_keeps_physical_claim_until_ready_commit(self):
+        with fixture() as (root,config,database,token,_):
+            server=TargetServer(config,str(root),owned_database=database,close_database=False);publisher=None;closer=None
+            result=[];errors=[]
+            try:
+                c=client(server,token,root);data=b'graceful active publish'*16000;aid=upload(c,data)['artifact_id']
+                pause_ready(database,aid,5)
+                def publish():
+                    try:result.append(c.publish(aid)['state'])
+                    except ManureError as error:result.append(error.code)
+                def close():
+                    try:server.close()
+                    except BaseException as error:errors.append(type(error).__name__)
+                publisher=threading.Thread(target=publish,daemon=True);publisher.start();wait_sleep(self,database)
+                self.assertFalse(claim_available(root));closer=threading.Thread(target=close,daemon=True);closer.start();time.sleep(.2)
+                self.assertIsNone(server.process.poll());self.assertFalse(claim_available(root),'claim released while ready commit callback remained active')
+                publisher.join(timeout=15);closer.join(timeout=15)
+                self.assertFalse(publisher.is_alive());self.assertFalse(closer.is_alive());self.assertEqual(result,['ready']);self.assertEqual(errors,[])
+                self.assertTrue(claim_available(root));server=None
+                database.runtime_sql('DROP TRIGGER pause_ready_fixture ON manure.artifacts; DROP FUNCTION manure.pause_ready_fixture();')
+                server=TargetServer(config,str(root),owned_database=database,close_database=False)
+                c=client(server,token,root,'reopened-publish');self.assertEqual(c.get_artifact(aid)['state'],'ready')
+                output=root/'published';c.fetch_to_dest(aid,output);self.assertEqual((output/'file.bin').read_bytes(),data)
+            finally:
+                if server is not None:server.close()
+                if publisher is not None:publisher.join(timeout=15)
+                if closer is not None:closer.join(timeout=15)
+
+    def test_shutdown_waits_active_sweep_callback_then_restart_removes_orphan_tree(self):
+        with fixture(sweep_interval_s=1,incomplete_session_ttl_s=2) as (root,config,database,token,_):
+            server=TargetServer(config,str(root),owned_database=database,close_database=False);closer=None;errors=[]
+            try:
+                c=client(server,token,root);aid=c.init_upload('idle directory','dir','internal',[])['artifact_id']
+                database.runtime_sql(f"""CREATE FUNCTION manure.pause_delete_fixture() RETURNS trigger LANGUAGE plpgsql AS $fixture$
+                BEGIN IF OLD.id=convert_to('{aid}','UTF8') THEN PERFORM pg_sleep(5); END IF; RETURN OLD; END $fixture$;
+                CREATE TRIGGER pause_delete_fixture BEFORE DELETE ON manure.artifacts FOR EACH ROW EXECUTE FUNCTION manure.pause_delete_fixture();""")
+                wait_sleep(self,database)
+                def close():
+                    try:server.close()
+                    except BaseException as error:errors.append(type(error).__name__)
+                closer=threading.Thread(target=close,daemon=True);closer.start();time.sleep(.2)
+                self.assertIsNone(server.process.poll());self.assertFalse(claim_available(root),'claim released while sweeper JDBC callback remained active')
+                closer.join(timeout=15);self.assertFalse(closer.is_alive());self.assertEqual(errors,[]);self.assertTrue(claim_available(root));server=None
+                self.assertEqual(database.runtime_sql(f"SELECT count(*) FROM manure.artifacts WHERE id=convert_to('{aid}','UTF8')"),'0')
+                database.runtime_sql('DROP TRIGGER pause_delete_fixture ON manure.artifacts; DROP FUNCTION manure.pause_delete_fixture();')
+                server=TargetServer(config,str(root),owned_database=database,close_database=False)
+                with self.assertRaises(ManureError) as gone:client(server,token,root,'after-sweep-close').get_artifact(aid)
+                self.assertEqual(gone.exception.code,'not-found')
+                self.assertFalse((root/'data'/'staging'/aid).exists());self.assertFalse((root/'data'/'staging'/(aid+'.json')).exists())
+            finally:
+                if server is not None:server.close()
+                if closer is not None:closer.join(timeout=15)
+
+    def test_shutdown_retains_claim_until_stalled_jdbc_worker_hits_its_configured_deadline(self):
+        with fixture() as (root,config,database,token,_):
+            server=TargetServer(config,str(root),owned_database=database,close_database=False,jdbc_limits={'statementTimeoutMs':2000});publisher=None;closer=None;result=[];errors=[]
+            try:
+                c=client(server,token,root);data=b'bounded stalled ready commit';aid=upload(c,data)['artifact_id'];pause_ready(database,aid,20)
+                def publish():
+                    try:result.append(c.publish(aid)['state'])
+                    except ManureError as error:result.append(error.code)
+                def close():
+                    try:server.close()
+                    except BaseException as error:errors.append(type(error).__name__)
+                publisher=threading.Thread(target=publish,daemon=True);publisher.start();wait_sleep(self,database)
+                closer=threading.Thread(target=close,daemon=True);closer.start();time.sleep(.2)
+                self.assertIsNone(server.process.poll());self.assertFalse(claim_available(root),'claim released before blocked callback terminated')
+                publisher.join(timeout=10);closer.join(timeout=10)
+                self.assertFalse(publisher.is_alive());self.assertFalse(closer.is_alive());self.assertEqual(result,['unavailable']);self.assertEqual(errors,[])
+                self.assertTrue(claim_available(root));server=None
+                self.assertEqual(database.runtime_sql(f"SELECT convert_from(state,'UTF8') FROM manure.artifacts WHERE id=convert_to('{aid}','UTF8')"),'publishing')
+                database.runtime_sql('DROP TRIGGER pause_ready_fixture ON manure.artifacts; DROP FUNCTION manure.pause_ready_fixture();')
+                server=TargetServer(config,str(root),owned_database=database,close_database=False);c=client(server,token,root,'after-worker-deadline')
+                self.assertEqual(c.get_artifact(aid)['state'],'ready');output=root/'deadline-recovered';c.fetch_to_dest(aid,output)
+                self.assertEqual((output/'file.bin').read_bytes(),data)
+            finally:
+                if server is not None:server.close()
+                if publisher is not None:publisher.join(timeout=10)
+                if closer is not None:closer.join(timeout=10)
+
     def test_reverse_and_concurrent_receipts_server_sigkill_after_ack_resume(self):
         with fixture() as (root,config,database,token,other):
             data=bytes(range(251))*3200;size=len(data);server=TargetServer(config,str(root),owned_database=database,close_database=False)
