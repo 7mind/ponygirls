@@ -109,7 +109,7 @@ in
       limits = import ../lib/jdbc-limits-options.nix { inherit lib; lockTimeoutMs = 35000; idleTransactionTimeoutMs = 60000; socketTimeoutMs = 35000; };
       manageLocal = lib.mkOption { type = lib.types.bool; default = false; description = "Retired: must remain false. Configure the explicitly migrated shared servicePostgres provider separately."; };
       readinessUnit = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
-      ssdTuning = lib.mkEnableOption "SSD-oriented planner and I/O concurrency defaults for the managed PostgreSQL cluster (cluster-wide, not a storage benchmark)" // { default = false; };
+      ssdTuning = lib.mkOption { type = lib.types.bool; default = false; description = "Retired: must remain false. Select measured cluster policy explicitly on ponygirls.servicePostgres; this consumer never owns cluster tuning."; };
       name = lib.mkOption { type = lib.types.str; default = "chronicle"; };
       user = lib.mkOption { type = lib.types.str; default = "chronicle"; };
       passwordFile = lib.mkOption { type = lib.types.str; description = "Runtime database password file; never embed a password in jdbcUrl."; };
@@ -140,6 +140,7 @@ in
         { assertion = lib.all (t: builtins.hasAttr t.userId cfg.users && t.name != "" && builtins.stringLength t.name <= 128 && t.scopes != [ ] && builtins.length t.scopes == builtins.length (lib.unique t.scopes) && (!(builtins.elem "Raw" t.scopes) || builtins.elem "Read" t.scopes)) cfg.staticTokens; message = "Chronicle: static tokens require configured owners, bounded names and nonempty distinct valid scopes (Raw requires Read)."; }
         { assertion = builtins.length loginList == builtins.length (lib.unique loginList); message = "Chronicle: logins must be unique."; }
         { assertion = lib.all (p: lib.hasPrefix "/" p && !(lib.hasPrefix builtins.storeDir p)) runtimeFiles; message = "Chronicle: all credential files must be runtime paths outside the Nix store."; }
+        { assertion = !cfg.database.ssdTuning; message = "Chronicle: database.ssdTuning has been retired; configure measured ponygirls.servicePostgres.randomPageCost, effectiveIoConcurrency and maintenanceIoConcurrency explicitly. Chronicle no longer owns cluster tuning."; }
         { assertion = !cfg.database.manageLocal; message = "Chronicle: implicit manageLocal has been retired. Migrate logically into the explicit shared servicePostgres provider and supply its connection fields/readinessUnit."; }
         { assertion = cfg.database.manageLocal || cfg.database.jdbcUrl != ""; message = "Chronicle: external database requires jdbcUrl and a preinstalled vector extension."; }
       ];

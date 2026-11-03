@@ -74,6 +74,7 @@ let
   rejectedCapacity = field: value: !(builtins.tryEval (builtins.getAttr field (invalidCapacity field value).smind.services.chronicle.indexing)).success;
   disabledServer = server { };
   sendDimensions = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.embedding.sendDimensions = true; });
+  retiredSsd = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.database.ssdTuning = true; });
   noSsd = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.database.ssdTuning = false; });
   customSsd = server (serverConfig // { services.postgresql.settings = { random_page_cost = 2.0; effective_io_concurrency = 64; maintenance_io_concurrency = 32; }; });
   externalDatabase = server (lib.recursiveUpdate serverConfig { smind.services.chronicle.database = { manageLocal = false; jdbcUrl = "jdbc:postgresql://db.example/chronicle"; }; });
@@ -154,6 +155,7 @@ assert enabledServer.systemd.services.chronicle-migrate.requires == [ "ponygirls
 assert !(enabledServer.systemd.services ? chronicle-database);
 assert !enabledServer.smind.services.chronicle.embedding.sendDimensions;
 assert sendDimensions.smind.services.chronicle.embedding.sendDimensions;
+assert lib.any (a: !a.assertion && lib.hasPrefix "Chronicle: database.ssdTuning" a.message) retiredSsd.assertions;
 assert !enabledServer.services.postgresql.enable;
 assert enabledServer.services.postgresql.ensureDatabases == [ ];
 assert !(enabledServer.services.postgresql.settings ? random_page_cost);
