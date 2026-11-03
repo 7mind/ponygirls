@@ -9,6 +9,8 @@ in pkgs.runCommand "haystack-native-current-transport" ({
   nativeBuildInputs = [ pkgs.python3 pkgs.nodejs pkgs.coreutils pkgs.binutils ];
   HAYSTACK_SERVER_COMMAND = "${native}/libexec/haystack-server";
   HAYSTACK_ARTIFACT_KIND = "native";
+  HAYSTACK_TEST_PROVISION_COMMAND = pkgs.writeShellScript "provision-owned-haystack-database" ''exec ${pkgs.python3}/bin/python3 ${./provision-owned-database.py} "$@"'';
+  PONYGIRLS_TEST_PROVISION_SERVICE = "haystack";
 } // (import ./owned-postgres-environment.nix { inherit pkgs; })) ''
   cp -r ${sources.haystackTests} source
   chmod -R u+w source

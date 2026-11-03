@@ -19,6 +19,7 @@ def main():
     pg=os.environ['PG_BIN']
     with tempfile.TemporaryDirectory(prefix='ponygirls-owned-pg-') as name:
         root=Path(name)
+        (root/'.owned-test-only').write_text('ponygirls-owned-test-v1\n')
         with socket.socket() as sock:
             sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]
         admin=pwd.getpwuid(os.getuid()).pw_name
@@ -39,7 +40,7 @@ def main():
         data=str(root/'cluster'/'data')
         run(pg+'/pg_ctl','-D',data,'-l',str(root/'postgres.log'),'-o',f'-c config_file={root}/postgresql.conf','-w','-t','30','start')
         try:
-            env=dict(os.environ)
+            env=dict(os.environ,PONYGIRLS_OWNED_FIXTURE_ROOT=str(root))
             for key,d in template['databases'].items():
                 run(sys.executable,os.environ['PG_PROVIDER'],'provision',str(manifest),key)
                 env['PONYGIRLS_TEST_DATABASE_'+key.upper()]=json.dumps({
