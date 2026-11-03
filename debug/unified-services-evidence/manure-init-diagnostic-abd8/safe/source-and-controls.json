@@ -1,0 +1,25 @@
+{
+  "sourceCommit": "abd8ec3acbaab82df3c8af9ccac2c7816b5d3619",
+  "driverWrapperSha256": "03f02065d9322942a30a0739b39b130896077e47bfcb3aee6ec90259fc5935d1",
+  "originalConfigSha256": "3199cef271e0458d99babd4fdb4101bee1de7430e177ee18565e6220822930c3",
+  "fullBaseScriptSha256": "87e6276ee297247ef0a7c5b8891624e3aa2ea4ede28ca098cedfc4adcd18c6c2",
+  "runtimeSha256": "1b9c73a83813725168ead5e2f30e163cab8c7db77956afe3f8851c65ed18ed82",
+  "auditorSha256": "153fae3597fd74a51f892c5b475da060ef67442463bfdd646d8b88b158c192a2",
+  "startScriptOriginalSha256": {
+    "edge": "3a15070313e8be8d0f50a0c1b217948b94039d46fc6a4d90e8b7d7fea9c5b6f7",
+    "strict": "bce57e4083fdd774e34c20186ffad474343a6288be11fe6447b1e21f8dc45773"
+  },
+  "initializerBodySha256": "93deaccaaa5d453fd97d17ffcf050be31560ed04eeb292aab8658ec536c0b5db",
+  "diagnosticHelperSha256": "d4e9ad72f70e8dc9d8853f382988593eb00f36c841b490810591805cd0205a8d",
+  "supervisorSha256": "d4b8825efae7b8e0b4964a2c13fb82707d9cfa0139c8546bc1864200a1731a77",
+  "prepSealSha256": "e73606d493b360c69f24e6b66c0473b63642444979f76541240c077862c33506",
+  "priorSupervisorKernelControls": {
+    "cases": 4,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "scope": "Prior benign-Python controls on identical supervisor, not VM tests"
+  },
+  "priorSourceReview": "No blocking supervisor issue found; not new VM correctness/diagnostic acceptance.",
+  "diagnosticCaveat": "Successful499 then unchanged500 initializes twice; diagnostic success never acceptance."
+}

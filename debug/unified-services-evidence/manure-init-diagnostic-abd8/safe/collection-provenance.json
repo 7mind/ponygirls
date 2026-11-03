@@ -1,0 +1,10 @@
+{
+  "observedAt": "2026-11-03T14:15:26.125491+00:00",
+  "collectorSourceSha256": "b5d4f0e694f6c33e329b71813d11d1d59284f6b67b9223a96a1c9b7c52f300fe",
+  "collectorLocation": "private/collect-safe-evidence.py (not included in safe archive)",
+  "sourceHashTiming": "Source archived before this collection and self-hashed during execution.",
+  "scope": "Existing fixed run artifacts, explicit scalar/JSON field allowlist, XML counts, hashes/byte sizes and recorded PID/starttick metadata only. No subprocess/guest/build/job/signal/cleanup/deletion or PG/image contents/metadata reads.",
+  "sqlExecuted": false,
+  "noNewRunnerCreated": true,
+  "selectedAccelerator": "UNKNOWN"
+}
