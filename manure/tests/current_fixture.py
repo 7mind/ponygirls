@@ -74,6 +74,10 @@ def _wrap(original):
             if isinstance(record,dict):
                 record.update(method=method,url=url,body=body)
                 if command is not None:record['operation']=command._variant
+        if 300<=status<400:
+            # Redirect status/Location are transport, not a typed application
+            # result; preserve the actual redirect-body refusal scenarios.
+            return status,response_headers,value
         if command is not None:
             return status,response_headers,p.dumps(p.ServerEnvelope(request_id,result(command,value)))
         if isinstance(value,dict):
