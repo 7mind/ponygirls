@@ -30,8 +30,8 @@ in {
         createPassword = mkOption { type = types.bool; default = false; description = "Explicit permission to create a missing random DB credential (never replace an existing one)."; };
         maxConnections = mkOption { type = types.ints.between 1 256; default = 12; };
         statementTimeoutMs = mkOption { type = types.ints.positive; default = 30000; };
-        lockTimeoutMs = mkOption { type = types.ints.positive; default = 5000; };
-        idleTransactionTimeoutMs = mkOption { type = types.ints.positive; default = 30000; };
+        lockTimeoutMs = mkOption { type = types.ints.positive; default = if name == "chronicle" then 35000 else 5000; };
+        idleTransactionTimeoutMs = mkOption { type = types.ints.positive; default = if name == "chronicle" then 60000 else 30000; };
         workMem = mkOption { type = types.strMatching "[0-9]+(kB|MB)"; default = "4MB"; };
       }; }));
       description = "Independent provisioned databases; do not derive this set from app enable flags. No automatic deletion/credential rotation.";

@@ -18,14 +18,18 @@ ponygirls.servicePostgres = {
     haystack = { passwordFile = "/run/secrets/haystack-database"; maxConnections = 8; };
     manure = { passwordFile = "/run/secrets/manure-database"; maxConnections = 8;
       schemas = [ "public" "manure" ]; };
-    chronicle = { passwordFile = "/run/secrets/chronicle-database"; maxConnections = 12; };
+    chronicle = { passwordFile = "/run/secrets/chronicle-database"; maxConnections = 12;
+      statementTimeoutMs = 30000; lockTimeoutMs = 35000; idleTransactionTimeoutMs = 60000; };
   };
 };
 ```
 
 `databases.KEY` also accepts explicit `name`, `user`, `schemas` (default public),
 `createPassword=false`, `statementTimeoutMs=30000`, `lockTimeoutMs=5000`,
-`idleTransactionTimeoutMs=30000`, `workMem="4MB"`. Generated missing credentials
+`idleTransactionTimeoutMs=30000`, `workMem="4MB"`. Chronicle-keyed roles default
+to lock=35000ms and idle-transaction=60000ms, matching its preserved long-lock
+contracts. Chronicle consumers default to statement/lock/idle/socket=30/35/60/35s;
+stricter explicit role or runtime limits still win. Generated missing credentials
 require **explicit** `createPassword=true`; existing files and role verifiers are
 preserved. Replaced/wrong credentials fail authentication, never silently rotate.
 Managed credential symlinks (agenix) resolve under trusted operator directories;

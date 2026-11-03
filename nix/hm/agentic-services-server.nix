@@ -398,7 +398,7 @@ in
       };
       "${cfg.unitPrefix}-manure" =
         (unit "Agentic services native Manure (low-security path hosting)" (setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ])
-          "${cfg.manure.package}/bin/manure-server --config ${manureConfig}") // { Unit = { Description = "Agentic services native Manure"; After = setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ]; Requires = [ "${cfg.unitPrefix}-manure-migrate.service" ]; Wants = setupDeps; }; };
+          "${cfg.manure.package}/bin/manure-server --config ${manureConfig}") // { Unit = { Description = "Agentic services native Manure (low-security path hosting)"; After = setupDeps ++ [ "${cfg.unitPrefix}-manure-migrate.service" ]; Requires = [ "${cfg.unitPrefix}-manure-migrate.service" ]; Wants = setupDeps; }; };
     };
     systemd.user.timers = lib.optionalAttrs stores.haystack.enable {
       "${cfg.unitPrefix}-haystack-backup" = {

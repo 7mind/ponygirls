@@ -64,7 +64,7 @@ assert services.custom-archive-setup.Unit.Wants == [ "external-secrets.service" 
 assert !(services.custom-archive-setup.Unit ? Requires);
 assert services.custom-archive.Unit.Requires == [ "custom-archive-migrate.service" "embedding.service" ];
 assert services.custom-archive-migrate.Unit.Requires == [ "ponygirls-database-chronicle.service" ];
-assert rendered.value.databaseLimits == { maxConnections = 8; maxQueued = 32; queueTimeoutMs = 5000; connectTimeoutMs = 5000; statementTimeoutMs = 30000; lockTimeoutMs = 5000; idleTransactionTimeoutMs = 30000; socketTimeoutMs = 40000; };
+assert rendered.value.databaseLimits == { maxConnections = 8; maxQueued = 32; queueTimeoutMs = 5000; connectTimeoutMs = 5000; statementTimeoutMs = 30000; lockTimeoutMs = 35000; idleTransactionTimeoutMs = 60000; socketTimeoutMs = 35000; };
 assert !(services.custom-archive.Unit ? PartOf);
 assert !(services ? custom-archive-postgres);
 assert !(services ? custom-archive-database);

@@ -28,7 +28,7 @@ def main():
             d['passwordFile']=str(root/'secrets'/key)
             # Behavioral native tests have finite <=30s statements. Module policy
             # rehearsal separately executes the short real deadline cases.
-            d.update(createPassword=True,statementTimeoutMs=30000,lockTimeoutMs=5000,idleTransactionTimeoutMs=30000)
+            d.update(createPassword=True,statementTimeoutMs=30000,lockTimeoutMs=35000 if key=="chronicle" else 5000,idleTransactionTimeoutMs=60000 if key=="chronicle" else 30000)
         manifest=root/'provider.json';manifest.write_text(json.dumps(template))
         hba=Path(os.environ['PG_HBA']).read_text().replace('local all "nixbld" peer',f'local all "{admin}" peer')
         (root/'hba').write_text(hba)
@@ -46,7 +46,7 @@ def main():
                 env['PONYGIRLS_TEST_DATABASE_'+key.upper()]=json.dumps({
                     'jdbcUrl':f'jdbc:postgresql://127.0.0.1:{port}/{d["name"]}',
                     'user':d['user'],'passwordFile':d['passwordFile'],
-                    'limits':{'maxConnections':8,'maxQueued':32,'queueTimeoutMs':5000,'connectTimeoutMs':5000,'statementTimeoutMs':30000,'lockTimeoutMs':5000,'idleTransactionTimeoutMs':30000,'socketTimeoutMs':40000}})
+                    'limits':{'maxConnections':8,'maxQueued':32,'queueTimeoutMs':5000,'connectTimeoutMs':5000,'statementTimeoutMs':d['statementTimeoutMs'],'lockTimeoutMs':d['lockTimeoutMs'],'idleTransactionTimeoutMs':d['idleTransactionTimeoutMs'],'socketTimeoutMs':35000 if key=='chronicle' else 40000}})
             child=subprocess.Popen(sys.argv[1:],env=env,start_new_session=True)
             try:
                 return child.wait(timeout=3600)

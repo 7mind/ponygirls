@@ -37,6 +37,10 @@ assert lib.all (name: hmUnits.${name}.Unit.Requires == [ "ponygirls-postgres.ser
 assert !(hmUnits.ponygirls-postgres.Unit ? PartOf);
 assert hmUnits.ponygirls-postgres == disabledApp.systemd.user.services.ponygirls-postgres;
 assert hmUnits.ponygirls-database-chronicle == disabledApp.systemd.user.services.ponygirls-database-chronicle;
+assert base.ponygirls.servicePostgres.databases.chronicle.lockTimeoutMs == 35000;
+assert base.ponygirls.servicePostgres.databases.chronicle.idleTransactionTimeoutMs == 60000;
+assert base.ponygirls.servicePostgres.databases.haystack.lockTimeoutMs == 5000;
+assert base.ponygirls.servicePostgres.databases.manure.idleTransactionTimeoutMs == 30000;
 assert base.ponygirls.servicePostgres.connections.haystack.jdbcUrl == "jdbc:postgresql://127.0.0.1:15434/haystack";
 assert tunedPolicy.settings.shared_buffers == "16GB";
 assert tunedPolicy.settings.effective_cache_size == "128GB";
