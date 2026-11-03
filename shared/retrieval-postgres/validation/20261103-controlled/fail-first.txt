@@ -1,0 +1,108 @@
+FIFO actual-read regression
+Original retained receipt: /tmp/ponygirls-retrieval-evidence/credential-before-20053c30/run.log
+==> X ponygirls.retrieval.CredentialBoundaryTest.Blackbox-GoodCommunication regression: FIFO size zero cannot bypass actual credential byte bound 0.335s munit.FailException: shared/model-http/src/test/scala/ponygirls/retrieval/CredentialBoundaryTest.scala:35 FIFO was read as a credential despite metadata size zero
+34:      val result=JsonHttp.credential(fifo.toString).attempt.timeout(4.seconds).unsafeRunSync()
+35:      assert(result.isLeft,"FIFO was read as a credential despite metadata size zero")
+36:    } finally {
+    at munit.FunSuite.assert(FunSuite.scala:12)
+    at ponygirls.retrieval.CredentialBoundaryTest.$init$$$anonfun$1(CredentialBoundaryTest.scala:35)
+ponygirls.retrieval.CredentialBoundaryTest: finished 0.368s
+Test run ponygirls.retrieval.CredentialBoundaryTest finished: 1 failed, 0 ignored, 2 total 0.38s
+[error] Failed: Total 2, Failed 1, Errors 0, Passed 1
+[error] Failed tests:
+[error] 	ponygirls.retrieval.CredentialBoundaryTest
+[error] (modelHttp / Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 11 s, completed Nov 3, 2026, 12:39:50 AM
+[0J
+
+Restore and same-space corpus-policy regressions
+Original retained receipt: shared/retrieval-postgres/target/validation-runs/20261103T004132Z.42oKx1/run.log
+==> X ponygirls.retrieval.postgres.PublicationFenceTest.Blackbox-GoodCommunication regression: remove then same-version restore creates executable durable replacement job 0.072s munit.FailException: shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala:87 restored eligible source is stranded without an indexing job
+86:    val claim=f.tx(c => f.index.claim(c,30))
+87:    assert(claim.nonEmpty,"restored eligible source is stranded without an indexing job")
+88:    f.tx(c => f.index.accept(c,claim.get,0,List(List(1.0,0.0,0.0))))
+    at munit.FunSuite.assert(FunSuite.scala:12)
+    at ponygirls.retrieval.postgres.PublicationFenceTest.$init$$$anonfun$9(PublicationFenceTest.scala:87)
+==> X ponygirls.retrieval.postgres.PublicationFenceTest.Blackbox-GoodCommunication regression: same vector space does not authorize old corpus-policy snippets 0.077s munit.FailException: shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala:99 expected exception of type 'ponygirls.retrieval.RetrievalError' but body evaluated successfully
+98:     // No implicit corpus compatibility: until approved rebuild, requesting this profile must fail.
+99:     assertEquals(intercept[RetrievalError](f.tx(c => candidate.search(c,query(RetrievalMode.Semantic),Some(List(1.0,0.0,0.0))))).code,"unavailable")
+100:  }
+    at munit.Assertions.fail(Assertions.scala:297)
+    at munit.Assertions.fail$(Assertions.scala:20)
+    at munit.FunSuite.fail(FunSuite.scala:12)
+    at munit.Assertions.runIntercept(Assertions.scala:224)
+    at munit.Assertions.intercept(Assertions.scala:206)
+    at munit.Assertions.intercept$(Assertions.scala:20)
+==> X ponygirls.retrieval.postgres.PublicationFenceTest.Blackbox-GoodCommunication regression: same vector space does not authorize old corpus-policy snippets 0.077s munit.FailException: shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala:99 expected exception of type 'ponygirls.retrieval.RetrievalError' but body evaluated successfully
+98:     // No implicit corpus compatibility: until approved rebuild, requesting this profile must fail.
+99:     assertEquals(intercept[RetrievalError](f.tx(c => candidate.search(c,query(RetrievalMode.Semantic),Some(List(1.0,0.0,0.0))))).code,"unavailable")
+100:  }
+    at munit.Assertions.fail(Assertions.scala:297)
+    at munit.Assertions.fail$(Assertions.scala:20)
+    at munit.FunSuite.fail(FunSuite.scala:12)
+    at munit.Assertions.runIntercept(Assertions.scala:224)
+    at munit.Assertions.intercept(Assertions.scala:206)
+    at munit.Assertions.intercept$(Assertions.scala:20)
+    at munit.FunSuite.intercept(FunSuite.scala:12)
+    at ponygirls.retrieval.postgres.PublicationFenceTest.$init$$$anonfun$10(PublicationFenceTest.scala:99)
+ponygirls.retrieval.postgres.PublicationFenceTest: finished 0.799s
+Test run ponygirls.retrieval.postgres.PublicationFenceTest finished: 2 failed, 0 ignored, 11 total 0.799s
+Test run ponygirls.retrieval.postgres.MemoryRetrievalContractTest started
+ponygirls.retrieval.postgres.MemoryRetrievalContractTest: finished 0.012s
+
+Wrong exact-ANN-recall test precondition
+Original retained receipt: shared/retrieval-postgres/target/validation-runs/20261103T004639Z.PtFviw/run.log
+==> X ponygirls.retrieval.postgres.AuthorizedCandidateTest.Blackbox-GoodCommunication: ACL and typed filters precede each 1000-candidate leg; selective ANN yield matches exact diagnostic 48.26s munit.ComparisonFailException: shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/AuthorizedCandidateTest.scala:35
+34:      val page=f.store.search(q.copy(mode=mode))
+35:      assertEquals(page.total,12L); assertEquals(page.hits.map(_.id).toSet,oracle.toSet)
+36:      assert(page.hits.forall(_.id.startsWith("authorized-")))
+values are not the same
+=> Obtained
+0
+=> Diff (- expected, + obtained)
+-12
++0
+    at munit.FunSuite.assertEquals(FunSuite.scala:12)
+    at ponygirls.retrieval.postgres.AuthorizedCandidateTest.$init$$$anonfun$1$$anonfun$5(AuthorizedCandidateTest.scala:35)
+    at scala.collection.immutable.List.foreach(List.scala:331)
+    at ponygirls.retrieval.postgres.AuthorizedCandidateTest.$init$$$anonfun$1(AuthorizedCandidateTest.scala:33)
+ponygirls.retrieval.postgres.AuthorizedCandidateTest: finished 48.262s
+Test run ponygirls.retrieval.postgres.AuthorizedCandidateTest finished: 1 failed, 0 ignored, 1 total 48.262s
+
+Response release cancellation accounting regression
+Original retained receipt: shared/model-http/target/accounting-before-d3de9f96/run.log
+==> X chronicle.InProcessModelAccountingTest.BG: cancellation after usage capture retains known counters and releases ticket and permit exactly once 0.173s munit.ComparisonFailException: chronicle/server/src/test/scala/chronicle/ModelAccountingHttpTest.scala:250
+249:        val value=snapshot.samples.find(_.purpose==ModelWorkload.McpTest).get
+250:        assertEquals(value.inFlight,0); assertEquals(value.finishedCalls,1L); assertEquals(value.cancelledCalls,1L); assertEquals(value.input.knownTokens,9L); assertEquals(value.output.get.knownTokens,4L)
+251:      }
+values are not the same
+=> Obtained
+0
+=> Diff (- expected, + obtained)
+-9
++0
+    at munit.FunSuite.assertEquals(FunSuite.scala:12)
+    at chronicle.InProcessModelAccountingTest.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1(ModelAccountingHttpTest.scala:250)
+    at chronicle.InProcessModelAccountingTest.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$adapted$1(ModelAccountingHttpTest.scala:251)
+    at apply @ chronicle.InProcessModelAccountingTest.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1(ModelAccountingHttpTest.scala:251)
+    at flatMap @ chronicle.InProcessModelAccountingTest.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1(ModelAccountingHttpTest.scala:248)
+    at apply @ chronicle.JavaModelTelemetryClock.read$$anonfun$1(ModelTelemetry.scala:22)
+
+Expired source claim regression
+Original retained receipt: /tmp/ponygirls-retrieval-expiry-before.log
+==> X ponygirls.retrieval.postgres.PublicationFenceTest.Blackbox-GoodCommunication regression: expired sources are never claimed for a new model call 0.058s munit.ComparisonFailException: shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala:128
+127:    f.store.put(source("expired","alpha",Set("reader")).copy(expiresAt=Some(EpochSeconds(BigDecimal(1000)))))
+128:    assertEquals(f.tx(c => f.index.claim(c,30)),None)
+129:  }
+values are not the same
+=> Obtained
+Some(
+  value = WorkClaim(
+    jobId = "219e0920-00b4-4629-ae61-564f4fbafecc",
+    sourceId = "expired",
+    version = "version-1",
+    epoch = 1,
+    fence = 1,
+    run = "f7e2fca8-6e28-49a9-81cd-3d268d7d99da",
+    profile = "35486603e265dd1d3058bd4e9f00f364d419d4693159a5d1a3c8888794bbb28c",
+    chunks = List(
