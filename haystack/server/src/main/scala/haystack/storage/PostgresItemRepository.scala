@@ -37,7 +37,7 @@ final class PostgresItemRepository(database: JdbcDatabase, projection: Option[ha
   private val columns = "project_id,item_id,revision,document_text,created_at,created_by,modified_at,modified_by"
   private def stored(r: ResultSet): StoredItem = {
     val text = r.getString("document_text")
-    StoredItem(ItemKey(r.getString("project_id"), r.getString("item_id")), r.getLong("revision"), DocumentCodec.parse(text), text,
+    StoredItem(ItemKey(r.getString("project_id"), r.getString("item_id")), r.getLong("revision"), DocumentCodec.decodeStored(text), text,
       ItemMetadata(r.getTimestamp("created_at").toInstant, r.getString("created_by"), r.getTimestamp("modified_at").toInstant, r.getString("modified_by")))
   }
   private def readCurrent(c: Connection, key: ItemKey): Option[StoredItem] = rows(c, s"SELECT $columns FROM items WHERE project_id=? AND item_id=?", Seq(key.project, key.item))(stored).headOption

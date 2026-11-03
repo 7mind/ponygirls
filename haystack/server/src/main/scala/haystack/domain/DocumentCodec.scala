@@ -6,8 +6,10 @@ import ponygirls.losslessjson.LosslessJson.*
 
 /** Lossless authoritative text, not Circe/Double or PostgreSQL's reserialized JSONB.
   * The shared parser rejects duplicate decoded keys, NUL and non-scalar Unicode.
-  * Admission is bounded: 1 MiB source and canonical text, 64 nested containers,
-  * 65536-character numeric tokens, explicit exponents within +/-999999.
+  * New-write admission is bounded: 1 MiB source and canonical text, fields
+  * depth starting at zero and capped at 64, numeric tokens up to 1 MiB, and
+  * explicit exponents within +/-999999. Stored decoding has a separate wider
+  * envelope so acknowledged historical text is never re-admitted as a new write.
   */
 object DocumentCodec {
   val DocumentMaxBytes = 1024 * 1024
@@ -17,7 +19,9 @@ object DocumentCodec {
   val LinksMax = 256
   val TagsMax = 64
   val MetaValueMax = 128
-  val Limits: LosslessJson.Limits = LosslessJson.Limits(DocumentMaxBytes, 64, 65536, 999999)
+  val FieldsDepthMax = 64
+  val Limits: LosslessJson.Limits = LosslessJson.Limits(DocumentMaxBytes, 66, DocumentMaxBytes, 999999)
+  val StoredLimits: LosslessJson.Limits = LosslessJson.Limits(16 * 1024 * 1024, 128, DocumentMaxBytes, 999999)
   private val Allowed = Set("title", "description", "fields", "type", "status", "importance", "human-attention", "links", "tags")
   private def invalid(message: String): Nothing = throw Fault("invalid-document", message)
 
@@ -28,9 +32,24 @@ object DocumentCodec {
   def parse(text: String): ItemDocument = validate(parseRaw(text))
   def canonical(document: ItemDocument): String = LosslessJson.encode(toJson(document))
 
+  /** Read historical acknowledged content without applying today's write envelope,
+    * PG numeric admission or qualified-ID admission again. Shape and the actual
+    * original fields-depth/string-leaf rules still apply; text is never rewritten.
+    */
+  def decodeStored(text: String): ItemDocument = {
+    val value = LosslessJson.parse(text, StoredLimits).fold(
+      error => throw Fault("unavailable", "invalid stored document JSON: " + error.code), identity)
+    validateShape(value, validateLinkKeys = false)
+  }
+
   def validate(value: Value): ItemDocument = {
     if (LosslessJson.encodeUtf8(value).length > DocumentMaxBytes) invalid("document exceeds byte limit")
-    checkDepth(value, 0)
+    val document = validateShape(value, validateLinkKeys = true)
+    PostgresAdmission.validate(value)
+    document
+  }
+
+  private def validateShape(value: Value, validateLinkKeys: Boolean): ItemDocument = {
     val obj = value match {
       case o: Obj => o.fields.toMap
       case _ => invalid("document must be an object")
@@ -43,7 +62,7 @@ object DocumentCodec {
     val title = string("title", TitleMax)
     val description = string("description", DescriptionMax)
     val fields = obj.getOrElse("fields", invalid("document fields required"))
-    checkLeaves(fields)
+    checkFields(fields, 0)
     val docType = string("type", MetaValueMax)
     val status = string("status", MetaValueMax)
     val importance = string("importance", MetaValueMax)
@@ -54,8 +73,11 @@ object DocumentCodec {
       case Some(a: Arr) if a.values.size <= LinksMax => a.values.map {
         case pair: Arr if pair.values.size == 2 => (pair.values(0), pair.values(1)) match {
           case (kind: Str, target: Str) if kind.value.nonEmpty && kind.value.length <= MetaValueMax =>
-            try QualifiedId.decodeKey(target.value)
-            catch { case _: Fault => invalid("link target is not a canonical qualified id") }
+            if (target.value.isEmpty) invalid("invalid link target")
+            if (validateLinkKeys) {
+              try QualifiedId.decodeKey(target.value)
+              catch { case _: Fault => invalid("link target is not a canonical qualified id") }
+            }
             kind.value -> target.value
           case _ => invalid("invalid link tuple")
         }
@@ -72,31 +94,28 @@ object DocumentCodec {
       }
       case _ => invalid("invalid tags array")
     }
-    PostgresAdmission.validate(value)
     ItemDocument(title, description, fields, docType, status, importance, attention, links, tags)
   }
 
-  // JS/JSON presentation contract whitespace, including NBSP/BOM, not only ASCII trim.
-  private def trimWhitespace(c: Char): Boolean = Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '\uFEFF'
+  // Exactly ECMAScript trim, not Java's broader isWhitespace: U+001C..001F
+  // were valid tag content in the original validator and remain so.
+  private def trimWhitespace(c: Char): Boolean =
+    c >= '\u0009' && c <= '\u000d' || c == ' ' || c == '\u00a0' || c == '\u1680' ||
+      c >= '\u2000' && c <= '\u200a' || c == '\u2028' || c == '\u2029' ||
+      c == '\u202f' || c == '\u205f' || c == '\u3000' || c == '\ufeff'
 
-  private def checkDepth(value: Value, depth: Int): Unit = value match {
-    case a: Arr =>
-      if (depth >= Limits.maxDepth) invalid("document exceeds depth limit")
-      a.values.foreach(checkDepth(_, depth + 1))
-    case o: Obj =>
-      if (depth >= Limits.maxDepth) invalid("document exceeds depth limit")
-      o.fields.foreach { case (_, v) => checkDepth(v, depth + 1) }
-    case _ => ()
-  }
-
-  private def checkLeaves(value: Value): Unit = value match {
-    case s: Str if s.value.length > StringLeafMax => invalid("fields string exceeds limit")
-    case a: Arr => a.values.foreach(checkLeaves)
-    case o: Obj => o.fields.foreach { case (key, v) =>
-      if (key.length > StringLeafMax) invalid("fields object key exceeds limit")
-      checkLeaves(v)
+  /** Original rule: check every node (including scalars) at depth 0..64.
+    * Consequently 64 arrays around a scalar and 65 empty arrays are valid.
+    * Object keys have no independent leaf-size cap: the document byte cap bounds them.
+    */
+  private def checkFields(value: Value, depth: Int): Unit = {
+    if (depth > FieldsDepthMax) invalid("fields exceeds depth limit")
+    value match {
+      case s: Str if s.value.length > StringLeafMax => invalid("fields string exceeds limit")
+      case a: Arr => a.values.foreach(checkFields(_, depth + 1))
+      case o: Obj => o.fields.foreach { case (_, v) => checkFields(v, depth + 1) }
+      case _ => ()
     }
-    case _ => ()
   }
 
   /** Case classes are convenient application data; they are revalidated at the write boundary. */
