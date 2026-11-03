@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { api, AuthError, NetworkError, type Principal } from "./api";
 import { Login } from "./Login";
 import { Browse } from "./Browse";
@@ -108,6 +108,7 @@ export function App() {
             onClick={() => { location.hash = entry.hash; }}><Icon name={entry.icon} />{entry.label}</button>;
         })}</nav>
         <div className="activity-namespace"><small>Activity namespace</small><strong>{principal.activityProjectId}</strong></div>
+        <PendingWriteNotice />
         <div className="identity"><span className="avatar">{principal.userId.slice(0, 1).toUpperCase()}</span><div><strong>{principal.userId}</strong><small>{principal.type} account</small></div>
           <button type="button" className="icon-button" aria-label="Sign out" title="Sign out" onClick={() => void logout()}><Icon name="logout" /></button></div>
       </aside>
@@ -141,4 +142,24 @@ export function App() {
     </div>
     </LiveProvider>
   );
+}
+
+function PendingWriteNotice() {
+  const pending = useSyncExternalStore(api.subscribePendingWrite, api.pendingWrite);
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState("");
+  const retry = async () => {
+    setBusy(true); setOutcome("");
+    try {
+      const result = await api.retryPendingWrite();
+      setOutcome(`Original write confirmed as revision ${result.revision}. Any newer draft is preserved; review it before saving.`);
+    } catch (error) { setOutcome(`Replay did not complete: ${error instanceof Error ? error.message : "unknown"}`); }
+    finally { setBusy(false); }
+  };
+  if (!pending && outcome === "") return null;
+  return <div className="notice" role="status">
+    {pending && <><p>A write to {pending.key} is pending or uncertain. Retry sends the original frozen payload and request ID. Different writes are blocked until it is reconciled.</p>
+      <button type="button" disabled={busy} onClick={() => void retry()}>Retry original write</button></>}
+    {outcome !== "" && <p>{outcome}</p>}
+  </div>;
 }

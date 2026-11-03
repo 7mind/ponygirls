@@ -160,3 +160,24 @@ test("malformed current item payload cannot fall back to an old document envelop
   t.mock.method(globalThis, "fetch", async () => Response.json({ key: "p:i", revision: 1, document: JSON.parse(documentJson), metadata: {} }));
   await assert.rejects(api.get("p:i"), ApiError);
 });
+
+test("API replay lane retains exact current body after 503 and blocks edited drafts until replay", async (t) => {
+  const bodies: unknown[] = []; let attempts = 0;
+  t.mock.method(globalThis, "fetch", async (_path: string, init: RequestInit) => {
+    bodies.push(JSON.parse(init.body as string));
+    if (++attempts === 1) return new Response("lost reply", { status: 503 });
+    return response(PutResult.jsonCodec(), new PutResult("p:i", 8, metadata, true));
+  });
+  await assert.rejects(api.put("p:i", documentJson, 7, "original-id"), NetworkError);
+  await assert.rejects(api.put("p:i", "edited", 7, "new-id"));
+  assert.equal(bodies.length, 1); assert.equal(api.pendingWrite()?.requestId, "original-id");
+  await api.retryPendingWrite(); assert.deepEqual(bodies[0], bodies[1]); assert.equal(api.pendingWrite(), undefined);
+});
+
+test("API session auth loss clears pending but an unreadable success keeps it uncertain", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => Response.json({}));
+  await assert.rejects(api.put("p:i", documentJson, 7, "lost-id"), ApiError);
+  assert.equal(api.pendingWrite()?.requestId, "lost-id");
+  t.mock.method(globalThis, "fetch", async () => new Response("unauthenticated", { status: 401 }));
+  await assert.rejects(api.whoami(), AuthError); assert.equal(api.pendingWrite(), undefined);
+});
