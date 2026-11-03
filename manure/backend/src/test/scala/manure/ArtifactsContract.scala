@@ -126,7 +126,7 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
         val now = f.clock.now
         tx.putContent(ContentGrant(SecretCodec.sha256(tokens(1)),a.id,now+100,now,None,None,None,a.externalPasswordHash))
         tx.putContent(ContentGrant(SecretCodec.sha256(tokens(0)),a.id,now+100,now,None,None,None,a.externalPasswordHash))
-        tx.trimContent(a.id,1)
+        tx.trimContent(a.id,1,SecretCodec.sha256(tokens(0)))
       }
       _ <- f.artifacts.contentInfo(a.id,Some(tokens(0)),None,None)
       _ <- fails("password-required",f.artifacts.contentInfo(a.id,Some(tokens(1)),None,None))

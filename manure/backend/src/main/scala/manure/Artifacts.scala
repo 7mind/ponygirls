@@ -236,7 +236,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
     val value = SecretCodec.token()
     val expiry = math.min(clock.now+limits.grantTtl,a.expiresAtSeconds.getOrElse(Double.PositiveInfinity))
     tx.putContent(ContentGrant(SecretCodec.sha256(value),a.id,expiry,clock.now,identity.map(_.userId),identity.map(_.tokenId),identity.map(_.tokenDigest),passwordHash))
-    tx.trimContent(a.id,limits.maxGrantsPerArtifact); (value,expiry)
+    tx.trimContent(a.id,limits.maxGrantsPerArtifact,SecretCodec.sha256(value)); (value,expiry)
   def createGrant(identity: Identity,id: String): IO[String] = serialized {
     metadata.transaction { tx =>
       Require(auth.live(identity), "unauthorized")
@@ -298,6 +298,20 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
     // The pinned file keeps ownership after the process gate is released for
     // streaming. The enclosing service lease outlives HTTP resource drainage.
     // Authorization is checked at each new open.
-    Resource.make(serialized(metadata.transaction { tx =>
-      val a = authorized(tx,id,grant,password,identity); (a,payloads.open(a,path))
-    })) { (_,file) => IO.blocking(file.close()) }
+    Resource.eval(IO(new java.util.concurrent.atomic.AtomicReference[ConfinedFile](null))).flatMap { acquired =>
+      def cleanup: IO[Unit] = IO.blocking(Option(acquired.getAndSet(null)).foreach(_.close()))
+      Resource.makeFull[IO,(Artifact,ConfinedFile)] { poll =>
+        val acquire = serialized(metadata.transaction { tx =>
+          val a = authorized(tx,id,grant,password,identity)
+          val file = payloads.open(a,path)
+          acquired.set(file) // Ownership established BEFORE JDBC commit can fail.
+          (a,file)
+        })
+        poll(acquire).handleErrorWith { primary =>
+          cleanup.attempt.flatMap { closed =>
+            closed.left.foreach(primary.addSuppressed)
+            IO.raiseError(primary)
+          }
+        }.onCancel(cleanup)
+      }(_ => cleanup)
+    }
