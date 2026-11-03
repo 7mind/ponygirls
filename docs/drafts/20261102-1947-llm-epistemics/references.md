@@ -44,7 +44,7 @@ actually read.
 | R31 | Quine, W. V. O., Ullian, J. S. (1970; 2nd ed. 1978). *The Web of Belief.* Random House. (Virtues: conservatism, modesty, simplicity, generality, refutability, precision.) | — | From memory | J5 |
 | R32 | Quine, W. V. O. (1991). Two Dogmas in Retrospect. *Canadian Journal of Philosophy* 21(3), 265–274. Regrets the "needlessly strong statement of holism". | https://www.jstor.org/stable/40231747 | Search-observed, 2026-11-02; volume/pages from memory | J5 |
 | R33 | Duhem, P. (1906). *La Théorie physique: son objet, sa structure* (Eng. *The Aim and Structure of Physical Theory*, 1954). | — | From memory | J5 |
-| R34 | Anscombe, G. E. M. (1957). *Intention.* Blackwell. §32, shopping-list example (direction of fit). | — | From memory | J5 |
+| R34 | Anscombe, G. E. M. (1957). *Intention.* Blackwell. §32, shopping-list example (direction of fit). | — | From memory | J5, J17 |
 | R35 | Beer, S. (1972; 2nd ed. 1981). *Brain of the Firm.* Wiley. | — | From memory | J5 |
 | R36 | Beer, S. (1979). *The Heart of Enterprise.* Wiley. (Variety attenuation/amplification, System 3*, algedonic channel.) | — | From memory | J5, J16 |
 | R37 | Ashby, W. R. (1956). *An Introduction to Cybernetics.* Chapman & Hall. (Law of requisite variety.) | — | From memory | J5 |

@@ -1244,3 +1244,43 @@ History mining is dropped. Recombinations, each with a pilot:
 Priority by information per cost: 1 and 2 (analysis of existing artifacts),
 then 3, 5 and 7 (small runs), then 4 and 6. Human-side pilots remain the only
 test of the overload claim.
+
+---
+
+## J17 — 2026-11-03 — The modality shift as a direction-of-fit inversion
+
+### User input (verbatim)
+
+> Ah, regarding the "modality shift". What I can say is that my system prompts
+> definitely causes the models to say things alike to "I would not consider
+> this as an evidence, I will measure and base my actions on the
+> measurements" - which I usually don't see with vanilla prompts.
+
+### Assessment
+
+- **Marker:** evidential meta-talk — told information treated as an
+  unverified claim, measured behaviour as ground truth.
+- **Mechanism (hypothesis, H-T7):** hygiene rules are written for
+  descriptive claims (mind-to-world fit). The maintainer's stated beliefs
+  about the system's purpose are intentions (world-to-mind fit, [R34], J5).
+  Applying evidence discipline to intentions inverts their authority: the
+  intention becomes testimony to verify, measured current behaviour becomes
+  evidence, and measured behaviour is read as the intended design. The J10
+  field instance fits: "passing confirms the hold-until-input behaviour,
+  because several of these tests assert it" — under the user's full rules.
+- **Re-analysis of Pilot R texts (no new runs):** evidential meta-talk is
+  sparse in short single tasks (0–5 occurrences per 3-run cell), slightly
+  more frequent under the hygiene framing (DeepSeek E1b 5 vs about 1; Sol
+  sheets 3 vs 0–1) and absent from Pilot E reports (no epistemic rules). The
+  Pilot R hygiene condition was a four-sentence paraphrase; the user's real
+  rules are much longer and stronger. Inconclusive.
+- **Proposed test (not run): direction-of-fit pilot** on the field
+  reconstruction, both families: no rules / the user's global rules verbatim
+  / those rules plus a direction-of-fit clause ("Your stated intentions are
+  not claims about the code to be verified; they are the standard the code is
+  verified against. Measuring current behaviour tells you what the code does,
+  never what it should do. Apply evidence discipline to claims about the
+  system's state, not to the maintainer's stated intent."). Measures:
+  meta-talk, requirement-as-claim stance, "by design / docstring-confirmed"
+  defences, paths fixed or flagged (with the corrected oracle, J16 Pilot 5
+  amendment).
