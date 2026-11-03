@@ -263,3 +263,32 @@ Focused affected five-suite rerun: **57 cases /5 suites /0 failures/errors/skips
 TagSearch15). Fresh `20261103-resume-fixture-fix.*` receipt retains pre-commit HEAD+
 source patch, fresh XML, exit0 and complete log. Deadline/session policy failures
 remain separately reproduced and are not counted fixed by this fixture-only patch.
+
+## Resume: preserve Chronicle's established deadline/session contracts (09:30Z)
+
+The same pre-patch seven-suite run above also reproduced four genuine policy
+regressions: lock5s preempted the six-second archive wait and the thirty-second
+statement error, and preempted renewal/raw extension serialized past five-second
+expiry; idle30s could race the thirty-second lock holder. The new baseline had
+silently narrowed prior observable behavior; it was not a defect in those tests.
+
+With parent approval, only the explicit Chronicle baseline/example/native/browser
+fixtures are aligned to statement30s /lock35s /idle60s /socket35s. The runtime's
+minimum-effective-role/config semantics and production URL validation are unchanged.
+No domain SQL or elapsed/status assertion is edited. The provider role and consumer
+baseline are coordinated to the same values by their owners (a role5s would still,
+correctly, remain stricter). Other services retain independent policy.
+
+Focused rerun: **5 suites /43 cases /0 failures/errors/skips**: ArchiveSearch13,
+PersistentBrowserSession9, ChronicleJdbcRuntime6, MessageContextBoundary10,
+SessionMessageSearchBoundary5. The original real six-second wait, observable
+29–35s deadline, stricter inherited100ms bounds and HTTP401/expiry invalidation
+assertions all pass unchanged. New baseline regression checks example/fixture
+agreement and verifies explicit lower operator policy remains valid.
+Fresh `20261103-resume-policy-fix.*` receipt retains HEAD+source patch, log, exit0
+and every XML. Shared runtime full unfiltered owned SCRAM gate also rerun:
+**9 suites /34 cases /0 failures/errors/skips** with fresh discovery/XML match;
+log `/tmp/unified-runtime-resume-runtime-gate.log` and its printed validation run.
+Pinned Node24 syntax checks passed for all three changed TS fixture configs.
+These focused receipts are not the full Chronicle/native/application release gate;
+parent owns the next immutable-source durable unfiltered run.

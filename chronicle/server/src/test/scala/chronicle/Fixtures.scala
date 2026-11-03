@@ -25,7 +25,9 @@ object Fixtures {
       FROM pg_settings s JOIN (VALUES ('statement_timeout',?::bigint),('lock_timeout',?::bigint),
       ('idle_in_transaction_session_timeout',?::bigint)) v(name,bound) ON s.name=v.name"""
   val databasePassword = "chronicle-test-password"
-  val databaseLimits = JdbcLimits(8,32,5.seconds,5.seconds,30.seconds,5.seconds,30.seconds,35.seconds)
+  // Preserve the existing 30s public archive statement budget and >5s renewal
+  // waits. Infrastructure lock/idle bounds must not silently preempt those APIs.
+  val databaseLimits = JdbcLimits(8,32,5.seconds,5.seconds,30.seconds,35.seconds,60.seconds,35.seconds)
   /** Proxies/schema options are fixture-only real-JDBC probes. Production validation
     * still accepts only a queryless PostgreSQL URL and receives identical properties.
     */

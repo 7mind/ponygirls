@@ -29,6 +29,18 @@ final class ChronicleJdbcRuntimeTest extends FunSuite {
     intercept[DomainError](c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=Duration.Zero)).validate())
     intercept[DomainError](c.copy(jdbcUrl=c.jdbcUrl+"?socketTimeout=0").validate())
   }
+  test("explicit Chronicle baseline preserves its existing public deadline before infrastructure bounds") {
+    val configured = Wire.parse(Files.readString(Path.of("config.example.json"))).as[Config].fold(e => fail(e.toString),identity)
+    val limits = configured.databaseLimits
+    assertEquals(limits,Fixtures.databaseLimits)
+    assertEquals(limits.statementTimeout.toMillis,ArchiveSearchPolicy.statementDeadlineMillis.toLong)
+    assertEquals(limits.lockTimeout,35.seconds)
+    assertEquals(limits.idleTransactionTimeout,60.seconds)
+    assertEquals(limits.socketTimeout,35.seconds)
+    assert(limits.lockTimeout>limits.statementTimeout && limits.idleTransactionTimeout>limits.statementTimeout && limits.socketTimeout>limits.statementTimeout)
+    // Explicit operator reductions remain valid policy, not silently enlarged.
+    configured.copy(databaseLimits=limits.copy(statementTimeout=100.millis,lockTimeout=75.millis,idleTransactionTimeout=150.millis)).validate()
+  }
   test("historical credential trimming and optional empty auth use bounded trusted file reader") {
     val dir = Files.createTempDirectory("chronicle-credential-")
     val secret = dir.resolve("secret"); val ref = dir.resolve("reference")

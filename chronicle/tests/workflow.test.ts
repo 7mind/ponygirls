@@ -179,7 +179,7 @@ test('collector → durable archive → annotation/pgvector → generated WS and
   const config = {
     listenHost: '127.0.0.1', listenPort: httpPort, allowedOrigin: base, secureCookies: false,
     jdbcUrl: `jdbc:postgresql://127.0.0.1:${dbPort}/chronicle_test`, databaseUser: 'chronicle_test', databasePasswordFile: join(directory, 'db-password'),
-    databaseLimits: { maxConnections: 8, maxQueued: 32, queueTimeoutMs: 5000, connectTimeoutMs: 5000, statementTimeoutMs: 30000, lockTimeoutMs: 5000, idleTransactionTimeoutMs: 30000, socketTimeoutMs: 35000 },
+    databaseLimits: { maxConnections: 8, maxQueued: 32, queueTimeoutMs: 5000, connectTimeoutMs: 5000, statementTimeoutMs: 30000, lockTimeoutMs: 35000, idleTransactionTimeoutMs: 60000, socketTimeoutMs: 35000 },
     users: ['alice', 'bob', 'carol'].map(id => ({ id, login: id, passwordHashFile: join(directory, 'password'), enabled: true })),
     maxBodyBytes: 8_388_608, maxFiles: 16, maxFileBytes: 4_194_304, maxMessages: 10_000, sessionTtlSeconds: 3600,
     annotation: { ...endpointConfig, endpoint: model.endpoint + '/chat/completions' },
