@@ -168,7 +168,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       case _: wire.Command.GetCapabilities =>
         IO.pure(wire.Result.CapabilityInfo(wire.Capabilities(if config.contentMode == "path" then wire.ContentMode.Path else wire.ContentMode.Subdomain,
           search.modes,true,config.limits.chunkBytes,config.limits.maxListLimit,config.limits.maxRequestBodyBytes,
-          config.limits.maxFileBytes,config.limits.maxArtifactBytes,config.limits.maxFilesPerArtifact,31536000,"utf8-lower-root-v1")))
+          config.limits.maxFileBytes,config.limits.maxArtifactBytes,config.limits.maxFilesPerArtifact,31536000,CataloguePolicy.Id)))
       case _: wire.Command.Whoami => IO(wire.Result.Identity(CurrentWire.principal(required(c))))
       case wire.Command.Login(token) =>
         return IO {
