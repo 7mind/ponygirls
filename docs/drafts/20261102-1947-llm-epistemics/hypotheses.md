@@ -9,6 +9,12 @@ feasibility signal, not efficacy.
 A result entry cites the run record, model/harness versions and fixture
 revision; scripted runs validate the workflow only, not agent behaviour.
 
+Cross-cutting qualification (J27, 2026-11-04): a real Nix-store sentinel reproduction
+shows that the historical all-/nix sandbox did not establish oracle inaccessibility
+merely by masking HOME. Prior counts are retained; no prior key access was observed
+in this check. Interpretations requiring hidden-key unreachability remain qualified
+pending a separate retrospective exposure/access audit.
+
 ## Working claims from J1
 
 | ID | Claim | Status | Basis / limits |
@@ -76,3 +82,15 @@ protocol. P2's prediction measures and M1's explain-back are possible diagnostic
 not substitutes for that outcome. Correct acceptance, correct rejection,
 unwarranted certainty, blanket deferral and total human effort must remain
 distinguishable; no acceptance threshold has been agreed.
+
+## Specification provenance and justification (2026-11-04)
+
+The user authorized extension and autonomous agent-only pilots using the RTS framing
+log. [Provenance extension](belief-network-provenance.md); Pilot P in the separate
+pilot repository. These hypotheses concern controlled consumption, not generation
+of faithful annotations, human intent access, end-to-end delivery or overload.
+
+| ID | Hypothesis | Operational check | Status |
+|---|---|---|---|
+| H-P1 | Adding declared rationale reduces source/authority/warrant errors relative to source-linked candidate assertions alone. | Matched historical C8 audit material, sources versus richer prose; separately code status, formulation origin, citation coverage and semantic rationale. Includes false provenance and legitimate-choice controls. | registered Pilot P 72bdeeb; provider canaries underway, no measured outcomes yet |
+| H-P2 | Typed grounds improve selective revision relative to the same substantive rationale in prose. | Matched prose/typed hypothetical premise changes; correct actions and retained roots, alternative grounds, failed means, scoped human revision, circular rationale and unrelated-change controls. | registered Pilot P 72bdeeb; provider canaries underway, no measured outcomes yet |

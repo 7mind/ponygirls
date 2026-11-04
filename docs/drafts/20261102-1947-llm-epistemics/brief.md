@@ -1,9 +1,9 @@
-# Brief — epistemics of LLM-accelerated development (2026-11-02 … 11-03)
+# Brief — epistemics of LLM-accelerated development (2026-11-02 … 11-04)
 
-Status: summary of journal entries J1–J26 for the user and the next agent;
+Status: summary of journal entries J1–J27 for the user and the next agent;
 J21–J22 clarify the framework; J23–J24 record intake/framing; J25 proposes the
-method; J26 implements a user-requested provisional playbook and cooperative
-bookkeeping CLI. No game acceptance, bounded-attention or efficacy result exists.
+method; J26 implements provisional bookkeeping; J27 extends provenance/justification
+and preregisters autonomous agent-only Pilot P, with canaries underway. No game acceptance, bounded-attention or efficacy result exists.
 Source of truth for every claim: [journal](journal.md), [hypotheses](hypotheses.md),
 [references](references.md), the [design draft](belief-dag-design.md), the
 [validation-frame proposal](belief-network-validation.md), the
@@ -90,8 +90,14 @@ captures the procedure.
 Item 1 is the current direction. Items 2–5 are earlier proposals, not newly
 authorized by Q17/Q18; no field replay or policy-tool implementation is underway.
 
-1. **Provisional playbook/bookkeeping (J26; current request).** The user explicitly
-   requested implementation and subagents. The
+1. **Provenance/justification extension and pilots (J27; current request).** The user
+   explicitly authorized extension, autonomous pilots and reuse of the RTS framing log.
+   Read the [extension](belief-network-provenance.md). Pilot P is preregistered in the
+   separate pilot repository at `72bdeeb`: two configured subjects, three conditions,
+   two tasks and two replicates (24 planned measured sessions). Canaries underway;
+   no measured outcome yet. A real store-copy leak in the older sandbox was reproduced
+   and corrected for P with a restricted runtime closure; prior oracle-isolation
+   claims are qualified, not evidence of prior key access. The earlier
    [portable bundle](../../../scripts/belief-workflow/README.md) contains a provisional
    SKILL.md and stdlib CLI (`snapshot/check/render/diff`), with 36 passing software
    test methods on Python 3.14.8. No automatic discovery/global installation,
@@ -143,7 +149,8 @@ authorized by Q17/Q18; no field replay or policy-tool implementation is underway
 
 ## Handover to the next agent
 
-**Read first, in order:** this brief; `journal.md` J26 and the prototype README
+**Read first, in order:** this brief; `journal.md` J27 and the provenance extension;
+Pilot P protocol/status in the separate pilot repository; J26 and the prototype README
 at `scripts/belief-workflow/`; `belief-network-methodology.md`; J25 (design),
 J24 and the RTS README,
 compact network and framing record (partial case); J23 (earlier intake);
@@ -173,7 +180,8 @@ pilot repo `README.md` and `protocols/pilot-e.md`, `pilot-5-7.md`.
   vary inputs (equal sizes, repeated faults) and be audited by an independent
   channel (Pilots 5, 6).
 
-**How subjects run** (keep this; it was verified repeatedly): `runner/sandbox.sh`
+**Historical subject setup** (J27 qualifies its oracle isolation; do not reuse the
+all-/nix wrapper for new hidden-key studies): `runner/sandbox.sh`
 (bubblewrap: empty `$HOME`, writable run dir, `~/.pi/agent` read-write with
 sessions/subagents/decisions masked); `pi -p -a -nc -ne -ns -np --no-mcp`;
 condition text in the workspace `.pi/APPEND_SYSTEM.md`; `.pi/settings.json`
@@ -203,6 +211,9 @@ a subject workspace.
   validation scripts after merging.
 
 **Open items for the user**
+- Current autonomous Pilot P is authorized; await no new decision forms. Actual
+  RTS construction is not. Raw source cutoff, synthetic changes and Q20 qualitative
+  uncertainty must stay distinct. No human attention instrument/proxy.
 - The requested cooperative prototype exists, not a trusted human-input adapter
   or globally installed skill. An inert generic candidate is in Haystack under
   `corporate-activity:skill-draft-joint-belief-framing` r1, with companion paths.

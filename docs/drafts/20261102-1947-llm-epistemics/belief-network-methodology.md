@@ -9,6 +9,10 @@ ratification service or authorization to construct the RTS. It operationalizes
 [validation frame](belief-network-validation.md); the earlier
 [DAG design](belief-dag-design.md) remains a source of proposals, not existing tooling.
 
+The user subsequently authorized the [provenance/justification extension](belief-network-provenance.md)
+and autonomous agent-only pilots using the RTS framing log. This extends the research
+model, not format-v1 capabilities or RTS construction authority.
+
 ## 1. What this case contributes
 
 | Observed in the framing case | What it does not establish |

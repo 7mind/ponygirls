@@ -2019,3 +2019,108 @@ The generic full SKILL.md and its supporting-file locations were saved as inert
 metadata distinguishes observed software checks from hypothesized human benefits,
 with human attention required. No participant/private case data or code bundle
 was uploaded. No skill was installed or treated as authoritative by a status label.
+
+## J27 — 2026-11-04 — Provenance/justification extension and Pilot P preregistration
+
+User first proposed carrying per-specification provenance: explicit intent,
+assumption/default-dependent inference, consequences of other constraints, and
+agent beliefs about what is built. Discussion separated origin, statement role,
+justification, normative standing and factual warrant. A fresh-context reader
+challenged the proposal (`de217e7d-d087-4645-8505-3ead7d21fa26`); no new skill
+was justified separately from the existing provisional draft.
+
+The user then explicitly authorized:
+
+> Ok, extend, run pilots autonomously - you can reuse our log of the RTS-spec experiment
+
+This authorizes the extension and agent-only study, not RTS construction, global
+installation, deployment/push, new human workload instruments or private acceptance
+cases. The [provenance extension](belief-network-provenance.md) explains typed
+justification, conditional necessity versus selected means, alternative grounding
+sets, scoped adoption without rewriting origin, and revision without blanket
+invalidation. Format-v1 and its four-command CLI are unchanged.
+
+### Source reuse and registered tasks [L12]
+
+Only the original RTS request, walkthrough request and C1–C8 user/assistant pairs
+were extracted from the named current-session JSONL. Ten selected pairs, 9,112 bytes,
+SHA-256 `f849dd82024bb890b7ccd3b9f0f32c5e08f756b33827ad5212187e78d6744fcb`.
+The cutoff is human input `46436667` and its actual proposal `f43d0ebe`; source IDs
+U0,WALK,C1–C8 map the pairs. Tools, thinking, unrelated exchanges and harness
+notices were excluded. Exact spelling and contextual proposals remain retained.
+This selection is not a complete conversation, authenticated authority store,
+pre-existing-intent oracle or independent human decomposition.
+
+A separately retained Q20 r2 decision-service snapshot (observed at startup
+00:06:42Z) enters only a qualitative revision challenge. It does not settle the
+actual old-context conflict. Q21's metric objection still does not choose a cap
+or no cap; no attention proxy is added. Historical Q16 approval applied to its
+full-global-rules pilot; this study explicitly uses controlled common instructions,
+not an unverified field/global-context reproduction.
+
+Pilot repository base `3768c9e934936b66a06c623d3b6e88c0ef1c7525`; dedicated
+`feature/provenance-pilot` worktree. Protocol, source/cases/reference, scorer,
+validator, runtime manifest and instrument reproductions committed **before
+provider canaries** as `72bdeeb3bce96b688eb72dd955129c85a91f7f40`.
+Two independent analysis tasks: ten source-relative audit items; seven stipulated
+premise-change cases. The latter include alternative grounds, failed means,
+unsupported cycles, unrelated edits and an explicitly hypothetical scoped human
+revision. Their invented user acts/probes are not real RTS observations.
+
+Three conditions: sources/candidates alone (S), added declared grounding in prose
+(P), and the same grounding in typed records (G). P−S changes explanation;
+G−P tests representation, including field/grouping cues. Same raw source prefix,
+item ordering and P/G substantive fields; erroneous provenance claims stay present.
+Two configured subjects (Sol xhigh and employer-hosted DeepSeek-V4-Pro high), two
+fresh replicates/task/condition: **24 planned measured sessions**, no pooling or
+significance claim. Items within a session are not independent replicates.
+
+Prospective protocol review `d291188d-d61e-4497-8038-cd1d3166a724` and blind
+reference review `57664146-a57e-461f-b7be-8dbf838a014c` preceded subject execution.
+The latter saw cases/source only, not the parent key. It led to narrower A2 wording
+and declared A3/A4 boundary codes. Both readers are same-family agents, not human
+oracles. Citation-ID coverage is only a secondary check; semantic rationale review
+and all answers/reports remain required. Root lists are supplied, so their retention
+is a scaffolded control, not independent dependency discovery.
+
+### Instrument corrections before any model subject
+
+The initial 17-method validation failed duplicate JSON-key rejection; correction
+followed the captured expected failure. Review then found rescore could bless an
+original timeout and overwrite previous rescoring. Two new tests reproduced those
+failures before correction. Rescores now preserve original operational invalidity,
+use exclusive versioned outputs and bind reference/scorer hashes. The final
+**21-method software suite passes**, no failures/errors/skips. These scripted tests
+validate the instrument only; no semantic model benefit follows.
+
+The implementation review (`6c662407-615e-4af7-bade-3945e44286f5`) found a more
+material isolation defect in the reused harness: building a flake can place its
+committed answer keys in Nix-store source copies, while the old sandbox mounts all
+of /nix. A harmless sentinel reproduced actual readability despite the original
+home path being hidden: `home_visible:false`, `store_copy_visible:true`, failed
+isolation assertion. This was observed before correction and before any provider
+canary or measured session.
+
+New `sandbox_p.sh` mounts only an enumerated **156-path runtime closure**, not the
+whole store or daemon. The corrected probe finds original key/research paths, a
+known store sentinel and an actual current reference copy all inaccessible, with
+Python executable. The registered runtime was resolved before freezing; measured
+runs do not rebuild the research flake. Full normalized system profiles will be
+reviewed from provider canaries, then matched for every measured run; timestamp
+and workspace path are the only normalized fields. Prompt/custom/compaction patches
+are rejected. Native authentication directory/network remain available: this is
+measurement isolation, not a hostile-agent or credential-security boundary.
+
+**Qualification of earlier records:** HOME masking alone did not establish the
+older pilots' claimed oracle inaccessibility when all /nix was exposed. This new
+reproduction demonstrates a channel, not that any earlier subject accessed a key.
+Their recorded outputs/counts are unchanged; stronger interpretations depending on
+oracle unreachability require a separate retrospective exposure/access audit.
+No old private logs were inspected to manufacture either reassurance or a leak claim.
+
+At this journal entry, the two unmeasured provider canaries have been launched. **No measured
+Pilot P outcomes have been observed.** Read actual canary tool results and full system
+profiles before r1; run r2 only after first-stage operational checks. Retain failures,
+use fresh batch paths, no automatic reruns, 600-second/session and 128-KiB answer
+bounds. These are execution controls, not attention or financial limits. User-facing
+workflow efficacy, annotation-generation fidelity and overload remain untested.
