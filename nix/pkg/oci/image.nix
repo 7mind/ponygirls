@@ -56,7 +56,7 @@ let
 
   imageConfig = {
     User = "${toString uid}:${toString gid}";
-    WorkingDirectory = workingDir;
+    WorkingDir = workingDir;
     Entrypoint = entrypoint;
     Cmd = cmd;
     Env = lib.mapAttrsToList (key: value: "${key}=${value}") imageEnv;

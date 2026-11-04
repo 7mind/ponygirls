@@ -1,13 +1,6 @@
-# OCI image contract checks.
-#
-# Classification: Behavioral + Active / Effectual (reads the built image
-# tarball: docker config, layer modes and ownership, /bin/sh and entrypoint
-# presence) / Atomic (stub service binaries, so no service closure, no docker
-# daemon and no network are involved).
-#
-# Not covered here: starting the real service processes inside a container.
-# That is a deployment-level check performed in the cluster, so this test only
-# asserts the packaging contract the deployment relies on.
+# OCI image contract checks (Behavioral/Active, Effectual, Atomic): stub
+# service binaries, so no service closure, daemon or network is involved.
+# Real container startup is a deployment-level check and is not claimed here.
 { pkgs, oci }:
 let
   stub = pkgs.runCommand "oci-stub-service" { } ''
@@ -20,15 +13,13 @@ let
     chmod +x "$out/libexec/chronicle-server"
   '';
 
-  stubImage = { package ? stub }: package;
-
   images = {
     haystack = oci.haystack { package = stub; };
     manure = oci.manure { package = stub; };
     # Mirrors a first deployment wrapping an exact native artifact: the
     # executable and web assets live outside the package's bin/.
     chronicle = oci.chronicle { package = stub; executable = "/libexec/chronicle-server"; };
-    crawl4ai = oci.crawl4ai { package = stub; browsers = stubImage { }; };
+    crawl4ai = oci.crawl4ai { package = stub; browsers = stub; };
     postgres = oci.postgres { package = stub; };
     redis = oci.redis { package = stub; };
   };
@@ -113,25 +104,35 @@ let
   });
 in
 pkgs.runCommand "oci-images-test" {
-  nativeBuildInputs = [ pkgs.gnugrep pkgs.python3 ];
+  nativeBuildInputs = [ pkgs.coreutils pkgs.gnugrep pkgs.python3 ];
 } ''
   mkdir "$out"
   python3 ${./oci-image-layout.py} ${expectations} | tee "$out/layout.txt"
   grep -qx '6 image layouts ok' "$out/layout.txt"
 
-  # Redis entrypoint contract: password read from the file, fails closed
-  # without one, and execs the server with the persisted data directory.
+  # Redis entrypoint: the password never appears in argv (process-list
+  # exposure); it reaches the server through a private config file.
   export PATH=${stub}/bin:$PATH
   export STUB_LOG="$out/redis-invocations.txt"
   : > "$STUB_LOG"
   printf 's3cret\n' > "$TMPDIR/redis-password"
   REDIS_PASSWORD_FILE="$TMPDIR/redis-password" REDIS_DATA_DIR="$TMPDIR/redis-data" \
+    REDIS_CONFIG_PATH="$TMPDIR/redis-run/redis.conf" \
     ${images.redis.passthru.entrypointScript}/bin/redis-entrypoint --maxmemory 128mb
-  grep -Fx "redis-server --bind 0.0.0.0 --port 6379 --protected-mode yes --requirepass s3cret --dir $TMPDIR/redis-data --save  --appendonly no --daemonize no --maxmemory 128mb" "$STUB_LOG"
+  grep -Fx "redis-server $TMPDIR/redis-run/redis.conf --maxmemory 128mb" "$STUB_LOG"
+  if grep -q 's3cret' "$STUB_LOG"; then
+    echo "redis-entrypoint exposed the password in argv" >&2
+    exit 1
+  fi
+  test "$(stat -c %a "$TMPDIR/redis-run/redis.conf")" = 600
+  test "$(stat -c %a "$TMPDIR/redis-run")" = 700
+  grep -Fx 'requirepass s3cret' "$TMPDIR/redis-run/redis.conf"
+  grep -Fx "dir $TMPDIR/redis-data" "$TMPDIR/redis-run/redis.conf"
   test -d "$TMPDIR/redis-data"
 
   : > "$STUB_LOG"
   if REDIS_PASSWORD_FILE="$TMPDIR/absent-password" REDIS_DATA_DIR="$TMPDIR/redis-data" \
+      REDIS_CONFIG_PATH="$TMPDIR/redis-run-2/redis.conf" \
       ${images.redis.passthru.entrypointScript}/bin/redis-entrypoint; then
     echo "redis-entrypoint accepted a missing password file" >&2
     exit 1

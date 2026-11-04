@@ -126,6 +126,7 @@ in
     let
       entrypointScript = pkgs.writeShellScriptBin "redis-entrypoint" ''
       set -euo pipefail
+      umask 077
       password_file="''${REDIS_PASSWORD_FILE:-/etc/redis/password}"
       if [ ! -s "$password_file" ]; then
         printf 'redis-entrypoint: %s is missing or empty\n' "$password_file" >&2
@@ -136,18 +137,32 @@ in
         printf 'redis-entrypoint: %s holds an empty password\n' "$password_file" >&2
         exit 1
       fi
+      case "$password" in
+        *[[:space:]\"\']*)
+          printf 'redis-entrypoint: %s holds a password redis config syntax cannot carry (whitespace or quote)\n' "$password_file" >&2
+          exit 1
+          ;;
+      esac
       data_dir="''${REDIS_DATA_DIR:-/data/redis}"
       mkdir -p "$data_dir"
-      exec redis-server \
-        --bind "''${REDIS_BIND_IP:-0.0.0.0}" \
-        --port "${toString port}" \
-        --protected-mode yes \
-        --requirepass "$password" \
-        --dir "$data_dir" \
-        --save "" \
-        --appendonly no \
-        --daemonize no \
-        "$@"
+      # The password must not be visible in the process list: it reaches
+      # redis through a private config file instead of argv.
+      config_path="''${REDIS_CONFIG_PATH:-/tmp/redis/redis.conf}"
+      config_dir="$(dirname "$config_path")"
+      mkdir -p "$config_dir"
+      chmod 0700 "$config_dir"
+      {
+        printf 'bind %s\n' "''${REDIS_BIND_IP:-0.0.0.0}"
+        printf 'port %s\n' "${toString port}"
+        printf 'protected-mode yes\n'
+        printf 'requirepass %s\n' "$password"
+        printf 'dir %s\n' "$data_dir"
+        printf 'save ""\n'
+        printf 'appendonly no\n'
+        printf 'daemonize no\n'
+      } > "$config_path"
+      chmod 0600 "$config_path"
+      exec redis-server "$config_path" "$@"
       '';
     in
     mkServiceImage {

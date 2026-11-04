@@ -7,7 +7,7 @@ expectations supplied as JSON.
 Expectation contract (one object per image):
   image       path to the .tar.gz
   user        config.User
-  workingDir  config.WorkingDirectory
+  workingDir  config.WorkingDir
   entrypoint  config.Entrypoint
   cmd         config.Cmd
   env         subset of the image environment
@@ -60,7 +60,12 @@ def main(spec_path):
         config, tree, blobs = load(want["image"])
         where = f"{name}: "
         assert config["User"] == want["user"], where + f"User {config['User']!r}"
-        assert config["WorkingDirectory"] == want["workingDir"], where + "WorkingDirectory"
+        # Docker's field is WorkingDir; a misspelled key is silently ignored
+        # by runtimes, so assert the exact config schema.
+        assert set(config) == {"Cmd", "Entrypoint", "Env", "Labels", "User", "WorkingDir"}, (
+            where + f"unexpected config keys {sorted(config)}"
+        )
+        assert config["WorkingDir"] == want["workingDir"], where + f"WorkingDir {config['WorkingDir']!r}"
         assert config["Entrypoint"] == want["entrypoint"], where + f"Entrypoint {config['Entrypoint']!r}"
         assert config["Cmd"] == want["cmd"], where + f"Cmd {config['Cmd']!r}"
         env = image_env(config)
