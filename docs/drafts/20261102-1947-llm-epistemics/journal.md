@@ -2254,3 +2254,110 @@ reads do not change frozen study sources. Actual RTS construction remains
 unauthorized, its consequential old-context conflict unresolved, private cases
 uninspected, and Q21 supplies no numeric/no-hard-cap agreement or attention proxy.
 Format v1 and its four commands are unchanged; no deployment or push.
+
+---
+
+## J29 — 2026-11-04 — Bounded human framing and framework synthesis
+
+### Scope and current user request
+
+The participant selected an encrypted-notes example for a human co-framing case.
+After confirming its consolidated view, they explicitly reanchored the governing
+purpose. Excerpt from `H16@1` [L14]:
+
+> We are building an epistemic framework for LLM-accelerated software development, not a notetaking app
+
+The subsequent request is:
+
+> So, a synthesis and a brief
+
+The authorized output here is an integrated [synthesis](synthesis.md) and refreshed
+[brief](brief.md), not construction of either example, another pilot, installation
+or deployment. The notes case is closed research evidence, not a delivery backlog.
+The older RTS remains separate and unfinished; its scope conflict is not resolved
+by this case or by the present documentation request.
+
+### Bounded case outcome [L14]
+
+One participant said **“Intent captured correctly”** after the seven-outcome
+consolidated presentation and its explicit limits (`P14@2` / `H15@1`). This is
+current participant confirmation, not an independent completeness oracle or a
+comparative fidelity result. Earlier interpretations and their source pairings
+remain inspectable: provisional permissions and recovery readings were not
+backfilled as original human wording; participant-originated history suggestions
+remained distinct from their later adopted scope.
+
+The participant declined a genuine scenario revision. That leg is **untested**;
+app delivery/security acceptance is **outside the bounded case**, not deferred
+work. The task-purpose reanchoring is retained as a correction/clarification at
+a different level, not counted as completion of the planned scenario-revision leg.
+No app construction occurred, and no-build limits were present throughout.
+
+The observed coexistence of example-level confirmation and a later purpose
+clarification motivates a proposed distinction among governing purpose, artifact
+role, authorized phase and qualitative exit criterion (B5). It does not prove
+imminent unauthorized construction, a causal effect on human burden or the benefit
+of a new intervention. Existing prototype records declare the distinction in
+prose; they do not implement a purpose hierarchy or semantic support engine.
+
+### Source and verification binding
+
+Local `epistemics-pilots` commit `5f186605d51693d237185cca05ee62fedb6cd8b3`
+contains the protocol, report, original records, selected-message receipts,
+confirmed baseline and advisory/erratum. Exact bindings:
+
+- Confirmed record016 SHA-256:
+  `86f1cd2261a8c99c565bded77b1b0d490f9ab4e5c7e758e7a668772b601585d4`.
+- Closing record017 SHA-256:
+  `0e10e6d61e587311ceda8d7536f070a2d319986840364e1606f6f2bdc42ab54b`.
+- Case report SHA-256:
+  `40a456b981519b8a6eda62cc9874fef4631ffe2fb7b815202ca04636862e8d65`.
+
+Seventeen snapshot/check/render cycles, sixteen adjacent history-preserving diffs,
+nine selected-message receipts and the baseline binding were checked in that
+case. The unchanged CLI's complete **36-method software suite** passed on Python
+3.14.8, with no failures/errors/skips. These are historical case-bound software/
+record checks, not fresh runs for this documentation change or human efficacy
+results. The first closing audit's erroneous 51-source expectation (actual roster
+49) and the advisory review's stream/readiness errors remain retained with their
+corrections; failed or disputed accounts were not silently replaced.
+
+A generic task-anchor amendment was saved/get-verified during case closure as
+inert `joint-belief-framing` draft r2. It was not installed or applied to the
+portable bundle. Its proposed body SHA-256 is
+`8b21697c5ec1b7e70fc5fe4b8061aaed7f95875894fb30d0b52193804ab1d8f2`.
+The case supplies a motivation, not validated recurrence or an efficacy estimate.
+
+### Synthesis and documentation corrections
+
+The synthesis keeps governing task scope separate from the five orthogonal claim
+dimensions: statement role, lineage, justification, normative standing and factual
+warrant. It preserves all three validation directions, selective revision with
+alternative grounds, and the distinction between conceptual models, the limited
+v1 CLI and Pilot P's experimental typed records.
+
+The current brief no longer treats lack of a human trial as the whole state of
+the evidence: one bounded case now exists, while comparative acceptance quality,
+human effort, scenario-revision performance and end-to-end use remain unestablished.
+B4's status is qualified accordingly; B5 records the task-purpose distinction as
+framing/proposal, not a demonstrated intervention.
+
+The methodology's earlier instruction to obtain an attention policy/measurement
+including a no-hard-cap option is corrected to respect the rejected instrument
+and absence of a cap agreement. Its closure/readiness and next-step wording are
+also made phase-dependent: construction authorization is required when construction
+is actually part of the task, not a prerequisite for ending a bounded framing
+exercise. Original journal entries and empirical records are not rewritten.
+
+A read-only advisory source-fidelity review (`b7b21ad1-7b96-46c2-bd63-6b257b181b97`,
+task `c08d594a-44bc-49cf-b7cb-654d3de843cf`) found no material source-fidelity error
+or scope suppression in the synthesis, brief and affected proposals. This is an
+attributed model review, not independent human acceptance or efficacy evidence.
+Its reusable-pattern check found no new procedure beyond the existing inert r2
+candidate and relevant installed test-design skills; no new skill draft was justified.
+
+This is documentation synthesis. No experimental runner, CLI, application source
+or installed instruction changed; no new subjects, private cases or workload
+instrument were introduced. Checks for these documents cover source binding,
+journal-prefix preservation, reference IDs, links/anchors and diff formatting,
+not application behavior or framework efficacy.
