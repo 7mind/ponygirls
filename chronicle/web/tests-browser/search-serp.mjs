@@ -14,9 +14,8 @@ async function scene(configure, width = 1440, theme = 'light') {
   const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme }), page = await context.newPage(), fixture = new SearchFixture();
   page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message)); if (configure) configure(fixture);
   await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`);
-  await page.locator('.archive-row').first().waitFor();
+  await page.getByRole('main', { name: 'Search', exact: true }).waitFor();
   assert.equal(await page.getByRole('dialog').count(), 0);
-  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'search', exact: true }).click();
   await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('mode:semantic source');
   return { context, page, fixture };
 }
