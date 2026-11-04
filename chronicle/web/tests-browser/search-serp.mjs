@@ -14,9 +14,8 @@ async function scene(configure, width = 1440, theme = 'light') {
   const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme }), page = await context.newPage(), fixture = new SearchFixture();
   page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message)); if (configure) configure(fixture);
   await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`);
-  await page.locator('.archive-row').first().waitFor();
+  await page.getByRole('main', { name: 'Search', exact: true }).waitFor();
   assert.equal(await page.getByRole('dialog').count(), 0);
-  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'search', exact: true }).click();
   await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('mode:semantic source');
   return { context, page, fixture };
 }
@@ -31,6 +30,34 @@ function mixedPins(result) {
 async function ready(page) { await page.locator('.search-card .search-excerpt').first().waitFor(); }
 async function group(name, body) { await body(); results.push(name); console.log(`PASS search SERP: ${name}`); }
 try {
+  await group('numbered source spans and cursor-backed result pages expose current selection and support revisits', async () => {
+    const { page, fixture, context } = await scene();
+    try {
+      await submit(page); await ready(page);
+      const card = page.locator('.search-card').first(), spans = card.getByRole('navigation', { name: 'Source spans', exact: true });
+      assert.equal(await spans.getByRole('button', { name: 'Source span 1', exact: true }).getAttribute('aria-current'), 'page');
+      await spans.getByRole('button', { name: 'Source span 2', exact: true }).click();
+      await card.locator('.search-excerpt strong').filter({ hasText: /^assistant$/ }).first().waitFor();
+      await spans.getByRole('button', { name: 'Source span 1', exact: true }).click();
+      await card.locator('.search-excerpt strong').filter({ hasText: /^user$/ }).first().waitFor();
+      const pages = page.getByRole('navigation', { name: 'Search result pages', exact: true });
+      await pages.getByRole('button', { name: 'Result page 2', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await page.getByRole('button', { name: 'Search conversation 11', exact: true }).waitFor();
+      assert.equal(await page.locator('.search-count').evaluate(element => element === document.activeElement), true, 'Page changes move keyboard focus to the new result summary');
+      await pages.getByRole('button', { name: 'Result page 3', exact: true }).click();
+      await page.getByRole('button', { name: 'Search conversation 21', exact: true }).waitFor();
+      assert.equal(await pages.getByRole('button', { name: 'Result page 4', exact: true }).count(), 0);
+      await pages.getByRole('button', { name: 'Result page 1', exact: true }).click(); await ready(page);
+      assert.equal(calls(fixture, api.Operation_ArchiveSearch).at(-1).query.cursor, undefined);
+      await pages.getByRole('button', { name: 'Result page 3', exact: true }).click();
+      await page.getByRole('button', { name: 'Search conversation 21', exact: true }).waitFor();
+      assert.equal(calls(fixture, api.Operation_ArchiveSearch).at(-1).query.cursor, '20');
+      await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('new query');
+      assert.equal(await pages.count(), 0); await submit(page); await ready(page);
+      assert.equal(await pages.getByRole('button', { name: 'Result page 3', exact: true }).count(), 0);
+    } finally { await context.close(); }
+  });
   // Regression: Search-specific form layout must not constrain Archive's composer.
   await group('Archive composer retains full row width after Search styles load, at every responsive size and theme', async () => {
     for (const width of [1440, 768, 390, 320]) for (const theme of ['light', 'dark']) {
@@ -63,7 +90,7 @@ try {
     let query = calls(fixture, api.Operation_ArchiveSearch).at(-1).query;
     assert.equal(query.expression, expression); assert.equal(query.limit, 10); assert.equal(query.cursor, undefined); assert.equal(query.sort, api.ArchiveSort.LastTimestamp); assert.equal(query.direction, api.SortDirection.Desc); assert.equal(query.preferRelevance, true);
     assert.match(await page.locator('.search-count').textContent(), /23 matching conversations.*exact lexical\/metadata/);
-    await page.getByRole('button', { name: 'Next results', exact: true }).click(); await page.getByRole('button', { name: 'Search conversation 11', exact: true }).waitFor(); assert.equal(calls(fixture, api.Operation_ArchiveSearch).at(-1).query.cursor, '10');
+    await page.getByRole('button', { name: 'Result page 2', exact: true }).click(); await page.getByRole('button', { name: 'Search conversation 11', exact: true }).waitFor(); assert.equal(calls(fixture, api.Operation_ArchiveSearch).at(-1).query.cursor, '10');
     for (const value of ['mode:lexical changed', '(tag:"architecture" OR tag:"migration") AND NOT producer:"codex"', 'after:"2026-10-02" before:"2026-10-25"']) {
       const before = calls(fixture, api.Operation_ArchiveSearch).length;
       await input.fill(value); assert.equal(await page.locator('.search-card').count(), 0); await page.clock.runFor(1000); assert.equal(calls(fixture, api.Operation_ArchiveSearch).length, before);
@@ -76,8 +103,8 @@ try {
       await page.getByRole('button', { name: 'Search syntax', exact: true }).click();
       await page.getByText('Up to 1000 published chunks per text operand, not a row cap. Hybrid also includes exact lexical HEAD matches.', { exact: true }).waitFor();
       await page.keyboard.press('Escape');
-      await page.getByRole('button', { name: 'Next results', exact: true }).click(); await page.getByRole('button', { name: 'Search conversation 11', exact: true }).waitFor(); assert.equal(await page.locator('.search-card').count(), mode === 'semantic' ? 2 : 10); assert.equal(await page.getByRole('button', { name: 'Next results', exact: true }).isDisabled(), mode === 'semantic');
-      await page.getByRole('button', { name: 'Previous results', exact: true }).click(); await ready(page); assert.equal(calls(fixture, api.Operation_ArchiveSearch).at(-1).query.cursor, undefined);
+      await page.getByRole('button', { name: 'Result page 2', exact: true }).click(); await page.getByRole('button', { name: 'Search conversation 11', exact: true }).waitFor(); assert.equal(await page.locator('.search-card').count(), mode === 'semantic' ? 2 : 10); assert.equal(await page.getByRole('button', { name: 'Result page 3', exact: true }).count(), mode === 'semantic' ? 0 : 1);
+      await page.getByRole('button', { name: 'Result page 1', exact: true }).click(); await ready(page); assert.equal(calls(fixture, api.Operation_ArchiveSearch).at(-1).query.cursor, undefined);
     }
     assert.equal(calls(fixture, api.Operation_Search).length, 0, 'The full DSL never falls back to the narrower MCP Search operation');
     await page.getByRole('navigation').getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), '');
@@ -113,7 +140,7 @@ try {
   await group('mixed HEAD literals and published semantic witnesses keep independent context and conversation pins', async () => {
     const { page, fixture, context } = await scene(f => { f.archiveSearchTransform = mixedPins; });
     await submit(page); await ready(page);
-    const card = page.locator('.search-card').first(); await card.getByRole('button', { name: 'Next source span', exact: true }).click(); await card.locator('.search-excerpt strong').filter({ hasText: /^assistant$/ }).first().waitFor();
+    const card = page.locator('.search-card').first(); await card.getByRole('button', { name: 'Source span 2', exact: true }).click(); await card.locator('.search-excerpt strong').filter({ hasText: /^assistant$/ }).first().waitFor();
     const request = calls(fixture, api.Operation_ReadMessageContext).at(-1); assert.equal(request.view.revision, fixture.session.revision); assert.equal(request.view.generationId, undefined); assert.equal(await card.locator('mark').textContent(), 'Separate ');
     await card.getByRole('button', { name: /^Open m66/ }).click(); await page.locator('#message-m66[aria-current=location]').waitFor();
     const locate = calls(fixture, api.Operation_LocateMessage).at(-1); assert.equal(locate.view.revision, fixture.session.revision); assert.equal(locate.view.generationId, undefined); assert.match(await page.locator('#message-m66 pre').textContent(), new RegExp(`source r${fixture.session.revision}`)); await context.close();
@@ -145,7 +172,7 @@ try {
     await card.getByRole('button', { name: 'Later context', exact: true }).click(); await page.waitForFunction(n => document.querySelector('.search-card .search-excerpt pre')?.textContent.length > n, firstText.length);
     request = calls(fixture, api.Operation_ReadMessageContext).at(-1); assert.equal(request.anchor.start, end); assert.equal(request.anchor.end, end); assert.equal(request.afterBytes, 2048); assert.equal(request.beforeBytes, 0);
     assert.equal(await card.locator('.search-excerpt pre').first().textContent(), Buffer.from(fixture.messagesAt(1)[64].text).subarray(end, end + 2048).toString()); assert.equal(await card.locator('mark').count(), 0, 'nearby continuation is not labeled matched source');
-    await card.getByRole('button', { name: 'Next source span', exact: true }).click(); await card.locator('.search-excerpt strong').filter({ hasText: /^assistant$/ }).first().waitFor();
+    await card.getByRole('button', { name: 'Source span 2', exact: true }).click(); await card.locator('.search-excerpt strong').filter({ hasText: /^assistant$/ }).first().waitFor();
     assert.equal(await card.locator('.search-excerpt pre').first().textContent(), fixture.messagesAt(1)[65].text); assert.ok(await card.locator('.search-excerpt').count() > 1); assert.equal(await card.locator('.search-excerpt').first().locator('mark').textContent(), 'Separate ');
     assert.ok(calls(fixture, api.Operation_ReadMessageContext).every(operation => operation.view.revision === 1 && operation.view.generationId === fixture.view.generationId && operation.beforeBytes + operation.afterBytes <= 2048));
     assert.equal(calls(fixture, api.Operation_GetSession).length, 0); assert.equal(calls(fixture, api.Operation_GetMessages).length, 0); await context.close();
@@ -171,7 +198,7 @@ try {
     const { page, fixture, context } = await scene(f => { f.holdSearch = true; }); await submit(page); await fixture.waitCall(api.Operation_ArchiveSearch, 1);
     await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('new query'); fixture.pendingSearch.shift()(); await page.clock.runFor(100); assert.equal(await page.locator('.search-card').count(), 0);
     fixture.holdSearch = false; fixture.holdContext = true; await submit(page); await fixture.waitCall(api.Operation_ReadMessageContext, 10);
-    const card = page.locator('.search-card').first(); await card.getByRole('button', { name: 'Next source span', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMessageContext, 11);
+    const card = page.locator('.search-card').first(); await card.getByRole('button', { name: 'Source span 2', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMessageContext, 11);
     const old = fixture.pendingContext.splice(0, 10); fixture.pendingContext.shift()(); await card.locator('.search-excerpt').first().waitFor(); old.forEach(reply => reply()); await page.clock.runFor(100);
     assert.equal(await card.locator('.search-excerpt pre').first().textContent(), fixture.messagesAt(1)[65].text); await context.close();
   });
@@ -226,7 +253,7 @@ try {
       const { page, fixture, context } = await scene(f => { f.archiveSearchTransform = mixedPins; });
       try {
         await submit(page); await ready(page);
-        const card = page.locator('.search-card').first(); await card.getByRole('button', { name: 'Next source span', exact: true }).click(); await card.locator('.search-excerpt strong').filter({ hasText: /^assistant$/ }).first().waitFor();
+        const card = page.locator('.search-card').first(); await card.getByRole('button', { name: 'Source span 2', exact: true }).click(); await card.locator('.search-excerpt strong').filter({ hasText: /^assistant$/ }).first().waitFor();
         fixture.holdContext = true;
         if (failure === 'wrong-pin') fixture.contextTransform = result => result.with({ view: fixture.viewAt(2) }); else fixture.contextFailure = failure;
         await card.getByRole('button', { name: 'Later context', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMessageContext, 12);
@@ -245,7 +272,7 @@ try {
     await submit(page); await ready(page);
     const card = page.locator('.search-card').first(); fixture.holdContext = true; fixture.contextFailure = 'forbidden';
     await card.getByRole('button', { name: 'Later context', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMessageContext, 11);
-    fixture.contextFailure = null; await card.getByRole('button', { name: 'Next source span', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMessageContext, 12);
+    fixture.contextFailure = null; await card.getByRole('button', { name: 'Source span 2', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMessageContext, 12);
     fixture.pendingContext.splice(1, 1)[0](); await card.locator('.search-excerpt strong').filter({ hasText: /^assistant$/ }).first().waitFor();
     await card.getByRole('button', { name: /^Open m66/ }).click(); await page.locator('#message-m66[aria-current=location]').waitFor();
     fixture.pendingContext.shift()(); await page.clock.runFor(100);

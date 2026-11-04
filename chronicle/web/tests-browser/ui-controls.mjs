@@ -12,7 +12,7 @@ async function scene(path = 'notifications', width = 1280, colorScheme = 'light'
   page.setDefaultTimeout(5000); page.on('pageerror', error => errors.push(error.message)); await page.clock.install();
   const fixture = new ChronicleFixture(); if (path === 'harness') await fixture.install(page);
   await page.goto(`${origin}/tests-browser/${path}.html`);
-  if (path === 'harness') await page.locator('.archive-row').first().waitFor(); else await page.getByRole('heading', { name: 'Notification fixture', exact: true }).waitFor();
+  if (path === 'harness') { await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); } else await page.getByRole('heading', { name: 'Notification fixture', exact: true }).waitFor();
   return { context, page, fixture };
 }
 async function group(name, body) { if (process.env.CHRONICLE_UI_CASE !== undefined && !name.includes(process.env.CHRONICLE_UI_CASE)) return; await body(); console.log(`PASS browser UI controls: ${name}`); }
@@ -98,22 +98,35 @@ try {
     await page.getByRole('button', { name: 'Mint token', exact: true }).click(); await page.getByRole('button', { name: 'Lose acknowledgement', exact: true }).click(); await page.getByRole('button', { name: 'Look up receipt', exact: true }).click(); await page.getByRole('button', { name: 'Return token metadata', exact: true }).click();
     await page.getByRole('heading', { name: 'Token committed; secret unavailable', exact: true }).waitFor(); await page.clock.runFor(10000); assert.equal(await page.getByRole('button', { name: 'Revoke unrecoverable token', exact: true }).isVisible(), true); assert.equal(await notifications(page).count(), 0); await context.close();
   });
-  await group('all controlled tables expose fitting and columns only inside right-aligned keyboard-accessible three-dots menus', async () => {
+  await group('all controlled tables expose fitting and columns only inside keyboard-accessible vertical three-dots menus in column headers', async () => {
     for (const width of [1280, 390]) {
       const { context, page, fixture } = await scene('harness', width);
       for (const name of ['Conversations', 'Collectors', 'Indexing jobs']) {
         if (name === 'Collectors') { await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor(); }
         const controls = page.getByRole('region', { name: `${name} table controls`, exact: true }), table = page.getByRole('table', { name, exact: true });
-        assert.equal(await controls.getByRole('button').count(), 1, 'Only the menu trigger is exposed on the table top bar');
-        const trigger = controls.getByRole('button', { name: `${name} table options`, exact: true }); assert.match(await trigger.innerText(), /⋯|…|\.\.\./); assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+        assert.equal(await controls.getByRole('button').count(), 1, 'Only the menu trigger is exposed in the column header');
+        const trigger = controls.getByRole('button', { name: `${name} table options`, exact: true }); assert.equal(await trigger.innerText(), '⋮'); assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+        assert.equal(await table.locator('thead th').getByRole('button', { name: `${name} table options`, exact: true }).count(), 1);
         const bar = await controls.boundingBox(), button = await trigger.boundingBox(); assert.ok(Math.abs(bar.x + bar.width - button.x - button.width) <= 2, 'Table menu is aligned at the right edge');
+        async function revealHeaderMenu() {
+          await trigger.scrollIntoViewIfNeeded();
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
+          await controls.getByRole('button', { name: 'Fit to width', exact: true }).waitFor();
+        }
         const before = fixture.calls.length; await trigger.focus(); await trigger.press('Enter'); await controls.getByRole('button', { name: 'Fit to width', exact: true }).waitFor(); await page.waitForFunction(name => document.querySelector(`button[aria-label="${name} table options"]`)?.getAttribute('aria-expanded') === 'true', name);
-        await controls.getByRole('button', { name: 'Fit to content', exact: true }).click(); await controls.getByRole('button', { name: 'Fit to width', exact: true }).click();
+        await controls.getByRole('button', { name: 'Fit to content', exact: true }).click();
+        // Content fitting can move the header offscreen; the clipped popover must
+        // dismiss rather than float detached. Bring its actual header back.
+        await revealHeaderMenu();
+        await controls.getByRole('button', { name: 'Fit to width', exact: true }).click();
         const columns = controls.locator('summary').filter({ hasText: /^Columns$/ }); await columns.focus(); await columns.press('Enter');
         assert.equal(await controls.getByRole('checkbox', { disabled: true }).count() > 0, true, 'Required columns remain protected');
         const compact = await table.locator('thead th').count(); await controls.getByRole('button', { name: 'Show all columns', exact: true }).click(); assert.ok(await table.locator('thead th').count() > compact);
+        await revealHeaderMenu();
         await controls.getByRole('button', { name: 'Compact columns', exact: true }).click(); assert.equal(await table.locator('thead th').count(), compact);
-        await columns.press('Escape'); await controls.getByRole('button', { name: 'Fit to width', exact: true }).waitFor({ state: 'hidden' }); assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
+        await revealHeaderMenu();
+        await columns.focus(); await columns.press('Escape'); await controls.getByRole('button', { name: 'Fit to width', exact: true }).waitFor({ state: 'hidden' }); assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
         await trigger.click(); await page.getByRole('combobox', { name: name === 'Conversations' ? 'Search conversations' : name === 'Collectors' ? 'Search collector metadata' : 'Search indexing job metadata', exact: true }).focus(); await page.waitForFunction(name => document.querySelector(`button[aria-label="${name} table options"]`)?.getAttribute('aria-expanded') === 'false', name);
         assert.equal(fixture.calls.slice(before).filter(call => !(call.operation instanceof api.Operation_Ping)).length, 0, 'Presentation controls must not sort, search, read source content or write');
       }

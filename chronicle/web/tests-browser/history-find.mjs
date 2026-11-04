@@ -13,7 +13,7 @@ const browser = await chromium.launch({ headless: true }), results = [], errors 
 async function scene(configure, width, theme) {
   const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme }), page = await context.newPage(), fixture = new HistoryFixture();
   page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); configure(fixture);
-  await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.locator('.archive-row').first().waitFor(); await page.locator('.archive-row .table-title').first().click(); await page.locator('.original-message').first().waitFor();
+  await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();  await page.locator('.archive-row').first().waitFor(); await page.locator('.archive-row .table-title').first().click(); await page.locator('.original-message').first().waitFor();
   const finder = page.getByRole('region', { name: 'Find in selected history', exact: true }), input = page.getByRole('textbox', { name: 'Literal message text', exact: true });
   return { context, page, fixture, finder, input };
 }
@@ -183,7 +183,7 @@ try {
     const reply = fixture.pendingFind.shift(); if (reply !== undefined) reply();
     if (change === 'source-acl') { await finder.getByRole('alert').waitFor(); assert.equal(await input.inputValue(), ''); }
     else if (change === 'pin' || change === 'session' || change === 'disconnect') { await page.getByRole('textbox', { name: 'Literal message text', exact: true }).waitFor(); assert.equal(await page.getByRole('textbox', { name: 'Literal message text', exact: true }).inputValue(), ''); }
-    else if (change === 'same-owner-auth' || change === 'account') { await page.getByLabel('Login', { exact: true }).fill(change === 'account' ? 'bob' : 'alice'); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in →', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); await page.locator('.archive-row .table-title').first().click(); assert.equal(await page.getByRole('textbox', { name: 'Literal message text', exact: true }).inputValue(), ''); }
+    else if (change === 'same-owner-auth' || change === 'account') { await page.getByLabel('Login', { exact: true }).fill(change === 'account' ? 'bob' : 'alice'); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in →', exact: true }).click(); await page.getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); await page.locator('.archive-row .table-title').first().click(); assert.equal(await page.getByRole('textbox', { name: 'Literal message text', exact: true }).inputValue(), ''); }
     assert.equal(await page.locator('.find-hits button').count(), 0); await s.context.close();
   });
   for (const width of [1440, 390, 320]) for (const theme of ['light', 'dark']) await group(`${theme} ${width} geometry, keyboard and focus`, async () => {

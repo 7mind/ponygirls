@@ -12,7 +12,7 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   fixture.archiveRows = [fixture.archiveAt(0), fixture.archiveAt(1)].map((row, index) => row.with({ head: row.head.with({ metadata: row.head.metadata.with({ title: index === 0 ? 'Subagent title without recorded ID' : 'Main title with recorded subagent', producer: 'synthetic-harness', model: 'recorded-source-model' }), source: row.head.source.with({ subagentId: index === 0 ? undefined : 'recorded-child', discoveryRootId: index === 0 ? 'yolo:Named_1.2' : 'native' }) }) }));
   fixture.activityJobs = fixture.jobRows.map(item => item.with({ session: item.session.with({ source: item.session.source.with({ discoveryRootId: 'yolo:JobRevision' }) }) }));
-  await fixture.install(page); await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.locator('.archive-row').first().waitFor();
+  await fixture.install(page); await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();  await page.locator('.archive-row').first().waitFor();
   const search = page.getByRole('combobox', { name: 'Search conversations', exact: true });
   await page.getByRole('button', { name: 'Main agents', exact: true }).click(); assert.equal(await search.inputValue(), 'agent:"main"'); await search.press('Enter');
   await page.waitForFunction(() => document.querySelector('.archive-context [role=status]').textContent.includes('shown'));

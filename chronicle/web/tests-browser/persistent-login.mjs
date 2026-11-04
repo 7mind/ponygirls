@@ -24,14 +24,14 @@ async function run(name, body) {
 }
 try {
   await run('transient disconnect clears private content without asking for credentials', async ({ page, fixture }) => {
-    await page.goto(`${origin}/tests-browser/harness.html`); await page.locator('.archive-row').first().waitFor();
+    await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
     fixture.mode = 'outage'; fixture.restart();
     await page.locator('.archive-row').waitFor({ state: 'detached' });
     assert.equal(await page.getByRole('heading', { name: 'Sign in', exact: true }).count(), 0, 'recoverable disconnect is not credential rejection');
     await page.getByRole('status').filter({ hasText: /Reconnecting|Session unavailable/ }).first().waitFor();
     await page.locator('.connection-widget[data-state="stopped"]').waitFor();
     fixture.mode = 'normal'; await page.getByRole('button', { name: 'Retry session', exact: true }).click();
-    await page.locator('.archive-row').first().waitFor();
+    await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
   });
   await run('nonterminal Whoami failure offers bounded credential-free recovery', async ({ page, fixture }) => {
     fixture.whoamiFailure = 'Synthetic identity service unavailable';
@@ -39,10 +39,10 @@ try {
     assert.equal(await page.getByRole('heading', { name: 'Sign in', exact: true }).count(), 0);
     const before = fixture.calls.length; fixture.whoamiFailure = null;
     await page.getByRole('button', { name: 'Retry session', exact: true }).click();
-    await page.locator('.archive-row').first().waitFor(); assert.ok(fixture.calls.length > before);
+    await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); assert.ok(fixture.calls.length > before);
   });
   await run('initial renewal makes a persistent HttpOnly cookie and survives context restoration', async ({ context, page, fixture }) => {
-    await page.goto(`${origin}/tests-browser/harness.html`); await page.locator('.archive-row').first().waitFor();
+    await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
     await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
     assert.equal(fixture.refreshRequests.length, 1, 'an authenticated connection renews immediately');
     const request = fixture.refreshRequests[0]; assert.equal(request.method, 'POST'); assert.equal(request.body, null); assert.equal(request.headers.origin, origin);
@@ -64,7 +64,7 @@ try {
     fixture.refreshStatus = 500;
     await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('alert').filter({ hasText: 'HTTP 500' }).waitFor();
     assert.equal(await page.getByRole('heading', { name: 'Sign in', exact: true }).count(), 0);
-    await page.locator('.archive-row').first().waitFor();
+    await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
     fixture.refreshStatus = 200; fixture.refreshTtl = 'invalid'; await page.getByRole('button', { name: 'Retry session renewal', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'invalid TTL' }).waitFor();
     fixture.refreshTtl = '2592000'; await page.getByRole('button', { name: 'Retry session renewal', exact: true }).click();
@@ -85,12 +85,12 @@ try {
     assert.equal(await page.getByRole('button', { name: 'Reload dashboard', exact: true }).count(), 1, 'version mismatch needs actionable reload guidance');
     assert.equal(await page.getByRole('heading', { name: 'Sign in', exact: true }).count(), 0);
     fixture.mode = 'normal'; await page.getByRole('button', { name: 'Reload dashboard', exact: true }).click();
-    await page.locator('.archive-row').first().waitFor();
+    await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
   });
   await run('periodic renewal and focus/resume use the advertised TTL without catch-up bursts', async ({ page, fixture }) => {
     fixture.refreshTtl = '4'; await page.clock.install({ time: new Date('2030-01-01T00:00:00Z') });
     await page.clock.pauseAt(new Date('2030-01-01T00:01:00Z'));
-    await page.goto(`${origin}/tests-browser/harness.html`); await page.locator('.archive-row').first().waitFor();
+    await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
     const first = fixture.refreshRequests.length; assert.equal(first, 1);
     await page.clock.runFor(1999); assert.equal(fixture.refreshRequests.length, first);
     const renewed = page.waitForResponse(response => response.url().endsWith('/api/session/refresh'));
@@ -104,7 +104,7 @@ try {
   await run('cookie account mismatch removes old content and forces Whoami before another owner is shown', async ({ page, fixture }) => {
     let release; const held = new Promise(resolve => { release = resolve; });
     await page.route('**/api/session/refresh', async route => { await held; await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'X-Chronicle-Session-Ttl-Seconds': '2592000' }, body: JSON.stringify(api.UserInfo_JsonCodec.instance.encode(api.BaboonCodecContext.Default, fixture.user)) }); });
-    await page.goto(`${origin}/tests-browser/harness.html`); await page.locator('.archive-row').first().waitFor();
+    await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
     const old = await page.locator('.archive-row').first().elementHandle();
     fixture.user = new api.UserInfo('bob', 'bob', [api.Scope.Read]); fixture.whoamiFailure = 'Hold new owner revalidation'; release();
     await page.getByRole('alert').filter({ hasText: fixture.whoamiFailure }).waitFor();
@@ -117,7 +117,7 @@ try {
     let request; const started = new Promise(resolve => { request = resolve; });
     await page.route('**/api/session/refresh', route => request(route));
     await page.goto(`${origin}/tests-browser/harness.html`); const route = await started;
-    await page.locator('.archive-row').first().waitFor();
+    await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
     const cancelled = page.waitForEvent('requestfailed', request => request.url().endsWith('/api/session/refresh'));
     await page.getByRole('button', { name: 'Sign out', exact: true }).click(); await cancelled;
     await page.getByRole('heading', { name: 'Sign in', exact: true }).waitFor();
@@ -135,13 +135,13 @@ try {
       await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`);
       await page.getByRole('heading', { name: 'Sign in', exact: true }).waitFor();
       await page.getByLabel('Login', { exact: true }).fill('alice'); await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
-      await page.getByRole('button', { name: 'Sign in →', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
+      await page.getByRole('button', { name: 'Sign in →', exact: true }).click(); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
       await persistent.addCookies([{ name: 'session_only_control', value: 'synthetic', url: origin }]);
       const cookie = (await persistent.cookies()).find(cookie => cookie.name === 'chronicle_session'); assert.ok(cookie && cookie.expires > 0 && cookie.httpOnly);
       await persistent.close(); persistent = await chromium.launchPersistentContext(profile, { headless: true });
       const restored = await persistent.cookies(); assert.deepEqual(restored.find(cookie => cookie.name === 'chronicle_session'), cookie); assert.equal(restored.some(cookie => cookie.name === 'session_only_control'), false);
       page = await persistent.newPage(); fixture = new ChronicleFixture(); await fixture.install(page);
-      await page.goto(`${origin}/tests-browser/harness.html`); await page.locator('.archive-row').first().waitFor();
+      await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor();
       assert.match(fixture.refreshRequests[0].headers.cookie, /chronicle_session=synthetic/);
     } finally { await persistent?.close(); await rm(profile, { recursive: true, force: true }); }
   });

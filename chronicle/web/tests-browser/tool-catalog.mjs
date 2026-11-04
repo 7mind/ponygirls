@@ -21,7 +21,7 @@ async function scene(viewport, configure) {
   const catalog = fixture.catalog.bind(fixture);
   fixture.catalog = () => catalog().with({ tools: toolCatalogFixture.map(tool => new api.McpToolDefinition(tool.name, tool.description, JSON.stringify(tool.inputSchema))) });
   configure(fixture); page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message));
-  await page.clock.install(); await fixture.install(page); await page.goto(`${origin}/tests-browser/goal50.html`);
+  await page.clock.install(); await fixture.install(page); await page.goto(`${origin}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
   await page.locator('.archive-row').first().waitFor(); await page.getByRole('button', { name: 'mcp', exact: true }).click();
   await page.getByRole('region', { name: 'Current MCP test catalog', exact: true }).waitFor();
   assert.equal(await page.locator('.mcp-tool-reference').getAttribute('open'), null, 'Optional schemas start collapsed');

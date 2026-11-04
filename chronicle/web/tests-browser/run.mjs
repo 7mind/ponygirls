@@ -24,6 +24,7 @@ async function sceneAt(sceneOrigin, waitForArchive, configure) {
   const page = await context.newPage(); page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message));
   const fixture = new ChronicleFixture(); if (configure) configure(fixture); await fixture.install(page);
   await page.goto(`${sceneOrigin}/tests-browser/harness.html`);
+  if (fixture.signedIn) await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
   if (waitForArchive) await archiveReady(page);
   return { context, page, fixture };
 }
@@ -255,6 +256,8 @@ try {
       await page.getByRole('button', { name: 'Sign in →', exact: true }).click();
     }
     await page.locator('.identity').getByText(nextUser, { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'search', exact: true }).getAttribute('aria-current'), 'page');
+    await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
     await archiveReady(page); await page.waitForTimeout(150);
     const after = fixture.requests.slice(boundary).filter(request => request.userId === nextUser).map(request => request.envelope.operation);
     assert.ok(after.some(operation => operation instanceof api.Operation_Archive), `${transition}: the new account receives its own default archive`);
@@ -464,6 +467,7 @@ try {
     await page.getByRole('textbox', { name: 'Login', exact: true }).fill('alice');
     await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
     await page.getByRole('button', { name: 'Sign in →', exact: true }).click();
+    await page.getByRole('button', { name: 'archive', exact: true }).click();
     await archiveReady(page);
     assert.ok((await context.cookies()).some(cookie => cookie.name === 'chronicle_session' && cookie.httpOnly));
     assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);

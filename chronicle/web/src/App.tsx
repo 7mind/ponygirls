@@ -43,7 +43,7 @@ function LoginPanel({ connection }: { connection: ChronicleConnection }) {
     </section></main>;
 }
 export function App({ connection, theme }: { connection: ChronicleConnection; theme: ThemeController }) {
-  const stats = useConnection(connection), [tab, setTab] = useState<'archive' | 'search' | 'activity' | 'access' | 'mcp'>('archive');
+  const stats = useConnection(connection), [tab, setTab] = useState<'archive' | 'search' | 'activity' | 'access' | 'mcp'>('search');
   // Register transport lifecycle verification before renewal's return/focus listener.
   useEffect(() => { connection.start(); return () => connection.dispose(); }, [connection]);
   const [archive, setArchive] = useState<ArchiveState>(emptyArchive);
@@ -56,7 +56,7 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
   const [draft, setDraft] = useState('');
   const [archiveOwner, setArchiveOwner] = useState<string | null>(null);
   const resetArchive = useCallback((owner: string | null) => {
-    archiveRequests.invalidate(); setArchive(emptyArchive()); setDraft(''); setTab('archive'); setArchiveOwner(owner);
+    archiveRequests.invalidate(); setArchive(emptyArchive()); setDraft(''); setTab('search'); setArchiveOwner(owner);
   }, [archiveRequests]);
   const identity = useResource(connection, stats, 'identity', '', true, () => read(connection, new Operation_Whoami(), r => r instanceof Result_Whoami ? r.user : null));
   useEffect(() => {

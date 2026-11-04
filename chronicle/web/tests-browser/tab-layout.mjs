@@ -39,6 +39,11 @@ try {
     page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message));
     await page.clock.install(); await fixture.install(page);
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`);
+    // Regression: identity initialization must not reset the landing tab to Archive.
+    const searchTab = page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'search', exact: true });
+    await searchTab.waitFor();
+    assert.equal(await searchTab.getAttribute('aria-current'), 'page', 'Search must be the default authenticated tab');
+    await visit(page, 'archive');
     await page.locator('.archive-row').first().waitFor();
     await page.evaluate(() => document.fonts.ready);
     const archive = await metrics(page), gutter = width <= 640 ? 10 : width <= 850 ? 14 : 22;
@@ -49,6 +54,19 @@ try {
         const run = await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).boundingBox();
         assert.ok(run !== null && run.y + run.height <= height, `Optional tool reference must not push Run below the initial viewport: ${JSON.stringify(run)}`);
       }
+      if (tab === 'archive' || tab === 'activity') {
+        for (const name of tab === 'archive' ? ['Conversations'] : ['Collectors', 'Indexing jobs']) {
+          const table = page.getByRole('table', { name, exact: true });
+          const options = table.locator('thead').getByRole('button', { name: `${name} table options`, exact: true });
+          assert.equal(await options.count(), 1, `${name}: options belong in the actual column header`);
+          assert.equal(await options.textContent(), '⋮', `${name}: vertical options icon`);
+          assert.equal(await page.getByRole('button', { name: `${name} table options`, exact: true }).count(), 1);
+          await options.click();
+          await table.getByRole('button', { name: 'Fit to width', exact: true }).waitFor();
+          await options.click();
+        }
+      }
+      await page.evaluate(() => window.scrollTo(0, 0));
       const current = await metrics(page);
       results.push({ tab, width, theme, ...current });
       assert.equal(current.left, archive.left, `${tab} ${width}: left content edge must match Archive`);

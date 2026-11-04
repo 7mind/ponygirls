@@ -46,7 +46,7 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
   async function scene(configure) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } }), page = await context.newPage(), fixture = new ChronicleFixture();
     page.on('pageerror', error => errors.push(error.message)); if (configure !== null) await configure(fixture, page);
-    await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`); await page.locator('.archive-row').first().waitFor();
+    await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();  await page.locator('.archive-row').first().waitFor();
     await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-overview').waitFor();
     for (const name of ['Collectors', 'Indexing jobs']) await showAllTableColumns(page, name);
     return { context, page, fixture };
@@ -81,7 +81,7 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     async function check(tableSelector, rowSelector, scroller, operationType, fields, resultRows) {
       const table = page.locator(tableSelector), headers = await table.locator('thead th[data-sort]').evaluateAll(items => items.map(item => item.getAttribute('data-sort')));
       assert.deepEqual([...headers].sort(), [...fields].sort(), 'every visible data header is a typed server sort');
-      assert.equal(await table.locator('thead th:not([data-sort])').innerText(), 'Actions');
+      assert.equal(await table.locator('thead th:not([data-sort]) > span').innerText(), 'Actions');
       for (const field of fields) for (let toggle = 0; toggle < 2; toggle++) {
         const previous = fixture.calls.filter(call => call.operation instanceof operationType).at(-1).operation.query;
         const direction = previous.sort === field && previous.direction === api.SortDirection.Asc ? api.SortDirection.Desc : api.SortDirection.Asc;
@@ -271,7 +271,7 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     const current = await begin(5); await current.getByRole('button', { name: 'Return typed success', exact: true }).click(); await settled(); assert.notEqual(await typed.textContent(), 'none'); await page.getByRole('button', { name: 'Sign out', exact: true }).click(); assert.equal(await typed.textContent(), 'none'); await context.close();
   });
   await run('activity tables without Read scope expose no protected tables or retry action', async () => {
-    const context = await browser.newContext(), page = await context.newPage(), fixture = new ChronicleFixture(); page.on('pageerror', error => errors.push(error.message)); fixture.user = fixture.user.with({ scopes: [api.Scope.Ingest] }); await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`);
+    const context = await browser.newContext(), page = await context.newPage(), fixture = new ChronicleFixture(); page.on('pageerror', error => errors.push(error.message)); fixture.user = fixture.user.with({ scopes: [api.Scope.Ingest] }); await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
     await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.getByRole('alert').filter({ hasText: 'Read scope is required to view your activity' }).waitFor();
     assert.equal(await page.locator('.activity-table').count(), 0); assert.equal(await page.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).count(), 0);
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Activity || call.operation instanceof api.Operation_ActivityJobs || call.operation instanceof api.Operation_PreviewRetryFailed || call.operation instanceof api.Operation_ApplyRetryFailed).length, 0); await context.close();

@@ -161,7 +161,7 @@ try {
   const page = await context.newPage();
   const fixture = new ChronicleFixture();
   await fixture.install(page);
-  await page.goto(`http://127.0.0.1:${address.port}/tests-browser/harness.html`);
+  await page.goto(`http://127.0.0.1:${address.port}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
   await page.getByRole('combobox', { name: 'Search conversations' }).fill('original source');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await page.locator('.archive-row .table-title').first().click();

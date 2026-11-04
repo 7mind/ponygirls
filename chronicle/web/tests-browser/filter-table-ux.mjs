@@ -14,7 +14,7 @@ async function scene(width, theme, configure) {
   if (configure !== undefined) configure(fixture);
   const tags = Array.from({ length: 16 }, (_, index) => `tag-${index}-猫🦄-<script>-` + 'long-value-'.repeat(8)), title = 'Literal 猫🦄 <script>not markup</script> ' .repeat(80);
   fixture.archiveRows = fixture.authorizedRows.map((row, index) => index === 0 ? row.with({ head: row.head.with({ metadata: row.head.metadata.with({ title, tags }) }), tags }) : row);
-  page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message)); await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.locator('.archive-row').first().waitFor(); return { context, page, fixture };
+  page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message)); await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();  await page.locator('.archive-row').first().waitFor(); return { context, page, fixture };
 }
 async function group(name, body) { if (process.env.CHRONICLE_FILTER_CASE !== undefined && !name.includes(process.env.CHRONICLE_FILTER_CASE)) return; await body(); console.log(`PASS browser filter-table: ${name}`); }
 const queryCalls = fixture => fixture.calls.filter(call => call.operation instanceof api.Operation_Archive);
