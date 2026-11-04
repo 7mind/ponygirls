@@ -42,8 +42,10 @@ try {
       await spans.getByRole('button', { name: 'Source span 1', exact: true }).click();
       await card.locator('.search-excerpt strong').filter({ hasText: /^user$/ }).first().waitFor();
       const pages = page.getByRole('navigation', { name: 'Search result pages', exact: true });
-      await pages.getByRole('button', { name: 'Result page 2', exact: true }).click();
+      await pages.getByRole('button', { name: 'Result page 2', exact: true }).focus();
+      await page.keyboard.press('Enter');
       await page.getByRole('button', { name: 'Search conversation 11', exact: true }).waitFor();
+      assert.equal(await page.locator('.search-count').evaluate(element => element === document.activeElement), true, 'Page changes move keyboard focus to the new result summary');
       await pages.getByRole('button', { name: 'Result page 3', exact: true }).click();
       await page.getByRole('button', { name: 'Search conversation 21', exact: true }).waitFor();
       assert.equal(await pages.getByRole('button', { name: 'Result page 4', exact: true }).count(), 0);
