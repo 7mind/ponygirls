@@ -11,11 +11,14 @@ Expectation contract (one object per image):
   entrypoint  config.Entrypoint
   cmd         config.Cmd
   env         subset of the image environment
+  absentEnv   names that must not be set by the image
+  webRoot     expected CHRONICLE_WEB_ROOT real package directory
   uid, gid    expected owner of /data
   userName    /etc/passwd identity name
   subdirs     expected owned directories under /data
 """
 import json
+import os
 import sys
 import tarfile
 
@@ -71,6 +74,8 @@ def main(spec_path):
         env = image_env(config)
         for key, value in want["env"].items():
             assert env.get(key) == value, where + f"env {key}={env.get(key)!r} != {value!r}"
+        for key in want.get("absentEnv") or []:
+            assert key not in env, where + f"image must not set {key} itself"
         # Every image carries CA roots, zoneinfo and a fixed PATH: the
         # entrypoint scripts resolve their binaries from /bin only.
         assert env["PATH"] == "/bin", where + "PATH"
@@ -98,6 +103,21 @@ def main(spec_path):
         entrypoint = want["entrypoint"][0].lstrip("/")
         assert entrypoint in tree, where + f"entrypoint {entrypoint} missing"
         assert tree[entrypoint]["mode"] & 0o111, where + "entrypoint not executable"
+        if "webRoot" in want:
+            # A merged contents root is a symlink forest: its leaves resolve
+            # into the store, outside the root, so static-file realpath
+            # confinement rejects them. The configured root must be the real
+            # package directory instead.
+            root = want["webRoot"]
+            assert env.get("CHRONICLE_WEB_ROOT") == root, where + f"CHRONICLE_WEB_ROOT {env.get('CHRONICLE_WEB_ROOT')!r}"
+            merged = tree["share/chronicle/web/index.html"]
+            assert merged["sym"], where + "merged web leaf is no longer a symlink; this check lost its subject"
+            assert os.path.isdir(root) and os.path.isfile(os.path.join(root, "index.html")), (
+                where + f"{root} is not a real package directory with index.html"
+            )
+            base = os.path.realpath(root)
+            leaf = os.path.realpath(os.path.join(base, "index.html"))
+            assert leaf.startswith(base + os.sep), where + f"web root {root} does not confine index.html"
         # No host configuration, credentials or homes may be baked in; the
         # deployment supplies those through mounts.
         for forbidden in ("run/secrets", "run/credentials", "etc/nixos", "etc/ssh", "home", "root/.ssh"):

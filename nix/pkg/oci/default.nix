@@ -52,12 +52,14 @@ in
     meta.description = "Manure file/directory hosting server image (nonroot, no embedded config)";
   };
 
-  # The default `package` (mkChroniclePackage) is a wrapper whose
-  # bin/chronicle-server sets CHRONICLE_WEB_ROOT to its own store path; the
-  # image overrides it with the merged in-image /share/chronicle/web. A bare
-  # native artifact has no wrapper and no web assets, so pass `executable`
-  # (its in-image path, e.g. "/libexec/chronicle-server") and `webPackage`
-  # (the top-level chronicle-web store path) explicitly.
+  # The merged /share/chronicle/web root is a symlink forest, and Chronicle's
+  # static-file realpath confinement rejects leaves that resolve outside the
+  # root, so the root must stay the immutable package directory. With
+  # `webPackage` the image anchors CHRONICLE_WEB_ROOT at
+  # "<webPackage>/share/chronicle/web"; the default packaged `package` is a
+  # wrapper that already sets its own real root, and no other case may
+  # override it with a wrong one. A bare native artifact needs `executable`
+  # (its in-image path, e.g. "/libexec/chronicle-server") and `webPackage`.
   chronicle = {
     package,
     webPackage ? null,
@@ -69,7 +71,9 @@ in
     contents = [ package ] ++ lib.optional (webPackage != null) webPackage;
     entrypoint = [ executable ];
     cmd = [ "serve" "/config/server.json" ];
-    env.CHRONICLE_WEB_ROOT = "/share/chronicle/web";
+    env = lib.optionalAttrs (webPackage != null) {
+      CHRONICLE_WEB_ROOT = "${webPackage}/share/chronicle/web";
+    };
     meta.description = "Chronicle archive server image (nonroot, no embedded config)";
   };
 

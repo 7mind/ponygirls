@@ -13,12 +13,20 @@ let
     chmod +x "$out/libexec/chronicle-server"
   '';
 
+  # Chronicle web dist stand-in: a real directory tree, so the image can
+  # anchor CHRONICLE_WEB_ROOT at the immutable package path.
+  webStub = pkgs.runCommand "chronicle-web-stub" { } ''
+    mkdir -p "$out/share/chronicle/web"
+    printf '<!doctype html>\n' > "$out/share/chronicle/web/index.html"
+  '';
+
   images = {
     haystack = oci.haystack { package = stub; };
     manure = oci.manure { package = stub; };
     # Mirrors a first deployment wrapping an exact native artifact: the
     # executable and web assets live outside the package's bin/.
     chronicle = oci.chronicle { package = stub; executable = "/libexec/chronicle-server"; };
+    chronicleWeb = oci.chronicle { package = stub; executable = "/libexec/chronicle-server"; webPackage = webStub; };
     crawl4ai = oci.crawl4ai { package = stub; browsers = stub; };
     postgres = oci.postgres { package = stub; };
     redis = oci.redis { package = stub; };
@@ -55,7 +63,21 @@ let
       workingDir = "/data";
       entrypoint = [ "/libexec/chronicle-server" ];
       cmd = [ "serve" "/config/server.json" ];
-      env = { CHRONICLE_WEB_ROOT = "/share/chronicle/web"; };
+      env = { };
+      absentEnv = [ "CHRONICLE_WEB_ROOT" ];
+      uid = 10001;
+      gid = 10001;
+      userName = "app";
+      subdirs = [ ];
+    };
+    chronicleWeb = {
+      image = "${images.chronicleWeb}";
+      user = "10001:10001";
+      workingDir = "/data";
+      entrypoint = [ "/libexec/chronicle-server" ];
+      cmd = [ "serve" "/config/server.json" ];
+      env = { CHRONICLE_WEB_ROOT = "${webStub}/share/chronicle/web"; };
+      webRoot = "${webStub}/share/chronicle/web";
       uid = 10001;
       gid = 10001;
       userName = "app";
@@ -108,7 +130,7 @@ pkgs.runCommand "oci-images-test" {
 } ''
   mkdir "$out"
   python3 ${./oci-image-layout.py} ${expectations} | tee "$out/layout.txt"
-  grep -qx '6 image layouts ok' "$out/layout.txt"
+  grep -qx '7 image layouts ok' "$out/layout.txt"
 
   # Redis entrypoint: the password never appears in argv (process-list
   # exposure); it reaches the server through a private config file.
