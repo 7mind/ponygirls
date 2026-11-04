@@ -13,6 +13,12 @@ The user subsequently authorized the [provenance/justification extension](belief
 and autonomous agent-only pilots using the RTS framing log. This extends the research
 model, not format-v1 capabilities or RTS construction authority.
 
+J29 adds a bounded human co-framing case: the participant confirmed the example's
+framing, declined a scenario revision and explicitly reanchored the governing
+purpose as framework evaluation. The example is not a delivery target. The
+current [synthesis](synthesis.md) separates that observation from proposed scope
+controls and from still-untested efficacy/construction/acceptance claims.
+
 ## 1. What this case contributes
 
 | Observed in the framing case | What it does not establish |
@@ -59,11 +65,16 @@ Already-scoped work may reuse an existing baseline with little or no new dialogu
 
 ### A. Anchor the task and operating agreement
 
-Preserve the request, relevant existing agreements, current authorization and
-known boundaries. Identify who will use the delivered result and judge it.
-Agree the interaction channel. For a study, prospectively agree an attention
-policy and measurement method, including an explicit no-hard-cap option.
-Record missing preconditions as missing; do not infer active time from timestamps.
+Preserve the request, relevant agreements, governing purpose, artifact role,
+current authorized operations and known boundaries. A fixture/example, research
+instrument and delivery target need not have the same endpoint. Identify who
+will use the result and judge it; reuse the chosen interaction channel.
+
+For a bounded study, state its capability question and qualitative observable exit
+criterion, including deliberately untested legs. Use a measurement instrument only
+when applicable and prospectively agreed; do not require a replacement for the
+rejected attention metric or infer a cap/no-hard-cap agreement from its absence.
+Record missing measurements as missing, not as active time inferred from timestamps.
 
 Separate study conditions from product requirements. An unbudgeted case may yield
 observations, but cannot be reported as a budget-controlled trial. A research
@@ -136,7 +147,7 @@ every word. Newly introduced or materially changed meanings are not covered by
 those confirmations. Record exactly what the closure covers. An opportunity to
 object, without a reply, does not approve new meaning or settle an open interpretation.
 
-Proposed readiness:
+Proposed readiness for the next authorized phase, if one is part of the task:
 
 - Known material conflicts/choices are resolved, or affected scope is explicitly
   deferred without discarding cross-scope obligations.
@@ -148,8 +159,11 @@ Proposed readiness:
 - Broad outcomes retain their positive obligations and a stated evidence route.
   An impractical material check is a visible gap needing an explicit acceptance-
   basis decision, not permission to shrink the goal or demand proof before coding.
-- The baseline is identifiable, routine engineering discretion is delegated, and
-  the user has authorized the construction stage under these conditions.
+- The baseline and its artifact role are identifiable. Construction requires
+  authorization when it is the next part of the actual task. A bounded framing
+  exercise can instead close here, with unexercised legs explicitly untested;
+  they do not become deferred product obligations. Routine engineering choices
+  remain delegated within whatever envelope is actually authorized.
 
 Record the applicable execution-question policy; existing instructions may already
 settle it. Proposed default: pause the affected branch and ask. Queuing until a
@@ -349,9 +363,11 @@ establish any unimplemented host, semantic, storage or human-workflow guarantee.
 
 1. Use this document as a **manual provisional playbook**; do not install a large
    skill suite or build a graph UI first.
-2. Exercise the untried baseline handoff, construction and delivery review. Finish
-   the RTS under its agreed final scope, or explicitly authorize a separate smaller
-   task; a smaller task must not masquerade as completion of the RTS.
+2. Match the next step to the governing task and its exit criterion. The bounded
+   notes case is closed; the unresolved RTS is not an automatic backlog item.
+   Construction/delivery review require a separately authorized task when those
+   capabilities are to be exercised. A partial or smaller test must not masquerade
+   as end-to-end framework validation or completion of the RTS.
 3. Automate demonstrated bookkeeping: snapshots, acts, projections and binding.
    Add the host-specific trust boundary before making stronger authority claims.
 4. Only then justify separate skill packaging, evidence adapters or richer UI from

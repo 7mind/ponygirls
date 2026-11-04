@@ -170,3 +170,10 @@ The next evidential gap is faithful generation/maintenance on unseen consequenti
 choices, followed by an authorized real delivery and human acceptance—not merely
 more perfect decoding of supplied annotations. No such result, private-case access
 or reduced-human-burden claim follows. Format v1 remains unchanged.
+
+J29 subsequently records a bounded human framing case [L14]: current participant
+confirmation and a task-purpose clarification, not a genuine scenario revision or
+construction/acceptance result. The broader evidential gaps above are separate
+research questions, not default next stages or authorization to build an example.
+The [synthesis](synthesis.md) integrates this distinction without upgrading the CLI's
+semantic or authority claims.
