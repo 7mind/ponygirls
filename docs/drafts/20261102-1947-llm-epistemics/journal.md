@@ -2124,3 +2124,133 @@ profiles before r1; run r2 only after first-stage operational checks. Retain fai
 use fresh batch paths, no automatic reruns, 600-second/session and 128-KiB answer
 bounds. These are execution controls, not attention or financial limits. User-facing
 workflow efficacy, annotation-generation fidelity and overload remain untested.
+
+## J28 — 2026-11-04 — Pilot P outcomes: baseline ceilings and unresolved source history
+
+### Completed attempts and preserved instrument limits [L13]
+
+Both unmeasured provider canaries were personally inspected: actual bash invocation,
+probe result and complete system/tool profile, not just a success marker. Provider
+baselines were frozen before r1. All ten registered input hashes were checked before
+both measured stages and after collection. **24/24 native processes exited zero;
+24/24 full normalized profiles matched**. Source material, policy/settings and
+baseline bindings were separately checked for every run. The 24 workspaces contain
+only their four expected material/settings/answer files, not a game implementation.
+
+Both batches report failure because only **22/24** answers satisfy the original
+strict schema. DeepSeek audit S r1 and r2 have empty A5 citation lists. The scorer
+requires nonempty citations, while the task prompt does not explicitly say so;
+this is a prompt/scorer contract ambiguity, not two demonstrated reasoning failures.
+R1 also calls a provisional price proposal an unverified historical implementation
+claim; r2 correctly calls it a choice despite the same empty list. Preserve both
+invalid answers/scores and all reports. R2 was the scheduled second replicate,
+not a replacement. No scorer/reference relaxation or outcome-driven extra run.
+
+Consequently **204 primary responses are supplied but only 184 strictly scored**:
+100 audit rows plus 84 revision rows. The 20 rows in the invalid audit sessions are
+unscored in the original primary analysis, not zero correct or restored success.
+All 204 have distinct semantic review. Twelve additional Q20 texts are qualitative,
+not primary intent-correctness endpoints.
+
+### Original strict results and separate semantic coding
+
+Two session clusters/cell; case rows are not independent trials. S is sources/
+candidates; P adds declared reasoning in prose; G contains the same reasoning in
+typed records. P−S changes information as well as presentation.
+
+| Subject | Arm | Audit valid sessions | Status | Origin | Citation-ID coverage | Revision actions | Supplied roots |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Sol | S | 2/2 | 20/20 | 20/20 | 20/20 | 14/14 | 14/14 |
+| Sol | P | 2/2 | 20/20 | 20/20 | 20/20 | 14/14 | 14/14 |
+| Sol | G | 2/2 | 20/20 | 20/20 | 20/20 | 14/14 | 14/14 |
+| Employer-hosted DeepSeek | S | 0/2 | unscored (20 rows) | unscored | unscored | 14/14 | 14/14 |
+| Employer-hosted DeepSeek | P | 2/2 | 20/20 | 20/20 | 20/20 | 14/14 | 14/14 |
+| Employer-hosted DeepSeek | G | 2/2 | 20/20 | 20/20 | 19/20 | 14/14 | 14/14 |
+
+The G A9 explanation names A_SAVE and reasons conditionally, but omits that ID
+from its structured citation list. This is a pointer omission, not absence of the
+premise from its reasoning. Correct pointer IDs would not by themselves establish
+entailment. All predeclared boundary alternatives remain unchanged.
+
+Two fresh read-only Sol-agent coders received disjoint opaque answer shards,
+neutral source/case facts and a common rubric, not identities or scores. Their
+complete exact final JSON and source/input hashes were validated and committed
+`56ae534ccd9980f8a74cde6237cbb252940f7203` **before identity inspection**. They
+coded all 24 views/204 rows, including invalid sessions. Parent had diagnostic
+exposure to the first failed report before coding; this is declared, not erased.
+Masking is procedural and style can reveal identity. Same-model disjoint coding
+is neither independent human assessment nor inter-rater reliability.
+
+Original rationale ratings are adequate for every Sol row and every revision row.
+DeepSeek audit S has 18/20 adequate; P and G have 20/20. Its two S flags occur in
+r1 only: A5's historical-implementation reading, and A6's additional claim that C7's
+economy Yes adopted fog (C6 independently does). R2 avoids both flagged patterns
+without added grounding. The coder's aside that no price approval was needed does
+not establish that the subject actually requested approval—it did not.
+
+### Q20: source-relative scrutiny, not actual intent resolution
+
+Original qualitative codes: Sol six bounded; DeepSeek one bounded, two ambiguous,
+three overclaimed. These are **original agent ratings**, not a true-intent score.
+The independent post-data audit (`4dce1ddc-0bfd-4db7-9016-42b51edbf488`) confirmed
+the counts/failure handling but disputed part of one adverse rating and demanded
+consistent chronology checks in both subjects. All twelve answers receive a
+separate post-data, identity-aware adjudication, preserved beside original codes.
+
+The source provides question creation at 16:58, C2 at 19:41, C5 at 20:06, C8 at
+20:54, and Q20 record update at 22:51. **There is no separate answer-submission or
+complete display/revision history.** Inferring either initial submission order or
+informed awareness solely from those metadata is unsupported. Sol G r2's “later
+answer” wording also needs this qualification; DeepSeek P r1 misquotes C2's time.
+A bounded intent stance does not certify factual chronology.
+
+DeepSeek P r2 asserts knowledge of the narrowing from updatedAt; G r2 declares
+context mismatch/non-contradiction established. Those conclusions exceed this
+record. S r1 instead says “best read” and acknowledges uncertainty: its chronology
+and favored framework reading are unsupported, but the original overclaimed label
+should not be inflated into unequivocal certainty about intent. Original ratings
+remain unchanged; no favorable recoding is substituted. Neither this audit nor any
+pilot answer resolves the actual Q20/C2/C5 conflict.
+
+### Interpretation, tests and durable accounting
+
+- **H-P1 remains inconclusive:** a small descriptive audit difference in one
+  subject, clustered in one baseline session and absent in its second; strict
+  comparison also has the output-contract ambiguity. Sol is already at ceiling.
+- **H-P2 is not supported in these cases:** every arm has 14/14 revision actions
+  and root controls. No observed typed-over-prose advantage; not an equivalence
+  proof or evidence that typed records are generally worse.
+- Controlled consumption of experimenter-authored annotations is feasible here.
+  Faithful annotation generation/maintenance, missing-intent discovery, human
+  acceptance and overload reduction were not tested. Do not confuse supplied
+  roots with dependency discovery, local case coding with full intent capture,
+  or a coherent long-term-framework story with actual human authorization.
+- Original-data/scoring/coding/reporting bindings: `919788df580eabee3dc47b8a3b4dc63fed3a4a24`,
+  `56ae534ccd9980f8a74cde6237cbb252940f7203`, and
+  `bfad1d5973b4904aebd845db340d9e2f14c1d439` in local `epistemics-pilots`.
+  `summary.json` SHA-256 is
+  `0c791d4496970cfc60013b123f5cbc8a6e5f16f6452426055a2e624d24a6f3ef`.
+  A fresh reduction is byte-identical; overwrite refusal and independent original
+  inventory recount passed. Parent inspected every full answer object in copies
+  verified equal to the original JSON, plus every original report. Self-reported
+  validation is not a scorer result.
+- Final unfiltered software runs on Python 3.14.8: **21** primary-instrument,
+  **3** all-attempt masking, **6** secondary coding-inventory and **36** unchanged
+  prototype CLI test methods pass; no final failures/errors/skips. The secondary
+  validator's initial duplicate-key acceptance was reproduced and retained before
+  reusing the strict reader; it never altered measured data or the original key.
+  These tests establish software contracts, not semantic model or human efficacy.
+- Focused reusable-pattern analysis was delegated (`36209157-3c8e-4bfa-b03b-3514429f2c04`)
+  with overlap against existing drafts. The existing inert Haystack
+  `corporate-activity:skill-draft-agent-behaviour-pilot` was amended via CAS to r3,
+  preserving earlier counts/history and qualifying store-alias isolation. Get r3
+  was verified byte-for-byte against the prepared body; full SKILL.md SHA-256
+  `61f07e495c285be9fa3c3080d3813cd77c74ecca9da70747a16269d81d0ab880`.
+  No new provenance skill was justified from this single unfinished case, and no
+  skill was installed or activated.
+
+Fresh wrap-up decision reads still show Q20/Q21 r2 with the same answers. These
+reads do not change frozen study sources. Actual RTS construction remains
+unauthorized, its consequential old-context conflict unresolved, private cases
+uninspected, and Q21 supplies no numeric/no-hard-cap agreement or attention proxy.
+Format v1 and its four commands are unchanged; no deployment or push.

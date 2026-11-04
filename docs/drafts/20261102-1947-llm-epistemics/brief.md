@@ -1,13 +1,16 @@
 # Brief — epistemics of LLM-accelerated development (2026-11-02 … 11-04)
 
-Status: summary of journal entries J1–J27 for the user and the next agent;
+Status: summary of journal entries J1–J28 for the user and the next agent;
 J21–J22 clarify the framework; J23–J24 record intake/framing; J25 proposes the
-method; J26 implements provisional bookkeeping; J27 extends provenance/justification
-and preregisters autonomous agent-only Pilot P, with canaries underway. No game acceptance, bounded-attention or efficacy result exists.
+method; J26 implements provisional bookkeeping; J27–J28 extend provenance/
+justification and complete 24 agent-only Pilot P sessions. No established typed-over-
+prose advantage, game acceptance, bounded-attention or human-efficacy result.
 Source of truth for every claim: [journal](journal.md), [hypotheses](hypotheses.md),
 [references](references.md), the [design draft](belief-dag-design.md), the
 [validation-frame proposal](belief-network-validation.md), the
-[joint-construction proposal](belief-network-construction.md) and the pilot repository `~/work/epistemics-pilots` (local git, `main` at `3768c9e`).
+[joint-construction proposal](belief-network-construction.md), the
+[provenance extension](belief-network-provenance.md) and the pilot repository
+`~/work/epistemics-pilots` (local Git; immutable Pilot P bindings in J28).
 
 ## 1. Problem
 
@@ -43,11 +46,15 @@ their load bounded while agents do most of the work.
   H-T7), independent refinement (B2), ratified scenarios (B3), plus the J16
   recombinations (pilots 1–7).
 
-## 3. What was validated (feasibility pilots; 1–2 model families, n = 3–5 per cell)
+## 3. Agent-side feasibility evidence (study-specific n)
 
 Subjects: gpt-6.1-sol (xhigh) throughout; employer-hosted DeepSeek-V4-Pro
-(high) from Pilot E on. Isolated pi in a bubblewrap sandbox, hidden oracles,
-pre-registered protocols, scorer validation committed before runs.
+(high) from Pilot E on. Controlled Pi prompts and preregistered protocols; scorer
+validation precedes runs. Earlier studies use n = 3–5/cell; Pilot P uses two session
+clusters/cell. J27–J28 qualify the older all-/nix oracle-isolation assurance: a
+store-copy exposure channel exists, but actual prior key access is not established.
+Historical counts/verdicts below retain their original coding, not renewed proof
+of universal oracle unreachability.
 
 | Claim | Evidence | Verdict |
 |---|---|---|
@@ -66,6 +73,8 @@ pre-registered protocols, scorer validation committed before runs.
 | Scenario selection by disagreement | beats own and random picks (Pilot 4) | supported, partly circular |
 | Rationale framing changes behaviour | no detectable effect; rules dominate (Pilot R) | not supported (n = 3) |
 | User's rules / direction-of-fit clause | no increase in defence under the rules; clause effect not measurable (Pilot DF) | not supported (n = 5) |
+| Added provenance/justification (Pilot P, J28) | 24 attempts; 22 strict valid/2 retained citation-contract ambiguities. Sol audit baseline ceiling; DeepSeek S has two flagged explanations in one replicate only | no stable added-rationale efficacy estimate |
+| Typed grounds versus matched prose (Pilot P) | every subject/arm 14/14 revision actions and supplied-root controls; qualitative Q20 still elicits overclaims | no incremental advantage established; not equivalence |
 | Human-side NASA-TLX | uniform ratings in a trial | instrument rejected |
 
 **Pattern across pilots:** what worked supplies a channel independent of the
@@ -75,29 +84,38 @@ fresh reader who experiments. Self-description and self-testing are weak.
 
 ## 4. Instrument lessons (the experimenter is a generator too)
 
-Nine instrument defects, all corrected openly (protocol amendments, original
-codings kept): pytest missing from the subject PATH; narrow disclosure terms;
-strengthening vs weakening of tests; a scorer contradicting its protocol;
-a fixture whose wording suppressed the behaviour (E1); keyword false
-positives; a too-lenient liveness oracle (found by Pilot 5 auditors); a
-too-narrow crash harness (found by Pilot 6 readers; E2 corrected 6/6 → 4/6
-atomic); unlabelled secondary codings in two write-ups (found by independent
-reviews, J9, J12). The skill draft `agent-behaviour-pilot` (Haystack r2)
-captures the procedure.
+Earlier pilots found nine instrument defects, corrected openly (amendments,
+original codings kept): pytest missing from the subject PATH; narrow disclosure
+terms; strengthening vs weakening of tests; a scorer contradicting its protocol;
+a fixture whose wording suppressed the behaviour (E1); keyword false positives;
+a too-lenient liveness oracle (Pilot 5 auditors); a too-narrow crash harness
+(Pilot 6 readers; E2 corrected 6/6 → 4/6 atomic); unlabelled secondary codings
+(independent reviews, J9, J12). Pilot P adds reproduced duplicate-key/rescore
+contracts and a real store-alias exposure channel, corrected prospectively, plus
+a retained empty-citation prompt/scorer ambiguity. Full profiles and actual native
+canaries are checked, not just section names or a success marker. The existing
+`agent-behaviour-pilot` Haystack draft r3 records the bounded isolation lessons;
+saved/get-verified 2026-11-04, still inert and uninstalled.
 
 ## 5. Current focus and parked options
 
-Item 1 is the current direction. Items 2–5 are earlier proposals, not newly
-authorized by Q17/Q18; no field replay or policy-tool implementation is underway.
+Item 1 is the latest completed agent-side work and remaining research boundary.
+Items 2–5 are earlier proposals, not newly authorized by Q17/Q18; no field replay
+or policy-tool implementation is underway.
 
-1. **Provenance/justification extension and pilots (J27; current request).** The user
-   explicitly authorized extension, autonomous pilots and reuse of the RTS framing log.
-   Read the [extension](belief-network-provenance.md). Pilot P is preregistered in the
-   separate pilot repository at `72bdeeb`: two configured subjects, three conditions,
-   two tasks and two replicates (24 planned measured sessions). Canaries underway;
-   no measured outcome yet. A real store-copy leak in the older sandbox was reproduced
-   and corrected for P with a restricted runtime closure; prior oracle-isolation
-   claims are qualified, not evidence of prior key access. The earlier
+1. **Provenance/justification extension and pilots (J27–J28).** The user authorized
+   extension, autonomous pilots and reuse of the RTS framing log. Read the
+   [extension](belief-network-provenance.md) and Pilot P `results/pilot-p/report.md`.
+   All 24 registered sessions completed; 22 strict valid, two retained empty-citation
+   ambiguities; all 204 primary responses separately received masked agent coding.
+   Original codes were saved before identity inspection. The revision baseline is
+   already saturated; no typed-over-prose advantage or stable added-rationale effect
+   is established. Q20 qualitative ratings are not latent-intent gold: independent
+   review disputed part of one adverse code and flagged chronology in both subjects.
+   Original ratings stay beside a separate identity-aware adjudication. No extra
+   reruns, relaxed scorer or rewritten reference. The older store-copy exposure
+   channel was corrected for P with a restricted closure; prior isolation assurance
+   is qualified, not evidence of actual prior key access. The earlier
    [portable bundle](../../../scripts/belief-workflow/README.md) contains a provisional
    SKILL.md and stdlib CLI (`snapshot/check/render/diff`), with 36 passing software
    test methods on Python 3.14.8. No automatic discovery/global installation,
@@ -149,8 +167,9 @@ authorized by Q17/Q18; no field replay or policy-tool implementation is underway
 
 ## Handover to the next agent
 
-**Read first, in order:** this brief; `journal.md` J27 and the provenance extension;
-Pilot P protocol/status in the separate pilot repository; J26 and the prototype README
+**Read first, in order:** this brief; `journal.md` J28–J27 and the provenance extension;
+Pilot P report, original codes and Q20 adjudication in the separate pilot repository;
+J26 and the prototype README
 at `scripts/belief-workflow/`; `belief-network-methodology.md`; J25 (design),
 J24 and the RTS README,
 compact network and framing record (partial case); J23 (earlier intake);
@@ -176,9 +195,10 @@ pilot repo `README.md` and `protocols/pilot-e.md`, `pilot-5-7.md`.
   explain-back remain possible diagnostics. Data in
   `~/.local/state/epistemics-pilots/`, never committed.
 - Skill draft: Haystack `corporate-activity:skill-draft-agent-behaviour-pilot`
-  (r2, human-attention required). Pending amendment: experimenter oracles must
-  vary inputs (equal sizes, repeated faults) and be audited by an independent
-  channel (Pilots 5, 6).
+  r3 saved/get-verified with full body hash `61f07e49…`, human-attention required,
+  uninstalled. Adds store-alias reachability, frozen runtime/full-profile and actual
+  subject-probe controls while preserving prior evidence/review history. This is
+  bounded instrument evidence, not a new human-workflow efficacy result.
 
 **Historical subject setup** (J27 qualifies its oracle isolation; do not reuse the
 all-/nix wrapper for new hidden-key studies): `runner/sandbox.sh`
@@ -201,7 +221,7 @@ a subject workspace.
   for ordinary interactive chat, one consequential question at a time, and no
   decisions-tool use for now. Do not build before the user authorizes that stage
   (they redirected once, J3). Tokens/model usage are not budget constrained
-  (Q10); the still-open human-attention ceiling is a separate condition.
+  (Q10); Q21 agreed neither a mechanical attention measure nor a chosen limit.
 - Report every number with its coding; distinguish observed from inferred;
   read runs before trusting unanimous or extreme results; have an
   independent channel (subagent review, cross-family audit) check
@@ -211,9 +231,10 @@ a subject workspace.
   validation scripts after merging.
 
 **Open items for the user**
-- Current autonomous Pilot P is authorized; await no new decision forms. Actual
-  RTS construction is not. Raw source cutoff, synthetic changes and Q20 qualitative
-  uncertainty must stay distinct. No human attention instrument/proxy.
+- Authorized autonomous Pilot P is complete; do not silently rerun/expand it or
+  turn its results into RTS construction authority. Raw source cutoff, synthetic
+  changes and Q20 qualitative uncertainty remain distinct. No new decision forms,
+  human attention instrument/proxy, global installation, deployment or push.
 - The requested cooperative prototype exists, not a trusted human-input adapter
   or globally installed skill. An inert generic candidate is in Haystack under
   `corporate-activity:skill-draft-joint-belief-framing` r1, with companion paths.

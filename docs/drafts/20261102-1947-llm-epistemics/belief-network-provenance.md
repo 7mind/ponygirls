@@ -1,8 +1,9 @@
 # Specification provenance and justification — provisional extension
 
-Status: user-requested research extension, 2026-11-04. Pilot P is being prepared;
-no result is claimed here yet. Extends the [methodology](belief-network-methodology.md),
-not an installed skill, trusted authority mechanism or completed RTS experiment.
+Status: user-requested research extension, 2026-11-04. Pilot P completed 24 agent-only
+sessions; bounded findings are below and in J28. Extends the
+[methodology](belief-network-methodology.md), not an installed skill, trusted authority
+mechanism or completed RTS acceptance experiment.
 
 ## 1. The question
 
@@ -112,7 +113,7 @@ format change. No new fields have silently been added to version 1. The same edi
 file assurance boundary remains: tags and graphs can be false but internally consistent.
 Mechanical validation must not mint a semantic-supported or human-approved badge.
 
-## 7. Proposed empirical screen
+## 7. Empirical screen — Pilot P
 
 Pilot P in the separate `epistemics-pilots` repository has two independent analysis
 problems: authority/origin/warrant auditing at the C8 historical cutoff; and selective
@@ -137,3 +138,35 @@ record. It does not test whether agents faithfully create/maintain provenance du
 construction, discover missing intentions, improve a delivered product or reduce human
 burden. Those require separate stages. Uniformly correct baselines would show no
 incremental semantic benefit here, even if the representation is convenient bookkeeping.
+
+## 8. Observed screen results and remaining gap
+
+All 24 sessions completed with matching full prompt profiles; 22 met the frozen
+strict schema. Two source-only DeepSeek audit answers had empty citations for a
+provisional price choice. The scorer forbids empty arrays without that rule being
+explicit in the prompt. Preserve both invalid scores; do not interpret them as two
+semantic failures or force routine choices to acquire spurious human authority.
+The second answer correctly calls the price a choice despite its empty list.
+
+Sol's audit baseline already has 20/20 status/origin decisions per arm. DeepSeek's
+prose/typed audits also have 20/20; its source-only strict results remain unscored,
+not zero correct. Separate masked agent coding flags two explanations in one
+source-only session (price proposal treated as historical implementation; an extra
+mis-scoped fog confirmation), neither repeated in its second baseline. One typed
+answer omits a structured assumption pointer while explicitly naming it in sound
+conditional reasoning. These tiny, clustered results do not establish a stable
+added-rationale benefit or a typed-over-prose advantage.
+
+Every subject/arm has 14/14 revision actions and supplied-root controls. This is a
+baseline ceiling, not evidence that metadata discovers dependencies or improves
+revision. The qualitative Q20 challenge still produces unsupported chronology and
+intent reconstructions, including with both richer formats. Keep the stored
+presentation, update timestamp, actual display history and intended revision
+separate; labels cannot settle their conflict. Original semantic ratings were saved
+before identity inspection, but are disjoint same-model agent judgments, not human
+quality scores or inter-rater reliability [L13].
+
+The next evidential gap is faithful generation/maintenance on unseen consequential
+choices, followed by an authorized real delivery and human acceptance—not merely
+more perfect decoding of supplied annotations. No such result, private-case access
+or reduced-human-burden claim follows. Format v1 remains unchanged.
