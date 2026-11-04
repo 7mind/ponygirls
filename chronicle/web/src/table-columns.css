@@ -1,4 +1,6 @@
-.table-controls{display:flex;justify-content:flex-end;align-items:center;margin:7px 0;font-size:10px;position:relative;min-width:0}
+.table-controls{display:flex;align-items:center;font-size:10px;position:absolute;right:13px;top:50%;transform:translateY(-50%);min-width:0}
+.archive-table th:has(.table-controls)>button:not(.column-resizer){padding-right:50px}
+.activity-table thead th:has(.table-controls){padding-right:50px}
 .table-options>button{display:grid;place-items:center;min-width:32px;min-height:28px;padding:0 8px;font-size:20px;line-height:1}
 .transient-popover.table-options-panel{width:290px}
 .table-options-panel [role=group]{display:grid;gap:8px}
@@ -13,3 +15,5 @@
 .archive-table th>button.column-resizer,.activity-table thead th>button.column-resizer{position:absolute;right:0;top:0;bottom:0;width:12px;height:100%;min-width:0;padding:0;border:0;border-radius:0;border-left:1px solid var(--control-border);background:transparent;cursor:col-resize;touch-action:none;z-index:1}
 .archive-table th>button.column-resizer:hover,.activity-table thead th>button.column-resizer:hover{background:var(--soft)}
 .column-resizer:focus-visible{outline-offset:-3px}
+
+@media(max-width:500px){.activity-table thead th:last-child{position:sticky;right:auto}}

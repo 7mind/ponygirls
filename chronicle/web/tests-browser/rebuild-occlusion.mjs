@@ -15,7 +15,7 @@ try {
   for (const width of [320, 390]) for (const theme of ['dark', 'light']) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme }), page = await context.newPage(), fixture = new Goal50Fixture(); fixture.archiveRowCount = 3;
     page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); await page.clock.install(); await fixture.install(page);
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.locator('.archive-row').first().waitFor(); await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.getByRole('button', { name: 'Rebuild archive index', exact: true }).click();
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();  await page.locator('.archive-row').first().waitFor(); await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.getByRole('button', { name: 'Rebuild archive index', exact: true }).click();
     const preview = page.getByRole('region', { name: 'Archive rebuild preview', exact: true }); await preview.getByRole('checkbox').waitFor();
     // Match the original cropped screenshot's scrolling behavior, then measure
     // actual viewport hit ownership rather than interpreting image pixels.

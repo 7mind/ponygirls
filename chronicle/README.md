@@ -121,6 +121,14 @@ Native metadata is in `server/src/main/resources/META-INF/native-image/chronicle
 
 Tests classify cheap blackbox contracts and controlled local communication separately. The same archive contract executes against a hand-written dummy and PostgreSQL through distage; full-verification script requires real PostgreSQL, never silently substitutes the dummy. Additional actual HTTP/WS tests use the production graph; OpenAI simulator tests require no live models. Only synthetic transcripts are used.
 
+## Dashboard navigation
+
+Authenticated sessions open on Search, including after sign-in or account changes.
+Archive and Activity table headers contain vertical three-dot options for fitting
+width/content and selecting columns; resizing remains available on each header.
+Search source matches are numbered. Result pages expose visited cursor-backed
+pages plus the next available page, not arbitrary jumps to unseen cursors.
+
 ## Configure and run
 
 Copy `config.example.json` outside the store, provision PostgreSQL database/role and pgvector extension permission, then:

@@ -14,7 +14,7 @@ async function scene(configure) {
   page.on('pageerror', error => errors.push(error.message));
   if (configure !== undefined) configure(fixture);
   await page.clock.install();
-  await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/live-archive.html`);
+  await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/live-archive.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
   await page.locator('.archive-row').first().waitFor();
   return { context, page, fixture };
 }
@@ -160,7 +160,7 @@ try {
     fixture.mode = 'unauthorized'; await page.getByRole('button', { name: 'Refresh archive', exact: true }).click();
     await page.getByRole('button', { name: 'Sign in →', exact: true }).waitFor();
     await page.getByLabel('Login', { exact: true }).fill('alice'); await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
-    await page.getByRole('button', { name: 'Sign in →', exact: true }).click();
+    await page.getByRole('button', { name: 'Sign in →', exact: true }).click(); await page.getByRole('button', { name: 'archive', exact: true }).click();
     await page.locator('.archive-row').first().waitFor();
     assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), '', 'A new session retained the old unsent private draft.');
     await page.clock.runFor(500); assert.equal(archiveCalls(fixture).filter(call => call.operation.query.expression === expression).length, 0, 'A prior-session draft was automatically replayed.');

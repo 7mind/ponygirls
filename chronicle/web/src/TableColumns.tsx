@@ -79,7 +79,7 @@ export function ColumnResize({ column, layout }: { column: SizedColumn; layout: 
 }
 export function TableControls({ name, layout }: { name: string; layout: TableLayout }) {
   return <div className="table-controls" role="region" aria-label={`${name} table controls`}>
-    <Popover className="table-options" label={<span aria-hidden="true">⋯</span>} ariaLabel={`${name} table options`} panelClassName="table-options-panel">
+    <Popover className="table-options" label={<span aria-hidden="true">⋮</span>} ariaLabel={`${name} table options`} panelClassName="table-options-panel">
       <div role="group" aria-label={`${name} table options`}>
         <button type="button" onClick={layout.fitWidth}>Fit to width</button>
         <button type="button" onClick={layout.fitContent}>Fit to content</button>

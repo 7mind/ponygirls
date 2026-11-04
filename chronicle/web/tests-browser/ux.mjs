@@ -30,7 +30,7 @@ async function scene(configure) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } }), page = await context.newPage(), fixture = new ChronicleFixture();
   page.on('pageerror', error => errors.push(error.message));
   if (configure) configure(fixture);
-  await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/harness.html`);
+  await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
   await page.getByRole('table', { name: 'Conversations', exact: true }).waitFor();
   await page.locator('.archive-row').first().waitFor();
   return { context, page, fixture };
@@ -379,7 +379,9 @@ try {
       await page.getByRole('button', { name: 'Sign in →', exact: true }).waitFor(); boundary = fixture.requests.length;
       await page.getByLabel('Login', { exact: true }).fill(nextUser); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in →', exact: true }).click();
     }
-    await page.locator('.identity').getByText(nextUser, { exact: true }).waitFor(); await page.locator('.archive-row').first().waitFor(); await archiveOrder(page, 'Ordered by Last activity · descending');
+    await page.locator('.identity').getByText(nextUser, { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'search', exact: true }).getAttribute('aria-current'), 'page');
+    await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); await archiveOrder(page, 'Ordered by Last activity · descending');
     const reads = fixture.requests.slice(boundary).filter(request => request.userId === nextUser && request.envelope.operation instanceof api.Operation_Archive).map(request => request.envelope.operation.query);
     assert.ok(reads.length > 0); for (const query of reads) assertArchiveQuery(query, { expression: '', sort: api.ArchiveSort.LastTimestamp, direction: api.SortDirection.Desc, preferRelevance: true }, `${transition} resets every Archive intent before the next read`);
     assert.equal(await relevanceControl(page).getAttribute('aria-pressed'), 'true');

@@ -12,7 +12,7 @@ const browser = await chromium.launch({ headless: true }), errors = [];
 async function scene(configure, viewport, deviceScaleFactor) {
   const context = await browser.newContext({ viewport: viewport === undefined ? { width: 1440, height: 1000 } : viewport, deviceScaleFactor: deviceScaleFactor === undefined ? 1 : deviceScaleFactor }), page = await context.newPage(), fixture = new Goal50Fixture();
   page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); if (configure !== undefined) configure(fixture);
-  await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/goal50.html`); await page.locator('.archive-row').first().waitFor(); return { context, page, fixture };
+  await page.clock.install(); await fixture.install(page); await page.goto(`http://127.0.0.1:${address.port}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();  await page.locator('.archive-row').first().waitFor(); return { context, page, fixture };
 }
 async function group(name, body) { if (process.env.CHRONICLE_GOAL50_CASE !== undefined && !name.includes(process.env.CHRONICLE_GOAL50_CASE)) return; await body(); console.log(`PASS browser goal50: ${name}`); }
 async function activity(page) { await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-overview .section-heading time').waitFor(); }

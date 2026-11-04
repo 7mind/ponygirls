@@ -22,7 +22,7 @@ const MAX_COMPACT_RETRY_WIDTH = 280, MIN_SUMMARY_TABLE_FRACTION = .9, DESKTOP = 
 const evidence = resolve(root, 'test-results/theme-retry'); await mkdir(evidence, { recursive: true });
 async function scene(viewport, configure) {
   const context = await browser.newContext({ viewport }), page = await context.newPage(), fixture = new ChronicleFixture();
-  page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); await configure({ context, page, fixture }); await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`); if (fixture.signedIn) await page.locator('.archive-row').first().waitFor(); else await page.getByRole('heading', { name: 'Sign in', exact: true }).waitFor();
+  page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); await configure({ context, page, fixture }); await fixture.install(page); await page.goto(`${origin}/tests-browser/harness.html`); if (fixture.signedIn) { await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); } else await page.getByRole('heading', { name: 'Sign in', exact: true }).waitFor();
   return { context, page, fixture };
 }
 async function run(name, body) { if (process.env.CHRONICLE_THEME_CASE !== undefined && !name.includes(process.env.CHRONICLE_THEME_CASE)) return; await body(); console.log(`PASS browser theme/retry: ${name}`); }
@@ -200,7 +200,7 @@ async function productionPrepaint() {
         page.on('pageerror', error => errors.push(error.message)); await fixture.install(page); await page.route('**/assets/*.js', route => { held.push(route); }); await page.goto(base, { waitUntil: 'commit' });
         await page.waitForFunction(() => window.themePaints.length > 0); const paints = await page.evaluate(() => window.themePaints); assert.ok(held.length > 0); assert.equal(await page.locator('#root').innerHTML(), '');
         for (const paint of paints) { assert.equal(paint.theme, expected); assert.equal(paint.scheme, expected); assert.equal(paint.background, THEME_CANVAS_RGB[expected]); }
-        for (const route of held) await route.continue(); await page.unroute('**/assets/*.js'); await page.locator('.archive-row').first().waitFor(); assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor), THEME_CANVAS_RGB[expected]);
+        for (const route of held) await route.continue(); await page.unroute('**/assets/*.js'); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor), THEME_CANVAS_RGB[expected]);
         const nextTheme = expected === 'dark' ? 'light' : 'dark'; await choose(page, nextTheme);
         assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor), THEME_CANVAS_RGB[nextTheme]);
         assert.deepEqual(await page.evaluate(() => window.themePolicyViolations), []);

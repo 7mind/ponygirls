@@ -23,7 +23,7 @@ try {
     const messagesAt = fixture.messagesAt.bind(fixture);
     fixture.messagesAt = revision => messagesAt(revision).map(message => message.id === 'm2' ? message.with({ text }) : message.id === 'm3' ? message.with({ text: longText }) : message);
     await fixture.install(page);
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`);
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests-browser/goal50.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
     await page.locator('.archive-row .table-title').first().click();
     const message = page.locator('#message-m2'); await message.waitFor();
     assert.equal(await message.getByRole('heading', { name: 'A terminal transcript', exact: true }).count(), 1);

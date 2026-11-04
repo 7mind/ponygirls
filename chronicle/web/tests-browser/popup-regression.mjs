@@ -48,7 +48,7 @@ try {
     fixture.jobs = fixture.activityJobs.map(row => row.job);
     await page.clock.install(); await fixture.install(page);
     // Exercise both the genuine entry and a synthetic harness with identical App.
-    await page.goto(`http://127.0.0.1:${address.port}/${width === 1440 || width === 390 ? 'index.html' : 'tests-browser/goal50.html'}`);
+    await page.goto(`http://127.0.0.1:${address.port}/${width === 1440 || width === 390 ? 'index.html' : 'tests-browser/goal50.html'}`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click();
     await page.locator('.archive-row').first().waitFor();
     const layout = await page.evaluate(() => ({ masthead: document.querySelector('.masthead').getBoundingClientRect().height, archivePadding: getComputedStyle(document.querySelector('.archive')).padding, document: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(layout.document <= width, `Page overflow: ${JSON.stringify(layout)}`);
