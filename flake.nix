@@ -338,6 +338,19 @@
           chronicle-native-dev = self.packages.${system}.chronicle.nativeArtifact;
           chronicle-update-sbt-lock = pkgs.callPackage ./nix/pkg/chronicle/update-lock.nix { lockfileGenerator = inputs.squish.packages.${system}.generate-lockfile; };
           crawl4ai = pkgs.callPackage ./nix/pkg/crawl4ai/package.nix { src = inputs.crawl4ai; };
+          # Daemonless OCI images. The chronicle image wraps the default
+          # package and therefore inherits its native build; a first
+          # deployment wraps exact built store paths through lib.oci instead
+          # (see nix/pkg/oci/default.nix).
+          oci-haystack = (self.lib.oci { inherit pkgs; }).haystack { package = self.packages.${system}.haystack; };
+          oci-manure = (self.lib.oci { inherit pkgs; }).manure { package = self.packages.${system}.manure; };
+          oci-chronicle = (self.lib.oci { inherit pkgs; }).chronicle { package = self.packages.${system}.chronicle; };
+          oci-crawl4ai = (self.lib.oci { inherit pkgs; }).crawl4ai {
+            package = self.packages.${system}.crawl4ai;
+            browsers = self.packages.${system}.crawl4ai.passthru.browsers;
+          };
+          oci-postgres = (self.lib.oci { inherit pkgs; }).postgres { };
+          oci-redis = (self.lib.oci { inherit pkgs; }).redis { };
           reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
           yolo = pkgs.callPackage ./nix/pkg/yolo/default.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
@@ -1095,6 +1108,7 @@
             touch $out
           '';
           crawl4ai-startup = import ./nix/tests/crawl4ai-startup.nix { inherit pkgs; package = self.packages.${system}.crawl4ai; };
+          oci-images = import ./nix/tests/oci-images.nix { inherit pkgs; oci = self.lib.oci { inherit pkgs; }; };
           crawl4ai-module =
             let
               crawl4aiConfig = (nixpkgs.lib.nixosSystem {
@@ -1159,6 +1173,9 @@
         homeManagerModules.manure = import ./nix/hm/manure.nix;
         homeManagerModules.service-postgres = import ./nix/hm/service-postgres.nix;
         nixosModules.service-postgres = import ./nix/nixos/service-postgres.nix;
+        # OCI image packaging: `lib.oci` exposes one spec per service plus the
+        # generic mkServiceImage builder (see nix/pkg/oci/default.nix).
+        lib.oci = { pkgs }: pkgs.callPackage ./nix/pkg/oci/default.nix { };
         lib.mkHaystackPackage = { pkgs }: pkgs.callPackage ./nix/pkg/haystack/package.nix { squishLib = inputs.squish.lib; };
         lib.mkManureClientPackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/client.nix { };
         lib.mkManurePackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/package.nix { squishLib = inputs.squish.lib; };
