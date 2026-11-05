@@ -109,6 +109,87 @@ test("agents can review answered and dismissed history with full answers through
   assert.equal((await f.call({ action: "get", id: "Q2" }, "dismissal")).details.answer, null);
 });
 
+// Specified behavioral/blackbox-good-communication: public tool backed by local SQLite.
+test("agents can record chat answers and dismissals at the observed revision", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Which storage?" }, "first");
+  await f.call({ action: "ask", question: "Superseded question" }, "second");
+  const answer = "Use SQLite.\nKeep the concurrent-session requirement.";
+  const saved = await f.call({ action: "answer", id: "q1", revision: 1, answer }, "answer");
+  assert.equal(saved.details.status, "answered");
+  assert.equal(saved.details.revision, 2);
+  assert.equal(saved.details.answer, answer);
+  assert.equal(JSON.parse(saved.content[0].text).answer, answer);
+  const dismissed = await f.call({ action: "dismiss", id: "Q2", revision: 1 }, "dismiss");
+  assert.equal(dismissed.details.status, "dismissed");
+  assert.equal(dismissed.details.answer, null);
+  assert.equal(dismissed.details.revision, 2);
+  assert.equal((await f.call({ action: "list" }, "pending")).details.total, 0);
+  assert.equal(f.widgets.at(-1)[1], undefined);
+  assert.equal(f.messages.length, 2);
+  assert.match(f.messages[1].message.content, /not approval/i);
+  f.tick(); assert.equal(f.messages.length, 2);
+  f.start();
+  assert.equal((await f.call({ action: "get", id: "Q1" }, "saved")).details.answer, answer);
+});
+
+test("agent resolutions preserve concurrent edits and allow explicit corrections after rereading", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Which storage?" }, "first");
+  const observed = (await f.call({ action: "get", id: "Q1" }, "read")).details;
+  const external = new SqliteDecisionStore(f.path);
+  t.after(() => external.close());
+  external.resolve("project-a", "Q1", 1, "answered", "Newer user answer");
+  for (const action of ["answer", "dismiss"]) {
+    await assert.rejects(f.call({ action, id: "Q1", revision: observed.revision,
+      ...(action === "answer" ? { answer: "Stale answer" } : {}) }, action), /changed.*reload before saving/);
+  }
+  const current = (await f.call({ action: "get", id: "Q1" }, "reread")).details;
+  assert.equal(current.answer, "Newer user answer");
+  assert.equal(current.revision, 2);
+  const corrected = await f.call({ action: "answer", id: "Q1", revision: current.revision, answer: "User's explicit correction in chat" }, "correct");
+  assert.equal(corrected.details.revision, 3);
+  assert.equal(corrected.details.answer, "User's explicit correction in chat");
+});
+
+test("agent resolutions validate required fields and never silently discard an answer", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Pending?" }, "first");
+  for (const [params, error] of [
+    [{ action: "answer", revision: 1, answer: "yes" }, /id is required/],
+    [{ action: "dismiss", revision: 1 }, /id is required/],
+    [{ action: "answer", id: "Q1", answer: "yes" }, /revision is required/],
+    [{ action: "dismiss", id: "Q1" }, /revision is required/],
+    [{ action: "answer", id: "Q1", revision: 1 }, /answer is required/],
+    [{ action: "answer", id: "Q1", revision: 1, answer: "  " }, /nonempty/],
+    [{ action: "answer", id: "Q1", revision: 1, answer: "x".repeat(16001) }, /at most 16000/],
+    [{ action: "dismiss", id: "Q1", revision: 1, answer: "Do not discard" }, /answer.*only.*answer/],
+    [{ action: "answer", id: "Q0", revision: 1, answer: "yes" }, /question ID/],
+    [{ action: "dismiss", id: "Q2", revision: 1 }, /not found/],
+    [{ action: "dismiss", id: "Q1", revision: 0 }, /revision must be/],
+  ]) await assert.rejects(f.call(params, "invalid"), error);
+  assert.equal((await f.call({ action: "get", id: "Q1" }, "unchanged")).details.revision, 1);
+  await f.command("off");
+  for (const action of ["answer", "dismiss"]) {
+    await assert.rejects(f.call({ action, id: "Q1", revision: 1, ...(action === "answer" ? { answer: "yes" } : {}) }, "disabled"), /disabled/i);
+  }
+});
+
+test("agent guidance requires explicit chat evidence and revision-checked recording", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Pending?" }, "first");
+  const tool = f.tool();
+  assert.equal(tool.annotations.destructiveHint, true, "answer/dismiss can replace an existing response");
+  assert.match(tool.description, /answer.*dismiss/);
+  assert.doesNotMatch(tool.description, /Only the user can answer/);
+  const guidance = tool.promptGuidelines.join("\n");
+  assert.match(guidance, /chat/);
+  assert.match(guidance, /answer.*dismiss/);
+  assert.match(guidance, /revision/);
+  assert.match(guidance, /ambiguous/);
+  assert.match(f.handlers.get("before_agent_start")({}, f.ctx).message.content, /chat.*answer.*dismiss/);
+});
+
 test("origin session is persisted and current-session markers follow session switches and resume", async (t) => {
   const f = fixture(t); f.start();
   await f.call({ action: "ask", question: "Origin question" }, "own");

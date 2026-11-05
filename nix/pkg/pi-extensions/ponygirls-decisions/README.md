@@ -72,8 +72,9 @@ already-running requests/actions are not revoked. The manual inbox, shortcut and
 answer/dismiss/reopen commands remain available; questions are never deleted.
 Re-enabling reconciles outstanding answers once, using the existing receipt rules.
 
-Dismissing means “no answer”, not approval. The model tool cannot answer,
-reopen, dismiss, delete, or rewrite a question.
+Dismissing means “no answer”, not approval. The model tool can record an explicit
+chat answer or dismissal on the user's behalf. It cannot reopen, delete, or
+rewrite a question.
 
 ## Agent tool
 
@@ -90,8 +91,36 @@ reopen, dismiss, delete, or rewrite a question.
 Call `decisions` with `action: "list"` to read pending summaries. `status` may be
 `pending`, `answered`, `dismissed`, or `all`; `offset` and `limit` paginate (10 by
 default, maximum 50). `action: "get", id: "Q12"` retrieves full context and the
-current answer. Repeated calls with the same project/session/tool-call identity
-are idempotent. Separate questions receive separate IDs even if their text matches.
+current answer.
+
+If the user prefers to answer in chat, the agent should read the full question
+with `get`, then record the user's explicit answer or dismissal itself:
+
+```json
+{ "action": "answer", "id": "Q12", "revision": 1, "answer": "Use SQLite; concurrent sessions need atomic ID allocation." }
+```
+
+```json
+{ "action": "dismiss", "id": "Q13", "revision": 1 }
+```
+
+Both mutations require the current `revision` returned by `list`/`get`; `answer`
+also requires nonempty answer text (at most 16,000 characters), while `dismiss`
+does not accept answer text. Preserve the user's meaning and the question's scope.
+Use dismissal only when the user explicitly dismisses the question or makes it
+obsolete, never to clear an unresolved blocker for convenience. Ambiguous chat
+replies require clarification, not an invented answer or assumed approval.
+Existing answers can be corrected or dismissed at their current revision when
+the user explicitly requests it. A stale revision fails without changing the
+question: reread and reconcile with the user rather than blindly retrying over a
+newer response. These are recording capabilities, not permission for the agent to
+make the user's decision. Scripted tests do not establish model compliance with
+this policy.
+
+Repeated `ask` calls with the same project/session/tool-call identity are
+idempotent. Resolutions use compare-and-swap, not replay deduplication: reusing a
+saved revision fails even when the answer text is unchanged. Separate questions
+receive separate IDs even if their text matches.
 List summaries and full `get` results include the originating `sessionId` and an
 `isCurrentSession` flag computed for the active session. The per-run project
 summary also marks matching questions with `[this session]`.

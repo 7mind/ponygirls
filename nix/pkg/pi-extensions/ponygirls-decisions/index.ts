@@ -5,7 +5,7 @@ import { FileTogglePreferenceStore, parseToggleCommand, sessionEnabled, sessionE
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { compactChip } from "@ponygirls/pi-ui";
 import { projectDisplayName, resolveProject } from "./src/project.ts";
-import { SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
+import { DECISION_LIMITS, SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
 import { DecisionsPane } from "./src/pane.ts";
 import { CONTEXT_TYPE, contextLine, summarizeContext } from "./src/context.ts";
 import { completeDecisionArguments } from "./src/complete.ts";
@@ -40,7 +40,7 @@ function notice(q: Decision): string {
     `Decision ${q.id} in ${q.project} (revision ${q.revision}, ${q.status})`,
     `Question: ${q.question}`,
     q.status === "answered" ? `User answer: ${q.answer}` : q.status === "dismissed"
-      ? "The user dismissed this question without an answer. This is not approval."
+      ? "This question was dismissed without an answer. This is not approval."
       : "The user reopened this question. Any previous answer has been withdrawn; it is pending again.",
     "Apply this only to the question's scope. Do not treat an answer as broader authorization.",
   ].join("\n\n");
@@ -259,7 +259,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     const recent = questions.filter((q) => q.status !== "pending").slice(-PAGE_SIZE);
     return { message: {
       customType: CONTEXT_TYPE, display: true,
-      content: `Project decisions: ${pending.length} unanswered. Pending questions are not permission to proceed on their dependent work. Continue independent work; never poll in a loop waiting for the user. Use decisions list/get to read current answers before acting.\n` +
+      content: `Project decisions: ${pending.length} unanswered. Pending questions are not permission to proceed on their dependent work. Continue independent work; never poll in a loop waiting for the user. Use decisions list/get to read current answers before acting. If the user responds in chat, record their explicit answer or dismissal with decisions answer/dismiss using the current revision; clarify ambiguous replies rather than guessing.\n` +
         [...pending.slice(0, PAGE_SIZE), ...recent].map((q) => summary({ ...q, question: q.question.slice(0, 160) }, b.sessionId)).join("\n"),
       details: { project: b.project },
     } };
@@ -267,16 +267,21 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
 
   const tool = defineTool({
     name: "decisions", label: "Decisions",
-    description: "Ask the user a persistent, asynchronous project-scoped question, or list/get questions and answers. ask returns immediately with Q1, Q2, etc.; it never waits for user input. Only the user can answer. Include context, alternatives/tradeoffs and a recommendation when useful. Continue independent work, but do not guess an unanswered decision or treat it as authorization. list returns summaries; get retrieves full context and answer.",
-    promptGuidelines: ["Prefer decisions to a blocking ask-user dialog. When user input is needed, create a focused question with context and possible solutions, then continue only independent work. Read current decisions with list/get; do not repeatedly poll or assume an answer."],
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    description: "Ask the user a persistent, asynchronous project-scoped question, list/get questions and answers, or record the user's explicit chat response with answer/dismiss. ask returns immediately with Q1, Q2, etc.; it never waits for user input. Include context, alternatives/tradeoffs and a recommendation when useful. list returns summaries; get retrieves full context and answer. answer requires id, revision and answer text; dismiss requires id and revision and is not approval. Read the current revision with list/get before saving; on conflict reread and reconcile, never blindly retry. Do not invent a user answer or treat an unanswered question as authorization.",
+    promptGuidelines: [
+      "Prefer decisions to a blocking ask-user dialog. When user input is needed, create a focused question with context and possible solutions, then continue only independent work. Read current decisions with list/get; do not repeatedly poll or assume an answer.",
+      "When the user answers in chat instead of the inbox, record their explicit response yourself with decisions answer, or use dismiss when they explicitly dismiss the question or make it obsolete. Read the full question and current revision with get first; preserve the user's meaning and scope. Clarify ambiguous replies; never supply your own answer, infer approval from silence, dismiss an unresolved question for convenience, or overwrite a newer response without reconciling it with the user. Dismissal is not approval.",
+    ],
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     parameters: Type.Object({
-      action: Type.Union([Type.Literal("ask"), Type.Literal("list"), Type.Literal("get")]),
+      action: Type.Union([Type.Literal("ask"), Type.Literal("list"), Type.Literal("get"), Type.Literal("answer"), Type.Literal("dismiss")]),
       question: Type.Optional(Type.String({ maxLength: 2000, description: "Focused question (ask)" })),
       context: Type.Optional(Type.String({ maxLength: 12000, description: "Background, constraints and tradeoffs; Markdown supported" })),
       options: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2000 }), { maxItems: 9, description: "Potential answers/solutions" })),
       recommendation: Type.Optional(Type.String({ maxLength: 4000, description: "Recommended solution and rationale" })),
-      id: Type.Optional(Type.String({ description: "Q number (get)" })),
+      id: Type.Optional(Type.String({ description: "Q number (get/answer/dismiss)" })),
+      revision: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER - 1, description: "Current revision from list/get, required for answer/dismiss; stale writes fail" })),
+      answer: Type.Optional(Type.String({ minLength: 1, maxLength: DECISION_LIMITS.answer, description: "The user's explicit chat answer (answer only); preserve their meaning and scope" })),
       status: Type.Optional(Type.Union([Type.Literal("pending"), Type.Literal("answered"), Type.Literal("dismissed"), Type.Literal("all")])),
       offset: Type.Optional(Type.Integer({ minimum: 0 })),
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_PAGE_SIZE })),
@@ -292,11 +297,22 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
           recommendation: params.recommendation ?? "", sessionId: b.sessionId, toolCallId,
         });
         refresh(b);
-        return { content: [{ type: "text", text: `${q.id} created (${q.status}). The user can answer via /decisions. Continue independent work; this is not an answer or approval.` }], details: q };
+        return { content: [{ type: "text", text: `${q.id} created (${q.status}). The user can answer via /decisions or chat; record explicit chat responses with answer/dismiss. Continue independent work; this is not an answer or approval.` }], details: q };
       }
       if (params.action === "get") {
         if (params.id === undefined) throw new Error("id is required for get");
         const decision = storeFor(b).get(b.project, questionId(params.id));
+        const q = { ...decision, isCurrentSession: decision.sessionId === b.sessionId };
+        return { content: [{ type: "text", text: JSON.stringify(q, null, 2) }], details: q };
+      }
+      if (params.action === "answer" || params.action === "dismiss") {
+        if (params.id === undefined) throw new Error(`id is required for ${params.action}`);
+        if (params.revision === undefined) throw new Error(`revision is required for ${params.action}; read the current question with get first`);
+        if (params.action === "answer" && params.answer === undefined) throw new Error("answer is required for answer");
+        if (params.action === "dismiss" && params.answer !== undefined) throw new Error("answer is only allowed for answer; dismissal records no answer");
+        const decision = storeFor(b).resolve(b.project, questionId(params.id), params.revision,
+          params.action === "answer" ? "answered" : "dismissed", params.answer === undefined ? null : params.answer);
+        refresh(b);
         const q = { ...decision, isCurrentSession: decision.sessionId === b.sessionId };
         return { content: [{ type: "text", text: JSON.stringify(q, null, 2) }], details: q };
       }
