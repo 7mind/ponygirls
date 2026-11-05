@@ -176,21 +176,36 @@ export class ToolBroker {
   async cancelJobs(agentId: AgentId): Promise<string[]> {
     this.flushReceipts();
     const active = this.activeJobs(agentId);
+    const failures: unknown[] = [];
+    // Own the entire batch before awaiting: cancelling the first backend
+    // can settle any of these jobs. None may publish ordinary success.
+    for (const job of active) job.done = true;
     for (const job of active) {
-      // Own the outcome first, synchronously: a backend settling during the
-      // awaits below must take a done-branch (cancel-marked, no journal),
-      // never journal an ordinary-confirmed outcome for a cancelled job. A
-      // per-op cancellation may have owned it meanwhile — then skip.
-      if (job.done) continue;
-      job.done = true;
-      try {
-        await this.executors.sandbox.cancel?.(job.operationId);
-        await this.executors.host.cancel?.(job.operationId);
-      } catch {
-        // best effort; outcome stays uncertain
+      let confirmed = this.executors.sandbox.cancel !== undefined || this.executors.host.cancel !== undefined;
+      for (const executor of [this.executors.sandbox, this.executors.host]) {
+        try {
+          await executor.cancel?.(job.operationId);
+        } catch (e) {
+          confirmed = false;
+          failures.push(e);
+        }
       }
-      this.store.append("tool.outcome", { operationId: job.operationId, status: "cancelled" });
+      const status = confirmed ? "cancelled" : "uncertain";
+      try {
+        this.store.append("tool.outcome", { operationId: job.operationId, status });
+      } catch (e) {
+        this.retainReceipt(job.operationId, {
+          phase: "broker-cancel-commit-failed",
+          operationId: job.operationId,
+          status,
+          error: String((e as Error)?.message ?? e).slice(0, 500),
+        });
+        failures.push(e);
+      }
     }
+    // Persistence is not a prerequisite for stopping the remaining jobs.
+    // Preserve the original error/code rather than reporting clean cleanup.
+    if (failures.length > 0) throw failures[0];
     return active.map((j) => j.operationId);
   }
 
