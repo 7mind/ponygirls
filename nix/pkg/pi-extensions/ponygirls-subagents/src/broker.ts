@@ -65,6 +65,7 @@ export interface ToolRequest {
 }
 
 export interface OwnedJob {
+  backend: keyof ToolExecutors;
   operationId: OperationId;
   agentId: AgentId;
   tool: string;
@@ -181,7 +182,7 @@ export class ToolBroker {
     // can settle any of these jobs. None may publish ordinary success.
     for (const job of active) job.done = true;
     for (const job of active) {
-      let confirmed = this.executors.sandbox.cancel !== undefined || this.executors.host.cancel !== undefined;
+      let confirmed = this.executors[job.backend].cancel !== undefined;
       for (const executor of [this.executors.sandbox, this.executors.host]) {
         try {
           await executor.cancel?.(job.operationId);
@@ -232,7 +233,7 @@ export class ToolBroker {
       throw err("STORE_FAILED", "journal holds uncommitted fault receipts; explicit recovery required");
     }
     const operationId = randomUUID();
-    const job: OwnedJob = { operationId, agentId: opts.agentId, tool: "gate-check", startedAt: new Date().toISOString(), done: false };
+    const job: OwnedJob = { backend: opts.sandbox === null ? "host" : "sandbox", operationId, agentId: opts.agentId, tool: "gate-check", startedAt: new Date().toISOString(), done: false };
     this.jobs.set(operationId, job);
     this.sharedIds.add(operationId);
     this.store.append("tool.intent", {
@@ -305,7 +306,7 @@ export class ToolBroker {
       throw err("STALE_GENERATION", "caller has no admitted generation");
     }
 
-    const job: OwnedJob = { operationId, agentId: caller.agentId, tool: request.tool, startedAt: new Date().toISOString(), done: false };
+    const job: OwnedJob = { backend: caller.sandbox === null ? "host" : "sandbox", operationId, agentId: caller.agentId, tool: request.tool, startedAt: new Date().toISOString(), done: false };
     this.jobs.set(operationId, job);
     this.sharedIds.add(operationId);
     this.store.append("tool.intent", {
@@ -330,10 +331,8 @@ export class ToolBroker {
       // A confirmed cancel requires the backend cancel to be issued without
       // error. An ignoring backend (no cancel hook at all) or a throwing
       // one leaves the effect unconfirmed: uncertain, never known-cancelled.
-      let confirmed =
-        this.executors.sandbox.cancel !== undefined ||
-        this.executors.host.cancel !== undefined;
-      if (confirmed) {
+      let confirmed = this.executors[job.backend].cancel !== undefined;
+      if (this.executors.sandbox.cancel !== undefined || this.executors.host.cancel !== undefined) {
         try {
           await this.executors.sandbox.cancel?.(operationId);
           await this.executors.host.cancel?.(operationId);

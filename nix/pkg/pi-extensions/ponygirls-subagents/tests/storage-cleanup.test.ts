@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ToolBroker, type BrokerCaller } from "../src/broker.ts";
-import { DummyToolExecutor } from "../src/sandbox.ts";
+import { DummyToolExecutor, type ToolExecutor } from "../src/sandbox.ts";
 import { FileRunStore, InMemoryRunStore, RootLock, type RunStore } from "../src/store.ts";
 import { CtlWorker, mkSup, tick } from "./ctl-worker.ts";
 
@@ -158,6 +158,42 @@ test("bulk cancellation attempts both backends and owns all outcomes before awai
   for (const result of await Promise.all(pending)) assert.notEqual(result.exitCode, 0);
   assert.deepEqual(store.readSince(0, 1000).records.filter((r) => r.kind === "tool.outcome").map((r) => r.body["status"]), ["uncertain", "uncertain"]);
 });
+
+for (const backend of ["host", "sandbox"] as const) {
+  for (const route of ["bulk", "signal", "gate"] as const) {
+    test(`${route} cancellation stays uncertain when only the non-owning ${backend === "host" ? "sandbox" : "host"} backend can cancel`, { timeout: 5000 }, async (t) => {
+      const store = new InMemoryRunStore("root-1");
+      const held = Promise.withResolvers<typeof ok>();
+      const cancelled = Promise.withResolvers<void>();
+      const uncancellable: ToolExecutor = { exec: async () => held.promise };
+      const other = new DummyToolExecutor();
+      const executors = backend === "host" ? { host: uncancellable, sandbox: other } : { host: other, sandbox: uncancellable };
+      assert.ok(process.env["PATH"]);
+      const broker = new ToolBroker(executors, store, [], {}, { PATH: process.env["PATH"] });
+      const c = caller();
+      if (backend === "sandbox") c.sandbox = { readRoots: [], hidePaths: [], tmpDir: "/tmp" };
+      const append = store.append.bind(store);
+      store.append = (kind, body) => {
+        const record = append(kind, body);
+        if (kind === "tool.outcome") cancelled.resolve();
+        return record;
+      };
+      const abort = new AbortController();
+      const pending = route === "gate"
+        ? broker.runControllerCheck({ agentId: c.agentId, taskRunId: c.taskRunId, generation: 1, sandbox: c.sandbox, command: "true", cwd: c.workdir, timeoutMs: 5000 })
+        : broker.execute(c, { tool: "read", args: { path: "." }, signal: abort.signal });
+      t.after(async () => { held.resolve(ok); await pending; });
+      if (route === "signal") abort.abort();
+      else await broker.cancelJobs(c.agentId);
+      await cancelled.promise;
+      assert.equal(other.cancelled.length, 1);
+      const outcome = store.readSince(0, 100).records.find((r) => r.kind === "tool.outcome")!;
+      assert.equal(outcome.body["status"], "uncertain", "the non-owning backend cannot establish cancellation");
+      held.resolve(ok);
+      assert.notEqual((await pending).exitCode, 0);
+    });
+  }
+}
 
 test("shutdown retains the lock if store.close fails and allows a cleanup retry", async (t) => {
   const store = new InMemoryRunStore("root-1");
