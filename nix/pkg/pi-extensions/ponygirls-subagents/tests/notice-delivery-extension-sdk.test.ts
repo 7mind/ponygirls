@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,8 +22,8 @@ interface NoticeEvent {
 
 // Regression #25: release a successful real child only after the parent settles;
 // neither a startup failure nor polling list_agents establishes idle delivery.
-for (const persistent of [true, false]) {
-  test(`real ${persistent ? "parent-registered" : "file-configured"} child completion autonomously resumes an idle ${persistent ? "file" : "memory"} governor without input or polling`, { timeout: 20_000 }, async (t) => {
+for (const { persistent, storageFails } of [{ persistent: true, storageFails: false }, { persistent: false, storageFails: false }, { persistent: true, storageFails: true }]) {
+  test(`real ${persistent ? "parent-registered" : "file-configured"} child ${storageFails ? "journal ENOSPC" : "completion"} autonomously resumes an idle ${persistent ? "file" : "memory"} governor without input or polling`, { timeout: 20_000 }, async (t) => {
     if (!process.env["PI_SUBAGENTS_SDK_ROOT"]) {
       t.skip("PI_SUBAGENTS_SDK_ROOT is required for the real worker");
       return;
@@ -129,26 +129,33 @@ for (const persistent of [true, false]) {
     assert.ok(session.isIdle);
     assert.equal(requests, 2);
     assert.equal(displayed.length, 0);
+    const journalPath = join(dir, "subagents", session.sessionManager.getSessionId(), "journal.log");
+    const readableJournal = storageFails ? `${journalPath}.preserved` : journalPath;
+    if (storageFails) {
+      renameSync(journalPath, readableJournal);
+      symlinkSync("/dev/full", journalPath);
+    }
     releaseChild.resolve();
-    const timer = setTimeout(() => noticeDelivered.reject(new Error("successful child completion was not delivered while the parent was idle")), NOTICE_DELIVERY_TIMEOUT_MS);
+    const timer = setTimeout(() => noticeDelivered.reject(new Error("child notice was not delivered while the parent was idle")), NOTICE_DELIVERY_TIMEOUT_MS);
     try {
       await noticeDelivered.promise;
     } catch (error) {
-      const journal = readFileSync(join(dir, "subagents", session.sessionManager.getSessionId(), "journal.log"), "utf8");
-      assert.match(journal, /"kind":"task.terminal".*"outcome":"succeeded"/, "the child must actually complete before asserting notice failure");
+      const journal = readFileSync(readableJournal, "utf8");
+      if (!storageFails) assert.match(journal, /"kind":"task.terminal".*"outcome":"succeeded"/, "the child must actually complete before asserting notice failure");
       throw error;
     } finally {
       clearTimeout(timer);
     }
     assert.equal(displayed.length, 1);
     assert.equal(displayed[0]!.display, true);
-    assert.match(displayed[0]!.text, /\/root\/idle-child task .* ended succeeded/);
+    const expectedNotice = storageFails ? /STORE_FAILED:.*ENOSPC/ : /\/root\/idle-child task .* ended succeeded/;
+    assert.match(displayed[0]!.text, expectedNotice);
     const wakeTimer = setTimeout(() => governorResumed.reject(new Error("completion reached context but did not resume the governor")), NOTICE_DELIVERY_TIMEOUT_MS);
     try { await governorResumed.promise; }
     finally { clearTimeout(wakeTimer); }
     await session.waitForIdle();
     assert.equal(requests, 3, "one automatic turn must process the child's completion");
-    assert.match(wakeContexts[0]!, /ended succeeded/);
+    assert.match(wakeContexts[0]!, expectedNotice);
     assert.ok(session.isIdle);
     assert.deepEqual(inputs, ["start child"], "no status prompt or polling may drive delivery");
     const notices = session.sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === CUSTOM_NOTICE);
@@ -156,7 +163,12 @@ for (const persistent of [true, false]) {
     if (persistent) {
       const file = session.sessionManager.getSessionFile();
       assert.ok(file);
-      assert.match(readFileSync(file, "utf8"), /ended succeeded/);
+      assert.match(readFileSync(file, "utf8"), expectedNotice);
+    }
+    if (storageFails) {
+      assert.doesNotMatch(readFileSync(readableJournal, "utf8"), /"kind":"task.terminal"/);
+      unlinkSync(journalPath);
+      renameSync(readableJournal, journalPath);
     }
     assert.deepEqual(errors, []);
   });

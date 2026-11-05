@@ -31,7 +31,7 @@ import type { DelegatedCall } from "./delegated-call.ts";
 import { killAndConfirm, readProcessIdentity, verifyOwnership, type OwnershipVerdict, type ProcessIdentity } from "./process-identity.ts";
 import { AdmissionScheduler, PathRegistry, type AgentCreationReservation, type CapacitySnapshot, type LeaseTicket, type SchedulerLimits } from "./scheduler.ts";
 import { BwrapToolExecutor, HostToolExecutor, sandboxRuntimePath } from "./sandbox.ts";
-import { InMemoryRunStore, RootLock, checkpointSha256, fsyncDir, fsyncFile, type JournalKind, type JournalRecord, type ResultRef, type RunStore } from "./store.ts";
+import { InMemoryRunStore, RootLock, checkpointSha256, fsyncDir, fsyncFile, type JournalKind, type JournalRecord, type ResultRef, type RunStore, type StoreFailure } from "./store.ts";
 import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, FILE_TOOLS, GATE_DECISION_TOOL, RESULT_TEXT_HARD_MAX, RESULT_TEXT_MAX, SHELL_TOOL, WRITE_TOOLS } from "./tools.ts";
 import type {
   AgentId,
@@ -107,6 +107,8 @@ export interface SpawnResult {
 }
 
 export interface AgentView {
+  /** Volatile root health; observed agent state may predate this failure. */
+  storageFailure?: StoreFailure;
   id: AgentId;
   path: string;
   parentId: AgentId | null;
@@ -524,6 +526,7 @@ export class Supervisor implements GateHost {
     if (!lockRes.ok) throw lockRes.error;
     try {
       this.constructOwned(options);
+      this.store.onWriteFailure(() => this.notifyChanged());
     } catch (e) {
       // Construction failed after acquiring the root lease: release it so a
       // healed successor can acquire instead of stranding on our PID. The
@@ -1184,7 +1187,13 @@ export class Supervisor implements GateHost {
    * routes never consult it. A bare needsRecovery flag alone implies
    * nothing about health — only these concrete states gate admission.
    */
+  get storageFailure(): StoreFailure | null {
+    return this.store.writeFailure();
+  }
+
   private admissionHoldError(): ReturnType<typeof err> | null {
+    const failure = this.storageFailure;
+    if (failure !== null) return err("STORE_FAILED", failure.message);
     if (this.suspended || this.disposed) {
       return err("NOT_RUNNING", "root suspended: no new model inference during recovery/shutdown");
     }
@@ -1206,7 +1215,7 @@ export class Supervisor implements GateHost {
    * receipts. Observable while idle, with no new tool call required.
    */
   get needsRecovery(): boolean {
-    return this.pendingLost.size > 0 || this.pendingSettle.size > 0 || this.attachCatchUpNeeded || this.pendingExternalBilling.size > 0 || this.pendingLateBilling.size > 0 || this.toolBroker.hasPendingReceipts();
+    return this.storageFailure !== null || this.pendingLost.size > 0 || this.pendingSettle.size > 0 || this.attachCatchUpNeeded || this.pendingExternalBilling.size > 0 || this.pendingLateBilling.size > 0 || this.toolBroker.hasPendingReceipts();
   }
 
   // -- serialized controller transitions ------------------------------------
@@ -1233,11 +1242,12 @@ export class Supervisor implements GateHost {
   private reportFailure(e: unknown): void {
     try {
       this.store.append("recovery.event", { phase: "controller_error", error: String((e as Error)?.message ?? e).slice(0, 500) });
-      this.evaluateWaiters();
-      this.opts.onChange?.();
     } catch {
-      // A failing store or observer cannot recursively report its own failure.
+      // A failed journal remains observable through its volatile health.
     }
+    this.evaluateWaiters();
+    try { this.opts.onChange?.(); }
+    catch (error) { console.error("subagents: failure observer failed:", error); }
   }
 
   private notifyChanged(): void {
@@ -1723,6 +1733,8 @@ export class Supervisor implements GateHost {
     if (this.suspended || this.disposed) {
       return { ok: false, code: "NOT_RUNNING", message: "root suspended: no new admissions during recovery/shutdown" };
     }
+    const failure = this.storageFailure;
+    if (failure !== null) return { ok: false, code: "STORE_FAILED", message: failure.message };
     if (this.toolBroker.hasPendingReceipts()) {
       return { ok: false, code: "STORE_FAILED", message: "journal holds uncommitted fault receipts; explicit recovery required" };
     }
@@ -3791,16 +3803,25 @@ export class Supervisor implements GateHost {
 
   /** Cancel expired unanswered questions (deadlines are explicit). */
   private sweepExpiredQuestions(): void {
+    if (this.storageFailure !== null) return;
     const now = Date.now();
     for (const q of this.questions.values()) {
       if (q.answered || q.cancelled || Date.parse(q.deadlineAt) > now) continue;
+      try {
+        this.store.append("mailbox.question_expired", { messageId: q.messageId, agentId: q.from, to: q.to });
+      } catch (error) {
+        // A read may discover the first failure. Preserve last committed
+        // state and let inspection report the latch instead of throwing.
+        if (this.storageFailure !== null) return;
+        throw error;
+      }
       q.cancelled = true;
-      this.publish("mailbox.question_expired", { messageId: q.messageId, agentId: q.from, to: q.to });
       const asker = this.agents.get(q.from);
       if (asker && asker.record.observed === "awaiting_parent") {
         asker.record.observed = asker.activeRun ? "running" : "settled";
         asker.record.detail = "question expired without reply; continuing";
       }
+      this.notifyChanged();
     }
   }
 
@@ -3817,8 +3838,8 @@ export class Supervisor implements GateHost {
   }
 
   /** The list_agents report: visible agents plus the shared admission capacity. */
-  listWithCapacity(caller: CallerId): { agents: AgentView[]; capacity: CapacitySnapshot } {
-    return { agents: this.list(caller), capacity: this.capacity() };
+  listWithCapacity(caller: CallerId): { agents: AgentView[]; capacity: CapacitySnapshot; storageFailure: StoreFailure | null } {
+    return { agents: this.list(caller), capacity: this.capacity(), storageFailure: this.storageFailure };
   }
 
   read(caller: CallerId, target: AgentId, view: "status" | "result" | "reviews" | "events", cursor: number, limit: number, taskRunId: TaskRunId | null): ReadResult {
@@ -4060,7 +4081,7 @@ export class Supervisor implements GateHost {
     const inbox = this.inbox(waiter.caller, waiter.cursor, cursor);
     if (inbox.truncated) cursor = inbox.lastSeq;
     const page = reported.filter((r) => r.seq <= cursor).slice(0, WAIT_EVENT_LIMIT);
-    return { completed, reason, events: page.map((r) => this.viewOfRecord(r)), messages: inbox.messages, cursor, joinTaskRunIds: waiter.joinTaskRunIds, joinToken: waiter.joinToken };
+    return { completed, reason, events: page.map((r) => this.viewOfRecord(r)), messages: inbox.messages, cursor, joinTaskRunIds: waiter.joinTaskRunIds, joinToken: waiter.joinToken, ...(this.storageFailure !== null ? { storageFailure: this.storageFailure } : {}) };
   }
 
   /**
@@ -4095,6 +4116,7 @@ export class Supervisor implements GateHost {
   }
 
   private checkWaitSatisfied(waiter: WaiterReg): WaitResult | null {
+    if (this.storageFailure !== null) return this.waitResult(waiter, false, "storage_failed", this.relevantRecords(waiter));
     if (waiter.condition === "activity") {
       const relevant = this.relevantRecords(waiter);
       return relevant.length > 0 ? this.waitResult(waiter, true, "events", relevant) : null;
@@ -5265,7 +5287,8 @@ export class Supervisor implements GateHost {
       externalTools: [...(r.grants.externalTools ?? [])],
       model: r.model ? `${r.model.provider}/${r.model.id}` : "unresolved",
       observed: r.observed,
-      pendingIntent: rt.activeRun?.interruptRequested === true ? "interrupt pending" : pendingIntentOf(rt),
+      ...(this.storageFailure !== null ? { storageFailure: this.storageFailure } : {}),
+      pendingIntent: this.storageFailure !== null ? "storage failed: restart/reopen required; observed state is last known" : rt.activeRun?.interruptRequested === true ? "interrupt pending" : pendingIntentOf(rt),
       currentTaskRunId: r.currentTaskRunId,
       generation: r.executionGeneration,
       taskOutcome: r.taskOutcome,

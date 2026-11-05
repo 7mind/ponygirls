@@ -14,7 +14,7 @@ export interface NoticeMessage {
   customType: typeof CUSTOM_NOTICE;
   content: Array<{ type: "text"; text: string }>;
   display: true;
-  details: { schemaVersion: 1; cursor: number };
+  details: { schemaVersion: 1; cursor: number; volatile?: true };
 }
 
 export interface NoticeSink {
@@ -33,11 +33,20 @@ export class NoticeDelivery {
   private readonly source: NoticeSource;
   private sink: NoticeSink;
   private attached = true;
+  private pendingFailure: string | null = null;
+  private deliveredFailure: string | null = null;
 
   constructor(source: NoticeSource, sink: NoticeSink, cursor: number) {
     this.source = source;
     this.sink = sink;
     this.cursor = cursor;
+  }
+
+  /** Out-of-band health: never invent a journal sequence for an unwritable store. */
+  storageFailed(message: string): void {
+    if (this.disposed || message === this.deliveredFailure || message === this.pendingFailure) return;
+    this.pendingFailure = message;
+    this.changed();
   }
 
   changed(): void {
@@ -49,6 +58,17 @@ export class NoticeDelivery {
     queueMicrotask(() => {
       try {
         while (!this.disposed && this.attached) {
+          if (this.pendingFailure !== null) {
+            const failure = this.pendingFailure;
+            this.sink.submit({
+              customType: CUSTOM_NOTICE,
+              content: [{ type: "text", text: sanitizeDisplay(`[subagents: volatile storage failure]\nSTORE_FAILED: ${failure}`, NOTICE_TEXT_MAX) }],
+              display: true,
+              details: { schemaVersion: 1, cursor: this.cursor, volatile: true },
+            });
+            this.deliveredFailure = failure;
+            this.pendingFailure = null;
+          }
           const { lines, cursor } = this.source.noticesSince(this.cursor, NOTICE_BATCH);
           if (lines.length > 0) {
             this.sink.submit({

@@ -222,6 +222,52 @@ test("disposal cancels an armed retry", async (t) => {
   assert.deepEqual(sink.messages, []);
 });
 
+test("storage failure is delivered without a journal event, once, across reload", async (t) => {
+  const journal = new Journal();
+  journal.append("existing history");
+  const sink = new Sink();
+  const delivery = new NoticeDelivery(journal, sink, 1);
+  t.after(() => delivery.dispose());
+  delivery.detach();
+  delivery.storageFailed("ENOSPC: restart/reopen required");
+  await tick();
+  assert.equal(sink.messages.length, 0);
+  delivery.attach(sink);
+  await tick();
+  assert.equal(sink.messages.length, 1);
+  assert.match(sink.messages[0]!.content[0]!.text, /volatile storage failure.*\nSTORE_FAILED: ENOSPC/);
+  assert.deepEqual(sink.messages[0]!.details, { schemaVersion: 1, cursor: 1, volatile: true });
+  delivery.storageFailed("ENOSPC: restart/reopen required");
+  delivery.detach();
+  delivery.attach(sink);
+  await tick();
+  assert.equal(sink.messages.length, 1);
+  journal.append("later durable event");
+  delivery.changed();
+  await tick();
+  assert.equal(sink.messages[1]!.details.cursor, 2, "volatile alert must not advance the durable cursor");
+});
+
+test("storage failure ingress uses bounded retries and survives rejection", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const sink = new Sink();
+  sink.reject = true;
+  const delivery = new NoticeDelivery(new Journal(), sink, 0);
+  t.after(() => delivery.dispose());
+  delivery.storageFailed("ENOSPC");
+  await tick();
+  for (let i = 0; i < 2; i++) { t.mock.timers.tick(100); await tick(); }
+  t.mock.timers.tick(10_000);
+  await tick();
+  assert.equal(sink.errors.length, 3);
+  assert.equal(sink.messages.length, 0);
+  sink.reject = false;
+  delivery.attach(sink);
+  await tick();
+  assert.equal(sink.messages.length, 1);
+  assert.equal(sink.messages[0]!.details.volatile, true);
+});
+
 test("a throwing error observer cannot terminate ingress retry", () => {
   const moduleUrl = new URL("../src/notice-delivery.ts", import.meta.url).href;
   const program = `

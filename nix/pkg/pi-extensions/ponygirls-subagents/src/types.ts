@@ -281,6 +281,7 @@ export type WaitEndReason =
   | "settled"
   | "timeout"
   | "needs_response"
+  | "storage_failed"
   | "input"
   | "cancelled";
 
@@ -294,6 +295,8 @@ export interface WaitMessage {
 }
 
 export interface WaitResult {
+  /** In-process diagnostic, not a committed event or terminal outcome. */
+  storageFailure?: import("./store.ts").StoreFailure;
   completed: boolean;
   reason: WaitEndReason;
   events: JournalEventView[];

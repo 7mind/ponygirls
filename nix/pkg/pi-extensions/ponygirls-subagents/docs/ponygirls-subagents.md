@@ -345,6 +345,40 @@ is not replayed. There is no crash-durable exactly-once governing-notice receipt
   with zero cache tokens and no reasoning breakdown; they do not set
   `unknown`.
 
+## Storage failures (ENOSPC, EDQUOT, I/O errors)
+
+A failed journal write or durability barrier **latches the store unavailable**.
+Freeing disk space does not clear the latch: the journal may contain a partial
+frame, or manifest publication may have succeeded without its final sync.
+Appending again without reopening/reconciliation could corrupt the committed
+prefix or duplicate uncertain work. `/reload` retains the same supervisor and
+therefore does **not** repair this state.
+
+- New provider requests and task admission are denied with `STORE_FAILED`;
+  new broker effects cannot pass their journal-intent barrier. Already-issued
+  requests/effects may still finish; this is not proof that effects stopped.
+- `list_agents` reports `storageFailure` (cause code, message, observation time).
+  Agent status includes the failure and labels its observed state as last known.
+  `wait_agent` returns `completed:false, reason:"storage_failed"`, not an ordinary
+  timeout or fabricated terminal outcome. Inspection does not need a journal write.
+- A volatile storage-failure notice is submitted without writing to the failed
+  journal or advancing its cursor. It is retained across process-local reload,
+  with bounded ingress retries. It is **not** crash-durable; if the governing
+  session also cannot persist messages, delivery may fail visibly there too.
+- Shutdown/recovery attempts cleanup for every owned job and worker even if
+  cancellation receipts cannot be persisted. Cleanup failures still surface;
+  no missing receipt is treated as confirmed success. A failed store close keeps
+  the ownership lock rather than allowing a successor behind a possibly live writer.
+
+Repair the filesystem containing the session store (check capacity, inodes and
+quotas as appropriate), then restart Pi and reopen the same governing session.
+Keep its journal, manifest, sessions, checkpoints and worktrees. Reopening validates
+only the manifest-selected prefix and discards an uncommitted tail; committed
+corruption remains `RECOVERY_CORRUPT`, not automatic repair. Inspect recovered runs,
+worktrees and external effects before explicitly resuming work/reviews. Do not
+blindly repeat a command whose acknowledgement was lost. No disk pruning, automatic
+restart, in-process journal reset, or replay of uncertain effects is performed.
+
 ## Recovery diagnostics
 
 - Attaching a session whose journal holds unfinished runs runs recovery

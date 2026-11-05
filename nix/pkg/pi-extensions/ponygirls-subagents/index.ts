@@ -227,11 +227,13 @@ export default function (pi: ExtensionAPI): void {
     binding.onSupervisorChange = () => {
       if (!binding.governingActive) return;
       refreshStatus(binding);
+      const failure = binding.supervisor.storageFailure;
+      if (failure !== null) binding.notices.storageFailed(failure.message);
       binding.notices.changed();
     };
     binding.notices.attach(noticeSink(ctx));
     bindings.set(binding.sessionId, binding);
-    refreshStatus(binding);
+    binding.onSupervisorChange();
     return binding;
   }
 

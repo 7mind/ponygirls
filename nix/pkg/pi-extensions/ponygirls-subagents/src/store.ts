@@ -118,8 +118,17 @@ export interface ResultRef {
   sha256: string;
 }
 
+export interface StoreFailure {
+  readonly causeCode: string | null;
+  readonly message: string;
+  readonly at: string;
+}
+
 export interface RunStore {
   readonly rootId: string;
+  /** Latched durability failure; free space alone does not restore write authority. */
+  writeFailure(): StoreFailure | null;
+  onWriteFailure(listener: () => void): void;
   append(kind: JournalKind, body: Record<string, unknown>): JournalRecord;
   /** Records since (exclusive) a cursor, bounded. */
   readSince(cursor: number, limit: number): { records: JournalRecord[]; cursor: number };
@@ -335,7 +344,8 @@ export class FileRunStore implements RunStore {
   private records: JournalRecord[] = [];
   private commands = new Map<string, JournalRecord>();
   /** Set when a durability barrier failed; the store refuses further writes. */
-  private failure: string | null = null;
+  private failure: StoreFailure | null = null;
+  private failureListeners = new Set<() => void>();
   /**
    * Set by close(): ownership transferred or disposed. Late writer paths
    * holding this object must fail closed instead of appending behind a new
@@ -362,9 +372,21 @@ export class FileRunStore implements RunStore {
     this.open();
   }
 
-  append(kind: JournalKind, body: Record<string, unknown>): JournalRecord {
+  writeFailure(): StoreFailure | null {
+    return this.failure;
+  }
+
+  onWriteFailure(listener: () => void): void {
+    this.failureListeners.add(listener);
+  }
+
+  private assertWritable(): void {
     if (this.closed) throw err("STORE_FAILED", "journal is closed: ownership transferred or disposed");
-    if (this.failure !== null) throw err("STORE_FAILED", `journal unavailable after a failed durability barrier: ${this.failure}`);
+    if (this.failure !== null) throw err("STORE_FAILED", this.failure.message);
+  }
+
+  append(kind: JournalKind, body: Record<string, unknown>): JournalRecord {
+    this.assertWritable();
     const record: JournalRecord = { seq: this.seq + 1, kind, at: new Date().toISOString(), body };
     const framed = frame(record);
     try {
@@ -380,8 +402,18 @@ export class FileRunStore implements RunStore {
     } catch (e) {
       // Bytes past the committed boundary are an uncommitted tail; the next
       // open truncates them. This process must not append behind them.
-      this.failure = (e as Error).message;
-      throw err("STORE_FAILED", `journal append failed: ${this.failure}`);
+      const code = (e as NodeJS.ErrnoException).code;
+      this.failure = Object.freeze({
+        causeCode: typeof code === "string" ? code : null,
+        message: `journal unavailable after a failed durability barrier: ${(e as Error).message}. Repair storage, then restart Pi and reopen this session; /reload retains this failed store. Uncommitted effects require reconciliation, not replay.`,
+        at: new Date().toISOString(),
+      });
+      // Failure notification cannot require the journal it reports on.
+      for (const listener of this.failureListeners) {
+        try { listener(); }
+        catch (error) { console.error("subagents: storage failure observer failed:", error); }
+      }
+      throw err("STORE_FAILED", this.failure.message);
     }
     this.seq = record.seq;
     this.committedBytes += framed.length;
@@ -400,8 +432,8 @@ export class FileRunStore implements RunStore {
   }
 
   recordCommand(requestId: string, record: JournalRecord): void {
-    this.commands.set(requestId, record);
     this.append("command.accepted", { requestId, seq: record.seq, kind: record.kind });
+    this.commands.set(requestId, record);
   }
 
   /**
@@ -410,6 +442,7 @@ export class FileRunStore implements RunStore {
    * first, file removal after). At most two copies exist during replacement.
    */
   saveCheckpoint(ref: CheckpointRef, bytes: Uint8Array): void {
+    this.assertWritable();
     const agentDir = join(this.checkpointDir, ref.agentId);
     if (!existsSync(agentDir)) {
       mkdirSync(agentDir, { recursive: true });
@@ -451,12 +484,14 @@ export class FileRunStore implements RunStore {
   }
 
   supersedeCheckpoint(agentId: string): void {
+    this.assertWritable();
     const published = this.latestPublished(agentId);
     if (!published) return;
     this.retirePredecessors(agentId, (published.body as { file: string }).file);
   }
 
   saveResult(agentId: string, taskRunId: string, generation: number, text: string): ResultRef {
+    this.assertWritable();
     const bytes = Buffer.from(text, "utf8");
     const file = `${RESULT_PREFIX}${taskRunId}-${generation}.txt`;
     try {
@@ -491,6 +526,7 @@ export class FileRunStore implements RunStore {
 
   close(): void {
     this.closed = true;
+    this.failureListeners.clear();
   }
 
   private latestPublished(agentId: string): JournalRecord | null {
@@ -601,6 +637,9 @@ export class InMemoryRunStore implements RunStore {
   constructor(rootId: string) {
     this.rootId = rootId;
   }
+
+  writeFailure(): StoreFailure | null { return null; }
+  onWriteFailure(_listener: () => void): void {}
 
   append(kind: JournalKind, body: Record<string, unknown>): JournalRecord {
     // No closed-guard here (unlike FileRunStore): this store has no manifest
