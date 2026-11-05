@@ -30,9 +30,10 @@ class CoreTest extends munit.FunSuite {
   test("BA: credential-file relocation does not change model profile identity") {
     val c=Fixtures.config(); assertEquals(c.profile,c.copy(annotation=c.annotation.copy(credentialFile="/relocated",timeoutSeconds=99),embedding=c.embedding.copy(credentialFile="/relocated",timeoutSeconds=99)).profile)
   }
-  test("BA: model profile separates revision dimensions prefix and endpoint identities") {
+  test("BA: model profile separates revisions dimensions and prefixes, not transports") {
     val c=Fixtures.config()
-    List(c.copy(annotation=c.annotation.copy(revision="v2")),c.copy(embedding=c.embedding.copy(revision="v2")),c.copy(embedding=c.embedding.copy(dimensions=4)),c.copy(embedding=c.embedding.copy(queryPrefix="different")),c.copy(annotation=c.annotation.copy(endpoint="http://different/chat"))).foreach(n => assert(n.profile!=c.profile))
+    List(c.copy(annotation=c.annotation.copy(revision="v2")),c.copy(embedding=c.embedding.copy(revision="v2")),c.copy(embedding=c.embedding.copy(dimensions=4)),c.copy(embedding=c.embedding.copy(queryPrefix="different"))).foreach(n => assert(n.profile!=c.profile))
+    assertEquals(c.copy(annotation=c.annotation.copy(endpoint="http://different/chat"),embedding=c.embedding.copy(endpoint="http://different/embedding")).profile,c.profile)
   }
   test("BA: password helper verifies only the original password") {
     val h = Password.hash("synthetic password".toCharArray)

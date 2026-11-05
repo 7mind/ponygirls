@@ -38,6 +38,31 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
   RetrievalChecks.text(namespace,128)
   profile.foreach(_.validate())
   private val ns=key(namespace)
+  def migrateModelIdentities(c: Connection,approvedLegacyProfiles: Set[String]): Unit = {
+    transaction(c)
+    val current=profile.getOrElse(throw RetrievalError("config","configured immutable model profile required"))
+    RetrievalChecks(approvedLegacyProfiles.nonEmpty && approvedLegacyProfiles.size<=128 && approvedLegacyProfiles.forall(_.matches("[0-9a-f]{64}")),"invalid","explicit legacy profile approval required")
+    exec(c,"LOCK TABLE pony_retrieval_jobs,pony_retrieval_sources IN SHARE ROW EXCLUSIVE MODE")
+    val retained=rows(c,"SELECT id,space,descriptor,policy FROM pony_retrieval_profiles WHERE namespace=? ORDER BY id",ns)(r=>(r.getString(1),r.getString(2),r.getString(3),r.getBytes(4))).filter(r=>approvedLegacyProfiles.contains(r._1))
+    RetrievalChecks(retained.map(_._1).toSet==approvedLegacyProfiles,"unavailable","approved legacy retrieval profile is absent")
+    retained.foreach { (legacyProfile,legacySpace,descriptor,policy) =>
+      val json=io.circe.parser.parse(descriptor).fold(_=>throw RetrievalError("unavailable","invalid retained model descriptor"),identity)
+      RetrievalChecks(json.asArray.flatMap(_.headOption).flatMap(_.asString).contains("embedding-space-v1"),"unavailable","approved profile is not a legacy model identity")
+      val space=EmbeddingSpace.verified(legacySpace,json)
+        val policyText=UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(policy)).toString
+        val canonical=RetrievalProfile(space,policyText)
+        canonical.validate()
+        RetrievalChecks(canonical==current,"unavailable","legacy model, revision or semantic policy differs from the verified target")
+        RetrievalChecks(!one(c,"SELECT 1 FROM pony_retrieval_jobs WHERE namespace=? AND profile=? AND state='Running' AND lease_until>clock_timestamp() LIMIT 1",ns,legacyProfile)(_=>true).contains(true),"conflict","stop legacy model workers before identity migration")
+        RetrievalChecks(legacyProfile==RetrievalChecks.hash(Json.arr(Json.fromString("retrieval-profile-v1"),Json.fromString(legacySpace),Json.fromString(policyText)).noSpaces),"unavailable","legacy retrieval profile is unverified")
+        exec(c,"INSERT INTO pony_retrieval_profiles(namespace,id,space,descriptor,policy) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING",ns,canonical.id,space.id,space.json.noSpaces,policy)
+        RetrievalChecks(one(c,"SELECT space=? AND descriptor=? AND policy=? FROM pony_retrieval_profiles WHERE namespace=? AND id=?",space.id,space.json.noSpaces,policy,ns,canonical.id)(_.getBoolean(1)).contains(true),"internal","canonical retrieval profile collision")
+        exec(c,"UPDATE pony_retrieval_sources SET target_profile=? WHERE namespace=? AND target_profile=?",canonical.id,ns,legacyProfile)
+        exec(c,"UPDATE pony_retrieval_jobs SET profile=? WHERE namespace=? AND profile=?",canonical.id,ns,legacyProfile)
+        exec(c,"UPDATE pony_retrieval_generations SET profile=?,space=? WHERE namespace=? AND profile=?",canonical.id,space.id,ns,legacyProfile)
+        exec(c,"UPDATE pony_retrieval_chunks SET profile=? WHERE namespace=? AND profile=?",canonical.id,ns,legacyProfile)
+    }
+  }
   private def transaction(c: Connection): Unit = RetrievalChecks(!c.getAutoCommit,"config","retrieval requires caller transaction")
   def initialize(c: Connection): Unit = {
     transaction(c)

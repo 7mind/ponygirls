@@ -117,7 +117,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   }
   private final case class StagedFailure(stage: IndexingStage,error: Throwable) extends RuntimeException
   private def publishStage(run: => IO[Unit]): IO[Unit] = IO.defer(run).handleErrorWith(error => IO.raiseError(StagedFailure(IndexingStage.Publication,error)))
-  private final class Windows(claim: Claim,total: Int) {
+  private final class Windows(claim: Claim,total: Int,namespace: CheckpointNamespace) {
     def accepted[A](key: CheckpointKey)(decode: Json => A,encode: A => Json)(run: => IO[A]): IO[A] = IO.blocking(archive.checkpoint(claim,key)).flatMap {
       case Some(value) => IO(decode(value)).handleErrorWith(_ => IO.raiseError(DomainError("internal","invalid accepted checkpoint payload")))
       case None => IO.defer(run).flatTap(value => IO.blocking(archive.checkpoint(claim,key,encode(value))))
@@ -155,7 +155,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     }
     def embed(chunks: List[Chunk],index: Int,attempt: Int): IO[List[IndexedChunk]] =
       chunks.grouped(config.indexing.embeddingBatchSize).toList.zipWithIndex.traverse { (batch,part) =>
-        val key=IndexCheckpoints.key(claim,IndexingStage.Embedding,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,CheckpointJson.chunks(batch))
+        val key=namespace.key(claim,IndexingStage.Embedding,index,part,EmbeddingSpaceDescriptor.from(config.embedding).id,CheckpointJson.chunks(batch))
         def validated(vectors: List[List[Double]]): List[List[Double]] = { CheckpointJson.validateVectors(vectors,batch.size,config.embedding.dimensions); vectors }
         accepted(key)(json => validated(CheckpointJson.vectors(json)),CheckpointJson.vectors)(IO.defer(embedder.documents(claim.owner,batch.map(_.text))).map(validated))
           .map(vectors => batch.zip(vectors).map(IndexedChunk.apply.tupled))
@@ -173,9 +173,9 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
   }
   private def passages(claim: Claim): IO[Unit] = IO.blocking {
     val source=ProblemPassages.Source(claim.snapshot.messages)
-    (source,count(source))
-  }.flatMap { (source,total) =>
-    val windows=new Windows(claim,total)
+    (source,count(source),archive.checkpointNamespace(claim,EmbeddingSpaceDescriptor.from(config.embedding).id))
+  }.flatMap { (source,total,namespace) =>
+    val windows=new Windows(claim,total,namespace)
     def loop(state: ProblemPassages.State,publication: ProblemsPublication.Builder,index: Int): IO[Unit] = IO.defer {
       source.next(state.nextSource) match {
         case None => publishStage(IO.blocking {
@@ -185,7 +185,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
         })
         case Some(window) =>
           val input=Json.arr(window.sourceJson,state.carry.map(ProblemPassages.carryJson).getOrElse(Json.Null))
-          val key=IndexCheckpoints.key(claim,IndexingStage.Annotation,index,0,ProblemPassages.identity,input)
+          val key=namespace.key(claim,IndexingStage.Annotation,index,0,ProblemPassages.identity,input)
           val decision=windows.accepted(key)(json => (ProblemPassages.decode(window,state.carry.nonEmpty,json),0),value => CheckpointJson.decision(value._1))(
             windows.annotate(key,problemAnnotator.annotate(claim.owner,window,state.carry).flatTap(value => IO(ProblemPassages.validate(window,state.carry.nonEmpty,value))),index))
           decision.flatMap { (value,attempt) =>

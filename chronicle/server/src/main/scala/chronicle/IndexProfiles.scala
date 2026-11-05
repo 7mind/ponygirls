@@ -8,7 +8,7 @@ enum IndexPolicy { case ContextAwareProblemsV1 }
 type EmbeddingSpaceDescriptor = ponygirls.retrieval.EmbeddingSpace
 object EmbeddingSpaceDescriptor {
   def from(config: EmbeddingConfig): EmbeddingSpaceDescriptor =
-    ponygirls.retrieval.EmbeddingSpace(Wire.hash(config.endpoint),config.model,config.revision,config.dimensions,config.sendDimensions,config.queryPrefix,config.documentPrefix,"cosine")
+    ponygirls.retrieval.EmbeddingSpace(config.model,config.revision,config.dimensions,config.sendDimensions,config.queryPrefix,config.documentPrefix,"cosine")
 }
 final case class IndexProfile(profile: String,policy: IndexPolicy,embedding: EmbeddingSpaceDescriptor,descriptor: Json)
 final class IndexProfileCatalog private (val profiles: List[IndexProfile],val preferred: IndexProfile) {
@@ -19,14 +19,16 @@ final class IndexProfileCatalog private (val profiles: List[IndexProfile],val pr
 object IndexProfileCatalog {
   private def annotation(config: Config): Json = {
     val a=config.annotation
-    Json.arr(List(Wire.hash(a.endpoint),a.model,a.revision,a.requestPolicy.identity,a.maxResponseBytes.toString).map(Json.fromString)*)
+    Json.arr(List(a.model,a.revision,a.requestPolicy.identity,a.maxResponseBytes.toString).map(Json.fromString)*)
   }
   def current(config: Config): IndexProfileCatalog = {
     val embedding=EmbeddingSpaceDescriptor.from(config.embedding)
-    val descriptor=Json.arr(Json.fromString("index-profile-descriptor-v1"),annotation(config),Json.fromString(ProblemPassages.identity))
-    val profile=IndexProfile(Wire.hash(Json.arr(Json.fromString("context-aware-problems-profile-v1"),Json.fromString(embedding.id),descriptor).noSpaces),IndexPolicy.ContextAwareProblemsV1,embedding,descriptor)
+    val descriptor=Json.arr(Json.fromString("index-profile-descriptor-v2"),annotation(config),Json.fromString(ProblemPassages.identity))
+    val profile=contextAware(embedding,descriptor)
     new IndexProfileCatalog(List(profile),profile)
   }
+  private[chronicle] def contextAware(embedding: EmbeddingSpaceDescriptor,descriptor: Json): IndexProfile =
+    IndexProfile(Wire.hash(Json.arr(Json.fromString("context-aware-problems-profile-v2"),Json.fromString(embedding.id),descriptor).noSpaces),IndexPolicy.ContextAwareProblemsV1,embedding,descriptor)
 }
 final case class OwnerTarget(profile: String,epoch: Long)
 object OwnerTargets {
@@ -65,11 +67,8 @@ object IndexProfiles {
     Check(Sql.one(c,"SELECT embedding_space=? AND policy=? AND descriptor=?::jsonb FROM ch_index_profiles WHERE profile=?",profile.embedding.id,profile.policy.toString,profile.descriptor.noSpaces,profile.profile)(_.getBoolean(1)).contains(true),"config","immutable index profile descriptor mismatch")
   }
   private[chronicle] def verifiedSpace(id: String,json: Json): Unit = {
-    val values=json.asArray.getOrElse(Vector.empty)
-    val strings=Set(0,1,2,3,6,7,8)
-    Check(values.size==9 && strings.forall(i => values(i).asString.nonEmpty) && values(0).asString.contains("embedding-space-v1") &&
-      values(1).asString.exists(_.matches("[0-9a-f]{64}")) && values(4).asNumber.flatMap(_.toInt).exists(n => n>0 && n<=SearchPolicy.maxDimensions) &&
-      values(5).asBoolean.nonEmpty && values(8).asString.contains("cosine") && Wire.hash(json.noSpaces)==id,"unavailable","embedding space descriptor is unverified")
+    try { ponygirls.retrieval.EmbeddingSpace.verified(id,json); () }
+    catch { case _: ponygirls.retrieval.RetrievalError => throw DomainError("unavailable","embedding space descriptor is unverified") }
   }
   def registered(c: Connection,profile: String): String =
     Sql.one(c,"SELECT p.embedding_space,e.descriptor FROM ch_index_profiles p JOIN ch_embedding_spaces e ON e.id=p.embedding_space WHERE p.profile=? AND p.policy IN('LegacyV4','ContiguousPassagesV1','ContextAwareProblemsV1')",profile) { r =>
