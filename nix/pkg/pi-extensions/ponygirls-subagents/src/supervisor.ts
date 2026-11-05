@@ -1117,29 +1117,39 @@ export class Supervisor implements GateHost {
     // unaffected (direct, pre-close appends).
     this.toolBroker.dispose();
     return this.serialized(async () => {
+      const failures: unknown[] = [];
+      const attempt = (cleanup: () => void): void => {
+        try { cleanup(); } catch (e) { failures.push(e); }
+      };
       for (const waiter of this.waiters.splice(0)) {
         clearTimeout(waiter.timer);
-        waiter.resolve(this.waitResult(waiter, false, "cancelled", []));
+        attempt(() => waiter.resolve(this.waitResult(waiter, false, "cancelled", [])));
       }
       for (const rt of this.agents.values()) {
-        rt.leaseWaitCancel?.();
-        rt.leaseWaitCancel = null;
-        await this.broker.cancelJobs(rt.record.id);
-        await this.externalDispatcher.fenceAgent(rt.record.id, "root shutdown; effect unconfirmed");
-        this.purgePreparedTickets(rt.record.id);
-        const worker = rt.worker;
-        rt.worker = null;
-        worker?.kill();
-        rt.record.residency = "unloaded";
-        // Suspended: release without pumping parked work.
-        if (rt.runnableLease) this.scheduler.release(rt.runnableLease);
-        if (rt.residentLease) this.scheduler.release(rt.residentLease);
-        rt.runnableLease = null;
-        rt.residentLease = null;
+        attempt(() => { rt.leaseWaitCancel?.(); rt.leaseWaitCancel = null; });
+        try { await this.broker.cancelJobs(rt.record.id); } catch (e) { failures.push(e); }
+        attempt(() => this.externalDispatcher.fenceAgentNow(rt.record.id, "root shutdown; effect unconfirmed"));
+        attempt(() => this.purgePreparedTickets(rt.record.id));
+        attempt(() => {
+          rt.worker?.kill();
+          rt.worker = null;
+          rt.record.residency = "unloaded";
+        });
+        // Suspended: release without pumping parked work. Keep a failed
+        // handle/lease available for a subsequent cleanup attempt.
+        attempt(() => { if (rt.runnableLease) this.scheduler.release(rt.runnableLease); rt.runnableLease = null; });
+        attempt(() => { if (rt.residentLease) this.scheduler.release(rt.residentLease); rt.residentLease = null; });
       }
-      this.store.close();
-      this.lock.release();
-      this.disposed = true;
+      if (!this.disposed) attempt(() => {
+        // A failed close MUST retain ownership. Earlier cleanup failures
+        // must not prevent close/release when the store can close safely.
+        // Once transferred, retries stop retained handles only: never close
+        // or release storage now owned by another supervisor.
+        this.store.close();
+        this.lock.release();
+        this.disposed = true;
+      });
+      if (failures.length > 0) throw failures[0];
     });
   }
 
@@ -4503,27 +4513,31 @@ export class Supervisor implements GateHost {
       // (no owned jobs) is distinct from effects-stopped. Truthful
       // uncertainty and native workspace quarantine are preserved below.
       this.suspended = true;
+      const failures: unknown[] = [];
+      const attempt = (cleanup: () => void): void => {
+        try { cleanup(); } catch (e) { failures.push(e); }
+      };
       for (const rt of this.agents.values()) {
-        const worker = rt.worker;
-        rt.worker = null;
-        worker?.kill();
-        rt.record.residency = "unloaded";
-        rt.leaseWaitCancel?.();
-        if (rt.runnableLease) this.scheduler.release(rt.runnableLease);
-        if (rt.residentLease) this.scheduler.release(rt.residentLease);
-        rt.runnableLease = null;
-        rt.residentLease = null;
-        // Fencing retires authority before any fallible journal write
-        // (fenceAgentNow marks + deletes with internal best-effort append;
-        // broker cancel marks done). Invariant failures propagate: recover
-        // fails through the project error channel and stays suspended rather
-        // than unsuspending after uncertain ownership. Durable native
-        // quarantine below is preserved.
-        this.externalDispatcher.fenceAgentNow(rt.record.id, "recovery: retire live external scopes; effect unconfirmed");
-        await this.broker.cancelJobs(rt.record.id);
-        this.purgePreparedTickets(rt.record.id);
+        attempt(() => {
+          rt.worker?.kill();
+          rt.worker = null;
+          rt.record.residency = "unloaded";
+        });
+        attempt(() => { rt.leaseWaitCancel?.(); rt.leaseWaitCancel = null; });
+        attempt(() => { if (rt.runnableLease) this.scheduler.release(rt.runnableLease); rt.runnableLease = null; });
+        attempt(() => { if (rt.residentLease) this.scheduler.release(rt.residentLease); rt.residentLease = null; });
+        // Retire all live authority independently of persistence. Report
+        // failures only after every agent has had its cleanup attempted;
+        // failed recovery stays suspended and never schedules replacements.
+        attempt(() => this.externalDispatcher.fenceAgentNow(rt.record.id, "recovery: retire live external scopes; effect unconfirmed"));
+        try { await this.broker.cancelJobs(rt.record.id); } catch (e) { failures.push(e); }
+        attempt(() => this.purgePreparedTickets(rt.record.id));
       }
-      for (const waiter of [...this.waiters]) waiter.resolve(this.waitResult(waiter, false, "cancelled", []));
+      for (const waiter of this.waiters.splice(0)) {
+        clearTimeout(waiter.timer);
+        attempt(() => waiter.resolve(this.waitResult(waiter, false, "cancelled", [])));
+      }
+      if (failures.length > 0) throw failures[0];
       // Gate recovery: running reviews become interrupted (resumable with
       // fresh context, counters kept); never infer approval from a crash.
       this.gate.markInterruptedForRecovery();
