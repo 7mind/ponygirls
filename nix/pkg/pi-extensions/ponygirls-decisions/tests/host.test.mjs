@@ -142,6 +142,38 @@ test("real Pi: async ask returns, answer wakes idle agent, receipt survives relo
   assert.deepEqual(f.errors, []);
 });
 
+test("real Pi: agent records chat answers and dismissals through the declared schema", { timeout: 15000 }, async (t) => {
+  const dismissQuestion = { ...ask, id: "ask-2", arguments: { action: "ask", question: "Superseded question?" } };
+  const resolveCall = (action, id, answer) => ({ type: "toolCall", id: `record-${id}`, name: "decisions",
+    arguments: { action, id, revision: 1, ...(answer === undefined ? {} : { answer }) } });
+  const f = await fixture(t, [[ask, dismissQuestion], "Waiting for your decisions",
+    [resolveCall("answer", "Q1", "Use SQLite with transactions"), resolveCall("dismiss", "Q2")], "Chat decisions recorded"]);
+  await f.session.prompt("Ask two questions and continue independent work");
+  await f.session.prompt("Use SQLite with transactions for Q1. Dismiss Q2; it is superseded.");
+  await f.session.waitForIdle();
+  const results = f.manager.getEntries().filter((e) => e.type === "message" && e.message.role === "toolResult" && e.message.toolName === "decisions").map((e) => e.message);
+  assert.equal(results.length, 4);
+  assert.ok(results.every((r) => !r.isError), JSON.stringify(results));
+  assert.equal(results[2].details.status, "answered");
+  assert.equal(results[3].details.status, "dismissed");
+  const store = new SqliteDecisionStore(join(f.dir, "decisions", "questions.sqlite"));
+  try {
+    assert.equal(store.get(f.dir, "Q1").answer, "Use SQLite with transactions");
+    assert.equal(store.get(f.dir, "Q2").status, "dismissed");
+  } finally { store.close(); }
+  const schema = JSON.stringify(JSON.parse(f.contexts[0]).messages.filter((m) => m.role === "system")
+    .flatMap((m) => m.toolsAdded ?? []).find((tool) => tool.name === "decisions"));
+  assert.match(schema, /revision/);
+  assert.match(schema, /dismiss/);
+  assert.match(f.contexts[3], /User answer: Use SQLite with transactions/);
+  assert.match(f.contexts[3], /not approval/i);
+  const receipts = f.manager.getEntries().filter((e) => e.type === "custom_message" && e.customType === "decisions-answer");
+  assert.equal(receipts.length, 2);
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(f.calls(), 4, "recording must not cause repeated wake-ups");
+  assert.deepEqual(f.errors, []);
+});
+
 test("real Pi: cancelling busy work retains the admitted answer without restarting cancelled work", { timeout: 15000 }, async (t) => {
   const f = await fixture(t, [[ask], "Independent work", { waitForAbort: true, content: [] }, "Continue with answer"]);
   await f.session.prompt("Ask the storage question");
