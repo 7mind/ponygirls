@@ -1,4 +1,4 @@
-# RDF encoding of the shared project graph — evaluation in progress
+# RDF encoding of the shared project graph — bounded evaluation
 
 This evaluates an encoding of the [shared schema](cq4-node-schema.md) and its
 [binding/progress semantics](cq4-unified-graph-semantics.md), not a replacement
@@ -141,9 +141,9 @@ parser rejects the input, and validator failure is kept distinct from conformanc
 
 ## Engineering evidence and the registered comparison
 
-The final combined engineering/analysis run passed **108 methods** in364.732s, no
-failures/errors/skips. Eight additional pre-data resource-reduction controls passed
-separately:116 methods, not one observed116-method execution. Coverage includes dual
+The complete frozen engineering/analysis suite passed **116 methods** in356.174s,
+zero failures/errors/skips. This later single run includes the eight resource-reduction
+controls that had previously passed separately from the108-method run. Coverage includes dual
 memory/real-file contracts, actual concurrent CAS, codec/shape negatives, four fixed
 SPARQL queries, native forwarding and audit/projection/citation controls. Earlier
 failing reproductions and a wrong-reason negative-fixture error are retained; green
@@ -169,8 +169,10 @@ inspected compiler. This is not credential-lifetime proof or guaranteed future v
 219 bound inputs, registration SHA256
 `b451d6a56892a74515933fd99da7ae82f22f48d8f8274ac733255721dcdde7de`.
 The roster is2 non-Opus subjects ×2 read encodings ×2 synthetic multi-stage cases ×2
-replicates = **16 original four-stage sessions**, launched after that commit. Results
-are pending. Both arms get identical typed JSON mutations, checks/feedback and facts.
+replicates = **16 original four-stage sessions**, launched after that commit. All16
+completed their64 operational stages without replacements. Independent replay verifies
+all16 originals; operational validity is not semantic adequacy. Both arms get identical
+typed JSON mutations, checks/feedback and facts.
 Native content audits verify that only the configured encoded read text is forwarded,
 not a canonical JSON duplicate. This is consumption during graph maintenance, not
 RDF-native writing or isolated comprehension.
@@ -183,9 +185,54 @@ quality-conditioned pairs cannot be rescued by rematching replicates. Coding vie
 preserve audit-bound canonical trajectories, every mutation/feedback and all finalized
 public text, including intermediate assertions later corrected; private thinking is
 not public testimony. Citation eligibility does not turn rejected-payload refs into
-established records, and neither citations nor replay establish entailment. No empirical
-encoding preference, schema winner, human-efficacy result or architecture choice is
-established at this stage.
+established records, and neither citations nor replay establish entailment.
+
+## Measured findings and the resulting boundary
+
+The bounded comparison is complete [J33; L18]. A native argument-parse rejection
+exposed missing auditor coverage: the immutable registered auditor remains unchanged;
+a versioned analysis-only derivative retains the rejection without repairing/applying
+it. The same16 originals independently replayed all64 checkpoints. Counts are266
+calls:127 reads,139 mutation attempts;95 accepted,42 domain rejected and2 interface
+rejected (including1 parse rejection). All219 registered inputs stayed unchanged.
+The final combined136-method engineering/analysis suite passed356.089s with zero
+failures/errors/skips; this is not semantic adequacy.
+
+All16 original advisory returns were frozen before identity/resources;10 pass strict
+coding validation and6 retain presentation failures, with additional citation/coverage
+errors in4 literal payloads. Readability projections never rescue original validity.
+Separate source-based parent adjudication used original A plus source checks and four
+full-trajectory audit aids, not blind independent Human gold. Parent results are:
+
+| Case | Primary criteria | Adequate | Material | Uncertain |
+|---|---:|---:|---:|---:|
+| Authority/adoption | 64 | 59 | 4 | 1 |
+| Binding/progress | 80 | 77 | 3 | 0 |
+
+The failures include a delayed mandatory reporting update, historical consumption
+asserted through a stale binding, substitution of maintenance-packet/history behavior
+for the fictional publishing outcomes, source-to-formulation inversion, an unsupported
+implementation delegation/admission, and non-supply promoted to nonperformance.
+Fifteen distinct consequential attempted calls (including rejected propagation), public
+assertions and the separate omission are retained. Critical M1 citation and wrong
+relation directions are not mechanically equated with authenticated Human approval.
+All-primary adequacy does not mean the rest of a graph is error-free.
+
+Seven JSON-reference and five Turtle originals meet every primary predicate. Five
+of8 exact same-case/subject/replicate pairs qualify; all16 native-counter rechecks are
+available/matching. In those five, Turtle uses more read bytes, mutation-argument bytes
+and cumulative native-reported tokens; elapsed native-process time is higher in4 and
+lower in1. All-attempt quality/resources and exclusion coverage remain visible. This
+post-treatment descriptive selection is not overall efficiency, a model-family result,
+a Human-attention proxy or a general format/architecture winner.
+
+**Provisional agent-read default: JSON-reference in this instrument.** RDF remains a
+viable supported representation candidate with a separate validation/query layer;
+these findings do not compare RDF-native writing, JSON-LD, human ergonomics, storage
+or hybrid retrieval performance. An RDF graph can be exposed to an agent through JSON.
+Production MCP, database/authentication/collector implementation and CQ4 migration
+remain paused; the earlier three-tool/Scala/PostgreSQL/shared-retrieval intent is
+unchanged. The accepted shared schema and its intent are not compressed away.
 
 ## Standards inspected
 
