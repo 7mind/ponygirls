@@ -119,9 +119,11 @@ validity. Workset readiness checks direct BlockedBy prerequisites using nominal 
 policy; it is not epistemic truth maintenance. A citation can be well formed without
 its content being read or its semantic relevance established.
 
-Preserve intended outcomes as flat statements with grounds. Eliminating a dedicated
-Goal ledger does not eliminate the need to represent what is wanted. Removing required
-milestone ownership need not remove optional, disposable grouping/query views.
+Eliminating compulsory organization must not eliminate what is wanted. J30 proposed
+flat statements with grounds; the [J31 shared schema](cq4-node-schema.md) now retains
+explicit Outcome/Constraint kinds and typed planning/source records. This is a design
+revision after human correction, not a new source finding. Optional, disposable
+grouping/query views remain compatible with removing required milestone ownership.
 
 ## 6. Review limitations and source caution
 

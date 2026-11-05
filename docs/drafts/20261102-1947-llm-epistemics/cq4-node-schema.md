@@ -1,101 +1,148 @@
-# CQ4: compact epistemic nodes
+# Unified project graph — schema proposal
 
-**Recommendation:** one grounds-first record; no mandatory Goal/Milestone hierarchy
-or agent-authored role/standing/warrant roll-ups. Permit changed-field revisions.
-This is a design preference with bounded feasibility evidence, **not an empirical
-schema winner, production implementation or migration plan**.
+Status: **design revision after human review**, not an implemented CQ4 API. The
+previous five-field agent payload under-specified planning and hid origin outside
+its visible schema. This proposal replaces it as the project model; it does not
+rewrite Pilot Q or claim that experiment validated the additions.
 
-CQ4 already has protected evidence origins, authenticated mutation provenance,
-revision-pinned reviews and support/contradiction links. Its epistemic layer is
-**incomplete, not absent**. Preserve those protections and its concurrency /
-transactional guarantees. [Pinned source review](cq4-source-review.md).
+**One graph for human intent, agent refinement, planning and evidence.** Humans and
+agents can contribute the same record kinds. Human-facing outcome/change views and
+agent-facing work queues are projections, not separate authorities.
 
-## Agent-authored record
+## 1. Common records, visible provenance
+
+Design pseudocode; opaque references and kind-specific content are defined in the
+[semantics and worked trace](cq4-unified-graph-semantics.md).
 
 ```typescript
-type Node = {
-  kind: "statement" | "task" | "defect" | "hypothesis" |
-        "question" | "decision" | "review";
-  text: string;
+type ActorRef = { id: ActorId; kind: "human" | "agent" | "service" | "unknown" };
+type Provenance = {
+  contributor: ActorRef;
+  recorder: ActorRef;
+  input: InputRef;
+};
+type Node<K extends Kind> = {
+  ref: DefinitionRef;
+  kind: K;
+  content: Content<K>;
   scope: string;
-  state: "open" | "closed" | "withdrawn";
-  grounds: Ground[];
+  provenance: Provenance;
 };
-
-type Ground = {
-  rel: "quotes" | "interprets" | "adopts" | "delegates" |
-       "chooses" | "assumes" | "infers" | "supports" | "challenges";
+type Relation<R extends RelationKind> = {
+  ref: RelationRef;
+  kind: R;
   from: Ref[];
+  to: Ref[];
+  detail: RelationDetail<R>;
   why: string;
+  scope: string;
+  provenance: Provenance;
+};
+type Binding = {
+  ref: BindingRef;
+  definition: DefinitionRef;
+  context: Ref[];
+  provenance: Provenance;
+};
+type StateEvent = {
+  ref: EventRef;
+  subject: BindingRef;
+  previous: EventRef | null;
+  change: LifecycleChange;
+  provenance: Provenance;
 };
 ```
 
-`Ref` is a system-provided immutable source/context handle, exact node revision or
-content-bound artifact reference—not a floating current head or file path.
-Stable untyped ID, revision, authenticated mutation audit, source capture and
-history are **system-owned**, not agent-authored epistemic verdicts.
+IDs, revisions, input receipts and provenance are **system-sealed, visible metadata**,
+not arbitrary fields an agent may supply. `contributor` identifies the actual input /
+revision contributor; `recorder` identifies its capture path. Neither alone identifies
+all original formulation or gives a statement normative force. Source/interpretation
+relations preserve that lineage explicitly. Changing an agent interpretation cannot
+rewrite the original human input.
 
-- **kind:** semantic use, not pipeline stage. Positive desired outcomes are
-  statements, not discarded because there is no Goal class. Task acceptance/results,
-  defect observed/expected/reproduction and hypothesis resolution remain explicit
-  in text, assisted by templates rather than fourteen wire shapes.
-- **scope:** applicability, conditions and material limits. Preserve governing
-  purpose, artifact role, authorized phase and exit criterion through exact source
-  context; fixture requirements do not authorize building the fixture.
-- **state:** lifecycle only. Closure records its resolution—success, failure,
-  refutation or inconclusiveness—and residual uncertainty in text/grounds. Closed
-  does not mean true, approved, implemented or verified. Withdrawal is not success.
-- **grounds:** attributed accounts, not proofs. Formulation/source lineage, later
-  adoption, delegated means and factual warrant remain distinct. An agent proposal
-  can become adopted without becoming originally human-authored. Adoption does not
-  establish truth or actual execution; chosen means cannot redefine outcomes.
+| Record | Visible attribution and meaning |
+|---|---|
+| Human request S1 | Human contributor, capture service recorder, exact input/context |
+| Agent interpretation G1 | Agent contributor; `interprets(S1,G1)` retains human source |
+| Agent-selected means D1 | Agent contributor; choice and delegated scope remain inspectable |
+| Later human input S2 | Human contributor; actual presented proposal/context retained |
+| Interpreted adoption relation | Its interpreting contributor is still Agent, even when S2 is Human |
+| Host observation | Restricted service/capture origin, actual subject and artifacts; not an agent report |
 
-One `infers.from` array contains joint premises; separate inference grounds are
-alternative routes. Other relations have one reference; immutable context retains
-proposal/answer association. Losing one route does not remove independently grounded
-intent or automatically defeat an alternative. References alone do not establish
-entailment, human consent or evidence applicability.
+A quotation of “operator approval” is not an operator act. A human's question,
+quotation or fictional example is not automatically an instruction. Human adoption
+of agent wording does not make it originally human-authored. Task assignee is another
+relation, not any of these authorship/origin fields.
 
-## Mutation and graph rules
+## 2. Semantic kinds, not compulsory containers
 
-```text
-create(record) -> allocated exact reference
-revise(exact_ref, changed_fields, reason) -> new exact reference
-```
+- **outcome / constraint:** wanted behavior / required or prohibited boundaries;
+  independently grounded, first-class, not lost in prose or compulsory containers.
+- **task:** work, acceptance and execution requirements (`delegated` or `human_required`).
+- **statement / hypothesis / defect:** descriptive claim, testable explanation or
+  observed/expected discrepancy, with applicability and source/evidence paths.
+- **question / decision / review:** unresolved matter, proposed/selected choice, or
+  assessment of exact subjects and evidence. Review activity can itself be a Task.
+- **source / artifact:** immutable captured input/context or content-bound material.
 
-Omitted fields survive; supplied arrays replace explicitly. Supplying all fields is
-allowed. Stale revisions fail rather than silently merge. The service owns atomicity,
-request identity/replay and immutable history. A ground change revises its declaring
-record, not another statement's authorship. Optional worksets/groupings are query views,
-not mandatory containers or execution-admission facts.
+Task acceptance must be specified or explicitly unresolved; unresolved acceptance
+blocks execution, not recording a backlog item. Sources/artifacts have protected
+capture/binding fields, not merely a title and mutable file path.
 
-Agents cannot manufacture privileged Human/Host source origins. Keep CQ4's actual
-authentication, collector-controlled evidence paths and exact review applicability;
-model text quoting an operator is not an operator act. OperatorAction may share Task
-shape only if human action, confirmation and observed completion remain separately
-enforced. Lossless migration of all existing ledger behavior is unproven.
+No mandatory milestone ownership, single parent, or Goal→Milestone→Task path.
+Optional decomposition/grouping does not confer authority or automatically complete
+its members. Handoffs and upstream/research work retain their obligations through
+Tasks, findings and exact references; [mapping and limits](cq4-unified-graph-semantics.md#cq4-coverage).
 
-Exact backward revision references give a **revision-reference DAG**, not necessarily
-a noncircular justification. A2 ← B1 ← A1 can recycle an unsupported premise. No truth
-propagation, complete dependency discovery or readiness rule follows from typed edges.
-Logical-cycle and joint/alternative reasoning efficacy remain untested here.
+## 3. Relations cover both planning and epistemology
 
-## Why this recommendation is bounded
+| Family | Initial vocabulary | Meaning that must not be lost |
+|---|---|---|
+| Lineage | quotes, interprets | Original input versus contributed formulation |
+| Justification | infers, assumes, supports, challenges | Joint premises, alternative routes and scoped warrant |
+| Authority/change | adopts, delegates, chooses, supersedes, withdraws | Scoped acts/interpretations, not factual proof |
+| Planning | contributes_to, depends_on, requires, decomposes, assigned_to | Means, work order, conditions, organization and responsibility differ |
+| Results/review | planned_output, produced, answers, assesses | Expected deliverable versus actual artifact; exact answer/review subjects |
 
-Pilot Q froze 24 four-stage sessions: **19 valid, five retained operationally invalid**,
-no replacements. Original readers and later source-based adjudication remain separate.
-All arms exhibited or left room for unsupported inferences; required roll-ups also
-contradicted binding requirements in two faceted sessions. No semantic advantage or
-equivalence was established. There were no fully adequate FR–GR resource pairs.
+`contributes_to` does not mean necessary or sufficient. `depends_on` must name a
+completion or fulfillment gate; neither is a factual proof. `requires` states a
+condition for the named task/selected plan, not an unconditional law about every
+possible solution. Evidence/adoption/review references bind exact content and relevant
+context; no floating branch or “latest” reference is an acceptance basis.
 
-Three adequate GR–GA pairs showed mixed resources: two publisher pairs used fewer
-mutation bytes/tool calls/reported total tokens with amendment; the CSV pair used
-more. Thus expose amendment without promising universal savings. A smaller required
-surface is a design choice, not a human-attention, model-family or global-optimality
-result. Full evidence: local `~/work/epistemics-pilots/results/pilot-q/report.md` [J30].
+## 4. Work lifecycle is not epistemic truth
 
-Ideas/Memories can use Statements/Decisions; Research/Upstream work can use Tasks with
-linked findings; Handoffs can use statements plus remaining work. Keep these as
-proposed mappings, not proof that every CQ4 status, dispatch or operational role is
-safely replaced. CQ4's existing `Claim` is a concurrency lease, not this epistemic
-statement. Source snapshot: `4d9b44aec6f7360abd448bb3412733449386c5e1`.
+Task phases: **planned, active, blocked, completed, cancelled**. Completion carries
+`fulfilled`, `not_fulfilled` or `inconclusive`, a resolution and evidence/remaining
+uncertainty. Fulfillment refers to the task's own acceptance, not its linked outcome.
+A completed investigation may refute its hypothesis; the human outcome can remain
+unachieved. Cancellation is not completion or withdrawal of intent.
+
+Intent standing follows scoped requests/adoption/withdrawal, not task phase. Outcome
+satisfaction and factual warrant have scoped assessments; neither is a green lifecycle
+label. Questions/reviews have open/resolved work state plus their answer/findings;
+a resolved review need not approve, and a concluded investigation need not support
+its hypothesis. Reported work state is not independently observed work. A ready view
+requires an admitted current binding and the applicable prerequisite/performer/authority
+checks; it is not another self-assigned truth badge.
+
+**Definitions, contract bindings and progress are separate.** A binding pins a node's
+content and its relevant relation/context revisions. Starting/completing T1 appends
+progress for that binding; it does not change the definition or pin a dependency
+forever to `planned`. Changed action/acceptance/scope or a governing prerequisite
+requires a new binding. Old execution history survives, but completion/adoption/evidence
+does not silently establish satisfaction of the new binding. An unrelated association
+need not reopen work; declared-context completeness remains a semantic responsibility.
+
+## 5. Limits and next boundary
+
+One typed graph need not be globally acyclic. Active work-order cycles are invalid;
+cycles in unrelated associations/history are not automatically defects. Inference and
+refinement still need semantic scrutiny; exact references are not a proof of entailment.
+
+Keep CQ4's real authentication, protected evidence/confirmation paths, exact review
+applicability, atomicity, concurrency and replay guarantees. [Pinned source review](cq4-source-review.md).
+The schema does not implement a scheduler, trusted language interpreter, truth-maintenance
+engine or lossless migration. Pilot Q found no empirical schema winner and did not test
+this unified planning/provenance model. No new measured pilot or application build is
+part of this revision.

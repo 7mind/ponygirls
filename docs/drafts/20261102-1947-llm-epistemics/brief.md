@@ -1,8 +1,10 @@
 # Brief — epistemics of LLM-accelerated development
 
-Status: through J30, 2026-11-05. CQ4 source review and the registered Pilot Q matrix
-are complete; **no example application or CQ4 replacement was built**. Read the
-[compact node recommendation](cq4-node-schema.md), [source review](cq4-source-review.md),
+Status: through J31, 2026-11-05. The schema now proposes **one shared human–agent
+project graph**, correcting the earlier agent-payload focus. CQ4 source review and
+Pilot Q are complete; **no new pilot, example application or CQ4 replacement was
+built**. Read the [shared schema](cq4-node-schema.md),
+[semantics/worked trace](cq4-unified-graph-semantics.md), [source review](cq4-source-review.md),
 [synthesis](synthesis.md) and [journal](journal.md) for evidence and limits.
 
 ## Problem and proposed response
@@ -11,9 +13,10 @@ Agents expand a small statement of intent into more implementation detail than a
 human can routinely inspect. The problem is preserving justified control over
 consequential outcomes—not merely producing code or a longer specification.
 
-**Proposal:** human and agent jointly maintain a compact belief network of intended
-outcomes, conditions, material decisions and their grounds. The agent owns detailed
-refinement and checks inside the authorized envelope. The human uses the network
+**Proposal:** human and agent jointly maintain one project graph of intended outcomes,
+constraints, work, knowledge, material decisions and their grounds. Intent and execution
+views use the same records. The agent owns detailed refinement and checks inside the
+authorized envelope. The human uses the graph
 and inspectable evidence for informed acceptance, correction or deliberate revision.
 **Compress implementation, not unresolved intent.**
 
@@ -23,19 +26,28 @@ without becoming originally human-authored. A chosen means is not automatically
 necessary. Agreement can require a guarantee; it cannot make a factual premise true.
 Trace links and passing checks do not themselves prove semantic support.
 
-## Current CQ4 recommendation
+## Current shared-graph recommendation
 
-Use one agent-authored `kind/text/scope/state/grounds` record, with system-owned
-identity, revisions, source provenance and audit. Retain Task/Defect/Hypothesis and
-other useful semantic uses; no mandatory Goal/Milestone organization or epistemic
-roll-up arrays. Positive intended outcomes remain grounded statements. Permit
-revision-checked changed-field amendment; it is not uniformly cheaper.
+Use common provenance-bearing definitions, typed relations, exact contract bindings
+and progress/resolution records. Humans and agents can contribute directly. Raw human
+input, agent interpretation, later scoped adoption, responsibility and host observation
+remain distinct and inspectable; actor identity is protected metadata, not a forgeable
+origin flag. Later adoption can target the raw proposal actually presented before a
+typed decision existed. Faithful interpretation does not require ceremonial reapproval.
+
+Outcomes and constraints remain first-class; remove compulsory organization, not
+planning. Tasks have meaningful work phases and explicit completion results. Separate
+contribution, work-order gates, factual conditions, assignment, decomposition and
+planned versus actual outputs. Failed means/cancelled work do not withdraw intent.
+A changed definition or governing relation creates a new contract binding; progress
+alone does not. Historical completion is retained without silently satisfying changed
+acceptance. One graph need not be globally acyclic [J31; L16].
 
 CQ4's epistemic support is incomplete, not absent. Keep its real authentication,
-protected evidence origins, exact review applicability and transactional guarantees.
-The candidate guarantees at most a revision-reference DAG, not sound inference or
-logical noncircularity. Pilot Q did not establish a semantic winner, equivalence,
-global efficiency or human efficacy [J30; R65; L15].
+protected evidence/confirmation paths, exact review applicability and transactional
+concurrency/replay guarantees. Changed-field amendment remains an API option, not
+uniformly cheaper. Pilot Q did not establish a semantic winner, equivalence, global
+efficiency or human efficacy, and did not test this revised shared model [J30; R65; L15].
 
 ## What the preceding human case added
 
@@ -98,7 +110,8 @@ exists here. Do not revive NASA-TLX or substitute time/question counts as a prox
 
 ## Handover and next boundary
 
-- Read: this brief → [node recommendation](cq4-node-schema.md) → J30/source review →
+- Read: this brief → [shared schema](cq4-node-schema.md) →
+  [semantics/worked trace](cq4-unified-graph-semantics.md) → J31 → J30/source review →
   [synthesis](synthesis.md) → J29/J28 →
   [provenance extension](belief-network-provenance.md) →
   [methodology](belief-network-methodology.md) and
@@ -119,8 +132,10 @@ exists here. Do not revive NASA-TLX or substitute time/question counts as a prox
   and not a human-workflow result.
 - The RTS case remains unfinished with its old-context Q20/C2/C5 scope conflict
   unresolved. Do not resume game work or transfer consent between examples.
-- Field replay and further agent/human experiments are parked, not implied by
-  this documentation request. Before any new test, name the capability, the
+- The shared schema is a design proposal, not a human-ratified final contract or
+  implemented graph engine. CQ4 implementation/migration and new measured pilots
+  are outside this continuation. Field replay and further agent/human experiments
+  are parked, not implied by this documentation request. Before any new test, name the capability, the
   framework decision its result could change, its independent assessment basis
   and its exit criterion. Faithful grounding/impact discovery—not more decoding
   of supplied annotations—is an outstanding research gap.

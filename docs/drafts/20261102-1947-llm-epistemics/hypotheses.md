@@ -106,7 +106,10 @@ prospective Pilot Q protocol, not newly invented preregistered hypothesis IDs.
 | Q-rollups | Mandatory role/standing/warrant arrays versus grounds-first records under full replacement (FR–GR). | Inconclusive: no empirical semantic advantage established. Required summaries contradicted binding requirements in two FR sessions, while GR also made unsupported inferences. All four Sol FR cells were operationally invalid; no fully adequate matched resource pair. Not equivalence or proof fields necessarily harm. |
 | Q-amendment | Grounds-first changed-field amendment versus full replacement (GR–GA). | Mixed, bounded resource observations in three fully adequate Sol pairs: lower bytes/calls/reported total tokens in two publisher pairs, higher in CSV r2; CSV GA r1 invalid. Both representations also had semantic failures in other sessions. No universal efficiency, human-attention or model-family result. |
 
-The [node recommendation](cq4-node-schema.md) favors a smaller required surface as
-an explicit design preference. Revision-reference acyclicity is not sound inference;
-logical cycles, complete impact discovery, production migration and human efficacy
-remain untested. Earlier H-P results and human-case limits are unchanged.
+J30's smaller mandatory agent payload was a design preference, not a selected project
+model. After human correction, the [J31 shared schema](cq4-node-schema.md) restores
+first-class planning, outcomes/constraints and visible human/agent/source provenance.
+Its contract-binding/progress semantics are a design proposal, not tested by Pilot Q.
+Revision-reference acyclicity is not sound inference; complete impact discovery,
+production migration and human efficacy remain untested. Earlier H-P/Q results and
+human-case limits are unchanged.

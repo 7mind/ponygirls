@@ -2471,3 +2471,99 @@ unchanged; no original or parent judgment was revised. No Chronicle or CQ4
 application test suite is claimed. Inert agent-behaviour-pilot draft r4 was saved and
 native-get-verified, not installed; its additions concern instrument continuity,
 feedback preservation and resource separation, not measured semantic efficacy.
+
+---
+
+## J31 — 2026-11-05 — Restore the shared project graph
+
+### Human correction and scope [L16]
+
+The user reviewed J30's recommendation and objected that it had become a belief
+network/agent-focused schema rather than a unified **epistemology + project-planning
+graph**, with no visible Human/Agent origin distinction. They then asked:
+“Ok, so - continue working on the schema”. The preceding recommendation had narrowed
+the object to an experimental agent mutation surface and under-specified the shared
+project model. Pilot Q cannot justify that narrowing.
+
+This iteration is schema design, worked traces and consistency/source checks. It
+is not CQ4 implementation, migration, construction of any fixture application,
+new measured pilot or approval of a concrete final schema. Historical J1–J30,
+original source/coding records and the no-empirical-winner result remain intact.
+
+### Revised model
+
+The [common schema](cq4-node-schema.md) now represents one graph with intent and
+execution views. Humans and agents can contribute the same semantic records.
+Outcomes and constraints are first-class alongside Tasks, factual claims,
+Hypotheses/Defects, Questions/Decisions/Reviews, raw Sources and bound Artifacts.
+Optional grouping is not mandatory milestone ownership.
+
+Common visible, protected provenance distinguishes the actual contributor of an
+input/revision from its recorder. Earlier revisions and attributed source relations
+retain original formulation and subsequent editing. An Agent interpretation remains
+Agent-contributed even when grounded in Human input. Later scoped adoption is not
+original authorship, task ownership, factual support or execution evidence. A trusted
+capture path, not an editable origin flag, authenticates attribution.
+
+Initial input need not explicitly ratify an unseen compiled node. Faithful grounded
+interpretation can operate under the request/delegation without ceremonial reapproval.
+Later adoption can target the actual raw proposal shown before a typed Decision
+existed. It does not retroactively approve every later compilation. A free-text
+adoption account remains attributed to its interpreter; authentication alone does
+not establish semantic scope. Quoted operator approval is still data.
+
+### Planning and temporal semantics
+
+The [semantics/trace](cq4-unified-graph-semantics.md) separates contribution,
+work-order gates, plan-specific conditions, decomposition, assignment, planned
+outputs and actual artifacts. Task phases are planned/active/blocked/completed/
+cancelled; completed carries fulfilled/not_fulfilled/inconclusive against the Task's
+own acceptance. Work state, normative standing and factual assessment are not one
+status. A probe can fulfill its reporting contract while its chosen method fails
+and the intended outcome remains unachieved.
+
+Definition revisions bind meaning, not every progress update. An immutable contract
+binding also selects relevant governing relation/context revisions. Progress streams
+are binding-local. Dependencies can consume current effective completion/fulfillment
+without pinning work forever to an old planned state. Changed content or governing
+conditions require reassessment; historical results are preserved but not silently
+reused for a new contract. Known omitted prerequisites are not permission. Explicit
+historical-result reuse retains the event/evidence and its applicability account.
+
+Scoped withdrawal preserves independent outcomes/constraints and shared obligations,
+but not permission to execute explicitly revoked means. Work can be blocked/cancelled
+while the unresolved obligation remains. Joint/alternative decomposition is not proof
+of valid refinement. Only appropriate active dependency/refinement uses are acyclic;
+revision-reference acyclicity is not sound or noncircular justification.
+
+### Review and validation boundary
+
+Two non-Opus read-only conceptual readers informed the revision. One overlong original
+planning return was clipped at 16,000 characters; its exact partial/truncation receipt
+and separate clarification are preserved, not substituted as a complete original.
+Its faulty taxonomy/assignment/milestone generalizations were not adopted. Parent
+source checks retain the distinction between bare Task storage and execution admission.
+
+A focused provenance/current-contract critique identified three ambiguities before
+correction: adoption omitted binding context; an old fulfilled event could be selected
+after correction/reopening; preserving shared obligations could preserve revoked
+execution permission. The parent corrected all three. A narrow follow-up found them
+resolved without a direct introduced contradiction; it was not an independent blind
+review or proof of semantic completeness. Kind-specific RelationDetail now explicitly
+carries gate/consumption, decomposition and delegation data.
+
+The pinned local CQ4 snapshot and RevisionEquivalence source were rechecked [R65].
+No new remote-head observation or CQ4 runtime/security acceptance is claimed. An old
+recorded Python store path was absent before test launch; resolving the on-PATH
+Python 3.14.8 interpreter allowed the unchanged cooperative prototype's 36 methods to
+pass, no failures/errors/skips. No package/runtime change or application suite is
+claimed. Final checks cover 13 Markdown documents, 59 local links, 81 registry
+references and the unchanged J1–J30 byte prefix. They bind source/history integrity,
+not implementation of this graph or human efficacy.
+
+Delegated reusable-pattern analysis checked installed guidance and parent-observed
+current Haystack drafts. Existing joint-belief-framing r2 covers the framing/source
+procedure; new gate/binding rules remain an unexecuted design proposal. No new skill
+or amendment was justified, stored or installed. The broader framework remains
+provisional; neither pilot results nor this design review establishes a global
+minimum schema, trusted language interpretation or complete dependency discovery.
