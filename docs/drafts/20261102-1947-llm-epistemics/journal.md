@@ -2831,3 +2831,12 @@ migration and additional Human/field studies remain outside this result. No push
 deployment, skill installation or revival of the parked RTS/notes examples follows.
 The already saved inert agent-behaviour-pilot r5 concerns same-project instrument
 preservation, not measured efficacy; existing task/artifact-role guidance is reused.
+
+Post-publication unit clarification: mutation-argument bytes are the canonical JSON
+serialization of the native parsed argument objects, not the model's original JSON
+spelling or physical wire bytes. The sole native parse-rejected call retains an empty
+argument object; its raw syntax and provider-reported output tokens are separate
+preserved evidence. Read bytes sum UTF-8 graph_read result text. The report now makes
+these units explicit without changing counters, criteria, pairing or results. The
+report digest above identifies the first publication at6c9c3d0, not its later unit
+clarification. No new model session was launched.

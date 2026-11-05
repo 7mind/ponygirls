@@ -220,7 +220,7 @@ All-primary adequacy does not mean the rest of a graph is error-free.
 
 Seven JSON-reference and five Turtle originals meet every primary predicate. Five
 of8 exact same-case/subject/replicate pairs qualify; all16 native-counter rechecks are
-available/matching. In those five, Turtle uses more read bytes, mutation-argument bytes
+available/matching. In those five, Turtle uses more read bytes, canonical-JSON mutation-argument bytes
 and cumulative native-reported tokens; elapsed native-process time is higher in4 and
 lower in1. All-attempt quality/resources and exclusion coverage remain visible. This
 post-treatment descriptive selection is not overall efficiency, a model-family result,
