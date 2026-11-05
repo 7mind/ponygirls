@@ -2567,3 +2567,131 @@ procedure; new gate/binding rules remain an unexecuted design proposal. No new s
 or amendment was justified, stored or installed. The broader framework remains
 provisional; neither pilot results nor this design review establishes a global
 minimum schema, trusted language interpretation or complete dependency discovery.
+
+## J32 — RDF profile, instrument counterexamples and preregistered read-side comparison
+
+2026-11-05. The user accepted the shared-graph direction, requested that the eventual
+MCP/service intent be recorded, then asked to evaluate RDF, possibly SHACL, before
+custom implementation. The [service intent](mcp-service-intent.md) preserves Scala,
+distage/izumi/BIO/logstage, PostgreSQL and shared hybrid vector/lexical/typed-attribute
+retrieval. The inspected shared attribute contract currently supports equality; BIO
+is the intended direction, not an assertion that every existing shared module already
+uses it. Production MCP, CQ4 migration and fictional application construction remain
+paused. The proposed production graph_find/read/apply surface is not this instrument.
+
+### Three questions, not one RDF winner
+
+The [RDF evaluation](rdf-graph-evaluation.md) separates abstract representation,
+constraint/query tooling and agent-facing syntax. Stable RDF1.1/Turtle2014 and
+SHACL2017 are used [R66–R68]. Full public HTML and source URL/time/digest receipts are
+retained; eleven relevant sections were read completely, not the entire specifications.
+Truncated web-reader excerpts did not establish full-spec coverage. RDF/SHACL1.2 drafts,
+imports, entailment and arbitrary SPARQL execution are not assumed.
+
+The bounded profile encodes all eleven semantic definition kinds with explicit
+attributed relation revisions, exact contract bindings and binding-local StateEvents.
+Externally referenced resources have exact IRIs; local objects/ordered lists use blank
+nodes. Source text/contexts remain separate from interpretations. JSON-reference and
+Turtle decode to identical absolute-IRI records. The fixed packet root is a snapshot
+envelope, not a production merge identity; named graphs and types do not authenticate
+an actor or create temporal/authority semantics.
+
+SHACL Core checks field/cardinality/datatype/class/closed/list structure. Fixed SPARQL
+constraints additionally check declared history/result/inventory/acceptance/digest
+patterns. Decoder/application admission covers complete consumed-triple closure,
+domain roles, protected ingress, selected context/order/refinement and transactional
+history/CAS/idempotency. This allocation is not a proof that those application checks
+are inexpressible in SHACL. Four engineering queries have independently stated expected
+bindings; they are not extra subject tools and do not promote recorded support to truth.
+
+This is not a complete implementation of Question/Review work-state admission,
+authenticated Human-required execution, collector completion, every scoped-retirement
+rule or CQ4 equivalence. Selected bindings can become stale after later context changes.
+The memory/real-file adapters establish a bounded transactional demonstrator, not a
+production PostgreSQL/authentication/collector service.
+
+### Failures retained before measurement
+
+Initial codec/shape and review controls failed before fixes. A negative fixture first
+used an absent input receipt, yielding wrong-reason rejections; its correction exposed
+the intended domain failures. Corrections include relation revision, final-batch context,
+single event roots, endpoint roles, explicit historical reuse, selective cycles and
+common read envelopes. Later counterexamples exposed unrelated context becoming an
+ordering edge, historical refinement targets collapsing to current entity heads and
+missing adoption detail escaping as KeyError. Original failures and separate parent
+review dispositions are retained [L17].
+
+Pinned RDFLib7.6.0/pySHACL0.40.1 behavior required explicit string-equality handling.
+The raw validator can raise while rendering an invalid cyclic RDF list; the decoder
+rejects it, and failure is not conformance. Raw SHACL can conform to an unreachable
+untyped blank node that the composed decoder rejects. Both remain disclosed coverage
+boundaries rather than silently filtered successes. A structurally conforming forged
+Human attribution remains negative authority evidence.
+
+Direct formatter/import tests missed actual wrapped-Pi interpreter selection: all four
+first unscored canaries failed because PATH selected Python without RDFLib. The import
+failure was reproduced, then an absolute backend interpreter and real Node→Python
+hostile-PATH control corrected it. Subsequent originals had three strict-valid controls
+and one retained DeepSeek/Turtle invalidity after a provider529 empty-error context_edit.
+A separate readiness probe passed without replacing/rescoring that original. The final
+common relation-direction contract required a new four-session canary batch; all four
+two-stage originals passed actual encoded reads, create/revise, source immutability
+and conversation-only continuity. Complete normalized profiles agree across encodings;
+text/descriptions were read and entire expanded mutation schemas checked against their
+inspected compiler, not claimed read verbatim line-by-line.
+
+A source reviewer then predicted four analysis gaps. Six intended failing reproductions
+confirmed changed before/checkpoint projection, unaudited stdout reports, lost nonfinal
+public assertions, invented rejected-payload citations and changed prompt acceptance.
+Audit-bound inputs/history and canonical citation inventories corrected them;21 focused
+methods passed. Public assertions later corrected remain observable, private thinking
+does not become public testimony, and format/citation checks are not semantic approval.
+
+The final combined108-method run passed364.732s, zero failures/errors/skips; eight
+additional pre-data reduction controls passed separately. A single116-method rerun is
+still running at this entry. Independent unchanged legacy-Q85 and cooperative-prototype36
+regressions also passed; these are distinct software observations, not semantic gold.
+The166-path runtime closure passed nine specific existing-path negatives and a workspace
+positive with actual8388608-byte file limits. No universal security or credential-
+lifetime guarantee follows from these controls or a ready auth check.
+
+### Frozen Pilot S, outcomes pending
+
+Pilot S is not historical Pilot R. Instrument commit9948e9d and preregistration
+`ce517460c9c0bf4e5379655481ad93ba8511dd04` bind219 exact inputs. Registration SHA256:
+`b451d6a56892a74515933fd99da7ae82f22f48d8f8274ac733255721dcdde7de` [L17].
+The matrix is2 non-Opus subjects ×2 read encodings ×2 synthetic four-stage cases ×2
+replicates:16 original sessions, seed2026110501, at most4 slots. It was launched only
+after the registration commit and remains running at14:01Z; no measured semantic
+outcome or resource comparison is reported here. Sixteen is an experimental bound,
+not a financial cap.
+
+Only model-facing read text differs. Both arms have identical typed JSON writes,
+tools, policy, validation/admission, feedback and substantive facts. New facts enter
+through the configured encoded reader, not duplicate controller JSON. Native histories
+verify actual forwarding, not just formatter output. This measures consumption during
+graph maintenance, not RDF-native authoring, isolated comprehension, triplestore or
+retrieval performance, full production MCP ergonomics or human efficacy.
+
+Authority has eight primary criteria; binding/progress has ten. Canonical opaque
+trajectories and two independent advisory original coding families will be frozen
+before identity/resource reduction, with separate parent source adjudication. Syntax
+may reveal encoding; neither agreement nor adjudication is blind Human gold. A fixed
+assignment plan was created without inspecting measured semantic outputs/key/resources.
+All original attempts/rejections/corrections are retained. Invalid sessions are
+unscored, not zero-correct; resource unavailability is a separate condition.
+
+Eight exact same-case/subject/replicate resource pairs are possible. Both originals
+must be process-valid and every primary criterion adequate; uncertain is not a pass.
+No replacements, rematching, cell medians, zero imputation or quality/token composite.
+Report all-attempt quality/resources and pairing coverage; post-treatment selection is
+descriptive, not overall format efficiency. Zero adequate pairs is permitted. No new
+mechanical Human-attention measure or model-family/architecture winner is implied.
+
+Delegated overlap analysis justified a narrow existing agent-behaviour-pilot amendment,
+not a new skill: audit-to-projection identity, canonical citation eligibility and
+preserved public text. Parent corrected the advisory's blanket ban on rereading,
+its treatment of every intermediate assertion as unsafe and a Haystack draft as
+installed. Complete r5 was saved/get-verified, human-attention required retained;
+not installed and not supported by measured semantic outcomes. Existing interpreter
+canary/prompt guidance was reused, not repackaged as a new discovery.
