@@ -9,7 +9,12 @@ enum IndexingStage { case Annotation,Embedding,Publication }
 final case class CheckpointKey(stage: IndexingStage,window: Int,part: Int,inputHash: String) {
   Check(stage!=IndexingStage.Publication && window>=0 && part>=0 && inputHash.matches("[0-9a-f]{64}"),"internal","invalid checkpoint key")
 }
+final case class CheckpointNamespace(profile: String,embeddingSpace: String) {
+  def key(claim: Claim,stage: IndexingStage,window: Int,part: Int,algorithm: String,input: Json): CheckpointKey =
+    IndexCheckpoints.key(claim.copy(profile=profile),stage,window,part,if(stage==IndexingStage.Embedding) embeddingSpace else algorithm,input)
+}
 trait IndexCheckpoints {
+  def checkpointNamespace(claim: Claim,currentEmbeddingSpace: String): CheckpointNamespace
   def reserveAnnotation(claim: Claim,key: CheckpointKey): AnnotationReservation
   def rejectAnnotation(claim: Claim,key: CheckpointKey,attempt: Int,reason: String): Int
   def checkpoint(claim: Claim,key: CheckpointKey): Option[Json]

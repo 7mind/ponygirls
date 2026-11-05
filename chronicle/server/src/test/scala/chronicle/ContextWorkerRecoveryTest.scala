@@ -26,6 +26,7 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder): Worker =
     new Worker(archive,model,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger())
   private class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
+    def checkpointNamespace(c: Claim,space: String): CheckpointNamespace=delegate.checkpointNamespace(c,space)
     def knownProfiles: Set[String]=delegate.knownProfiles
     def ingest(owner: String,r: IngestRequest): IngestReceipt=delegate.ingest(owner,r)
     def session(reader: String,id: UUID): SessionInfo=delegate.session(reader,id)

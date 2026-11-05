@@ -18,7 +18,7 @@ import scala.concurrent.duration.*
   */
 final case class EmbeddingEndpoint(operationUrl: String,model: String,revision: String,dimensions: Int,sendDimensions: Boolean,documentPrefix: String,queryPrefix: String,normalization: String,credentialFile: String,deadline: FiniteDuration,maxResponseBytes: Int,maxBatch: Int,maxInputBytes: Int,maxRequestBytes: Int) {
   override def toString: String = "EmbeddingEndpoint(<redacted>)"
-  def space: EmbeddingSpace = EmbeddingSpace(RetrievalChecks.hash(operationUrl),model,revision,dimensions,sendDimensions,queryPrefix,documentPrefix,normalization)
+  def space: EmbeddingSpace = EmbeddingSpace(model,revision,dimensions,sendDimensions,queryPrefix,documentPrefix,normalization)
   def validate(): Unit = {
     JsonHttp.operationUri(operationUrl); space.validate()
     RetrievalChecks(credentialFile.nonEmpty && deadline>Duration.Zero && deadline<=1.day && maxResponseBytes>0 && maxRequestBytes>0 && maxInputBytes>0 && maxBatch>=1 && maxBatch<=1024,"config","invalid embedding bounds")

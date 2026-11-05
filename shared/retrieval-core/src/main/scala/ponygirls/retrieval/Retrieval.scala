@@ -13,14 +13,30 @@ object RetrievalChecks {
   def text(value: String, maximum: Int): Unit = apply(value.nonEmpty && value.length<=maximum && !value.contains('\u0000') && UTF_8.newEncoder().canEncode(value),"invalid","invalid retrieval identifier/text")
 }
 
-/** The v1 array representation intentionally preserves Chronicle's existing durable identity. */
-final case class EmbeddingSpace(endpointIdentity: String, model: String, revision: String, dimensions: Int, sendDimensions: Boolean, queryPrefix: String, documentPrefix: String, normalization: String) {
-  def json: Json = Json.arr(Json.fromString("embedding-space-v1"),Json.fromString(endpointIdentity),Json.fromString(model),Json.fromString(revision),Json.fromInt(dimensions),Json.fromBoolean(sendDimensions),Json.fromString(queryPrefix),Json.fromString(documentPrefix),Json.fromString(normalization))
+final case class EmbeddingSpace(model: String, revision: String, dimensions: Int, sendDimensions: Boolean, queryPrefix: String, documentPrefix: String, normalization: String) {
+  def json: Json = Json.arr(Json.fromString("embedding-space-v2"),Json.fromString(model),Json.fromString(revision),Json.fromInt(dimensions),Json.fromBoolean(sendDimensions),Json.fromString(queryPrefix),Json.fromString(documentPrefix),Json.fromString(normalization))
   def id: String = RetrievalChecks.hash(json.noSpaces)
   def validate(): Unit = {
-    RetrievalChecks(endpointIdentity.matches("[0-9a-f]{64}") && model.nonEmpty && revision.nonEmpty,"config","embedding model/revision/endpoint identity required")
+    RetrievalChecks(model.nonEmpty && revision.nonEmpty,"config","immutable embedding model/revision required")
     Vectors.dimensions(dimensions)
     RetrievalChecks(normalization=="cosine","config","unsupported embedding normalization")
+  }
+}
+object EmbeddingSpace {
+  def verified(id: String, descriptor: Json): EmbeddingSpace = {
+    val values=descriptor.asArray.getOrElse(Vector.empty)
+    val legacy=values.headOption.flatMap(_.asString).contains("embedding-space-v1")
+    val offset=if(legacy) 2 else 1
+    val version=if(legacy) "embedding-space-v1" else "embedding-space-v2"
+    RetrievalChecks(values.size==offset+7 && values.head.asString.contains(version) &&
+      (!legacy || values(1).asString.exists(_.matches("[0-9a-f]{64}"))) &&
+      List(offset,offset+1,offset+4,offset+5,offset+6).forall(i=>values(i).asString.nonEmpty) &&
+      values(offset).asString.exists(_.nonEmpty) && values(offset+1).asString.exists(_.nonEmpty) &&
+      values(offset+2).asNumber.flatMap(_.toInt).exists(n=>n>=1 && n<=Vectors.maxDimensions) &&
+      values(offset+3).asBoolean.nonEmpty && values(offset+6).asString.contains("cosine") &&
+      RetrievalChecks.hash(descriptor.noSpaces)==id,"unavailable","embedding space descriptor is unverified")
+    EmbeddingSpace(values(offset).asString.get,values(offset+1).asString.get,values(offset+2).asNumber.get.toInt.get,
+      values(offset+3).asBoolean.get,values(offset+4).asString.get,values(offset+5).asString.get,values(offset+6).asString.get)
   }
 }
 final case class RetrievalProfile(space: EmbeddingSpace, policy: String) {

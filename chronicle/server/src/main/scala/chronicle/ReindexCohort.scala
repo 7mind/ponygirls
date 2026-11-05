@@ -44,9 +44,11 @@ object ReindexCohort {
   def apply(c: Connection,owner: String,id: UUID,profile: String,hash: String,confirm: Boolean,catalog: IndexProfileCatalog): OwnerReindexOutcome = {
     Check(!c.getAutoCommit && id!=null && confirm && hash!=null && hash.matches("[0-9a-f]{64}"),"invalid","valid rebuild selection and explicit confirmation required")
     val current=target(c,owner,true)
-    val replay=Sql.one(c,"SELECT target_profile,selection_hash,result FROM ch_reindex_requests WHERE owner=? AND request_id=?",owner,id) { row =>
-      Check(row.getString(1)==profile && row.getString(2)==hash,"conflict","rebuild request ID bound to another selection")
-      outcome(Wire.decode(OwnerReindexResult.codecJson,Sql.json(row,"result")))
+    val replay=Sql.one(c,"SELECT selection_hash,result FROM ch_reindex_requests WHERE owner=? AND request_id=?",owner,id) { row =>
+      val recorded=Wire.decode(OwnerReindexResult.codecJson,Sql.json(row,"result"))
+      // The control projection can canonicalize; the original request receipt cannot.
+      Check(recorded.targetProfile==profile && row.getString("selection_hash")==hash,"conflict","rebuild request ID bound to another selection")
+      outcome(recorded)
     }
     replay.getOrElse {
       each(c,"SELECT id FROM ch_sources WHERE owner=? AND NOT tombstone ORDER BY id FOR UPDATE",owner)(_ => ())

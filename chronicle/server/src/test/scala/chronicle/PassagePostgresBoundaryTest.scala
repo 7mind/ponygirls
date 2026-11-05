@@ -84,7 +84,7 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
       Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile) VALUES(?,?,1,?),(?,?,1,?)",opaque,receipt.sessionId,"opaque-pre007",p1,receipt.sessionId,catalog.preferred.profile)
       Sql.exec(c,"DROP TABLE ch_problem_pieces,ch_problem_spans,ch_problem_passages")
       Sql.exec(c,"ALTER TABLE ch_generations DROP COLUMN passage_format,DROP COLUMN passage_count")
-      Sql.exec(c,"DROP TABLE ch_owner_targets,ch_index_profiles,ch_embedding_spaces")
+      Sql.exec(c,"DROP TABLE ch_checkpoint_namespaces,ch_model_identity_migrations,ch_owner_targets,ch_index_profiles,ch_embedding_spaces")
       Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=8")
     }
     db.initialize()

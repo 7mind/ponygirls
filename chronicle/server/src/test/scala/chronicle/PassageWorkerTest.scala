@@ -18,6 +18,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     val progressCalls=ListBuffer.empty[(Int,Int)]
     val publications=ListBuffer.empty[ProblemsPublication]
     val failures=ListBuffer.empty[String]
+    def checkpointNamespace(c: Claim,space: String): CheckpointNamespace = delegate.checkpointNamespace(c,space)
     def knownProfiles: Set[String] = delegate.knownProfiles
     def ingest(owner: String,r: IngestRequest): IngestReceipt = delegate.ingest(owner,r)
     def session(reader: String,id: UUID): SessionInfo = delegate.session(reader,id)
@@ -245,6 +246,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         }
         def fail(c: Claim,code: String)=delegate.fail(c,code)
         def fail(c: Claim,code: String,stage: IndexingStage)=delegate.fail(c,code,stage)
+        def checkpointNamespace(c: Claim,space: String): CheckpointNamespace = delegate.checkpointNamespace(c,space)
         def reserveAnnotation(c: Claim,key: CheckpointKey): AnnotationReservation = delegate.reserveAnnotation(c,key)
         def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
         def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)

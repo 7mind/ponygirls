@@ -90,6 +90,10 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     annotationAttempts(slot)=stored.copy(reason=Some(reason))
     rejected
   }
+  def checkpointNamespace(claim: Claim,currentEmbeddingSpace: String): CheckpointNamespace = synchronized {
+    Check(valid(claim),"stale-claim","indexing claim is no longer current")
+    CheckpointNamespace(claim.profile,currentEmbeddingSpace)
+  }
   def checkpoint(claim: Claim,key: CheckpointKey): Option[io.circe.Json] = synchronized {
     Check(valid(claim),"stale-claim","indexing claim is no longer current")
     acceptedWork.get((claim.jobId,claim.runId,key.stage,key.window,key.part)).map { (input,value) =>

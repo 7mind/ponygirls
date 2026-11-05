@@ -17,7 +17,7 @@ import TestSupport.*
 class ProjectionTransactionTest extends ContractSuite {
   private def projection(db: JdbcDatabase): HaystackRetrieval = {
     val policy = ProjectionPolicy("synthetic-test-approved-fields", true, Vector("/public"), 4096)
-    val space = EmbeddingSpace("0" * 64, "synthetic-fixture", "v1", 3, true, "", "", "cosine")
+    val space = EmbeddingSpace("synthetic-fixture", "v1", 3, true, "", "", "cosine")
     new HaystackRetrieval(db, policy, new PostgresRetrieval("haystack", Some(RetrievalProfile(space, policy.id))), None, 16)
   }
   private def withProjection(body: (JdbcDatabase, PostgresItemRepository, HaystackRetrieval) => IO[Unit]): Unit =

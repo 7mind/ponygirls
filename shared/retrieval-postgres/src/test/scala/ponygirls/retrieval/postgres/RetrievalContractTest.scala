@@ -6,7 +6,7 @@ import java.util.UUID
 import scala.util.Using
 
 private[postgres] object ControlledFixtures {
-  val profile=RetrievalProfile(EmbeddingSpace("a"*64,"controlled-fixture","immutable-v1",3,false,"","","cosine"),"controlled-metadata-v1")
+  val profile=RetrievalProfile(EmbeddingSpace("controlled-fixture","immutable-v1",3,false,"","","cosine"),"controlled-metadata-v1")
   val field=AttributeKey.parse("project")
   val provenance=ChunkProvenance("metadata",Some("/description"),None,None)
   def source(id: String,text: String,audience: Set[String]): SourceProjection = SourceProjection(id,"version-1",List(InputChunk("first",text,provenance)),Vector(ProjectionAttribute(field,AttributeValue("controlled"))),audience,true,false,None)
@@ -118,4 +118,33 @@ class MemoryRetrievalContractTest extends RetrievalContractTest {
 }
 class PostgresRetrievalContractTest extends RetrievalContractTest {
   protected def fresh(): RetrievalContractStore = new PgFixture(Some(ControlledFixtures.profile)).store
+  test("BG: legacy endpoint-bound metadata migrates without re-embedding or changing publication and accepted work") {
+    import ControlledFixtures.*
+    import Jdbc.*
+    import io.circe.Json
+    val fixture=new PgFixture(Some(profile)); val ns=key(fixture.index.namespace)
+    fixture.store.put(source("preserved","alpha",Set("reader"))); fixture.store.publishAll()
+    val before=fixture.store.search(query(RetrievalMode.Semantic)).hits.head
+    val legacyDescriptor=Json.arr((Vector(Json.fromString("embedding-space-v1"),Json.fromString("b"*64))++profile.space.json.asArray.get.tail)*)
+    val legacySpace=RetrievalChecks.hash(legacyDescriptor.noSpaces)
+    val legacyProfile=RetrievalChecks.hash(Json.arr(Json.fromString("retrieval-profile-v1"),Json.fromString(legacySpace),Json.fromString(profile.policy)).noSpaces)
+    fixture.tx { c=>
+      exec(c,"INSERT INTO pony_retrieval_profiles VALUES(?,?,?,?,?)",ns,legacyProfile,legacySpace,legacyDescriptor.noSpaces,bytes(profile.policy))
+      exec(c,"UPDATE pony_retrieval_sources SET target_profile=? WHERE namespace=?",legacyProfile,ns)
+      exec(c,"UPDATE pony_retrieval_jobs SET profile=? WHERE namespace=?",legacyProfile,ns)
+      exec(c,"UPDATE pony_retrieval_generations SET profile=?,space=? WHERE namespace=?",legacyProfile,legacySpace,ns)
+      exec(c,"UPDATE pony_retrieval_chunks SET profile=? WHERE namespace=?",legacyProfile,ns)
+    }
+    def accepted=fixture.tx(c=>rows(c,"SELECT embedding::text,digest FROM pony_retrieval_accepted WHERE namespace=? ORDER BY job_id,ordinal",ns)(r=>(r.getString(1),r.getString(2))))
+    val saved=accepted
+    fixture.tx(fixture.index.initialize)
+    assertEquals(intercept[RetrievalError](fixture.store.search(query(RetrievalMode.Semantic))).code,"unavailable")
+    fixture.tx(c=>fixture.index.migrateModelIdentities(c,Set(legacyProfile)))
+    assertEquals(fixture.store.search(query(RetrievalMode.Semantic)).hits.head,before)
+    assertEquals(accepted,saved)
+    assertEquals(fixture.tx(c=>fixture.index.claim(c,30)),None)
+    fixture.tx(c=>fixture.index.migrateModelIdentities(c,Set(legacyProfile)))
+    assertEquals(fixture.store.search(query(RetrievalMode.Semantic)).hits.head,before)
+    assertEquals(accepted,saved)
+  }
 }
