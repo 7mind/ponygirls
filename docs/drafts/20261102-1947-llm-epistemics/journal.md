@@ -2361,3 +2361,113 @@ or installed instruction changed; no new subjects, private cases or workload
 instrument were introduced. Checks for these documents cover source binding,
 journal-prefix preservation, reference IDs, links/anchors and diff formatting,
 not application behavior or framework efficacy.
+
+---
+
+## J30 — 2026-11-05 — CQ4 source review and compact-node Pilot Q
+
+The user authorized public CQ4 taxonomy/metadata review, a concise epistemic-node
+schema, and relevant autonomous non-Opus pilots without a financial cap. This did
+not authorize a CQ4 migration, deployment or construction of a fixture application.
+The [node recommendation](cq4-node-schema.md) and [source appendix](cq4-source-review.md)
+separate those boundaries from the schema decision.
+
+### Source findings [R65]
+
+CQ4 snapshot `4d9b44aec6f7360abd448bb3412733449386c5e1` matched remote main when
+observed 2026-11-04T23:04:29Z. Its fourteen ledgers already provide protected evidence
+origins, authenticated last-write provenance, revision-specific reviews and typed
+support/contradiction. HMAC/expiry/project scopes and collector-controlled integration
+are real source-level protections. No CQ4 runtime/security acceptance was executed.
+Epistemic support is incomplete, not absent; last mutation is not original authorship.
+
+Goal is not simply a milestone container, nor is Goal→Milestone mandatory. Bare Task
+storage permits no milestone; proposal and implementation admission impose additional
+milestone requirements. Workset descent follows Produces/Contains, with DerivedFrom
+producer context, and the general graph permits cycles. Removing organizational
+classes alone does not remove those execution policies. Positive outcomes must remain
+represented even without a Goal class. CQ4 Claim denotes a concurrency lease.
+
+### Registered experiment [L15]
+
+Pilot Q prospectively compared faceted/full replacement (FR), grounds-first/full
+replacement (GR), and grounds-first/amendment (GA). Two synthetic four-stage cases,
+two native-recorded subjects, two replicates and three arms gave exactly **24 original
+sessions**. Registration commit before calls:
+`30acd39684b5c83cda8eb07f607c80dd2c2e810f`; manifest SHA-256
+`3826da6387f1792000b8a1709df4bbcab3db301c229863a8f3c28e355cdf41d7`.
+No faceted-amendment interaction or extra outcome-conditioned replicate was run.
+
+**Nineteen process-valid; five original Sol cells operationally invalid and unscored.**
+All Sol FR cells and CSV GA r1 are missing from semantic comparison. Authentication /
+completion failures are not reasoning errors. A separate later successful unscored
+probe did not repair them; credential lifetime across the batch was not established.
+Native labels were checked, not independently authenticated as physical implementations.
+
+Audit `e5f142a6d1746180d4160e567e208ccb60f01e2e245a47742302aa500bd19b66`
+binds original data, sources/prompts/runtime, exact native history/turns/continuation,
+actual mutation replay and resource availability separately. Valid sessions made
+496 mutations, 491 accepted/five rejected; all nineteen resource rechecks were
+available and matched. These are not semantic-approval results. Fixture Human/Host
+origins are controller declarations, not production authentication or consumer behavior.
+
+### Coding, corrections and findings
+
+Twenty original advisory returns were frozen at `62a5aa5` before identity inspection;
+parent source-based adjudication at `12108e0`, also before identity/resource reduction.
+Identity redaction was not full blinding. Both original and parent codes are model
+judgments, not independent human gold.
+
+Original A: 134 adequate/18 material; B: 151 adequate/one uncertain, each over 152
+criterion codes. B's fenced presentation deviations, B01's substantive summary suffix
+and B05's source-as-attempt misbinding remain intact. Excluding B01/B05 leaves B
+111 adequate/one uncertain over 112 codes; parsing/coverage does not establish truth.
+Parent targeted adjudication: 126 adequate/24 material/two uncertain. Every criterion,
+original code, reason, unsafe attempt and closure observation is retained separately.
+
+Source checks found consensus misses: favorable outputs plus a human-selected plan
+were promoted into application/verification of that algorithm. Other errors confused
+an unchanged pointer with demonstrated readability, packet omission with uninstrumented
+execution, and scoped absence with checks never having happened. Two faceted sessions
+also labeled binding requirements merely proposed. Later trace evidence did not justify
+earlier unsupported inference. The parent narrowed V017 atomicity to genuine ambiguity:
+“only within” is not same-filesystem sufficiency. V013 remains ambiguous as well.
+
+The 63 listed unsafe call instances (62 material/one uncertain) include 59 accepted
+and four schema-rejected attempts. Repeated propagation/retries are not independent
+defects. The supplied OPERATOR APPROVAL artifact was not genuine human authority or
+itself an evaluated unsafe mutation. Any closed revision occurs in 15/19 valid views;
+work/selection/premise closure are heterogeneous, not proof of successful outcomes.
+
+### Decision and limits
+
+**No empirical winner.** No fully adequate FR–GR resource pair remains under parent
+coding. Three fully adequate Sol GR–GA pairs show mixed observations: publisher r1/r2
+use fewer mutation bytes/tool calls/native total tokens with amendment; CSV r2 uses
+more. No zero imputation, equivalence, human-attention or model-family conclusion.
+Detailed vectors, resource pairs, counts and source bindings are in the Pilot Q report.
+Pilot publication: `381759d122a2e770bb5110314203a5dd00f105f4` in the separate repository;
+report SHA-256 `626c3f88e738ecc0c324325955055880390f428a0f1049579b24e5c7ccfd9f57`.
+
+Recommend a grounds-first `kind/text/scope/state/grounds` common record and permit
+changed-field revision, as a smaller required surface—not proven optimality. Retain
+useful semantic kinds and intended outcomes while removing compulsory Goal/Milestone
+organization and roll-up duplication. Keep authentication, privileged source capture,
+exact reviews, transaction/replay and history outside agent-authored fields.
+
+The experiment guarantees only a revision-reference DAG, not noncircular justification.
+Semantic soundness, complete impact discovery, real authority/security, lossless CQ4
+migration, human efficacy and end-to-end delivery remain unestablished. The registered
+matrix is the exit boundary, not an instruction to build the publisher/CSV exporter.
+
+Software evidence: 85 methods, zero failures/errors/skips (49 registered + 36 analysis),
+including 90 memory/filesystem adapter-arm scenarios. Two bound full reductions agree
+byte-for-byte. Fail-before logs, incomplete checks and postregistration corrections
+remain retained; registered inputs/raw data/rubric were unchanged. A late post-identity
+archive-relocation reproduction corrected analysis normalization/redaction to use
+recorded execution identity, not evidence-storage location. The fresh full measured
+audit is byte-identical, and all 24 frozen views/key mappings plus summary remain
+unchanged; no original or parent judgment was revised. No Chronicle or CQ4
+application test suite is claimed. Inert agent-behaviour-pilot draft r4 was saved and
+native-get-verified, not installed; its additions concern instrument continuity,
+feedback preservation and resource separation, not measured semantic efficacy.

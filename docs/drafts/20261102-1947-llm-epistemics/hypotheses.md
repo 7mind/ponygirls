@@ -95,3 +95,18 @@ of faithful annotations, human intent access, end-to-end delivery or overload.
 |---|---|---|---|
 | H-P1 | Adding declared rationale reduces source/authority/warrant errors relative to source-linked candidate assertions alone. | Matched historical C8 audit material, sources versus richer prose; separately code status, formulation origin, citation coverage and semantic rationale. Includes false provenance and legitimate-choice controls. | inconclusive (J28): Sol baseline ceiling; DeepSeek S has two schema-invalid sessions and two flagged explanations in r1 only, absent r2. Added information and n=2 clustered sessions/cell prevent a stable efficacy estimate. |
 | H-P2 | Typed grounds improve selective revision relative to the same substantive rationale in prose. | Matched prose/typed hypothetical premise changes; correct actions and retained roots, alternative grounds, failed means, scoped human revision, circular rationale and unrelated-change controls. | not supported in these cases (J28): both subjects, every arm 14/14 actions and supplied-root controls; semantic baseline ceiling. No observed G−P advantage, not an equivalence proof. |
+
+## Compact CQ4 record comparisons (J30)
+
+These are post-data register labels for the comparisons already specified in the
+prospective Pilot Q protocol, not newly invented preregistered hypothesis IDs.
+
+| Label | Prospective comparison | Current evidence and limits |
+|---|---|---|
+| Q-rollups | Mandatory role/standing/warrant arrays versus grounds-first records under full replacement (FR–GR). | Inconclusive: no empirical semantic advantage established. Required summaries contradicted binding requirements in two FR sessions, while GR also made unsupported inferences. All four Sol FR cells were operationally invalid; no fully adequate matched resource pair. Not equivalence or proof fields necessarily harm. |
+| Q-amendment | Grounds-first changed-field amendment versus full replacement (GR–GA). | Mixed, bounded resource observations in three fully adequate Sol pairs: lower bytes/calls/reported total tokens in two publisher pairs, higher in CSV r2; CSV GA r1 invalid. Both representations also had semantic failures in other sessions. No universal efficiency, human-attention or model-family result. |
+
+The [node recommendation](cq4-node-schema.md) favors a smaller required surface as
+an explicit design preference. Revision-reference acyclicity is not sound inference;
+logical cycles, complete impact discovery, production migration and human efficacy
+remain untested. Earlier H-P results and human-case limits are unchanged.
