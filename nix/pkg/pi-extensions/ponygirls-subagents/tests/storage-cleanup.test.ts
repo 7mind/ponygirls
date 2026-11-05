@@ -165,7 +165,10 @@ for (const backend of ["host", "sandbox"] as const) {
       const store = new InMemoryRunStore("root-1");
       const held = Promise.withResolvers<typeof ok>();
       const cancelled = Promise.withResolvers<void>();
-      const uncancellable: ToolExecutor = { exec: async () => held.promise };
+      const uncancellable: ToolExecutor = {
+        backend: "uncancellable-fixture", probe: () => ({ ok: true }),
+        exec: async (spec) => ({ ...await held.promise, operationId: spec.operationId }),
+      };
       const other = new DummyToolExecutor();
       const executors = backend === "host" ? { host: uncancellable, sandbox: other } : { host: other, sandbox: uncancellable };
       assert.ok(process.env["PATH"]);

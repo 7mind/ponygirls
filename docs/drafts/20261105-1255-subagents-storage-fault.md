@@ -34,8 +34,12 @@ effects.
   cancellation errors, and skipped worker-stop retries. Its implementation
   attempts all owned cleanup before reporting errors, suppresses late success,
   retains failed receipts and preserves the lock when store close fails.
+- Final review exposed cancellation confirmation from the wrong backend. Six
+  fail-first cases (host/sandbox × bulk/signal/controller check) reported
+  `cancelled` instead of `uncertain`. Each job now records its owning backend;
+  unrelated cancellation support cannot establish that its effect stopped.
 
-## Validation so far
+## Validation
 
 Focused commands from `nix/pkg/pi-extensions/ponygirls-subagents`:
 
@@ -55,12 +59,34 @@ directory sync, and reopening only the manifest-selected prefix. An operation
 with a failed directory sync may nevertheless be adopted on reopen; it is never
 blindly replayed. Kernel ENOSPC is exercised without consuming free space.
 
-Cleanup writer reports 10/10 new regressions and 100/100 related tests passed;
-its changes have not yet been integrated here. Final combined pinned typecheck
-and full suite remain required. The earlier full-check output was truncated and
-is not counted as verified evidence.
+Cleanup writer reported 10/10 new regressions and 100/100 related tests passed;
+these were reviewed and integrated. Final combined validation was freshly run
+against package tree `13f00dfaa1daa9e07112e398d8fa11c9e5987e73`
+(`nix/pkg/pi-extensions/ponygirls-subagents`, final staged source):
+
+```bash
+nix build .#checks.x86_64-linux.ponygirls-subagents \
+  --no-link --print-out-paths -L
+```
+
+Exit 0. The check runs `tsc -p tsconfig.json`, then the unfiltered
+`node --test tests/*.test.ts`: **760 tests passed**, 0 failures, 0 cancellations,
+0 skips, 0 TODO, about 53 seconds. Derivation:
+`lyz84mhr7b0shgzazmxphl80idksdh9c-ponygirls-subagents-test.drv`;
+output: `/nix/store/j7lpbcb9lq7hawkx1hsl5b1q1g8xavbx-ponygirls-subagents-test`.
+The previous combined check passed 754 cases at `249d2316`; final backend-owner
+coverage adds six. Two intervening typechecks rejected incomplete test-adapter
+shapes (missing operation ID, then backend/probe); their logs remain preserved.
+The final typed adapter and entire suite passed together.
+Local raw logs are preserved at `.worktrees/subagents-storage-evidence/`, outside
+the disposable task worktrees. Earlier truncated full-check output is not
+counted as verified evidence. This is code/test validation, not deployment or
+repair of the affected session.
 
 Codegraph was unavailable (foreign/unknown PID namespace); source was inspected
 directly. Read-only agent review identified the expiry and effect-time admission
 gaps. Skill review found no distinct reusable candidate beyond existing
-`dual-tests` and `tass`; no external draft search or skill write is claimed.
+`dual-tests`, `tass`, and the existing Haystack draft
+`corporate-activity:skill-draft-caller-completion-resource-ownership` (revision 3,
+read by the parent after a bounded overlap search). No new skill was written or
+installed.
