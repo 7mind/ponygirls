@@ -1,11 +1,14 @@
 # Brief — epistemics of LLM-accelerated development
 
-Status: through J31, 2026-11-05. The schema now proposes **one shared human–agent
-project graph**, correcting the earlier agent-payload focus. CQ4 source review and
-Pilot Q are complete; **no new pilot, example application or CQ4 replacement was
-built**. Read the [shared schema](cq4-node-schema.md),
-[semantics/worked trace](cq4-unified-graph-semantics.md), [source review](cq4-source-review.md),
-[synthesis](synthesis.md) and [journal](journal.md) for evidence and limits.
+Status: through J33, including the bounded RDF evaluation, 2026-11-05.
+The working schema is **one shared human–agent project graph**, correcting the earlier
+agent-payload focus. CQ4 review and Pilots Q/S are complete. Pilot S preserves all16
+originals/64 stages and separate source-based adjudication; JSON-reference is the
+provisional agent-read default here, not an RDF storage/architecture decision.
+No example application or CQ4 replacement was built; production MCP remains paused. Read the
+[shared schema](cq4-node-schema.md), [semantics/worked trace](cq4-unified-graph-semantics.md),
+[RDF evaluation](rdf-graph-evaluation.md), [service intent](mcp-service-intent.md),
+[source review](cq4-source-review.md), [synthesis](synthesis.md) and [journal](journal.md).
 
 ## Problem and proposed response
 
@@ -83,6 +86,17 @@ The case is closed: framing was participant-confirmed; scenario revision is
   occurred with every arm; three adequate amendment comparisons had mixed resources.
   The smaller mandatory surface is a design preference, not an empirical winner
   [J30; L15].
+- Pilot S separates RDF representation, SHACL/fixed-query checks and agent-facing
+  read syntax. All16 original sessions/64 stages replayed; original coding failures
+  remain failures. Parent authority59 adequate/4 material/1 uncertain of64 and
+  binding77 adequate/3 material of80 are source-based judgments, not Human gold.
+  Five of8 exact pairs qualify: Turtle uses more bytes/cumulative native tokens in
+  those five, with mixed elapsed time. This post-treatment selection supports a
+  provisional JSON-reference agent-read default here, not overall efficiency,
+  Human efficacy or an RDF architecture winner. Final136 software methods pass;
+  RDF-native writing, storage/retrieval performance and Human ergonomics are untested.
+  The eventual Scala/distage/BIO/logstage/PostgreSQL/shared-retrieval intent is
+  unchanged [J33; L18].
 - The cooperative v1 CLI has 36 passing software test methods. Case checks verified
   record/projection/history integrity, not semantic approval or application security.
 
@@ -111,14 +125,19 @@ exists here. Do not revive NASA-TLX or substitute time/question counts as a prox
 ## Handover and next boundary
 
 - Read: this brief → [shared schema](cq4-node-schema.md) →
-  [semantics/worked trace](cq4-unified-graph-semantics.md) → J31 → J30/source review →
+  [semantics/worked trace](cq4-unified-graph-semantics.md) →
+  [RDF evaluation](rdf-graph-evaluation.md)/J33 → historical J32/J31 → J30/source review →
   [synthesis](synthesis.md) → J29/J28 →
   [provenance extension](belief-network-provenance.md) →
   [methodology](belief-network-methodology.md) and
   [validation frame](belief-network-validation.md). Detailed historical hypotheses
   and source provenance remain in their registers.
-- Research artifacts: local `~/work/epistemics-pilots`; Pilot Q report in
-  `results/pilot-q/report.md`, original readers frozen at `62a5aa5`, later parent
+- Research artifacts: local `~/work/epistemics-pilots`; Pilot S report in
+  `results/pilot-s/report.md`, source-bound `summary-001.json`, original codings frozen
+  at `ee7a7e0`, separate parent at `330f62c`, both before identity/resources. The native
+  parse-rejection auditor amendment is versioned separately; no219 registered input
+  changed. Pilot Q report is in `results/pilot-q/report.md`, original readers frozen
+  at `62a5aa5`, later parent
   adjudication at `12108e0`, both before identity reduction. Earlier human-case commit
   `5f186605d51693d237185cca05ee62fedb6cd8b3`; human case in
   `results/pilot-human-notes/report.md`, immutable baseline binding and closing
@@ -128,16 +147,18 @@ exists here. Do not revive NASA-TLX or substitute time/question counts as a prox
   trusted authority service, semantic approval parser or typed justification engine.
 - Saved during the human case: inert `joint-belief-framing` draft r2, get-verified;
   the portable bundle was not changed or installed. The separate agent-behaviour
-  pilot draft is now r4, saved/get-verified during Q's instrument work, not installed
-  and not a human-workflow result.
+  pilot draft was r4 during Q; a narrow audit-to-projection/citation amendment is now
+  r5, saved/get-verified during S instrument work. Neither is installed or a measured
+  human-workflow result.
 - The RTS case remains unfinished with its old-context Q20/C2/C5 scope conflict
   unresolved. Do not resume game work or transfer consent between examples.
-- The shared schema is a design proposal, not a human-ratified final contract or
-  implemented graph engine. CQ4 implementation/migration and new measured pilots
-  are outside this continuation. Field replay and further agent/human experiments
-  are parked, not implied by this documentation request. Before any new test, name the capability, the
-  framework decision its result could change, its independent assessment basis
-  and its exit criterion. Faithful grounding/impact discovery—not more decoding
+- The shared schema is an accepted working direction, not a deployed authority or
+  completeness guarantee. The authorized RDF phase has a bounded executable profile,
+  not every lifecycle/authentication/collector rule. Custom production MCP and CQ4
+  migration remain paused. Pilot S ends at its registered matrix; field/private replay
+  and additional human experiments are not implied. Before any further test, name its
+  capability, the framework decision it could change, independent assessment basis
+  and exit criterion. Faithful grounding/impact discovery—not more decoding
   of supplied annotations—is an outstanding research gap.
 
 Pilot Q ended at its registered matrix; no outcome-conditioned extension, private
