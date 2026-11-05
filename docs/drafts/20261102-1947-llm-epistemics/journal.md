@@ -2840,3 +2840,15 @@ preserved evidence. Read bytes sum UTF-8 graph_read result text. The report now 
 these units explicit without changing counters, criteria, pairing or results. The
 report digest above identifies the first publication at6c9c3d0, not its later unit
 clarification. No new model session was launched.
+
+Post-integration verification is now complete. Fresh unfiltered integrated runs pass
+136 S methods in361.701s,85 legacy Q methods in0.707s and36 prototype methods in5.983s,
+all zero failures/errors/skips. All225 tested source files and219 registered inputs
+remain unchanged. A fresh offline replay from pilot main reconstructs all16 originals
+and64 checkpoints; its audit, opaque key/inventory and16 complete views are byte-
+identical to the preserved originals (19 artifacts). Validation-005/006 at pilot commit
+`1dd7583ea6a6206b5493cd2db41519c401595647` retain these checks. The unit-clarified report
+SHA256 is `93dd1b7f1e1d039a6995c4c1d950367621a1d080ac8605780411adc6e464117f`;
+summary digest and all results are unchanged. This is additional offline verification,
+not a new participant run or semantic adjudication. Worktree archival/cleanup receipts
+are local controller records; no production implementation or deployment follows.
