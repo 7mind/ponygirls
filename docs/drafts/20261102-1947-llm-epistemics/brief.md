@@ -10,6 +10,11 @@ No example application or CQ4 replacement was built; production MCP remains paus
 [RDF evaluation](rdf-graph-evaluation.md), [service intent](mcp-service-intent.md),
 [source review](cq4-source-review.md), [synthesis](synthesis.md) and [journal](journal.md).
 
+The subsequent [schema intent-review checkpoint](schema-intent-review.md) preserves
+working agreements, tentative ideas and open questions from the guided human review,
+including Question/Conflict naming. It is a resumable review log, not an implemented
+schema revision or authorization to start another pilot or service implementation.
+
 ## Problem and proposed response
 
 Agents expand a small statement of intent into more implementation detail than a
