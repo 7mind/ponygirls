@@ -119,3 +119,32 @@ test("wrapped key hints on a narrow terminal still fit the row budget", async ()
   assert.equal(lines.at(-3), "─".repeat(50));
   v.dispose();
 });
+
+test("allocated fullscreen height preserves quota hints and uses the body's real viewport", async (t) => {
+  const { VStack, Text } = await import("@earendil-works/pi-tui");
+  const { renderLayoutFrame } = await import("@earendil-works/pi-tui/dist/layout.js");
+  const { v } = view({ refreshedAt: NOW, results: results(30) }, 30);
+  t.after(() => v.dispose());
+  await settle();
+  const root = new VStack([
+    { component: new Text("transcript", 0, 0), shrink: 0 },
+    { component: new Text("top badge", 0, 0), shrink: 0 },
+    { component: v, shrink: 1 },
+    { component: new Text("bottom badge\nPi status", 0, 0), shrink: 0 },
+  ]);
+  const frame = () => renderLayoutFrame(root, 48, 18, () => {}).lines;
+  assert.match(frame().join("\n"), /esc close/, "actual allocation must keep the close hints visible");
+  v.handleInput("G");
+  assert.match(frame().join("\n"), /29%/, "End reaches the real last quota row");
+  assert.equal(frame().at(-1)!.trimEnd(), "Pi status");
+  v.handleInput("m");
+  frame();
+  v.handleInput("G");
+  assert.match(frame().join("\n"), /model-a, model-b/);
+  assert.match(renderLayoutFrame(root, 80, 30, () => {}).lines.join("\n"), /esc close/);
+  renderLayoutFrame(root, 48, 12, () => {});
+  v.handleInput("G");
+  const shrunk = renderLayoutFrame(root, 48, 12, () => {}).lines.join("\n");
+  assert.match(shrunk, /model-a, model-b/);
+  assert.match(shrunk, /esc close/);
+});

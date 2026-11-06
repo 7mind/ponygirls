@@ -38,3 +38,29 @@ test("status view honors configured cancel and q without mutating its text", () 
   view.handleInput("not a command");
   assert.match(view.render(40).join("\n"), /snapshot/);
 });
+
+test("allocated fullscreen height preserves status hints and scrolls the complete snapshot", async () => {
+  const { VStack, Text } = await import("@earendil-works/pi-tui");
+  const { renderLayoutFrame } = await import("@earendil-works/pi-tui/dist/layout.js");
+  const view = new ui.StatusView({ title: "Status", text: Array.from({ length: 40 }, (_, n) => `snapshot line ${n}`).join("\n"),
+    theme: ui.PLAIN_THEME, keys: { matches: () => false }, rows: () => 30, requestRender() {}, close() {} });
+  const root = new VStack([
+    { component: new Text("transcript", 0, 0), shrink: 0 },
+    { component: new Text("top badge", 0, 0), shrink: 0 },
+    { component: view, shrink: 1 },
+    { component: new Text("bottom badge\nPi status", 0, 0), shrink: 0 },
+  ]);
+  const frame = () => renderLayoutFrame(root, 48, 18, () => {}).lines;
+  assert.match(frame().join("\n"), /esc\/q close/, "actual allocation must keep the close hints visible");
+  view.handleInput("\u001b[F");
+  assert.match(frame().join("\n"), /snapshot line 39/, "End reaches the real last row, not a pre-clipped body");
+  assert.equal(frame().at(-1)!.trimEnd(), "Pi status");
+  const grown = renderLayoutFrame(root, 80, 30, () => {}).lines.join("\n");
+  assert.match(grown, /snapshot line 39/);
+  assert.match(grown, /esc\/q close/);
+  renderLayoutFrame(root, 48, 12, () => {});
+  view.handleInput("\u001b[F");
+  const shrunk = renderLayoutFrame(root, 48, 12, () => {}).lines.join("\n");
+  assert.match(shrunk, /snapshot line 39/);
+  assert.match(shrunk, /esc\/q close/);
+});

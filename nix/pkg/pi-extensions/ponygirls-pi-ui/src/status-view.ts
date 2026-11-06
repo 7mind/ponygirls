@@ -1,5 +1,6 @@
-import { Key, matchesKey, ScrollView, Text, type Component, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { Key, matchesKey, ScrollView, Text, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { frameTitle, keyHints } from "./frame.ts";
+import { PanelLayout, type PanelParts } from "./panel-layout.ts";
 import type { UiTheme } from "./theme.ts";
 
 export interface StatusViewOptions {
@@ -12,29 +13,39 @@ export interface StatusViewOptions {
   close(): void;
 }
 
-/** Space for the retained editor borders and surrounding interactive chrome. */
-const RESERVED_ROWS = 4;
-
 /** Read-only snapshot with bounded, wrapped content and keyboard/wheel scrolling. */
-export class StatusView implements Component {
+export class StatusView extends PanelLayout {
   private readonly options: StatusViewOptions;
-  private readonly scroll: ScrollView;
+  private readonly regularScroll: ScrollView;
+  private readonly text: Text;
 
   constructor(options: StatusViewOptions) {
+    super((width) => this.renderParts(width));
     this.options = options;
-    this.scroll = new ScrollView(new Text(options.text, 0, 0), { overscroll: "contain" });
+    this.text = new Text(options.text, 0, 0);
+    this.regularScroll = new ScrollView(this.text, { overscroll: "contain" });
   }
 
-  invalidate(): void { this.scroll.invalidate(); }
+  override invalidate(): void { this.text.invalidate(); }
 
-  render(width: number): string[] {
+  private get scroll(): ScrollView { return this.hasAllocatedHeight ? this.bodyScroll : this.regularScroll; }
+
+  private renderParts(width: number): PanelParts {
     const { theme, title } = this.options;
-    const hints = keyHints(theme, width, [{ key: "↑↓ PgUp PgDn", action: "scroll" }, { key: "esc/q", action: "close" }]).lines;
-    const lines = this.scroll.render(width);
-    const height = Math.min(lines.length, Math.max(1, this.options.rows() - RESERVED_ROWS - hints.length - 1));
-    this.scroll.updateLayout(lines.length, height, this.options.requestRender);
-    return [frameTitle(theme, width, { title }, "none").line,
-      ...lines.slice(this.scroll.scrollTop, this.scroll.scrollTop + height), ...hints];
+    return {
+      header: [frameTitle(theme, width, { title }, "none").line],
+      body: this.text.render(width),
+      footer: keyHints(theme, width, [{ key: "↑↓ PgUp PgDn", action: "scroll" }, { key: "esc/q", action: "close" }]).lines,
+    };
+  }
+
+  override render(width: number): string[] {
+    const { header, body, footer } = this.renderParts(width);
+    const height = Math.min(body.length, Math.max(1, this.options.rows() - header.length - footer.length));
+    // Flat rendering is also used for intrinsic measurement; never mutate the allocated body viewport here.
+    this.regularScroll.updateLayout(body.length, height, this.options.requestRender);
+    const start = Math.min(this.scroll.scrollTop, Math.max(0, body.length - height));
+    return [...header, ...body.slice(start, start + height), ...footer];
   }
 
   handleInput(data: string): void {
@@ -48,9 +59,9 @@ export class StatusView implements Component {
     else if (matchesKey(data, Key.end)) this.scroll.scrollToEnd();
   }
 
-  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+  handleMouse(event: TuiMouseEvent): ReturnType<PanelLayout["handleMouse"]> {
     if (event.type !== "wheel" || !event.wheelDelta) return undefined;
     this.scroll.scrollBy(event.wheelDelta);
-    return { handled: true };
+    return { handled: true, target: { component: this, originX: event.screenX - event.x, originY: event.screenY - event.y, width: event.width, height: event.height } };
   }
 }
