@@ -24,6 +24,19 @@ index dbd5be6..77152ce 100644
  			/** Overlay positioning/sizing options. Can be static or a function for dynamic updates. */
  			overlayOptions?: OverlayOptions | (() => OverlayOptions);
  			/** Called with the overlay handle after the overlay is shown. Use to control visibility. */
+diff --git a/packages/coding-agent/src/modes/interactive/chat-viewport.ts b/packages/coding-agent/src/modes/interactive/chat-viewport.ts
+index eff762a..dd3e3a3 100644
+--- a/packages/coding-agent/src/modes/interactive/chat-viewport.ts
++++ b/packages/coding-agent/src/modes/interactive/chat-viewport.ts
+@@ -34,7 +34,7 @@ export function createChatViewport(options: ChatViewportOptions): ChatViewport {
+ 		...(options.widgetsAbove === undefined ? [] : [{ component: options.widgetsAbove, shrink: 1, minSize: 0 }]),
+ 		{ component: options.editor, shrink: 1, minSize: 3 },
+ 		...(options.widgetsBelow === undefined ? [] : [{ component: options.widgetsBelow, shrink: 1, minSize: 0 }]),
+-		{ component: options.footer, shrink: 1, minSize: 0 },
++		{ component: options.footer, shrink: 0 },
+ 	]);
+ 	return {
+ 		transcript,
 diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 index efbf3b6..c11150e 100644
 --- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
@@ -248,6 +261,32 @@ index 2233000..002da6c 100644
  					}
  				})
  				.catch((err) => {
+diff --git a/packages/coding-agent/test/chat-viewport.test.ts b/packages/coding-agent/test/chat-viewport.test.ts
+index c87215d..9b91a5b 100644
+--- a/packages/coding-agent/test/chat-viewport.test.ts
++++ b/packages/coding-agent/test/chat-viewport.test.ts
+@@ -1,8 +1,21 @@
+ import { Container } from "@earendil-works/pi-tui";
+ import { describe, expect, test } from "vitest";
++import { renderLayoutFrame } from "../../tui/src/layout.ts";
+ import { createChatViewport } from "../src/modes/interactive/chat-viewport.ts";
+ 
+ describe("chat viewport", () => {
++	test("preserves the complete footer when a custom editor view exceeds the terminal", () => {
++		const view = createChatViewport({
++			document: new Container(),
++			pendingMessages: new Container(),
++			status: new Container(),
++			editor: { render: () => Array.from({ length: 60 }, () => "detail"), invalidate() {} },
++			footer: { render: () => ["footer path", "footer model"], invalidate() {} },
++		});
++		const frame = renderLayoutFrame(view.root, 48, 12);
++		expect(frame.lines.join("\n")).toContain("footer path");
++		expect(frame.lines.join("\n")).toContain("footer model");
++	});
+ 	test("defaults the transcript scrollbar to auto and accepts overrides", () => {
+ 		const automatic = createChatViewport({
+ 			document: new Container(),
 diff --git a/packages/coding-agent/test/custom-editor-border-content.test.ts b/packages/coding-agent/test/custom-editor-border-content.test.ts
 index 66beec6..4be58f7 100644
 --- a/packages/coding-agent/test/custom-editor-border-content.test.ts
