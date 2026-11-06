@@ -1,6 +1,7 @@
+import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { VStack, visibleWidth } from "@earendil-works/pi-tui";
 import { AgentInspector, AgentsScreen, TranscriptView, badgeState, chatModeFor, compactBadge, countTree, renderHeadless, sanitizeDisplay, widgetLine, type AgentDetails, type ChatMode, type InspectorAction, type TranscriptDeps } from "../src/ui.ts";
 import { PLAIN_STYLE } from "../src/display.ts";
 import { PLAIN_THEME, type UiTheme } from "@ponygirls/pi-ui";
@@ -358,4 +359,41 @@ test("the transcript is framed with the agent path, kind and model, and its stat
   const narrow = ui.render(40);
   assert.equal(narrow.length, 24, "wrapped hints shrink the viewport, not the frame");
   assert.ok(narrow.every((l) => visibleWidth(l) <= 40));
+});
+
+// Behavioral-Active × Blackbox × Group; regression: allocated-height clipping lost pane actions.
+test("allocated inspector layout retains close hints", () => {
+  const { ui } = inspector([], { rows: 24 });
+  const frame = renderLayoutFrame(ui, 100, 18, () => {});
+  assert.match(frame.lines.join("\n"), /esc close/);
+});
+
+// Regression: intrinsic wide previews must not change an allocated transcript's reading position.
+test("transcript measurement preserves scroll position and fixed chat/footer", () => {
+  const { ui } = transcriptView({ file: () => ({ version: "1", text: session([Array.from({ length: 40 }, (_, i) => `word-${i}`).join(" ")]) }) });
+  const root = new VStack([{ component: ui, grow: 0 }]);
+  const draw = () => renderLayoutFrame(root, 48, 12, () => {}).lines;
+  draw();
+  const initial = draw();
+  ui.handleInput(PAGE_UP);
+  const before = draw();
+  assert.notDeepEqual(before, initial, "page up must actually change the reading position before preview");
+  ui.render(120);
+  const after = draw();
+  assert.deepEqual(after, before);
+  assert.ok(after.some((line) => line.includes("›")), "the input remains outside the scrollable body");
+  assert.ok(after.some((line) => line.includes("esc")), "transcript exit hints remain visible");
+});
+
+test("an auto-basis inspector grows with its available height", () => {
+  const { ui } = inspector(Array.from({ length: 30 }, (_, i) => view({ id: `agent-${i}`, path: `/root/agent-${i}` })), { rows: 30 });
+  const root = new VStack([
+    { component: { render: () => ["chat"], invalidate() {} }, basis: 0, grow: 1 },
+    { component: ui, grow: 0 },
+    { component: { render: () => ["status", "badges"], invalidate() {} }, shrink: 0 },
+  ]);
+  renderLayoutFrame(root, 48, 12, () => {});
+  const short = ui.bodyScroll.viewportHeight;
+  renderLayoutFrame(root, 100, 24, () => {});
+  assert.ok(ui.bodyScroll.viewportHeight > short);
 });

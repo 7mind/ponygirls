@@ -10,6 +10,7 @@
 import { Type, type TSchema } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
+import { CustomViewToggle } from "@ponygirls/pi-ui";
 import { FileRunStore } from "./src/store.ts";
 import { CUSTOM_NOTICE, NoticeDelivery, type NoticeSink } from "./src/notice-delivery.ts";
 import { renderNotice, renderSpawnCall, renderSpawnResult } from "./src/render.ts";
@@ -132,6 +133,7 @@ interface SessionBinding {
   ui: ExtensionContext["ui"] | null;
   statusTimer: ReturnType<typeof setTimeout> | null;
   currentCtx: ExtensionContext | null;
+  pane: CustomViewToggle;
   prepareDelegatedCall: (call: Parameters<typeof prepareThroughEventBus>[1]) => ReturnType<typeof prepareThroughEventBus>;
   onSupervisorChange: () => void;
   handoffTimer: ReturnType<typeof setTimeout> | null;
@@ -199,7 +201,12 @@ export default function (pi: ExtensionAPI): void {
       binding.statusTimer = null;
       const views = binding.supervisor.list("user");
       const ctx = binding.currentCtx;
-      publishBadge(binding.ui, views.length > 0 ? views : null, () => { if (ctx) void openAgents("", ctx); });
+      const pane = binding.pane;
+      publishBadge(binding.ui, views.length > 0 ? views : null, () => {
+        if (ctx && bindings.get(binding.sessionId) === binding && binding.pane === pane) {
+          void openAgents("", ctx, "toggle").catch((error: unknown) => ctx.ui.notify(`/agents: ${String(error)}`, "error"));
+        }
+      });
     }, STATUS_THROTTLE_MS);
   }
 
@@ -220,6 +227,7 @@ export default function (pi: ExtensionAPI): void {
     binding.cwd = ctx.cwd;
     binding.ui = ctx.ui;
     binding.currentCtx = ctx;
+    binding.pane = new CustomViewToggle();
     binding.governingActive = true;
     binding.providerActive = true;
     binding.prepareDelegatedCall = (call) => prepareThroughEventBus(pi.events, call);
@@ -292,7 +300,7 @@ export default function (pi: ExtensionAPI): void {
     const store = new FileRunStore(rootDir, sessionId);
     const binding: SessionBinding = {
       sessionId, rootDir, supervisor: null as unknown as Supervisor, model: null, modelRegistry: ctx.modelRegistry, cwd: ctx.cwd, instructions: null,
-      ui: ctx.ui, statusTimer: null, currentCtx: ctx, governingBaseCtx: null, governingActive: true, providerActive: true,
+      ui: ctx.ui, statusTimer: null, currentCtx: ctx, pane: new CustomViewToggle(), governingBaseCtx: null, governingActive: true, providerActive: true,
       prepareDelegatedCall: (call) => prepareThroughEventBus(pi.events, call),
       onSupervisorChange: () => {}, handoffTimer: null, finishHandoff: null,
       policyFingerprint: "", retiring: null,
@@ -592,7 +600,7 @@ export default function (pi: ExtensionAPI): void {
     }),
   );
 
-  const openAgents = async (_args: string, ctx: ExtensionContext): Promise<void> => {
+  const openAgents = async (_args: string, ctx: ExtensionContext, action: "open" | "toggle"): Promise<void> => {
       let binding: SessionBinding;
       try {
         binding = bindingFor(ctx);
@@ -606,7 +614,7 @@ export default function (pi: ExtensionAPI): void {
         ctx.ui.notify(`${widgetLine(views)}\n${renderHeadless(views)}`, "info");
         return;
       }
-      await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+      await binding.pane[action](ctx.ui, (tui, theme, _kb, done) => {
         const style = themeStyle(theme);
         const render = (): void => tui.requestRender();
         const requestId = (): string => `ui:${randomUUID()}`;
@@ -730,12 +738,12 @@ export default function (pi: ExtensionAPI): void {
           render();
         }, SCREEN_POLL_MS);
         return Object.assign(screen, { dispose: () => { if (poll) clearInterval(poll); poll = null; } });
-      }, { overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 } });
+      });
   };
 
   pi.registerCommand("agents", {
     description: "Subagents: tree, details, transcripts with chat, and controls",
-    handler: openAgents,
+    handler: (args, ctx) => openAgents(args, ctx, "open"),
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -772,6 +780,7 @@ export default function (pi: ExtensionAPI): void {
     const sessionId = ctx.sessionManager.getSessionId();
     const binding = bindings.get(sessionId);
     if (!binding) return;
+    binding.pane.dispose();
     bindings.delete(sessionId);
     binding.governingActive = false;
     binding.governingBaseCtx = null;

@@ -734,6 +734,7 @@
             mkdir -p node_modules/@earendil-works
             mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             ln -s "$PI_CODEGRAPH_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_CODEGRAPH_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
             ln -s "$PI_CODEGRAPH_SDK_ROOT/node_modules/@types" node_modules/@types
             tsc -p tsconfig.json
             node --test *.test.ts
@@ -881,6 +882,7 @@
             cd context-archive
             mkdir -p node_modules/@ponygirls
             ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
+            ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             mkdir -p node_modules/@earendil-works
             ln -s "$sdk" node_modules/@earendil-works/pi-coding-agent
             for package in pi-ai pi-agent-core pi-tui; do

@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { FileTogglePreferenceStore, parseToggleCommand, sessionEnabled, sessionEnabledData, TOGGLE_ARGUMENTS, type TogglePreferenceStore } from "@ponygirls/pi-settings";
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { compactChip } from "@ponygirls/pi-ui";
+import { compactChip, CustomViewToggle } from "@ponygirls/pi-ui";
 import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { DECISION_LIMITS, SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
 import { DecisionsPane } from "./src/pane.ts";
@@ -62,7 +62,7 @@ interface Binding {
   delivered: Set<string>;
   stop: () => void;
   repaint: (() => void) | null;
-  paneOpen: boolean;
+  pane: CustomViewToggle;
   failure: string | null;
 }
 
@@ -105,6 +105,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   };
 
   const dispose = (b: Binding): void => {
+    b.pane.dispose();
     b.stop();
     if (b.store !== null) { b.store.close(); b.store = null; }
   };
@@ -132,7 +133,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
           invalidate() {},
           handleMouse(event) {
             if (event.type !== "click" || event.button !== "left") return;
-            void openPane(b, null).catch((error: unknown) => report(b, error));
+            void openPane(b, null, "toggle").catch((error: unknown) => report(b, error));
             return { handled: true };
           },
         }), { placement: "borderBottomLeft" });
@@ -171,28 +172,23 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     return b;
   };
 
-  const openPane = async (b: Binding, id: string | null): Promise<void> => {
+  const openPane = async (b: Binding, id: string | null, action: "open" | "toggle"): Promise<void> => {
+    if (b.pane.isDisposed) return;
     if (b.ctx.mode !== "tui") throw new Error("The decisions inbox requires terminal UI; use /decisions answer Q1 <text>, dismiss, or reopen");
-    if (b.paneOpen) return;
-    b.paneOpen = true;
-    try {
-      await b.ctx.ui.custom<void>((tui, theme, _keys, done) => {
-        b.repaint = () => tui.requestRender();
-        return new DecisionsPane(theme, {
-          tui,
-          load: () => storeFor(b).list(b.project),
-          resolve: (q, status, answer) => {
-            storeFor(b).resolve(b.project, q.id, q.revision, status, answer);
-            refresh(b);
-          },
-          close: () => done(),
-          requestRender: () => tui.requestRender(),
-        }, projectDisplayName(b.project), id, () => Math.max(1, tui.terminal.rows - PANE_CHROME_ROWS), b.sessionId);
-      });
-    } finally {
-      b.repaint = null;
-      b.paneOpen = false;
-    }
+    await b.pane[action](b.ctx.ui, (tui, theme, _keys, done) => {
+      b.repaint = () => tui.requestRender();
+      const pane = new DecisionsPane(theme, {
+        tui,
+        load: () => storeFor(b).list(b.project),
+        resolve: (q, status, answer) => {
+          storeFor(b).resolve(b.project, q.id, q.revision, status, answer);
+          refresh(b);
+        },
+        close: () => done(),
+        requestRender: () => tui.requestRender(),
+      }, projectDisplayName(b.project), id, () => Math.max(1, tui.terminal.rows - PANE_CHROME_ROWS), b.sessionId);
+      return Object.assign(pane, { dispose: () => { b.repaint = null; } });
+    });
   };
 
   pi.on("session_start", (_event, ctx) => {
@@ -210,7 +206,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         }
       }
       const b: Binding = { ctx, project, sessionId: ctx.sessionManager.getSessionId(), store: null, delivered,
-        stop: () => {}, repaint: null, paneOpen: false, failure: null };
+        stop: () => {}, repaint: null, pane: new CustomViewToggle(), failure: null };
       binding = b;
       refresh(b);
       b.stop = deps.watch(() => refresh(b));
@@ -387,14 +383,14 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         if (text !== "" && !/^q[1-9]\d*$/i.test(text)) throw new Error("Usage: /decisions [Qn] | answer Qn <text> | dismiss Qn | reopen Qn | on|off|inherit|default on|default off|status");
         const id = text === "" ? null : questionId(text);
         if (id !== null) storeFor(b).get(b.project, id);
-        if (ctx.mode === "tui") await openPane(b, id);
+        if (ctx.mode === "tui") await openPane(b, id, "open");
         else ctx.ui.notify(plain(id === null ? storeFor(b).list(b.project).map((q) => summary(q, b.sessionId)).join("\n") || "No project questions" : JSON.stringify(storeFor(b).get(b.project, id), null, 2)), "info");
       } catch (error) {
         ctx.ui.notify(`Decisions: ${plain(error instanceof Error ? error.message : String(error))}`, "error");
       }
     },
   });
-  pi.registerShortcut(INBOX_SHORTCUT.key, { description: "Open decisions inbox", handler: async (ctx) => { await openPane(active(ctx), null); } });
+  pi.registerShortcut(INBOX_SHORTCUT.key, { description: "Open decisions inbox", handler: async (ctx) => { await openPane(active(ctx), null, "open"); } });
 }
 
 export default function decisionsExtension(pi: ExtensionAPI): void {

@@ -12,6 +12,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { defineTool, keyText, SessionManager } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { CustomViewToggle } from "@ponygirls/pi-ui";
 
 import {
   blockRecord,
@@ -90,6 +91,7 @@ interface SessionBinding {
   sessionFile: string | undefined;
   store: GoalStore;
   controller: GoalController;
+  pane: CustomViewToggle;
   pendingKickoff: { purpose: "kickoff" | "resync"; revision: number } | null;
   parentGoal: GoalRecord | null;
 }
@@ -352,6 +354,7 @@ export default function (pi: ExtensionAPI): void {
       sessionFile,
       store,
       controller,
+      pane: new CustomViewToggle(),
       pendingKickoff: null,
       parentGoal: null,
     };
@@ -593,12 +596,13 @@ export default function (pi: ExtensionAPI): void {
   );
 
   function publishGoalStatus(binding: SessionBinding, ctx: ExtensionContext): void {
-    refreshGoalStatus(binding, ctx.ui, () => void openGoalPane(binding, ctx));
+    refreshGoalStatus(binding, ctx.ui, () => void openGoalPane(binding, ctx, "toggle").catch((error: unknown) => safeNotify(ctx, String(error), "error")));
   }
 
   /** The /goal pane (TUI): the persisted goal at a glance; its keys run /goal subcommands. */
-  async function openGoalPane(binding: SessionBinding, ctx: ExtensionContext): Promise<void> {
-    await ctx.ui.custom<void>((tui, theme, _kb, done) =>
+  async function openGoalPane(binding: SessionBinding, ctx: ExtensionContext, action: "open" | "toggle"): Promise<void> {
+    if (binding.pane.isDisposed) return;
+    await binding.pane[action](ctx.ui, (tui, theme, _kb, done) =>
       new GoalPane(theme, {
         load: () => paneSnapshot(binding.store),
         run: (action) => runPaneAction(binding, action, ctx),
@@ -639,7 +643,7 @@ export default function (pi: ExtensionAPI): void {
         // non-fatal
       }
       if (ctx.mode === "tui" && ctx.hasUI) {
-        await openGoalPane(binding, ctx);
+        await openGoalPane(binding, ctx, "open");
       } else {
         ctx.ui.notify(formatStatus(envelope.goal, envelope.revision), "info");
       }
@@ -1145,6 +1149,7 @@ export default function (pi: ExtensionAPI): void {
       return;
     }
     if (!binding) return;
+    binding.pane.dispose();
     binding.controller.invalidate("shutdown");
     try {
       ctx.ui.setWidget(GOAL_STATUS_KEY, undefined);

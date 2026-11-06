@@ -1,3 +1,4 @@
+import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 /** The /goal pane: frame, values, status-dependent keys, and widths. */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -175,4 +176,22 @@ test("timestamps read as local day and time plus a relative age", () => {
   assert.equal(relativeAge(2 * 3_600_000 + 5), "2h ago");
   assert.equal(relativeAge(3 * 86_400_000), "3d ago");
   assert.equal(relativeAge(-5_000), "just now");
+});
+
+// Behavioral-Active × Blackbox × Group; regression: allocated-height clipping lost pane actions.
+test("allocated layout retains goal hints below a scrolling long objective", () => {
+  const { pane } = harness(PLAIN_THEME, at({ ...goal, objective: "line\n".repeat(30) }, 1));
+  const frame = renderLayoutFrame(pane, 48, 8, () => {});
+  assert.match(frame.lines.join("\n"), /esc close/);
+  assert.equal(frame.root.children.length, 3);
+});
+
+test("the allocated goal body scrolls without hiding its title and actions", () => {
+  const { pane } = harness(PLAIN_THEME, at({ ...goal, objective: "line\n".repeat(30) }, 1));
+  renderLayoutFrame(pane, 48, 8, () => {});
+  for (let i = 0; i < 10; i++) pane.handleInput("\x1b[6~");
+  const frame = renderLayoutFrame(pane, 48, 8, () => {});
+  assert.match(frame.lines[0]!, /Goal/);
+  assert.match(frame.lines.join("\n"), /updated/);
+  assert.match(frame.lines.at(-1)!, /esc close/);
 });

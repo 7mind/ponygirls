@@ -523,3 +523,42 @@ test("corrupt session override stops automation and a later explicit setting rep
   assert.match(f.notifications.at(-1).message, /append denied/);
   assert.ok(f.active().includes("decisions"));
 });
+
+// Behavioral-Active × Blackbox × Group; regression: a badge could open but not close its pane.
+test("badge toggles the inbox, while command/Esc and shutdown share its lifecycle", async (t) => {
+  const f = fixture(t);
+  f.ctx.mode = "tui";
+  const theme = { bg: (_color, text) => text, fg: (_color, text) => text, bold: (text) => text };
+  let opens = 0;
+  let closes = 0;
+  let pane;
+  f.ctx.ui.custom = (factory) => new Promise((resolve) => {
+    opens += 1;
+    pane = factory({ terminal: { rows: 24 }, requestRender() {} }, theme, {}, () => { closes += 1; resolve(); });
+  });
+  f.start();
+  await f.call({ action: "ask", question: "Proceed?" }, "toggle-question");
+  const badge = f.widgets.at(-1)[1](null, theme);
+  const click = () => badge.handleMouse({ type: "click", button: "left" });
+  assert.equal(badge.handleMouse({ type: "click", button: "right" }), undefined);
+  assert.equal(opens, 0);
+  click();
+  assert.equal(opens, 1);
+  click();
+  assert.equal(closes, 1, "second badge click must invoke the custom completion callback");
+  await new Promise((resolve) => setImmediate(resolve));
+  const command = f.command("");
+  assert.equal(opens, 2);
+  click();
+  assert.equal(closes, 2, "badge closes a command-opened pane too");
+  await command;
+  click();
+  pane.handleInput("\x1b");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closes, 3);
+  click();
+  f.handlers.get("session_shutdown")({}, f.ctx);
+  assert.equal(closes, 4);
+  click();
+  assert.equal(opens, 4, "a retained old badge cannot reopen a disposed session");
+});

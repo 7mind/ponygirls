@@ -4,7 +4,7 @@ import {
   CURSOR_MARKER, Editor, Key, Markdown, SelectList, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi,
   type Component, type Focusable, type MarkdownTheme, type TUI,
 } from "@earendil-works/pi-tui";
-import { fit as fitCell, frameRule, frameTitle, keyHints, listRow, type KeyHint, type UiFg } from "@ponygirls/pi-ui";
+import { PanelLayout, type PanelParts, fit as fitCell, frameRule, frameTitle, keyHints, listRow, type KeyHint, type UiFg } from "@ponygirls/pi-ui";
 import type { Decision } from "./store.ts";
 
 export interface DecisionsPaneCallbacks {
@@ -81,7 +81,7 @@ interface Section {
  * Render reloads current records; a draft retains its original CAS revision.
  * Ctrl+R explicitly adopts the latest revision without dropping draft text.
  */
-export class DecisionsPane implements Component, Focusable {
+export class DecisionsPane extends PanelLayout implements Component, Focusable {
   private items: Decision[] = [];
   private selectedId: string | null;
   private all = false;
@@ -105,6 +105,7 @@ export class DecisionsPane implements Component, Focusable {
   private sessionId: string;
 
   constructor(theme: Theme, callbacks: DecisionsPaneCallbacks, projectName: string, initialId: string | null, getHeight: () => number, sessionId: string) {
+    super((width) => this.renderParts(width));
     this.theme = theme;
     this.callbacks = callbacks;
     this.projectName = projectName;
@@ -135,7 +136,7 @@ export class DecisionsPane implements Component, Focusable {
     if (this.editor) this.editor.focused = value && this.draft?.mode === "editor";
   }
 
-  invalidate(): void { this.sectionCache = null; this.editor?.invalidate(); }
+  invalidate(): void { super.invalidate(); this.sectionCache = null; this.editor?.invalidate(); }
 
   /** Also called on every render and key event; does not replace an active draft. */
   refresh(): void {
@@ -344,16 +345,20 @@ export class DecisionsPane implements Component, Focusable {
   }
 
   private viewport(lines: string[], rows: number): string[] {
-    this.detailRows = Math.max(1, rows);
-    this.detailLength = lines.length;
-    this.scroll = Math.max(0, Math.min(this.scroll, lines.length - this.detailRows));
-    return lines.slice(this.scroll, this.scroll + rows);
+    const detailRows = Math.max(1, rows);
+    const scroll = Math.max(0, Math.min(this.scroll, lines.length - detailRows));
+    if (!this.isMeasuring) {
+      this.detailRows = detailRows;
+      this.detailLength = lines.length;
+      this.scroll = scroll;
+    }
+    return lines.slice(scroll, scroll + rows);
   }
 
-  render(width: number): string[] {
-    this.refresh();
-    const w = Math.max(0, Math.floor(width)), height = Math.max(0, Math.floor(this.getHeight()));
-    if (!w || !height) return [];
+  private renderParts(width: number): PanelParts {
+    if (!this.isMeasuring) this.refresh();
+    const w = Math.max(0, Math.floor(width)), height = Math.max(0, Math.floor(this.height(this.getHeight())));
+    if (!w || !height) return { header: [], body: [], footer: [] };
     const fit = (s: string) => truncateToWidth(s, w, "…");
     const dim = (s: string) => this.theme.fg("dim", s);
     const draft = this.draft, d = draft?.base ?? this.current();
@@ -404,8 +409,9 @@ export class DecisionsPane implements Component, Focusable {
         out.push(...lines.slice(start, start + rows));
       } else if (draft?.mode === "options") {
         const count = Math.min(d.options.length + 1, Math.max(1, Math.floor(rows / 2)));
-        this.choices = this.makeChoices(Math.max(1, count - 1));
-        const choices = this.choices.render(w).slice(0, count);
+        const selection = this.makeChoices(Math.max(1, count - 1));
+        if (!this.isMeasuring) this.choices = selection;
+        const choices = selection.render(w).slice(0, count);
         out.push(...choices);
         out.push(...this.viewport(this.sections([{ label: "Selected option", body: draft.answer ?? "" }], w), Math.max(0, rows - choices.length)));
       } else {
@@ -416,6 +422,6 @@ export class DecisionsPane implements Component, Focusable {
         out.push(...this.viewport(this.sections(sections, w), rows));
       }
     }
-    return [...out.slice(0, height - bottom.length), ...bottom].map(fit);
+    return { header: out.slice(0, 1).map(fit), body: out.slice(1, height - bottom.length).map(fit), footer: bottom.map(fit) };
   }
 }
