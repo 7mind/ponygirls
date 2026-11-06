@@ -115,6 +115,17 @@ buildNpmPackage (finalAttrs: {
     runHook postBuild
   '';
 
+  doCheck = true;
+  checkPhase = ''
+    runHook preCheck
+    (cd packages/coding-agent && ../../node_modules/.bin/vitest run \
+      test/custom-editor-border-content.test.ts \
+      test/interactive-mode-widget-placement.test.ts \
+      test/interactive-mode-extension-dialogs.test.ts \
+      test/interactive-mode-status.test.ts)
+    runHook postCheck
+  '';
+
   dontNpmPrune = true;
 
   preInstall = ''

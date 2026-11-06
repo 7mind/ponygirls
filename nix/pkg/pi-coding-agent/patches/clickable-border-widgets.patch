@@ -25,7 +25,7 @@ index dbd5be6..77152ce 100644
  			overlayOptions?: OverlayOptions | (() => OverlayOptions);
  			/** Called with the overlay handle after the overlay is shown. Use to control visibility. */
 diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
-index efbf3b6..b01fd7e 100644
+index efbf3b6..c11150e 100644
 --- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 +++ b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 @@ -1,4 +1,5 @@
@@ -42,7 +42,7 @@ index efbf3b6..b01fd7e 100644
  	public readonly embedWorkingStatus: boolean;
  	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
  
-@@ -212,15 +214,57 @@ export class CustomEditor extends Editor {
+@@ -212,15 +214,58 @@ export class CustomEditor extends Editor {
  		} else {
  			this.borderContent.set(key, { slot, content });
  		}
@@ -92,7 +92,8 @@ index efbf3b6..b01fd7e 100644
 +			const result = span.content.handleMouse({
 +				...event, x: event.x - span.start, y: 0, width: span.end - span.start, height: 1,
 +			});
-+			if (result !== undefined) return result;
++			// Keep gesture ownership here, not on a forwarded child that may be disposed before release.
++			if (result !== undefined) return { handled: result.handled, capture: result.capture, focus: result.focus, render: result.render };
 +		}
 +		return undefined;
 +	}
@@ -100,7 +101,7 @@ index efbf3b6..b01fd7e 100644
  	protected override renderTopBorder(width: number, hiddenLineCount: number): string {
  		const composed = this.renderBorderWithContent(width, hiddenLineCount, "↑", "topLeft", "topRight");
  		this.borderSpans.top = composed?.spans ?? [];
-@@ -241,17 +285,8 @@ export class CustomEditor extends Editor {
+@@ -241,17 +286,8 @@ export class CustomEditor extends Editor {
  	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
  		const edge = event.y === 0 ? "top" : event.y === this.renderedVisibleLineCount + 1 ? "bottom" : undefined;
  		if (edge !== undefined) {
@@ -121,10 +122,18 @@ index efbf3b6..b01fd7e 100644
  		return super.handleMouse(event);
  	}
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 2233000..8ca04c4 100644
+index 2233000..002da6c 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-@@ -245,6 +245,14 @@ function isBorderContentEditor(editor: EditorComponent): editor is BorderContent
+@@ -52,6 +52,7 @@ import {
+ 	type TuiMouseEvent,
+ 	type TuiMouseEventResult,
+ 	visibleWidth,
++	VStack,
+ } from "@earendil-works/pi-tui";
+ import chalk from "chalk";
+ import { spawn } from "child_process";
+@@ -245,6 +246,14 @@ function isBorderContentEditor(editor: EditorComponent): editor is BorderContent
  	);
  }
  
@@ -139,7 +148,16 @@ index 2233000..8ca04c4 100644
  /** The border slot a border placement renders in, or undefined for above/below placements. */
  function borderSlotOf(placement: WidgetPlacement): EditorBorderSlot | undefined {
  	switch (placement) {
-@@ -609,7 +617,8 @@ export class InteractiveMode {
+@@ -509,7 +518,7 @@ export class InteractiveMode {
+ 	private autocompleteProvider: AutocompleteProvider | undefined;
+ 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
+ 	private fdPath: string | undefined;
+-	private editorContainer: Container;
++	private editorContainer: VStack;
+ 	private activeSelectorToken?: object;
+ 	private activeSelectorDispose?: () => void;
+ 	private footer: FooterComponent;
+@@ -609,7 +618,8 @@ export class InteractiveMode {
  	// Extension UI state
  	// Extension dialogs shown in the editor slot (select, confirm, input, editor, inline custom).
  	// The last entry is visible; see pushExtensionDialog().
@@ -149,7 +167,16 @@ index 2233000..8ca04c4 100644
  	private extensionTerminalInputSubscriptions = new Set<{
  		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
  		unsubscribe: () => void;
-@@ -2764,9 +2773,9 @@ export class InteractiveMode {
+@@ -700,7 +710,7 @@ export class InteractiveMode {
+ 			embedWorkingStatus: true,
+ 		});
+ 		this.editor = this.defaultEditor;
+-		this.editorContainer = new Container();
++		this.editorContainer = new VStack();
+ 		this.editorContainer.addChild(this.editor as Component);
+ 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
+ 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
+@@ -2764,9 +2774,9 @@ export class InteractiveMode {
  	 * the previous one again. Every dialog stays answerable, so no dialog promise is left pending,
  	 * and dialogs opened from inside another dialog (for example a confirm from a custom component) work.
  	 */
@@ -161,7 +188,7 @@ index 2233000..8ca04c4 100644
  		this.showTopExtensionDialog();
  	}
  
-@@ -2781,8 +2790,15 @@ export class InteractiveMode {
+@@ -2781,8 +2791,15 @@ export class InteractiveMode {
  	private showTopExtensionDialog(): void {
  		const top = this.extensionDialogs.at(-1);
  		const component = top?.component ?? this.editor;
@@ -170,14 +197,14 @@ index 2233000..8ca04c4 100644
  		this.editorContainer.clear();
 +		const editor = this.editor;
 +		const retainBorders = top?.retainEditorBorders === true;
-+		const isActive = () => this.extensionDialogBorderOwner === owner;
-+		if (retainBorders && isBorderRowEditor(editor)) this.editorContainer.addChild(editor.createBorderComponent("top", isActive));
++		const isActive = () => this.extensionDialogBorderOwner === owner && this.editorContainer.children.includes(component);
++		if (retainBorders && isBorderRowEditor(editor)) this.editorContainer.addChild(editor.createBorderComponent("top", isActive), { shrink: 0 });
  		this.editorContainer.addChild(component);
-+		if (retainBorders && isBorderRowEditor(editor)) this.editorContainer.addChild(editor.createBorderComponent("bottom", isActive));
++		if (retainBorders && isBorderRowEditor(editor)) this.editorContainer.addChild(editor.createBorderComponent("bottom", isActive), { shrink: 0 });
  		this.ui.setFocus(component);
  		this.programStatus.setBlocked("extension-dialog", top?.blocked);
  		this.ui.requestRender();
-@@ -2819,7 +2835,7 @@ export class InteractiveMode {
+@@ -2819,7 +2836,7 @@ export class InteractiveMode {
  				() => finish(undefined),
  				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
  			);
@@ -186,7 +213,7 @@ index 2233000..8ca04c4 100644
  		});
  	}
  
-@@ -2876,7 +2892,7 @@ export class InteractiveMode {
+@@ -2876,7 +2893,7 @@ export class InteractiveMode {
  				() => finish(undefined),
  				{ tui: this.ui, timeout: opts?.timeout },
  			);
@@ -195,7 +222,7 @@ index 2233000..8ca04c4 100644
  		});
  	}
  
-@@ -2899,7 +2915,7 @@ export class InteractiveMode {
+@@ -2899,7 +2916,7 @@ export class InteractiveMode {
  				undefined,
  				this.settingsManager.getExternalEditorCommand(),
  			);
@@ -204,7 +231,7 @@ index 2233000..8ca04c4 100644
  		});
  	}
  
-@@ -3008,6 +3024,7 @@ export class InteractiveMode {
+@@ -3008,6 +3025,7 @@ export class InteractiveMode {
  		) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>,
  		options?: {
  			overlay?: boolean;
@@ -212,7 +239,7 @@ index 2233000..8ca04c4 100644
  			overlayOptions?: OverlayOptions | (() => OverlayOptions);
  			onHandle?: (handle: OverlayHandle) => void;
  		},
-@@ -3063,7 +3080,7 @@ export class InteractiveMode {
+@@ -3063,7 +3081,7 @@ export class InteractiveMode {
  						// Expose handle to caller for visibility control
  						options?.onHandle?.(overlayHandle);
  					} else {
@@ -222,10 +249,10 @@ index 2233000..8ca04c4 100644
  				})
  				.catch((err) => {
 diff --git a/packages/coding-agent/test/custom-editor-border-content.test.ts b/packages/coding-agent/test/custom-editor-border-content.test.ts
-index 66beec6..07554d3 100644
+index 66beec6..4be58f7 100644
 --- a/packages/coding-agent/test/custom-editor-border-content.test.ts
 +++ b/packages/coding-agent/test/custom-editor-border-content.test.ts
-@@ -142,6 +142,60 @@ describe("CustomEditor border content", () => {
+@@ -142,6 +142,61 @@ describe("CustomEditor border content", () => {
  });
  
  describe("CustomEditor border content mouse input", () => {
@@ -248,7 +275,8 @@ index 66beec6..07554d3 100644
 +	it("renders independent border rows with local mouse coordinates and no editor focus", () => {
 +		initTheme("dark");
 +		const editor = createEditor();
-+		const seen = vi.fn(() => ({ handled: true, focus: true }));
++		const child = { render: () => ["nested"], invalidate: () => {} };
++		const seen = vi.fn(() => ({ handled: true, focus: true, target: { component: child, originX: 0, originY: 0, width: 8, height: 1 }, focusTarget: child }));
 +		editor.setBorderContent("bottomLeft", "badge", { render: () => "界 badge", handleMouse: seen });
 +		let active = true;
 +		const border = editor.createBorderComponent("bottom", () => active);
@@ -287,20 +315,22 @@ index 66beec6..07554d3 100644
  		initTheme("dark");
  		const editor = createEditor();
 diff --git a/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts b/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
-index d296ff2..4be38a0 100644
+index d296ff2..5dec2cf 100644
 --- a/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
 +++ b/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
-@@ -1,5 +1,9 @@
- import { type Component, Container, Text } from "@earendil-works/pi-tui";
+@@ -1,5 +1,10 @@
+-import { type Component, Container, Text } from "@earendil-works/pi-tui";
++import { type Component, Container, Text, VStack } from "@earendil-works/pi-tui";
  import { beforeAll, describe, expect, it, vi } from "vitest";
 +import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
 +import { KeybindingsManager } from "../src/core/keybindings.ts";
 +import { getEditorTheme } from "../src/modes/interactive/theme/theme.ts";
 +import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
++import { renderLayoutFrame } from "../../tui/src/layout.ts";
  import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
  import { initTheme } from "../src/modes/interactive/theme/theme.ts";
  
-@@ -18,6 +22,7 @@ type DialogMethods = {
+@@ -18,6 +23,7 @@ type DialogMethods = {
  	showExtensionConfirm(title: string, message: string, opts?: { signal?: AbortSignal }): Promise<boolean>;
  	showExtensionCustom<T>(
  		factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
@@ -308,7 +338,16 @@ index d296ff2..4be38a0 100644
  	): Promise<T>;
  };
  
-@@ -62,6 +67,44 @@ function visible(context: DialogContext): string {
+@@ -32,7 +38,7 @@ function createContext(): DialogContext & DialogMethods {
+ 	});
+ 	const context: DialogContext = {
+ 		extensionDialogs: [],
+-		editorContainer: new Container(),
++		editorContainer: new VStack(),
+ 		editor,
+ 		focused: undefined,
+ 		ui: {
+@@ -62,6 +68,66 @@ function visible(context: DialogContext): string {
  describe("InteractiveMode extension dialogs", () => {
  	beforeAll(() => initTheme("dark"));
  
@@ -331,6 +370,11 @@ index d296ff2..4be38a0 100644
 +		expect(lines).toContain("badge");
 +		expect(lines).not.toContain("private unsent draft");
 +		const row = context.editorContainer.children.at(-1)!;
++		const mounted = [...context.editorContainer.children];
++		context.editorContainer.clear();
++		row.handleMouse!(click);
++		expect(badge).not.toHaveBeenCalled();
++		for (const child of mounted) context.editorContainer.addChild(child);
 +		const focused = context.focused;
 +		expect(row).not.toBe(focused);
 +		const confirm = context.showExtensionConfirm("Permission", "allow?");
@@ -348,6 +392,23 @@ index d296ff2..4be38a0 100644
 +		expect(editor.getText()).toBe("private unsent draft");
 +		restoredRow.handleMouse!(click);
 +		expect(badge).toHaveBeenCalledTimes(1);
++	});
++
++	it("reserves a bottom badge in a height-constrained tall view", async () => {
++		const context = createContext();
++		const editor = new CustomEditor({ ...context.ui, terminal: { rows: 6 } } as unknown as TUI, getEditorTheme(), KeybindingsManager.create());
++		context.editor = editor;
++		editor.setBorderContent("bottomLeft", "test", { render: () => "badge" });
++		let done: () => void = () => {};
++		const custom = context.showExtensionCustom<void>((_tui, _theme, _keys, finish) => {
++			done = finish;
++			return new Text(Array.from({ length: 30 }, (_, i) => `detail ${i}`).join("\n"), 0, 0);
++		}, { retainEditorBorders: true });
++		await vi.waitFor(() => expect(context.editorContainer.children.length).toBe(3));
++		const frame = renderLayoutFrame(context.editorContainer, 80, 6);
++		expect(frame.lines.join("\n")).toContain("badge");
++		done();
++		await custom;
 +	});
 +
  	// Regression for #11166: a second dialog replaced the first one and the first promise never settled.
