@@ -1,0 +1,325 @@
+From ef8a63a006a6cb08f454498f3dac28974d04d2d3 Mon Sep 17 00:00:00 2001
+From: Pavel Shirshov <pshirshov@eml.cc>
+Date: Fri, 6 Nov 2026 13:35:21 +0000
+Subject: [PATCH] fix(tui): backport non-clearing shrink viewport restoration
+
+Backport f3a5defc79f7cbca98b07765d2b7cebd2ea22895 onto the pinned 1.4.0 runtime without changing its OSC/output handling, APIs, dependencies, or model catalog. Preserve the same renderer regression coverage and bounded image-aware viewport replay.
+---
+ packages/tui/src/tui-main-screen.ts           |  67 +++++++---
+ .../tui/test/tui-main-screen-mouse.test.ts    |   3 +-
+ packages/tui/test/tui-render.test.ts          | 119 ++++++++++++++++++
+ 3 files changed, 174 insertions(+), 15 deletions(-)
+
+diff --git a/packages/tui/src/tui-main-screen.ts b/packages/tui/src/tui-main-screen.ts
+index 518d4e0..54ab5cb 100644
+--- a/packages/tui/src/tui-main-screen.ts
++++ b/packages/tui/src/tui-main-screen.ts
+@@ -270,6 +270,15 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 		return reservedRows;
+ 	}
+ 
++	private getKittyImageBlockStart(lines: string[], row: number): number {
++		for (let i = 0; i < row && i < lines.length; ) {
++			const end = i + this.getKittyImageReservedRows(lines, i);
++			if (end > row) return i;
++			i = end;
++		}
++		return row;
++	}
++
+ 	private expandChangedRangeForKittyImages(
+ 		firstChanged: number,
+ 		lastChanged: number,
+@@ -358,23 +367,40 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 
+ 		newLines = this.applyLineResets(newLines);
+ 
+-		// Helper to clear scrollback and viewport and render all new lines
+-		const fullRender = (clear: boolean): void => {
++		// Viewport replay restores newly visible rows without replaying unrelated history.
++		const fullRender = (mode: "append" | "clear" | "viewport"): void => {
++			const clear = mode === "clear";
++			const viewport = mode === "viewport";
++			// A clipped Kitty block must be replayed from its actual header, not its reserved blank rows.
++			const startLine = viewport ? this.getKittyImageBlockStart(newLines, Math.max(0, newLines.length - height)) : 0;
+ 			this.fullRedrawCount += 1;
+ 			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
+ 			output.append("\x1b[?2026h"); // Begin synchronized output
+ 			if (clear) {
+ 				output.append(this.deleteKittyImages(this.previousKittyImageIds));
+ 				output.append("\x1b[2J\x1b[H\x1b[3J"); // Clear screen, home, then clear scrollback
++			} else if (viewport) {
++				const oldStart = this.getKittyImageBlockStart(this.previousLines, Math.max(0, prevViewportTop));
++				output.append(this.deleteKittyImages(this.collectKittyImageIds(this.previousLines.slice(oldStart))));
++				output.append("\x1b[H");
+ 			}
+-			for (let i = 0; i < newLines.length; i++) {
+-				if (i > 0) output.append("\r\n");
++			for (let i = startLine; i < newLines.length; i++) {
++				if (i > startLine) output.append("\r\n");
++				if (viewport) output.append("\x1b[2K");
+ 				const line = newLines[i];
+ 				const isImage = isImageLine(line);
+ 				const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i) : 1;
++				if (viewport && imageReservedRows > height) {
++					// Clear before placement; clearing reserved rows afterwards would erase the image.
++					output.append("\x1b[J");
++					output.append(line);
++					for (let row = 1; row < imageReservedRows; row++) output.append("\r\n");
++					i += imageReservedRows - 1;
++					continue;
++				}
+ 				if (imageReservedRows > 1 && imageReservedRows <= height) {
+ 					for (let row = 1; row < imageReservedRows; row++) {
+-						output.append("\r\n");
++						output.append(viewport ? "\r\n\x1b[2K" : "\r\n");
+ 					}
+ 					output.append(`\x1b[${imageReservedRows - 1}A`);
+ 					output.append(line);
+@@ -384,6 +410,12 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 				}
+ 				output.append(line);
+ 			}
++			if (viewport && newLines.length - startLine < height) {
++				output.append("\r"); // Settle pending wrap before erasing only the unused viewport rows.
++				if (newLines.length > 0) output.append("\x1b[1B");
++				output.append("\x1b[J");
++				if (newLines.length > 0) output.append("\x1b[1A");
++			}
+ 			output.append("\x1b[?2026l"); // End synchronized output
+ 			output.flush();
+ 			this.cursorRow = Math.max(0, newLines.length - 1);
+@@ -396,7 +428,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 			}
+ 			const bufferLength = Math.max(height, newLines.length);
+ 			this.previousViewportTop = Math.max(0, bufferLength - height);
+-			this.mouseOriginKnown = clear || newLines.length >= height;
++			this.mouseOriginKnown = mode !== "append" || newLines.length >= height;
+ 			this.positionHardwareCursor(cursorPos, newLines.length);
+ 			this.previousLines = newLines;
+ 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+@@ -416,14 +448,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 		// First render - just output everything without clearing (assumes clean screen)
+ 		if (this.previousLines.length === 0 && !widthChanged && !heightChanged) {
+ 			logRedraw("first render");
+-			fullRender(false);
++			fullRender("append");
+ 			return;
+ 		}
+ 
+ 		// Width changes always need a full re-render because wrapping changes.
+ 		if (widthChanged) {
+ 			logRedraw(`terminal width changed (${this.previousWidth} -> ${width})`);
+-			fullRender(true);
++			fullRender("clear");
+ 			return;
+ 		}
+ 
+@@ -432,7 +464,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 		// In that environment, a full redraw causes the entire history to replay on every toggle.
+ 		if (heightChanged && !isTermuxSession()) {
+ 			logRedraw(`terminal height changed (${this.previousHeight} -> ${height})`);
+-			fullRender(true);
++			fullRender("clear");
+ 			return;
+ 		}
+ 
+@@ -441,7 +473,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 		// Configurable via setClearOnShrink()
+ 		if (this.getClearOnShrink() && newLines.length < this.maxLinesRendered && !this.hasOverlayEntries) {
+ 			logRedraw(`clearOnShrink (maxLinesRendered=${this.maxLinesRendered})`);
+-			fullRender(true);
++			fullRender("clear");
++			return;
++		}
++
++		const nextViewportTop = Math.max(0, newLines.length - height);
++		if (newLines.length < this.previousLines.length && nextViewportTop < prevViewportTop) {
++			logRedraw(`shrink rebased viewport (${prevViewportTop} -> ${nextViewportTop})`);
++			fullRender("viewport");
+ 			return;
+ 		}
+ 
+@@ -492,7 +531,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 				const targetRow = Math.max(0, newLines.length - 1);
+ 				if (targetRow < prevViewportTop) {
+ 					logRedraw(`deleted lines moved viewport up (${targetRow} < ${prevViewportTop})`);
+-					fullRender(true);
++					fullRender("clear");
+ 					return;
+ 				}
+ 				const lineDiff = computeLineDiff(targetRow);
+@@ -503,7 +542,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 				const extraLines = this.previousLines.length - newLines.length;
+ 				if (extraLines > height) {
+ 					logRedraw(`extraLines > height (${extraLines} > ${height})`);
+-					fullRender(true);
++					fullRender("clear");
+ 					return;
+ 				}
+ 				const clearStartOffset = newLines.length === 0 ? 0 : 1;
+@@ -536,7 +575,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 		// If the first changed line is above the previous viewport, we need a full redraw.
+ 		if (firstChanged < prevViewportTop) {
+ 			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+-			fullRender(true);
++			fullRender("clear");
+ 			return;
+ 		}
+ 
+@@ -584,7 +623,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 					logRedraw(
+ 						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
+ 					);
+-					fullRender(true);
++					fullRender("clear");
+ 					return;
+ 				}
+ 
+diff --git a/packages/tui/test/tui-main-screen-mouse.test.ts b/packages/tui/test/tui-main-screen-mouse.test.ts
+index 4f83924..8074625 100644
+--- a/packages/tui/test/tui-main-screen-mouse.test.ts
++++ b/packages/tui/test/tui-main-screen-mouse.test.ts
+@@ -113,7 +113,8 @@ describe("regular-mode mouse", () => {
+ 		tui.renderNow();
+ 		await terminal.flush();
+ 		const row = terminal.getViewport().findIndex((line) => line.startsWith("overlay"));
+-		assert.equal(row, 2);
++		assert.equal(row, 10);
++		assert.equal(terminal.getViewport()[0], "line 0");
+ 		assert.equal(handle.getBounds()?.row, row);
+ 		terminal.sendInput(`\x1b[<0;2;${row + 1}M`);
+ 		tui.renderNow();
+diff --git a/packages/tui/test/tui-render.test.ts b/packages/tui/test/tui-render.test.ts
+index 3749eac..49573dd 100644
+--- a/packages/tui/test/tui-render.test.ts
++++ b/packages/tui/test/tui-render.test.ts
+@@ -590,6 +590,125 @@ describe("TUI resize handling", () => {
+ });
+ 
+ describe("TUI content shrinkage", () => {
++	it("preserves a full-width final row and subsequent append after viewport rebase", async () => {
++		const terminal = new LoggingVirtualTerminal(5, 4);
++		const tui = new TuiMainScreen(terminal);
++		const component = new TestComponent();
++		component.lines = Array.from({ length: 9 }, () => "older");
++		tui.addChild(component);
++		tui.renderNow();
++		await terminal.flush();
++		component.lines = ["12345"];
++		tui.renderNow();
++		await terminal.flush();
++		assert.deepStrictEqual(terminal.getViewport(), ["12345", "", "", ""]);
++		component.lines.push("after");
++		tui.renderNow();
++		await terminal.flush();
++		assert.deepStrictEqual(terminal.getViewport(), ["12345", "after", "", ""]);
++		tui.stop();
++	});
++
++	it("does not extend image replay beyond actual contiguous reserved rows", async () => {
++		const terminal = new LoggingVirtualTerminal(20, 4);
++		const tui = new TuiMainScreen(terminal);
++		const component = new TestComponent();
++		const image = encodeKitty("AAAA", { rows: 1000000, imageId: 43, moveCursor: false });
++		const shortLines = [image, "", "visible 0", "visible 1", "visible 2", "visible 3"];
++		component.lines = [...shortLines, ...Array.from({ length: 10 }, () => "old tail")];
++		tui.addChild(component);
++		tui.renderNow();
++		await terminal.flush();
++		terminal.clearWrites();
++		component.lines = shortLines;
++		tui.renderNow();
++		await terminal.flush();
++		assert.ok(!terminal.getWrites().includes(image), "the non-intersecting image must stay outside the replay");
++		assert.deepStrictEqual(terminal.getViewport(), shortLines.slice(2));
++		tui.stop();
++	});
++
++	for (const imageRows of [3, 7]) {
++		it(`replays an intersecting ${imageRows}-row Kitty block before a rebased viewport`, async () => {
++			const terminal = new LoggingVirtualTerminal(20, 4);
++			const tui = new TuiMainScreen(terminal);
++			const component = new TestComponent();
++			const image = encodeKitty("AAAA", { rows: imageRows, imageId: 42, moveCursor: false });
++			const shortLines = [
++				"old prefix",
++				image,
++				...Array.from({ length: imageRows - 1 }, () => ""),
++				`draft${CURSOR_MARKER}`,
++				"footer",
++			];
++			component.lines = [...shortLines, ...Array.from({ length: 10 }, (_, i) => `old tail ${i}`)];
++			tui.addChild(component);
++			tui.renderNow();
++			await terminal.flush();
++			const history = terminal.getScrollBuffer().slice(0, -terminal.rows);
++			terminal.clearWrites();
++			component.lines = shortLines;
++			tui.renderNow();
++			await terminal.flush();
++			const writes = terminal.getWrites();
++			assert.ok(writes.includes(image), "image wire sequence must be replayed intact");
++			assert.ok(!writes.includes(`${image}\r\n\x1b[2K`), "must not erase reserved rows after drawing the image");
++			assert.ok(!writes.includes("old prefix"), "replay must not include unrelated historical prefix");
++			assert.ok(!writes.includes("\x1b[3J"));
++			assert.ok(!writes.includes(deleteKittyImage(42)), "fully historical placement must not be explicitly deleted");
++			assert.deepStrictEqual(terminal.getViewport(), ["", "", "draft", "footer"]);
++			assert.deepStrictEqual(terminal.getCursorPosition(), { x: 5, y: 2 });
++			assert.deepStrictEqual(terminal.getScrollBuffer().slice(0, history.length), history);
++			tui.stop();
++		});
++	}
++
++	for (const mouse of [false, true]) {
++		for (const scenario of ["shared prefix", "still overflowing", "deleted tail", "empty"] as const) {
++			it(`restores newly visible rows after ${scenario} shrink with mouse=${mouse}`, async () => {
++				const terminal = new LoggingVirtualTerminal(48, 18);
++				terminal.write("prior shell line\r\n".repeat(7));
++				const tui = new TuiMainScreen(terminal, undefined, undefined, { mouse });
++				tui.setClearOnShrink(false);
++				const component = new TestComponent();
++				const prefix = ["header0", "header1", "header2", "header3", "header4", "TOP QUOTA BADGE"];
++				const footer = ["BOTTOM CHIPS", "footer1", "footer2"];
++				const longLines = [...prefix, ...Array.from({ length: 15 }, (_, i) => `dialog ${i}`), ...footer];
++				const shortLines =
++					scenario === "shared prefix"
++						? [...prefix, `unsent draft${CURSOR_MARKER}`, ...footer]
++						: scenario === "still overflowing"
++							? [...prefix, ...Array.from({ length: 10 }, (_, i) => `remaining ${i}`), ...footer]
++							: scenario === "deleted tail"
++								? longLines.slice(0, 10)
++								: [];
++				tui.addChild(component);
++				for (let cycle = 0; cycle < 2; cycle++) {
++					component.lines = longLines;
++					tui.renderNow();
++					await terminal.flush();
++					const history = terminal.getScrollBuffer().slice(0, -terminal.rows);
++					terminal.clearWrites();
++					component.lines = shortLines;
++					tui.renderNow();
++					await terminal.flush();
++					const visible = shortLines.slice(-terminal.rows).map((line) => line.replace(CURSOR_MARKER, ""));
++					assert.deepStrictEqual(terminal.getViewport(), [
++						...visible,
++						...Array.from({ length: terminal.rows - visible.length }, () => ""),
++					]);
++					assert.deepStrictEqual(terminal.getScrollBuffer().slice(0, history.length), history);
++					assert.ok(!terminal.getWrites().includes("\x1b[3J"), "shrink must preserve scrollback");
++					assert.ok(!terminal.getWrites().includes("\x1b[2J"), "shrink must not clear the entire screen");
++					if (scenario === "shared prefix") {
++						assert.deepStrictEqual(terminal.getCursorPosition(), { x: 12, y: 6 });
++					}
++				}
++				tui.stop();
++			});
++		}
++	}
++
+ 	it("clears empty rows when content shrinks significantly", async () => {
+ 		const terminal = new VirtualTerminal(40, 10);
+ 		const tui: TUI = new TuiMainScreen(terminal);
+-- 
+2.56.0
+

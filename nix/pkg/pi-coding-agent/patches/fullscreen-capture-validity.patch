@@ -1,0 +1,2244 @@
+From 91942df9125d5c427e1804b736a17a86c8b636bd Mon Sep 17 00:00:00 2001
+From: Pavel Shirshov <pshirshov@eml.cc>
+Date: Fri, 6 Nov 2026 16:31:01 +0000
+Subject: [PATCH] fix(tui): backport complete fullscreen mouse validity
+ correction
+
+Apply the complete a2984f67..469d0e72 correction to Pi 1.4.0 as one commit, including safe capture transfers and explicit internal validity provenance. Preserve pinned public APIs and MainScreenMouse policy.
+
+Upstream commits: 725b04f7735c9888284958ea06395ac7e6d39467 and 469d0e72ee5aa17d5b1fd109764e6240b3933d88. The initial correction is not integrated independently.
+---
+ .../20261106-1613-mouse-dispatch-validity.md  |  32 ++
+ .../tui/src/components/bounded-v-stack.ts     |  49 +-
+ packages/tui/src/components/box.ts            |  42 +-
+ packages/tui/src/layout-node.ts               |   2 +
+ packages/tui/src/layout.ts                    |  10 +-
+ packages/tui/src/mouse-layout.ts              | 126 +++++
+ packages/tui/src/tui-alt-screen.ts            | 115 +++-
+ packages/tui/src/tui.ts                       |  99 +++-
+ .../tui/test/mouse-validity-gc.fixture.ts     | 107 ++++
+ packages/tui/test/mouse-validity-gc.test.ts   |  16 +
+ .../tui/test/tui-alt-screen-capture.test.ts   | 274 ++++++++++
+ .../tui/test/tui-alt-screen-gesture.test.ts   | 369 +++++++++++++
+ .../tui/test/tui-alt-screen-validity.test.ts  | 491 ++++++++++++++++++
+ 13 files changed, 1678 insertions(+), 54 deletions(-)
+ create mode 100644 docs/drafts/20261106-1613-mouse-dispatch-validity.md
+ create mode 100644 packages/tui/src/mouse-layout.ts
+ create mode 100644 packages/tui/test/mouse-validity-gc.fixture.ts
+ create mode 100644 packages/tui/test/mouse-validity-gc.test.ts
+ create mode 100644 packages/tui/test/tui-alt-screen-capture.test.ts
+ create mode 100644 packages/tui/test/tui-alt-screen-gesture.test.ts
+ create mode 100644 packages/tui/test/tui-alt-screen-validity.test.ts
+
+diff --git a/docs/drafts/20261106-1613-mouse-dispatch-validity.md b/docs/drafts/20261106-1613-mouse-dispatch-validity.md
+new file mode 100644
+index 0000000..ad652e7
+--- /dev/null
++++ b/docs/drafts/20261106-1613-mouse-dispatch-validity.md
+@@ -0,0 +1,32 @@
++# Internal mouse-dispatch validity
++
++This is an implementation contract, not the public component API. `Component.handleMouse` still returns `TuiMouseEventResult` (`handled`, `capture`, `focus`, `render`). Raw dispatch targets and helpers are internal and are not exported by the package root.
++
++## Provenance
++
++`TuiMouseDispatchTarget.validity` separates:
++
++- `path`: inherited delegation/ownership/geometry guards. Each guard has a `scope`, a `subject`, and `isValid`. The identity pair `(scope, subject)` names one actual ownership/geometry generation and the specific registration it protects. Fresh callbacks for the same pair must describe that same lifetime. Component identity, equal rectangles, callback identity, and callback text do not establish lifetime identity.
++- `current`: the current target's replaceable predicate. A new explicit predicate supersedes the previous current constraint. A same-target recapture with `current: undefined` (including a plain result without metadata) retains the last current constraint; an explicit `current: () => true` replaces it with an unconstrained current predicate. A valid handoff supersedes the outgoing current constraint, but never the inherited path.
++
++Fullscreen retains the original press validity separately. Its inherited path is retained even if the press did not request capture. Original press ownership remains an invariant throughout subsequent handoffs.
++
++`withMouseDispatchValidity` derives the combined `isValid` compatibility predicate from this metadata. `withMouseDispatchGuard` extends the inherited path without obscuring the current predicate. Dispatch copies forwarded result metadata before composing guards, so reusing a producer-owned structured response cannot accumulate path history. Existing consumers, including MainScreenMouse, continue reading the combined predicate; their routing policy is unchanged.
++
++An internal target supplying `isValid` without explicit provenance is malformed. Dispatch and composition fail with `Mouse dispatch invariant: isValid requires explicit validity provenance`. There is no opaque-producer escape hatch, current-only reinterpretation, unbounded legacy history, or transfer-count cap. Plain public handler results require no new fields.
++
++## Built-in identities
++
++- Container/Box: the committed mouse-layout token supplies the geometry generation; a per-child-slot lifetime token supplies the subject, including distinct occurrences of the same component; removal/clear revokes that lifetime. Removing or clearing a child revokes its lifetime, even if the same component object is re-added with identical output. Distinct children sharing a container layout have distinct subjects.
++- Overlays: a rendered overlay-layout entry supplies the geometry generation; its visibility lifetime supplies the subject. Hide/show revokes the previous visibility lifetime.
++- Structural fullscreen and bounded layouts: LayoutBox records the actual structural registration. MouseLayoutScopes reconciles registrations through their owning ancestry and retains scope identities only while the same registration has unchanged allocated bounds, clipping, line offset and logical height. Changed or removed scopes are revoked, not revived by a later matching frame. Temporary bounded allocation entries retain their owner's registration rather than inventing a new registration each render. BoundedVStack additionally retains its existing whole-layout token guard: a structural/logical-height change to another bounded child cancels the path even when the target rectangle is unchanged. Scope predicates retain compact registration paths and scalar geometry, not historical LayoutBox trees; historical sibling trees must remain collectible.
++
++These registries are instance-owned, not global. Mutation through ownership methods (`removeChild`, `clear`, overlay hide/show and layout-root replacement) revokes ownership independently of final component/rectangle equality. Render commits additionally revoke moved, resized, clipped, or removed structural paths. Direct remove-and-reinsert mutations that leave no observable state and bypass ownership methods cannot supply a lifetime notification; this contract does not manufacture one from equal final arrays.
++
++## Capture lifecycle and cost
++
++Fullscreen stores inherited guards by `(scope, subject)`, not by fresh callback identity. Repeated handoffs among unchanged finite scopes therefore retain at most those scopes. Validation cost depends on the retained scopes, not pointer-report count. Current target metadata is replaced without recursive validator chains.
++
++Validate before and after mouse callbacks, after focus setters before installing new capture metadata, and on committed frames. After focus, validate both the old capture/original press/inherited path and the incoming target. An invalid incoming request cancels the gesture; it must not leave a previous permissive capture active. Lifecycle generation checks prevent stopped/restarted or reentrant callbacks from restoring an obsolete gesture.
++
++Once invalidated, the gesture remains canceled until it ends. Redraw intent is independent: a canceled callback can still request repaint. Neither rendering nor historical-guard deduplication authorizes reviving a removed registration.
+diff --git a/packages/tui/src/components/bounded-v-stack.ts b/packages/tui/src/components/bounded-v-stack.ts
+index c7f33fb..503bb22 100644
+--- a/packages/tui/src/components/bounded-v-stack.ts
++++ b/packages/tui/src/components/bounded-v-stack.ts
+@@ -1,6 +1,13 @@
+ import { getLayoutBoxesAt, type LayoutBox, type LayoutFrame, type LayoutRect, renderLayoutFrame } from "../layout.ts";
+ import { getLayoutNode, LAYOUT_NODE, type StackLayoutNode } from "../layout-node.ts";
+-import { Container, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
++import { MouseLayoutScopes } from "../mouse-layout.ts";
++import {
++	Container,
++	dispatchMouseEvent,
++	type TuiMouseDispatchResult,
++	type TuiMouseEvent,
++	withMouseDispatchGuard,
++} from "../tui.ts";
+ import { allocateStackSizes, visibleStackEntries } from "./stack.ts";
+ import { VStack } from "./v-stack.ts";
+ 
+@@ -17,6 +24,7 @@ export class BoundedVStack extends VStack {
+ 	private layoutToken: object | undefined;
+ 	private allocatedNode: StackLayoutNode | undefined;
+ 	private dispatchHeights = new Map<LayoutBox, number>();
++	private readonly mouseScopes = new MouseLayoutScopes();
+ 
+ 	constructor(options: BoundedVStackOptions) {
+ 		super();
+@@ -36,6 +44,7 @@ export class BoundedVStack extends VStack {
+ 		this.frame = undefined;
+ 		this.layoutToken = undefined;
+ 		this.dispatchHeights.clear();
++		this.mouseScopes.clear();
+ 	}
+ 
+ 	override render(width: number): string[] {
+@@ -44,6 +53,7 @@ export class BoundedVStack extends VStack {
+ 			this.frame = undefined;
+ 			this.layoutToken = undefined;
+ 			this.dispatchHeights.clear();
++			this.mouseScopes.clear();
+ 			// Structural hosts skip this exact inherited handler after visiting the descendants themselves.
+ 			this.handleMouse = Container.prototype.handleMouse;
+ 			return super.render(width);
+@@ -54,6 +64,7 @@ export class BoundedVStack extends VStack {
+ 			this.frame = undefined;
+ 			this.layoutToken = undefined;
+ 			this.dispatchHeights.clear();
++			this.mouseScopes.clear();
+ 			return [];
+ 		}
+ 		const node = super[LAYOUT_NODE]();
+@@ -66,7 +77,7 @@ export class BoundedVStack extends VStack {
+ 				child?.type === "vstack" &&
+ 				visibleStackEntries(child.entries, viewport).some((item) => (item.grow ?? 0) > 0)
+ 			) {
+-				return { ...entry, grow: 1 };
++				return { ...entry, grow: 1, registration: entry.registration ?? entry };
+ 			}
+ 			return entry;
+ 		});
+@@ -84,6 +95,7 @@ export class BoundedVStack extends VStack {
+ 			this.frame = undefined;
+ 			this.layoutToken = undefined;
+ 			this.dispatchHeights.clear();
++			this.mouseScopes.clear();
+ 			return [];
+ 		}
+ 		let frame: LayoutFrame;
+@@ -102,6 +114,7 @@ export class BoundedVStack extends VStack {
+ 		rememberHeight(frame.root);
+ 		if (!this.frame || !sameLayout(this.frame.root, frame.root, this.dispatchHeights, heights)) this.layoutToken = {};
+ 		this.frame = frame;
++		this.mouseScopes.update(frame);
+ 		this.dispatchHeights = heights;
+ 		return frame.lines;
+ 	}
+@@ -116,7 +129,14 @@ export class BoundedVStack extends VStack {
+ 			if (box.component === this || visited.has(box.component)) continue;
+ 			if (getLayoutNode(box.component) && box.component.handleMouse === Container.prototype.handleMouse) continue;
+ 			visited.add(box.component);
+-			if (!this.isLive(box, token)) continue;
++			const structural = this.mouseScopes.get(box);
++			const guard = {
++				scope: token,
++				// Shared content objects can belong to different structural paths.
++				subject: structural.scope,
++				isValid: () => this.layoutToken === token && structural.isValid(),
++			};
++			if (!guard.isValid()) continue;
+ 			const result = dispatchMouseEvent(box.component, {
+ 				...event,
+ 				x: event.x - box.rect.x,
+@@ -125,8 +145,7 @@ export class BoundedVStack extends VStack {
+ 				height: heights.get(box)!,
+ 			});
+ 			if (!result) continue;
+-			const valid = result.target.isValid;
+-			result.target = { ...result.target, isValid: () => this.isLive(box, token) && (valid?.() ?? true) };
++			result.target = withMouseDispatchGuard(result.target, guard);
+ 			if (result.focus) {
+ 				for (let parent = box.parent; parent; parent = parent.parent) {
+ 					if (parent.component.handleInput) result.focusTarget = parent.component;
+@@ -136,25 +155,6 @@ export class BoundedVStack extends VStack {
+ 		}
+ 		return undefined;
+ 	}
+-
+-	private isLive(box: LayoutBox, token: object): boolean {
+-		const frame = this.frame;
+-		if (!frame || this.layoutToken !== token) return false;
+-		let child = box;
+-		while (child.parent) {
+-			const parent = child.parent;
+-			const node = getLayoutNode(parent.component);
+-			if (!node) return false;
+-			if (node.type === "scroll") {
+-				if (node.component !== child.component || node.state.scrollTop !== parent.rect.y - child.rect.y)
+-					return false;
+-			} else if (!visibleStackEntries(node.entries, frame).some((entry) => entry.component === child.component)) {
+-				return false;
+-			}
+-			child = parent;
+-		}
+-		return child.component === this;
+-	}
+ }
+ 
+ function sameRect(a: LayoutRect, b: LayoutRect): boolean {
+@@ -169,6 +169,7 @@ function sameLayout(
+ ): boolean {
+ 	return (
+ 		a.component === b.component &&
++		a.registration === b.registration &&
+ 		sameRect(a.rect, b.rect) &&
+ 		sameRect(a.clip, b.clip) &&
+ 		a.lineOffset === b.lineOffset &&
+diff --git a/packages/tui/src/components/box.ts b/packages/tui/src/components/box.ts
+index 3bcb022..d9c8ac1 100644
+--- a/packages/tui/src/components/box.ts
++++ b/packages/tui/src/components/box.ts
+@@ -1,4 +1,10 @@
+-import { type Component, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
++import {
++	type Component,
++	dispatchMouseEvent,
++	type TuiMouseDispatchResult,
++	type TuiMouseEvent,
++	withMouseDispatchGuard,
++} from "../tui.ts";
+ import { flattenLines, visibleWidth } from "../utils.ts";
+ 
+ type RenderCache = {
+@@ -20,6 +26,21 @@ export class Box implements Component {
+ 	// Cache for rendered output
+ 	private cache?: RenderCache;
+ 	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
++	private mouseChildLifetimes = new WeakMap<Component, object[]>();
++
++	private getMouseChildLifetime(child: Component, index: number): object {
++		let lifetimes = this.mouseChildLifetimes.get(child);
++		if (!lifetimes) {
++			lifetimes = [];
++			this.mouseChildLifetimes.set(child, lifetimes);
++		}
++		let lifetime = lifetimes[index];
++		if (!lifetime) {
++			lifetime = {};
++			lifetimes[index] = lifetime;
++		}
++		return lifetime;
++	}
+ 
+ 	constructor(paddingX = 1, paddingY = 1, bgFn?: (text: string) => string) {
+ 		this.paddingX = paddingX;
+@@ -36,12 +57,14 @@ export class Box implements Component {
+ 		const index = this.children.indexOf(component);
+ 		if (index !== -1) {
+ 			this.children.splice(index, 1);
++			this.mouseChildLifetimes.delete(component);
+ 			this.invalidateCache();
+ 		}
+ 	}
+ 
+ 	clear(): void {
+ 		this.children = [];
++		this.mouseChildLifetimes = new WeakMap();
+ 		this.invalidateCache();
+ 	}
+ 
+@@ -88,10 +111,11 @@ export class Box implements Component {
+ 				? this.mouseLayout.children
+ 				: this.children.map((component) => ({ component, height: component.render(contentWidth).length }));
+ 		let childY = 0;
+-		for (const { component: child, height: childHeight } of mouseChildren) {
++		for (const [index, { component: child, height: childHeight }] of mouseChildren.entries()) {
+ 			if (contentY >= childY && contentY < childY + childHeight) {
+ 				if (!this.children.includes(child)) return undefined;
+ 				const layout = this.mouseLayout;
++				const lifetime = this.getMouseChildLifetime(child, index);
+ 				const paddingX = this.paddingX;
+ 				const result = dispatchMouseEvent(child, {
+ 					...event,
+@@ -101,17 +125,17 @@ export class Box implements Component {
+ 					height: childHeight,
+ 				});
+ 				if (!result) return undefined;
+-				const isValid = result.target.isValid;
+ 				return {
+ 					...result,
+-					target: {
+-						...result.target,
++					target: withMouseDispatchGuard(result.target, {
++						scope: layout ?? this,
++						subject: lifetime,
+ 						isValid: () =>
+-							this.children.includes(child) &&
++							this.children[index] === child &&
++							this.mouseChildLifetimes.get(child)?.[index] === lifetime &&
+ 							this.paddingX === paddingX &&
+-							this.mouseLayout === layout &&
+-							(isValid?.() ?? true),
+-					},
++							this.mouseLayout === layout,
++					}),
+ 				};
+ 			}
+ 			childY += childHeight;
+diff --git a/packages/tui/src/layout-node.ts b/packages/tui/src/layout-node.ts
+index a3c06b2..9f20228 100644
+--- a/packages/tui/src/layout-node.ts
++++ b/packages/tui/src/layout-node.ts
+@@ -9,6 +9,8 @@ export interface LayoutViewport {
+ 
+ export interface StackLayoutEntry {
+ 	component: Component;
++	/** Preserve the owner's registration when deriving temporary allocation options. */
++	registration?: object;
+ 	basis?: number | "auto";
+ 	grow?: number;
+ 	shrink?: number;
+diff --git a/packages/tui/src/layout.ts b/packages/tui/src/layout.ts
+index 897c51d..d289c10 100644
+--- a/packages/tui/src/layout.ts
++++ b/packages/tui/src/layout.ts
+@@ -22,6 +22,8 @@ export interface LayoutRect {
+ 
+ export interface LayoutBox {
+ 	component: Component;
++	/** Structural registration identity, independent of the component's reusable object identity. */
++	registration?: object;
+ 	rect: LayoutRect;
+ 	clip: LayoutRect;
+ 	children: LayoutBox[];
+@@ -88,8 +90,9 @@ function measureWidth(context: LayoutContext, component: Component, width: numbe
+ 	return renderCached(context, component, width).reduce((max, line) => Math.max(max, visibleWidth(line)), 0);
+ }
+ 
+-function withParent(box: LayoutBox, parent: LayoutBox): LayoutBox {
++function withParent(box: LayoutBox, parent: LayoutBox, registration: object): LayoutBox {
+ 	box.parent = parent;
++	box.registration = registration;
+ 	return box;
+ }
+ 
+@@ -163,6 +166,7 @@ function layoutComponent(
+ 			layer: 0,
+ 		};
+ 		childBox.parent = box;
++		childBox.registration = node.component;
+ 		updateClips(childBox, childClip);
+ 		return box;
+ 	}
+@@ -190,6 +194,7 @@ function layoutComponent(
+ 				withParent(
+ 					layoutComponent(context, entries[index]!.component, x, childY, safeWidth, sizes[index]!, box.clip),
+ 					box,
++					entries[index]!.registration ?? entries[index]!,
+ 				),
+ 			);
+ 			childY += sizes[index]! + node.gap;
+@@ -231,6 +236,7 @@ function layoutComponent(
+ 				clip: { x: childX, y: childY, width: 0, height: 0 },
+ 				children: [],
+ 				parent: box,
++				registration: entries[index]!.registration ?? entries[index]!,
+ 				layer: 0,
+ 			});
+ 		} else {
+@@ -238,6 +244,7 @@ function layoutComponent(
+ 				withParent(
+ 					layoutComponent(context, entries[index]!.component, childX, childY, childWidth, childHeight, box.clip),
+ 					box,
++					entries[index]!.registration ?? entries[index]!,
+ 				),
+ 			);
+ 		}
+@@ -396,6 +403,7 @@ export function renderLayoutFrame(
+ 		width: safeWidth,
+ 		height: safeHeight,
+ 	});
++	rootBox.registration = root;
+ 	const lines = Array.from({ length: safeHeight }, () => "");
+ 	paintBox(rootBox, lines, safeWidth);
+ 	return {
+diff --git a/packages/tui/src/mouse-layout.ts b/packages/tui/src/mouse-layout.ts
+new file mode 100644
+index 0000000..8281e64
+--- /dev/null
++++ b/packages/tui/src/mouse-layout.ts
+@@ -0,0 +1,126 @@
++import type { LayoutBox, LayoutFrame } from "./layout.ts";
++import { getLayoutNode } from "./layout-node.ts";
++import type { Component, TuiMouseDispatchGuard } from "./tui.ts";
++
++interface MouseLayoutPathEntry {
++	component: Component;
++	registration: object | undefined;
++	y: number;
++}
++
++type MouseLayoutGeometry = Pick<LayoutBox, "rect" | "clip" | "lineOffset">;
++
++interface MouseLayoutScope {
++	guard: TuiMouseDispatchGuard;
++	logicalHeight: number | undefined;
++	valid: boolean;
++}
++
++/** Renderer-owned identities for structural registrations at a committed geometry generation. */
++export class MouseLayoutScopes {
++	private frame: LayoutFrame | undefined;
++	private readonly scopes = new WeakMap<LayoutBox, MouseLayoutScope>();
++
++	update(frame: LayoutFrame): void {
++		if (this.frame) this.reconcile(this.frame.root, frame.root);
++		this.frame = frame;
++	}
++
++	clear(): void {
++		if (this.frame) this.invalidate(this.frame.root);
++		this.frame = undefined;
++	}
++
++	get(box: LayoutBox): TuiMouseDispatchGuard {
++		const existing = this.scopes.get(box);
++		if (existing) return existing.guard;
++		// Capturing a LayoutBox would retain its historical parents and sibling frame trees.
++		const path: MouseLayoutPathEntry[] = [];
++		for (let entry: LayoutBox | undefined = box; entry; entry = entry.parent) {
++			path.unshift({ component: entry.component, registration: entry.registration, y: entry.rect.y });
++		}
++		const geometry: MouseLayoutGeometry = { rect: box.rect, clip: box.clip, lineOffset: box.lineOffset };
++		const scope: MouseLayoutScope = {
++			logicalHeight: box.lines?.length,
++			valid: true,
++			guard: {
++				scope: {},
++				subject: box.registration ?? box.component,
++				isValid: () => {
++					const current = this.resolve(path);
++					scope.valid &&= current !== undefined && sameGeometry(geometry, current, scope.logicalHeight);
++					return scope.valid;
++				},
++			},
++		};
++		this.scopes.set(box, scope);
++		return scope.guard;
++	}
++
++	private reconcile(previous: LayoutBox, current: LayoutBox): void {
++		if (previous.component !== current.component || previous.registration !== current.registration) {
++			this.invalidate(previous);
++			return;
++		}
++		const scope = this.scopes.get(previous);
++		if (scope) {
++			if (scope.valid && sameGeometry(previous, current, scope.logicalHeight)) this.scopes.set(current, scope);
++			else scope.valid = false;
++		}
++		const children = new Map(current.children.map((child) => [child.registration, child]));
++		for (const child of previous.children) {
++			const next = children.get(child.registration);
++			if (next) this.reconcile(child, next);
++			else this.invalidate(child);
++		}
++	}
++
++	private invalidate(box: LayoutBox): void {
++		const scope = this.scopes.get(box);
++		if (scope) scope.valid = false;
++		for (const child of box.children) this.invalidate(child);
++	}
++
++	private resolve(path: readonly MouseLayoutPathEntry[]): LayoutBox | undefined {
++		const frame = this.frame;
++		if (!frame) return undefined;
++		let current = frame.root;
++		for (let index = 0; index < path.length; index++) {
++			const entry = path[index]!;
++			if (index > 0) {
++				const node = getLayoutNode(current.component);
++				if (!node) return undefined;
++				const mounted =
++					node.type === "scroll"
++						? node.component === entry.registration && node.state.scrollTop === current.rect.y - entry.y
++						: node.entries.some(
++								(candidate) =>
++									(candidate.registration ?? candidate) === entry.registration &&
++									candidate.component === entry.component &&
++									(candidate.visible?.(frame) ?? true),
++							);
++				if (!mounted) return undefined;
++				const child = current.children.find((candidate) => candidate.registration === entry.registration);
++				if (!child) return undefined;
++				current = child;
++			}
++			if (current.component !== entry.component || current.registration !== entry.registration) return undefined;
++		}
++		return current;
++	}
++}
++
++function sameGeometry(a: MouseLayoutGeometry, b: LayoutBox, logicalHeight: number | undefined): boolean {
++	return (
++		a.rect.x === b.rect.x &&
++		a.rect.y === b.rect.y &&
++		a.rect.width === b.rect.width &&
++		a.rect.height === b.rect.height &&
++		a.clip.x === b.clip.x &&
++		a.clip.y === b.clip.y &&
++		a.clip.width === b.clip.width &&
++		a.clip.height === b.clip.height &&
++		a.lineOffset === b.lineOffset &&
++		logicalHeight === b.lines?.length
++	);
++}
+diff --git a/packages/tui/src/tui-alt-screen.ts b/packages/tui/src/tui-alt-screen.ts
+index 5e6d768..dc2c246 100644
+--- a/packages/tui/src/tui-alt-screen.ts
++++ b/packages/tui/src/tui-alt-screen.ts
+@@ -18,6 +18,7 @@ import {
+ 	type ScrollbarGeometry,
+ } from "./layout.ts";
+ import { getLayoutNode } from "./layout-node.ts";
++import { MouseLayoutScopes } from "./mouse-layout.ts";
+ import type { Terminal } from "./terminal.ts";
+ import {
+ 	deleteAllKittyImages,
+@@ -37,16 +38,20 @@ import {
+ 	CURSOR_MARKER,
+ 	compositeTuiLine,
+ 	dispatchMouseEvent,
++	getMouseDispatchValidity,
+ 	type OverlayHandle,
+ 	retargetMouseEvent,
+ 	TuiBase,
+ 	type TuiMouseButton,
++	type TuiMouseDispatchGuard,
+ 	type TuiMouseDispatchResult,
+ 	type TuiMouseDispatchTarget,
+ 	type TuiMouseEvent,
+ 	type TuiStopOptions,
+ 	VIEWPORT_TUI,
+ 	type ViewportTUI,
++	withMouseDispatchGuard,
++	withMouseDispatchValidity,
+ } from "./tui.ts";
+ import {
+ 	extractAnsiCode,
+@@ -208,6 +213,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+ 	private previousScreenHeight = 0;
+ 	private layoutRoot: Component | undefined;
+ 	private currentLayout: LayoutFrame | undefined;
++	private readonly mouseLayoutScopes = new MouseLayoutScopes();
++	private mouseLayoutLifetime: object = {};
+ 	private readonly implicitDocument: Component;
+ 	private readonly implicitScrollView: ScrollView;
+ 	private readonly flashes: AltScreenFlashContainer;
+@@ -231,9 +238,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+ 	private pressedUrl?: string;
+ 	private selectionDragged = false;
+ 	private mouseCapture?: TuiMouseDispatchTarget;
++	private readonly mouseCapturePath = new Map<object, Map<object, TuiMouseDispatchGuard>>();
+ 	private mousePressTarget?: TuiMouseDispatchTarget;
+ 	private mousePressPoint?: { x: number; y: number };
+ 	private mousePressMoved = false;
++	private mouseGestureCancelled = false;
++	private mouseGestureGeneration = 0;
++
+ 	private lastComponentClick?: {
+ 		timestamp: number;
+ 		count: number;
+@@ -327,7 +338,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+ 	setLayoutRoot(component: Component | undefined): void {
+ 		if (this.layoutRoot === component) return;
+ 		this.layoutRoot = component;
++		this.mouseLayoutLifetime = {};
++		this.mouseLayoutScopes.clear();
+ 		this.currentLayout = undefined;
++		this.validateComponentMouseGesture();
+ 		this.requestRender();
+ 	}
+ 
+@@ -682,12 +696,44 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+ 	}
+ 
+ 	private clearComponentMouseGesture(): void {
++		this.mouseGestureGeneration += 1;
++		this.mouseGestureCancelled = false;
+ 		this.mouseCapture = undefined;
++		this.mouseCapturePath.clear();
+ 		this.mousePressTarget = undefined;
+ 		this.mousePressPoint = undefined;
+ 		this.mousePressMoved = false;
+ 	}
+ 
++	private retainMousePath(target: TuiMouseDispatchTarget): void {
++		for (const guard of getMouseDispatchValidity(target).path) {
++			let subjects = this.mouseCapturePath.get(guard.scope);
++			if (!subjects) {
++				subjects = new Map();
++				this.mouseCapturePath.set(guard.scope, subjects);
++			}
++			if (!subjects.has(guard.subject)) subjects.set(guard.subject, guard);
++		}
++	}
++
++	private validateComponentMouseGesture(): boolean {
++		for (const subjects of this.mouseCapturePath.values()) {
++			for (const guard of subjects.values()) {
++				if (!guard.isValid()) this.mouseGestureCancelled = true;
++			}
++		}
++		if (
++			this.mouseGestureCancelled ||
++			this.stopped ||
++			(this.mouseCapture && getMouseDispatchValidity(this.mouseCapture).current?.() === false) ||
++			(this.mousePressTarget && getMouseDispatchValidity(this.mousePressTarget).current?.() === false)
++		) {
++			this.mouseGestureCancelled = true;
++			this.lastComponentClick = undefined;
++		}
++		return !this.mouseGestureCancelled;
++	}
++
+ 	private handleViewportInput(data: string): { consume?: boolean } | undefined {
+ 		if (data === FOCUS_OUT) {
+ 			const hadActiveSelection = this.selectionPressActive;
+@@ -849,6 +895,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+ 			if (visited.has(box.component)) continue;
+ 			if (getLayoutNode(box.component) && box.component.handleMouse === Container.prototype.handleMouse) continue;
+ 			visited.add(box.component);
++			const guard = this.mouseLayoutScopes.get(box);
++			if (!guard.isValid()) continue;
+ 			const result = dispatchMouseEvent(box.component, {
+ 				...event,
+ 				x: event.screenX - box.rect.x,
+@@ -856,16 +904,43 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+ 				width: box.rect.width,
+ 				height: box.rect.height,
+ 			});
+-			if (result) return result;
++			if (result) {
++				result.target = withMouseDispatchGuard(result.target, guard);
++				return result;
++			}
+ 		}
+ 		return undefined;
+ 	}
+ 
+ 	private applyMouseDispatchResult(event: TuiMouseEvent, result: TuiMouseDispatchResult): boolean {
++		const targetValid = result.target.isValid?.() !== false;
++		if (result.capture && !targetValid) {
++			this.mouseGestureCancelled = true;
++			this.lastComponentClick = undefined;
++		}
++		const valid = !this.stopped && !this.mouseGestureCancelled && targetValid;
++		const generation = this.mouseGestureGeneration;
+ 		const focusTarget = this.resolveMouseFocusTarget(result.focusTarget ?? result.target.component);
+-		const focusChanged = result.focus === true && this.getFocusedComponent() !== focusTarget;
+-		if (result.focus) this.setFocus(focusTarget);
+-		if (result.capture) this.mouseCapture = result.target;
++		const focusChanged = valid && result.focus === true && this.getFocusedComponent() !== focusTarget;
++		if (valid && result.focus) this.setFocus(focusTarget);
++		if (generation === this.mouseGestureGeneration) {
++			this.validateComponentMouseGesture();
++			if (result.capture && result.target.isValid?.() === false) {
++				this.mouseGestureCancelled = true;
++				this.lastComponentClick = undefined;
++			}
++			if (valid && result.capture && !this.stopped && !this.mouseGestureCancelled) {
++				const incoming = getMouseDispatchValidity(result.target);
++				this.retainMousePath(result.target);
++				const previous = this.mouseCapture;
++				const current =
++					incoming.current ??
++					(previous?.component === result.target.component
++						? getMouseDispatchValidity(previous).current
++						: undefined);
++				this.mouseCapture = withMouseDispatchValidity(result.target, { path: incoming.path, current });
++			}
++		}
+ 		return (
+ 			result.render ??
+ 			(focusChanged ||
+@@ -922,19 +997,38 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+ 
+ 		if (this.mouseCapture || this.mousePressTarget) {
+ 			const target = this.mouseCapture ?? this.mousePressTarget!;
++			if (!this.validateComponentMouseGesture()) {
++				if (raw.release) this.clearComponentMouseGesture();
++				return;
++			}
++			const generation = this.mouseGestureGeneration;
+ 			if (this.mousePressPoint && (raw.x !== this.mousePressPoint.x || raw.y !== this.mousePressPoint.y)) {
+ 				this.mousePressMoved = true;
+ 				this.lastComponentClick = undefined;
+ 			}
+ 			let render = false;
+ 			const targetResult = this.dispatchMouseToTarget(event, target);
++			if (generation !== this.mouseGestureGeneration) return;
++			const valid = this.validateComponentMouseGesture();
+ 			if (targetResult) render = this.applyMouseDispatchResult(event, targetResult);
++			if (!valid) {
++				if (raw.release) this.clearComponentMouseGesture();
++				if (render) this.requestRender();
++				return;
++			}
+ 			if (raw.release) {
+-				if (!this.mousePressMoved && this.mousePressPoint?.x === raw.x && this.mousePressPoint.y === raw.y) {
++				if (
++					this.validateComponentMouseGesture() &&
++					!this.mousePressMoved &&
++					this.mousePressPoint?.x === raw.x &&
++					this.mousePressPoint.y === raw.y
++				) {
+ 					const clickEvent = this.createMouseEvent("click", raw.button, raw.x, raw.y, {
+ 						clickCount: this.getComponentClickCount(target, raw.x, raw.y),
+ 					});
+ 					const clickResult = this.dispatchMouseToTarget(clickEvent, target);
++					if (generation !== this.mouseGestureGeneration) return;
++					this.validateComponentMouseGesture();
+ 					if (clickResult) render = this.applyMouseDispatchResult(clickEvent, clickResult) || render;
+ 				}
+ 				this.clearComponentMouseGesture();
+@@ -945,6 +1039,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+ 
+ 		if (this.handleSearchMouseEvent(raw)) return;
+ 
++		const generation = this.mouseGestureGeneration;
++
+ 		const overlay = this.dispatchMouseToOverlay(event);
+ 		if (!overlay.hit) {
+ 			if (this.handleScrollToEndIndicatorMouseEvent(raw)) return;
+@@ -957,13 +1053,16 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+ 
+ 		const result = overlay.result ?? (overlay.hit ? undefined : this.dispatchMouseToLayout(event));
+ 		if (result) {
+-			const render = this.applyMouseDispatchResult(event, result);
++			if (generation !== this.mouseGestureGeneration || this.stopped) return;
+ 			if (type === "press") {
+ 				this.clearTextSelection();
+ 				this.mousePressTarget = result.target;
++				this.retainMousePath(result.target);
+ 				this.mousePressPoint = { x: raw.x, y: raw.y };
+ 				this.mousePressMoved = false;
+ 			}
++			this.validateComponentMouseGesture();
++			const render = this.applyMouseDispatchResult(event, result);
+ 			if (render) this.requestRender();
+ 			return;
+ 		}
+@@ -1792,6 +1891,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+ 		this.previousScreen = screen;
+ 		this.previousScreenWidth = width;
+ 		this.previousScreenHeight = height;
++		nextLayout.root.registration = this.mouseLayoutLifetime;
+ 		this.currentLayout = nextLayout;
++		this.mouseLayoutScopes.update(nextLayout);
++		// Latch invalidation on every committed frame, even if a later frame restores the old position.
++		this.validateComponentMouseGesture();
+ 	}
+ }
+diff --git a/packages/tui/src/tui.ts b/packages/tui/src/tui.ts
+index 1035879..eb599af 100644
+--- a/packages/tui/src/tui.ts
++++ b/packages/tui/src/tui.ts
+@@ -57,10 +57,24 @@ export interface TuiMouseEventResult {
+ 	render?: boolean;
+ }
+ 
++/** Internal inherited path constraint. The pair identifies an ownership/geometry generation and its subject. */
++export interface TuiMouseDispatchGuard {
++	scope: object;
++	subject: object;
++	isValid: () => boolean;
++}
++
++/** Internal provenance: path guards survive handoffs; current is the replaceable target-local constraint. */
++export interface TuiMouseDispatchValidity {
++	path: readonly TuiMouseDispatchGuard[];
++	current: (() => boolean) | undefined;
++}
++
+ /** Internal target metadata used by containers and alternate-screen dispatch. */
+ export interface TuiMouseDispatchTarget {
+-	/** Whether the rendered path still contains this target at the same position. */
++	/** Combined compatibility view for consumers; producers with a predicate must supply validity provenance. */
+ 	isValid?: () => boolean;
++	validity?: TuiMouseDispatchValidity;
+ 	component: Component;
+ 	originX: number;
+ 	originY: number;
+@@ -76,6 +90,34 @@ export interface TuiMouseDispatchResult extends TuiMouseEventResult {
+ 	focusTarget?: Component;
+ }
+ 
++/** Read internal provenance, rejecting opaque predicates rather than guessing their lifetime. */
++export function getMouseDispatchValidity(target: TuiMouseDispatchTarget): TuiMouseDispatchValidity {
++	if (target.validity) return target.validity;
++	if (target.isValid) throw new Error("Mouse dispatch invariant: isValid requires explicit validity provenance");
++	return { path: [], current: undefined };
++}
++
++/** Derive the combined compatibility predicate from explicit internal provenance. */
++export function withMouseDispatchValidity(
++	target: TuiMouseDispatchTarget,
++	validity: TuiMouseDispatchValidity,
++): TuiMouseDispatchTarget {
++	return {
++		...target,
++		validity,
++		isValid: () => validity.path.every((guard) => guard.isValid()) && (validity.current?.() ?? true),
++	};
++}
++
++/** Extend a delegated target's inherited path without hiding its current predicate. */
++export function withMouseDispatchGuard(
++	target: TuiMouseDispatchTarget,
++	guard: TuiMouseDispatchGuard,
++): TuiMouseDispatchTarget {
++	const validity = getMouseDispatchValidity(target);
++	return withMouseDispatchValidity(target, { path: [...validity.path, guard], current: validity.current });
++}
++
+ /**
+  * Dispatch an event to a component and retain the exact target and coordinate
+  * transform. Containers use this when forwarding events to nested children.
+@@ -87,7 +129,11 @@ export function dispatchMouseEvent(component: Component, event: TuiMouseEvent):
+ 		// The component forwarded the event to a child it hosts. Like a delegating container, it routes
+ 		// keys to that child itself, so it keeps keyboard focus. Focusing the child directly would leave
+ 		// focus on a detached component once the host removes it, e.g. a closed settings submenu.
+-		const forwarded = result as TuiMouseDispatchResult;
++		const source = result as TuiMouseDispatchResult;
++		const forwarded = {
++			...source,
++			target: withMouseDispatchValidity(source.target, getMouseDispatchValidity(source.target)),
++		};
+ 		return forwarded.focus && component.handleInput ? { ...forwarded, focusTarget: component } : forwarded;
+ 	}
+ 	if (!result.handled && !result.capture && !result.focus) return undefined;
+@@ -327,6 +373,7 @@ export interface OverlayHandle {
+ 
+ type OverlayStackEntry = {
+ 	component: Component;
++	mouseLifetime: object;
+ 	options?: OverlayOptions;
+ 	preFocus: Component | null;
+ 	hidden: boolean;
+@@ -360,6 +407,21 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
+ export class Container implements Component {
+ 	children: Component[] = [];
+ 	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number; layout?: object }> };
++	private mouseChildLifetimes = new WeakMap<Component, object[]>();
++
++	private getMouseChildLifetime(child: Component, index: number): object {
++		let lifetimes = this.mouseChildLifetimes.get(child);
++		if (!lifetimes) {
++			lifetimes = [];
++			this.mouseChildLifetimes.set(child, lifetimes);
++		}
++		let lifetime = lifetimes[index];
++		if (!lifetime) {
++			lifetime = {};
++			lifetimes[index] = lifetime;
++		}
++		return lifetime;
++	}
+ 
+ 	protected get mouseLayoutToken(): object | undefined {
+ 		return this.mouseLayout;
+@@ -373,11 +435,13 @@ export class Container implements Component {
+ 		const index = this.children.indexOf(component);
+ 		if (index !== -1) {
+ 			this.children.splice(index, 1);
++			this.mouseChildLifetimes.delete(component);
+ 		}
+ 	}
+ 
+ 	clear(): void {
+ 		this.children = [];
++		this.mouseChildLifetimes = new WeakMap();
+ 	}
+ 
+ 	invalidate(): void {
+@@ -393,21 +457,25 @@ export class Container implements Component {
+ 				? this.mouseLayout.children
+ 				: this.children.map((component) => ({ component, height: component.render(event.width).length }));
+ 		let childY = 0;
+-		for (const { component: child, height: childHeight } of mouseChildren) {
++		for (const [index, { component: child, height: childHeight }] of mouseChildren.entries()) {
+ 			if (event.y >= childY && event.y < childY + childHeight) {
+ 				if (!this.children.includes(child)) return undefined;
+ 				const layout = this.mouseLayout;
++				const lifetime = this.getMouseChildLifetime(child, index);
+ 				const result = dispatchMouseEvent(child, {
+ 					...event,
+ 					y: event.y - childY,
+ 					height: childHeight,
+ 				});
+ 				if (!result) return undefined;
+-				const isValid = result.target.isValid;
+-				result.target = {
+-					...result.target,
+-					isValid: () => this.children.includes(child) && this.mouseLayout === layout && (isValid?.() ?? true),
+-				};
++				result.target = withMouseDispatchGuard(result.target, {
++					scope: layout ?? this,
++					subject: lifetime,
++					isValid: () =>
++						this.children[index] === child &&
++						this.mouseChildLifetimes.get(child)?.[index] === lifetime &&
++						this.mouseLayout === layout,
++				});
+ 				if (result.focus && (this as Component).handleInput) return { ...result, focusTarget: this };
+ 				return result;
+ 			}
+@@ -796,6 +864,7 @@ export abstract class TuiBase extends Container implements TUI {
+ 	showOverlay(component: Component, options?: OverlayOptions): OverlayHandle {
+ 		const entry: OverlayStackEntry = {
+ 			component,
++			mouseLifetime: {},
+ 			...(options === undefined ? {} : { options }),
+ 			preFocus: this.focusedComponent,
+ 			hidden: false,
+@@ -829,6 +898,7 @@ export abstract class TuiBase extends Container implements TUI {
+ 			setHidden: (hidden: boolean) => {
+ 				if (entry.hidden === hidden) return;
+ 				entry.hidden = hidden;
++				entry.mouseLifetime = {};
+ 				// Update focus when hiding/showing
+ 				if (hidden) {
+ 					this.clearOverlayFocusRestoreFor(entry);
+@@ -951,6 +1021,7 @@ export abstract class TuiBase extends Container implements TUI {
+ 			) {
+ 				continue;
+ 			}
++			const lifetime = layout.entry.mouseLifetime;
+ 			const result = dispatchMouseEvent(layout.entry.component, {
+ 				...event,
+ 				x: event.screenX - layout.col,
+@@ -959,16 +1030,16 @@ export abstract class TuiBase extends Container implements TUI {
+ 				height: layout.height,
+ 			});
+ 			if (result) {
+-				const isValid = result.target.isValid;
+-				result.target = {
+-					...result.target,
++				result.target = withMouseDispatchGuard(result.target, {
++					scope: layout,
++					subject: lifetime,
+ 					isValid: () =>
+ 						this.overlayStack.includes(layout.entry) &&
++						layout.entry.mouseLifetime === lifetime &&
+ 						this.isOverlayVisible(layout.entry) &&
+ 						this.mouseOverlayRowOffset === rowOffset &&
+-						this.renderedOverlayLayouts.includes(layout) &&
+-						(isValid?.() ?? true),
+-				};
++						this.renderedOverlayLayouts.includes(layout),
++				});
+ 			}
+ 			return result
+ 				? {
+diff --git a/packages/tui/test/mouse-validity-gc.fixture.ts b/packages/tui/test/mouse-validity-gc.fixture.ts
+new file mode 100644
+index 0000000..f1a2d62
+--- /dev/null
++++ b/packages/tui/test/mouse-validity-gc.fixture.ts
+@@ -0,0 +1,107 @@
++import assert from "node:assert/strict";
++import { setImmediate } from "node:timers/promises";
++import { VStack } from "../src/components/v-stack.ts";
++import { renderLayoutFrame } from "../src/layout.ts";
++import { MouseLayoutScopes } from "../src/mouse-layout.ts";
++import type { Component, TuiMouseDispatchGuard, TuiMouseEvent } from "../src/tui.ts";
++import { TuiAltScreen } from "../src/tui-alt-screen.ts";
++import { VirtualTerminal } from "./virtual-terminal.ts";
++
++const collect = global.gc;
++if (!collect) throw new Error("GC fixture requires --expose-gc");
++const FRAME_COUNT = 64;
++const TRANSFER_COUNT = 10000;
++const INHERITED_SUBJECT_COUNT = 2;
++const MAX_RETAINED_GUARDS = INHERITED_SUBJECT_COUNT + 1;
++
++function historicalFrames() {
++	let aHeight = 1;
++	let bHeight = 1;
++	const a: Component = { render: () => Array(aHeight).fill("A"), invalidate() {} };
++	const b: Component = { render: () => Array(bHeight).fill("B"), invalidate() {} };
++	const root = new VStack([
++		{ component: a, basis: 2 },
++		{ component: b, basis: 2 },
++	]);
++	const scopes = new MouseLayoutScopes();
++	const previous: WeakRef<object>[] = [];
++	for (let index = 0; index < FRAME_COUNT; index++) {
++		if (index % 2 === 0) aHeight++;
++		else bHeight++;
++		const frame = renderLayoutFrame(root, 40, 12, () => {});
++		scopes.update(frame);
++		for (const child of frame.root.children) assert.equal(scopes.get(child).isValid(), true);
++		if (index < FRAME_COUNT - 1) previous.push(new WeakRef(frame.root));
++	}
++	return { scopes, previous };
++}
++
++async function collectGarbage() {
++	for (let attempt = 0; attempt < 3; attempt++) {
++		await setImmediate();
++		collect!();
++	}
++	await setImmediate();
++}
++
++const history = historicalFrames();
++await collectGarbage();
++const retainedFrames = history.previous.filter((reference) => reference.deref() !== undefined).length;
++console.log(JSON.stringify({ historicalFrames: FRAME_COUNT - 1, retainedFrames }));
++assert.equal(retainedFrames, 0, "historical layout trees must not be retained by current scope guards");
++// Keep the scope registry alive across collection; dropping it would hide the retention defect.
++history.scopes.clear();
++
++const terminal = new VirtualTerminal(40, 12);
++const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++const ownerGeneration = {};
++const aSubject = {};
++const bSubject = {};
++const guards: WeakRef<TuiMouseDispatchGuard>[] = [];
++function capture(target: Component, subject: object, row: number, event: TuiMouseEvent) {
++	const guard: TuiMouseDispatchGuard = { scope: ownerGeneration, subject, isValid: () => true };
++	guards.push(new WeakRef(guard));
++	return {
++		handled: true,
++		capture: true,
++		render: false,
++		target: {
++			component: target,
++			originX: 0,
++			originY: row,
++			width: event.width,
++			height: event.height,
++			validity: { path: [guard], current: () => true },
++		},
++	};
++}
++const a: Component = {
++	render: () => ["A"],
++	invalidate() {},
++	handleMouse: (event) => (event.type === "press" ? capture(a, aSubject, 0, event) : capture(b, bSubject, 1, event)),
++};
++const b: Component = { render: () => ["B"], invalidate() {}, handleMouse: (event) => capture(a, aSubject, 0, event) };
++tui.setLayoutRoot(new VStack([a, b]));
++try {
++	tui.start();
++	tui.renderNow();
++	await terminal.flush();
++	terminal.sendInput("\x1b[<0;2;1M");
++	for (let index = 0; index < TRANSFER_COUNT; index++) terminal.sendInput(`\x1b[<32;${3 + (index % 2)};1M`);
++	assert.equal(guards.length, TRANSFER_COUNT + 1);
++	await collectGarbage();
++	const retainedGuards = guards.filter((reference) => reference.deref() !== undefined).length;
++	console.log(
++		JSON.stringify({
++			transfers: TRANSFER_COUNT,
++			createdGuards: guards.length,
++			retainedGuards,
++			maxRetainedGuards: MAX_RETAINED_GUARDS,
++		}),
++	);
++	assert.ok(retainedGuards <= MAX_RETAINED_GUARDS, `retained guard count: ${retainedGuards}`);
++	terminal.sendInput("\x1b[<0;4;1m");
++} finally {
++	tui.stop();
++	await terminal.flush();
++}
+diff --git a/packages/tui/test/mouse-validity-gc.test.ts b/packages/tui/test/mouse-validity-gc.test.ts
+new file mode 100644
+index 0000000..d512440
+--- /dev/null
++++ b/packages/tui/test/mouse-validity-gc.test.ts
+@@ -0,0 +1,16 @@
++import { execFileSync } from "node:child_process";
++import { it } from "node:test";
++import { fileURLToPath } from "node:url";
++
++const GC_TIMEOUT_MS = 10000;
++it("bounds retained capture guards and does not retain historical layout frames", (t) => {
++	const output = execFileSync(
++		process.execPath,
++		["--expose-gc", fileURLToPath(new URL("./mouse-validity-gc.fixture.ts", import.meta.url))],
++		{
++			encoding: "utf8",
++			timeout: GC_TIMEOUT_MS,
++		},
++	);
++	t.diagnostic(output.trim());
++});
+diff --git a/packages/tui/test/tui-alt-screen-capture.test.ts b/packages/tui/test/tui-alt-screen-capture.test.ts
+new file mode 100644
+index 0000000..7827260
+--- /dev/null
++++ b/packages/tui/test/tui-alt-screen-capture.test.ts
+@@ -0,0 +1,274 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { VStack } from "../src/components/v-stack.ts";
++import {
++	type Component,
++	Container,
++	dispatchMouseEvent,
++	type TuiMouseDispatchResult,
++	type TuiMouseEvent,
++} from "../src/tui.ts";
++import { TuiAltScreen } from "../src/tui-alt-screen.ts";
++import { VirtualTerminal } from "./virtual-terminal.ts";
++
++const WIDTH = 40;
++const HEIGHT = 12;
++const DRAG_REPORTS = 10000;
++const MAX_VALIDATIONS_PER_REPORT = 20;
++
++class CaptureThenDelegate extends Container {
++	readonly events: string[] = [];
++	override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
++		this.events.push(event.type);
++		if (this.events.length > 1) return super.handleMouse(event);
++		return {
++			handled: true,
++			capture: true,
++			render: false,
++			target: {
++				component: this,
++				originX: event.screenX - event.x,
++				originY: event.screenY - event.y,
++				width: event.width,
++				height: event.height,
++			},
++		};
++	}
++}
++
++// Regression: avoiding recursive validator chains must not suppress delegated capture requests.
++describe("TuiAltScreen capture updates", () => {
++	for (const capturePress of [false, true]) {
++		it(`transfers subsequent drag/release to a live delegated child (initial capture: ${capturePress})`, async () => {
++			const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++			const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++			const hostEvents: string[] = [];
++			const childEvents: string[] = [];
++			const child: Component = {
++				render: () => ["CHILD"],
++				invalidate() {},
++				handleMouse(event) {
++					childEvents.push(event.type);
++					return { handled: true, capture: true, render: false };
++				},
++			};
++			let transferred = false;
++			const host: Component = {
++				render: (width) => child.render(width),
++				invalidate() {},
++				handleMouse(event) {
++					hostEvents.push(event.type);
++					if (event.type === "drag" && !transferred) {
++						transferred = true;
++						return dispatchMouseEvent(child, event);
++					}
++					return { handled: true, capture: capturePress, render: false };
++				},
++			};
++			tui.setLayoutRoot(new VStack([host]));
++			try {
++				tui.start();
++				tui.renderNow();
++				await terminal.flush();
++				assert.equal(terminal.getViewport()[0].trimEnd(), "CHILD");
++				terminal.sendInput("\x1b[<0;2;1M");
++				terminal.sendInput("\x1b[<32;3;1M");
++				terminal.sendInput("\x1b[<32;4;1M");
++				terminal.sendInput("\x1b[<0;4;1m");
++				assert.deepEqual(hostEvents, ["press", "drag"]);
++				assert.deepEqual(childEvents, ["drag", "drag", "release"]);
++			} finally {
++				tui.stop();
++				await terminal.flush();
++			}
++		});
++	}
++
++	it("keeps same-target repeated capture validation bounded over 10000 drag reports", async (t) => {
++		const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++		const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++		let drags = 0;
++		let releases = 0;
++		let validations = 0;
++		const target: Component = {
++			render: () => ["TARGET"],
++			invalidate() {},
++			handleMouse(event) {
++				if (event.type === "drag") drags++;
++				if (event.type === "release") releases++;
++				return {
++					handled: true,
++					capture: true,
++					render: false,
++					target: {
++						component: target,
++						originX: event.screenX - event.x,
++						originY: event.screenY - event.y,
++						width: event.width,
++						height: event.height,
++						validity: {
++							path: [],
++							current: () => {
++								validations++;
++								return true;
++							},
++						},
++					},
++				};
++			},
++		};
++		tui.setLayoutRoot(new VStack([target]));
++		try {
++			tui.start();
++			tui.renderNow();
++			await terminal.flush();
++			terminal.sendInput("\x1b[<0;2;1M");
++			for (let index = 0; index < DRAG_REPORTS; index++) terminal.sendInput(`\x1b[<32;${3 + (index % 2)};1M`);
++			terminal.sendInput("\x1b[<0;4;1m");
++			t.diagnostic(JSON.stringify({ reports: DRAG_REPORTS, validations, drags, releases }));
++			assert.equal(drags, DRAG_REPORTS);
++			assert.equal(releases, 1);
++			assert.ok(validations <= MAX_VALIDATIONS_PER_REPORT * (DRAG_REPORTS + 2), `validation calls: ${validations}`);
++		} finally {
++			tui.stop();
++			await terminal.flush();
++		}
++	});
++
++	for (const phase of ["drag", "release"] as const) {
++		it(`honors a new same-component capture validity predicate returned on ${phase}`, async () => {
++			const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++			const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++			const events: string[] = [];
++			let captureValid = phase === "drag";
++			const target: Component = {
++				render: () => ["TARGET"],
++				invalidate() {},
++				handleMouse(event) {
++					events.push(event.type);
++					if (event.type !== phase) return { handled: true, capture: true, render: false };
++					return {
++						handled: true,
++						capture: true,
++						render: false,
++						target: {
++							component: target,
++							originX: event.screenX - event.x,
++							originY: event.screenY - event.y,
++							width: event.width,
++							height: event.height,
++							validity: { path: [], current: () => captureValid },
++						},
++					};
++				},
++			};
++			tui.setLayoutRoot(new VStack([target]));
++			try {
++				tui.start();
++				tui.renderNow();
++				await terminal.flush();
++				terminal.sendInput("\x1b[<0;2;1M");
++				if (phase === "drag") {
++					terminal.sendInput("\x1b[<32;3;1M");
++					captureValid = false;
++				}
++				terminal.sendInput("\x1b[<0;2;1m");
++				assert.deepEqual(events, phase === "drag" ? ["press", "drag"] : ["press", "release"]);
++			} finally {
++				tui.stop();
++				await terminal.flush();
++			}
++		});
++	}
++	for (const depth of [1, 2]) {
++		for (const removal of ["none", "delegated", "press-root"] as const) {
++			it(`preserves transfer-path guards after recapture (depth: ${depth}, removal: ${removal})`, async () => {
++				const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++				const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++				const events: string[] = [];
++				const child: Component = {
++					render: () => ["CHILD"],
++					invalidate() {},
++					handleMouse(event) {
++						events.push(event.type);
++						return { handled: true, capture: true, render: false };
++					},
++				};
++				const host = new CaptureThenDelegate();
++				const intermediate = new CaptureThenDelegate();
++				if (depth === 2) {
++					intermediate.addChild(child);
++					host.addChild(intermediate);
++				} else host.addChild(child);
++				tui.setLayoutRoot(new VStack([host]));
++				try {
++					tui.start();
++					tui.renderNow();
++					await terminal.flush();
++					const before = terminal.getViewport();
++					terminal.sendInput("\x1b[<0;2;1M");
++					for (let transfer = 0; transfer < depth; transfer++) terminal.sendInput("\x1b[<32;3;1M");
++					terminal.sendInput("\x1b[<32;4;1M");
++					assert.deepEqual(host.events, ["press", "drag"]);
++					assert.deepEqual(events, ["drag", "drag"]);
++					if (removal === "delegated") {
++						host.removeChild(depth === 2 ? intermediate : child);
++						host.addChild({ render: () => ["CHILD"], invalidate() {} });
++					} else if (removal === "press-root") {
++						tui.setLayoutRoot(new VStack([host]));
++					}
++					tui.renderNow();
++					await terminal.flush();
++					assert.deepEqual(terminal.getViewport(), before);
++					terminal.sendInput("\x1b[<0;4;1m");
++					assert.deepEqual(events, removal === "none" ? ["drag", "drag", "release"] : ["drag", "drag"]);
++				} finally {
++					tui.stop();
++					await terminal.flush();
++				}
++			});
++		}
++	}
++	it("retains a fresh same-component constraint when its next recapture omits the predicate", async () => {
++		const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++		const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++		const events: string[] = [];
++		let constraintValid = true;
++		const target: Component = {
++			render: () => ["TARGET"],
++			invalidate() {},
++			handleMouse(event) {
++				events.push(event.type);
++				if (events.length !== 2) return { handled: true, capture: true, render: false };
++				return {
++					handled: true,
++					capture: true,
++					render: false,
++					target: {
++						component: target,
++						originX: event.screenX - event.x,
++						originY: event.screenY - event.y,
++						width: event.width,
++						height: event.height,
++						validity: { path: [], current: () => constraintValid },
++					},
++				};
++			},
++		};
++		tui.setLayoutRoot(new VStack([target]));
++		try {
++			tui.start();
++			tui.renderNow();
++			await terminal.flush();
++			terminal.sendInput("\x1b[<0;2;1M");
++			terminal.sendInput("\x1b[<32;3;1M");
++			terminal.sendInput("\x1b[<32;4;1M");
++			constraintValid = false;
++			terminal.sendInput("\x1b[<0;4;1m");
++			assert.deepEqual(events, ["press", "drag", "drag"]);
++		} finally {
++			tui.stop();
++			await terminal.flush();
++		}
++	});
++});
+diff --git a/packages/tui/test/tui-alt-screen-gesture.test.ts b/packages/tui/test/tui-alt-screen-gesture.test.ts
+new file mode 100644
+index 0000000..f196aac
+--- /dev/null
++++ b/packages/tui/test/tui-alt-screen-gesture.test.ts
+@@ -0,0 +1,369 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { MouseRegion } from "../src/components/mouse-region.ts";
++import { ScrollView } from "../src/components/scroll-view.ts";
++import { Text } from "../src/components/text.ts";
++import { VStack } from "../src/components/v-stack.ts";
++import { type Component, Container, CURSOR_MARKER, type TuiMouseEvent } from "../src/tui.ts";
++import { TuiAltScreen } from "../src/tui-alt-screen.ts";
++import { VirtualTerminal } from "./virtual-terminal.ts";
++
++const WIDTH = 40;
++const HEIGHT = 12;
++
++// Behavioral / Blackbox / Group: production layout, dispatch, and terminal rendering.
++// Regression: fullscreen capture used stale coordinates after a preceding row grew.
++describe("TuiAltScreen captured geometry", () => {
++	for (const nested of [false, true]) {
++		for (const scenario of [
++			"stable",
++			"text",
++			"moved",
++			"restored",
++			"resized",
++			"detached",
++			"replaced",
++			"root",
++		] as const) {
++			it(`${nested ? "container" : "leaf"}: ${scenario}`, async () => {
++				const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++				const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++				const events: string[] = [];
++				const replacementEvents: string[] = [];
++				const lead = new Text("LEAD", 0, 0);
++				const label = new Text("AGENTS", 0, 0);
++				const target = new MouseRegion(label, (event) => {
++					events.push(event.type);
++					return { handled: true, capture: true };
++				});
++				const host = new Container();
++				host.addChild(target);
++				const slot: Component = nested ? host : target;
++				const root = new VStack([
++					{ component: lead, shrink: 0 },
++					{ component: slot, shrink: 0 },
++				]);
++				tui.setLayoutRoot(root);
++				try {
++					tui.start();
++					tui.renderNow();
++					await terminal.flush();
++					assert.equal(terminal.getViewport()[1].trimEnd(), "AGENTS");
++					terminal.sendInput("\x1b[<0;2;2M");
++					assert.deepEqual(events, ["press"]);
++					switch (scenario) {
++						case "stable":
++							break;
++						case "text":
++							label.setText("AGENTS updated");
++							break;
++						case "moved":
++						case "restored":
++							lead.setText("LEAD\nLEAD");
++							break;
++						case "resized":
++							label.setText("AGENTS\nMORE");
++							break;
++						case "detached":
++							root.removeChild(slot);
++							break;
++						case "replaced":
++							root.removeChild(slot);
++							root.addChild(
++								new MouseRegion(new Text("AGENTS", 0, 0), (event) => {
++									replacementEvents.push(event.type);
++									return { handled: true };
++								}),
++							);
++							break;
++						case "root":
++							tui.setLayoutRoot(new VStack([lead, slot]));
++							break;
++					}
++					tui.renderNow();
++					await terminal.flush();
++					if (scenario === "moved" || scenario === "restored") {
++						assert.equal(terminal.getViewport()[2].trimEnd(), "AGENTS");
++					}
++					if (scenario === "restored") {
++						lead.setText("LEAD");
++						tui.renderNow();
++						await terminal.flush();
++						assert.equal(terminal.getViewport()[1].trimEnd(), "AGENTS");
++					}
++					terminal.sendInput("\x1b[<0;2;2m");
++					assert.deepEqual(
++						events,
++						scenario === "stable" || scenario === "text" ? ["press", "release", "click"] : ["press"],
++					);
++					assert.deepEqual(replacementEvents, []);
++				} finally {
++					tui.stop();
++					await terminal.flush();
++				}
++			});
++		}
++	}
++
++	for (const phase of ["press", "release"] as const) {
++		for (const mutation of ["detach", "root", "stop", "move", "restore", "stable", "overlay-close"] as const) {
++			it(`${phase} callback: ${mutation}`, async () => {
++				const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++				const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++				const events: string[] = [];
++				const lead = new Text("LEAD", 0, 0);
++				const root = new VStack([lead]);
++				let close = () => {};
++				const target = new MouseRegion(new Text("AGENTS", 0, 0), (event: TuiMouseEvent) => {
++					events.push(event.type);
++					if (event.type === phase) {
++						switch (mutation) {
++							case "detach":
++								root.removeChild(target);
++								break;
++							case "root":
++								tui.setLayoutRoot(new VStack([lead]));
++								break;
++							case "stop":
++								tui.stop();
++								break;
++							case "move":
++								lead.setText("LEAD\nLEAD");
++								tui.renderNow();
++								break;
++							case "restore":
++								lead.setText("LEAD\nLEAD");
++								tui.renderNow();
++								lead.setText("LEAD");
++								tui.renderNow();
++								break;
++							case "stable":
++								tui.renderNow();
++								break;
++							case "overlay-close":
++								close();
++								break;
++						}
++					}
++					return { handled: true, capture: true, focus: true, render: true };
++				});
++				root.addChild(target);
++				tui.setLayoutRoot(root);
++				if (mutation === "overlay-close") {
++					root.removeChild(target);
++					const overlay = tui.showOverlay(target, { row: 1, col: 0, width: WIDTH });
++					close = () => overlay.hide();
++				}
++				try {
++					tui.start();
++					tui.renderNow();
++					await terminal.flush();
++					assert.equal(terminal.getViewport()[1].trimEnd(), "AGENTS");
++					terminal.sendInput("\x1b[<0;2;2M");
++					await terminal.waitForRender();
++					terminal.sendInput("\x1b[<0;2;2m");
++					assert.deepEqual(
++						events,
++						mutation === "stable"
++							? ["press", "release", "click"]
++							: phase === "press"
++								? ["press"]
++								: ["press", "release"],
++					);
++					if (mutation === "detach") {
++						await terminal.waitForRender();
++						assert.equal(
++							terminal.getViewport().some((line) => line.includes("AGENTS")),
++							false,
++						);
++					}
++				} finally {
++					tui.stop();
++					await terminal.flush();
++				}
++			});
++		}
++	}
++	for (const mode of ["implicit", "overlay"] as const) {
++		it(`${mode}: preserves held capture across ordinary scheduled frames`, async () => {
++			const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++			const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++			const events: string[] = [];
++			const target = new MouseRegion(new Text("AGENTS", 0, 0), (event) => {
++				events.push(event.type);
++				return { handled: true, capture: true };
++			});
++			if (mode === "implicit") tui.addChild(target);
++			else tui.showOverlay(target, { row: 0, col: 0, width: WIDTH });
++			try {
++				tui.start();
++				await terminal.waitForRender();
++				assert.equal(terminal.getViewport()[0].trimEnd(), "AGENTS");
++				terminal.sendInput("\x1b[<0;2;1M");
++				for (let frame = 0; frame < 3; frame++) {
++					tui.requestRender();
++					await terminal.waitForRender();
++				}
++				terminal.sendInput("\x1b[<0;2;1m");
++				assert.deepEqual(events, ["press", "release", "click"]);
++			} finally {
++				tui.stop();
++				await terminal.flush();
++			}
++		});
++	}
++
++	for (const mutation of [
++		"line-offset",
++		"logical-height",
++		"clip",
++		"scroll-unrendered",
++		"ancestor-detach",
++		"recapture",
++	] as const) {
++		it(`cancels ${mutation} without transferring the release`, async () => {
++			const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++			const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++			const events: string[] = [];
++			const lines = ["AGENTS", "SECOND", "THIRD"];
++			const target = new MouseRegion({ render: () => lines, invalidate() {} }, (event) => {
++				events.push(event.type);
++				return { handled: true, capture: true };
++			});
++			const parent = new VStack([{ component: target, basis: 2, shrink: 0 }]);
++			const scroll = new ScrollView(parent);
++			const root = new VStack([{ component: scroll, basis: 1, shrink: 0 }]);
++			tui.setLayoutRoot(root);
++			try {
++				tui.start();
++				tui.renderNow();
++				await terminal.flush();
++				assert.equal(terminal.getViewport()[0].trimEnd(), "AGENTS");
++				terminal.sendInput("\x1b[<0;2;1M");
++				switch (mutation) {
++					case "line-offset":
++						lines[2] = `${CURSOR_MARKER}THIRD`;
++						break;
++					case "logical-height":
++						lines.push("FOURTH");
++						break;
++					case "clip":
++						root.clear();
++						root.addChild(scroll, { basis: 2 });
++						break;
++					case "scroll-unrendered":
++						scroll.scrollBy(1);
++						break;
++					case "ancestor-detach":
++						root.removeChild(scroll);
++						break;
++					case "recapture":
++						terminal.sendInput("\x1b[<32;3;1M");
++						root.removeChild(scroll);
++						break;
++				}
++				if (mutation !== "scroll-unrendered" && mutation !== "ancestor-detach") {
++					tui.renderNow();
++					await terminal.flush();
++				}
++				terminal.sendInput("\x1b[<0;2;1m");
++				assert.deepEqual(events, mutation === "recapture" ? ["press", "drag"] : ["press"]);
++			} finally {
++				tui.stop();
++				await terminal.flush();
++			}
++		});
++	}
++
++	it("does not recapture after a press callback stops and restarts the renderer", async () => {
++		const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++		const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++		const events: string[] = [];
++		const target = new MouseRegion(new Text("AGENTS", 0, 0), (event) => {
++			events.push(event.type);
++			if (event.type === "press") {
++				tui.stop();
++				tui.start();
++				tui.renderNow();
++			}
++			return { handled: true, capture: true };
++		});
++		tui.setLayoutRoot(new VStack([target]));
++		try {
++			tui.start();
++			tui.renderNow();
++			await terminal.flush();
++			terminal.sendInput("\x1b[<0;2;1M");
++			terminal.sendInput("\x1b[<0;2;1m");
++			assert.equal(events.includes("click"), false);
++		} finally {
++			tui.stop();
++			await terminal.flush();
++		}
++	});
++	it("does not dispatch a new press to a detached layout target awaiting repaint", async () => {
++		const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++		const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++		const events: string[] = [];
++		const target = new MouseRegion(new Text("AGENTS", 0, 0), (event) => {
++			events.push(event.type);
++			return { handled: true, capture: true };
++		});
++		const root = new VStack([target]);
++		tui.setLayoutRoot(root);
++		try {
++			tui.start();
++			tui.renderNow();
++			await terminal.flush();
++			root.removeChild(target);
++			terminal.sendInput("\x1b[<0;2;1M");
++			assert.deepEqual(events, []);
++		} finally {
++			tui.stop();
++			await terminal.flush();
++		}
++	});
++	for (const phase of ["held", "press", "release"] as const) {
++		it(`honors delegated target invalidation during ${phase} with unchanged root geometry`, async () => {
++			const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++			const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++			const events: string[] = [];
++			const replacements: string[] = [];
++			const host = new Container();
++			const replacement = new MouseRegion(new Text("AGENTS", 0, 0), (event) => {
++				replacements.push(event.type);
++				return { handled: true };
++			});
++			const target = new MouseRegion(new Text("AGENTS", 0, 0), (event) => {
++				events.push(event.type);
++				if (event.type === phase) {
++					host.removeChild(target);
++					host.addChild(replacement);
++				}
++				return { handled: true, capture: true, render: true };
++			});
++			host.addChild(target);
++			tui.setLayoutRoot(new VStack([host]));
++			try {
++				tui.start();
++				tui.renderNow();
++				await terminal.flush();
++				const before = terminal.getViewport();
++				terminal.sendInput("\x1b[<0;2;1M");
++				await terminal.waitForRender();
++				if (phase === "held") {
++					host.removeChild(target);
++					host.addChild(replacement);
++				}
++				terminal.sendInput("\x1b[<0;2;1m");
++				await terminal.waitForRender();
++				assert.deepEqual(events, phase === "release" ? ["press", "release"] : ["press"]);
++				assert.deepEqual(replacements, []);
++				assert.deepEqual(terminal.getViewport(), before);
++			} finally {
++				tui.stop();
++				await terminal.flush();
++			}
++		});
++	}
++});
+diff --git a/packages/tui/test/tui-alt-screen-validity.test.ts b/packages/tui/test/tui-alt-screen-validity.test.ts
+new file mode 100644
+index 0000000..d6c9ef6
+--- /dev/null
++++ b/packages/tui/test/tui-alt-screen-validity.test.ts
+@@ -0,0 +1,491 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { BoundedVStack } from "../src/components/bounded-v-stack.ts";
++import { Box } from "../src/components/box.ts";
++import { ScrollView } from "../src/components/scroll-view.ts";
++import { VStack } from "../src/components/v-stack.ts";
++import {
++	type Component,
++	Container,
++	dispatchMouseEvent,
++	type TuiMouseDispatchGuard,
++	type TuiMouseDispatchResult,
++	type TuiMouseEvent,
++} from "../src/tui.ts";
++import { TuiAltScreen } from "../src/tui-alt-screen.ts";
++import { TuiMainScreen } from "../src/tui-main-screen.ts";
++import { VirtualTerminal } from "./virtual-terminal.ts";
++
++const REPORTS = 10000;
++const VALIDATION_BUDGET_PER_REPORT = 20;
++function capture(
++	target: Component,
++	event: TuiMouseEvent,
++	valid: () => boolean,
++	focus: boolean,
++	originY: number,
++	path: readonly TuiMouseDispatchGuard[],
++): TuiMouseDispatchResult {
++	return {
++		handled: true,
++		capture: true,
++		focus,
++		render: false,
++		target: {
++			component: target,
++			originX: 0,
++			originY,
++			width: event.width,
++			height: event.height,
++			isValid: () => path.every((guard) => guard.isValid()) && valid(),
++			validity: { path, current: valid },
++		},
++	};
++}
++
++describe("TuiAltScreen structured capture validity", () => {
++	it("bounds fresh-predicate A↔B transfer validation across 10000 reports", async (t) => {
++		const terminal = new VirtualTerminal(40, 12);
++		const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++		let validations = 0;
++		let drags = 0;
++		let releases = 0;
++		const scope = {};
++		const aSubject = {};
++		const bSubject = {};
++		const fresh = () => () => {
++			validations++;
++			return true;
++		};
++		const a: Component = {
++			render: () => ["A"],
++			invalidate() {},
++			handleMouse(event) {
++				if (event.type === "drag") drags++;
++				if (event.type === "release") releases++;
++				return capture(event.type === "press" ? a : b, event, fresh(), false, event.type === "press" ? 0 : 1, [
++					{ scope, subject: event.type === "press" ? aSubject : bSubject, isValid: fresh() },
++				]);
++			},
++		};
++		const b: Component = {
++			render: () => ["B"],
++			invalidate() {},
++			handleMouse(event) {
++				if (event.type === "drag") drags++;
++				if (event.type === "release") releases++;
++				return capture(a, event, fresh(), false, 0, [{ scope, subject: aSubject, isValid: fresh() }]);
++			},
++		};
++		tui.setLayoutRoot(new VStack([a, b]));
++		try {
++			tui.start();
++			tui.renderNow();
++			await terminal.flush();
++			terminal.sendInput("\x1b[<0;2;1M");
++			for (let index = 0; index < REPORTS; index++) terminal.sendInput(`\x1b[<32;${3 + (index % 2)};1M`);
++			terminal.sendInput("\x1b[<0;4;1m");
++
++			t.diagnostic(JSON.stringify({ reports: REPORTS, validations, drags, releases }));
++			assert.equal(drags, REPORTS);
++			assert.equal(releases, 1);
++			assert.ok(validations <= VALIDATION_BUDGET_PER_REPORT * (REPORTS + 2), `validation calls: ${validations}`);
++		} finally {
++			tui.stop();
++			await terminal.flush();
++		}
++	});
++
++	for (const invalidation of ["incoming", "previous"] as const) {
++		it(`latches ${invalidation} capture invalidation from a focus setter`, async () => {
++			const terminal = new VirtualTerminal(40, 12);
++			const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++			const events: string[] = [];
++			let incomingValid = true;
++			let previousValid = true;
++			let focused = false;
++			const target: Component & { focused: boolean } = {
++				get focused() {
++					return focused;
++				},
++				set focused(value) {
++					focused = value;
++					if (value) {
++						if (invalidation === "incoming") incomingValid = false;
++						else previousValid = false;
++					}
++				},
++				render: () => ["TARGET"],
++				invalidate() {},
++				handleMouse(event) {
++					events.push(event.type);
++					if (event.type === "press") return { handled: true, capture: true, render: false };
++					if (invalidation === "previous" && events.length === 2)
++						return capture(target, event, () => previousValid, false, 0, []);
++					return capture(target, event, () => incomingValid, true, 0, []);
++				},
++			};
++			tui.setLayoutRoot(new VStack([target]));
++			try {
++				tui.start();
++				tui.renderNow();
++				await terminal.flush();
++				terminal.sendInput("\x1b[<0;2;1M");
++				if (invalidation === "previous") {
++					terminal.sendInput("\x1b[<32;3;1M");
++					terminal.sendInput("\x1b[<32;4;1M");
++				}
++				terminal.sendInput("\x1b[<0;2;1m");
++
++				assert.deepEqual(events, invalidation === "incoming" ? ["press", "release"] : ["press", "drag", "drag"]);
++			} finally {
++				tui.stop();
++				await terminal.flush();
++			}
++		});
++	}
++	for (const kind of ["container", "box", "bounded", "structural", "overlay"] as const) {
++		for (const phase of ["held", "press"] as const) {
++			it(`invalidates ${kind} ownership after remove/readd of the same object during ${phase}`, async () => {
++				const terminal = new VirtualTerminal(40, 12);
++				const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++				const events: string[] = [];
++				let replace = () => {};
++				const target: Component = {
++					render: () => ["TARGET"],
++					invalidate() {},
++					handleMouse(event) {
++						events.push(event.type);
++						if (phase === "press" && event.type === "press") replace();
++						return { handled: true, capture: true, render: false };
++					},
++				};
++				if (kind === "overlay") {
++					const overlay = tui.showOverlay(target, { row: 0, col: 0, width: 40, nonCapturing: true });
++					replace = () => {
++						overlay.setHidden(true);
++						overlay.setHidden(false);
++					};
++				} else {
++					const host =
++						kind === "box"
++							? new Box(0, 0)
++							: kind === "bounded"
++								? new BoundedVStack({ getMaxHeight: () => 4, requestRender: () => tui.requestRender() })
++								: kind === "structural"
++									? new VStack()
++									: new Container();
++					host.addChild(target);
++					replace = () => {
++						host.removeChild(target);
++						host.addChild(target);
++					};
++					const shell: Component = {
++						render: (width) => host.render(width),
++						handleMouse: (event) => host.handleMouse(event),
++						invalidate: () => host.invalidate(),
++					};
++					tui.setLayoutRoot(new VStack([kind === "structural" ? host : shell]));
++				}
++				try {
++					tui.start();
++					tui.renderNow();
++					await terminal.flush();
++					const before = terminal.getViewport();
++					terminal.sendInput("\x1b[<0;2;1M");
++					if (phase === "held") replace();
++					tui.renderNow();
++					await terminal.flush();
++					assert.deepEqual(terminal.getViewport(), before);
++					terminal.sendInput("\x1b[<0;2;1m");
++					assert.deepEqual(events, ["press"]);
++				} finally {
++					tui.stop();
++					await terminal.flush();
++				}
++			});
++		}
++	}
++
++	it("rejects an opaque internal predicate instead of inventing provenance", () => {
++		const target: Component = {
++			render: () => ["TARGET"],
++			invalidate() {},
++			handleMouse(event) {
++				return {
++					handled: true,
++					capture: true,
++					target: {
++						component: target,
++						originX: 0,
++						originY: 0,
++						width: event.width,
++						height: event.height,
++						isValid: () => true,
++					},
++				};
++			},
++		};
++		assert.throws(
++			() =>
++				dispatchMouseEvent(target, {
++					type: "press",
++					button: "left",
++					x: 0,
++					y: 0,
++					screenX: 0,
++					screenY: 0,
++					width: 40,
++					height: 1,
++					shift: false,
++					alt: false,
++					ctrl: false,
++				}),
++			/Mouse dispatch invariant: isValid requires explicit validity provenance/,
++		);
++	});
++	for (const invalidation of ["inherited-path", "superseded-current"] as const) {
++		it(`distinguishes subjects sharing a scope from ${invalidation}`, async () => {
++			const terminal = new VirtualTerminal(40, 12);
++			const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++			const scope = {};
++			const bSubject = {};
++			const cSubject = {};
++			let bPathLive = true;
++			let bCurrentLive = true;
++			const events: string[] = [];
++			const c: Component = {
++				render: () => ["C"],
++				invalidate() {},
++				handleMouse(event) {
++					events.push(event.type);
++					return { handled: true, capture: true, render: false };
++				},
++			};
++			const b: Component = {
++				render: () => ["B"],
++				invalidate() {},
++				handleMouse(event) {
++					return capture(c, event, () => true, false, 2, [{ scope, subject: cSubject, isValid: () => true }]);
++				},
++			};
++			const a: Component = {
++				render: () => ["A"],
++				invalidate() {},
++				handleMouse(event) {
++					if (event.type === "press") return { handled: true, capture: true, render: false };
++					return capture(b, event, () => bCurrentLive, false, 1, [
++						{ scope, subject: bSubject, isValid: () => bPathLive },
++					]);
++				},
++			};
++			tui.setLayoutRoot(new VStack([a, b, c]));
++			try {
++				tui.start();
++				tui.renderNow();
++				await terminal.flush();
++				terminal.sendInput("\x1b[<0;2;1M");
++				terminal.sendInput("\x1b[<32;3;1M");
++				terminal.sendInput("\x1b[<32;4;1M");
++				terminal.sendInput("\x1b[<32;3;1M");
++				if (invalidation === "inherited-path") bPathLive = false;
++				else bCurrentLive = false;
++				terminal.sendInput("\x1b[<0;3;1m");
++				assert.deepEqual(events, invalidation === "inherited-path" ? ["drag"] : ["drag", "release"]);
++			} finally {
++				tui.stop();
++				await terminal.flush();
++			}
++		});
++	}
++
++	it("preserves an auto-fill bounded slot's registration across stable renders", async () => {
++		const terminal = new VirtualTerminal(40, 12);
++		const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++		const events: string[] = [];
++		const target: Component = {
++			render: () => ["TARGET"],
++			invalidate() {},
++			handleMouse(event) {
++				events.push(event.type);
++				return { handled: true, capture: true };
++			},
++		};
++		const inner = new VStack([{ component: target, basis: 0, grow: 1 }]);
++		const bounded = new BoundedVStack({ getMaxHeight: () => 4, requestRender: () => tui.requestRender() });
++		bounded.addChild(inner);
++		tui.setLayoutRoot(
++			new VStack([
++				{
++					render: (width) => bounded.render(width),
++					handleMouse: (event) => bounded.handleMouse(event),
++					invalidate: () => bounded.invalidate(),
++				},
++			]),
++		);
++		try {
++			tui.start();
++			tui.renderNow();
++			await terminal.flush();
++			terminal.sendInput("\x1b[<0;2;1M");
++			tui.renderNow();
++			await terminal.flush();
++			terminal.sendInput("\x1b[<0;2;1m");
++			assert.deepEqual(events, ["press", "release", "click"]);
++		} finally {
++			tui.stop();
++			await terminal.flush();
++		}
++	});
++	for (const owner of ["container", "box"] as const) {
++		for (const duplicate of [false, true]) {
++			it(`distinguishes ${owner} subjects under the same geometry generation (duplicate component: ${duplicate})`, () => {
++				const host = owner === "container" ? new Container() : new Box(0, 0);
++				const child = (): Component => ({
++					render: () => ["TARGET"],
++					invalidate() {},
++					handleMouse: () => ({ handled: true, capture: true }),
++				});
++				const first = child();
++				host.addChild(first);
++				host.addChild(duplicate ? first : child());
++				host.render(40);
++				const event: TuiMouseEvent = {
++					type: "press",
++					button: "left",
++					x: 0,
++					y: 0,
++					screenX: 0,
++					screenY: 0,
++					width: 40,
++					height: 2,
++					shift: false,
++					alt: false,
++					ctrl: false,
++				};
++				const a = dispatchMouseEvent(host, event)!;
++				const b = dispatchMouseEvent(host, { ...event, y: 1, screenY: 1 })!;
++				const aGuard = a.target.validity!.path[0]!;
++				const bGuard = b.target.validity!.path[0]!;
++				assert.equal(aGuard.scope, bGuard.scope);
++				assert.notEqual(aGuard.subject, bGuard.subject);
++				assert.equal(a.target.isValid!(), true);
++				assert.equal(b.target.isValid!(), true);
++			});
++		}
++	}
++
++	for (const mutation of ["logical-height", "registration"] as const) {
++		it(`preserves regular bounded whole-layout cancellation when another child's ${mutation} changes`, async () => {
++			const terminal = new VirtualTerminal(40, 12);
++			const tui = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++			const events: string[] = [];
++			let siblingHeight = 5;
++			const target: Component = {
++				render: () => ["TARGET"],
++				invalidate() {},
++				handleMouse(event) {
++					events.push(event.type);
++					return { handled: true, capture: true };
++				},
++			};
++			const sibling: Component = { render: () => Array(siblingHeight).fill("SIBLING"), invalidate() {} };
++			const bounded = new BoundedVStack({ getMaxHeight: () => 3, requestRender: () => tui.requestRender() });
++			bounded.addChild(target, { basis: 1 });
++			bounded.addChild(sibling, { basis: 2 });
++			tui.addChild({
++				render: (width) => bounded.render(width),
++				handleMouse: (event) => bounded.handleMouse(event),
++				invalidate: () => bounded.invalidate(),
++			});
++			try {
++				tui.start();
++				tui.renderNow();
++				await terminal.flush();
++				terminal.sendInput(`\x1b[${terminal.getCursorPosition().y + 1};1R`);
++				terminal.sendInput("\x1b[<0;2;1M");
++				const before = terminal.getViewport();
++				if (mutation === "logical-height") siblingHeight++;
++				else {
++					bounded.removeChild(sibling);
++					bounded.addChild(sibling, { basis: 2 });
++				}
++				tui.renderNow();
++				await terminal.flush();
++				assert.deepEqual(terminal.getViewport(), before);
++				terminal.sendInput("\x1b[<0;2;1m");
++				assert.deepEqual(events, ["press"]);
++			} finally {
++				tui.stop();
++				await terminal.flush();
++			}
++		});
++	}
++	it("distinguishes duplicate bounded scroll-content occurrences under one layout generation", () => {
++		const host = new BoundedVStack({ getMaxHeight: () => 2, requestRender: () => {} });
++		const shared: Component = {
++			render: () => ["TARGET", "TARGET"],
++			invalidate() {},
++			handleMouse: () => ({ handled: true, capture: true }),
++		};
++		host.addChild(new ScrollView(shared), { basis: 1 });
++		host.addChild(new ScrollView(shared), { basis: 1 });
++		host.render(40);
++		const event: TuiMouseEvent = {
++			type: "press",
++			button: "left",
++			x: 0,
++			y: 0,
++			screenX: 0,
++			screenY: 0,
++			width: 40,
++			height: 2,
++			shift: false,
++			alt: false,
++			ctrl: false,
++		};
++		const a = dispatchMouseEvent(host, event)!;
++		const b = dispatchMouseEvent(host, { ...event, y: 1, screenY: 1 })!;
++		assert.equal(a.target.component, shared);
++		assert.equal(b.target.component, shared);
++		assert.equal(a.target.validity!.path[0]!.scope, b.target.validity!.path[0]!.scope);
++		assert.notEqual(a.target.validity!.path[0]!.subject, b.target.validity!.path[0]!.subject);
++	});
++
++	it("bounds composed path metadata when an internal producer reuses its structured result", () => {
++		const owner = new Container();
++		const child: Component = { render: () => ["TARGET"], invalidate() {}, handleMouse: () => response };
++		const response: TuiMouseDispatchResult = {
++			handled: true,
++			capture: true,
++			target: {
++				component: child,
++				originX: 0,
++				originY: 0,
++				width: 40,
++				height: 1,
++				validity: { path: [], current: () => true },
++			},
++		};
++		owner.addChild(child);
++		owner.render(40);
++		const event: TuiMouseEvent = {
++			type: "drag",
++			button: "left",
++			x: 0,
++			y: 0,
++			screenX: 0,
++			screenY: 0,
++			width: 40,
++			height: 1,
++			shift: false,
++			alt: false,
++			ctrl: false,
++		};
++		for (let index = 0; index < REPORTS; index++) {
++			const result = dispatchMouseEvent(owner, event)!;
++			assert.equal(result.target.validity!.path.length, 1);
++		}
++		assert.equal(response.target.validity!.path.length, 0);
++	});
++});
+-- 
+2.56.0
+

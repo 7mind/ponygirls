@@ -75,6 +75,10 @@ buildNpmPackage (finalAttrs: {
     ./patches/border-gesture-lifecycle.patch
     # Opt-in main-screen mouse routing; native terminal selection remains the default.
     ./patches/regular-mode-mouse.patch
+    ./patches/main-screen-shrink-viewport.patch
+    ./patches/regular-retained-viewport.patch
+    ./patches/widget-registration-lifetimes.patch
+    ./patches/fullscreen-capture-validity.patch
   ];
 
   npmDepsHash = "sha256-aBzVz78IxZQlzPYC72Ufa2YFtkow6nZR24YBYZrv9W0=";
@@ -125,15 +129,24 @@ buildNpmPackage (finalAttrs: {
       test/chat-viewport.test.ts \
       test/custom-editor-border-content.test.ts \
       test/custom-editor-border-gesture.test.ts \
+      test/custom-editor-border-registration.test.ts \
       test/interactive-mode-widget-placement.test.ts \
+      test/interactive-widget-reconciliation.test.ts \
       test/interactive-mode-extension-dialogs.test.ts \
       test/interactive-mode-status.test.ts \
+      test/interactive-retained-viewport.test.ts \
       test/interactive-tui.test.ts \
       test/regular-mouse-settings.test.ts \
       test/config-schemas.test.ts)
     node --test \
+      packages/tui/test/bounded-v-stack.test.ts \
+      packages/tui/test/tui-alt-screen-capture.test.ts \
+      packages/tui/test/tui-alt-screen-gesture.test.ts \
+      packages/tui/test/tui-alt-screen-validity.test.ts \
+      packages/tui/test/mouse-validity-gc.test.ts \
       packages/tui/test/cursor-position.test.ts \
       packages/tui/test/tui-main-screen-mouse.test.ts \
+      packages/tui/test/tui-render.test.ts \
       packages/tui/test/stdin-buffer.test.ts
     runHook postCheck
   '';

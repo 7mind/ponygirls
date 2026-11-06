@@ -1,0 +1,1008 @@
+From 4083619c8fc4163763f5168ef52912f67996f0bd Mon Sep 17 00:00:00 2001
+From: Pavel Shirshov <pshirshov@eml.cc>
+Date: Fri, 6 Nov 2026 14:24:23 +0000
+Subject: [PATCH] fix(tui): backport bounded retained inline viewport
+
+Backport 51f42336f8cffc1d42f7260609703cff0e41931d onto the pinned 1.4.0 runtime. Preserve its blocked/overlay and output handling, versions, dependencies and model catalog. Include effective-height snapshots, coherent dispatch frames and all 27 adapter/host regressions.
+---
+ packages/coding-agent/docs/tui.md             |   2 +
+ .../src/modes/interactive/interactive-mode.ts |  23 +-
+ .../interactive-retained-viewport.test.ts     | 303 +++++++++++++++
+ packages/tui/README.md                        |  14 +-
+ .../tui/src/components/bounded-v-stack.ts     | 179 +++++++++
+ packages/tui/src/index.ts                     |   1 +
+ packages/tui/test/bounded-v-stack.test.ts     | 367 ++++++++++++++++++
+ 7 files changed, 884 insertions(+), 5 deletions(-)
+ create mode 100644 packages/coding-agent/test/interactive-retained-viewport.test.ts
+ create mode 100644 packages/tui/src/components/bounded-v-stack.ts
+ create mode 100644 packages/tui/test/bounded-v-stack.test.ts
+
+diff --git a/packages/coding-agent/docs/tui.md b/packages/coding-agent/docs/tui.md
+index 0f6e601..962cb22 100644
+--- a/packages/coding-agent/docs/tui.md
++++ b/packages/coding-agent/docs/tui.md
+@@ -145,6 +145,8 @@ Finish the interaction with the completion callback supplied to the component fa
+ 
+ For an inline detail view opened by an editor-border badge, pass `{ retainEditorBorders: true }` to `ctx.ui.custom()`. The editor's visible border widgets remain above/below the view, without showing the draft or moving keyboard focus to the hidden editor. A second badge click can call that interaction's completion callback to close it. Keep one pending/open interaction per badge and revoke its callback on session shutdown; repeated clicks must not stack duplicate views. Empty border rows take no space. The option is ignored for overlays and custom editors without `createBorderComponent()` support. Nested confirmation/input dialogs do not retain the rows. Mouse interaction requires fullscreen mode or regular mode with `regularMouse: true`; preserve command/shortcut and keyboard dismissal paths.
+ 
++In regular mode, retained inline views receive a bounded structural allocation after reserving the actual footer and below-editor widgets at the current width. Use `VStack` with fixed chrome (`shrink: 0`) and a shrinkable `ScrollView` body (`grow: 1, shrink: 1, minSize: 0`) so the body yields space to the retained badges. The allocation updates on resize and footer/widget changes; do not subtract those reservations again inside the view. Ordinary editors and custom views without this option keep their intrinsic rendering. This does not add regular-mode wheel-scroll defaults.
++
+ See [`retained-border-details.ts`](../examples/extensions/retained-border-details.ts) for a repeat-click detail view with a command and keyboard dismissal path. See [`overlay-qa-tests.ts`](../examples/extensions/overlay-qa-tests.ts) for positioning, stacking, focus, responsive visibility, and animation behavior.
+ 
+ ## Apply themes correctly
+diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+index 3f043ae..b0dc4a2 100644
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -32,6 +32,7 @@ import type {
+ } from "@earendil-works/pi-tui";
+ import * as TuiLayouts from "@earendil-works/pi-tui";
+ import {
++	BoundedVStack,
+ 	CombinedAutocompleteProvider,
+ 	type Component,
+ 	Container,
+@@ -51,7 +52,7 @@ import {
+ 	TuiMainScreen,
+ 	type TuiMouseEvent,
+ 	type TuiMouseEventResult,
+-	VStack,
++	type VStack,
+ 	visibleWidth,
+ } from "@earendil-works/pi-tui";
+ import chalk from "chalk";
+@@ -711,7 +712,25 @@ export class InteractiveMode {
+ 			embedWorkingStatus: true,
+ 		});
+ 		this.editor = this.defaultEditor;
+-		this.editorContainer = new VStack();
++		this.editorContainer = new BoundedVStack({
++			getMaxHeight: (width) => {
++				const top = this.extensionDialogs.at(-1);
++				if (
++					this.renderer.mode !== "regular" ||
++					!top?.retainEditorBorders ||
++					!isBorderRowEditor(this.editor) ||
++					!this.editorContainer.children.includes(top.component)
++				)
++					return undefined;
++				return Math.max(
++					0,
++					this.ui.terminal.rows -
++						this.footerContainer.render(width).length -
++						this.widgetContainerBelow.render(width).length,
++				);
++			},
++			requestRender: () => this.ui.requestRender(),
++		});
+ 		this.editorContainer.addChild(this.editor as Component);
+ 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
+ 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
+diff --git a/packages/coding-agent/test/interactive-retained-viewport.test.ts b/packages/coding-agent/test/interactive-retained-viewport.test.ts
+new file mode 100644
+index 0000000..668ffe7
+--- /dev/null
++++ b/packages/coding-agent/test/interactive-retained-viewport.test.ts
+@@ -0,0 +1,303 @@
++import {
++	type Component,
++	type Container,
++	ScrollView,
++	Text,
++	type TUI,
++	type TuiMainScreen,
++	VStack,
++} from "@earendil-works/pi-tui";
++import { describe, expect, it, vi } from "vitest";
++import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
++import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
++import { SessionManager } from "../src/core/session-manager.ts";
++import { SettingsManager } from "../src/core/settings-manager.ts";
++import type { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
++import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
++
++type Host = {
++	renderer: TuiMainScreen;
++	editor: CustomEditor;
++	editorContainer: VStack;
++	widgetContainerBelow: Container;
++	footerContainer: Container;
++	programStatus: { setBlocked: ReturnType<typeof vi.fn> };
++	themeController: { dispose(): void };
++	footer: { dispose(): void };
++	footerDataProvider: { dispose(): void };
++	showExtensionCustom(
++		factory: (tui: TUI, theme: unknown, keys: unknown, done: () => void) => Component,
++		options: { retainEditorBorders: boolean },
++	): Promise<void>;
++};
++
++function host(terminal: VirtualTerminal): Host {
++	const runtime = {
++		session: {
++			settingsManager: SettingsManager.inMemory({ tuiMode: "regular", regularMouse: true, theme: "dark" }),
++			sessionManager: SessionManager.inMemory("/tmp"),
++			autoCompactionEnabled: false,
++			resourceLoader: { getThemes: () => ({ themes: [] }) },
++		},
++		setBeforeSessionInvalidate: () => {},
++		setRebindSession: () => {},
++	};
++	// Exercise the real constructor; the fixture supplies only its runtime dependencies and never starts a session.
++	const mode = new InteractiveMode(runtime as unknown as AgentSessionRuntime, { terminal });
++	const result = mode as unknown as Host;
++	result.programStatus = { setBlocked: vi.fn() };
++	result.footerContainer.clear();
++	result.renderer.addChild(result.editorContainer);
++	result.renderer.addChild(result.widgetContainerBelow);
++	result.renderer.addChild(result.footerContainer);
++	return result;
++}
++
++function dispose(h: Host): void {
++	h.renderer.stop();
++	h.themeController.dispose();
++	h.footer.dispose();
++	h.footerDataProvider.dispose();
++}
++
++describe("regular retained inline viewport", () => {
++	it("does not render a phantom editor row when the actual dock consumes the terminal", async () => {
++		const terminal = new VirtualTerminal(48, 12);
++		const h = host(terminal);
++		let done: () => void = () => {};
++		try {
++			h.editor.setBorderContent("topLeft", "top", { render: () => "TOP BADGE" });
++			h.footerContainer.addChild(new Text(Array.from({ length: 10 }, (_, i) => `FOOTER ${i}`).join("\n"), 0, 0));
++			h.widgetContainerBelow.addChild(new Text("BELOW 0\nBELOW 1", 0, 0));
++			const panel = new Text("BODY", 0, 0);
++			const dialog = h.showExtensionCustom(
++				(_tui, _theme, _keys, finish) => {
++					done = finish;
++					return panel;
++				},
++				{ retainEditorBorders: true },
++			);
++			await vi.waitFor(() => expect(h.editorContainer.children).toContain(panel));
++			expect(h.editorContainer.render(48)).toEqual([]);
++			h.renderer.start();
++			h.renderer.renderNow();
++			await terminal.flush();
++			const screen = terminal.getViewport().join("\n");
++			expect(screen).toContain("BELOW 0");
++			expect(screen).toContain("FOOTER 9");
++			expect(screen).not.toContain("BODY");
++			done();
++			await dialog;
++		} finally {
++			done();
++			dispose(h);
++		}
++	});
++
++	it("keeps the same top badge clickable across a held press and restores the draft", async () => {
++		const terminal = new VirtualTerminal(48, 12);
++		const h = host(terminal);
++		const events: string[] = [];
++		let done: () => void = () => {};
++		try {
++			h.editor.setText("private draft");
++			h.editor.setBorderContent("topLeft", "top", {
++				render: () => "TOP BADGE",
++				handleMouse: (event) => {
++					events.push(event.type);
++					if (event.type === "click") done();
++					return { handled: true, focus: true };
++				},
++			});
++			h.editor.setBorderContent("bottomLeft", "bottom", { render: () => "BOTTOM BADGE" });
++			h.footerContainer.addChild(new Text("FOOTER 0\nFOOTER 1", 0, 0));
++			const scroll = new ScrollView(new Text(Array.from({ length: 20 }, (_, i) => `BODY ${i}`).join("\n"), 0, 0));
++			const panel = new VStack([
++				{ component: new Text("HEADER", 0, 0), shrink: 0 },
++				{ component: scroll, grow: 1, shrink: 1, minSize: 0 },
++				{ component: new Text("CLOSE", 0, 0), shrink: 0 },
++			]);
++			const dialog = h.showExtensionCustom(
++				(_tui, _theme, _keys, finish) => {
++					done = finish;
++					return panel;
++				},
++				{ retainEditorBorders: true },
++			);
++			await vi.waitFor(() => expect(h.editorContainer.children).toContain(panel));
++			h.renderer.start();
++			h.renderer.renderNow();
++			await terminal.flush();
++			terminal.sendInput(`\x1b[${terminal.getCursorPosition().y + 1};1R`);
++			expect(terminal.getViewport()[0]).toContain("TOP BADGE");
++			terminal.sendInput("\x1b[<0;4;1M");
++			expect(events).toEqual(["press"]);
++			await new Promise((resolve) => setTimeout(resolve, 30));
++			h.renderer.renderNow();
++			await terminal.flush();
++			expect(h.renderer.getFocusedComponent()).toBe(panel);
++			terminal.sendInput("\x1b[<0;4;1m");
++			expect(events).toEqual(["press", "release", "click"]);
++			await dialog;
++			h.renderer.renderNow();
++			await terminal.flush();
++			expect(terminal.getViewport().join("\n")).toContain("private draft");
++			expect(h.renderer.getFocusedComponent()).toBe(h.editor);
++		} finally {
++			done();
++			dispose(h);
++		}
++	});
++	it("remeasures wrapped below widgets, custom footers, and terminal resize", async () => {
++		const terminal = new VirtualTerminal(48, 12);
++		const h = host(terminal);
++		let done: () => void = () => {};
++		try {
++			h.editor.setBorderContent("topLeft", "top", { render: () => "TOP BADGE" });
++			h.editor.setBorderContent("bottomLeft", "bottom", { render: () => "BOTTOM BADGE" });
++			const scroll = new ScrollView(new Text(Array.from({ length: 30 }, (_, i) => `BODY ${i}`).join("\n"), 0, 0));
++			const panel = new VStack([
++				{ component: new Text("HEADER", 0, 0), shrink: 0 },
++				{ component: scroll, grow: 1, shrink: 1, minSize: 0 },
++				{ component: new Text("CLOSE", 0, 0), shrink: 0 },
++			]);
++			h.footerContainer.addChild(new Text("FOOTER 0\nFOOTER 1", 0, 0));
++			const dialog = h.showExtensionCustom(
++				(_tui, _theme, _keys, finish) => {
++					done = finish;
++					return panel;
++				},
++				{ retainEditorBorders: true },
++			);
++			await vi.waitFor(() => expect(h.editorContainer.children).toContain(panel));
++			h.renderer.start();
++			h.renderer.renderNow();
++			await terminal.flush();
++			expect(scroll.viewportHeight).toBe(6);
++			h.widgetContainerBelow.addChild(new Text("word ".repeat(12), 0, 0));
++			h.footerContainer.addChild(new Text("FOOTER 2\nFOOTER 3", 0, 0));
++			h.renderer.renderNow();
++			await terminal.flush();
++			expect(scroll.viewportHeight).toBe(2);
++			scroll.scrollToEnd();
++			h.renderer.renderNow();
++			await terminal.flush();
++			expect(terminal.getViewport().join("\n")).toContain("BODY 29");
++			terminal.resize(80, 18);
++			h.renderer.renderNow();
++			await terminal.flush();
++			expect(scroll.viewportHeight).toBe(9);
++			expect(terminal.getViewport().join("\n")).toContain("TOP BADGE");
++			done();
++			await dialog;
++		} finally {
++			done();
++			dispose(h);
++		}
++	});
++	it("leaves the normal editor, legacy custom views, and directly mounted selectors intrinsic", async () => {
++		const terminal = new VirtualTerminal(48, 12);
++		const h = host(terminal);
++		let done: () => void = () => {};
++		try {
++			expect(h.editorContainer.render(48)).toEqual(h.editor.render(48));
++			const panel = new Text(Array.from({ length: 20 }, (_, i) => `LEGACY ${i}`).join("\n"), 0, 0);
++			const legacy = h.showExtensionCustom(
++				(_tui, _theme, _keys, finish) => {
++					done = finish;
++					return panel;
++				},
++				{ retainEditorBorders: false },
++			);
++			await vi.waitFor(() => expect(h.editorContainer.children).toContain(panel));
++			expect(h.editorContainer.render(48)).toHaveLength(20);
++			done();
++			await legacy;
++			h.editor.setBorderContent("topLeft", "top", { render: () => "TOP BADGE" });
++			const retained = h.showExtensionCustom(
++				(_tui, _theme, _keys, finish) => {
++					done = finish;
++					return panel;
++				},
++				{ retainEditorBorders: true },
++			);
++			await vi.waitFor(() => expect(h.editorContainer.children).toContain(panel));
++			expect(h.editorContainer.render(48).length).toBeLessThanOrEqual(12);
++			h.editorContainer.clear();
++			h.editorContainer.addChild(new Text(Array.from({ length: 20 }, (_, i) => `SELECTOR ${i}`).join("\n"), 0, 0));
++			expect(h.editorContainer.render(48)).toHaveLength(20);
++			done();
++			await retained;
++		} finally {
++			done();
++			dispose(h);
++		}
++	});
++
++	it.each([
++		[2, 0, false, 2],
++		[4, 0, false, 2],
++		[2, 2, false, 2],
++		[2, 0, true, 2],
++		[3, 0, false, 0],
++		[3, 0, false, 1],
++	] as const)(
++		"allocates the real editor slot with footer=%i below=%i zeroBasis=%s edges=%i",
++		async (footerRows, belowRows, zeroBasis, edges) => {
++			const terminal = new VirtualTerminal(48, 12);
++			const h = host(terminal);
++			let done: () => void = () => {};
++			try {
++				if (edges > 0) h.editor.setBorderContent("topLeft", "top", { render: () => "TOP BADGE" });
++				if (edges > 1) h.editor.setBorderContent("bottomLeft", "bottom", { render: () => "BOTTOM BADGE" });
++				h.editor.setText("private draft");
++				h.footerContainer.addChild(
++					new Text(Array.from({ length: footerRows }, (_, i) => `FOOTER ${i}`).join("\n"), 0, 0),
++				);
++				if (belowRows)
++					h.widgetContainerBelow.addChild(
++						new Text(Array.from({ length: belowRows }, (_, i) => `BELOW ${i}`).join("\n"), 0, 0),
++					);
++				const panel = new VStack([
++					{ component: new Text("HEADER", 0, 0), shrink: 0 },
++					{
++						component: new ScrollView(
++							new Text(Array.from({ length: 20 }, (_, i) => `BODY ${i}`).join("\n"), 0, 0),
++						),
++						basis: zeroBasis ? 0 : "auto",
++						grow: 1,
++						shrink: 1,
++						minSize: 0,
++					},
++					{ component: new Text("CLOSE", 0, 0), shrink: 0 },
++				]);
++				const dialog = h.showExtensionCustom(
++					(_tui, _theme, _keys, finish) => {
++						done = finish;
++						return panel;
++					},
++					{ retainEditorBorders: true },
++				);
++				await vi.waitFor(() => expect(h.editorContainer.children).toContain(panel));
++				h.renderer.start();
++				h.renderer.renderNow();
++				await terminal.flush();
++				const screen = terminal.getViewport().join("\n");
++				if (edges > 0) expect(screen).toContain("TOP BADGE");
++				if (edges > 1) expect(screen).toContain("BOTTOM BADGE");
++				expect(screen).toContain("HEADER");
++				expect(screen).toContain("BODY 0");
++				expect(screen).toContain("CLOSE");
++				expect(screen).not.toContain("private draft");
++				for (let i = 0; i < footerRows; i++) expect(screen).toContain(`FOOTER ${i}`);
++				for (let i = 0; i < belowRows; i++) expect(screen).toContain(`BELOW ${i}`);
++				done();
++				await dialog;
++				expect(h.editor.getText()).toBe("private draft");
++			} finally {
++				done();
++				dispose(h);
++			}
++		},
++	);
++});
+diff --git a/packages/tui/README.md b/packages/tui/README.md
+index 9594034..58dd60d 100644
+--- a/packages/tui/README.md
++++ b/packages/tui/README.md
+@@ -11,7 +11,7 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
+ - **Bracketed Paste Mode**: Handles large pastes correctly with markers for >10 line pastes
+ - **Component-based**: Simple Component interface with render() method
+ - **Theme Support**: Components accept theme interfaces for customizable styling
+-- **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, MouseRegion, Spacer, Image, Box, Container, VStack, HStack, ScrollView
++- **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, MouseRegion, Spacer, Image, Box, Container, VStack, BoundedVStack, HStack, ScrollView
+ - **Inline Images**: Renders images in terminals that support Kitty or iTerm2 graphics protocols
+ - **Autocomplete Support**: File paths and slash commands
+ 
+@@ -118,7 +118,7 @@ const foregroundCode = foregroundAnsi(foreground, getTerminalColorMode());
+ 
+ ### Alternate-screen viewport layouts
+ 
+-`TuiAltScreen` can render an explicit terminal-height layout. `VStack` and `HStack` allocate constrained regions, while `ScrollView` owns scrolling for one region. These semantics are intentionally unavailable on `TuiMainScreen`, where the terminal owns scrollback.
++`TuiAltScreen` can render an explicit terminal-height layout. `VStack` and `HStack` allocate constrained regions, while `ScrollView` owns scrolling for one region. `TuiMainScreen` has no whole-screen layout root; the terminal owns scrollback. A `BoundedVStack` can allocate a local inline region without changing that ownership.
+ 
+ ```typescript
+ import {
+@@ -163,6 +163,14 @@ Stack entries support `basis`, `grow`, `shrink`, `minSize`, `maxSize`, and respo
+ 
+ Layout geometry is rebuilt for each requested frame. Stateful components are retained, and their existing rendered-line caches remain effective. Calling `render(width)` directly on these layout components produces an unbounded document, which is also used when alt mode restores the main screen.
+ 
++### Bounded inline layouts
++
++`BoundedVStack` extends `VStack` for a flat-rendered host that knows an inline region's available height. Construct it with `{ getMaxHeight: (width) => availableRows, requestRender: () => tui.requestRender() }`, then add children with the usual stack entry options. Measure surrounding footer/widgets at that width before computing the budget; put retained fixed chrome inside the stack with `shrink: 0`.
++
++Auto-sized, shrinkable entries without an explicit `grow` pass through a direct `VStack` child's explicit vertical growth. Horizontal growth and growth behind a fixed-height ancestor do not expand the region. Explicit entry constraints still apply; content without vertical fill remains compact. A zero budget renders no rows. Return `undefined` from `getMaxHeight` to preserve ordinary intrinsic rendering, including measurement by a structural host.
++
++Pointer dispatch uses the committed allocated frame and preserves held gestures across unchanged geometry. This does not add fullscreen wheel-scroll defaults, transcript selection, or clipboard behavior to regular mode.
++
+ ### Overlays
+ 
+ Overlays render components on top of existing content without replacing it. Useful for dialogs, menus, and modal UI.
+@@ -311,7 +319,7 @@ const collapsible = new MouseRegion(content, (event) => {
+ });
+ ```
+ 
+-`Container` and `Box` route events to nested children using geometry recorded by the last rendered frame, so pointer motion does not rerender children merely to hit-test them. Explicit `VStack`, `HStack`, and `ScrollView` layouts use the alternate-screen layout frame directly.
++`Container` and `Box` route events to nested children using geometry recorded by the last rendered frame, so pointer motion does not rerender children merely to hit-test them. Explicit `VStack`, `HStack`, and `ScrollView` layouts use the alternate-screen layout frame, or the local allocated frame inside a bounded inline stack.
+ 
+ ### Focusable Interface (IME Support)
+ 
+diff --git a/packages/tui/src/components/bounded-v-stack.ts b/packages/tui/src/components/bounded-v-stack.ts
+new file mode 100644
+index 0000000..c7f33fb
+--- /dev/null
++++ b/packages/tui/src/components/bounded-v-stack.ts
+@@ -0,0 +1,179 @@
++import { getLayoutBoxesAt, type LayoutBox, type LayoutFrame, type LayoutRect, renderLayoutFrame } from "../layout.ts";
++import { getLayoutNode, LAYOUT_NODE, type StackLayoutNode } from "../layout-node.ts";
++import { Container, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
++import { allocateStackSizes, visibleStackEntries } from "./stack.ts";
++import { VStack } from "./v-stack.ts";
++
++export interface BoundedVStackOptions {
++	/** Undefined preserves ordinary intrinsic rendering, including measurement by a structural host. */
++	getMaxHeight(width: number): number | undefined;
++	requestRender(): void;
++}
++
++/** A stack that can allocate its structural descendants within a flat-rendered host. */
++export class BoundedVStack extends VStack {
++	private readonly options: BoundedVStackOptions;
++	private frame: LayoutFrame | undefined;
++	private layoutToken: object | undefined;
++	private allocatedNode: StackLayoutNode | undefined;
++	private dispatchHeights = new Map<LayoutBox, number>();
++
++	constructor(options: BoundedVStackOptions) {
++		super();
++		this.options = options;
++	}
++
++	override [LAYOUT_NODE](): StackLayoutNode {
++		return this.allocatedNode ?? super[LAYOUT_NODE]();
++	}
++
++	protected override get mouseLayoutToken(): object | undefined {
++		return this.layoutToken;
++	}
++
++	override clear(): void {
++		super.clear();
++		this.frame = undefined;
++		this.layoutToken = undefined;
++		this.dispatchHeights.clear();
++	}
++
++	override render(width: number): string[] {
++		const limit = this.options.getMaxHeight(width);
++		if (limit === undefined) {
++			this.frame = undefined;
++			this.layoutToken = undefined;
++			this.dispatchHeights.clear();
++			// Structural hosts skip this exact inherited handler after visiting the descendants themselves.
++			this.handleMouse = Container.prototype.handleMouse;
++			return super.render(width);
++		}
++		this.handleMouse = this.handleBoundedMouse;
++		const available = Math.max(0, Math.floor(limit));
++		if (available === 0) {
++			this.frame = undefined;
++			this.layoutToken = undefined;
++			this.dispatchHeights.clear();
++			return [];
++		}
++		const node = super[LAYOUT_NODE]();
++		const viewport = { width, height: available };
++		const entries = visibleStackEntries(node.entries, viewport).map((entry) => {
++			if (entry.grow !== undefined || entry.shrink === 0 || typeof entry.basis === "number") return entry;
++			const child = getLayoutNode(entry.component);
++			// An auto-sized slot passes its child's explicit vertical fill into the finite allocation.
++			if (
++				child?.type === "vstack" &&
++				visibleStackEntries(child.entries, viewport).some((item) => (item.grow ?? 0) > 0)
++			) {
++				return { ...entry, grow: 1 };
++			}
++			return entry;
++		});
++		const sizes = allocateStackSizes(
++			entries,
++			entries.map((entry) => entry.component.render(width).length),
++			available,
++			node.gap,
++		);
++		const height = Math.min(
++			available,
++			sizes.reduce((sum, size) => sum + size, 0) + Math.max(0, entries.length - 1) * node.gap,
++		);
++		if (height === 0) {
++			this.frame = undefined;
++			this.layoutToken = undefined;
++			this.dispatchHeights.clear();
++			return [];
++		}
++		let frame: LayoutFrame;
++		this.allocatedNode = { ...node, entries };
++		try {
++			frame = renderLayoutFrame(this, width, height, this.options.requestRender);
++		} finally {
++			this.allocatedNode = undefined;
++		}
++		// Snapshot source bounds: render() may return a line array that is later mutated in place.
++		const heights = new Map<LayoutBox, number>();
++		const rememberHeight = (box: LayoutBox): void => {
++			heights.set(box, Math.max(box.rect.height, box.lines?.length ?? 0));
++			box.children.forEach(rememberHeight);
++		};
++		rememberHeight(frame.root);
++		if (!this.frame || !sameLayout(this.frame.root, frame.root, this.dispatchHeights, heights)) this.layoutToken = {};
++		this.frame = frame;
++		this.dispatchHeights = heights;
++		return frame.lines;
++	}
++
++	private handleBoundedMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
++		const frame = this.frame;
++		const token = this.layoutToken;
++		const heights = this.dispatchHeights;
++		if (!frame || !token) return undefined;
++		const visited = new Set<LayoutBox["component"]>();
++		for (const box of getLayoutBoxesAt(frame, event.x, event.y)) {
++			if (box.component === this || visited.has(box.component)) continue;
++			if (getLayoutNode(box.component) && box.component.handleMouse === Container.prototype.handleMouse) continue;
++			visited.add(box.component);
++			if (!this.isLive(box, token)) continue;
++			const result = dispatchMouseEvent(box.component, {
++				...event,
++				x: event.x - box.rect.x,
++				y: event.y - box.rect.y + (box.lineOffset ?? 0),
++				width: box.rect.width,
++				height: heights.get(box)!,
++			});
++			if (!result) continue;
++			const valid = result.target.isValid;
++			result.target = { ...result.target, isValid: () => this.isLive(box, token) && (valid?.() ?? true) };
++			if (result.focus) {
++				for (let parent = box.parent; parent; parent = parent.parent) {
++					if (parent.component.handleInput) result.focusTarget = parent.component;
++				}
++			}
++			return result;
++		}
++		return undefined;
++	}
++
++	private isLive(box: LayoutBox, token: object): boolean {
++		const frame = this.frame;
++		if (!frame || this.layoutToken !== token) return false;
++		let child = box;
++		while (child.parent) {
++			const parent = child.parent;
++			const node = getLayoutNode(parent.component);
++			if (!node) return false;
++			if (node.type === "scroll") {
++				if (node.component !== child.component || node.state.scrollTop !== parent.rect.y - child.rect.y)
++					return false;
++			} else if (!visibleStackEntries(node.entries, frame).some((entry) => entry.component === child.component)) {
++				return false;
++			}
++			child = parent;
++		}
++		return child.component === this;
++	}
++}
++
++function sameRect(a: LayoutRect, b: LayoutRect): boolean {
++	return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
++}
++
++function sameLayout(
++	a: LayoutBox,
++	b: LayoutBox,
++	aHeights: ReadonlyMap<LayoutBox, number>,
++	bHeights: ReadonlyMap<LayoutBox, number>,
++): boolean {
++	return (
++		a.component === b.component &&
++		sameRect(a.rect, b.rect) &&
++		sameRect(a.clip, b.clip) &&
++		a.lineOffset === b.lineOffset &&
++		aHeights.get(a) === bHeights.get(b) &&
++		a.children.length === b.children.length &&
++		a.children.every((child, index) => sameLayout(child, b.children[index]!, aHeights, bHeights))
++	);
++}
+diff --git a/packages/tui/src/index.ts b/packages/tui/src/index.ts
+index 01df076..33dbcf0 100644
+--- a/packages/tui/src/index.ts
++++ b/packages/tui/src/index.ts
+@@ -37,6 +37,7 @@ export {
+ 	type TextStyle,
+ } from "./colors.ts";
+ // Components
++export { BoundedVStack, type BoundedVStackOptions } from "./components/bounded-v-stack.ts";
+ export { Box } from "./components/box.ts";
+ export { CancellableLoader } from "./components/cancellable-loader.ts";
+ export { Editor, type EditorOptions, type EditorTheme } from "./components/editor.ts";
+diff --git a/packages/tui/test/bounded-v-stack.test.ts b/packages/tui/test/bounded-v-stack.test.ts
+new file mode 100644
+index 0000000..c1d142f
+--- /dev/null
++++ b/packages/tui/test/bounded-v-stack.test.ts
+@@ -0,0 +1,367 @@
++import assert from "node:assert/strict";
++import { describe, it, type TestContext } from "node:test";
++import { BoundedVStack } from "../src/components/bounded-v-stack.ts";
++import { HStack } from "../src/components/h-stack.ts";
++import { ScrollView } from "../src/components/scroll-view.ts";
++import { Text } from "../src/components/text.ts";
++import { VStack } from "../src/components/v-stack.ts";
++import { type Component, Container, CURSOR_MARKER, type TuiMouseEvent } from "../src/tui.ts";
++import { TuiAltScreen } from "../src/tui-alt-screen.ts";
++import { TuiMainScreen } from "../src/tui-main-screen.ts";
++import { VirtualTerminal } from "./virtual-terminal.ts";
++
++class Control implements Component {
++	lines = ["button"];
++	events: TuiMouseEvent[] = [];
++	focus = false;
++	render(): string[] {
++		return this.lines;
++	}
++	invalidate(): void {}
++	handleMouse(event: TuiMouseEvent) {
++		this.events.push(event);
++		return { handled: true, focus: this.focus };
++	}
++}
++class KeyboardHost extends VStack {
++	keys: string[] = [];
++	handleInput(data: string): void {
++		this.keys.push(data);
++	}
++}
++const text = (value: string) => new Text(value, 0, 0);
++function input(terminal: VirtualTerminal, type: "press" | "release", x: number, y: number): void {
++	terminal.sendInput(`\x1b[<0;${x + 1};${y + 1}${type === "press" ? "M" : "m"}`);
++}
++async function mount(t: TestContext, stack: BoundedVStack) {
++	const terminal = new VirtualTerminal(40, 12);
++	const tui = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++	tui.addChild(text("prefix"));
++	tui.addChild(stack);
++	tui.addChild(text("footer"));
++	tui.start();
++	t.after(() => tui.stop());
++	tui.renderNow();
++	await terminal.flush();
++	terminal.sendInput(`\x1b[${terminal.getCursorPosition().y + 1};1R`);
++	return { terminal, tui };
++}
++
++describe("bounded structural stack", () => {
++	it("keeps one committed height snapshot while an unhandled child synchronously rerenders", async (t) => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 3, requestRender: () => {} });
++		const heights: number[] = [];
++		const child: Component = {
++			render: () => ["child"],
++			invalidate() {},
++			handleMouse() {
++				stack.render(40);
++				return undefined;
++			},
++		};
++		const parent = new VStack([child]);
++		parent.handleMouse = (event) => {
++			heights.push(event.height);
++			return {
++				handled: true,
++				target: {
++					component: parent,
++					originX: event.screenX - event.x,
++					originY: event.screenY - event.y,
++					width: event.width,
++					height: event.height,
++				},
++			};
++		};
++		stack.addChild(parent);
++		const { terminal } = await mount(t, stack);
++		input(terminal, "press", 2, 1);
++		assert.deepEqual(heights, [1]);
++	});
++
++	it("revokes a held target when its opaque source height changes inside the same allocated rectangle", async (t) => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 3, requestRender: () => {} });
++		const control = new Control();
++		control.lines = ["row 0", "row 1", "row 2", "row 3", "row 4"];
++		stack.addChild(control);
++		const { terminal, tui } = await mount(t, stack);
++		input(terminal, "press", 2, 1);
++		assert.equal(control.events[0]!.height, 5);
++		control.lines.push("row 5");
++		tui.renderNow();
++		await terminal.flush();
++		input(terminal, "release", 2, 1);
++		assert.deepEqual(
++			control.events.map((event) => event.type),
++			["press"],
++		);
++	});
++
++	it("does not infer vertical fill from horizontal growth or through a fixed-height ancestor", () => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 12, requestRender: () => {} });
++		stack.addChild(new HStack([{ component: text("short"), basis: 0, grow: 1 }]));
++		assert.equal(stack.render(40).length, 1);
++		stack.clear();
++		const fill = new VStack([{ component: new ScrollView(text("a\nb\nc\nd\ne")), basis: 0, grow: 1 }]);
++		stack.addChild(new VStack([{ component: fill, basis: 4, shrink: 0 }]));
++		assert.equal(stack.render(40).length, 4);
++	});
++	it("respects explicit non-growing and fixed slots, and caps a growing slot", () => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 12, requestRender: () => {} });
++		const panel = new VStack([
++			{ component: text("header"), shrink: 0 },
++			{ component: new ScrollView(text("a\nb\nc\nd\ne")), basis: 0, grow: 1 },
++			{ component: text("close"), shrink: 0 },
++		]);
++		stack.addChild(panel, { grow: 0 });
++		assert.equal(stack.render(40).length, 2);
++		stack.clear();
++		stack.addChild(panel, { shrink: 0 });
++		assert.equal(stack.render(40).length, 2);
++		stack.clear();
++		stack.addChild(panel, { basis: 4, shrink: 0 });
++		assert.equal(stack.render(40).length, 4);
++		stack.clear();
++		stack.addChild(panel, { grow: 1, maxSize: 5 });
++		assert.equal(stack.render(40).length, 5);
++	});
++
++	it("uses source coordinates for a cursor-clipped opaque leaf", async (t) => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 3, requestRender: () => {} });
++		const control = new Control();
++		control.lines = ["source 0", "source 1", "source 2", "source 3", `source 4${CURSOR_MARKER}`];
++		stack.addChild(control);
++		const { terminal } = await mount(t, stack);
++		assert.match(terminal.getViewport()[1]!, /source 2/);
++		input(terminal, "press", 2, 1);
++		input(terminal, "release", 2, 1);
++		assert.deepEqual(
++			control.events.map((event) => [event.type, event.y]),
++			[
++				["press", 2],
++				["release", 2],
++				["click", 2],
++			],
++		);
++	});
++	it("does not invoke an earlier clipped control inside an opaque container", async (t) => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 3, requestRender: () => {} });
++		const opaque = new Container();
++		const hidden = new Control();
++		hidden.lines = ["hidden control"];
++		const visible = new Control();
++		visible.lines = ["visible control"];
++		opaque.addChild(hidden);
++		opaque.addChild(text("line 1"));
++		opaque.addChild(visible);
++		opaque.addChild(text(`line 3\nline 4${CURSOR_MARKER}`));
++		stack.addChild(opaque);
++		const { terminal } = await mount(t, stack);
++		assert.match(terminal.getViewport()[1]!, /visible control/);
++		input(terminal, "press", 2, 1);
++		input(terminal, "release", 2, 1);
++		assert.deepEqual(hidden.events, []);
++		assert.deepEqual(
++			visible.events.map((event) => event.type),
++			["press", "release", "click"],
++		);
++	});
++
++	it("allocates a scroll body without consuming fixed chrome or measuring away its navigation", () => {
++		const scroll = new ScrollView(text(Array.from({ length: 30 }, (_, i) => `body ${i}`).join("\n")));
++		const panel = new VStack([
++			{ component: text("header"), shrink: 0 },
++			{ component: scroll, grow: 1, shrink: 1, minSize: 0 },
++			{ component: text("close"), shrink: 0 },
++		]);
++		const stack = new BoundedVStack({ getMaxHeight: () => 8, requestRender: () => {} });
++		stack.addChild(text("top"), { shrink: 0 });
++		stack.addChild(panel);
++		stack.addChild(text("bottom"), { shrink: 0 });
++		const first = stack.render(40);
++		assert.equal(first.length, 8);
++		assert.match(first[0]!, /top/);
++		assert.match(first[7]!, /bottom/);
++		assert.equal(scroll.viewportHeight, 4);
++		scroll.scrollToEnd();
++		const end = stack.render(40);
++		assert.match(end.join("\n"), /body 29/);
++		assert.equal(scroll.scrollTop, 26);
++		stack.render(40);
++		assert.equal(scroll.scrollTop, 26);
++	});
++	it("keeps short intrinsic stacks compact but honors a growing zero-basis child", () => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 8, requestRender: () => {} });
++		stack.addChild(text("short"));
++		assert.equal(stack.render(40).length, 1);
++		stack.clear();
++		const scroll = new ScrollView(text("a\nb\nc\nd\ne\nf\ng\nh\ni"));
++		stack.addChild(text("top"), { shrink: 0 });
++		stack.addChild(scroll, { basis: 0, grow: 1, shrink: 1 });
++		stack.addChild(text("bottom"), { shrink: 0 });
++		assert.equal(stack.render(40).length, 8);
++		assert.equal(scroll.viewportHeight, 6);
++	});
++	it("renders no rows and dispatches nothing when the bound is exhausted", () => {
++		const stack = new BoundedVStack({ getMaxHeight: () => -2, requestRender: () => {} });
++		const button = new Control();
++		stack.addChild(button);
++		assert.deepEqual(stack.render(40), []);
++		assert.equal(
++			stack.handleMouse({
++				type: "press",
++				button: "left",
++				x: 0,
++				y: 0,
++				screenX: 0,
++				screenY: 0,
++				width: 40,
++				height: 1,
++				shift: false,
++				alt: false,
++				ctrl: false,
++			}),
++			undefined,
++		);
++		assert.deepEqual(button.events, []);
++	});
++	it("keeps a physical-duration press across an ordinary geometry-stable render", async (t) => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 5, requestRender: () => {} });
++		const button = new Control();
++		stack.addChild(button);
++		const { terminal, tui } = await mount(t, stack);
++		input(terminal, "press", 2, 1);
++		button.lines = ["changed text"];
++		await new Promise((resolve) => setTimeout(resolve, 30));
++		tui.renderNow();
++		await terminal.flush();
++		input(terminal, "release", 2, 1);
++		assert.deepEqual(
++			button.events.map((e) => e.type),
++			["press", "release", "click"],
++		);
++	});
++	it("revokes a press when allocation changes the nested geometry", async (t) => {
++		let height = 6;
++		const stack = new BoundedVStack({ getMaxHeight: () => height, requestRender: () => {} });
++		const button = new Control();
++		stack.addChild(new ScrollView(text("a\nb\nc\nd\ne\nf")), { grow: 1, shrink: 1 });
++		stack.addChild(button, { shrink: 0 });
++		const { terminal, tui } = await mount(t, stack);
++		input(terminal, "press", 2, 6);
++		height = 5;
++		tui.renderNow();
++		await terminal.flush();
++		input(terminal, "release", 2, 6);
++		assert.deepEqual(
++			button.events.map((e) => e.type),
++			["press"],
++		);
++	});
++	it("revokes a removed nested horizontal target before deferred paint", async (t) => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 5, requestRender: () => {} });
++		const button = new Control();
++		const row = new HStack([
++			{ component: text("left"), basis: 10 },
++			{ component: button, grow: 1 },
++		]);
++		stack.addChild(row);
++		const { terminal } = await mount(t, stack);
++		input(terminal, "press", 12, 1);
++		assert.equal(button.events[0]!.x, 2);
++		assert.equal(button.events[0]!.screenX, 12);
++		row.removeChild(button);
++		row.addChild(new Control());
++		input(terminal, "release", 12, 1);
++		assert.deepEqual(
++			button.events.map((e) => e.type),
++			["press"],
++		);
++	});
++	it("revokes a hidden target before paint", async (t) => {
++		let visible = true;
++		const stack = new BoundedVStack({ getMaxHeight: () => 5, requestRender: () => {} });
++		const button = new Control();
++		stack.addChild(button, { visible: () => visible });
++		const { terminal } = await mount(t, stack);
++		input(terminal, "press", 2, 1);
++		visible = false;
++		input(terminal, "release", 2, 1);
++		assert.deepEqual(
++			button.events.map((e) => e.type),
++			["press"],
++		);
++	});
++	it("revokes captured scroll content when scrolling changes its coordinates before paint", async (t) => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 3, requestRender: () => {} });
++		const button = new Control();
++		button.lines = Array.from({ length: 10 }, (_, i) => `line ${i}`);
++		const scroll = new ScrollView(button);
++		stack.addChild(scroll);
++		const { terminal } = await mount(t, stack);
++		input(terminal, "press", 2, 1);
++		scroll.scrollBy(1);
++		input(terminal, "release", 2, 1);
++		assert.deepEqual(
++			button.events.map((e) => e.type),
++			["press"],
++		);
++	});
++	it("keeps the delegating keyboard host focused for nested pointer targets", async (t) => {
++		const stack = new BoundedVStack({ getMaxHeight: () => 5, requestRender: () => {} });
++		const button = new Control();
++		button.focus = true;
++		const host = new KeyboardHost([button]);
++		stack.addChild(host);
++		const { terminal, tui } = await mount(t, stack);
++		tui.setFocus(host);
++		input(terminal, "press", 2, 1);
++		input(terminal, "release", 2, 1);
++		terminal.sendInput("x");
++		assert.equal(tui.getFocusedComponent(), host);
++		assert.deepEqual(host.keys, ["x"]);
++	});
++	it("does not redispatch fullscreen events through intrinsic-height container fallback", async (t) => {
++		const seen: string[] = [];
++		const control = (label: string): Component => ({
++			render: () => [label],
++			invalidate() {},
++			handleMouse() {
++				seen.push(label);
++				return undefined;
++			},
++		});
++		let bounded = true;
++		const stack = new BoundedVStack({ getMaxHeight: () => (bounded ? 4 : undefined), requestRender: () => {} });
++		stack.addChild(
++			new HStack([
++				{ component: control("left"), basis: 10 },
++				{ component: control("right"), grow: 1 },
++			]),
++		);
++		const terminal = new VirtualTerminal(40, 12);
++		const tui = new TuiAltScreen(terminal, false, undefined, { copyOnSelect: false });
++		stack.render(40);
++		bounded = false;
++		tui.setLayoutRoot(new VStack([stack]));
++		tui.start();
++		t.after(() => tui.stop());
++		tui.renderNow();
++		await terminal.flush();
++		assert.equal(stack.handleMouse, Container.prototype.handleMouse);
++		input(terminal, "press", 12, 0);
++		assert.deepEqual(seen, ["right"]);
++	});
++	it("preserves ordinary regular-mode dispatch when disabled", async (t) => {
++		const stack = new BoundedVStack({ getMaxHeight: () => undefined, requestRender: () => {} });
++		const button = new Control();
++		stack.addChild(button);
++		const { terminal } = await mount(t, stack);
++		input(terminal, "press", 2, 1);
++		input(terminal, "release", 2, 1);
++		assert.deepEqual(
++			button.events.map((e) => e.type),
++			["press", "release", "click"],
++		);
++	});
++});
+-- 
+2.56.0
+

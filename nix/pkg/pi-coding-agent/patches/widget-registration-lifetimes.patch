@@ -1,0 +1,1034 @@
+From 7d35e99d74629dd4a5da6420e2e290727b0be011 Mon Sep 17 00:00:00 2001
+From: Pavel Shirshov <pshirshov@eml.cc>
+Date: Fri, 6 Nov 2026 15:56:07 +0000
+Subject: [PATCH] fix(coding-agent): reconcile extension widget registration
+ lifetimes
+
+Surgical Pi 1.4.0 backport; preserves pinned APIs and the eight active fullscreen regression assertions pending the separate renderer correction.
+
+(cherry picked from commit 1dad8ea5a47ab011e11e99478ba971effb5e0afc)
+---
+ .../interactive/components/custom-editor.ts   | 129 ++++++---
+ .../src/modes/interactive/interactive-mode.ts |  71 +++--
+ .../custom-editor-border-registration.test.ts | 179 ++++++++++++
+ .../interactive-mode-widget-placement.test.ts |  96 ++++++-
+ .../interactive-widget-reconciliation.test.ts | 269 ++++++++++++++++++
+ 5 files changed, 679 insertions(+), 65 deletions(-)
+ create mode 100644 packages/coding-agent/test/custom-editor-border-registration.test.ts
+ create mode 100644 packages/coding-agent/test/interactive-widget-reconciliation.test.ts
+
+diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
+index f40b45d..4b07a37 100644
+--- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
++++ b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
+@@ -40,30 +40,65 @@ export interface BorderContentSpan {
+ 	content: EditorBorderContent;
+ }
+ 
++interface BorderRegistration {
++	slot: EditorBorderSlot;
++	content: EditorBorderContent;
++	active: boolean;
++}
++
++interface RegisteredBorderSpan extends BorderContentSpan {
++	registration: BorderRegistration;
++}
++
+ interface BorderMouseState {
+ 	width: number;
+-	gesture: { span: BorderContentSpan; revision: number; width: number; row: number; cancelled: boolean } | undefined;
++	gesture: { span: RegisteredBorderSpan; width: number; row: number; cancelled: boolean } | undefined;
++}
++
++function updateBorderMouse(state: BorderMouseState, spans: RegisteredBorderSpan[], width: number, row: number): void {
++	state.width = width;
++	const gesture = state.gesture;
++	if (
++		gesture &&
++		(gesture.width !== width ||
++			gesture.row !== row ||
++			!gesture.span.registration.active ||
++			!spans.some(
++				(span) =>
++					span.registration === gesture.span.registration &&
++					span.start === gesture.span.start &&
++					span.end === gesture.span.end,
++			))
++	) {
++		// Returning to an earlier painted position must not revive a cancelled gesture.
++		gesture.cancelled = true;
++	}
+ }
+ 
+ /** One composed border line plus the column spans of its content, for mouse dispatch. */
+ interface ComposedBorderLine {
+ 	line: string;
+-	spans: BorderContentSpan[];
++	spans: RegisteredBorderSpan[];
+ }
+ 
+ /** One item's rendered border text with its width. */
+ interface BorderItemRender {
+ 	text: string;
+ 	width: number;
+-	content: EditorBorderContent;
++	registration: BorderRegistration;
+ }
+ 
+ /** Column spans of rendered items starting at `start`, each followed by a one-column join. */
+-function spansFrom(start: number, rendered: readonly BorderItemRender[]): BorderContentSpan[] {
+-	const spans: BorderContentSpan[] = [];
++function spansFrom(start: number, rendered: readonly BorderItemRender[]): RegisteredBorderSpan[] {
++	const spans: RegisteredBorderSpan[] = [];
+ 	let column = start;
+ 	for (const part of rendered) {
+-		spans.push({ start: column, end: column + part.width, content: part.content });
++		spans.push({
++			start: column,
++			end: column + part.width,
++			content: part.registration.content,
++			registration: part.registration,
++		});
+ 		column += part.width + 1;
+ 	}
+ 	return spans;
+@@ -88,12 +123,12 @@ function splitBudget(widths: number[], budget: number): number[] {
+ 
+ /** Render one edge's items into at most `budget` columns, separated by border-styled spaces. */
+ function renderBorderItems(
+-	items: EditorBorderContent[],
++	items: BorderRegistration[],
+ 	budget: number,
+ 	width: number,
+ 	borderColor: (text: string) => string,
+ ): { text: string; items: BorderItemRender[] } {
+-	const full = items.map((item) => item.render(width));
++	const full = items.map((item) => item.content.render(width));
+ 	const shares = splitBudget(
+ 		full.map((line) => visibleWidth(line)),
+ 		Math.max(0, budget - (items.length - 1)),
+@@ -103,11 +138,11 @@ function renderBorderItems(
+ 		const share = shares[i]!;
+ 		let line = full[i]!;
+ 		if (visibleWidth(line) > share) {
+-			line = items[i]!.renderCompact?.(share) ?? line;
++			line = items[i]!.content.renderCompact?.(share) ?? line;
+ 		}
+ 		line = truncateToWidth(line, share, "");
+ 		const itemWidth = visibleWidth(line);
+-		if (itemWidth > 0) rendered.push({ text: line, width: itemWidth, content: items[i]! });
++		if (itemWidth > 0) rendered.push({ text: line, width: itemWidth, registration: items[i]! });
+ 	}
+ 	return { text: rendered.map((part) => part.text).join(borderColor(" ")), items: rendered };
+ }
+@@ -122,8 +157,8 @@ function renderBorderItems(
+ function composeBorderLine(
+ 	width: number,
+ 	borderColor: (text: string) => string,
+-	left: EditorBorderContent[],
+-	right: EditorBorderContent[],
++	left: BorderRegistration[],
++	right: BorderRegistration[],
+ 	label: string | undefined,
+ ): ComposedBorderLine | undefined {
+ 	const naturalLeft = visibleWidth(renderBorderItems(left, width, width, borderColor).text);
+@@ -189,9 +224,8 @@ function composeBorderLine(
+ export class CustomEditor extends Editor {
+ 	private keybindings: KeybindingsManager;
+ 	private workingStatusIndicator: StatusIndicator | undefined;
+-	private borderContent = new Map<string, { slot: EditorBorderSlot; content: EditorBorderContent }>();
+-	private borderSpans: { top: BorderContentSpan[]; bottom: BorderContentSpan[] } = { top: [], bottom: [] };
+-	private borderRevision = 0;
++	private borderContent = new Map<string, BorderRegistration>();
++	private borderSpans: { top: RegisteredBorderSpan[]; bottom: RegisteredBorderSpan[] } = { top: [], bottom: [] };
+ 	private borderMouse: BorderMouseState = { width: 0, gesture: undefined };
+ 	public readonly embedWorkingStatus: boolean;
+ 	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
+@@ -215,50 +249,49 @@ export class CustomEditor extends Editor {
+ 
+ 	/** Show `content` in a border slot under `key`, replacing content set with the same key. Pass undefined to clear. */
+ 	setBorderContent(slot: EditorBorderSlot, key: string, content: EditorBorderContent | undefined): void {
++		// Reusing the content object still starts a new registration lifetime.
++		const previous = this.borderContent.get(key);
++		if (previous) previous.active = false;
+ 		if (content === undefined) {
+ 			this.borderContent.delete(key);
+ 		} else {
+-			this.borderContent.set(key, { slot, content });
++			this.borderContent.set(key, { slot, content, active: true });
+ 		}
+-		this.invalidateBorderTargets();
+ 		this.tui.requestRender();
+ 	}
+ 
+ 	/** Clear every border slot. */
+ 	clearBorderContent(): void {
++		for (const registration of this.borderContent.values()) registration.active = false;
+ 		this.borderContent.clear();
+-		this.invalidateBorderTargets();
+ 		this.tui.requestRender();
+ 	}
+ 
+-	private invalidateBorderTargets(): void {
+-		this.borderRevision++;
+-		this.borderSpans = { top: [], bottom: [] };
+-	}
+-
+ 	/** A border-only row for a custom dialog; never renders or focuses the hidden editor. */
+ 	createBorderComponent(edge: "top" | "bottom", isActive: () => boolean): Component {
+-		let spans: BorderContentSpan[] = [];
+-		let revision = -1;
++		let spans: RegisteredBorderSpan[] = [];
+ 		const mouse: BorderMouseState = { width: 0, gesture: undefined };
+ 		return {
+ 			render: (width) => {
+ 				mouse.width = width;
+ 				spans = [];
+-				if (!isActive()) return [];
++				if (!isActive()) {
++					updateBorderMouse(mouse, spans, width, 0);
++					return [];
++				}
+ 				const composed =
+ 					edge === "top"
+ 						? this.renderBorderWithContent(width, 0, "↑", "topLeft", "topRight")
+ 						: this.renderBorderWithContent(width, 0, "↓", "bottomLeft", "bottomRight");
+ 				spans = composed?.spans ?? [];
+-				revision = this.borderRevision;
++				updateBorderMouse(mouse, spans, width, 0);
+ 				return composed === undefined ? [] : [composed.line];
+ 			},
+ 			invalidate: () => {
+ 				spans = [];
+ 			},
+ 			handleMouse: (event) => {
+-				if (!isActive() || revision !== this.borderRevision || event.y !== 0) return { handled: true };
++				if (!isActive() || event.y !== 0) return { handled: true };
+ 				const result = this.dispatchBorderMouse(spans, event, mouse, 0);
+ 				return result === undefined
+ 					? { handled: true }
+@@ -268,7 +301,7 @@ export class CustomEditor extends Editor {
+ 	}
+ 
+ 	private dispatchBorderMouse(
+-		spans: BorderContentSpan[],
++		spans: RegisteredBorderSpan[],
+ 		event: TuiMouseEvent,
+ 		state: BorderMouseState,
+ 		row: number,
+@@ -278,18 +311,18 @@ export class CustomEditor extends Editor {
+ 		const continuation =
+ 			gesture !== undefined && (event.type === "drag" || event.type === "release" || event.type === "click");
+ 		if (event.type === "click") state.gesture = undefined;
+-		let span: BorderContentSpan | undefined;
++		let span: RegisteredBorderSpan | undefined;
+ 		if (continuation) {
+ 			// The renderer retains the press target across renders and synthesizes click after release.
+ 			// Never re-hit-test that gesture against a replacement badge or changed geometry.
+ 			if (
+ 				gesture.cancelled ||
+-				gesture.revision !== this.borderRevision ||
++				!gesture.span.registration.active ||
+ 				gesture.width !== state.width ||
+ 				gesture.row !== row ||
+ 				!spans.some(
+ 					(current) =>
+-						current.content === gesture.span.content &&
++						current.registration === gesture.span.registration &&
+ 						current.start === gesture.span.start &&
+ 						current.end === gesture.span.end,
+ 				)
+@@ -299,14 +332,16 @@ export class CustomEditor extends Editor {
+ 			span = gesture.span;
+ 		} else {
+ 			span = spans.find(
+-				(current) => event.x >= current.start && event.x < current.end && current.content.handleMouse !== undefined,
++				(current) =>
++					current.registration.active &&
++					event.x >= current.start &&
++					event.x < current.end &&
++					current.content.handleMouse !== undefined,
+ 			);
+ 		}
+ 		if (!span?.content.handleMouse) return undefined;
+-		if (event.type === "press")
+-			state.gesture = { span, revision: this.borderRevision, width: state.width, row, cancelled: false };
++		if (event.type === "press") state.gesture = { span, width: state.width, row, cancelled: false };
+ 		const focused = this.focused;
+-		const revision = this.borderRevision;
+ 		const result = span.content.handleMouse({
+ 			...event,
+ 			x: event.x - span.start,
+@@ -314,7 +349,7 @@ export class CustomEditor extends Editor {
+ 			width: span.end - span.start,
+ 			height: 1,
+ 		});
+-		const changed = focused !== this.focused || revision !== this.borderRevision;
++		const changed = focused !== this.focused || !span.registration.active || state.gesture?.cancelled === true;
+ 		if (changed && state.gesture) state.gesture.cancelled = true;
+ 		// Own the whole gesture without forwarding a child that can be disposed before release.
+ 		if (result === undefined) return { handled: true, focus: false };
+@@ -330,12 +365,16 @@ export class CustomEditor extends Editor {
+ 		this.borderMouse.width = width;
+ 		const composed = this.renderBorderWithContent(width, hiddenLineCount, "↑", "topLeft", "topRight");
+ 		this.borderSpans.top = composed?.spans ?? [];
++		if (this.borderMouse.gesture?.row === 0) updateBorderMouse(this.borderMouse, this.borderSpans.top, width, 0);
+ 		return composed?.line ?? super.renderTopBorder(width, hiddenLineCount);
+ 	}
+ 
+ 	protected override renderBottomBorder(width: number, hiddenLineCount: number): string {
+ 		const composed = this.renderBorderWithContent(width, hiddenLineCount, "↓", "bottomLeft", "bottomRight");
+ 		this.borderSpans.bottom = composed?.spans ?? [];
++		if (this.borderMouse.gesture && this.borderMouse.gesture.row !== 0) {
++			updateBorderMouse(this.borderMouse, this.borderSpans.bottom, width, this.renderedVisibleLineCount + 1);
++		}
+ 		return composed?.line ?? super.renderBottomBorder(width, hiddenLineCount);
+ 	}
+ 
+@@ -367,18 +406,22 @@ export class CustomEditor extends Editor {
+ 		rightSlot: EditorBorderSlot,
+ 	): ComposedBorderLine | undefined {
+ 		if (width <= 0) return undefined;
+-		const left: EditorBorderContent[] = [];
+-		const right: EditorBorderContent[] = [];
++		const left: BorderRegistration[] = [];
++		const right: BorderRegistration[] = [];
+ 		if (direction === "↑" && this.embedWorkingStatus && this.workingStatusIndicator) {
+ 			const indicator = this.workingStatusIndicator;
+ 			left.push({
+-				render: (w) => indicator.renderInBorder(w),
+-				renderCompact: (w) => indicator.renderSpinnerInBorder(w),
++				slot: leftSlot,
++				active: true,
++				content: {
++					render: (w) => indicator.renderInBorder(w),
++					renderCompact: (w) => indicator.renderSpinnerInBorder(w),
++				},
+ 			});
+ 		}
+ 		for (const entry of this.borderContent.values()) {
+-			if (entry.slot === leftSlot) left.push(entry.content);
+-			else if (entry.slot === rightSlot) right.push(entry.content);
++			if (entry.slot === leftSlot) left.push(entry);
++			else if (entry.slot === rightSlot) right.push(entry);
+ 		}
+ 		if (left.length === 0 && right.length === 0) return undefined;
+ 		const label = hiddenLineCount > 0 ? ` ${direction} ${hiddenLineCount} more ` : undefined;
+diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+index b0dc4a2..de230e8 100644
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -275,6 +275,8 @@ interface ExtensionWidget {
+ 	placement: WidgetPlacement;
+ 	/** Rendered above/below the editor, and the fallback for border placements on editors without border slots. */
+ 	component: Component & { dispose?(): void };
++	/** A registration lifetime boundary, replaced even when the factory reuses its component. */
++	container: Container;
+ 	/** One-line rendering used by border placements. */
+ 	borderContent: EditorBorderContent;
+ }
+@@ -630,6 +632,13 @@ export class InteractiveMode {
+ 	private extensionWidgets = new Map<string, ExtensionWidget>();
+ 	private widgetContainerAbove!: Container;
+ 	private widgetContainerBelow!: Container;
++	private readonly widgetSpacer = new Spacer(1);
++	private widgetBorderState:
++		| {
++				editor: BorderContentEditor;
++				registrations: Map<string, { slot: EditorBorderSlot; content: EditorBorderContent }>;
++		  }
++		| undefined;
+ 
+ 	// Custom footer from extension (undefined = use built-in footer)
+ 	private customFooter: (Component & { dispose?(): void }) | undefined = undefined;
+@@ -2522,7 +2531,9 @@ export class InteractiveMode {
+ 			};
+ 		}
+ 
+-		this.extensionWidgets.set(key, { placement, component, borderContent });
++		const container = new Container();
++		container.addChild(component);
++		this.extensionWidgets.set(key, { placement, component, container, borderContent });
+ 		this.renderWidgets();
+ 	}
+ 
+@@ -2574,22 +2585,41 @@ export class InteractiveMode {
+ 	 */
+ 	private renderWidgets(): void {
+ 		if (!this.widgetContainerAbove || !this.widgetContainerBelow) return;
+-		for (const editor of [this.editor, this.defaultEditor]) {
+-			if (isBorderContentEditor(editor)) editor.clearBorderContent();
++		const editor = isBorderContentEditor(this.editor) ? this.editor : undefined;
++		const previous = this.widgetBorderState;
++		if (previous) {
++			for (const [key, registration] of previous.registrations) {
++				const widget = this.extensionWidgets.get(key);
++				if (
++					previous.editor !== editor ||
++					!widget ||
++					borderSlotOf(widget.placement) !== registration.slot ||
++					widget.borderContent !== registration.content
++				) {
++					previous.editor.setBorderContent(registration.slot, key, undefined);
++					previous.registrations.delete(key);
++				}
++			}
++		}
++		if (previous?.editor !== editor) {
++			this.widgetBorderState = editor === undefined ? undefined : { editor, registrations: new Map() };
+ 		}
+ 
+ 		const above: Component[] = [];
+ 		const below: Component[] = [];
+ 		for (const [key, widget] of this.extensionWidgets) {
+ 			const slot = borderSlotOf(widget.placement);
+-			if (slot !== undefined && isBorderContentEditor(this.editor)) {
+-				this.editor.setBorderContent(slot, key, widget.borderContent);
++			if (slot !== undefined && this.widgetBorderState) {
++				if (!this.widgetBorderState.registrations.has(key)) {
++					this.widgetBorderState.editor.setBorderContent(slot, key, widget.borderContent);
++					this.widgetBorderState.registrations.set(key, { slot, content: widget.borderContent });
++				}
+ 				continue;
+ 			}
+ 			// Editors without border slots show border widgets beside the editor on the same edge.
+ 			const target =
+ 				widget.placement === "belowEditor" || slot === "bottomLeft" || slot === "bottomRight" ? below : above;
+-			target.push(widget.component);
++			target.push(widget.container);
+ 		}
+ 		this.renderWidgetContainer(this.widgetContainerAbove, above, true, true);
+ 		this.renderWidgetContainer(this.widgetContainerBelow, below, false, false);
+@@ -2602,21 +2632,15 @@ export class InteractiveMode {
+ 		spacerWhenEmpty: boolean,
+ 		leadingSpacer: boolean,
+ 	): void {
+-		container.clear();
+-
+-		if (widgets.length === 0) {
+-			if (spacerWhenEmpty) {
+-				container.addChild(new Spacer(1));
+-			}
++		const needsSpacer = widgets.length === 0 ? spacerWhenEmpty : leadingSpacer;
++		const children = needsSpacer ? [this.widgetSpacer, ...widgets] : widgets;
++		if (
++			container.children.length === children.length &&
++			children.every((component, index) => component === container.children[index])
++		)
+ 			return;
+-		}
+-
+-		if (leadingSpacer) {
+-			container.addChild(new Spacer(1));
+-		}
+-		for (const component of widgets) {
+-			container.addChild(component);
+-		}
++		container.clear();
++		for (const component of children) container.addChild(component);
+ 	}
+ 
+ 	/**
+@@ -2951,6 +2975,13 @@ export class InteractiveMode {
+ 	 * Pass undefined to restore the default editor.
+ 	 */
+ 	private setCustomEditorComponent(factory: EditorFactory | undefined): void {
++		// Installing even the same editor object ends its previous registration lifetimes.
++		if (this.widgetBorderState) {
++			for (const [key, registration] of this.widgetBorderState.registrations) {
++				this.widgetBorderState.editor.setBorderContent(registration.slot, key, undefined);
++			}
++			this.widgetBorderState = undefined;
++		}
+ 		this.editorComponentFactory = factory;
+ 
+ 		// Save text from current editor before switching
+diff --git a/packages/coding-agent/test/custom-editor-border-registration.test.ts b/packages/coding-agent/test/custom-editor-border-registration.test.ts
+new file mode 100644
+index 0000000..4441058
+--- /dev/null
++++ b/packages/coding-agent/test/custom-editor-border-registration.test.ts
+@@ -0,0 +1,179 @@
++import { type Component, TuiMainScreen, type TuiMouseEvent } from "@earendil-works/pi-tui";
++import { describe, expect, it } from "vitest";
++import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
++import { KeybindingsManager } from "../src/core/keybindings.ts";
++import { CustomEditor, type EditorBorderContent } from "../src/modes/interactive/components/custom-editor.ts";
++import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
++
++const WIDTH = 80;
++const HEIGHT = 12;
++const BADGE = "TARGET";
++const CASES = [
++	"unrelated-same-row",
++	"unrelated-cross-slot",
++	"synchronous-unrelated",
++	"own-replacement",
++	"remove-readd",
++	"clear-readd",
++	"move-restore",
++	"mutable-move-restore",
++	"clip-restore",
++	"synchronous-own-release",
++	"synchronous-focus",
++	"same-object-replacement",
++] as const;
++
++describe.each([false, true])("border registration continuity (retained: %s)", (retained) => {
++	it.each(CASES)("%s", (scenario) => {
++		initTheme("dark");
++		const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++		const tui = new TuiMainScreen(terminal, undefined, undefined, { mouse: true });
++		const editor = new CustomEditor(tui, getEditorTheme(), KeybindingsManager.create());
++		const events: string[] = [];
++		const replacements: string[] = [];
++		let prefix = "P";
++		const replacement: EditorBorderContent = {
++			render: () => BADGE,
++			handleMouse: (event) => {
++				replacements.push(event.type);
++				return { handled: true };
++			},
++		};
++		let view: Component;
++		const badge: EditorBorderContent = {
++			render: () => BADGE,
++			handleMouse(event) {
++				events.push(event.type);
++				if (event.type === "press" && scenario === "synchronous-unrelated") {
++					editor.setBorderContent("bottomRight", "other", { render: () => "OTHER" });
++					view.render(WIDTH);
++				}
++				if (event.type === "press" && scenario === "synchronous-focus") editor.focused = !editor.focused;
++				if (event.type === "release" && scenario === "synchronous-own-release")
++					editor.setBorderContent("topLeft", "badge", replacement);
++				return { handled: true, focus: false };
++			},
++		};
++		editor.setBorderContent("topLeft", "prefix", { render: () => prefix });
++		editor.setBorderContent("topLeft", "badge", badge);
++		editor.setText("draft");
++		view = retained ? editor.createBorderComponent("top", () => true) : editor;
++		try {
++			const before = view.render(WIDTH);
++			const x = before[0].replace(/\x1b\[[0-9;]*m/g, "").indexOf(BADGE);
++			expect(x).toBeGreaterThan(0);
++			const send = (type: TuiMouseEvent["type"]) =>
++				view.handleMouse!({
++					type,
++					button: "left",
++					x,
++					y: 0,
++					screenX: x,
++					screenY: 0,
++					width: WIDTH,
++					height: before.length,
++					shift: false,
++					alt: false,
++					ctrl: false,
++				});
++			send("press");
++			expect(events).toEqual(["press"]);
++			switch (scenario) {
++				case "unrelated-same-row":
++					editor.setBorderContent("topLeft", "prefix", { render: () => "P" });
++					break;
++				case "unrelated-cross-slot":
++					editor.setBorderContent("bottomRight", "other", { render: () => "OTHER" });
++					break;
++				case "own-replacement":
++					editor.setBorderContent("topLeft", "badge", replacement);
++					break;
++				case "same-object-replacement":
++					editor.setBorderContent("topLeft", "badge", badge);
++					break;
++				case "remove-readd":
++					editor.setBorderContent("topLeft", "badge", undefined);
++					editor.setBorderContent("topLeft", "badge", badge);
++					break;
++				case "clear-readd":
++					editor.clearBorderContent();
++					editor.setBorderContent("topLeft", "prefix", { render: () => "P" });
++					editor.setBorderContent("topLeft", "badge", badge);
++					break;
++				case "move-restore":
++					editor.setBorderContent("topLeft", "prefix", { render: () => "LONG PREFIX" });
++					view.render(WIDTH);
++					editor.setBorderContent("topLeft", "prefix", { render: () => "P" });
++					break;
++				case "mutable-move-restore":
++					prefix = "LONG PREFIX";
++					view.render(WIDTH);
++					prefix = "P";
++					break;
++				case "clip-restore":
++					view.render(8);
++					break;
++			}
++			view.render(WIDTH);
++			send("release");
++			send("click");
++			const survives =
++				scenario === "unrelated-same-row" ||
++				scenario === "unrelated-cross-slot" ||
++				scenario === "synchronous-unrelated";
++			expect(events).toEqual(
++				survives
++					? ["press", "release", "click"]
++					: scenario === "synchronous-own-release"
++						? ["press", "release"]
++						: ["press"],
++			);
++			expect(replacements).toEqual([]);
++		} finally {
++			tui.stop();
++		}
++	});
++});
++
++it("does not revive a bottom badge after the editor body grows and shrinks", () => {
++	initTheme("dark");
++	const tui = new TuiMainScreen(new VirtualTerminal(WIDTH, HEIGHT), undefined, undefined, { mouse: true });
++	const editor = new CustomEditor(tui, getEditorTheme(), KeybindingsManager.create());
++	const events: string[] = [];
++	editor.setBorderContent("bottomLeft", "badge", {
++		render: () => BADGE,
++		handleMouse: (event) => {
++			events.push(event.type);
++			return { handled: true };
++		},
++	});
++	editor.setText("draft");
++	try {
++		const before = editor.render(WIDTH);
++		const row = before.length - 1;
++		const send = (type: TuiMouseEvent["type"]) =>
++			editor.handleMouse({
++				type,
++				button: "left",
++				x: 4,
++				y: row,
++				screenX: 4,
++				screenY: row,
++				width: WIDTH,
++				height: before.length,
++				shift: false,
++				alt: false,
++				ctrl: false,
++			});
++		send("press");
++		editor.setText("draft\nsecond");
++		expect(editor.render(WIDTH)).toHaveLength(before.length + 1);
++		editor.setText("draft");
++		expect(editor.render(WIDTH)).toEqual(before);
++		send("release");
++		send("click");
++		expect(events).toEqual(["press"]);
++	} finally {
++		tui.stop();
++	}
++});
+diff --git a/packages/coding-agent/test/interactive-mode-widget-placement.test.ts b/packages/coding-agent/test/interactive-mode-widget-placement.test.ts
+index 8612409..e83bb74 100644
+--- a/packages/coding-agent/test/interactive-mode-widget-placement.test.ts
++++ b/packages/coding-agent/test/interactive-mode-widget-placement.test.ts
+@@ -1,5 +1,5 @@
+-import { Container } from "@earendil-works/pi-tui";
+-import { beforeAll, describe, expect, it } from "vitest";
++import { Container, Spacer, Text, VStack } from "@earendil-works/pi-tui";
++import { beforeAll, describe, expect, it, vi } from "vitest";
+ import type { ExtensionWidgetOptions } from "../src/core/extensions/types.ts";
+ import type { EditorBorderContent, EditorBorderSlot } from "../src/modes/interactive/components/custom-editor.ts";
+ import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+@@ -31,6 +31,8 @@ type WidgetContext = {
+ };
+ 
+ const widgetPrototype = InteractiveMode.prototype as unknown as {
++	renderWidgets(this: WidgetContext): void;
++	clearExtensionWidgets(this: WidgetContext): void;
+ 	setExtensionWidget(
+ 		this: WidgetContext,
+ 		key: string,
+@@ -55,6 +57,8 @@ function createContext(
+ 		defaultEditor,
+ 		widgetContainerAbove: above,
+ 		widgetContainerBelow: below,
++		widgetSpacer: new Spacer(1),
++		widgetBorderState: undefined,
+ 		ui: { requestRender: () => {} },
+ 	}) as WidgetContext;
+ 	return { context, above, below };
+@@ -189,6 +193,94 @@ describe("InteractiveMode extension widget placement", () => {
+ 		expect(context.extensionWidgets.size).toBe(0);
+ 	});
+ 
++	it("preserves structural widget rendering and invalidation through plain-editor fallback", () => {
++		const { context, above } = createContext(plainEditor);
++		const component = new VStack([
++			{ component: new Text("FIRST", 0, 0), basis: 1, shrink: 0 },
++			{ component: new Text("SECOND", 0, 0), minSize: 1, maxSize: 2 },
++		]);
++		const expected = component.render(48);
++		const render = vi.spyOn(component, "render");
++		const invalidate = vi.spyOn(component, "invalidate");
++		widgetPrototype.setExtensionWidget.call(context, "structural", () => component, { placement: "borderTopLeft" });
++		expect(above.render(48)).toEqual(["", ...expected]);
++		expect(render).toHaveBeenCalledExactlyOnceWith(48);
++		above.invalidate();
++		expect(invalidate).toHaveBeenCalledTimes(1);
++		const registration = above.children[1];
++		widgetPrototype.setExtensionWidget.call(context, "structural", () => component, { placement: "borderTopLeft" });
++		expect(above.children[1]).not.toBe(registration);
++		expect(above.render(48)).toEqual(["", ...expected]);
++	});
++
++	it("preserves untouched registrations and delete/reinsert ordering", () => {
++		const editor = borderEditor();
++		const register = vi.fn(editor.setBorderContent);
++		editor.setBorderContent = register;
++		const { context, above } = createContext(editor);
++		for (const key of ["a", "b", "c"])
++			widgetPrototype.setExtensionWidget.call(context, key, [key], { placement: "borderBottomLeft" });
++		const untouched = editor.slots.get("bottomLeft:a");
++		const spacer = above.children[0];
++		register.mockClear();
++		widgetPrototype.setExtensionWidget.call(context, "b", ["updated"], { placement: "borderBottomLeft" });
++		expect(register.mock.calls.map(([slot, key, content]) => [slot, key, content === undefined])).toEqual([
++			["bottomLeft", "b", true],
++			["bottomLeft", "b", false],
++		]);
++		expect([...editor.slots.keys()]).toEqual(["bottomLeft:a", "bottomLeft:c", "bottomLeft:b"]);
++		expect([...context.extensionWidgets.keys()]).toEqual(["a", "c", "b"]);
++		expect(editor.slots.get("bottomLeft:a")).toBe(untouched);
++		expect(above.children[0]).toBe(spacer);
++	});
++
++	it("transfers owned registrations through a plain editor without disposing widgets", () => {
++		const first = borderEditor();
++		const second = borderEditor();
++		const dispose = vi.fn();
++		const { context, above, below } = createContext(first);
++		widgetPrototype.setExtensionWidget.call(
++			context,
++			"top",
++			() => ({ render: () => ["TOP"], invalidate() {}, dispose }),
++			{ placement: "borderTopRight" },
++		);
++		widgetPrototype.setExtensionWidget.call(context, "bottom", ["BOTTOM"], { placement: "borderBottomLeft" });
++		context.editor = plainEditor;
++		widgetPrototype.renderWidgets.call(context);
++		expect(first.slots.size).toBe(0);
++		expect(above.children).toHaveLength(2);
++		expect(below.children).toHaveLength(1);
++		context.editor = second;
++		widgetPrototype.renderWidgets.call(context);
++		expect([...second.slots.keys()]).toEqual(["topRight:top", "bottomLeft:bottom"]);
++		expect(above.children).toHaveLength(1);
++		expect(below.children).toHaveLength(0);
++		expect(dispose).not.toHaveBeenCalled();
++		widgetPrototype.clearExtensionWidgets.call(context);
++		expect(dispose).toHaveBeenCalledTimes(1);
++		expect(second.slots.size).toBe(0);
++		context.editor = first;
++		widgetPrototype.renderWidgets.call(context);
++		expect(first.slots.size).toBe(0);
++		expect(dispose).toHaveBeenCalledTimes(1);
++	});
++
++	it("disposes each replaced registration once even when its component is reused", () => {
++		const editor = borderEditor();
++		const { context } = createContext(editor);
++		const dispose = vi.fn();
++		const component = { render: () => ["same"], invalidate() {}, dispose };
++		widgetPrototype.setExtensionWidget.call(context, "same", () => component, { placement: "borderBottomLeft" });
++		const previous = editor.slots.get("bottomLeft:same");
++		widgetPrototype.setExtensionWidget.call(context, "same", () => component, { placement: "borderBottomLeft" });
++		expect(dispose).toHaveBeenCalledTimes(1);
++		expect(editor.slots.get("bottomLeft:same")).not.toBe(previous);
++		widgetPrototype.setExtensionWidget.call(context, "same", undefined);
++		expect(dispose).toHaveBeenCalledTimes(2);
++		expect(editor.slots.size).toBe(0);
++	});
++
+ 	it("replaces a widget's content in place", () => {
+ 		const editor = borderEditor();
+ 		const { context } = createContext(editor);
+diff --git a/packages/coding-agent/test/interactive-widget-reconciliation.test.ts b/packages/coding-agent/test/interactive-widget-reconciliation.test.ts
+new file mode 100644
+index 0000000..c6b4698
+--- /dev/null
++++ b/packages/coding-agent/test/interactive-widget-reconciliation.test.ts
+@@ -0,0 +1,269 @@
++import {
++	type Component,
++	type Container,
++	Spacer,
++	type TUI,
++	TuiAltScreen,
++	type TuiMainScreen,
++	type TuiMouseEvent,
++	VStack,
++} from "@earendil-works/pi-tui";
++import { describe, expect, it, vi } from "vitest";
++import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
++import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
++import type { EditorFactory, ExtensionWidgetOptions } from "../src/core/extensions/types.ts";
++import { SessionManager } from "../src/core/session-manager.ts";
++import { SettingsManager } from "../src/core/settings-manager.ts";
++import type { CustomEditor, EditorBorderContent } from "../src/modes/interactive/components/custom-editor.ts";
++import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
++
++const WIDTH = 120;
++const HEIGHT = 36;
++const AGENTS = "AGENTS stable";
++const OTHER = "OTHER stable";
++const CASES = [
++	"unchanged-render",
++	"unrelated-publication",
++	"same-row-publication",
++	"synchronous-publication",
++	"clicked-replacement",
++	"moving-geometry",
++	"revision-only",
++	"editor-replacement",
++	"above-own-republication",
++	"below-own-republication",
++	"above-keyboard-routing",
++	"above-synchronous-republication",
++] as const;
++const MODES = [
++	["regular", false],
++	["regular", true],
++	["fullscreen", false],
++	["fullscreen", true],
++] as const;
++type Host = {
++	renderer: TuiMainScreen | TuiAltScreen;
++	editor: CustomEditor;
++	editorContainer: VStack;
++	widgetContainerAbove: Container;
++	widgetContainerBelow: Container;
++	footerContainer: Container;
++	extensionWidgets: Map<string, { component: Component; borderContent: EditorBorderContent }>;
++	programStatus: { setBlocked: ReturnType<typeof vi.fn> };
++	themeController: { dispose(): void };
++	footer: { dispose(): void };
++	footerDataProvider: { dispose(): void };
++	setExtensionWidget(key: string, factory: (() => Component) | undefined, options: ExtensionWidgetOptions): void;
++	setCustomEditorComponent(factory: EditorFactory | undefined): void;
++	showExtensionCustom(
++		factory: (tui: TUI, theme: unknown, keys: unknown, done: () => void) => Component,
++		options: { retainEditorBorders: boolean },
++	): Promise<void>;
++};
++
++// Regression: unrelated publication must not revoke the pressed widget's registration or ancestor layout.
++describe.each(MODES)("widget reconciliation (%s, retained: %s)", (mode, retained) => {
++	it.each([...CASES, ...(mode === "regular" ? ["ancestor-replacement-cancellation-control" as const] : [])])(
++		"%s",
++		async (scenario) => {
++			const terminal = new VirtualTerminal(WIDTH, HEIGHT);
++			const runtime = {
++				session: {
++					settingsManager: SettingsManager.inMemory({ tuiMode: mode, regularMouse: true, theme: "dark" }),
++					sessionManager: SessionManager.inMemory("/tmp"),
++					autoCompactionEnabled: false,
++					resourceLoader: { getThemes: () => ({ themes: [] }) },
++				},
++				setBeforeSessionInvalidate: () => {},
++				setRebindSession: () => {},
++			};
++			// Only constructor dependencies are synthetic; widget publication, rendering and input routing are production code.
++			const h = new InteractiveMode(runtime as unknown as AgentSessionRuntime, { terminal }) as unknown as Host;
++			h.programStatus = { setBlocked: vi.fn() };
++			const events: string[] = [];
++			const replacementEvents: string[] = [];
++			const otherPlacement = scenario === "same-row-publication" ? "borderBottomLeft" : "borderTopRight";
++			const other = () => ({ render: () => [OTHER], invalidate() {} });
++			let leadRows = 1;
++			let done: () => void = () => {};
++			let dialog: Promise<void> | undefined;
++			try {
++				h.footerContainer.clear();
++				const root = new VStack([
++					{
++						component: { render: () => Array.from({ length: leadRows }, () => "LEAD"), invalidate() {} },
++						shrink: 0,
++					},
++					{ component: h.widgetContainerAbove, shrink: 0 },
++					{ component: h.editorContainer },
++					{ component: h.widgetContainerBelow, shrink: 0 },
++					{ component: h.footerContainer, shrink: 0 },
++				]);
++				if (h.renderer instanceof TuiAltScreen) h.renderer.setLayoutRoot(root);
++				else for (const component of root.children) h.renderer.addChild(component);
++				h.editor.setText("unsent draft");
++				const input: string[] = [];
++				let disposedAbove = 0;
++				const receive = (event: TuiMouseEvent) => {
++					events.push(event.type);
++					if (scenario === "above-synchronous-republication" && event.type === "press")
++						h.setExtensionWidget("above", () => stableAbove, { placement: "aboveEditor" });
++					return { handled: true, focus: scenario === "above-keyboard-routing" };
++				};
++				const stableAbove = {
++					render: () => ["ABOVE"],
++					invalidate() {},
++					handleMouse: receive,
++					handleInput: (data: string) => {
++						input.push(data);
++					},
++					focused: false,
++					dispose: () => {
++						disposedAbove++;
++					},
++				};
++				const stableBelow = { render: () => ["BELOW"], invalidate() {}, handleMouse: receive };
++				h.setExtensionWidget("above", () => stableAbove, { placement: "aboveEditor" });
++				h.setExtensionWidget("below", () => stableBelow, { placement: "belowEditor" });
++				h.setExtensionWidget(
++					"agents",
++					() => ({
++						render: () => [AGENTS],
++						invalidate() {},
++						handleMouse(event: TuiMouseEvent) {
++							events.push(event.type);
++							if (scenario === "synchronous-publication" && event.type === "press") {
++								h.setExtensionWidget("other", other, { placement: otherPlacement });
++								h.renderer.renderNow();
++							}
++							return { handled: true, focus: false };
++						},
++					}),
++					{ placement: "borderBottomLeft" },
++				);
++				h.setExtensionWidget("other", other, { placement: otherPlacement });
++				const agent = h.extensionWidgets.get("agents")!;
++				const above = [...h.widgetContainerAbove.children];
++				const below = [...h.widgetContainerBelow.children];
++				if (retained) {
++					const panel = { render: () => ["PANEL"], invalidate() {} };
++					dialog = h.showExtensionCustom(
++						(_tui, _theme, _keys, finish) => {
++							done = finish;
++							return panel;
++						},
++						{ retainEditorBorders: true },
++					);
++					await vi.waitFor(() => expect(h.editorContainer.children).toContain(panel));
++				}
++				h.renderer.start();
++				h.renderer.renderNow();
++				await terminal.flush();
++				if (mode === "regular") terminal.sendInput(`\x1b[${terminal.getCursorPosition().y + 1};1R`);
++				const before = terminal.getViewport();
++				const clickedLabel =
++					scenario === "above-own-republication" ||
++					scenario === "above-keyboard-routing" ||
++					scenario === "above-synchronous-republication"
++						? "ABOVE"
++						: scenario === "below-own-republication"
++							? "BELOW"
++							: AGENTS;
++				const row = before.findIndex((line) => line.includes(clickedLabel));
++				expect(row).toBeGreaterThanOrEqual(0);
++				const column = before[row].indexOf(clickedLabel) + 1;
++				terminal.sendInput(`\x1b[<0;${column + 1};${row + 1}M`);
++				expect(events).toEqual(["press"]);
++				switch (scenario) {
++					case "unrelated-publication":
++					case "above-keyboard-routing":
++					case "same-row-publication":
++						h.setExtensionWidget("other", other, { placement: otherPlacement });
++						break;
++					case "clicked-replacement":
++						h.setExtensionWidget(
++							"agents",
++							() => ({
++								render: () => [AGENTS],
++								invalidate() {},
++								handleMouse(event) {
++									replacementEvents.push(event.type);
++									return { handled: true };
++								},
++							}),
++							{ placement: "borderBottomLeft" },
++						);
++						break;
++					case "above-own-republication":
++						h.setExtensionWidget("above", () => stableAbove, { placement: "aboveEditor" });
++						break;
++					case "below-own-republication":
++						h.setExtensionWidget("below", () => stableBelow, { placement: "belowEditor" });
++						break;
++					case "moving-geometry":
++						leadRows = 2;
++						break;
++					case "revision-only":
++						h.editor.setBorderContent("topRight", "other", { render: () => OTHER });
++						break;
++					case "editor-replacement":
++						h.setCustomEditorComponent(() => h.editor);
++						break;
++					case "ancestor-replacement-cancellation-control":
++						h.widgetContainerAbove.children[0] = new Spacer(1);
++						break;
++				}
++				h.renderer.renderNow();
++				await terminal.flush();
++				const after = terminal.getViewport();
++				terminal.sendInput(`\x1b[<0;${column + 1};${row + 1}m`);
++				const cancelled =
++					scenario === "clicked-replacement" ||
++					scenario === "moving-geometry" ||
++					scenario === "editor-replacement" ||
++					scenario === "above-own-republication" ||
++					scenario === "above-synchronous-republication" ||
++					scenario === "below-own-republication" ||
++					scenario === "ancestor-replacement-cancellation-control";
++				expect(events).toEqual(cancelled ? ["press"] : ["press", "release", "click"]);
++				expect(replacementEvents).toEqual([]);
++				expect(disposedAbove).toBe(
++					scenario === "above-own-republication" || scenario === "above-synchronous-republication" ? 1 : 0,
++				);
++				if (scenario === "above-keyboard-routing") {
++					expect(h.renderer.getFocusedComponent()).toBe(stableAbove);
++					terminal.sendInput("z");
++					expect(input).toEqual(["z"]);
++				}
++				if (scenario === "moving-geometry") expect(after.findIndex((line) => line.includes(AGENTS))).toBe(row + 1);
++				else expect(after).toEqual(before);
++				if (scenario !== "clicked-replacement") expect(h.extensionWidgets.get("agents")).toBe(agent);
++				if (
++					scenario !== "ancestor-replacement-cancellation-control" &&
++					scenario !== "above-own-republication" &&
++					scenario !== "above-synchronous-republication"
++				) {
++					expect(h.widgetContainerAbove.children).toHaveLength(above.length);
++					above.forEach((component, index) => {
++						expect(h.widgetContainerAbove.children[index]).toBe(component);
++					});
++				}
++				expect(h.widgetContainerBelow.children).toHaveLength(below.length);
++				if (scenario !== "below-own-republication")
++					below.forEach((component, index) => {
++						expect(h.widgetContainerBelow.children[index]).toBe(component);
++					});
++				done();
++				if (dialog) await dialog;
++				expect(h.editor.getText()).toBe("unsent draft");
++			} finally {
++				done();
++				h.renderer.stop();
++				h.themeController.dispose();
++				h.footer.dispose();
++				h.footerDataProvider.dispose();
++				await terminal.flush();
++			}
++		},
++	);
++});
+-- 
+2.56.0
+
