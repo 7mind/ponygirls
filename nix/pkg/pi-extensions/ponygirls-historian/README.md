@@ -8,8 +8,9 @@ interpretations, not verified current state or a complete transcript backup.
 
 ## Enablement and disclosure
 
-**Default OFF, no built-in model, no model fallback.** Load after `ponygirls-subagents`
-for descendant coverage. Select an authenticated model explicitly:
+**Default OFF, no extension-level model default, no model fallback.** Load after
+`ponygirls-subagents` for descendant coverage. Home Manager supplies the managed
+model below; otherwise select an authenticated model explicitly:
 
 ```text
 /historian model PROVIDER MODEL THINKING
@@ -54,7 +55,8 @@ root to retry; no silent provider fallback occurs.
 
 ## Home Manager defaults
 
-Optional configuration; neither setting enables Historian or grants disclosure consent:
+Home Manager defaults to `openai-codex/gpt-6.1-sol` with `medium` effort. It does
+not enable Historian or grant disclosure consent. Explicit configuration or overrides:
 
 ```nix
 programs.pi.historian = {
@@ -67,9 +69,11 @@ programs.pi.historian = {
 };
 ```
 
-Both options default to null. A configured root must be absolute; the model requires
-all three nonempty/validated fields. Home Manager writes `historian-defaults.json`
-only when an option is set, never the mutable `historian.json`. No credentials are
+The journal root defaults to null (`<agentDir>/historian`). Set
+`programs.pi.historian.model = null;` to opt out of the managed model default.
+A configured root must be absolute; a model requires all three nonempty/validated
+fields. Home Manager writes `historian-defaults.json` whenever either effective
+option is non-null, never the mutable `historian.json`. No credentials are
 stored in these options. Model precedence is session override → writable global
 override → managed default → unconfigured. Enablement/focus changes do not pin an
 inherited model. Changing a managed model preserves existing approval, not approval
