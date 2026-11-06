@@ -1,6 +1,8 @@
 /** The /goal pane: the current goal at a glance, with keys for the /goal subcommands. */
 import { type Component, type KeyId, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import {
+  PanelLayout,
+  type PanelParts,
   fit,
   fractionState,
   frameRule,
@@ -91,31 +93,33 @@ export function relativeAge(elapsedMs: number): string {
 }
 
 /** The goal pane shown by `/goal` and by clicking the goal badge. */
-export class GoalPane implements Component {
+export class GoalPane extends PanelLayout implements Component {
   private readonly theme: UiTheme;
   private readonly ports: GoalPanePorts;
   private busy = false;
 
   constructor(theme: UiTheme, ports: GoalPanePorts) {
+    super((width) => this.renderParts(width));
     this.theme = theme;
     this.ports = ports;
   }
 
-  invalidate(): void {}
+  invalidate(): void { super.invalidate(); }
 
-  render(width: number): string[] {
+  private renderParts(width: number): PanelParts {
     const loaded = this.ports.load();
     const s = this.theme;
     if (!loaded.ok || loaded.value.goal === null) {
       const body = loaded.ok
         ? s.fg("muted", "no goal — /goal <objective> sets one")
         : s.fg("error", `goal state unreadable: ${loaded.error}`);
-      return [
+      const lines = [
         frameTitle(s, width, { title: "Goal", right: loaded.ok ? s.fg("dim", `rev ${loaded.value.revision}`) : undefined }, "none").line,
         `${INDENT}${body}`,
         frameRule(s, width),
         ...keyHints(s, width, [CLOSE_HINT]).lines,
       ].map((line) => truncateToWidth(line, width, "…"));
+      return { header: lines.slice(0, 1), body: lines.slice(1, 2), footer: lines.slice(2) };
     }
     const goal = loaded.value.goal;
     const look = GOAL_STATUS_LOOK[goal.status];
@@ -126,7 +130,8 @@ export class GoalPane implements Component {
       .flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width - INDENT.length)))
       .map((line) => `${INDENT}${s.fg("text", line)}`);
     const hints = [...STATUS_KEYS[goal.status].map((k) => ({ key: k.key, action: k.label })), CLOSE_HINT];
-    return [
+    const footer = [frameRule(s, width), ...keyHints(s, width, hints).lines];
+    const lines = [
       frameTitle(s, width, { title: "Goal", right: `${chip} ${s.fg("dim", `rev ${loaded.value.revision}`)}` }, "none").line,
       ...objective,
       "",
@@ -134,14 +139,20 @@ export class GoalPane implements Component {
       this.row("time", s.fg("text", formatDuration(goal.timeUsedSeconds))),
       this.row("created", this.when(goal.createdAt, now)),
       this.row("updated", this.when(goal.updatedAt, now)),
-      frameRule(s, width),
-      ...keyHints(s, width, hints).lines,
     ].map((line) => truncateToWidth(line, width, "…"));
+    return { header: lines.slice(0, 1), body: lines.slice(1), footer };
   }
 
   handleInput(data: string): void {
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
       this.ports.close();
+      return;
+    }
+    if (matchesKey(data, "up") || matchesKey(data, "down") || matchesKey(data, "pageUp") || matchesKey(data, "pageDown")) {
+      const direction = matchesKey(data, "up") || matchesKey(data, "pageUp") ? -1 : 1;
+      const page = matchesKey(data, "pageUp") || matchesKey(data, "pageDown");
+      this.bodyScroll.scrollBy(direction * (page ? Math.max(1, this.bodyScroll.viewportHeight) : 1));
+      this.ports.requestRender();
       return;
     }
     if (this.busy) return;

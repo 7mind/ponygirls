@@ -1,7 +1,8 @@
+import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 /** /bg panel and transcript rendering against the in-memory backend. */
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { VStack, visibleWidth } from "@earendil-works/pi-tui";
 import { PLAIN_THEME, type UiTheme } from "@ponygirls/pi-ui";
 import { formatSize, informativeReason, shortTaskId } from "../src/present.ts";
 import type { CompletionDetails, SessionId, TaskId, TaskRecord } from "../src/protocol.ts";
@@ -255,4 +256,28 @@ test("bg_task expanded: identical to pi's generic call and result rendering", as
     [{ type: "text", text: "" }],
   ];
   for (const content of contents) assert.equal(resultText(content), pi.getTextOutput({ content }, true), JSON.stringify(content));
+});
+
+// Behavioral-Active × Blackbox × Group; regression: allocated-height clipping lost pane actions.
+test("allocated background-task layout retains action hints", async (t) => {
+  const backend = new MemoryTaskBackend("layout" as SessionId);
+  for (let i = 0; i < 30; i++) await backend.spawn({ label: `task-${i}`, command: "sleep 30", cwd: "/", notify: false });
+  const pane = await inspector(t, backend, PLAIN_THEME, 24);
+  const frame = renderLayoutFrame(pane, 100, 18, () => {});
+  assert.match(frame.lines.join("\n"), /refresh/);
+});
+
+test("background-task pagination regrows under an auto-basis editor", async (t) => {
+  const backend = new MemoryTaskBackend("resize" as SessionId);
+  for (let i = 0; i < 30; i++) await backend.spawn({ label: `task-${i}`, command: "sleep 30", cwd: "/", notify: false });
+  const pane = await inspector(t, backend, PLAIN_THEME, 30);
+  const root = new VStack([
+    { component: { render: () => ["chat"], invalidate() {} }, basis: 0, grow: 1 },
+    { component: pane, grow: 0 },
+    { component: { render: () => ["status", "badges"], invalidate() {} }, shrink: 0 },
+  ]);
+  renderLayoutFrame(root, 48, 12, () => {});
+  const short = pane.bodyScroll.viewportHeight;
+  renderLayoutFrame(root, 100, 24, () => {});
+  assert.ok(pane.bodyScroll.viewportHeight > short);
 });

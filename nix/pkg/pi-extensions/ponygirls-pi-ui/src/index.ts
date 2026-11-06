@@ -7,3 +7,4 @@ export { CustomViewToggle, type CustomViewFactory, type CustomViewUI } from "./c
 export { completeArgument, type ArgumentChoice, type CompletionItem } from "./complete.ts";
 
 export { StatusView, type StatusViewOptions } from "./status-view.ts";
+export { PanelLayout, type PanelParts } from "./panel-layout.ts";

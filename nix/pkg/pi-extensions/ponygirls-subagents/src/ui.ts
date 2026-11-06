@@ -13,8 +13,8 @@
  */
 
 import { readFileSync, statSync } from "node:fs";
-import { Input, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { columnCells, columnHeader, compactChip, frameRule, frameTitle, keyHints, listRow, type Column, type KeyHint, type UiFg, type UiState, type UiTheme } from "@ponygirls/pi-ui";
+import { VStack, Input, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { PanelLayout, type PanelParts, columnCells, columnHeader, compactChip, frameRule, frameTitle, keyHints, listRow, type Column, type KeyHint, type UiFg, type UiState, type UiTheme } from "@ponygirls/pi-ui";
 import { AGENT_GLYPH, OUTCOME_GLYPH, PLAIN_STYLE, outcomeTone, sanitizeDisplay, type UiStyle } from "./display.ts";
 import type { AgentView, TranscriptSource } from "./supervisor.ts";
 import { parseTranscript, renderConversation, type ReviewBlock, type TranscriptItem } from "./transcript.ts";
@@ -182,7 +182,7 @@ function inspectorColumns(views: AgentView[]): Column[] {
  * The agent tree: canonical path (nested agents indented), kind, state,
  * outcome, and model per row, with the selected agent's details below.
  */
-export class AgentInspector {
+export class AgentInspector extends PanelLayout {
   private views: AgentView[];
   private selected = 0;
   private scrollTop = 0;
@@ -190,6 +190,7 @@ export class AgentInspector {
   private deps: InspectorDeps;
 
   constructor(initial: AgentView[], deps: InspectorDeps) {
+    super((width) => this.renderParts(width));
     this.deps = deps;
     this.views = initial;
   }
@@ -210,29 +211,31 @@ export class AgentInspector {
   }
 
   /** Wheel moves the selection; a click selects a row, a double click opens its transcript. */
-  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+  handleMouse(event: TuiMouseEvent): ReturnType<VStack["handleMouse"]> {
     if (event.type === "wheel" && event.wheelDelta) {
       this.selected = Math.min(Math.max(0, this.selected + Math.sign(event.wheelDelta)), Math.max(0, this.views.length - 1));
-      return { handled: true };
+      return { handled: true, target: { component: this, originX: event.screenX - event.x, originY: event.screenY - event.y, width: event.width, height: event.height } };
     }
     if (event.type !== "click") return undefined;
     const index = this.scrollTop + event.y - LIST_TOP;
     if (event.y < LIST_TOP || index >= this.views.length || index >= this.scrollTop + this.listHeight()) return undefined;
     this.selected = index;
     if ((event.clickCount ?? 1) >= 2) this.deps.onAction({ kind: "transcript", agentId: this.views[index]!.id });
-    return { handled: true };
+    return { handled: true, target: { component: this, originX: event.screenX - event.x, originY: event.screenY - event.y, width: event.width, height: event.height } };
   }
+
+  invalidate(): void { super.invalidate(); }
 
   private listHeight(): number {
-    return Math.max(3, this.deps.rows() - INSPECTOR_CHROME);
+    return Math.max(1, this.height(this.deps.rows()) - INSPECTOR_CHROME);
   }
 
-  render(width: number): string[] {
+  private renderParts(width: number): PanelParts {
     const t = this.deps.theme;
     const w = Math.max(40, width);
     const lines: string[] = [];
     const height = this.listHeight();
-    this.clampScroll(height);
+    if (!this.isMeasuring) this.clampScroll(height);
     const shownEnd = Math.min(this.views.length, this.scrollTop + height);
     const position = this.views.length > height ? t.fg("dim", `${this.scrollTop + 1}–${shownEnd} of ${this.views.length}`) : undefined;
     lines.push(frameTitle(t, w, { title: "Subagents", meta: widgetLine(this.views), right: position }, "none").line);
@@ -247,11 +250,11 @@ export class AgentInspector {
       lines.push(frameRule(t, w));
       lines.push(...this.detailLines(current, w));
     }
-    // The screen covers the terminal: hints sit on its last lines.
+    // Fixed chrome stays outside the allocated scrolling body.
     const footer = [fit(this.statusLine ? t.fg("warning", this.statusLine) : "", w), frameRule(t, w), ...keyHints(t, w, INSPECTOR_HINTS).lines];
-    const rows = this.deps.rows();
+    const rows = this.height(this.deps.rows());
     while (lines.length + footer.length < rows) lines.push("");
-    return [...lines.slice(0, Math.max(0, rows - footer.length)), ...footer];
+    return { header: lines.slice(0, 1), body: lines.slice(1, Math.max(1, rows - footer.length)), footer };
   }
 
   handleInput(data: string): void {
@@ -402,7 +405,7 @@ const TRANSCRIPT_CHROME = 6;
  * One agent's conversation, read from its native session, live while it
  * runs, with a chat line that messages the agent.
  */
-export class TranscriptView implements Component, Focusable {
+export class TranscriptView extends PanelLayout implements Component, Focusable {
   private deps: TranscriptDeps;
   private input: Input;
   private items: TranscriptItem[] = [];
@@ -421,6 +424,7 @@ export class TranscriptView implements Component, Focusable {
   private _focused = false;
 
   constructor(deps: TranscriptDeps) {
+    super((width) => this.renderParts(width));
     this.deps = deps;
     this.input = new Input({ prompt: "› " });
     this.input.onSubmit = (value) => this.submit(value);
@@ -440,6 +444,7 @@ export class TranscriptView implements Component, Focusable {
 
   invalidate(): void {
     this.input.invalidate();
+    super.invalidate();
   }
 
   /** Re-read state and session; true when anything visible changed. */
@@ -476,10 +481,10 @@ export class TranscriptView implements Component, Focusable {
     this.version = version;
   }
 
-  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+  handleMouse(event: TuiMouseEvent): ReturnType<VStack["handleMouse"]> {
     if (event.type !== "wheel" || !event.wheelDelta) return undefined;
     this.scrollFromBottom = Math.max(0, this.scrollFromBottom - event.wheelDelta);
-    return { handled: true };
+    return { handled: true, target: { component: this, originX: event.screenX - event.x, originY: event.screenY - event.y, width: event.width, height: event.height } };
   }
 
   handleInput(data: string): void {
@@ -523,7 +528,7 @@ export class TranscriptView implements Component, Focusable {
   }
 
   private viewportHeight(): number {
-    return Math.max(5, this.deps.rows() - TRANSCRIPT_CHROME - this.hintLines);
+    return Math.max(1, this.bodyHeight(this.deps.rows() - TRANSCRIPT_CHROME - this.hintLines));
   }
 
   private bodyLines(width: number): string[] {
@@ -552,7 +557,7 @@ export class TranscriptView implements Component, Focusable {
     return lines.length > 0 ? lines : [s.muted("(empty conversation)")];
   }
 
-  render(width: number): string[] {
+  private renderParts(width: number): PanelParts {
     const s = this.deps.style;
     const t = this.deps.theme;
     const w = Math.max(40, width);
@@ -560,7 +565,7 @@ export class TranscriptView implements Component, Focusable {
     const question = this.deps.question();
     const mode = view ? chatModeFor(view, question) : ({ kind: "unavailable", reason: "agent no longer exists" } as ChatMode);
     const hints = keyHints(t, w, [chatHint(mode), ...TRANSCRIPT_HINTS]).lines;
-    this.hintLines = hints.length;
+    if (!this.isMeasuring) this.hintLines = hints.length;
     const out: string[] = [];
     if (view) {
       const outcome = view.taskOutcome ? ` · ${outcomeLabel(t, view.taskOutcome)}` : "";
@@ -570,19 +575,24 @@ export class TranscriptView implements Component, Focusable {
       out.push(frameTitle(t, w, { title: "Subagent", right: t.fg("error", "agent no longer exists") }, "none").line, "");
     }
     const body = this.bodyLines(w).map((l) => fit(l, w));
-    const height = this.viewportHeight();
+    const height = Math.max(1, this.bodyHeight(this.deps.rows() - TRANSCRIPT_CHROME - hints.length));
     const maxScroll = Math.max(0, body.length - height);
-    this.scrollFromBottom = Math.min(this.scrollFromBottom, maxScroll);
-    const end = body.length - this.scrollFromBottom;
+    const scrollFromBottom = Math.min(this.scrollFromBottom, maxScroll);
+    if (!this.isMeasuring) this.scrollFromBottom = scrollFromBottom;
+    const end = body.length - scrollFromBottom;
     const visible = body.slice(Math.max(0, end - height), end);
     out.push(frameRule(t, w));
+    const header = [...out];
+    out.length = 0;
     for (let i = visible.length; i < height; i++) out.push("");
     out.push(...visible);
+    const viewportBody = [...out];
+    out.length = 0;
     out.push(this.scrollFromBottom > 0 ? fit(`${t.fg("border", "── ")}${t.fg("muted", `${this.scrollFromBottom} more below (↓/PgDn)`)}${t.fg("border", ` ${"─".repeat(w)}`)}`, w) : frameRule(t, w));
     out.push(fit(this.notice ? s.warning(this.notice) : question ? s.warning(`? ${sanitizeDisplay(question.text, 500).replace(/\s+/g, " ")}`) : "", w));
     out.push(...this.input.render(w));
     out.push(...hints);
-    return out;
+    return { header, body: viewportBody, footer: out };
   }
 }
 
@@ -599,13 +609,14 @@ export interface AgentsScreenDeps {
 }
 
 /** The /agents screen: the agent list, or one agent's transcript. */
-export class AgentsScreen implements Component, Focusable {
+export class AgentsScreen extends VStack implements Component, Focusable {
   private deps: AgentsScreenDeps;
   readonly inspector: AgentInspector;
   private transcriptView: TranscriptView | null = null;
   private _focused = false;
 
   constructor(deps: AgentsScreenDeps) {
+    super();
     this.deps = deps;
     this.inspector = new AgentInspector(deps.list(), {
       refresh: deps.list,
@@ -615,6 +626,7 @@ export class AgentsScreen implements Component, Focusable {
       onClose: deps.onClose,
       onAction: (action) => (action.kind === "transcript" ? this.openTranscript(action.agentId) : deps.onAction(action)),
     });
+    this.addChild(this.inspector, { grow: 1, minSize: 0 });
   }
 
   get focused(): boolean {
@@ -633,11 +645,15 @@ export class AgentsScreen implements Component, Focusable {
   openTranscript(agentId: string): void {
     this.transcriptView = new TranscriptView(this.deps.transcript(agentId, () => this.closeTranscript()));
     this.transcriptView.focused = this._focused;
+    this.clear();
+    this.addChild(this.transcriptView, { grow: 1, minSize: 0 });
   }
 
   private closeTranscript(): void {
     if (this.transcriptView) this.transcriptView.focused = false;
     this.transcriptView = null;
+    this.clear();
+    this.addChild(this.inspector, { grow: 1, minSize: 0 });
     this.inspector.refreshViews(this.deps.list());
   }
 
@@ -655,7 +671,7 @@ export class AgentsScreen implements Component, Focusable {
     return this.transcriptView ? this.transcriptView.render(width) : this.inspector.render(width);
   }
 
-  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+  handleMouse(event: TuiMouseEvent): ReturnType<VStack["handleMouse"]> {
     return this.transcriptView ? this.transcriptView.handleMouse(event) : this.inspector.handleMouse(event);
   }
 

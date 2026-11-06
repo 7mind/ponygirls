@@ -1,10 +1,11 @@
+import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 /** Behavioral-Active × Blackbox × Group (specified): pane + real Pi widgets.
  * These headless keyboard/render checks complement, not replace, real PTY tests.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, visibleWidth, type TUI } from "@earendil-works/pi-tui";
+import { VStack, CURSOR_MARKER, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { DecisionsPane } from "../src/pane.ts";
 import type { Decision } from "../src/store.ts";
 
@@ -334,4 +335,30 @@ test("framed inbox: tabs and repository name in the title rule, status glyphs, f
   h.press("r");
   const notice = h.pane.render(width);
   assert.ok(notice.some((line) => line.startsWith(fgCode("warning") + "Refreshed.")), "notices keep the warning colour");
+});
+
+// Behavioral-Active × Blackbox × Group; regression: allocated-height clipping lost pane actions.
+test("allocated decisions layout retains close hints", () => {
+  const h = open([decision(1, { context: "line\n".repeat(50) })]);
+  const frame = renderLayoutFrame(h.pane, 100, 18, () => {});
+  assert.match(plain(frame.lines.join("\n")), /esc close/);
+});
+
+test("wide intrinsic previews preserve decisions detail scroll and root resize regrows the body", () => {
+  const h = open([decision(1, { context: Array.from({ length: 20 }, (_, i) => `context-${i} ` + "wrapped words ".repeat(10)).join("\n") })]);
+  h.press(ENTER);
+  const root = new VStack([
+    { component: { render: () => ["chat"], invalidate() {} }, basis: 0, grow: 1 },
+    { component: h.pane, grow: 0 },
+    { component: { render: () => ["status", "badges"], invalidate() {} }, shrink: 0 },
+  ]);
+  const draw = () => renderLayoutFrame(root, 48, 12, () => {}).lines;
+  draw(); draw();
+  h.press(END);
+  const before = draw();
+  h.pane.render(120);
+  assert.deepEqual(draw(), before);
+  const short = h.pane.bodyScroll.viewportHeight;
+  renderLayoutFrame(root, 100, 24, () => {});
+  assert.ok(h.pane.bodyScroll.viewportHeight > short);
 });

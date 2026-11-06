@@ -5,7 +5,7 @@
  */
 import { Key, matchesKey, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import {
-  MARKER_WIDTH, columnCells, columnHeader, frameRule, frameTitle, keyHints, listRow, type Column, type KeyHint, type UiFg, type UiTheme,
+  PanelLayout, type PanelParts, MARKER_WIDTH, columnCells, columnHeader, frameRule, frameTitle, keyHints, listRow, type Column, type KeyHint, type UiFg, type UiTheme,
 } from "@ponygirls/pi-ui";
 import type { TaskBackend } from "./backend.ts";
 import {
@@ -102,7 +102,7 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
   return out;
 }
 
-export class BgInspector implements Component {
+export class BgInspector extends PanelLayout implements Component {
   private readonly deps: ViewerDeps;
   private items: TaskRecord[] = [];
   private upper: number | null = null;
@@ -116,6 +116,7 @@ export class BgInspector implements Component {
   private disposed = false;
 
   constructor(deps: ViewerDeps) {
+    super((width) => this.renderParts(width));
     this.deps = deps;
     this.enqueue(async () => {
       const backend = await deps.backend();
@@ -150,7 +151,7 @@ export class BgInspector implements Component {
     this.unsubscribe = null;
   }
 
-  invalidate(): void {}
+  invalidate(): void { super.invalidate(); }
 
   private enqueue(work: () => Promise<void>): Promise<void> {
     this.busy = this.busy.then(async () => {
@@ -324,7 +325,7 @@ export class BgInspector implements Component {
     }));
   }
 
-  private renderList(width: number): string[] {
+  private renderList(width: number): PanelParts {
     const th = this.deps.theme;
     const running = this.items.filter((task) => !isFinalized(task)).length;
     const retained = `${this.items.length}${this.nextAfter !== null ? "+" : ""} retained`;
@@ -334,7 +335,7 @@ export class BgInspector implements Component {
     else {
       const columns = this.columns();
       out.push(truncateToWidth(columnHeader(th, columns, COLUMN_GAP), width));
-      const visible = Math.max(1, this.deps.rows() - CHROME_ROWS);
+      const visible = Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS) - (out.length - 1));
       const first = Math.max(0, Math.min(this.selected - Math.floor(visible / 2), this.items.length - visible));
       this.items.slice(first, first + visible).forEach((task, i) => {
         const selected = first + i === this.selected;
@@ -343,8 +344,7 @@ export class BgInspector implements Component {
       });
     }
     if (this.nextAfter !== null) out.push(th.fg("dim", `${" ".repeat(MARKER_WIDTH)}… more history below`));
-    out.push(frameRule(th, width), ...keyHints(th, width, LIST_HINTS).lines);
-    return out;
+    return { header: out.slice(0, 1), body: out.slice(1), footer: [frameRule(th, width), ...keyHints(th, width, LIST_HINTS).lines] };
   }
 
   /** What the log view is doing: only an unfinished task can be followed live (D6). */
@@ -354,7 +354,7 @@ export class BgInspector implements Component {
     return d.follow ? th.fg("accent", "following") : th.fg("warning", "paused");
   }
 
-  private renderDetail(width: number, d: DetailState): string[] {
+  private renderDetail(width: number, d: DetailState): PanelParts {
     const th = this.deps.theme;
     const t = d.task;
     const facts = [displayValue(t.label)];
@@ -368,7 +368,7 @@ export class BgInspector implements Component {
     const out = [frameTitle(th, width, { title: t.id, meta: facts.join(" · "), right }, "none").line];
     const fit = (line: string) => truncateToWidth(line, width);
     if (t.state === "dead") out.push(fit(th.fg("warning", `dead: supervision was interrupted (${t.reason}); the process outcome is unknown${t.exit ? `, root ${formatExit(t.exit)} was observed` : ""}.`)));
-    const visible = Math.max(1, this.deps.rows() - CHROME_ROWS);
+    const visible = Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS) - (out.length - 1));
     if (d.artifact) out.push(th.fg("error", d.artifact));
     else {
       const lines = this.lines(width);
@@ -378,13 +378,12 @@ export class BgInspector implements Component {
         out.push(...lines.slice(Math.max(0, end - visible), end).map(fit));
       }
     }
-    out.push(frameRule(th, width), ...keyHints(th, width, detailHints(isFinalized(t))).lines);
-    return out;
+    return { header: out.slice(0, 1), body: out.slice(1), footer: [frameRule(th, width), ...keyHints(th, width, detailHints(isFinalized(t))).lines] };
   }
 
-  render(width: number): string[] {
+  private renderParts(width: number): PanelParts {
     const out = this.detail ? this.renderDetail(width, this.detail) : this.renderList(width);
-    if (this.message) out.push(truncateToWidth(this.deps.theme.fg("warning", displayValue(this.message)), width));
+    if (this.message) out.footer.push(truncateToWidth(this.deps.theme.fg("warning", displayValue(this.message)), width));
     return out;
   }
 
@@ -398,7 +397,7 @@ export class BgInspector implements Component {
     this.message = null;
     if (this.detail) {
       const d = this.detail;
-      const page = Math.max(1, this.deps.rows() - CHROME_ROWS);
+      const page = Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS));
       if (matchesKey(data, Key.escape) || data === "q") {
         this.detail = null;
         void this.refresh();
