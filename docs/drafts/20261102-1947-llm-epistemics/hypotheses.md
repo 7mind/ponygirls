@@ -113,3 +113,17 @@ Its contract-binding/progress semantics are a design proposal, not tested by Pil
 Revision-reference acyclicity is not sound inference; complete impact discovery,
 production migration and human efficacy remain untested. Earlier H-P/Q results and
 human-case limits are unchanged.
+
+## Actual delivery and selective revision (J34)
+
+This is a post-data register label for the prospective Pilot T comparison, not a newly
+invented preregistered hypothesis ID. The [T1 experimental contract](experimental-contract-t1.md)
+is not a schema release; [findings and limits](workflow-benefit-pilot.md) retain all originals.
+
+| Label | Prospective comparison | Current evidence and limits |
+|---|---|---|
+| T-workflow | Unified-graph assistance versus strong ordinary chat/optional notes for faithful real artifact delivery and scoped deliberate policy revision, with quality before resources. | No workflow advantage demonstrated:16 originals,13 process-valid (notes8, graph5), all13 passing finite functional acceptance;12 all-primary adequate (notes8, graph4). Three graph invalids include two originals affected by a reproduced trusted-backend admission defect and are unscored, not zero-correct artifacts. Four exact qualified pairs have higher graph native cumulative token counters, other resources mixed; two graph-assigned qualified originals used no graph tools. Small/near-ceiling tasks, variable uptake, differential attrition and post-treatment selection preclude general equivalence, pure-schema/causal efficiency or Human-efficacy conclusions [L19]. |
+
+The observed-baseline comparator reports no new regression in its finite domain;
+expected-value equality is not complete dependency preservation. No new run, UI,
+production implementation, parked application or export-policy choice follows.

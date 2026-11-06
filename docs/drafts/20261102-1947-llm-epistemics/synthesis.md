@@ -1,8 +1,9 @@
 # Synthesis — an epistemic framework for LLM-accelerated development
 
-Status: synthesis through J29, 2026-11-04. This combines conceptual proposals,
-agent-side feasibility studies, a cooperative software prototype and one bounded
-human co-framing case. **It is not an end-to-end validated development method.**
+Status: J29 conceptual synthesis with a bounded Pilot T postscript, J34,2026-11-06.
+This combines conceptual proposals, agent-side feasibility studies, a cooperative
+software prototype, one bounded human co-framing case and finite artifact-delivery
+observations. **It is not an end-to-end validated development method.**
 The [brief](brief.md) is the short entry point; the [journal](journal.md) preserves
 chronology and corrections, and the [hypotheses register](hypotheses.md) preserves
 individual verdicts. Reference IDs below resolve in [references.md](references.md).
@@ -186,6 +187,16 @@ measure, numerical cap or no-hard-cap agreement exists here; no proxy is introdu
 | Pilot P, J27–J28 [L13] | 24 attempts; 22 strict-valid answers and two retained prompt/scorer citation ambiguities. Revision actions and supplied-root controls were at ceiling in every arm. | Stable added-rationale efficacy, a typed-over-prose advantage, equivalence, annotation-generation fidelity or independent dependency discovery. |
 | Bounded human case, J29 [L14] | One participant explicitly confirmed a consolidated framing; sources and later adoption remained inspectable; the governing purpose was explicitly reanchored. | Comparative fidelity/effort benefits, complete latent intent or a genuine scenario-revision result. Revision was declined; delivery was outside scope. |
 | Cooperative CLI [L11, L14] | Its 36-method public software suite passed; the bounded case's record, projection and history checks passed. | Authenticated human authority, semantic approval, inferred support, human efficacy or application security. |
+| Pilot T, J34 [L19] |16 originals;13 process-valid, all passing336 finite independent functional inputs;12 meet all primary criteria after separate source-based semantics. Strong notes meet the configured criteria; no graph advantage demonstrated. | Three graph process-invalids are not three incorrect artifacts. Ceiling effects, varied graph uptake, differential instrument failure and four post-treatment qualified pairs do not establish pure-schema effects, general equivalence/efficiency or Human benefit. |
+
+The [T delivery/revision comparison](workflow-benefit-pilot.md) preserves the distinction
+between artifact correctness and faithful evidence/completion reports: one graph
+original passes functional checks but materially promotes finite tests to full-contract
+execution coverage. Applicable inspection can nevertheless support a bounded reuse
+claim without fabricated reruns or mandatory exhaustive testing. No new regression was
+observed under the frozen pre/post correspondence; unchanged expected values do not
+prove unaffected dependency scope. This extends the evidence beyond recording-only
+fixtures, not to Human acceptance or sustained workflow efficacy.
 
 Historical agent-pilot interpretations retain an isolation qualification: the older
 all-`/nix` wrapper exposed a reproduced store-copy channel. Pilot P's restricted
