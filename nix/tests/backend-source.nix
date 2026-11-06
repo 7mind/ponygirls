@@ -6,6 +6,8 @@ let
   server = sources.server;
   tests = sources.backendTests;
   protocol = sources.protocol;
+  manureInventory = builtins.fromJSON (builtins.readFile ../../manure/tests/current-test-inventory.json);
+  manureWitnesses = pkgs.lib.concatMap (group: group.sourceRefs ++ group.targetRefs) manureInventory.invariantGroups;
 in
 assert selected server "build.sbt" "regular";
 assert selected server "project/plugins.sbt" "regular";
@@ -37,6 +39,10 @@ assert !(selected server "manure/server/src/main/java/manure/storage/PosixNative
 assert !(selected tests "manure/server/src/main/c/posix_native.c" "regular");
 assert selected sources.manureAcceptance "manure/server/native-image/PosixLinkFeature.java" "regular";
 assert selected sources.manureAcceptance "scripts/manure-native-image.sh" "regular";
+assert pkgs.lib.all (ref: selected sources.manureTargetTests ref.path "regular") manureWitnesses;
+assert selected sources.manureTargetTests "manure/tests/portable_root_probe.py" "regular";
+assert !(selected sources.manureTargetTests "shared/retrieval-postgres/src/test/scala/unrelated.scala" "regular");
+assert !(selected sources.manureServer "shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/AuthorizedCandidateTest.scala" "regular");
 assert !(selected sources.manurePosix "manure/server/src/main/scala/example.scala" "regular");
 assert selected sources.manureDirectJni "manure/server/native-tests/NativeSelfTest.java" "regular";
 assert selected sources.manureDirectJni "manure/server/src/main/c/posix_native.c" "regular";
@@ -57,6 +63,8 @@ pkgs.runCommand "backend-source-layout-test" {
   protocolSource = protocol;
   haystackSource = sources.haystackServer;
   manureSource = sources.manureServer;
+  manureTargetSource = sources.manureTargetTests;
+  nativeBuildInputs = [ pkgs.python3 ];
 } ''
   # Real source existence belongs to the builder. Pure no-build evaluation must
   # not dereference lazily realized filtered-store paths via builtins.pathExists.
@@ -77,5 +85,15 @@ pkgs.runCommand "backend-source-layout-test" {
   test -d "$haystackSource/haystack/migrations"
   test -f "$manureSource/manure/migration/schema.sql"
   test -f "$manureSource/manure/server/native-image/PosixLinkFeature.java"
+  test -f "$manureTargetSource/manure/tests/portable_root_probe.py"
+  python3 - "$manureTargetSource" <<'PY'
+  import json,pathlib,sys
+  root=pathlib.Path(sys.argv[1])
+  registry=json.loads((root/'manure/tests/current-test-inventory.json').read_text())
+  for group in registry['invariantGroups']:
+      for kind in ('sourceRefs','targetRefs'):
+          for reference in group[kind]:
+              assert (root/reference['path']).is_file(), reference['path']
+  PY
   touch "$out"
 ''

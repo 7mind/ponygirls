@@ -43,6 +43,10 @@ public final class PosixNative {
     public native int openFile(int parent, byte[] name, boolean writable) throws NativeFailure;
     /** Unsigned kernel dev/ino bit patterns. */
     public native long[] identity(int fd) throws NativeFailure;
+    /** Nonblocking inode flock; the descriptor owns it until close, across network namespaces. */
+    public native void lockRoot(int fd) throws NativeFailure;
+    /** Descriptor filesystem type and device major/minor; observations, not durable ownership. */
+    public native long[] filesystemIdentity(int fd) throws NativeFailure;
     public native int kind(int parent, byte[] name) throws NativeFailure;
     /** Independent enumeration; EOVERFLOW rather than silently truncated cleanup. */
     public native byte[][] entries(int directory, int maxEntries) throws NativeFailure;
@@ -57,6 +61,8 @@ public final class PosixNative {
     public native void sync(int fd) throws NativeFailure;
     public native void move(int sourceParent, byte[] source, int destinationParent,
                             byte[] destination) throws NativeFailure;
+    public native void moveNew(int sourceParent, byte[] source, int destinationParent,
+                               byte[] destination) throws NativeFailure;
     public native void unlink(int parent, byte[] name, boolean directory) throws NativeFailure;
     /** Name excludes the initial abstract-namespace NUL, which the bridge adds. */
     public native int claim(byte[] abstractSocketName) throws NativeFailure;
