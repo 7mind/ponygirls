@@ -3,12 +3,13 @@
 **Final acceptance pending after rejected artifacts (2026-11-06).** Widget
 reconciliation, stable Decisions/Tokemon registrations and fullscreen capture
 validity corrections are implemented, and the complete Pi 1.4.0 backport is
-packaged. Nix validation and the seven-badge matrices passed for both the
-pre-integration candidate and the new combined-main bundle. Immutable timer
-controls exposed an observer namespace mismatch. The corrected Decisions
-control now passes; final timer review and acceptance of a subsequently rebuilt
-Historian-containing bundle remain pending. This is a source-bound preparation
-checkpoint, not a claim that every current artifact or full suite passed.
+packaged. Seven-badge matrices passed for the `4giir`, `n5b` and `rxn` bundles.
+Corrected immutable native controls passed for `n5b`; `rxn` positive03 later
+failed an HTTP-count assertion after pacing denied refreshes just before their
+deadlines. That failure remains preserved. The latest combined-main bundle,
+`9im`, built successfully but still requires artifact-specific runtime acceptance
+and a reviewed passive-observation extension to the positive timer scenario.
+This checkpoint does not claim every current artifact or full suite passed.
 
 The preceding real seven-badge run stopped at 120×36: after two rapid Agents
 clicks, a third held click delivered a press but no release/click despite
@@ -83,19 +84,61 @@ CLI, cleanup and analysis exit 0: 24 gestures, 18 held clicks and twelve observe
 Decisions panes with exact native PanelLayout/SDK VStack ancestry. Their
 `bundledVStack:false` observations remain explicit. Parent raw-trace and cleanup
 checks passed at 19:35:35Z. The full-length Tokemon positive and negative controls
-were then launched separately; their parent outcome review remains pending.
+subsequently completed with CLI, cleanup and analysis exit 0. Independent review
+cleared all three `n5b` controls; the parent verified the complete 1,219-entry
+seal at 20:01:11Z. Positive covered twelve 31-second holds with stable geometry;
+negative observed sticky cancellation during the eleventh held gesture.
 No cache-policy change, namespace substitution or silent rerun was used.
 
 A further concurrent main commit, `35b112f7036adf8b128e16a6c19e50259855493d`,
 adds Historian reliability and managed defaults. It was merged into the task
 branch as `063df9b11f9c8e1c1434a4e14d6e7ee280127235`, without modifying main.
-The fourteen-target Nix job `bgt-41584058e435ac96` completed with exit 0;
-its freshness/count audit is separate. Pi and shared UI/settings remain unchanged,
-but the bundle is now
+The fourteen-target Nix job `bgt-41584058e435ac96` completed with exit 0.
+Pi and shared UI/settings remained unchanged; the resulting bundle was
 `/nix/store/rxn5ywvw9wkffz63hmdixgkhvbzhiv5c-ponygirls-pi-extensions`,
-NAR `sha256-LCSrtNpZXV+gbVQe18DekTZ//22BcJ753kaR6fBPe8U=`
-(observed 19:42:06Z). Earlier bundle evidence is not automatically acceptance
-of this rebuilt artifact. Its own binding review and matrix remain required.
+NAR `sha256-LCSrtNpZXV+gbVQe18DekTZ//22BcJ753kaR6fBPe8U=`.
+Its independently reviewed matrix passed the same 21 journeys and 401 actions;
+the parent verified all 939 seal entries at 20:36:11Z. This is separate runtime
+evidence, not acceptance transferred from `n5b`.
+
+The original `rxn` build audit omitted 87 Python executions from Background
+Tasks. A separately reviewed correction preserves the inaccurate report and
+reviewer misses. The corrected total is **389 fresh + 1,725 reused = 2,114
+executions**, including 462 reused selected Pi checks. These are not unique
+cases. All 28 current/prior logs and their 16 runner segments per build were
+reconciled against runner commands; the parent independently verified the hashes
+and totals. ANSI stripping was not the cause: the extractor omitted Python's
+runner-summary format.
+
+`rxn` Decisions03 and geometry-negative03 completed successfully. Positive03
+completed its UI journey and cleanup but failed analysis: only one usage/profile
+HTTP pair occurred, not the required two. Native refresh claims were 21/31 ms
+early and the pane's native tick was 7/17 ms early against endpoint pacing
+deadlines. Cached responses advanced report freshness without another HTTP
+fetch. This trace does not establish a product regression or missing callback.
+The failure remains failed. A separately reviewed successor is being prepared:
+retain all twelve 31-second holds, native timers and HTTP-count assertions, then
+observe passively through another native refresh cycle without extra input,
+redraw, resize or manual refresh.
+
+Main subsequently advanced to `25dec23bf5d9f56506ce6990a5268d327d2e9f86`,
+adding the managed Historian Sol 6.1/medium default. It was merged into the task
+branch as `b86b267bb1b18eb6beaef091674d15015222a7a8`; main was not modified.
+Job `bgt-e59edf977b87644a` completed all fourteen targets. Its reviewed audit
+again records 16 runner segments and **389 fresh + 1,725 reused = 2,114
+executions**: six fresh derivations (bundle plus five checks), eight exact reuses.
+The changed Home Manager assertions were evaluated; a reused policy output does
+not imply unchanged evaluation. All fourteen patches, dependencies and catalog
+inputs remain preserved.
+
+The new bundle is
+`/nix/store/9imcl15v2d58jrzsivcznnmb2wjc8544-ponygirls-pi-extensions`,
+NAR `sha256-Ns8BuSed+JXHdb0GFKUaqrJDGaIMNdFYjFsEcWVGrCw=`.
+Parent actual NAR hashing at 20:38:05Z verified it and unchanged Pi/UI/settings.
+The 381-entry bundle comparison differs only in Historian's README; all seven
+selected extension trees and shared targets match. This does not automatically
+accept the new artifact. Its matrix and native controls are being prepared.
+The managed model default grants neither Historian activation nor inference.
 
 ## Behavior and boundaries
 
@@ -352,8 +395,13 @@ and removal remain blocked on final acceptance/integration, recovery verificatio
 writer freeze and no-drift checks. Q28 requests scoped Codegraph maintenance:
 the read-only audit could not establish ownership/quiescence, and missing owner
 records are not evidence of inactivity. No daemon control, lock deletion,
-archive/export or worktree removal has occurred. Synthetic recovery rehearsal
-preparation does not clear these real-data gates.
+real-source archive/export or worktree removal has occurred. Synthetic run-01
+failed before creating fixtures because its inherited `/dev` mount rejected
+Git's `/dev/null` access. A separately reviewed private-device correction let
+run-02 exit successfully, reporting five recovery stages; its evidence audit
+remains pending. The host Nix store stayed visible, and registered process/group
+absence does not independently attest absence of escaped descendants. Neither
+synthetic run clears real-data preservation or removal gates.
 
 The reviewed reusable procedure was saved and read back as Haystack
 `corporate-activity:skill-draft-untagged-terminal-reply-fencing`, revision 1.
@@ -362,4 +410,8 @@ limited to one implementation and overlap with existing drafts is recorded.
 The bounded-validity procedure was also saved and read back as
 `corporate-activity:skill-draft-bounded-guard-provenance`, revision 1. Its evidence
 is one upstream correction plus a backport, not independent recurrence or feature
-acceptance. Neither draft was installed or activated.
+acceptance. The optional runtime-identity instrumentation amendment was saved
+and read back as `corporate-activity:skill-draft-tui-testing-runtime-identity`,
+revision 2. Its complete proposed skill retains the installed text outside the
+new optional section; it does not prove initializer counts or observational
+noninterference. All three drafts remain inert, not installed or activated.
