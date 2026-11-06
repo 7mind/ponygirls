@@ -25,8 +25,8 @@ function imageView(src, alt, target = content) {
   const img = new Image(); img.alt = alt; img.src = src;
   img.addEventListener('error', () => fail(new Error('The image could not be decoded.'), box));
   let zoom = 1;
-  const fit = () => { zoom = 1; img.style.width = ''; img.style.maxWidth = '100%'; };
-  const scale = factor => { zoom = Math.min(8, Math.max(.1, zoom * factor)); img.style.maxWidth = 'none'; img.style.width = `${Math.max(1, img.naturalWidth * zoom)}px`; };
+  const fit = () => { zoom = 1; img.style.width = ''; img.style.maxWidth = '100%'; img.style.maxHeight = ''; };
+  const scale = factor => { zoom = Math.min(8, Math.max(.1, zoom * factor)); img.style.maxWidth = 'none'; img.style.maxHeight = 'none'; img.style.width = `${Math.max(1, img.naturalWidth * zoom)}px`; };
   tools.append(button('− Zoom out', () => scale(.8)), button('+ Zoom in', () => scale(1.25)), button('Actual size', () => {zoom = 1; scale(1);}), button('Fit / reset', fit));
   viewport.append(img); box.append(tools,viewport); target.append(box);
 }
