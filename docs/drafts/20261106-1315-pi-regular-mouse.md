@@ -3,12 +3,13 @@
 **Final acceptance pending after rejected artifacts (2026-11-06).** Widget
 reconciliation, stable Decisions/Tokemon registrations and fullscreen capture
 validity corrections are implemented, and the complete Pi 1.4.0 backport is
-packaged. Seven-badge matrices passed for the `4giir`, `n5b` and `rxn` bundles.
-Corrected immutable native controls passed for `n5b`; `rxn` positive03 later
-failed an HTTP-count assertion after pacing denied refreshes just before their
-deadlines. That failure remains preserved. The latest combined-main bundle,
-`9im`, built successfully but still requires artifact-specific runtime acceptance
-and a reviewed passive-observation extension to the positive timer scenario.
+packaged. Separately reviewed seven-badge matrices passed for the `4giir`, `n5b`,
+`rxn` and latest `9im` bundles. Corrected immutable native controls passed for
+`n5b`; `rxn` positive03 later failed an HTTP-count assertion after pacing denied
+refreshes just before their deadlines. That failure remains preserved. Fresh
+`9im` Decisions04 completed with CLI, cleanup and analysis exit 0; independent
+completed-run review remains pending. The reviewed Tokemon04 controls have been
+launched, but their terminal outcomes have not yet been read.
 This checkpoint does not claim every current artifact or full suite passed.
 
 The preceding real seven-badge run stopped at 120×36: after two rapid Agents
@@ -116,10 +117,10 @@ HTTP pair occurred, not the required two. Native refresh claims were 21/31 ms
 early and the pane's native tick was 7/17 ms early against endpoint pacing
 deadlines. Cached responses advanced report freshness without another HTTP
 fetch. This trace does not establish a product regression or missing callback.
-The failure remains failed. A separately reviewed successor is being prepared:
-retain all twelve 31-second holds, native timers and HTTP-count assertions, then
-observe passively through another native refresh cycle without extra input,
-redraw, resize or manual refresh.
+The failure remains failed. The separately reviewed successor retains all twelve
+31-second holds, native timers and HTTP-count assertions, then observes passively
+through another native refresh cycle without extra input, redraw, resize or
+manual refresh. Its static preparation does not establish runtime acceptance.
 
 Main subsequently advanced to `25dec23bf5d9f56506ce6990a5268d327d2e9f86`,
 adding the managed Historian Sol 6.1/medium default. It was merged into the task
@@ -137,7 +138,27 @@ NAR `sha256-Ns8BuSed+JXHdb0GFKUaqrJDGaIMNdFYjFsEcWVGrCw=`.
 Parent actual NAR hashing at 20:38:05Z verified it and unchanged Pi/UI/settings.
 The 381-entry bundle comparison differs only in Historian's README; all seven
 selected extension trees and shared targets match. This does not automatically
-accept the new artifact. Its matrix and native controls are being prepared.
+accept the new artifact. Its separate `combined03` matrix completed with exit 0:
+21 journeys, 401 actions, 420 plain/ANSI capture pairs, 102 held gestures, 69 opens
+and 48 same-badge closures. Independent review cleared the saved evidence; at
+21:08:19Z the parent verified all 934 entries of manifest
+`62919846afa218b9fff57dcefacd1bf80d6bcdab49fa78a0517ccb3203a80da5`.
+
+Native controls04 required a fail-first harness correction: its cleanup allowlist
+still named03 cases. The blocked snapshot remains preserved; only those names
+changed, followed by three routing and twelve passive-policy checks and renewed
+independent static clearance. Manifest
+`a33414e94bf33c2396d23fc23b39fe0c0f0ca93951966d9ab66cfd5471da0af5`
+binds the corrected nine inputs. Fresh Decisions04 completed with 24 gesture
+triplets, 18 holds (minimum 1.128918074 seconds) and twelve actual native panes,
+explicitly retaining `bundledVStack:false`. CLI, cleanup and analysis exited 0;
+the parent verified raw trace, input hashes and scoped resource absence before
+writing the fresh terminal gate. Independent completed-run review is pending.
+Positive04 and negative04 were then launched in isolated runs. The first negative
+launch failed before execution because the parent supplied an incorrect working
+directory; that error is retained separately from the corrected launch. Neither
+Tokemon terminal outcome has yet been read. No native-timer, Historian, physical
+mouse or real-enqueue-delivery acceptance follows from the regular matrix.
 The managed model default grants neither Historian activation nor inference.
 
 ## Behavior and boundaries
@@ -398,10 +419,18 @@ records are not evidence of inactivity. No daemon control, lock deletion,
 real-source archive/export or worktree removal has occurred. Synthetic run-01
 failed before creating fixtures because its inherited `/dev` mount rejected
 Git's `/dev/null` access. A separately reviewed private-device correction let
-run-02 exit successfully, reporting five recovery stages; its evidence audit
-remains pending. The host Nix store stayed visible, and registered process/group
+run-02 exit successfully. Its independent saved-evidence review and eighteen-file
+seal are complete. At 21:21:56Z the parent verified the seal
+`64ff19c9515df77aa6626d10277b25615674c704e69ba932f2aab573f480d9f7`
+and all 1,001 preserved input nodes. Evidence covers five positive stages and
+109 command receipts (106 exit 0; three expected exit 1), not 109 tests. Restored
+payloads contain 77 files and forty directories, four Git packs, three bundles
+and one 112-byte no-reference NAR. No captured symlink, socket, xattr or hardlink
+case was exercised. The host Nix store stayed visible, and registered process/group
 absence does not independently attest absence of escaped descendants. Neither
-synthetic run clears real-data preservation or removal gates.
+synthetic run clears real-data preservation or removal gates. Q28 remains pending;
+the advertised ready-index inventory does not establish ownership or an admission
+barrier.
 
 The reviewed reusable procedure was saved and read back as Haystack
 `corporate-activity:skill-draft-untagged-terminal-reply-fencing`, revision 1.
@@ -414,4 +443,9 @@ acceptance. The optional runtime-identity instrumentation amendment was saved
 and read back as `corporate-activity:skill-draft-tui-testing-runtime-identity`,
 revision 2. Its complete proposed skill retains the installed text outside the
 new optional section; it does not prove initializer counts or observational
-noninterference. All three drafts remain inert, not installed or activated.
+noninterference. The optional runner-accounting procedure was saved and read back
+as `corporate-activity:skill-draft-runner-execution-accounting`, revision 1;
+whole-document equality was verified. It addresses command-to-runner-to-summary
+completeness, repeated executions and fresh/reused provenance, based on one
+incident rather than demonstrated independent recurrence. All four drafts remain
+inert, not installed or activated.
