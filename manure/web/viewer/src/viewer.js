@@ -1,4 +1,4 @@
-import { marked } from 'marked';
+import { marked, Renderer } from 'marked';
 import DOMPurify from 'dompurify';
 import mermaid from 'mermaid';
 import * as pdfjs from 'pdfjs-dist/build/pdf.mjs';
@@ -53,6 +53,9 @@ async function diagram(text, kind, target) {
   const svg = ['dot','gv','graphviz'].includes(kind) ? await graphviz(source) : (await mermaid.render(`diagram-${++graphId}`, source)).svg;
   svgImage(svg,target,'Rendered diagram');
 }
+const markdownRenderer = new Renderer();
+// Preserve GFM task meaning without allowing any interactive uploaded inputs.
+markdownRenderer.checkbox = ({checked}) => `<span role="img" aria-label="${checked ? 'Completed task' : 'Incomplete task'}">${checked ? '☑' : '☐'}</span> `;
 function sanitizedMarkdown(text) {
   // Rewrite in the inert sanitizer document, BEFORE creating any live image nodes.
   // Resolve against the original document URL, not the reserved viewer/raw route.
@@ -70,7 +73,7 @@ function sanitizedMarkdown(text) {
     }
     if (node.tagName === 'A') node.setAttribute('rel','noopener noreferrer');
   });
-  return purifier.sanitize(marked.parse(text, {gfm:true}), {USE_PROFILES:{html:true}, FORBID_TAGS:['style','iframe','object','embed','form','input','video','audio','source'], FORBID_ATTR:['style','srcset','background']});
+  return purifier.sanitize(marked.parse(text, {gfm:true, renderer:markdownRenderer}), {USE_PROFILES:{html:true}, FORBID_TAGS:['style','iframe','object','embed','form','input','video','audio','source'], FORBID_ATTR:['style','srcset','background']});
 }
 async function markdown(text) {
   const article = element('article',null,'markdown');
