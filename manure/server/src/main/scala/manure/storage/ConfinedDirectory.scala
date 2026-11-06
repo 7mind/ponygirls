@@ -21,6 +21,8 @@ object RelativeName:
 
 final class RootReplaced extends IOException("storage root identity changed")
 final class RootAlreadyClaimed extends IOException("physical storage root already claimed in this network namespace")
+final class RootLocked extends IOException("physical storage root locked")
+final case class RootFilesystem(kind: Long, deviceMajor: Long, deviceMinor: Long)
 final class OpenFileHandles extends IOException("close refused: storage file handles remain open")
 final class OpenRootLeases extends IOException("close refused: storage operation leases remain open")
 
@@ -53,7 +55,8 @@ enum ExistingFileAccess:
   *
   * The explicitly injected native bridge owns no-follow traversal, type-safe pinned regular
   * opens (O_PATH + trusted procfs), mkdirat, fsync, renameat and raw-name unlink. Opening
-  * automatically claims the physical dev/ino in the current Linux network namespace.
+  * automatically claims the physical dev/ino in the current Linux network namespace
+  * and locks the root inode across network namespaces on the same kernel.
   * New directory operations revalidate the configured root before using the original fd.
   * File handles remain pinned after renames/unlink; root close refuses until all close.
   * Same-UID hostile inode moves/hardlinks are outside this boundary. These primitives
@@ -70,6 +73,25 @@ final class ConfinedDirectory private (
   private var closed = false
   private var files = 0
   private var leases = 0
+
+  /** Trusted operator mount path only, not a payload-relative path. */
+  def filesystemIdentityAt(path: Path): RootFilesystem = synchronized {
+    checked()
+    require(path.isAbsolute,"absolute mount path required")
+    val fd = call(bridge.openRoot(PosixErrors.utf8(path.toString)))
+    try
+      val values = call(bridge.filesystemIdentity(fd))
+      if values.length != 3 then throw new IOException("invalid mount filesystem observation")
+      RootFilesystem(values(0),values(1),values(2))
+    finally call(bridge.close(fd))
+  }
+
+  def hasRootEntryPrefix(prefix: RelativeName,maxEntries: Int): Boolean = synchronized {
+    checked()
+    require(prefix.components.size == 1 && maxEntries > 0,"bounded single-component prefix required")
+    val bytes=prefix.components.head.toVector
+    call(bridge.entries(root,maxEntries)).exists(_.toVector.startsWith(bytes))
+  }
 
   /** Root ownership spans all DB transactions, file work and workers, not merely
     * open payload handles. Close refusal retains both the root and physical claim.
@@ -161,6 +183,13 @@ final class ConfinedDirectory private (
 
   def physicalIdentity: Vector[Long] = synchronized { checked(); identity }
 
+  def filesystemIdentity: RootFilesystem = synchronized {
+    checked()
+    val values = call(bridge.filesystemIdentity(root))
+    if values.length != 3 then throw new IOException("invalid root filesystem observation")
+    RootFilesystem(values(0),values(1),values(2))
+  }
+
   def forceRootDirectory(): Unit = synchronized {
     checked()
     call(bridge.sync(root))
@@ -211,6 +240,14 @@ final class ConfinedDirectory private (
     checked()
     withParent(source) { (from, leaf) =>
       withParent(destination) { (to, target) => call(bridge.move(from, leaf, to, target)) }
+    }
+  }
+
+  /** Atomic no-replace rename; explicit EEXIST rather than replacing a foreign marker. */
+  def moveNew(source: RelativeName, destination: RelativeName): Unit = synchronized {
+    checked()
+    withParent(source) { (from, leaf) =>
+      withParent(destination) { (to, target) => call(bridge.moveNew(from, leaf, to, target)) }
     }
   }
 
@@ -358,7 +395,8 @@ final class ConfinedDirectory private (
 object ConfinedDirectory:
   /** Existing root only. Claim precedes payload effects. Claim names interoperate with
     * Python: manure- + SHA256(unsigned decimal dev + ':' + unsigned decimal ino).
-    * Abstract AF_UNIX claims are confined to this Linux network namespace, not global.
+    * Abstract AF_UNIX claims interoperate within this network namespace. The directory
+    * flock additionally excludes cooperating native instances across network namespaces.
     */
   def open(path: Path, bridge: PosixNative): ConfinedDirectory =
     require(path.getFileSystem == FileSystems.getDefault, "default filesystem required")
@@ -383,6 +421,10 @@ object ConfinedDirectory:
       val digest = MessageDigest.getInstance("SHA-256").digest(PosixErrors.utf8(key))
       val claimName = "manure-" + digest.map(b => f"${b & 0xff}%02x").mkString
       claim = PosixErrors.call(bridge.claim(PosixErrors.utf8(claimName)))
+      try bridge.lockRoot(root)
+      catch
+        case failure: NativeFailure if failure.errno() == 11 => throw new RootLocked
+        case failure: NativeFailure => PosixErrors.call(throw failure)
       new ConfinedDirectory(bridge, encoded, root, identity, claim)
     catch
       case error: Throwable =>

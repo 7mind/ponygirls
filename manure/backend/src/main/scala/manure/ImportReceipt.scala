@@ -5,6 +5,9 @@ import io.circe.{Json,JsonObject}
 import scala.util.Using
 
 final case class ImportedDestination(id: String,root: String,source: String,writesStarted: Boolean)
+final case class ImportedRootWitness(controlVolume: RootVolume,control: PhysicalRootBinding,payload: PhysicalRootBinding,
+  ownerSha256: String,completeSha256: String,manifestSha256: String):
+  Require(Vector(ownerSha256,completeSha256,manifestSha256).forall(_.matches("[0-9a-f]{64}")),"migration-required")
 
 /** First adoption is NOT a path-name check. The converter's exact completion
   * digest binds the copied payload inode and every raw directory/file/hash.
@@ -31,24 +34,47 @@ object ImportReceipt:
   def rootBytes(root: ConfinedDirectory): Array[Byte] =
     val buffer=java.nio.ByteBuffer.allocate(16)
     root.physicalIdentity.foreach(buffer.putLong);buffer.array()
+  def capture(config: Config,payload: ConfinedDirectory,control: ConfinedDirectory,
+    record: ImportedDestination,volume: RootVolume): ImportedRootWitness =
+    val ownerBytes=read(control,"OWNER.json",16384)
+    val completeBytes=read(control,"COMPLETE",16384)
+    val manifestBytes=read(control,"PAYLOAD.json",config.migrationManifestMaxBytes)
+    val owner=CurrentWire.parse(Exact.string(ownerBytes))
+    val manifest=CurrentWire.parse(Exact.string(manifestBytes))
+    def physical(value: Json): PhysicalRootBinding = PhysicalRootBinding(
+      java.lang.Long.parseUnsignedLong(unsigned(value,"device")),java.lang.Long.parseUnsignedLong(unsigned(value,"inode")))
+    val witness=ImportedRootWitness(volume,physical(owner),physical(manifest),SecretCodec.sha256(ownerBytes),
+      SecretCodec.sha256(completeBytes),SecretCodec.sha256(manifestBytes))
+    validate(config,payload,control,record,false,true,Some(witness))
+    witness
   def validate(config: Config,payload: ConfinedDirectory,control: ConfinedDirectory,
-    record: ImportedDestination,firstAdoption: Boolean,requireWritable: Boolean): Unit =
+    record: ImportedDestination,firstAdoption: Boolean,requireWritable: Boolean,accepted: Option[ImportedRootWitness]): Unit =
     try
       Require(config.migrationReceiptDir.exists(_.toString == record.root) && (!requireWritable || record.writesStarted) &&
         record.id.matches("[0-9a-f]{32}") && record.source.matches("[0-9a-f]{64}"),"migration-required")
-      val owner=CurrentWire.parse(Exact.string(read(control,"OWNER.json",16384)))
-      val controlId=control.physicalIdentity.map(java.lang.Long.toUnsignedString)
+      val ownerBytes=read(control,"OWNER.json",16384)
+      val completeBytes=read(control,"COMPLETE",16384)
+      val owner=CurrentWire.parse(Exact.string(ownerBytes))
+      val observedControl=RootBinding.physical(control)
+      val observedPayload=RootBinding.physical(payload)
+      accepted.foreach { witness =>
+        Require(!firstAdoption && witness.control.inode == observedControl.inode && witness.payload.inode == observedPayload.inode &&
+          witness.ownerSha256 == SecretCodec.sha256(ownerBytes) && witness.completeSha256 == SecretCodec.sha256(completeBytes),"migration-required")
+      }
+      val originalControl=accepted.map(_.control).getOrElse(observedControl)
+      val controlId=Vector(originalControl.device,originalControl.inode).map(java.lang.Long.toUnsignedString)
       Require(text(owner,"format") == "manure-offline-1" && text(owner,"id") == record.id && text(owner,"root") == record.root &&
         unsigned(owner,"device") == controlId(0) && unsigned(owner,"inode") == controlId(1),"migration-required")
-      val complete=CurrentWire.parse(Exact.string(read(control,"COMPLETE",16384)))
+      val complete=CurrentWire.parse(Exact.string(completeBytes))
       obj(complete,Set("source","destination","payloadManifestSha256"))
       val digest=text(complete,"payloadManifestSha256")
       Require(text(complete,"source") == record.source && text(complete,"destination") == record.id && digest.matches("[0-9a-f]{64}"),"migration-required")
       val manifestBytes=read(control,"PAYLOAD.json",config.migrationManifestMaxBytes)
-      Require(SecretCodec.sha256(manifestBytes) == digest,"migration-required")
+      Require(SecretCodec.sha256(manifestBytes) == digest && accepted.forall(_.manifestSha256 == digest),"migration-required")
       val manifest=CurrentWire.parse(Exact.string(manifestBytes))
       obj(manifest,Set("format","source","destination","device","inode","entries"))
-      val physical=payload.physicalIdentity.map(java.lang.Long.toUnsignedString)
+      val originalPayload=accepted.map(_.payload).getOrElse(observedPayload)
+      val physical=Vector(originalPayload.device,originalPayload.inode).map(java.lang.Long.toUnsignedString)
       Require(text(manifest,"format") == "manure-payload-1" && text(manifest,"source") == record.source && text(manifest,"destination") == record.id &&
         unsigned(manifest,"device") == physical(0) && unsigned(manifest,"inode") == physical(1),"migration-required")
       if firstAdoption then

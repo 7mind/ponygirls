@@ -433,6 +433,47 @@ final class FilesystemBehavior(bridge: PosixNative, childCommand: Vector[String]
     }
   }
 
+  test("root inode flock excludes an independent descriptor without a namespace claim") {
+    fixture { temp =>
+      val root = Files.createDirectory(temp.resolve("root"))
+      val fd = bridge.openRoot(root.toString.getBytes(UTF_8))
+      try
+        bridge.lockRoot(fd)
+        intercept[RootLocked](ConfinedDirectory.open(root, bridge))
+      finally bridge.close(fd)
+      Using.resource(ConfinedDirectory.open(root, bridge))(_.forceRootDirectory())
+    }
+  }
+
+  test("filesystem observation is descriptor-derived and stable across directory contents") {
+    fixture { temp =>
+      Using.resource(ConfinedDirectory.open(temp, bridge)) { directory =>
+        val observed = directory.filesystemIdentity
+        assert(observed.kind != 0 && observed.deviceMajor >= 0 && observed.deviceMinor >= 0)
+        directory.createDirectory(name("new"))
+        assertEquals(directory.filesystemIdentity,observed)
+      }
+    }
+  }
+
+  test("atomic no-replace rename cannot overwrite an existing marker or symlink") {
+    fixture { temp =>
+      val outside = Files.writeString(temp.resolve("sentinel"),"untouched")
+      val root = Files.createDirectory(temp.resolve("root"))
+      Using.resource(ConfinedDirectory.open(root, bridge)) { directory =>
+        Using.resource(directory.createFile(name("prepared")))(_.write(0,bytes("new-marker")))
+        Files.createSymbolicLink(root.resolve("marker"),outside)
+        intercept[FileAlreadyExistsException](directory.moveNew(name("prepared"),name("marker")))
+        assertEquals(Files.readString(outside),"untouched")
+        directory.deleteFile(name("marker"))
+        directory.moveNew(name("prepared"),name("marker"))
+        directory.forceRootDirectory()
+        assert(!Files.exists(root.resolve("prepared")))
+        assertEquals(Files.readString(root.resolve("marker")),"new-marker")
+      }
+    }
+  }
+
   test("kernel claims contend across processes, inode rename aliases, and failed root close") {
     fixture { temp =>
       val root = Files.createDirectory(temp.resolve("root"))

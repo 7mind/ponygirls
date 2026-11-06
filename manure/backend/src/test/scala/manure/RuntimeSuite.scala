@@ -89,6 +89,28 @@ final class RuntimeSuite extends FunSuite:
       _ <- IO.blocking(assertEquals(Files.readString(config.dataDir.resolve("staging/owned/tree/file")),"preserve"))
     yield () }.unsafeRunSync()
   }
+  test("legacy device renumbering refuses before metadata or payload effects") {
+    BackendFixture.configuration.use { (config,_,_) => for
+      _ <- Main.resources(config).use(_ => IO.unit)
+      legacy <- JdbcDatabase.resource(config.database).use(_.transaction { c =>
+        Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).head
+      })
+      priorNode = legacy.clone()
+      _ <- IO {
+        val bytes=java.nio.ByteBuffer.wrap(priorNode)
+        bytes.putLong(0,bytes.getLong(0) ^ 16L)
+      }
+      _ <- JdbcDatabase.resource(config.database).use(_.transaction { c =>
+        Jdbc.exec(c,"UPDATE manure.root_owner SET identity=? WHERE singleton",priorNode)
+      })
+      result <- Main.resources(config).use(_ => IO.unit).attempt
+      _ <- IO(assertEquals(result.left.toOption.collect { case e: DomainError => e.code },Some("migration-required")))
+      _ <- JdbcDatabase.resource(config.database).use(_.transaction { c =>
+        assert(java.util.Arrays.equals(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).head,priorNode))
+        assertEquals(Jdbc.rows(c,"SELECT count(*) FROM manure.artifacts")(_.getLong(1)).head,0L)
+      })
+    yield () }.unsafeRunSync()
+  }
   test("wrong payload root cannot silently attach existing PG metadata") {
     BackendFixture.configuration.use { (config,_,_) => for
       _ <- Main.resources(config).use(_ => IO.unit)

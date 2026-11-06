@@ -73,6 +73,22 @@ JNIEXPORT jlongArray JNICALL Java_manure_storage_PosixNative_identity
 
 /*
  * Class:     manure_storage_PosixNative
+ * Method:    lockRoot
+ * Signature: (I)V
+ */
+JNIEXPORT void JNICALL Java_manure_storage_PosixNative_lockRoot
+  (JNIEnv *, jobject, jint);
+
+/*
+ * Class:     manure_storage_PosixNative
+ * Method:    filesystemIdentity
+ * Signature: (I)[J
+ */
+JNIEXPORT jlongArray JNICALL Java_manure_storage_PosixNative_filesystemIdentity
+  (JNIEnv *, jobject, jint);
+
+/*
+ * Class:     manure_storage_PosixNative
  * Method:    kind
  * Signature: (I[B)I
  */
@@ -133,6 +149,14 @@ JNIEXPORT void JNICALL Java_manure_storage_PosixNative_sync
  * Signature: (I[BI[B)V
  */
 JNIEXPORT void JNICALL Java_manure_storage_PosixNative_move
+  (JNIEnv *, jobject, jint, jbyteArray, jint, jbyteArray);
+
+/*
+ * Class:     manure_storage_PosixNative
+ * Method:    moveNew
+ * Signature: (I[BI[B)V
+ */
+JNIEXPORT void JNICALL Java_manure_storage_PosixNative_moveNew
   (JNIEnv *, jobject, jint, jbyteArray, jint, jbyteArray);
 
 /*

@@ -391,12 +391,6 @@
           };
           manure-config = import ./nix/tests/manure-config.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
           manure-backend = import ./nix/tests/manure-backend.nix { inherit pkgs; squishLib = inputs.squish.lib; };
-          manure-unittests = import ./nix/tests/manure-unittests.nix {
-            inherit pkgs;
-            backendCheck = self.checks.${system}.manure-backend;
-            installedClientCheck = self.checks.${system}.manure-client;
-            nativeCheck = self.checks.${system}.manure-native;
-          };
           haystack-nixos-eval =
             let
               mkSystem = extra: (nixpkgs.lib.nixosSystem {
@@ -1015,6 +1009,14 @@
             touch "$out"
           '';
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
+          manure-portable-root = import ./nix/tests/manure-portable-root.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
+          manure-unittests = import ./nix/tests/manure-unittests.nix {
+            inherit pkgs;
+            backendCheck = self.checks.${system}.manure-backend;
+            installedClientCheck = self.checks.${system}.manure-client;
+            nativeCheck = self.checks.${system}.manure-native;
+            portableRootCheck = self.checks.${system}.manure-portable-root;
+          };
           haystack-proxy = import ./nix/tests/haystack-proxy.nix { inherit pkgs inputs; haystackPackage = self.packages.${system}.haystack; };
           hm-service-unit-graph-harness = import ./nix/tests/hm-service-unit-graph-harness.nix { inherit pkgs; };
           hm-service-unit-graph-vm = import ./nix/tests/hm-service-unit-graph-vm.nix {
