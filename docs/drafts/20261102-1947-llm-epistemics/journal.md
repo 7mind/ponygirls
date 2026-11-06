@@ -3042,3 +3042,45 @@ Fresh integrated Q85/0.782s, T72/24.730s and successor38/6.953s pass, zero failu
 errors/skips. S136 is explicitly reused on matching128-source hashes, registered inputs
 and unchanged historical source/fixture/protocol/Nix inputs. Relocated public inventory
 matches,2031-file publication verification passes. No fresh integrated S run is implied.
+
+## J36 — additive T rejection diagnostics under bounded autonomy (2026-11-06)
+
+The user invited autonomous continuation. The selected increment was localized
+[rejection diagnostics](pilot-t-diagnostics.md), independent of pending Q22,
+transport recovery and new participant measurement. Diagnostics003 in local
+`epistemics-pilots` is integrated at `09bc22043de27edee1fd3f7f68753e113c77310a`
+[L21]. It adds missing/stale governing refs, stale-definition and wrong-progress-kind
+explanations; preserves002 admission order/code/detail and transaction semantics;
+never selects context or repairs the caller's request. Attributable bind/state
+pointers differ from referenced graph records. Whole-packet/final-context errors
+remain batch-scoped, not assigned to the last operation. Tentative refs are not
+admission receipts; oversized reasons are explicitly omitted, not truncated.
+
+The corrected16-method fail-before contract fails on missing diagnostics; an
+initial fixture-reference precedence error remains retained.70 successor methods
+pass, including memory/file and actual SDK→extension→copied-backend/CLI/audit
+controls. Three retained process-valid graph users provide65 exact-prestate mutation
+comparisons (27 accepted/38 rejected):002/003 legacy outcome and complete store state
+agree. Frozen original replay still controls historical verification. No participant
+artifact is executed/imported and no original verdict changes.
+
+Complete final fresh suites pass401 methods: S136/400.226s,Q85/0.821s,T72/25.448s,
+repair00238/6.128s,diagnostics00370/11.531s; zero failures/errors/skips.137 source
+hashes,984 registered inputs and2031 publication-bound files verify. Integrated and
+post-cleanup runs each freshly pass265 Q/T/002/003 tests; S136 is explicitly reused
+with exact source binding and unchanged historical inputs. Pilot task worktree
+removed normally after preserving11 local/index entries; an earlier cleanup guard
+failed before any move because it omitted internally ignored index files, and its
+failure/correction are retained. Main index was not moved or edited by this work.
+
+Read-only design/code/skill reviews and parent dispositions are retained. No new
+skill/amendment, native participant run, production/UI/CQ4 change, export-policy
+choice, transport correction, deployment or push. Software diagnostics are not
+measured agent improvement or Human usability. Static schema alignment, binding
+preview and evidence-method reporting remain independent proposals, not implied
+implementations.
+
+Research handover checks20 documents/93 local links/36 journal entries/89 references;
+J1–J35 and prior references are exact prefixes, protected schema/semantics/review/T1
+and prototype sources unchanged. The prototype's36 methods freshly pass6.610s,
+zero failures/errors/skips. Structural/regression checks are not semantic approval.
