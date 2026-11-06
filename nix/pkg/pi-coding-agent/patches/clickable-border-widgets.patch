@@ -38,7 +38,7 @@ index eff762a..dd3e3a3 100644
  	return {
  		transcript,
 diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
-index efbf3b6..c11150e 100644
+index efbf3b6..69bbea0 100644
 --- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 +++ b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 @@ -1,4 +1,5 @@
@@ -55,7 +55,7 @@ index efbf3b6..c11150e 100644
  	public readonly embedWorkingStatus: boolean;
  	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
  
-@@ -212,15 +214,58 @@ export class CustomEditor extends Editor {
+@@ -212,15 +214,60 @@ export class CustomEditor extends Editor {
  		} else {
  			this.borderContent.set(key, { slot, content });
  		}
@@ -105,8 +105,10 @@ index efbf3b6..c11150e 100644
 +			const result = span.content.handleMouse({
 +				...event, x: event.x - span.start, y: 0, width: span.end - span.start, height: 1,
 +			});
-+			// Keep gesture ownership here, not on a forwarded child that may be disposed before release.
-+			if (result !== undefined) return { handled: result.handled, capture: result.capture, focus: result.focus, render: result.render };
++			// Own the whole gesture: falling through on press starts text selection, which can swallow triple clicks.
++			if (result === undefined) return { handled: true, focus: false };
++			// Keep ownership here, not on a forwarded child that may be disposed before release.
++			return { handled: result.handled, capture: result.capture, focus: result.focus, render: result.render };
 +		}
 +		return undefined;
 +	}
@@ -114,7 +116,7 @@ index efbf3b6..c11150e 100644
  	protected override renderTopBorder(width: number, hiddenLineCount: number): string {
  		const composed = this.renderBorderWithContent(width, hiddenLineCount, "↑", "topLeft", "topRight");
  		this.borderSpans.top = composed?.spans ?? [];
-@@ -241,17 +286,8 @@ export class CustomEditor extends Editor {
+@@ -241,17 +288,8 @@ export class CustomEditor extends Editor {
  	override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
  		const edge = event.y === 0 ? "top" : event.y === this.renderedVisibleLineCount + 1 ? "bottom" : undefined;
  		if (edge !== undefined) {
@@ -288,10 +290,32 @@ index c87215d..9b91a5b 100644
  		const automatic = createChatViewport({
  			document: new Container(),
 diff --git a/packages/coding-agent/test/custom-editor-border-content.test.ts b/packages/coding-agent/test/custom-editor-border-content.test.ts
-index 66beec6..4be58f7 100644
+index 66beec6..626f2ca 100644
 --- a/packages/coding-agent/test/custom-editor-border-content.test.ts
 +++ b/packages/coding-agent/test/custom-editor-border-content.test.ts
-@@ -142,6 +142,61 @@ describe("CustomEditor border content", () => {
+@@ -46,6 +46,21 @@ function bottomBorder(editor: CustomEditor, width: number): string {
+ }
+ 
+ describe("CustomEditor border content", () => {
++	it("owns press and release on interactive badges instead of starting text selection", () => {
++		initTheme("dark");
++		const editor = createEditor();
++		const events: string[] = [];
++		editor.setBorderContent("bottomLeft", "badge", {
++			render: () => "badge",
++			handleMouse(event) { events.push(event.type); return event.type === "click" ? { handled: true } : undefined; },
++		});
++		bottomBorder(editor, 30);
++		for (const type of ["press", "release"] as const) {
++			expect(editor.handleMouse({ ...click(3, 2), type })).toEqual({ handled: true, focus: false });
++		}
++		expect(editor.handleMouse(click(3, 2))?.handled).toBe(true);
++		expect(events).toEqual(["press", "release", "click"]);
++	});
+ 	it("renders top-right content at the end of the top border", () => {
+ 		initTheme("dark");
+ 		const editor = createEditor();
+@@ -142,6 +157,61 @@ describe("CustomEditor border content", () => {
  });
  
  describe("CustomEditor border content mouse input", () => {
