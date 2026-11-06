@@ -151,6 +151,25 @@ for (const adapter of [
 			assert.throws(() => store.resolve("b", "Q1", 1, "dismissed", null), errorCode("not_found"));
 		});
 
+		test("timestamps preserve creation and track every successful edit, not reads or rejected writes", (t) => {
+			t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-01-01T00:00:00Z") });
+			const store = fresh(t);
+			const original = store.ask("a", input());
+			assert.equal(original.createdAt, new Date().toISOString());
+			for (const [status, answer] of [["answered", "First"], ["answered", "Edited"], ["dismissed", null], ["pending", null], ["pending", null]] as const) {
+				t.mock.timers.tick(60_000);
+				const before = store.get("a", "Q1");
+				const saved = store.resolve("a", "Q1", before.revision, status, answer);
+				assert.equal(saved.createdAt, original.createdAt);
+				assert.equal(saved.updatedAt, new Date().toISOString());
+				assert.notEqual(saved.updatedAt, before.updatedAt);
+				t.mock.timers.tick(60_000);
+				assert.throws(() => store.resolve("a", "Q1", before.revision, "dismissed", null), errorCode("conflict"));
+				assert.deepEqual(store.ask("a", input()), saved);
+				assert.deepEqual(store.list("a"), [saved]);
+			}
+		});
+
 		test("same-value saves also advance revision", (t) => {
 			const store = fresh(t);
 			store.ask("a", input());

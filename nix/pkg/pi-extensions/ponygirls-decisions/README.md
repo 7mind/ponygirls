@@ -24,7 +24,11 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
 - The inbox frame shows `pending N` / `all` tabs and the repository name (the
   directory owning the Git common directory, so worktrees show the main repository).
   Questions originating in the active session carry a `[this session]` marker in
-  both tabs and in detail. Detail also shows the full originating session ID.
+  both tabs and in detail. Rows show creation and last-modification ages (for
+  example, `2h 30m ago`); the selected question's preview and detail show both
+  ages alongside exact UTC timestamps, including when row text is truncated.
+  Ages refresh while the inbox is open. Detail also shows the full originating
+  session ID.
 - The inbox supports keyboard navigation, Markdown context and recommendations,
   suggested answers, and a multiline free-form answer editor. Answers are saved
   explicitly, never by merely moving the selection. Escape cancels an edit.
@@ -170,6 +174,11 @@ session branches: forks and `/new` do not roll back project decisions. The saved
 `sessionId` is the session that originally asked, not the session that later
 answered or reopened it. Resuming that session restores its `[this session]`
 markers; a new or forked session does not inherit them.
+
+Creation timestamps are retained permanently. Every successful save (answer,
+answer edit, dismissal, reopening, or same-value save) updates the modification
+timestamp; reads, duplicate asks and rejected stale writes do not. Existing
+questions already have these timestamps; no database migration is required.
 
 Concurrent writes allocate IDs atomically. Answer changes compare the question
 revision, so a stale editor cannot silently overwrite someone else's answer.
