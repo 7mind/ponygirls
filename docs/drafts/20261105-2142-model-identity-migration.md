@@ -35,15 +35,29 @@ match, introduce an endpoint alias, or force reindex compatible vectors.
 
    ```json
    {
-     "version": "model-identity-migration-v1",
+     "version": "model-identity-migration-v2",
      "legacyProfiles": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+     "retainedProfiles": [{
+       "profile": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+       "embeddingSpace": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+       "policy": "ContiguousPassagesV1",
+       "descriptorSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+     }],
      "canonicalProfile": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
    }
    ```
 
    These are synthetic IDs, not a deployable plan. No endpoint or credential
-   belongs in this file. Unknown fields, empty/duplicate/invalid IDs, plans over
-   32 KiB and plans targeting a different configured model/policy are rejected.
+   belongs in this file. `legacyProfiles` authorizes execution migration only
+   when the entire policy matches the configured executable profile.
+   `retainedProfiles` separately authorizes historical reads: bind the exact
+   profile, original space, supported read policy and SHA-256 of its original
+   profile descriptor serialized with Circe `noSpacesSortKeys` (UTF-8).
+   Either list may be empty, but their union must be nonempty and disjoint.
+   Each list is limited to 128 entries, additionally subject to the 32-KiB
+   document limit. Unknown fields, duplicates, malformed hashes, stale snapshots
+   and a different configured canonical model/policy are rejected. The unreleased
+   v1 plan format is replaced, not silently expanded into read approval.
 5. Run:
 
    ```bash
@@ -54,19 +68,44 @@ match, introduce an endpoint alias, or force reindex compatible vectors.
    subsequent **model metadata operation** is one transaction, not a promise
    that initialization and metadata migration form one atomic operation. It
    verifies original descriptor/profile hashes, exact semantic compatibility,
-   quiescence, immutable mappings and checkpoint-namespace collisions. Only
-   explicitly approved current-policy legacy profiles are migrated. Unsupported
-   or unapproved profiles are not made executable or silently reindexed.
+   quiescence for both approval lists, immutable mappings and checkpoint-namespace
+   collisions. Only explicitly approved current-policy `legacyProfiles` are
+   migrated. A retained read approval requires the complete verified embedding
+   identity to match; it does not require the historical annotation policy to be
+   executable today. Unsupported or unapproved profiles are not made executable
+   or silently reindexed.
 6. Compare content/vector hashes, publication IDs, runs, target epochs and
    accepted outputs with the baseline. Repeating the approved migration must be
    idempotent. Verify native reads, semantic inference and accepted-work reuse
    before enabling workers or directing clients to the destination.
 
-The operation retains original registry records and updates control references
-in the singleton/owner targets, jobs, generations, search projection and rebuild
-requests. It does not rewrite raw sessions, vector values or historical result
+The execution branch retains original registry records and updates control
+references in the singleton/owner targets, jobs, generations, search projection
+and rebuild requests. It does not rewrite raw sessions, vector values or historical result
 JSON. A rebuild request's canonical target is control state; replay still binds
 to its original immutable result receipt and selection token.
+
+Retained-read entries add only immutable per-profile proof rows in migration
+019's `ch_retained_profile_reads`. Original targets, jobs, generations, search
+chunks, vectors, checkpoints and receipts are untouched. Snapshot predicates and
+exact model-tuple equality are shared by the semantic guard and candidate
+filters; a visible unapproved or malformed publication **or its owner's target**
+fails the request with `unavailable`, rather than silently shrinking results.
+One approval never aliases other profiles sharing its old space. Ordinary
+initialization creates the table but approves no rows. Separately provisioned
+SELECT-only readers need SELECT on this new metadata table as well as the
+existing registry tables; do not grant TEMP or write privileges to make reads
+work, and do not hide a permission failure by ignoring the proof.
+
+A retained owner target can become readable without becoming executable:
+`claim`/catalog resolution still refuse that profile. Such approval is not
+indexing health or authority to advance the target. Use a separately authorized
+full-policy execution migration or explicit reindex where needed. A subsequent
+annotation-policy change on the same embedding model does not invalidate the
+read proof; creating a new approval still binds the then-configured canonical
+profile. Retain old proof rows even if a later execution migration makes them
+unreferenced. They are database metadata, not signed provider attestation or an
+adopted backup policy.
 
 Accepted checkpoint hashes historically included profile and embedding-space
 IDs. A per-`(job_id,run_id)` namespace preserves those original hash inputs;

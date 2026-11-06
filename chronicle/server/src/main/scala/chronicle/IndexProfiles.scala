@@ -5,6 +5,7 @@ import java.sql.Connection
 import java.nio.charset.StandardCharsets.UTF_8
 
 enum IndexPolicy { case ContextAwareProblemsV1 }
+enum ReadableIndexPolicy { case LegacyV4, ContiguousPassagesV1, ContextAwareProblemsV1 }
 type EmbeddingSpaceDescriptor = ponygirls.retrieval.EmbeddingSpace
 object EmbeddingSpaceDescriptor {
   def from(config: EmbeddingConfig): EmbeddingSpaceDescriptor =
@@ -74,13 +75,20 @@ object IndexProfiles {
     Sql.one(c,"SELECT p.embedding_space,e.descriptor FROM ch_index_profiles p JOIN ch_embedding_spaces e ON e.id=p.embedding_space WHERE p.profile=? AND p.policy IN('LegacyV4','ContiguousPassagesV1','ContextAwareProblemsV1')",profile) { r =>
       val id=r.getString(1); verifiedSpace(id,Sql.json(r,"descriptor")); id
     }.getOrElse(throw DomainError("unavailable","index profile has no verified descriptor"))
+  private def readSpaceSql(profileColumn: String): String = {
+    val policies=ReadableIndexPolicy.values.map(value=>s"'$value'").mkString(",")
+    // V1 prepends a transport hash; only the remaining complete model tuple can authorize reads.
+    val sameModel="CASE WHEN jsonb_typeof(legacy.descriptor)='array' AND jsonb_typeof(canonical.descriptor)='array' AND legacy.descriptor->>0='embedding-space-v1' AND canonical.descriptor->>0='embedding-space-v2' THEN legacy.descriptor-0-0=canonical.descriptor-0 ELSE false END"
+    s"SELECT canonical.id FROM ch_index_profiles compatible JOIN ch_embedding_spaces legacy ON legacy.id=compatible.embedding_space LEFT JOIN ch_retained_profile_reads approved ON approved.profile=compatible.profile AND approved.legacy_space=compatible.embedding_space AND approved.policy=compatible.policy AND approved.profile_descriptor=compatible.descriptor AND approved.legacy_descriptor=legacy.descriptor JOIN ch_embedding_spaces canonical ON canonical.id=COALESCE(approved.canonical_space,compatible.embedding_space) AND canonical.descriptor=COALESCE(approved.canonical_descriptor,legacy.descriptor) AND (approved.profile IS NULL OR ($sameModel)) AND (approved.profile IS NULL OR EXISTS(SELECT 1 FROM ch_index_profiles declared WHERE declared.profile=approved.canonical_profile AND declared.embedding_space=approved.canonical_space)) WHERE compatible.profile=$profileColumn AND compatible.policy IN($policies)"
+  }
   def semantic(c: Connection,reader: String,visible: String,embedding: EmbeddingSpaceDescriptor): Unit = {
     OwnerTargets.read(c,reader,false)
+    verifiedSpace(embedding.id,embedding.json)
+    Check(Sql.one(c,"SELECT 1 FROM ch_embedding_spaces WHERE id=? AND descriptor=?::jsonb",embedding.id,embedding.json.noSpaces)(_=>true).contains(true),"unavailable","configured embedding space descriptor is unavailable")
     val incompatible=Sql.one(c,s"""SELECT 1 FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published
-      LEFT JOIN ch_index_profiles p ON p.profile=g.profile LEFT JOIN ch_embedding_spaces e ON e.id=p.embedding_space
-      LEFT JOIN ch_owner_targets t ON t.owner=s.owner LEFT JOIN ch_index_profiles target ON target.profile=t.profile LEFT JOIN ch_embedding_spaces te ON te.id=target.embedding_space
-      WHERE $visible AND (target.profile IS NULL OR te.descriptor IS DISTINCT FROM ?::jsonb OR (g.id IS NOT NULL AND (p.profile IS NULL OR p.embedding_space<>? OR e.descriptor IS DISTINCT FROM ?::jsonb))) LIMIT 1""",reader,reader,reader,embedding.json.noSpaces,embedding.id,embedding.json.noSpaces)(_ => true).contains(true)
-    Check(!incompatible,"unavailable","visible publications or owner targets have an unknown or incompatible embedding profile")
+      LEFT JOIN ch_owner_targets t ON t.owner=s.owner
+      WHERE ($visible) AND (NOT ${compatibleSql("t.profile")} OR (g.id IS NOT NULL AND NOT ${compatibleSql("g.profile")})) LIMIT 1""",reader,reader,reader,embedding.id,embedding.id)(_ => true).contains(true)
+    Check(!incompatible,"unavailable","visible publications or owner targets have an unknown, incompatible or unapproved embedding profile")
   }
-  def compatibleSql(profileColumn: String): String = s"EXISTS(SELECT 1 FROM ch_index_profiles compatible WHERE compatible.profile=$profileColumn AND compatible.embedding_space=?)"
+  def compatibleSql(profileColumn: String): String = s"EXISTS(${readSpaceSql(profileColumn)} AND canonical.id=?)"
 }
