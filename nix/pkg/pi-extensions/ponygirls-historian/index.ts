@@ -33,7 +33,7 @@ export default function (pi: ExtensionAPI): void {
       text: value, theme, keys, rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done }));
   }
   pi.registerCommand('historian', {
-    description: 'Project journals (on approves configured-provider disclosure): on|off|inherit|default on|default off|status|journal; [default] model PROVIDER MODEL THINKING; [default] focus TEXT; model/focus inherit',
+    description: 'Project journals (on approves configured-provider disclosure): on|off|inherit|default on|default off|status|journal; [default] model PROVIDER MODEL THINKING; [default] focus TEXT; [default] model inherit; focus inherit',
     handler: async (args, ctx) => {
       try {
         if (controller === null) throw new Error('Historian session initialization failed; inspect extension errors');
@@ -51,7 +51,7 @@ export default function (pi: ExtensionAPI): void {
           } else {
             preferences.update(defaults => {
               if (toggle.enabled && defaults.model === null) throw new Error('Configure /historian default model PROVIDER MODEL THINKING first');
-              return { ...defaults, enabled: toggle.enabled, approvedModel: toggle.enabled ? defaults.model : defaults.approvedModel };
+              return { enabled: toggle.enabled, approvedModel: toggle.enabled ? defaults.model : defaults.approvedModel };
             });
           }
         } else {
@@ -59,14 +59,14 @@ export default function (pi: ExtensionAPI): void {
           if (global) words.shift();
           const setting = words.shift(); const value = words.join(' ');
           if (setting === 'model') {
-            const inherit = !global && value === 'inherit';
-            if (!inherit && words.length !== 3) throw new Error('Model syntax: [default] model PROVIDER MODEL THINKING, or model inherit');
+            const inherit = value === 'inherit';
+            if (!inherit && words.length !== 3) throw new Error('Model syntax: [default] model PROVIDER MODEL THINKING, or [default] model inherit');
             const model = inherit ? null : parseModel({ provider: words[0], id: words[1], thinking: words[2] });
-            if (global) preferences.update(defaults => ({ ...defaults, model }));
+            if (global) preferences.update(() => ({ model }));
             else pi.appendEntry(MODEL_TYPE, { version: 1, sessionId, model });
           } else if (setting === 'focus') {
             if (!value || value.length > 4000) throw new Error('Focus must contain 1–4000 characters');
-            if (global) preferences.update(defaults => ({ ...defaults, focus: value }));
+            if (global) preferences.update(() => ({ focus: value }));
             else pi.appendEntry(FOCUS_TYPE, { version: 1, sessionId, focus: value === 'inherit' ? null : value });
           } else throw new Error('Usage: /historian on|off|inherit|default on|default off|status|journal|[default] model PROVIDER MODEL THINKING|[default] focus TEXT');
         }
@@ -76,7 +76,7 @@ export default function (pi: ExtensionAPI): void {
   });
   pi.on('session_start', async (_event, ctx) => {
     context = ctx; pane = new CustomViewToggle();
-    controller = new HistorianController(pi, preferences, ctx, getAgentDir(), publish);
+    controller = new HistorianController(pi, preferences, ctx, publish);
     await controller.reconcile(); publish();
   });
   pi.on('turn_end', () => controller?.schedule(0));

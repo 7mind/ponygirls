@@ -14,8 +14,8 @@ export default function (pi: ExtensionAPI): void {
         const body = typeof user.content === 'string' ? user.content : user.content.map(block => block.type === 'text' ? block.text : '').join('');
         const payload = JSON.parse(body) as { evidence: Array<{ ref: string; text: string }> };
         const selected = payload.evidence.find(evidence => evidence.text.includes('UI_EXPERIMENT'));
-        text = JSON.stringify(selected === undefined ? [] : [{ episodeId: null, expectedRevision: 0, title: 'UI experiment', kind: 'experiment', status: 'ongoing',
-          claims: [{ section: 'objective', basis: 'reported', text: 'Synthetic UI evidence', evidence: [selected.ref] }] }]);
+        text = JSON.stringify({ proposals: selected === undefined ? [] : [{ episodeId: null, expectedRevision: 0, title: 'UI experiment', kind: 'experiment', status: 'ongoing',
+          claims: [{ section: 'objective', basis: 'reported', text: 'Synthetic UI evidence', evidence: [selected.ref] }] }] });
       }
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {

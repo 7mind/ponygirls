@@ -8,7 +8,7 @@ interpretations, not verified current state or a complete transcript backup.
 
 ## Enablement and disclosure
 
-**Default OFF, no default model, no fallback.** Load after `ponygirls-subagents`
+**Default OFF, no built-in model, no model fallback.** Load after `ponygirls-subagents`
 for descendant coverage. Select an authenticated model explicitly:
 
 ```text
@@ -35,6 +35,7 @@ Controls mirror `/context-archive`:
 | `default on`, `default off` | Change global defaults; local overrides still win |
 | `default model PROVIDER MODEL THINKING` | Set global model selection |
 | `model inherit` | Inherit global model selection |
+| `default model inherit` | Clear writable global selection; inherit managed model, if any |
 | `[default] focus TEXT`, `focus inherit` | Configure/inherit the journal objective focus |
 | `status`, `journal` | Read status or the journal without inference |
 
@@ -51,14 +52,46 @@ use `status` to distinguish requested enablement, backlog, provider drain,
 projection errors and coverage. After three failed attempts, use `on` in that
 root to retry; no silent provider fallback occurs.
 
+## Home Manager defaults
+
+Optional configuration; neither setting enables Historian or grants disclosure consent:
+
+```nix
+programs.pi.historian = {
+  journalRoot = "/home/alice/.local/state/pi/historian";
+  model = {
+    provider = "openai-codex";
+    id = "gpt-6.1-sol";
+    thinking = "medium";
+  };
+};
+```
+
+Both options default to null. A configured root must be absolute; the model requires
+all three nonempty/validated fields. Home Manager writes `historian-defaults.json`
+only when an option is set, never the mutable `historian.json`. No credentials are
+stored in these options. Model precedence is session override → writable global
+override → managed default → unconfigured. Enablement/focus changes do not pin an
+inherited model. Changing a managed model preserves existing approval, not approval
+for the new model; use an explicit `on` after reviewing the disclosure.
+
+The root is the parent of `projects/<identity>/`. It is read when constructing a
+session controller (restart/reload to change it). Existing journals and pending
+evidence are **not migrated**. Keep it outside repositories and explicitly bind a
+custom location read-write in a sandbox. Stable session ownership remains under
+`<agentDir>/historian/projects/<identity>/` across root changes; a custom journal
+also has its own lease. An undrained old request blocks a replacement controller,
+even when its requested storage root differs.
+
 ## Scope, recovery and storage
 
 Canonical Git common directories identify projects, so linked worktrees share a
 journal; independent clones do not. Outside Git, canonical cwd is the identity.
-Storage is outside the repository:
+Default storage is outside the repository:
 
 ```text
-<agentDir>/historian.json
+<agentDir>/historian.json                    # writable preferences
+<agentDir>/historian-defaults.json           # optional managed defaults
 <agentDir>/historian/projects/<sha256-project-identity>/journal.sqlite
 <agentDir>/historian/projects/<sha256-project-identity>/journal.md
 ```
@@ -95,6 +128,42 @@ Original sources are read independently. First deliveries queued while
 a child was unloaded can also fall within this excluded prefix: their recipient
 history is omitted, even if sender-side evidence exists. This is an explicit
 coverage limitation, not implicit permission to disclose reconstructed history.
+
+## Attempts and output validation
+
+`status` separates the current three-attempt retry streak from durable per-session
+admission totals in the selected journal and the latest ten attempt receipts. Receipts retain attempt/batch
+identity, a context digest, provider/model/effort, objective version, audit times,
+monotonic duration, safe outcome/category, and available numeric response/usage
+metrics. They do not retain arbitrary rejected response/error bodies or duplicate
+raw evidence. Receipt metadata remains for the journal's lifetime; the display, not
+retention, is bounded. Schema-1 journals upgrade to schema 2 without inventing
+historical attempt counts.
+
+- Counts are controller **admissions**, not wire requests; prerequisite failures
+  can submit nothing, and SDK/provider retries can occur within one admission.
+- `validated` means output passed validation, **not that publication succeeded**.
+  A commit receipt links its attempt when publication occurs.
+- `recovered` counts failed attempts with a later validated response for that same
+  batch, not necessarily a published revision. Success does not erase failures.
+- A new lease holder marks abandoned `running` attempts `interrupted`: outcome,
+  elapsed duration and usage remain unknown. Cancellation/deadline is not drain.
+- Usage is SDK-reported telemetry, not an independent measurement of actual usage.
+
+Objective v2 requires exactly a `{ "proposals": [...] }` envelope, exact nested
+fields, valid references and bounded proposals. There is no JSON repair/salvage.
+The qualified `openai-codex/gpt-6.1-sol` / `openai-codex-responses` binding requests
+strict `text.format` JSON schema over **SSE**. Other configured bindings explicitly
+use prompt-only JSON with the same local validator. A schema/provider rejection
+never removes the schema or switches model/transport as a fallback. Actual endpoint
+probes establish acceptance, schema-conditioned output and invalid-schema rejection,
+not decoding internals or universal semantic correctness. Claim-level citation
+instructions require literal sources and matching action results; structural
+validation still cannot prove entailment.
+
+The pinned Codex adapter does **not** send `maxTokens` as a wire limit. The worker's
+180-second deadline and streaming character bound remain operative safeguards;
+input reservation/output-token hints are not an enforced Codex generation cap.
 
 ## Evidence and limitations
 

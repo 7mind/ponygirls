@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as sdk from '@earendil-works/pi-coding-agent';
@@ -36,8 +36,8 @@ async function fixture(t) {
         const body = context.messages.find(m => m.role === 'user').content;
         const payload = JSON.parse(typeof body === 'string' ? body : body.map(c => c.text).join(''));
         const selected = payload.evidence.find(e => e.text.includes('EXPERIMENT_'));
-        text = JSON.stringify(selected === undefined ? [] : [{ episodeId: null, expectedRevision: 0, title: 'Synthetic experiment', kind: 'experiment', status: 'ongoing',
-          claims: [{ section: 'objective', basis: 'reported', text: 'Controlled synthetic experiment', evidence: [selected.ref] }] }]);
+        text = JSON.stringify({ proposals: selected === undefined ? [] : [{ episodeId: null, expectedRevision: 0, title: 'Synthetic experiment', kind: 'experiment', status: 'ongoing',
+          claims: [{ section: 'objective', basis: 'reported', text: 'Controlled synthetic experiment', evidence: [selected.ref] }] }] });
       }
       const stream = createAssistantMessageEventStream(); let finished = false;
       const finish = () => {
@@ -102,6 +102,30 @@ test('real Pi: explicit opt-in, outside-project shared publication, reload and d
   assert.doesNotMatch(markdown, /Subagent history feed unavailable/, 'real subagents bridge is attached before Historian');
   assert.match(markdown, new RegExp(`entry ${source.id}`));
   assert.match(markdown, /SHA-256/); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi: managed model/root and default model inherit preserve writable preferences and consent', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  const managed = JSON.stringify({ version: 1, journalRoot: join(f.agentDir, 'custom-journals'), model: { provider: 'historian', id: 'scripted', thinking: 'off' } });
+  const managedPath = join(f.agentDir, 'historian-defaults.json'); writeFileSync(managedPath, managed);
+  await f.session.reload();
+  await f.session.prompt('EXPERIMENT_MANAGED_BUT_OFF'); assert.equal(f.calls.historian.length, 0);
+  await f.session.prompt('/historian default on');
+  const preferences = () => JSON.parse(readFileSync(join(f.agentDir, 'historian.json'), 'utf8'));
+  assert.equal(preferences().model, null, 'enabling must not materialize inherited model');
+  await f.session.prompt('/historian default model main scripted off'); assert.equal(preferences().model.provider, 'main');
+  await f.session.prompt('/historian default model inherit'); assert.equal(preferences().model, null);
+  await f.session.prompt('EXPERIMENT_MANAGED_ROOT');
+  const database = join(f.agentDir, 'custom-journals', 'projects', digest(resolveProject(f.cwd)), 'journal.sqlite');
+  const revisions = () => {
+    if (!existsSync(database)) return [];
+    const store = new JournalStore(database, resolveProject(f.cwd)); try { return store.recent(10); } finally { store.close(); }
+  };
+  await eventually(() => revisions().length === 1);
+  assert.equal(existsSync(f.database), false, 'stable lease does not create an old-root journal');
+  assert.doesNotMatch(JSON.stringify(f.calls.historian), /EXPERIMENT_MANAGED_BUT_OFF/);
+  assert.equal(readFileSync(managedPath, 'utf8'), managed);
+  assert.deepEqual(f.errors, []);
 });
 
 test('real Pi: OFF aborts a running worker and prevents its publication; pending work resumes only on explicit enable', { timeout: 20000 }, async t => {

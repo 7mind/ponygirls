@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -25,9 +25,100 @@ function fixture(t) {
   const ctx = { cwd: dir, sessionManager: { getSessionId: () => 'root', getEntries: () => entries },
     modelRegistry: { find: () => undefined }, ui: { notify() {} } };
   const events = { emit() {} };
-  const make = () => new HistorianController({ events }, preferences, ctx, dir, () => {});
+  const make = () => new HistorianController({ events }, preferences, ctx, () => {});
   return { make, preferences, entries, defaults, events, dir, ctx };
 }
+
+test('recovered failures remain visible after a successful retry and controller restart', async t => {
+  const { make, entries } = fixture(t); let calls = 0;
+  t.mock.method(HistorianWorker.prototype, 'run', async () => {
+    if (++calls === 1) throw new SyntaxError('Synthetic malformed JSON');
+    return { proposals: [], metrics: { responseChars: 2, usage: null }, meta: { provider: 'fixture', model: 'scripted', thinking: 'off', objective: 'v1', usage: null } };
+  });
+  const first = make(); t.after(() => first.dispose()); await first.reconcile();
+  entries.push({ type: 'message', id: 'retry-accounting', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'Synthetic experiment', timestamp: 1 } });
+  await first.reconcile(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1); assert.match(first.status(), /failed attempts: 1\/3/);
+  const later = performance.now() + 11000; t.mock.method(performance, 'now', () => later);
+  await first.reconcile(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 2); assert.match(first.status(), /pending events: 0/);
+  assert.match(first.status(), /failed attempts: 0\/3/);
+  assert.match(first.status(), /Attempt totals: 2; validated: 1; failed: 1/);
+  await first.dispose();
+  const second = make(); t.after(() => second.dispose()); await second.reconcile();
+  assert.match(second.status(), /Attempt totals: 2; validated: 1; failed: 1/);
+  assert.equal(calls, 2, 'restart must not reprocess consumed evidence');
+});
+
+test('managed journal root routes new storage without moving old journals or granting model approval', async t => {
+  const { make, preferences, dir, defaults } = fixture(t);
+  preferences.write({ ...defaults, enabled: false, model: null, approvedModel: null });
+  const first = make(); const oldDirectory = first.directory;
+  first.journal(); await first.dispose();
+  const managedRoot = join(dir, 'custom-journals');
+  writeFileSync(join(dir, 'historian-defaults.json'), JSON.stringify({ version: 1, journalRoot: managedRoot, model: defaults.model }));
+  const second = make(); t.after(() => second.dispose());
+  assert.equal(second.directory, join(managedRoot, 'projects', oldDirectory.split('/').at(-1)));
+  assert.match(second.status(), /Historian OFF/);
+  assert.deepEqual(second.effective().model, defaults.model); assert.equal(second.effective().approvedModel, null);
+  second.journal();
+  assert.equal(existsSync(join(oldDirectory, 'journal.sqlite')), true);
+  assert.equal(existsSync(join(second.directory, 'journal.sqlite')), true);
+  preferences.update(() => ({ enabled: true })); await second.reconcile();
+  assert.match(second.status(), /disclosure not approved/);
+});
+
+test('failed attempt reconciliation closes the unadopted journal and releases ownership', async t => {
+  const { make } = fixture(t); const controller = make(); t.after(() => controller.dispose());
+  const close = JournalStore.prototype.close; let closes = 0;
+  t.mock.method(JournalStore.prototype, 'close', function () { closes++; return close.call(this); });
+  const interruption = t.mock.method(JournalStore.prototype, 'interruptAttempts', () => { throw new Error('Synthetic interruption storage failure'); });
+  await controller.reconcile(); assert.match(controller.status(), /Synthetic interruption storage failure/);
+  assert.equal(closes, 1, 'unadopted database must close on initialization failure');
+  interruption.mock.restore();
+  await controller.reconcile(); assert.match(controller.status(), /Error: none/);
+});
+
+test('changing journal root cannot bypass an undrained provider session lease', async t => {
+  const { make, dir, entries, ctx } = fixture(t);
+  const runtime = await ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
+  const stream = createAssistantMessageEventStream(); let calls = 0; let selected;
+  let started; const providerStarted = new Promise(resolve => { started = resolve; });
+  runtime.registerProvider('fixture', { api: 'openai-completions', apiKey: 'synthetic-only', baseUrl: 'http://fixture.invalid',
+    models: [{ id: 'scripted', name: 'Scripted', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 8192 }],
+    streamSimple(model) { calls++; selected = model; started(); return stream; } });
+  ctx.modelRegistry = new ModelRegistry(runtime);
+  const first = make(); t.after(() => first.dispose()); await first.reconcile();
+  entries.push({ type: 'message', id: 'before-root-change', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'Synthetic task', timestamp: 1 } });
+  await first.reconcile(); await providerStarted;
+  await first.dispose();
+  const oldStore = new JournalStore(join(first.directory, 'journal.sqlite'), dir); t.after(() => oldStore.close());
+  assert.equal(oldStore.attemptSummary('root').cancelled, 1); assert.equal(oldStore.pending('root'), 1);
+  writeFileSync(join(dir, 'historian-defaults.json'), JSON.stringify({ version: 1, journalRoot: join(dir, 'new-root'), model: null }));
+  const second = make(); t.after(() => second.dispose()); await second.reconcile();
+  const blocked = second.status();
+  const message = { role: 'assistant', content: [{ type: 'text', text: '{"proposals":[]}' }], api: selected.api, provider: selected.provider, model: selected.id,
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: 'stop', timestamp: Date.now() };
+  stream.push({ type: 'done', reason: 'stop', message }); stream.end();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(blocked, /already owned/);
+  assert.equal(calls, 1, 'no second provider call while old provider drains');
+  await second.reconcile(); assert.match(second.status(), /Error: none/);
+  assert.equal(oldStore.attemptSummary('root').cancelled, 1, 'late output cannot finalize twice');
+  assert.deepEqual(oldStore.recent(10), []);
+});
+
+test('unexpected worker rejection bodies cannot leak through status or notifications', async t => {
+  const { make, entries, ctx } = fixture(t); const notices = [];
+  ctx.ui.notify = text => notices.push(text);
+  t.mock.method(HistorianWorker.prototype, 'run', async () => { throw new Error('PRIVATE_ERROR_BODY'); });
+  const controller = make(); t.after(() => controller.dispose()); await controller.reconcile();
+  entries.push({ type: 'message', id: 'unexpected-failure', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'Synthetic task', timestamp: 1 } });
+  await controller.reconcile(); await new Promise(resolve => setImmediate(resolve));
+  assert.doesNotMatch(controller.status(), /PRIVATE_ERROR_BODY/);
+  assert.doesNotMatch(JSON.stringify(notices), /PRIVATE_ERROR_BODY/);
+  assert.match(controller.status(), /runtime-error/);
+});
 
 test('restart while OFF must not authorize the disabled interval when enabled later', async t => {
   const { make, preferences, entries, defaults } = fixture(t);
@@ -71,7 +162,7 @@ for (const stage of ['capture', 'commit']) test(`global OFF cannot complete betw
   t.mock.method(HistorianWorker.prototype, 'run', async batch => { calls++; return {
     proposals: [{ episodeId: null, expectedRevision: 0, title: 'Authorized experiment', kind: 'experiment', status: 'ongoing',
       claims: [{ section: 'objective', basis: 'reported', text: 'Synthetic result', evidence: [batch.evidence[0].ref] }] }],
-    meta: { provider: 'fixture', model: 'scripted', thinking: 'off', objective: 'v1', usage: null },
+    metrics: { responseChars: 200, usage: null }, meta: { provider: 'fixture', model: 'scripted', thinking: 'off', objective: 'v1', usage: null },
   }; });
   let attempted;
   const operation = JournalStore.prototype[stage];
@@ -98,7 +189,7 @@ test('global OFF is available during inference and fences its late result withou
   entries.push({ type: 'message', id: 'pending-global-off', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'Authorized pending evidence', timestamp: 1 } });
   await controller.reconcile(); assert.match(controller.status(), /Activity: journaling/);
   const off = disableGlobally(preferences); assert.equal(off.status, 0, off.stderr);
-  finish({ proposals: [], meta: { provider: 'fixture', model: 'scripted', thinking: 'off', objective: 'v1', usage: null } });
+  finish({ proposals: [], metrics: { responseChars: 2, usage: null }, meta: { provider: 'fixture', model: 'scripted', thinking: 'off', objective: 'v1', usage: null } });
   await new Promise(resolve => setImmediate(resolve));
   assert.match(controller.status(), /OFF/); assert.match(controller.status(), /pending events: 1/);
 });
@@ -113,7 +204,7 @@ test('global OFF fences publication, not a provider submission already admitted 
       calls.push(context); assert.equal(preferences.read().enabled, false);
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
-        const message = { role: 'assistant', content: [{ type: 'text', text: '[]' }], api: model.api, provider: model.provider, model: model.id,
+        const message = { role: 'assistant', content: [{ type: 'text', text: '{"proposals":[]}' }], api: model.api, provider: model.provider, model: model.id,
           usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: 'stop', timestamp: Date.now() };
         stream.push({ type: 'done', reason: 'stop', message }); stream.end();
       });
