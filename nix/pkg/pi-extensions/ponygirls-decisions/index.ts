@@ -54,6 +54,13 @@ export interface DecisionsDependencies {
   watch(refresh: () => void): () => void;
 }
 
+interface BadgeRegistration {
+  here: number;
+  other: number;
+  active: boolean;
+  requestRender: (() => void) | null;
+}
+
 interface Binding {
   ctx: ExtensionContext;
   project: string;
@@ -63,6 +70,7 @@ interface Binding {
   stop: () => void;
   repaint: (() => void) | null;
   pane: CustomViewToggle;
+  badge: BadgeRegistration | null;
   failure: string | null;
 }
 
@@ -71,6 +79,11 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   let settings: SettingsMode = { kind: "fault", message: "settings not loaded" };
   let visible = false;
   let settingsWarning: string | null = null;
+
+  const revokeBadge = (b: Binding): void => {
+    if (b.badge !== null) b.badge.active = false;
+    b.badge = null;
+  };
 
   const refreshSettings = (ctx: ExtensionContext, reconcileTools: boolean): boolean => {
     try {
@@ -95,7 +108,10 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
       const active = pi.getActiveTools().filter((name) => name !== "decisions");
       pi.setActiveTools(enabled ? [...active, "decisions"] : active);
     }
-    if (!enabled) ctx.ui.setWidget(STATUS_KEY, undefined);
+    if (!enabled) {
+      if (binding !== null) revokeBadge(binding);
+      ctx.ui.setWidget(STATUS_KEY, undefined);
+    }
     return enabled;
   };
 
@@ -105,12 +121,20 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   };
 
   const dispose = (b: Binding): void => {
+    revokeBadge(b);
     b.pane.dispose();
     b.stop();
     if (b.store !== null) { b.store.close(); b.store = null; }
   };
 
   const report = (b: Binding, error: unknown): void => {
+    if (error instanceof Error && error.message.includes("This extension ctx is stale")) {
+      // SDK dispose invalidates contexts without emitting session_shutdown.
+      dispose(b);
+      if (binding === b) binding = null;
+      return;
+    }
+    if (binding !== b) return;
     const message = error instanceof Error ? error.message : String(error);
     if (b.failure !== message) b.ctx.ui.notify(`Decisions unavailable: ${plain(message)}. Stored questions have not been cleared.`, "error");
     b.failure = message;
@@ -126,17 +150,34 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         const pending = questions.filter((q) => q.status === "pending");
         const here = pending.filter((q) => q.sessionId === b.sessionId).length;
         const other = pending.length - here;
-        if (pending.length === 0) b.ctx.ui.setWidget(STATUS_KEY, undefined);
-        else b.ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({
-          render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${here}+${other} · ${INBOX_SHORTCUT.label} `)), width)],
-          renderCompact: () => compactChip(theme, "?", "attention", `${here}+${other}`),
-          invalidate() {},
-          handleMouse(event) {
-            if (event.type !== "click" || event.button !== "left") return;
-            void openPane(b, null, "toggle").catch((error: unknown) => report(b, error));
-            return { handled: true };
-          },
-        }), { placement: "borderBottomLeft" });
+        if (pending.length === 0) {
+          revokeBadge(b);
+          b.ctx.ui.setWidget(STATUS_KEY, undefined);
+        } else if (b.badge !== null) {
+          b.badge.here = here;
+          b.badge.other = other;
+          if (b.badge.requestRender !== null) b.badge.requestRender();
+        } else {
+          const badge: BadgeRegistration = { here, other, active: true, requestRender: null };
+          b.ctx.ui.setWidget(STATUS_KEY, (tui, theme) => {
+            badge.requestRender = () => tui.requestRender();
+            return {
+              render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${badge.here}+${badge.other} · ${INBOX_SHORTCUT.label} `)), width)],
+              renderCompact: () => compactChip(theme, "?", "attention", `${badge.here}+${badge.other}`),
+              invalidate() {},
+              dispose() {
+                badge.active = false;
+                if (b.badge === badge) b.badge = null;
+              },
+              handleMouse(event) {
+                if (!badge.active || binding !== b || b.badge !== badge || event.type !== "click" || event.button !== "left") return;
+                void openPane(b, null, "toggle").catch((error: unknown) => report(b, error));
+                return { handled: true };
+              },
+            };
+          }, { placement: "borderBottomLeft" });
+          b.badge = badge;
+        }
       }
       for (const q of questions) {
         if (q.sessionId !== b.sessionId || q.revision === 1) continue;
@@ -153,12 +194,6 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
       if (b.failure !== null) b.ctx.ui.notify("Decisions storage is available again.", "info");
       b.failure = null;
     } catch (error) {
-      if (error instanceof Error && error.message.includes("This extension ctx is stale")) {
-        // SDK dispose invalidates contexts without emitting session_shutdown.
-        dispose(b);
-        if (binding === b) binding = null;
-        return;
-      }
       report(b, error);
     }
   };
@@ -206,7 +241,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         }
       }
       const b: Binding = { ctx, project, sessionId: ctx.sessionManager.getSessionId(), store: null, delivered,
-        stop: () => {}, repaint: null, pane: new CustomViewToggle(), failure: null };
+        stop: () => {}, repaint: null, pane: new CustomViewToggle(), badge: null, failure: null };
       binding = b;
       refresh(b);
       b.stop = deps.watch(() => refresh(b));

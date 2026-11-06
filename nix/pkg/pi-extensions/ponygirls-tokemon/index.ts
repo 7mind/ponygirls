@@ -31,7 +31,7 @@ import { secretOf } from "./src/pi-auth.ts";
 import { PacedHttp, stateDbPath } from "./src/pacing.ts";
 import { toolReport, type ModelReport } from "./src/report.ts";
 import { QuotaService, type ProviderAuth, type QuotaReport } from "./src/service.ts";
-import { quotaLine } from "./src/status.ts";
+import { quotaLine, type QuotaLine } from "./src/status.ts";
 import { buildTable, PLAIN_TABLE_STYLE, type TableStyle } from "./src/table.ts";
 import { TokemonView } from "./src/view.ts";
 
@@ -83,6 +83,12 @@ function tableStyle(theme: ThemeColors): TableStyle {
   };
 }
 
+interface BadgeRegistration {
+  line: QuotaLine;
+  active: boolean;
+  requestRender: (() => void) | null;
+}
+
 export default function (pi: ExtensionAPI): void {
   const service = new QuotaService({
     discover: () => discoverTargets(getAgentDir(), homedir(), process.env),
@@ -100,44 +106,84 @@ export default function (pi: ExtensionAPI): void {
   let statusContext: ExtensionContext | null = null;
   let statusReport: QuotaReport | null = null;
   let statusGeneration = 0;
+  let badge: BadgeRegistration | null = null;
+  const revokeBadge = (): void => {
+    if (badge !== null) badge.active = false;
+    badge = null;
+  };
   let redrawTimer: ReturnType<typeof setInterval> | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
-  const drawStatus = (ctx: ExtensionContext): void => {
-    const provider = ctx.model?.provider;
+  const drawStatus = (ctx: ExtensionContext, owner: CustomViewToggle): void => {
+    if (owner !== view) return;
+    let provider: string | undefined;
+    let ui: ExtensionContext["ui"];
+    try {
+      provider = ctx.model?.provider;
+      ui = ctx.ui;
+    } catch (error) {
+      if (!stopStaleStatus(error, owner)) throw error;
+      return;
+    }
     const line = provider && statusReport !== null ? quotaLine(provider, statusReport.results, new Date()) : null;
-    if (line === null) ctx.ui.setWidget(STATUS_KEY, undefined);
-    else {
-      const currentView = view;
-      ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({
-        render: () => [line(tableStyle(theme))], invalidate: () => {},
-        handleMouse: (event) => {
-          if (event.type !== "click" || event.button !== "left") return undefined;
-          void showView(ctx, currentView, true).catch((error: unknown) => ctx.ui.notify(`/tokemon: ${String(error)}`, "error"));
-          return { handled: true };
-        },
-      }), { placement: "borderTopRight" });
+    if (line === null) {
+      revokeBadge();
+      ui.setWidget(STATUS_KEY, undefined);
+    } else if (badge !== null) {
+      badge.line = line;
+      if (badge.requestRender !== null) badge.requestRender();
+    } else {
+      const registration: BadgeRegistration = { line, active: true, requestRender: null };
+      ui.setWidget(STATUS_KEY, (tui, theme) => {
+        registration.requestRender = () => tui.requestRender();
+        return {
+          render: () => [registration.line(tableStyle(theme))], invalidate: () => {},
+          dispose() {
+            registration.active = false;
+            if (badge === registration) badge = null;
+          },
+          handleMouse: (event) => {
+            if (!registration.active || badge !== registration || view !== owner || event.type !== "click" || event.button !== "left") return undefined;
+            void showView(ctx, owner, true).catch((error: unknown) => {
+              if (owner !== view) return;
+              if (!stopStaleStatus(error, owner)) ctx.ui.notify(`/tokemon: ${String(error)}`, "error");
+            });
+            return { handled: true };
+          },
+        };
+      }, { placement: "borderTopRight" });
+      badge = registration;
     }
   };
-  const refreshStatus = (ctx: ExtensionContext): void => {
-    if (ctx.mode !== "tui") return;
+  const refreshStatus = (ctx: ExtensionContext, owner: CustomViewToggle): void => {
+    if (owner !== view) return;
+    let hasModel: boolean;
+    try {
+      if (ctx.mode !== "tui") return;
+      hasModel = ctx.model !== undefined;
+    } catch (error) {
+      if (ctx !== statusContext && error instanceof Error && error.message.includes("This extension ctx is stale")) return;
+      if (!stopStaleStatus(error, owner)) throw error;
+      return;
+    }
     statusContext = ctx;
     const generation = ++statusGeneration;
-    if (!ctx.model) {
-      drawStatus(ctx);
+    if (!hasModel) {
+      drawStatus(ctx, owner);
       return;
     }
     service.report(authOf(ctx), TOOL_MAX_AGE_MS).then(
       (report) => {
-        if (generation !== statusGeneration) return;
+        if (generation !== statusGeneration || owner !== view) return;
         statusReport = report;
-        drawStatus(ctx);
+        drawStatus(ctx, owner);
       },
       () => {
-        if (generation === statusGeneration) drawStatus(ctx);
+        if (generation === statusGeneration && owner === view) drawStatus(ctx, owner);
       },
     );
   };
   const stopStatus = (): void => {
+    revokeBadge();
     ++statusGeneration;
     if (redrawTimer !== null) clearInterval(redrawTimer);
     if (refreshTimer !== null) clearInterval(refreshTimer);
@@ -146,19 +192,26 @@ export default function (pi: ExtensionAPI): void {
     statusContext = null;
     statusReport = null;
   };
+  const stopStaleStatus = (error: unknown, owner: CustomViewToggle): boolean => {
+    if (!(error instanceof Error) || !error.message.includes("This extension ctx is stale")) return false;
+    owner.dispose();
+    if (owner === view) stopStatus();
+    return true;
+  };
   pi.on("session_start", (_event, ctx) => {
     stopStatus();
     view.dispose();
     view = new CustomViewToggle();
     if (ctx.mode !== "tui") return;
-    refreshStatus(ctx);
+    const owner = view;
+    refreshStatus(ctx, owner);
     // Age/countdowns advance without network traffic; shared values refresh at the normal cadence.
-    redrawTimer = setInterval(() => { if (statusContext !== null) drawStatus(statusContext); }, STATUS_REDRAW_MS);
-    refreshTimer = setInterval(() => { if (statusContext !== null) refreshStatus(statusContext); }, PANE_REFRESH_MS);
+    redrawTimer = setInterval(() => { if (statusContext !== null) drawStatus(statusContext, owner); }, STATUS_REDRAW_MS);
+    refreshTimer = setInterval(() => { if (statusContext !== null) refreshStatus(statusContext, owner); }, PANE_REFRESH_MS);
   });
   pi.on("session_shutdown", () => { view.dispose(); stopStatus(); });
-  pi.on("turn_end", (_event, ctx) => refreshStatus(ctx));
-  pi.on("model_select", (_event, ctx) => refreshStatus(ctx));
+  pi.on("turn_end", (_event, ctx) => refreshStatus(ctx, view));
+  pi.on("model_select", (_event, ctx) => refreshStatus(ctx, view));
 
   pi.registerTool(
     defineTool({

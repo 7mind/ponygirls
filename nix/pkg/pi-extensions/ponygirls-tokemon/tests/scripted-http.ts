@@ -55,7 +55,7 @@ export const TAG_THEME = {
 /** The first line a border widget factory renders with TAG_THEME. */
 export function renderBorderWidget(content: unknown): string {
   assert.equal(typeof content, "function", "border widgets are component factories");
-  const component = (content as (tui: unknown, theme: typeof TAG_THEME) => { render(width: number): string[] })(undefined, TAG_THEME);
+  const component = (content as (tui: unknown, theme: typeof TAG_THEME) => { render(width: number): string[] })({ requestRender() {} }, TAG_THEME);
   const lines = component.render(200);
   assert.equal(lines.length, 1);
   return lines[0]!;

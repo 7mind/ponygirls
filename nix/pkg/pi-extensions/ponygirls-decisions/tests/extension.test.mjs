@@ -80,11 +80,11 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal(key, "decisions");
   assert.equal(options.placement, "borderBottomLeft");
   const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
-  assert.equal(factory(null, theme).render(80)[0], " ? 1+0 · ⌃⌥D ");
+  assert.equal(factory({ requestRender() {} }, theme).render(80)[0], " ? 1+0 · ⌃⌥D ");
   assert.equal(f.shortcuts.get("ctrl+alt+d").description, "Open decisions inbox");
   assert.equal(f.shortcuts.has("ctrl+shift+d"), false, "Pi reserves Ctrl+Shift+D for its global debug handler");
   const tagged = { bg: (color, s) => `[${color}]${s}[/${color}]`, fg: (color, s) => `<${color}>${s}</${color}>` };
-  assert.equal(factory(null, tagged).renderCompact(10), "[toolPendingBg] <warning>?</warning><text>1+0</text> [/toolPendingBg]");
+  assert.equal(factory({ requestRender() {} }, tagged).renderCompact(10), "[toolPendingBg] <warning>?</warning><text>1+0</text> [/toolPendingBg]");
   assert.equal((await f.call({ action: "list" }, "list")).details.total, 1);
   assert.equal((await f.call({ action: "get", id: "q1" }, "get")).details.context, "Concurrent sessions");
   assert.equal(f.messages.length, 0);
@@ -96,7 +96,7 @@ test("badge partitions only pending project questions by originating session and
   assert.equal(f.widgets.at(-1)[1], undefined);
   const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
   const badge = (here, other) => {
-    const widget = f.widgets.at(-1)[1](null, theme);
+    const widget = f.widgets.at(-1)[1]({ requestRender() {} }, theme);
     assert.equal(widget.render(100)[0], ` ? ${here}+${other} · ⌃⌥D `);
     assert.equal(widget.renderCompact(20), ` ?${here}+${other} `);
   };
@@ -538,7 +538,7 @@ test("badge toggles the inbox, while command/Esc and shutdown share its lifecycl
   });
   f.start();
   await f.call({ action: "ask", question: "Proceed?" }, "toggle-question");
-  const badge = f.widgets.at(-1)[1](null, theme);
+  const badge = f.widgets.at(-1)[1]({ requestRender() {} }, theme);
   const click = () => badge.handleMouse({ type: "click", button: "left" });
   assert.equal(badge.handleMouse({ type: "click", button: "right" }), undefined);
   assert.equal(opens, 0);
@@ -561,4 +561,109 @@ test("badge toggles the inbox, while command/Esc and shutdown share its lifecycl
   assert.equal(closes, 4);
   click();
   assert.equal(opens, 4, "a retained old badge cannot reopen a disposed session");
+});
+
+function mountedBadges(f) {
+  const theme = { bg: (_color, text) => text, fg: (_color, text) => text, bold: (text) => text };
+  const publish = f.ctx.ui.setWidget;
+  let component;
+  let renders = 0;
+  f.ctx.ui.setWidget = (key, factory, options) => {
+    component?.dispose?.();
+    publish(key, factory, options);
+    component = factory === undefined ? undefined : factory({ requestRender() { renders++; } }, theme);
+  };
+  return { theme, current: () => component, renders: () => renders };
+}
+
+// Regression: periodic publication replaced the pressed registration even when its owner was unchanged.
+test("same-owner polling preserves registration while counts, external revisions and pane ages advance", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-11-06T15:00:00Z") });
+  const f = fixture(t), mounted = mountedBadges(f);
+  f.ctx.mode = "tui";
+  let pane;
+  f.ctx.ui.custom = (factory) => new Promise((resolve) => {
+    pane = factory({ terminal: { rows: 24 }, requestRender() {} }, mounted.theme, {}, resolve);
+  });
+  f.start();
+  await f.call({ action: "ask", question: "Original" }, "own");
+  const badge = mounted.current(), count = f.widgets.length;
+  f.tick();
+  assert.equal(f.widgets.length, count, "unchanged polling must not replace the registered component");
+  assert.equal(mounted.current(), badge);
+  const external = new SqliteDecisionStore(f.path);
+  t.after(() => external.close());
+  external.ask("project-a", { question: "Other", context: "", options: [], recommendation: "", sessionId: "other", toolCallId: "other" });
+  f.tick();
+  assert.equal(mounted.current(), badge);
+  assert.match(badge.render(100)[0], /1\+1/);
+  assert.match(badge.renderCompact(20), /1\+1/);
+  assert.ok(mounted.renders() > 0);
+  badge.handleMouse({ type: "click", button: "left" });
+  t.mock.timers.tick(60_000);
+  f.tick();
+  assert.match(pane.render(120).join("\n"), /created 1m ago/);
+  external.resolve("project-a", "Q1", 1, "answered", "External answer");
+  f.tick();
+  assert.equal(mounted.current(), badge);
+  assert.match(badge.render(100)[0], /0\+1/);
+  assert.equal(f.messages.length, 1);
+  assert.match(f.messages[0].message.content, /External answer/);
+});
+
+test("hiding a registration revokes its callback without closing its pane; reappearance and owner replacement are fresh", async (t) => {
+  const f = fixture(t), mounted = mountedBadges(f);
+  f.ctx.mode = "tui";
+  let opens = 0, closes = 0;
+  f.ctx.ui.custom = (factory) => new Promise((resolve) => {
+    opens++;
+    factory({ terminal: { rows: 24 }, requestRender() {} }, mounted.theme, {}, () => { closes++; resolve(); });
+  });
+  f.start(); await f.call({ action: "ask", question: "Question" }, "own");
+  const old = mounted.current();
+  old.handleMouse({ type: "click", button: "left" });
+  await f.command("dismiss Q1");
+  assert.equal(mounted.current(), undefined);
+  assert.equal(closes, 0, "zero pending questions must not close an existing inbox");
+  old.handleMouse({ type: "click", button: "left" });
+  assert.equal(closes, 0, "hidden registration must not toggle the still-live controller");
+  await f.command("reopen Q1");
+  const next = mounted.current();
+  assert.notEqual(next, old);
+  next.handleMouse({ type: "click", button: "left" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closes, 1);
+  const beforeOwner = mounted.current();
+  f.start();
+  assert.notEqual(mounted.current(), beforeOwner);
+  beforeOwner.handleMouse({ type: "click", button: "left" });
+  assert.equal(opens, 1);
+  mounted.current().handleMouse({ type: "click", button: "left" });
+  assert.equal(opens, 2);
+});
+
+test("stale context polling without shutdown disposes the registration and stops its watcher", async (t) => {
+  const f = fixture(t), mounted = mountedBadges(f);
+  f.start(); await f.call({ action: "ask", question: "Question" }, "own");
+  const old = mounted.current();
+  const ui = f.ctx.ui;
+  Object.defineProperty(f.ctx, "hasUI", { get() { throw new Error("This extension ctx is stale after reload"); } });
+  f.tick();
+  assert.equal(f.watching(), false);
+  let opens = 0;
+  ui.custom = async () => { opens++; };
+  old.handleMouse({ type: "click", button: "left" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(opens, 0);
+});
+
+test("a stale badge click stops its old owner without notifying through its UI", async (t) => {
+  const f = fixture(t), mounted = mountedBadges(f);
+  f.ctx.mode = "tui";
+  f.start(); await f.call({ action: "ask", question: "Question" }, "own");
+  Object.defineProperty(f.ctx, "mode", { get() { throw new Error("This extension ctx is stale after reload"); } });
+  mounted.current().handleMouse({ type: "click", button: "left" });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.watching(), false);
+  assert.deepEqual(f.notifications, [], "expired context cleanup must not call its UI");
 });

@@ -51,7 +51,7 @@ test("badge initializes, ages while idle without polling, and stops on shutdown"
     assert.match(untag(renderBorderWidget(widgets.at(-1)!.content)), /\[██░░░ 42%\]/);
     assert.deepEqual(widgets.at(-1)!.options, { placement: "borderTopRight" });
     type Badge = Component & { handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined };
-    const badge = () => (widgets.at(-1)!.content as (tui: undefined, theme: typeof TAG_THEME) => Badge)(undefined, TAG_THEME) as Badge;
+    const badge = () => (widgets.at(-1)!.content as (tui: { requestRender(): void }, theme: typeof TAG_THEME) => Badge)({ requestRender() {} }, TAG_THEME) as Badge;
     assert.equal(typeof badge().handleMouse, "function", "quota badge must expose mouse actions");
     const click = { type: "click", button: "left", x: 0, y: 0 } as TuiMouseEvent;
     assert.equal(badge().handleMouse({ ...click, button: "right" }), undefined);
