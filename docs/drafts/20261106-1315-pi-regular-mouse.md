@@ -1,28 +1,29 @@
 # Pi regular-mode border mouse: local preparation and pinned backport
 
-**Final acceptance pending after rejected artifacts (2026-11-06).** Widget
+**Artifact-specific validation complete; preservation/publication blocked (2026-11-06).** Widget
 reconciliation, stable Decisions/Tokemon registrations and fullscreen capture
 validity corrections are implemented, and the complete Pi 1.4.0 backport is
 packaged. Separately reviewed seven-badge matrices passed for the `4giir`, `n5b`,
 `rxn` and latest `9im` bundles. Corrected immutable native controls passed for
 `n5b`; `rxn` positive03 later failed an HTTP-count assertion after pacing denied
-refreshes just before their deadlines. That failure remains preserved. Fresh
-`9im` Decisions04 completed with CLI, cleanup and analysis exit 0; independent
-completed-run review remains pending. The reviewed Tokemon04 controls have been
-launched, but their terminal outcomes have not yet been read.
+refreshes just before their deadlines. That failure remains preserved. All three
+fresh `9im` native controls completed with CLI, cleanup and analysis exit 0.
+Independent per-control and aggregate reviews cleared their bounded evidence;
+the parent verified the complete seal. The positive run's second HTTP pair
+preceded its passive tail, so missed-first-cycle recovery remains unexercised.
 This checkpoint does not claim every current artifact or full suite passed.
 
-The preceding real seven-badge run stopped at 120×36: after two rapid Agents
+The rejected real seven-badge run stopped at 120×36: after two rapid Agents
 clicks, a third held click delivered a press but no release/click despite
 unchanged visible geometry. A subsequent instrumented run reproduced a held
 Agents close failure: a Decisions timer rebuilt an unrelated spacer, changing
 the root layout token and clearing the press before release. Source tests also
 isolated global border invalidation, producer-owned republication and baseline
 fullscreen geometry defects. These failures remain preserved; passing source
-checks do not replace final immutable acceptance. No main integration,
-publication or deployment.
+checks do not replace artifact-specific acceptance. Local integration requires
+fresh checkout and derivation checks; publication and deployment remain unauthorized.
 
-## Current checkpoint — concurrent main integration
+## Validation history — concurrent main integration
 
 The original immutable `matrix01` stopped at 48×12 because its Agents locator
 required an optional ID omitted by the allocated view. The capture showed the
@@ -153,12 +154,33 @@ binds the corrected nine inputs. Fresh Decisions04 completed with 24 gesture
 triplets, 18 holds (minimum 1.128918074 seconds) and twelve actual native panes,
 explicitly retaining `bundledVStack:false`. CLI, cleanup and analysis exited 0;
 the parent verified raw trace, input hashes and scoped resource absence before
-writing the fresh terminal gate. Independent completed-run review is pending.
-Positive04 and negative04 were then launched in isolated runs. The first negative
-launch failed before execution because the parent supplied an incorrect working
-directory; that error is retained separately from the corrected launch. Neither
-Tokemon terminal outcome has yet been read. No native-timer, Historian, physical
-mouse or real-enqueue-delivery acceptance follows from the regular matrix.
+writing the fresh terminal gate. Independent completed-run review cleared Decisions.
+Positive04 and negative04 then completed in isolated runs, each with CLI, cleanup
+and analysis exit 0 and independent bounded approval. The first negative launch
+failed before execution because the parent supplied an incorrect working directory;
+that error remains separate from the completed runtime case.
+
+Positive04 preserved twelve 31-second holds, twelve native callbacks, stable
+registration and 1,584 observed target spans. The passive tail began at 375.923
+seconds and observed the third native report at 600.003 seconds. Its second HTTP
+pair had already occurred at 300.227/300.233 seconds; zero fetches occurred during
+the tail, and the third report used cached data. This is not runtime evidence of
+recovery when both first-cycle attempts miss eligibility, nor a late-tail fetch
+under a held gesture. Negative04 preserved eleven 31-second holds and observed
+sticky local cancellation when the same registration expanded from `[68,117)`
+to `[57,117)`, without changing MainScreen capture/target/layout identity.
+
+The aggregate review cleared the bounded evidence. At 21:48:35Z the parent
+verified all 2,481 seal entries and recomputed the four runtime NAR hashes.
+Manifest `96efd290b2322abae4d63e69744b5abb44409a45c36d96a9cb944d7ff7c385e6`
+includes 642 controls04 files, 619 frozen03 files and 1,220 prior02 entries/anchor.
+Earlier namespace/timing failures, blocked preflight and launch error remain
+preserved. All three cases observed zero real enqueue calls and one explicitly
+suppressed `sendUserMessage` each. Native ancestry remains distinct from bundled
+classes; mounted-object counts do not establish constructor/initializer counts.
+No full-suite-green, Historian, provider, physical mouse/clipboard, enqueue-delivery
+or escaped-descendant acceptance follows. The regular matrix and native controls
+are separate, source/artifact-bound evidence.
 The managed model default grants neither Historian activation nor inference.
 
 ## Behavior and boundaries
@@ -412,8 +434,9 @@ inside `Promise.resolve(factory(...))`; no speculative example fix was retained.
 
 Q27 revision 2 authorizes private archival, recovery verification and removal of
 only the two owned task worktrees **after every gate passes**. Actual preservation
-and removal remain blocked on final acceptance/integration, recovery verification,
-writer freeze and no-drift checks. Q28 requests scoped Codegraph maintenance:
+and removal remain blocked on safe integration, real recovery verification,
+writer freeze and no-drift checks. The latest selected artifact checks are complete;
+that does not waive the source-suite baseline failures or preservation gates. Q28 requests scoped Codegraph maintenance:
 the read-only audit could not establish ownership/quiescence, and missing owner
 records are not evidence of inactivity. No daemon control, lock deletion,
 real-source archive/export or worktree removal has occurred. Synthetic run-01
