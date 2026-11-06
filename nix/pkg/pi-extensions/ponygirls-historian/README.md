@@ -40,6 +40,13 @@ Controls mirror `/context-archive`:
 | `[default] focus TEXT`, `focus inherit` | Configure/inherit the journal objective focus |
 | `status`, `journal` | Read status or the journal without inference |
 
+Command arguments autocomplete subcommands, defaults, available providers/models,
+and thinking levels. Focus remains free text (with session `inherit` completion).
+Status panels group configuration, activity, diagnostics and coverage with semantic
+theme colors; journal headings, evidence metadata and coverage notices are visually
+distinct. Use arrows/Page Up/Page Down/Home/End to scroll and Escape or `q` to close.
+Stored Markdown and non-TUI output remain unstyled.
+
 A global ON requires a configured global model and approves that model. Session
 consent is independent of enablement inheritance. A fork gets a new session
 identity and does not inherit copied session-local approval. OFF is not a

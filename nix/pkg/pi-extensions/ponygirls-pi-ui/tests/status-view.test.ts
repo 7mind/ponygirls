@@ -27,6 +27,18 @@ test("status view wraps narrow/wide text, bounds its viewport, and scrolls", () 
   assert.ok(renders > 0);
 });
 
+test("status view rebuilds themed content on invalidation without losing the snapshot", () => {
+  let color = "success";
+  const snapshot = "Historical evidence";
+  const view = new ui.StatusView({ title: "Status", text: () => `${color}: ${snapshot}`, theme: ui.PLAIN_THEME,
+    keys: { matches: () => false }, rows: () => 24, requestRender() {}, close() {} });
+  assert.match(view.render(80).join("\n"), /success: Historical evidence/);
+  color = "accent";
+  view.invalidate();
+  assert.match(view.render(80).join("\n"), /accent: Historical evidence/);
+  assert.doesNotMatch(view.render(80).join("\n"), /success:/);
+});
+
 test("status view honors configured cancel and q without mutating its text", () => {
   assert.equal(typeof ui.StatusView, "function");
   let closed = 0;

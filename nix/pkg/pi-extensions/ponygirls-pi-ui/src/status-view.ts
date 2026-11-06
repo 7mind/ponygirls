@@ -5,7 +5,7 @@ import type { UiTheme } from "./theme.ts";
 
 export interface StatusViewOptions {
   title: string;
-  text: string;
+  text: string | (() => string);
   theme: UiTheme;
   keys: { matches(data: string, action: "tui.select.cancel"): boolean };
   rows(): number;
@@ -22,11 +22,13 @@ export class StatusView extends PanelLayout {
   constructor(options: StatusViewOptions) {
     super((width) => this.renderParts(width));
     this.options = options;
-    this.text = new Text(options.text, 0, 0);
+    this.text = new Text(this.content(), 0, 0);
     this.regularScroll = new ScrollView(this.text, { overscroll: "contain" });
   }
 
-  override invalidate(): void { this.text.invalidate(); }
+  private content(): string { return typeof this.options.text === "string" ? this.options.text : this.options.text(); }
+
+  override invalidate(): void { this.text.setText(this.content()); this.text.invalidate(); }
 
   private get scroll(): ScrollView { return this.hasAllocatedHeight ? this.bodyScroll : this.regularScroll; }
 

@@ -4,6 +4,8 @@ import { truncateToWidth } from '@earendil-works/pi-tui';
 import { CustomViewToggle, StatusView } from '@ponygirls/pi-ui';
 import { parseToggleCommand, sessionEnabledData } from '@ponygirls/pi-settings';
 import { HistorianController } from './src/controller.ts';
+import { completeHistorianArguments } from './src/complete.ts';
+import { styleHistorianJournal, styleHistorianStatus } from './src/presentation.ts';
 import { CONSENT_TYPE, ENABLED_TYPE, FOCUS_TYPE, MODEL_TYPE, PreferenceStore, parseModel } from './src/preferences.ts';
 
 export default function (pi: ExtensionAPI): void {
@@ -30,10 +32,11 @@ export default function (pi: ExtensionAPI): void {
     const value = journal ? controller.journal() : controller.status();
     if (ctx.mode !== 'tui' || !ctx.hasUI) { ctx.ui.notify(value, 'info'); return; }
     await pane.toggle(ctx.ui, (tui, theme, keys, done) => new StatusView({ title: journal ? 'Historian project journal' : 'Historian status',
-      text: value, theme, keys, rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done }));
+      text: () => journal ? styleHistorianJournal(value, theme) : styleHistorianStatus(value, theme), theme, keys, rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done }));
   }
   pi.registerCommand('historian', {
     description: 'Project journals (on approves configured-provider disclosure): on|off|inherit|default on|default off|status|journal; [default] model PROVIDER MODEL THINKING; [default] focus TEXT; [default] model inherit; focus inherit',
+    getArgumentCompletions: prefix => completeHistorianArguments(prefix, context === null ? [] : context.modelRegistry.getAvailable()),
     handler: async (args, ctx) => {
       try {
         if (controller === null) throw new Error('Historian session initialization failed; inspect extension errors');
