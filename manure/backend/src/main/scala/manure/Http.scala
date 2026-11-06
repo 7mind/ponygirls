@@ -108,7 +108,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       raw("Cross-Origin-Resource-Policy","same-origin"),raw("X-Content-Type-Options","nosniff"),
       raw("Cache-Control","no-store"))
       .putHeaders(raw("Referrer-Policy",response.headers.headers.find(_.name == CIString("Referrer-Policy")).map(_.value).getOrElse("no-referrer")))
-    if content then base.putHeaders(raw("Content-Security-Policy","frame-ancestors 'none'; base-uri 'none'; form-action 'self'")) else base
+    if content && !base.headers.headers.exists(_.name == CIString("Content-Security-Policy")) then base.putHeaders(raw("Content-Security-Policy","frame-ancestors 'none'; base-uri 'none'; form-action 'self'")) else base
   private def json(value: io.circe.Json,status: Int = 200): Response[IO] =
     Response[IO](Status.fromInt(status).getOrElse(Status.InternalServerError)).withEntity(value.noSpaces)
       .putHeaders(raw("Content-Type","application/json"))
@@ -280,12 +280,16 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     case "html" | "htm" => "text/html; charset=utf-8"
     case "js" | "mjs" => "application/javascript; charset=utf-8"
     case "css" => "text/css; charset=utf-8"
-    case "txt" | "md" => "text/plain; charset=utf-8"
+    case "txt" | "md" | "markdown" | "mmd" | "mermaid" | "dot" | "gv" => "text/plain; charset=utf-8"
     case "json" => "application/json"
     case "svg" => "image/svg+xml"
     case "png" => "image/png"
     case "jpg" | "jpeg" => "image/jpeg"
     case "gif" => "image/gif"
+    case "webp" => "image/webp"
+    case "avif" => "image/avif"
+    case "bmp" => "image/bmp"
+    case "ico" => "image/x-icon"
     case "pdf" => "application/pdf"
     case "wasm" => "application/wasm"
     case _ => "application/octet-stream"
@@ -320,6 +324,55 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
           if range.nonEmpty then response = response.putHeaders(raw("Content-Range",s"bytes $start-${end-1}/${entry.size}"))
           if attachment then response = response.putHeaders(raw("Content-Disposition",disposition(path)))
           IO.pure(response)
+    }
+  private def acceptsViewer(req: Request[IO]): Boolean =
+    header(req,"Accept").exists(_.split(",").exists { offer =>
+      val parts = offer.split(";").map(_.trim.toLowerCase(java.util.Locale.ROOT))
+      parts.headOption.contains("text/html") && parts.drop(1).filter(_.startsWith("q=")).forall { q =>
+        q.drop(2).toDoubleOption.exists(v => v > 0 && v <= 1)
+      }
+    })
+  private def viewerKind(path: String): Option[String] =
+    path.toLowerCase(java.util.Locale.ROOT).split('.').lastOption.flatMap {
+      case "md" | "markdown" => Some("markdown")
+      case "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp" | "svg" | "ico" => Some("image")
+      case "pdf" => Some("pdf")
+      case "mmd" | "mermaid" => Some("mermaid")
+      case "dot" | "gv" => Some("graphviz")
+      case _ => None
+    }
+  private def htmlAttribute(value: String): String = value.flatMap {
+    case '&' => "&amp;"
+    case '<' => "&lt;"
+    case '>' => "&gt;"
+    case '"' => "&quot;"
+    case '\'' => "&#39;"
+    case c => c.toString
+  }
+  private def viewerBytes(name: String): IO[Array[Byte]] = IO.blocking {
+    val root = config.viewerDir.getOrElse(throw DomainError("not-found"))
+    Require(Set("index.html","viewer.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
+    val file = root.resolve(name)
+    Require(Files.isRegularFile(file) && Files.size(file) <= 16777216L, "not-found")
+    // Bound the read too: a concurrently replaced asset cannot bypass the cap.
+    val input = Files.newInputStream(file)
+    try
+      val bytes = input.readNBytes(16777217)
+      Require(bytes.length <= 16777216, "not-found")
+      bytes
+    finally input.close()
+  }
+  private def viewerShell(ctx: Context,path: String): IO[Response[IO]] =
+    val kind = viewerKind(path).getOrElse(throw DomainError("not-found"))
+    viewerBytes("index.html").map { bytes =>
+      val values = Map("__MANURE_ASSET_BASE__" -> (ctx.mount + "/__manure/viewer"),
+        "__MANURE_PATH__" -> path,"__MANURE_RAW_URL__" -> (ctx.mount + "/__manure/raw/" + encoded(path)),
+        "__MANURE_DOWNLOAD_URL__" -> (ctx.mount + "/__manure/files/" + encoded(path) + "/content"),"__MANURE_KIND__" -> kind)
+      // A single pass prevents filenames containing placeholder text from being re-expanded.
+      val html = "__MANURE_(?:ASSET_BASE|PATH|RAW_URL|DOWNLOAD_URL|KIND)__".r.replaceAllIn(Exact.string(bytes),
+        m => java.util.regex.Matcher.quoteReplacement(htmlAttribute(values(m.matched))))
+      Response[IO](Status.Ok).withEntity(html).putHeaders(raw("Content-Type","text/html; charset=utf-8"),
+        raw("Content-Security-Policy","default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self'; connect-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"))
     }
   private def form(req: Request[IO]): IO[Map[String,String]] =
     IO(Require(header(req,"Content-Type").exists(_.split(";",2)(0).trim == "application/x-www-form-urlencoded"), "bad-envelope")) *>
@@ -383,6 +436,23 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
           case error => IO.raiseError(error)
         }
       }
+    else if req.method == Method.GET && path.startsWith("/__manure/viewer/") then
+      artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None).flatMap { _ =>
+        val name = path.stripPrefix("/__manure/viewer/")
+        Require(Set("viewer.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
+        viewerBytes(name).map(bytes => Response[IO](Status.Ok).withEntity(bytes).putHeaders(raw("Content-Type",mime(name))))
+      }
+    else if req.method == Method.GET && path.startsWith("/__manure/raw/") then
+      val (file,trailing) = decoded("/" + path.stripPrefix("/__manure/raw/"))
+      Require(!trailing, "not-found")
+      serveFile(req,ctx,id,file,false,None)
+    else if req.method == Method.GET && path.startsWith("/__manure/view/") then
+      val (file,trailing) = decoded("/" + path.stripPrefix("/__manure/view/"))
+      artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None).flatMap { a =>
+        Require(!trailing && a.manifest.exists(e => !e.directory && e.path == file) && viewerKind(file).nonEmpty, "not-found")
+        if header(req,"Range").nonEmpty || config.viewerDir.isEmpty then serveFile(req,ctx,id,file,false,None)
+        else viewerShell(ctx,file)
+      }
     else if req.method == Method.GET && path.startsWith("/__manure/files/") && path.endsWith("/content") then
       val (file,_) = decoded("/" + path.stripPrefix("/__manure/files/").stripSuffix("/content"))
       serveFile(req,ctx,id,file,true,None)
@@ -396,7 +466,12 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         else if trailing then file + "/index.html" else file
         val isDirectory = file.nonEmpty && a.manifest.exists(e => e.path.startsWith(file + "/") || e.directory && e.path == file)
         if isDirectory && !trailing then IO.pure(Response[IO](Status.SeeOther).putHeaders(raw("Location",ctx.mount + "/" + encoded(file) + "/")))
-        else serveFile(req,ctx,id,target,false,None)
+        else
+          val negotiates = file.isEmpty && a.kind == ArtifactKind.File && viewerKind(target).nonEmpty && config.viewerDir.nonEmpty
+          val response = if negotiates && header(req,"Range").isEmpty && acceptsViewer(req) then
+            viewerShell(ctx,target)
+          else serveFile(req,ctx,id,target,false,None)
+          response.map(r => if negotiates then r.putHeaders(raw("Vary","Accept")) else r)
       }.handleErrorWith {
         case d: DomainError if d.code == "password-required" =>
           // Only the external entry point is a password page. Preserve the
