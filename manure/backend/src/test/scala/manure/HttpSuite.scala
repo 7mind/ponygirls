@@ -75,6 +75,39 @@ final class HttpSuite extends FunSuite:
       _ <- IO(assertEquals(hostileForm.status.code,403))
     yield ()
   }}
+  // Regression: browser login must not mint an agent cookie that makes GET / forbidden.
+  for route <- Vector("generated","form") do
+    test(s"browser $route login accepts humans across reload and refuses agents without a cookie") { run { (f,h) =>
+      def login(token: String): Request[IO] =
+        if route == "generated" then command(wire.Command.Login(token),None,Some("http://127.0.0.1:47329"))
+        else request(Method.POST,"/api/current/login",None,Some("http://127.0.0.1:47329"))
+          .withEntity("token="+token).putHeaders(Header.Raw(CIString("Content-Type"),"application/x-www-form-urlencoded"))
+      def cookies(response: org.http4s.Response[IO]): List[String] =
+        response.headers.headers.filter(_.name == CIString("Set-Cookie")).map(_.value)
+      val agentToken = SecretCodec.token()
+      for
+        _ <- IO.blocking(java.nio.file.Files.writeString(f.config.users.find(_.userType == "agent").get.tokens.head.hashFile,SecretCodec.sha256(agentToken)+"\n"))
+        human <- h.app.run(login(f.token))
+        cookie <- IO {
+          assertEquals(human.status.code,if route == "generated" then 200 else 303)
+          assertEquals(cookies(human).size,1)
+          assert(cookies(human).head.contains("HttpOnly"))
+          cookies(human).head.takeWhile(_ != ';')
+        }
+        _ <- Vector.fill(2)(()).traverse_ { _ =>
+          h.app.run(request(Method.GET,"/").putHeaders(Header.Raw(CIString("Cookie"),cookie))).flatMap { response =>
+            response.as[String].map { html => assertEquals(response.status.code,200); assert(html.contains("<html")) }
+          }
+        }
+        who <- h.app.run(command(wire.Command.Whoami(),Some(agentToken)))
+        principal <- who.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)))
+        _ <- IO { assertEquals(who.status.code,200); assert(principal.result.isInstanceOf[wire.Result.Identity]) }
+        listed <- h.app.run(command(wire.Command.ListArtifacts(wire.CatalogueQuery("",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,20,None)),Some(agentToken)))
+        _ <- IO(assertEquals(listed.status.code,200))
+        rejected <- h.app.run(login(agentToken))
+        _ <- IO { assert(cookies(rejected).isEmpty,"rejected browser login must not set cookies"); assertEquals(rejected.status.code,403) }
+      yield ()
+    }}
   test("bounded body, duplicate JSON and framing fail before initialization effects") { run { (f,h) => for
     dup <- h.app.run(command(wire.Command.Version(),None).withEntity("{\"apiVersion\":\"1.0.0\",\"apiVersion\":\"1.0.0\"}").putHeaders(Header.Raw(CIString("Content-Type"),"application/json")))
     _ <- IO(assertEquals(dup.status.code,400))

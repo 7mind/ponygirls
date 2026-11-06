@@ -175,6 +175,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
           Require(originHeader(req).contains(ctx.origin.value), "forbidden")
           Require(throttle.allow("login:" + peer(req),config.loginRatePerMinutePerIp), "rate-limited")
           val i = auth.authenticate(token).getOrElse(throw DomainError("unauthorized"))
+          auth.human(i)
           envelope(e.requestId,wire.Result.Identity(CurrentWire.principal(i))).putHeaders(raw("Set-Cookie",sessionCookie(ctx,token,false)))
         }
       case _: wire.Command.Logout =>
@@ -223,7 +224,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         Require(throttle.allow("login:" + peer(req),config.loginRatePerMinutePerIp), "rate-limited")
       } *> form(req).flatMap { fields => IO {
         val token = fields.getOrElse("token","")
-        auth.authenticate(token).getOrElse(throw DomainError("unauthorized"))
+        val i = auth.authenticate(token).getOrElse(throw DomainError("unauthorized"))
+        auth.human(i)
         Response[IO](Status.SeeOther).putHeaders(raw("Location","/"),raw("Set-Cookie",sessionCookie(ctx,token,false)))
       }}
     else if req.method == Method.POST && path == "/api/current/logout" then
