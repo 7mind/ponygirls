@@ -125,7 +125,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
       Sql.exec(c,s"CREATE ROLE $role LOGIN PASSWORD '${Fixtures.databasePassword}'")
       Sql.exec(c,s"REVOKE TEMP ON DATABASE $databaseIdentifier FROM PUBLIC")
       Sql.exec(c,s"GRANT USAGE ON SCHEMA public TO $role")
-      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_messages,ch_chunks,ch_generation_tags,ch_search_chunks,ch_jobs,ch_profile,ch_owner_targets,ch_index_profiles,ch_embedding_spaces TO $role")
+      Sql.exec(c,s"GRANT SELECT ON ch_sources,ch_users,ch_members,ch_generations,ch_revision_info,ch_messages,ch_chunks,ch_generation_tags,ch_search_chunks,ch_jobs,ch_profile,ch_owner_targets,ch_index_profiles,ch_embedding_spaces,ch_retained_profile_reads TO $role")
       Sql.exec(c,s"GRANT SELECT(session_id,revision) ON ch_revisions TO $role")
     }
     try {
