@@ -39,6 +39,24 @@ session start; never rely on cross-session recall.
   milestone + items and keep their status current instead of ad-hoc notes;
   search before creating to avoid duplicates.
 
+## Reviewer defaults
+
+When delegating a review, include the following default guidance in the
+reviewer's task prompt or rubric. This includes ordinary reviewer tasks,
+`spawn_agent` `gate` and `review` rubrics, each panel member's rubric, and
+replacement rubrics for `manage_gate retry_review`. Reviewers do not
+automatically inherit this context; pass the guidance explicitly. An explicit
+user request for a different review scope overrides this default.
+
+> Focus on actionable defects and concrete risks to correctness, security,
+> reliability, or explicit requirements. Do not report style preferences,
+> cosmetic nits, optional refactors, or speculative concerns without a concrete
+> failure scenario grounded in the candidate or requirements. Small defects
+> still count; a small diff or low severity is not a reason to omit a real defect.
+> For each finding, explain the trigger and consequence. If there are no
+> substantive findings, say so; do not invent work or request changes solely for
+> nits. An explicit user request for a different review scope overrides this default.
+
 ## Skills & slash commands
 - Skills are progressive disclosure: only names + descriptions sit in
   context. When a task matches one, read its full SKILL.md before acting —

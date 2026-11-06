@@ -115,6 +115,10 @@ let
 in
 assert builtins.hashString "sha256" contexts.general == "d82edc398517e05570657b6c10ca816aaf17f9f3234fd18632b8a520816246e5";
 assert general == contexts.general;
+assert lib.hasInfix "## Reviewer defaults" contexts.pi;
+assert defaults.programs.pi.appendSystemPrompt == contexts.pi;
+assert defaults.home.file."${defaults.programs.pi.configDir}/APPEND_SYSTEM.md".text == contexts.pi;
+assert !(lib.hasInfix "## Reviewer defaults" (memory defaults));
 assert defaults.smind.hm.dev.llm.commitPolicy == "no-preference";
 assert !defaults.smind.hm.dev.llm.worktrees.enable;
 assert !(lib.hasInfix "## Worktree workflow" (memory defaults));
