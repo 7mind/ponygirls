@@ -3084,3 +3084,60 @@ Research handover checks20 documents/93 local links/36 journal entries/89 refere
 J1–J35 and prior references are exact prefixes, protected schema/semantics/review/T1
 and prototype sources unchanged. The prototype's36 methods freshly pass6.610s,
 zero failures/errors/skips. Structural/regression checks are not semantic approval.
+
+## J37 — agent-memory content/use candidate, separate from Pilot U (2026-11-06)
+
+The user requested Astra-assisted analysis/fixes of small-experiment failures, then
+a larger experiment, and an extension of the design with agentic memory—rules,
+observations/facts and prior-art research. The parent keeps these as two independent
+increments: repaired workflow measurement in U, and the [M1 design candidate](agent-memory-m1.md).
+New memory semantics do not enter U's first comparison. This preserves an interpretable
+bundle comparison without attributing changed behavior solely to schema repair.
+
+The baseline already maps memory to source-bound Statements with applicability and
+history. M1 therefore proposes discriminated content/use profiles, not new canonical
+truth kinds or a parallel memory service. Observations and domain occurrences retain
+method, conditions, time, material and uncertainty; they are separately inspectable
+from assessments and do not become binding-local Task progress. “Fact” is a bounded
+presentation under a named use policy, not an intrinsic verification bit. Policies,
+heuristics, procedures and empirical regularities have distinct roles; retrieving
+or editing a procedure cannot authorize side effects or promote it to Human approval.
+
+Recorded/observed/claimed-validity time, exact applicability and use-specific recheck
+remain distinct. Correction, world change, scope refinement, retraction, normative
+change and summary replacement are attributed changes, not one timeless newest
+winner. Distillation preserves shared evidence roots and limitations; repeated
+summaries are not independent corroboration. Retrieval returns candidates, not
+permission or established gates. Missing corrections/context and retention losses
+must remain visible. No universal TTL, automatic cross-project standing or blanket
+approval for engineering choices is introduced. Independently wanted outcomes and
+support routes survive failure of one means, without retaining revoked permission.
+
+Six primary-source snapshots inform bounded transfer [R69–R74]: CoALA's memory and
+action cycle; LangMem's collections/profiles and formation timing; Zep's temporal
+records; A-Mem's linked evolving notes; Letta MemFS's editable file context; and
+LongMemEval's temporal/update/abstention and retrieval-versus-use distinctions.
+Only named sections were inspected, except the short retained MemFS page read in
+full. Author performance claims are not replicated results. Zep's new-information
+invalidation and A-Mem's representation replacement are not adopted as universal
+truth/history policies. Letta's MEMORY.md directory indexes are not assumed to be
+semantic/vector retrieval or authenticated authority.
+
+Astra local-gap analysis, a separate writer and a read-only candidate review are
+retained with exact receipts. Parent read M1 completely, checked its scope against
+the baseline and retained-source findings, and applied one nonblocking clarification
+about Letta's directory indexes. The review found no material design defect; it is
+advisory, not Human ratification. Twelve prohibited-conclusion/legitimate-neighbor
+pairs are proposed falsification cases, not executed semantic validation. Observation
+profile enforcement, partial temporal applicability, sufficient context expansion
+and retention/privacy effects remain open design work rather than new user blockers.
+
+U preparation meanwhile retains real SDK schema/read/storage reproductions, a broader
+four-family/four-variant corpus, and launch/readiness gate corrections. At this entry,
+no U native canary, registration or measured participant call has occurred. Proposed
+64 originals/128 stages are not reported outcomes. Corpus mutant discrimination is
+instrument sensitivity, not model difficulty. Pilot T's demonstrated disadvantages
+remain historical findings; neither repairs nor M1 establish a workflow advantage.
+Q22 was freshly observed pending/null at2026-11-06T12:39Z; neither increment selects
+its export policy. No client/service/CQ4/application implementation, deployment,
+push or skill installation is authorized or claimed [L22].
