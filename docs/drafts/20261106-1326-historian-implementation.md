@@ -1,6 +1,6 @@
 # Historian implementation ledger
 
-Status: implementation and mechanical validation complete; integration pending below.
+Status: implementation and mechanical validation complete. Integration receipt below.
 User authorized implementation after Q25. Initial base:
 `1ec22b0e659c42b0f4c8f3781c0d84f6cc28d7a5`; fast-forwarded to
 `32034dab6687c349f9c1c24410611c9cead94e3a` before final implementation checks.
@@ -315,5 +315,16 @@ input transport. No semantic-quality inference follows.
 
 ## Integration receipt
 
-Pending commit, safe fast-forward into main, exact-input integrated checks and
-removal of only this task worktree. Main was last observed clean on branch main.
+- Implementation committed as `a7a4360289e38380ff4d274c5c8440e29716c562`.
+- Main advanced concurrently to `36847d70780bdadd2ee7d9b05b6ba708bc702b1f`
+  (unrelated Manure work); the initial fast-forward was safely refused without
+  changing main. Merged that history into the clean task worktree without conflict
+  as `4385ef2e17dfc0f971064e1ee5d32459dd8ee75c`, preserving both histories.
+- All six checks passed again after that merge with the exact same Nix output
+  identities above (cached execution evidence reused, assertions reevaluated).
+  Receipt: `.git/historian-evidence-20261106/merged-checks.log`.
+- Finalization procedure: fast-forward clean main to the descendant containing
+  this receipt; rerun integrated checks; remove only the clean task worktree.
+  Actual final branch/commit, check outputs and cleanup postconditions are recorded
+  separately in `.git/historian-evidence-20261106/completion.json` and the closing
+  session report. No push, deployment or installed-session activation is included.
