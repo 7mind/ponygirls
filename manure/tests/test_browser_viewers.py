@@ -122,7 +122,9 @@ class ViewerBrowserTests(unittest.TestCase):
         upload("internal", {"private.md": b"# Internal viewer handoff\n"}, visibility="internal")
         payload = {"base": fix.api_base, "token": fix.identity.token,
                    "core": core, "browser": browser, "mode": mode,
-                   "resolver": bf.HOST_RESOLVER_RULES, "records": records}
+                   "resolver": bf.HOST_RESOLVER_RULES, "records": records,
+                   "artifacts": str(Path(os.environ["MANURE_VIEWER_ARTIFACTS"]).resolve())
+                   if os.environ.get("MANURE_VIEWER_ARTIFACTS") else ""}
         result = subprocess.run([node, str(Path(__file__).resolve().parent / "browser/viewers.mjs")],
                                 input=json.dumps(payload).encode(), capture_output=True, timeout=300)
         output = (result.stdout + result.stderr).decode("utf-8", "replace")

@@ -1,6 +1,7 @@
 // Specified viewer feature contracts. Real renderers, real HTTP, no CDN access.
 // Credentials are supplied over stdin and redacted from every failure report.
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -8,6 +9,7 @@ import { randomUUID } from "node:crypto";
 let raw = "";
 for await (const chunk of process.stdin) raw += chunk;
 const input = JSON.parse(raw);
+if (input.artifacts) await fs.mkdir(input.artifacts, { recursive: true });
 const require = createRequire(path.join(input.core, "package.json"));
 const { chromium } = require("playwright-core");
 const browser = await chromium.launch({ executablePath: input.browser, args: [
@@ -39,6 +41,14 @@ const check = async (name, run) => {
   page.setDefaultNavigationTimeout(20000);
   const offOrigin = [];
   const pageErrors = [];
+  const cspErrors = [];
+  page.on("console", (message) => {
+    // PDF/font diagnostics can be harmless. Only browser CSP errors belong in
+    // this guard, particularly stylesheet blocks that semantic checks miss.
+    if (message.type() === "error" && /content[- ]security[- ]policy|\bcsp\b/i.test(message.text())) {
+      if (cspErrors.length < 20) cspErrors.push(clean(message.text()));
+    }
+  });
   let dialogs = 0;
   // Observe AND abort accidental internet access: failures are deterministic and
   // this controlled-system test never depends on a third-party server.
@@ -64,13 +74,22 @@ const check = async (name, run) => {
     assert.equal(dialogs, 0, "uploaded code must not open dialogs");
     assert.deepEqual(offOrigin, [], "viewer must never automatically request third-party resources");
     assert.deepEqual(pageErrors, [], "viewer must not leave uncaught browser errors");
+    assert.deepEqual(cspErrors, [], "viewer resources/styles must not be blocked by CSP");
     for (const secret of secrets) if (secret) assert.equal(requestURLs.some((url) => url.includes(secret)), false, "credential in URL");
     results.push({ name, ok: true });
   } catch (error) {
-    results.push({ name, ok: false, error: clean(error) });
+    results.push({ name, ok: false, error: clean(error), cspErrors });
   } finally {
     await context.close();
   }
+};
+
+// Only public synthetic Markdown/PDF fixtures are captured: never an unlock
+// form, dashboard session, or one-time password. Mode prefixes avoid overwrites.
+const capture = async (page, name) => {
+  if (input.artifacts) await page.screenshot({
+    path: path.join(input.artifacts, `${input.mode}-${name}.png`), fullPage: true,
+  });
 };
 
 const shell = async (page, key, name = filename(key)) => {
@@ -129,6 +148,7 @@ await check("markdown renders headings, GFM and both fenced diagrams without exe
   await markdownRendered(page);
   await rawEqual(page, "markdown");
   await downloadEqual(page, "markdown");
+  await capture(page, "markdown-diagrams");
 });
 
 await check("standalone Mermaid and Graphviz produce decoded diagram images and exact original downloads", async (page) => {
@@ -171,10 +191,12 @@ const canvasSnapshot = async (page) => {
 await check("two-page PDF paints nonempty distinct canvases and navigates forward and backward", async (page) => {
   await open(page, "pdf");
   const first = await canvasSnapshot(page);
+  await capture(page, "pdf-page-1");
   await page.getByRole("button", { name: /next/i }).click();
   await page.waitForFunction((first) => document.querySelector("main canvas")?.toDataURL() !== first, first);
   const second = await canvasSnapshot(page);
   assert.notEqual(second, first, "page two must actually repaint the PDF canvas");
+  await capture(page, "pdf-page-2");
   await page.getByRole("button", { name: /prev/i }).click();
   await page.waitForFunction((first) => document.querySelector("main canvas")?.toDataURL() === first, first);
   await rawEqual(page, "pdf");
