@@ -16,10 +16,10 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
 
 - `/decisions` or **⌃⌥D** opens the project's pending inbox (⌃ = Control, ⌥ = Alt).
 - `/decisions Q12` opens a particular question, including answered history.
-- The **? N here · M other · ⌃⌥D** badge counts unanswered questions from this
+- The **? N+M · ⌃⌥D** badge counts unanswered questions from this
   session and all other sessions in the same project. It lives on the editor's
   bottom-left border and shows the inbox shortcut. In fullscreen mode it is
-  clickable. When the border is too narrow it shrinks to `?N/M`, in the same order.
+  clickable. When the border is too narrow it shrinks to `?N+M`, in the same order.
   Both counters include zero; the badge disappears when both are zero.
 - The inbox frame shows `pending N` / `all` tabs and the repository name (the
   directory owning the Git common directory, so worktrees show the main repository).

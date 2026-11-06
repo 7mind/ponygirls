@@ -128,8 +128,8 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         const other = pending.length - here;
         if (pending.length === 0) b.ctx.ui.setWidget(STATUS_KEY, undefined);
         else b.ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({
-          render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${here} here · ${other} other · ${INBOX_SHORTCUT.label} `)), width)],
-          renderCompact: () => compactChip(theme, "?", "attention", `${here}/${other}`),
+          render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${here}+${other} · ${INBOX_SHORTCUT.label} `)), width)],
+          renderCompact: () => compactChip(theme, "?", "attention", `${here}+${other}`),
           invalidate() {},
           handleMouse(event) {
             if (event.type !== "click" || event.button !== "left") return;
